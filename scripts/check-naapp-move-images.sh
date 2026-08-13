@@ -305,7 +305,7 @@ write_root_dockerignore() {
 **/*.pem
 agents
 cli/agents
-oas/agents
+oats/agents
 **/.aw
 **/.claude
 **/.agents

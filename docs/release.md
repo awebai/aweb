@@ -49,7 +49,7 @@ The seven aw npm packages: `@awebai/aw` and `@awebai/aw-{linux,darwin,windows}-{
 
 Non-artifacts (nothing here builds or publishes them): `channel-core`, the five `skills/aweb-*` sources,
 and server source in the AWID image (bundled inputs); `packages/codex-plugin`, `naapp/*`, `naapp-lib`,
-`packages/hermes-aweb-platform`, `resource-packs/`, `oas/`, `test-vectors/`. The marketplace pointer and
+`packages/hermes-aweb-platform`, `resource-packs/`, `oats/`, `test-vectors/`. The marketplace pointer and
 AC pin/lock are publication effects. Sites deploy by branch push, invoked by continue, outside the ordering.
 
 ## The static DAG (all ten audited edges)

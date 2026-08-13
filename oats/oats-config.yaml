@@ -1,0 +1,24 @@
+# OATS deployment for the aweb monorepo.
+#
+# Scope: the oats/ component root.
+name: aweb-oats
+
+# The deployment boundary. Instances coordinate on this aweb team.
+team:
+  name: aweb-oats
+  id: aweb-oats:aweb.ai
+
+agent-types:
+  coordinators:
+    description: Durable coordinators that serve the resident identity and are never cleanup-owned by an instance
+
+capabilities:
+  layers:
+    # The identity-attach design is retired. Its grants-based replacement
+    # (aweb.identity) lands in the next commit; until then this deployment
+    # deliberately has no messaging layer.
+    messaging: none
+    # No tasks layer yet — aaaa.10 binds `aw task`/`aw work`. Until then this
+    # deployment coordinates through mail and the board directly.
+    tasks: none
+    knowledge: none

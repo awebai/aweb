@@ -193,7 +193,7 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 
 	for _, rel := range []string{
 		"packages/codex-plugin/skills/aweb-coordination/SKILL.md",
-		"oas/.agents/capabilities/owned/aweb-tasks/skills/aweb-coordination/SKILL.md",
+		"oats/.agents/capabilities/owned/aweb-tasks/skills/aweb-coordination/SKILL.md",
 	} {
 		if generated := read(rel); generated != canonical {
 			t.Errorf("generated skill copy %s differs from canonical skill", rel)

@@ -1,0 +1,6 @@
+name: oats-mail-dev
+kind: persistent
+description: Implements the attached-principal mail decryption fix (aweb-oats-aaaa.63)
+repo: .
+work: worktree
+runtime: pi

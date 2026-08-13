@@ -38,8 +38,8 @@ release-residue	contract	check-release-gate-residue
 local-gate-contract	contract	test-release-local-gate-contract
 publication-workflow-contract	contract	test-release-gate-contract
 channel-process-guard	contract	test-channel-core-process-guard
-oas	journey	_release-oas
-oas-proof-helpers	journey	_release-oas-proof-helpers
+oats	journey	_release-oats
+oats-proof-helpers	journey	_release-oats-proof-helpers
 tmux-guard	journey	test-tmux-guard
 a2a-gateway-e2e	journey	test-a2a-gateway-e2e
 channel-integration	journey	test-channel-integration

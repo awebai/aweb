@@ -156,34 +156,34 @@ artifact drift rather than as an absent install. The internal release gate
 installs all three Node workspaces once before it reaches freshness; running
 `make freshness` on its own skips that step.
 
-## Reproducible OAS seam input
+## Reproducible OATS seam input
 
-The OAS seam tests do not read a sibling working checkout by default. `make
-prepare-oas-test-root` materializes the immutable repository and commit recorded
-in `oas/upstream-test-pin.json` into the ignored `.cache/oas-pinned` directory;
-`make test-oas`, `make test-oas-proof-helpers`, and the internal clean-Docker
+The OATS seam tests do not read a sibling working checkout by default. `make
+prepare-oats-test-root` materializes the immutable repository and commit recorded
+in `oats/upstream-test-pin.json` into the ignored `.cache/oats-pinned` directory;
+`make test-oats`, `make test-oats-proof-helpers`, and the internal clean-Docker
 gate all consume that clean checkout, so an aweb result is attributable to
 committed inputs rather than another repository's uncommitted state.
 
-This pin has a cost: it does not automatically exercise newer or uncommitted OAS
+This pin has a cost: it does not automatically exercise newer or uncommitted OATS
 integration primitives. To test that leading edge deliberately, opt in without
 changing or cleaning the local checkout:
 
 ```bash
-make test-oas OAS_TEST_ROOT=/path/to/local/oas
-make test-oas-proof-helpers OAS_TEST_ROOT=/path/to/local/oas
+make test-oats OATS_TEST_ROOT=/path/to/local/oats
+make test-oats-proof-helpers OATS_TEST_ROOT=/path/to/local/oats
 ```
 
 Treat that override as additional early-integration evidence, not as a substitute
 for the pinned release result. Update the committed pin deliberately when the
-reviewed OAS seam advances; a clean first run requires network access to fetch the
+reviewed OATS seam advances; a clean first run requires network access to fetch the
 pinned commit, while later runs reuse and reset the repository-owned cache.
 
 ## Comprehensive release proof
 
 The release train runs one complete gate in a clean local Docker environment
 before publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
-packages/images, unit and contract suites, OAS and real-stack journeys, freshness,
+packages/images, unit and contract suites, OATS and real-stack journeys, freshness,
 process guards, and vulnerability audits. Hosted workflows retain focused pull
 request checks but no longer repeat this complete proof on `main`.
 
@@ -195,7 +195,7 @@ The gate is internal to release preparation and is deliberately not a third
 operator command.
 
 Reproducible here means reproducible on a clean runner with no helpful ambient
-tools. The OAS seam builds `aw` from the exact aweb checkout and selects the real
+tools. The OATS seam builds `aw` from the exact aweb checkout and selects the real
 Pi binary installed from `pi-extension/package-lock.json`; it prepends both exact
 paths before spawning. It never substitutes a globally installed or previously
 published CLI/runtime. A developer laptop is weak evidence for this property

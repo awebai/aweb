@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-release-gate-contract check-release-gate-residue release-prepare release-continue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract check-oas-pi-launch-order test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-release-gate-contract check-release-gate-residue release-prepare release-continue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -10,7 +10,7 @@
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
 	test-pointer-adapter test-pointer-adapter-ac-pin test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _release-gate-version-authority _release-gate-channel-version _release-node-deps \
-	_release-unit-channel _release-unit-channel-core _release-unit-pi _release-oas _release-marketplace-pointer \
+	_release-unit-channel _release-unit-channel-core _release-unit-pi _release-oats _release-marketplace-pointer \
 	_release-artifact-server _release-artifact-awid-package _release-artifact-awid-image \
 	_release-artifact-channel _release-artifact-pi _release-artifact-skills _release-artifact-a2a-image
 
@@ -23,13 +23,13 @@ CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plu
 CLI_VERSION = $(shell ./scripts/cli-release-version.sh next)
 # The A2A gateway workflow requires its tag to match server/pyproject.toml.
 A2A_GATEWAY_VERSION := $(SERVER_VERSION)
-# OAS seam tests default to an immutable reviewed upstream commit materialized
+# OATS seam tests default to an immutable reviewed upstream commit materialized
 # under this repository's ignored cache. That makes local and CI runs consume the
 # same clean input instead of a colleague's mutable sibling checkout. Deliberate
-# early integration remains opt-in: OAS_TEST_ROOT=/path/to/local/oas make test-oas.
-OAS_PIN_FILE := $(CURDIR)/oas/upstream-test-pin.json
-OAS_PINNED_ROOT := $(CURDIR)/.cache/oas-pinned
-OAS_TEST_ROOT ?= $(OAS_PINNED_ROOT)
+# early integration remains opt-in: OATS_TEST_ROOT=/path/to/local/oats make test-oats.
+OATS_PIN_FILE := $(CURDIR)/oats/upstream-test-pin.json
+OATS_PINNED_ROOT := $(CURDIR)/.cache/oats-pinned
+OATS_TEST_ROOT ?= $(OATS_PINNED_ROOT)
 
 # Canonical docs mirrored onto the public AWID site. Sync, freshness checks, and
 # their negative controls all consume this one list so adding a mirror cannot
@@ -58,18 +58,16 @@ help:
 	@echo "  regenerate-cli-reference Regenerate the CLI reference from live Cobra help"
 	@echo "  test-mcp-tools-reference Verify the generated MCP inventory against live registration"
 	@echo "  regenerate-mcp-tools-reference Regenerate the MCP inventory from live registration"
-	@echo "  prepare-oas-test-root Materialize the clean committed OAS test pin"
-	@echo "  check-oas-launch-environment-contract Verify the pinned OAS seam dependency"
-	@echo "  check-oas-pi-launch-order Prove pinned Pi command construction; real execution is opt-in"
-	@echo "    real execution: OAS_RUN_REAL_PI_LAUNCH_ORDER=1 make test-oas"
-	@echo "    opt-in local OAS: make test-oas OAS_TEST_ROOT=/path/to/local/oas"
+	@echo "  prepare-oats-test-root Materialize the clean committed OATS test pin"
+	@echo "  check-oats-launch-environment-contract Verify the pinned OATS seam dependency"
+	@echo "  check-oats-pi-launch-order Prove pinned Pi command construction; real execution is opt-in"
+	@echo "    real execution: OATS_RUN_REAL_PI_LAUNCH_ORDER=1 make test-oats"
+	@echo "    opt-in local OATS: make test-oats OATS_TEST_ROOT=/path/to/local/oats"
 	@echo "  freshness    Regenerate committed artifacts and fail on drift"
 	@echo "  check-node-audit Audit Node dependencies for known vulnerabilities"
 	@echo "  check-go-vulnerability-audit Audit Go dependencies (pinned toolchain)"
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
-	@echo "  test-oas-proof-helpers Run attached-principal proof filesystem guard tests"
-	@echo "  test-oas-attached-principal-e2e Run the real local-stack attach/retire proof"
-	@echo "  test-oas-pi-resident-e2e Run the guarded real-Pi wake/reply/retire proof"
+	@echo "  test-oats-proof-helpers Run attached-principal proof filesystem guard tests"
 	@echo "  test-tmux-guard Run the guarded tmux migration and PATH-alias regressions"
 	@echo "  test-e2e     Run the end-to-end user journey and its mutation guard (requires Docker)"
 	@echo "  test-federation-harness Validate the 51-row direct-core historical inventory and mutations"
@@ -104,7 +102,7 @@ build:
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: check-aw-commit-repo-stamp test-release-local-gate-contract test-release-train test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-release-local-gate-contract test-release-train test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -309,39 +307,32 @@ test-release-gate-contract:
 	python3 scripts/e2e/test_release_gate_contract.py
 	python3 scripts/e2e/test_aw_a2a_release_workflows.py
 
-prepare-oas-test-root:
-	@if [ "$(abspath $(OAS_TEST_ROOT))" = "$(abspath $(OAS_PINNED_ROOT))" ]; then \
-		node scripts/prepare-pinned-oas.mjs --pin-file "$(OAS_PIN_FILE)" --target "$(OAS_PINNED_ROOT)"; \
+prepare-oats-test-root:
+	@if [ "$(abspath $(OATS_TEST_ROOT))" = "$(abspath $(OATS_PINNED_ROOT))" ]; then \
+		node scripts/prepare-pinned-oats.mjs --pin-file "$(OATS_PIN_FILE)" --target "$(OATS_PINNED_ROOT)"; \
 	else \
-		echo "Using explicit OAS_TEST_ROOT override without modifying it: $(OAS_TEST_ROOT)" >&2; \
+		echo "Using explicit OATS_TEST_ROOT override without modifying it: $(OATS_TEST_ROOT)" >&2; \
 	fi
 
-check-oas-launch-environment-contract: prepare-oas-test-root
-	@OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node scripts/check-oas-launch-environment-contract.mjs
+check-oats-launch-environment-contract: prepare-oats-test-root
+	@OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node scripts/check-oats-launch-environment-contract.mjs
 
 # Construction always runs. Real Pi execution is explicitly opt-in because it
 # consumes network/model tokens; the script reports the omitted layer on stderr.
 # Its runtime branch uses a named session on an isolated socket, with the tmux
 # guard first on PATH for the entire child process tree.
-check-oas-pi-launch-order: prepare-oas-test-root
-	@PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node scripts/check-oas-pi-launch-order.mjs
+check-oats-pi-launch-order: prepare-oats-test-root
+	@PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node scripts/check-oats-pi-launch-order.mjs
 
 # The real spawn seam validates both the aweb capability command and its selected
 # Pi runtime even with --no-launch. Use only tools built/locked by this checkout;
 # ambient developer installs must not decide whether the release test passes.
-test-oas: check-oas-launch-environment-contract check-oas-pi-launch-order build test-node-deps
-	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
+test-oats: check-oats-launch-environment-contract check-oats-pi-launch-order build test-node-deps
+	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
 
-test-oas-proof-helpers: prepare-oas-test-root
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_pinned_checkout.py
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_principal_proof.py
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_tmux_safety.py
-
-test-oas-attached-principal-e2e: test-oas-proof-helpers
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" ./scripts/e2e-oas-attached-principal-retire.sh
-
-test-oas-pi-resident-e2e: test-oas-proof-helpers
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OAS_PROOF_MODE=resident-pi ./scripts/e2e-oas-attached-principal-retire.sh
+test-oats-proof-helpers: prepare-oats-test-root
+	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
+	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
 test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
@@ -533,13 +524,12 @@ _release-unit-channel-core:
 _release-unit-pi:
 	cd pi-extension && npm test
 
-_release-oas: check-oas-launch-environment-contract check-oas-pi-launch-order
-	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
+_release-oats: check-oats-launch-environment-contract check-oats-pi-launch-order
+	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
 
-_release-oas-proof-helpers:
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_pinned_checkout.py
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_principal_proof.py
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_tmux_safety.py
+_release-oats-proof-helpers:
+	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
+	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
 _release-marketplace-pointer:
 	python3 scripts/e2e/test_pointer_adapter_marketplace.py

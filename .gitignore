@@ -48,6 +48,10 @@ pi-extension/skills/
 # config are not.
 /agents/instances/
 /cli/agents/instances/
-/oas/agents/*/instances/
+/oats/agents/*/instances/
 .release-runs/
 
+/agents/instances/release-dev/
+/agents/instances/release-review/
+/agents/instances/release-spec/
+/agents/instances/pgdbm-dev/
