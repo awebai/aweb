@@ -1,6 +1,8 @@
 # OATS deployment for the aweb monorepo.
 #
-# Scope: the oats/ component root.
+# Scope: the oats/ component root. Instances spawned here serve a resident aweb
+# identity through session grants — see docs/oats-aweb-seam.md for the
+# Principal / Instance / Session model.
 name: aweb-oats
 
 # The deployment boundary. Instances coordinate on this aweb team.
@@ -14,10 +16,18 @@ agent-types:
 
 capabilities:
   layers:
-    # The identity-attach design is retired. Its grants-based replacement
-    # (aweb.identity) lands in the next commit; until then this deployment
-    # deliberately has no messaging layer.
-    messaging: none
+    # Our own capability, deliberately NOT upstream's oats.aweb: that one mints
+    # a fresh identity at spawn and deletes it at retire, which is right for
+    # disposable workers but wrong for a durable principal. Selection is
+    # explicit so a resolution order can never silently substitute one for
+    # the other.
+    messaging:
+      capability: aweb.identity
+      from: owned
+      settings:
+        # The resident identity's .aw lives at the monorepo root, one level
+        # above this deployment's workspace (oats/).
+        custody-root: ".."
     # No tasks layer yet — aaaa.10 binds `aw task`/`aw work`. Until then this
     # deployment coordinates through mail and the board directly.
     tasks: none

@@ -1,0 +1,27 @@
+{
+  "capability": "aweb.identity",
+  "version": "0.1.0",
+  "compatibility": {
+    "oats": ">=0.20.0"
+  },
+  "layer": "messaging",
+  "description": "Serve a resident aweb identity through session grants: spawn mints a scoped, expiring grant into the instance home; retire revokes it; root keys never leave custody.",
+  "requires": [
+    {
+      "command": "aw",
+      "why": "mint and revoke identity session grants, and let the instance send and read mail/chat under its grant",
+      "install": "https://aweb.ai/docs"
+    }
+  ],
+  "inject": "injects/aweb-identity.md",
+  "environment": [
+    "AWEB_IDENTITY_HOME"
+  ],
+  "hooks": {
+    "spawn": {
+      "command": "bin/aweb-identity.mjs spawn",
+      "required": true
+    },
+    "retire": "bin/aweb-identity.mjs retire"
+  }
+}

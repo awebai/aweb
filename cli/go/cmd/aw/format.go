@@ -120,6 +120,12 @@ func formatIntrospect(v any) string {
 	if out.IdentityScope != "" {
 		sb.WriteString(fmt.Sprintf("Scope:     %s\n", awid.DescribeIdentityScope(out.IdentityScope)))
 	}
+	if out.GrantID != "" {
+		sb.WriteString(fmt.Sprintf("Grant:     %s (%s, expires %s)\n", out.GrantID, out.GrantStatus, out.GrantExpiresAt))
+		if len(out.GrantScopes) > 0 {
+			sb.WriteString(fmt.Sprintf("Scopes:    %s\n", strings.Join(out.GrantScopes, ", ")))
+		}
+	}
 	return sb.String()
 }
 

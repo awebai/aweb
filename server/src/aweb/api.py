@@ -37,6 +37,7 @@ from .routes.contacts import router as contacts_router
 from .routes.conversations import router as conversations_router
 from .routes.events import router as events_router
 from .routes.federation import router as federation_router
+from .routes.identity_grants import router as identity_grants_router
 from .routes.messages import router as messages_router
 from .routes.reservations import router as reservations_router
 from .routes.session_leases import router as session_leases_router
@@ -525,6 +526,7 @@ def create_app(
     app.include_router(conversations_router)
     app.include_router(events_router)
     app.include_router(federation_router)
+    app.include_router(identity_grants_router)
     app.include_router(messages_router)
     app.include_router(reservations_router)
     app.include_router(session_leases_router)

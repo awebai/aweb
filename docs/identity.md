@@ -320,6 +320,34 @@ machine then uses its local identity key to run `aw id team fetch-cert
 installs the certificate locally. The team controller private key never leaves
 the controller machine.
 
+## Session grants
+
+A session grant lets a worker process act as an identity for a bounded window
+without holding the identity's root keys. The identity mints the grant from
+its own `.aw` home:
+
+```
+aw id grant mint --scope mail.read,mail.send,chat.read,chat.send \
+    --ttl 8h --out /path/to/grant-home
+```
+
+Minting generates a fresh session Ed25519 keypair, registers its `did:key`
+with the server together with the scopes and expiry, and writes a
+self-contained grant home (`grant.yaml` plus the session key — never the
+identity's `signing.key`). A process pointed at that directory (via
+`AWEB_IDENTITY_HOME` or `--identity-home`) runs `aw mail` and `aw chat`
+normally; requests are signed per-request with the session key and the server
+attributes the results to the identity.
+
+Scopes are `mail.read`, `mail.send`, `chat.read`, and `chat.send`; grant
+requests outside them, and every non-messaging surface (team lifecycle,
+leases, reservations, minting further grants), are refused server-side. A
+grant expires at its TTL and can be revoked early and idempotently with
+`aw id grant revoke <grant-id>`; `aw id grant list` shows each grant as
+active, revoked, or expired. Root-authority commands refuse to run from a
+grant home, and `aw whoami` there reports the subject identity plus the
+grant's status, scopes, and expiry.
+
 ## Message verification and trust
 
 Every mail and chat message carries sender identity fields and an Ed25519

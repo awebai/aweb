@@ -224,6 +224,7 @@ Subcommands:
 - `cert` Team certificate operations
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
+- `grant` Scoped, expiring session grants derived from this identity
 - `log` Show an identity log
 - `namespace` Protocol/admin namespace controller and address operations
 - `register` Register the current global identity at the configured registry
@@ -342,6 +343,61 @@ Flags:
 ### `id encryption-key show`
 
 Show local E2E encryption key state
+
+Flags:
+- `-h, --help help for show`
+
+## `id grant`
+
+### `id grant`
+
+Scoped, expiring session grants derived from this identity
+
+Subcommands:
+- `list` List this identity's session grants
+- `mint` Mint a session grant and write a self-contained grant home
+- `revoke` Revoke a session grant
+- `show` Show one session grant
+
+Flags:
+- `-h, --help help for grant`
+
+## `id grant list`
+
+### `id grant list`
+
+List this identity's session grants
+
+Flags:
+- `-h, --help help for list`
+
+## `id grant mint`
+
+### `id grant mint`
+
+Mint a session grant and write a self-contained grant home
+
+Flags:
+- `-h, --help help for mint`
+- `--label string Optional label for the grant`
+- `--out string Directory to write the grant home (created fresh; a non-empty directory is refused)`
+- `--scope stringArray Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send)`
+- `--ttl duration Grant duration before expiry (60s to 720h) (default 8h0m0s)`
+
+## `id grant revoke`
+
+### `id grant revoke`
+
+Revoke a session grant
+
+Flags:
+- `-h, --help help for revoke`
+
+## `id grant show`
+
+### `id grant show`
+
+Show one session grant
 
 Flags:
 - `-h, --help help for show`

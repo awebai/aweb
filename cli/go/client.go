@@ -32,3 +32,13 @@ func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *awi
 	}
 	return &Client{Client: c}, nil
 }
+
+// NewWithGrant creates a client authenticated as an identity-grant session,
+// signing each request with the grant's session key.
+func NewWithGrant(baseURL string, sessionKey ed25519.PrivateKey, grantID string) (*Client, error) {
+	c, err := awid.NewWithGrant(baseURL, sessionKey, grantID)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{Client: c}, nil
+}

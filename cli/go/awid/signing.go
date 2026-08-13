@@ -221,6 +221,63 @@ func SignAppEmitCredential(key ed25519.PrivateKey, method string, target *url.UR
 	}, nil
 }
 
+// IdentityGrantCredential carries the request headers for an identity-grant
+// authenticated API call signed by the grant session key.
+type IdentityGrantCredential struct {
+	DIDKey              string
+	SignatureB64        string
+	CanonicalPayload    string
+	SignedPayloadB64URL string
+	BodySHA256          string
+	Headers             http.Header
+}
+
+// SignIdentityGrantCredential signs an API request with an identity-grant
+// session key. The signed payload uses the same canonicalization, body
+// hashing, and aud semantics as the v2 team envelope and the app-emit
+// credential.
+func SignIdentityGrantCredential(key ed25519.PrivateKey, method string, target *url.URL, grantID string, body []byte, timestamp string) (*IdentityGrantCredential, error) {
+	if key == nil {
+		return nil, fmt.Errorf("signing key is required")
+	}
+	if target == nil || target.Scheme == "" || target.Host == "" {
+		return nil, fmt.Errorf("target URL is required")
+	}
+	grantID = strings.TrimSpace(grantID)
+	if grantID == "" {
+		return nil, fmt.Errorf("grant_id is required")
+	}
+	bodyHashBytes := sha256.Sum256(body)
+	bodyHash := fmt.Sprintf("%x", bodyHashBytes)
+	payload := map[string]any{
+		"v":           1,
+		"auth":        "identity-grant",
+		"aud":         target.Scheme + "://" + target.Host,
+		"method":      strings.ToUpper(strings.TrimSpace(method)),
+		"path":        appEmitRequestTargetPath(target),
+		"grant_id":    grantID,
+		"body_sha256": bodyHash,
+	}
+	signedDIDKey, signature, canonical, err := SignArbitraryPayload(key, payload, timestamp)
+	if err != nil {
+		return nil, err
+	}
+	signedPayload := base64.RawURLEncoding.EncodeToString([]byte(canonical))
+	headers := make(http.Header)
+	headers.Set("Authorization", fmt.Sprintf("AWEB-Grant DIDKey %s %s", signedDIDKey, signature))
+	headers.Set("X-AWEB-Grant-ID", grantID)
+	headers.Set("X-AWEB-Timestamp", strings.TrimSpace(timestamp))
+	headers.Set("X-AWEB-Signed-Payload", signedPayload)
+	return &IdentityGrantCredential{
+		DIDKey:              signedDIDKey,
+		SignatureB64:        signature,
+		CanonicalPayload:    canonical,
+		SignedPayloadB64URL: signedPayload,
+		BodySHA256:          bodyHash,
+		Headers:             headers,
+	}, nil
+}
+
 func appEmitRequestTargetPath(target *url.URL) string {
 	path := target.EscapedPath()
 	if path == "" {

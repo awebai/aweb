@@ -200,6 +200,7 @@ type Client struct {
 	did                     string             // empty for legacy/custodial
 	teamCertHeader          string             // base64-encoded team certificate for X-AWID-Team-Certificate
 	teamID                  string             // team identifier from certificate, used in auth signature
+	grantID                 string             // identity-grant id; non-empty selects grant auth with the session signing key
 	certAlias               string             // certificate alias, used for signed payloads in cert-auth mode
 	address                 string             // namespace/alias, used in signed envelopes
 	e2eeSenderAddress       string             // explicit address for E2EE envelopes; empty for addressless local/team identities
@@ -285,6 +286,35 @@ func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *Tea
 	c.teamID = cert.Team
 	c.certAlias = strings.TrimSpace(cert.Alias)
 	return c, nil
+}
+
+// NewWithGrant creates a client authenticated as an identity-grant session.
+// The session key signs every request; the subject identity's root keys are
+// never involved.
+func NewWithGrant(baseURL string, sessionKey ed25519.PrivateKey, grantID string) (*Client, error) {
+	if sessionKey == nil {
+		return nil, fmt.Errorf("sessionKey must not be nil")
+	}
+	grantID = strings.TrimSpace(grantID)
+	if grantID == "" {
+		return nil, fmt.Errorf("grantID must not be empty")
+	}
+	c, err := New(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	c.signingKey = sessionKey
+	c.did = ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey))
+	c.grantID = grantID
+	return c, nil
+}
+
+// GrantID returns the identity-grant id, or empty for non-grant clients.
+func (c *Client) GrantID() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.grantID)
 }
 
 func (c *Client) TeamID() string {
@@ -1205,7 +1235,19 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 				req.Header.Set(key, value)
 			}
 		}
-		if c.teamCertHeader != "" && c.signingKey != nil {
+		if c.grantID != "" && c.signingKey != nil {
+			// Grant auth: session did:key signature over the identity-grant
+			// envelope. aud, method, path, and body_sha256 bind the request to
+			// the grant, mirroring the v2 team envelope canonicalization.
+			timestamp := time.Now().UTC().Format(time.RFC3339)
+			credential, err := SignIdentityGrantCredential(c.signingKey, method, req.URL, c.grantID, bodyBytes, timestamp)
+			if err != nil {
+				return nil, err
+			}
+			for key := range credential.Headers {
+				req.Header.Set(key, credential.Headers.Get(key))
+			}
+		} else if c.teamCertHeader != "" && c.signingKey != nil {
 			// Certificate auth: DIDKey signature over {body_sha256, team_id, timestamp}.
 			// body_sha256 binds the request body to the signature without the
 			// server having to consume the body stream for signature verification.
@@ -1414,7 +1456,7 @@ func traceHeaders(prefix string, headers http.Header, redact bool) {
 
 func shouldRedactTraceHeader(key string) bool {
 	switch http.CanonicalHeaderKey(strings.TrimSpace(key)) {
-	case "Authorization", "Cookie", "Set-Cookie", "X-Aweb-Signed-Payload", "X-Awid-Team-Certificate", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate":
+	case "Authorization", "Cookie", "Set-Cookie", "X-Aweb-Signed-Payload", "X-Awid-Team-Certificate", "X-Aweb-Grant-Id", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate", "X-AWEB-Grant-ID":
 		return true
 	default:
 		return false

@@ -252,7 +252,7 @@ able to distinguish:
 
 ### Request format
 
-aweb has two authentication classes:
+aweb has three authentication classes:
 
 - **Team-certificate auth** for coordination and team-scoped routes:
   `Authorization`, `X-AWEB-Timestamp`, `X-AWID-Team-Certificate`, and,
@@ -260,6 +260,21 @@ aweb has two authentication classes:
 - **Identity-only auth** for identity-scoped messaging routes:
   `Authorization`, `X-AWEB-Timestamp`, and optional `X-AWEB-DID-AW`. A
   global caller must send its `did:aw`; a local caller omits the header.
+- **Identity-grant auth** for messaging routes only: a session key acting
+  as a durable identity under a scoped, expiring, revocable grant.
+  `Authorization: AWEB-Grant DIDKey <session did:key> <sig>`,
+  `X-AWEB-Grant-ID`, `X-AWEB-Timestamp`, and a **mandatory** request-bound
+  `X-AWEB-Signed-Payload` (canonical JSON `{v: 1, auth: "identity-grant",
+  method, path, grant_id, body_sha256, timestamp, aud}`). The server
+  requires the grant row (`identity_session_grants`) to be unrevoked and
+  unexpired, the session `did:key` to match the registered
+  `grant_did_key`, and the request to fall inside the grant's scopes
+  (`mail.read`, `mail.send`, `chat.read`, `chat.send`; `GET /v1/agents`
+  is allowed for recipient resolution). Everything else — including
+  minting or revoking grants — is refused. Actions resolve to the subject
+  identity for attribution; `certificate_id` carries `grant:<grant_id>`
+  provenance. Grants are minted and revoked only under team-certificate
+  auth via `/v1/identity-grants`.
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
@@ -510,6 +525,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `federation_authority_token_buckets`
 - `message_ingress_receipts`
 - `federation_mutation_outbox`
+- `identity_session_grants`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
@@ -536,6 +552,7 @@ router entry.
 - `conversations`
 - `events`
 - `federation`
+- `identity_grants`
 - `messages`
 - `reservations`
 - `session_leases`

@@ -151,6 +151,12 @@ async def lookup_identity_agent_context(
 
 
 async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingAuth:
+    if (request.headers.get("Authorization") or "").lstrip().startswith("AWEB-Grant "):
+        # Imported lazily: identity_grant_auth imports MessagingAuth from here.
+        from aweb.identity_grant_auth import verify_identity_grant_auth
+
+        return await verify_identity_grant_auth(request, db)
+
     if request.headers.get("X-AWID-Team-Certificate"):
         team_identity: TeamIdentity = await get_team_identity(request, db)
         aweb_db = _aweb_db(db)

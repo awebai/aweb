@@ -112,6 +112,13 @@ func resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (
 	if err != nil {
 		return nil, err
 	}
+	// Selections resolved here feed root-authority flows (team certificates,
+	// the identity's own signing key). A grant home carries only the session
+	// credential, so those flows must stop with a clear pointer instead of
+	// failing on missing root state.
+	if awconfig.IsGrantHome(identityHome.Root) {
+		return nil, errGrantHomeRootAuthority
+	}
 	return resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 }
 
@@ -266,7 +273,14 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 }
 
 func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (*aweb.Client, *awconfig.Selection, error) {
-	sel, err := resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride)
+	identityHome, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if awconfig.IsGrantHome(identityHome.Root) {
+		return resolveGrantClientSelection(workingDir, identityHome)
+	}
+	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 	if err != nil {
 		return nil, nil, err
 	}
