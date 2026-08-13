@@ -35,6 +35,8 @@ jobs:
           python-version: "3.12"
 
       - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.32"
 
       - name: Derive awid-service version
         id: version
@@ -167,6 +169,8 @@ jobs:
           python-version: "3.12"
 
       - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.32"
 
       - name: Derive aweb version
         id: version

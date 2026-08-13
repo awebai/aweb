@@ -140,6 +140,15 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
             (server, "aweb", "server-v", "import aweb"),
         ):
             with self.subTest(package=package):
+                # The runner's uv is a production input like every other:
+                # it must be pinned to an exact version, never latest.
+                self.assertEqual(job.count("astral-sh/setup-uv@"), 1)
+                self.assertIn(
+                    '- uses: astral-sh/setup-uv@v7\n'
+                    '        with:\n'
+                    '          version: "',
+                    job,
+                )
                 self.assertEqual(job.count("uv build --sdist --wheel"), 1)
                 # uv build stamps a .gitignore into the out-dir it creates;
                 # inspect-staged refuses any extra file, so the workflow must

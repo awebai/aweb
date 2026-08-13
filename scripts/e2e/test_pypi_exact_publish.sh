@@ -319,4 +319,23 @@ for knob in PYPI_VERIFY_DEADLINE PYPI_VERIFY_REQUEST_TIMEOUT PYPI_VERIFY_ATTEMPT
 done
 ok "pypi refuses zero and malformed deadline/request/attempt overrides"
 
+# ── real-builder pipeline: build -> workflow cleanup -> inspect ─────
+# The hand-made dists above test the guard; the untested seam that broke a
+# release was the pipeline between the real builder and the guard (uv build
+# stamps a .gitignore the guard rightly refuses). Build a real package with
+# the local uv toolchain, apply the exact cleanup the publish workflow
+# applies, and require the result to inspect clean - builder drift reds here
+# before a hosted runner sees it. Needs uv and its cached build backend.
+awid_version="$(python3 -c "import tomllib; print(tomllib.load(open('$ROOT/awid/pyproject.toml','rb'))['project']['version'])")"
+rm -rf "$tmp/real-dist"; mkdir -p "$tmp/real-dist"
+uv build --sdist --wheel --out-dir "$tmp/real-dist" "$ROOT/awid" >/dev/null 2>&1 \
+  || fail "real uv build of awid failed"
+rm -f "$tmp/real-dist/.gitignore"
+out="$(bash "$LANE" inspect-staged --dist "$tmp/real-dist" \
+  --package awid-service --version "$awid_version" 2>&1)" \
+  || fail "real-builder dist refused after workflow cleanup: $out"
+grep -c "STAGED:" <<<"$out" | grep -qx 2 \
+  || fail "real-builder dist must stage exactly the pair: $out"
+ok "real uv build plus workflow cleanup inspects clean (builder-drift detector)"
+
 printf 'SELFTEST OK: %d assertions\n' "$PASS"
