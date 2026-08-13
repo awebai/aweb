@@ -175,6 +175,17 @@ for container in "$pg_id" "$redis_id"; do
   [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] \
     || refuse "gate service failed health: $container"
 done
+
+# Production parity: the app role there carries search_path=pg_catalog as its
+# role default; the gate's role must too, or an unqualified reference passes
+# locally and fails in production. Applied and read back; refuse if unset.
+docker exec "$pg_id" psql -v ON_ERROR_STOP=1 -U postgres -d postgres \
+  -c 'ALTER ROLE postgres SET search_path = pg_catalog' >/dev/null \
+  || refuse "could not apply the production search_path role default"
+applied="$(docker exec "$pg_id" psql -At -U postgres -d postgres \
+  -c "SELECT useconfig::text FROM pg_user WHERE usename = 'postgres'")"
+[[ "$applied" == *"search_path=pg_catalog"* ]] \
+  || refuse "search_path role default did not stick: $applied"
 owned_builder="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
 docker_bind_root="$checkout/.release-docker-bind"
 mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.release-home"
