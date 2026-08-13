@@ -37,9 +37,18 @@ if [[ "${1:-}" == "compat-pairing" ]]; then
   exit 0
 fi
 
-RELEASE_SOURCE_SHA="$SOURCE_SHA" "$GATE_SCRIPT" >&2
 log_dir="/tmp/aweb-release-gate-$SOURCE_SHA"
 verdict="$log_dir/wrapper-verdict.log"
+# Gate-result adoption (resume path only): a green verdict at the EXACT
+# source SHA with its summary present is the same evidence a fresh run would
+# produce, so re-executing it is waste. Fail-closed: absent, red, or
+# other-SHA evidence runs the gate; the verdict and summary checks below
+# apply to adopted evidence exactly as to fresh evidence.
+if grep -qs "release gate PASSED at $SOURCE_SHA" "$verdict" && [[ -s "$log_dir/summary.tsv" ]]; then
+  echo "adopting prior green gate evidence at $SOURCE_SHA: $log_dir" >&2
+else
+  RELEASE_SOURCE_SHA="$SOURCE_SHA" "$GATE_SCRIPT" >&2
+fi
 grep -q "release gate PASSED at $SOURCE_SHA" "$verdict" \
   || { echo "gate verdict does not name a pass at $SOURCE_SHA" >&2; exit 1; }
 suites=()

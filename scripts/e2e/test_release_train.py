@@ -11,6 +11,7 @@ from __future__ import annotations
 import dataclasses
 import inspect
 import json
+import os
 import re
 import subprocess
 import sys
@@ -1839,8 +1840,14 @@ class PrepareGateWrapperTests(unittest.TestCase):
             )
 
     def test_passing_gate_emits_the_row_names_and_reference(self) -> None:
+        import shutil
+
         sha = "e" * 40
         log_dir = f"/tmp/aweb-release-gate-{sha}"
+        # A leftover green dir from a prior run would be adopted; this test
+        # pins the fresh-run path, so it starts from a clean slate.
+        shutil.rmtree(log_dir, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, log_dir, ignore_errors=True)
         body = (
             f"mkdir -p {log_dir}\n"
             f"printf 'one\\tPASSED\\tcontract\\tt1\\ntwo\\tPASSED\\tunit\\tt2\\n' > {log_dir}/summary.tsv\n"
@@ -1870,6 +1877,68 @@ class PrepareGateWrapperTests(unittest.TestCase):
         result = self._run(gate_body=body, sha=sha)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "")
+
+    def test_green_evidence_at_the_exact_sha_is_adopted_without_rerunning(self) -> None:
+        sha = "9" * 40
+        log_dir = f"/tmp/aweb-release-gate-{sha}"
+        marker = Path(tempfile.gettempdir()) / f"gate-invoked-{sha[:8]}"
+        marker.unlink(missing_ok=True)
+        os.makedirs(log_dir, exist_ok=True)
+        Path(log_dir, "summary.tsv").write_text(
+            "one\tPASSED\tcontract\tt1\ntwo\tPASSED\tunit\tt2\n"
+        )
+        Path(log_dir, "wrapper-verdict.log").write_text(
+            f"release gate PASSED at {sha}; logs: {log_dir}\n"
+        )
+        try:
+            result = self._run(
+                gate_body=f"touch {marker}\nexit 1\n", sha=sha
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            evidence = json.loads(result.stdout)
+            self.assertEqual(evidence["suites"], ["one", "two"])
+            self.assertFalse(
+                marker.exists(), "gate was invoked despite green evidence"
+            )
+            self.assertIn("adopting prior green gate evidence", result.stderr)
+        finally:
+            marker.unlink(missing_ok=True)
+            import shutil
+
+            shutil.rmtree(log_dir, ignore_errors=True)
+
+    def test_adoption_fails_closed_on_red_mismatched_or_absent_evidence(self) -> None:
+        import shutil
+
+        sha = "8" * 40
+        log_dir = f"/tmp/aweb-release-gate-{sha}"
+        marker = Path(tempfile.gettempdir()) / f"gate-invoked-{sha[:8]}"
+        arms = ("red-verdict", "other-sha-verdict", "absent")
+        for arm in arms:
+            marker.unlink(missing_ok=True)
+            shutil.rmtree(log_dir, ignore_errors=True)
+            if arm != "absent":
+                os.makedirs(log_dir, exist_ok=True)
+                Path(log_dir, "summary.tsv").write_text(
+                    "one\tPASSED\tcontract\tt1\n"
+                )
+                verdict = (
+                    f"release gate FAILED; logs: {log_dir}"
+                    if arm == "red-verdict"
+                    else f"release gate PASSED at {'7' * 40}; logs: {log_dir}"
+                )
+                Path(log_dir, "wrapper-verdict.log").write_text(verdict + "\n")
+            try:
+                result = self._run(
+                    gate_body=f"touch {marker}\nexit 1\n", sha=sha
+                )
+                self.assertNotEqual(result.returncode, 0, arm)
+                self.assertTrue(
+                    marker.exists(), f"gate was not invoked for arm {arm}"
+                )
+            finally:
+                marker.unlink(missing_ok=True)
+                shutil.rmtree(log_dir, ignore_errors=True)
 
     def test_compat_mode_names_the_pairing_and_runs_the_cell(self) -> None:
         # The wrapper resolves the published aw CLI from PATH; the fixture
