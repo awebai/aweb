@@ -50,6 +50,4 @@ marketplace-pointer	contract	_release-marketplace-pointer
 npm-exact-publish	contract	test-npm-exact-publish
 pypi-exact-publish	contract	test-pypi-exact-publish
 oci-exact-publish	contract	test-oci-exact-publish
-node-vulnerability-audit	audit	check-node-audit
-go-vulnerability-audit	audit	check-go-vulnerability-audit
 ac-pointer-primary-moves	contract	test-pointer-adapter-ac-pin

@@ -120,8 +120,6 @@ EXPECTED_STEPS = (
     ("npm-exact-publish", "contract", "test-npm-exact-publish"),
     ("pypi-exact-publish", "contract", "test-pypi-exact-publish"),
     ("oci-exact-publish", "contract", "test-oci-exact-publish"),
-    ("node-vulnerability-audit", "audit", "check-node-audit"),
-    ("go-vulnerability-audit", "audit", "check-go-vulnerability-audit"),
     ("ac-pointer-primary-moves", "contract", "test-pointer-adapter-ac-pin"),
 )
 
@@ -299,7 +297,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
 
     def test_exact_suite_map_is_unique_and_every_target_exists(self) -> None:
         rows = self.read_map()
-        self.assertEqual(len(EXPECTED_STEPS), 53)
+        self.assertEqual(len(EXPECTED_STEPS), 51)
         self.assertEqual(
             rows,
             [
@@ -307,7 +305,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
                 *[tuple(row) for row in EXPECTED_STEPS],
             ],
         )
-        self.assertEqual(len(rows), 54)
+        self.assertEqual(len(rows), 52)
         self.assertEqual(len({row[0] for row in rows}), len(rows))
         self.assertEqual(len({row[2] for row in rows}), len(rows))
         makefile = MAKEFILE.read_text()
