@@ -61,6 +61,13 @@ class DatabaseInfra:
             )
 
             await self._manager.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
+            # Ensure ahead of migration 001, whose unqualified CREATE
+            # EXTENSION would otherwise resolve into a pinned pg_catalog on a
+            # fresh database and collide with the built-in gen_random_uuid.
+            # Idempotent; existing databases already carry the extension.
+            await self._manager.execute(
+                "CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public"
+            )
 
             if run_migrations:
                 base_dir = Path(__file__).resolve().parent
