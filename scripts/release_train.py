@@ -969,7 +969,18 @@ def _read_manifest_version(prepared: PreparedEnvironment, artifact: Artifact) ->
                 f"{artifact.key} has no {pattern} tag history to derive the next version"
             )
         newest = max(versions)
-        return f"{newest[0]}.{newest[1]}.{newest[2] + 1}"
+        newest_tag = f"aw-v{newest[0]}.{newest[1]}.{newest[2]}"
+        # The next patch exists only if the synced cli/go tree changed since
+        # the newest tag; otherwise the intended version IS the newest tag's,
+        # already published, and the artifact does not move. Deriving
+        # newest+1 unconditionally would mint a contentless aw release on
+        # every train run after the first (observed at 0.7.14 prepare:
+        # derived 1.34.5 with zero cli-scope changes since aw-v1.34.4).
+        try:
+            _git(repository, "diff", "--quiet", newest_tag, sha, "--", "cli/go")
+        except CommandFailed:
+            return f"{newest[0]}.{newest[1]}.{newest[2] + 1}"
+        return f"{newest[0]}.{newest[1]}.{newest[2]}"
     body = _git(repository, "show", f"{sha}:{source}").stdout
     if source.endswith("pyproject.toml"):
         document = tomllib.loads(body)

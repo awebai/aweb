@@ -803,6 +803,14 @@ class _PipelineFixture(unittest.TestCase):
             git("push", "-u", "origin", "main", cwd=repo)
             git("fetch", "origin", cwd=repo)
         git("tag", "aw-v1.34.3", cwd=self.aweb)
+        # aw-cli moves only when the synced cli/go tree changed since the
+        # newest tag; give the fixture a real cli-scope change so the
+        # derived next version is 1.34.4 everywhere it always was.
+        manifest(self.aweb, "cli/go/main.go", "package main\n")
+        git("add", ".", cwd=self.aweb)
+        git("commit", "-m", "cli change", cwd=self.aweb)
+        git("push", "origin", "main", cwd=self.aweb)
+        git("fetch", "origin", cwd=self.aweb)
         gate = Path(self.tmp.name) / "gate.py"
         gate.write_text(
             "import json\n"
@@ -881,6 +889,21 @@ class PreparePipelineTests(_PipelineFixture):
         with self.assertRaises(rt.ValidationError) as caught:
             self._prepare()
         self.assertIn("plugin.json", str(caught.exception))
+
+    def test_aw_cli_does_not_move_when_cli_scope_is_unchanged_since_the_tag(self) -> None:
+        from urllib.parse import quote
+
+        # The first release pushed aw-v1.34.4 back; nothing in cli/go moved
+        # since. Deriving newest+1 unconditionally would mint a contentless
+        # aw release every train run forever.
+        git("tag", "aw-v1.34.4", cwd=self.aweb)
+        _PresenceHandler.present[
+            "/" + quote("github:awebai/aw:release", safe="") + "/1.34.4"
+        ] = {"state": "present", "version": "1.34.4", "digest": DIGEST}
+        card = self._prepare()
+        by_name = {item.name: item for item in card.artifacts}
+        self.assertEqual(by_name["aw-cli"].version, "1.34.4")
+        self.assertFalse(by_name["aw-cli"].moves)
 
     def test_gate_failure_leaves_no_card(self) -> None:
         gate = Path(self.tmp.name) / "failing-gate.py"
