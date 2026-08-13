@@ -1454,16 +1454,31 @@ def fast_forward_release(
 
 
 def _poll_public_target(
-    target: str, version: str, *, bases: Mapping[str, str] | None, timeout: float
+    target: str,
+    version: str,
+    *,
+    bases: Mapping[str, str] | None,
+    timeout: float,
+    wait_seconds: float = 10.0,
 ) -> None:
+    """Poll until the registry serves the version, bounded by wait_seconds.
+
+    The default bound stays short for targets whose publisher was already
+    monitored to completion; the digest edge passes its work bound instead,
+    because the AC release-branch push starts a build this wait must outlast
+    (first release: the digest observation raced the image build and stopped
+    the train for a full rerun).
+    """
+
     import time as _time
 
-    attempts = 10
-    for attempt in range(attempts):
+    deadline = _time.monotonic() + wait_seconds
+    while True:
         if observe_public_target(target, version, bases=bases, timeout=timeout):
             return
-        if attempt + 1 < attempts:
-            _time.sleep(min(1.0, _bounded_timeout(timeout) / 60))
+        if _time.monotonic() >= deadline:
+            break
+        _time.sleep(min(1.0, _bounded_timeout(timeout) / 60))
     raise ObservationUnavailable(
         f"still waiting: {target} does not yet serve {version}; rerun "
         f"release-continue once the registry catches up"
@@ -1557,6 +1572,13 @@ def continue_train(
         )
     run_command(list(ac_gate_command), cwd=environment.ac_root, timeout=work_timeout)
     fast_forward_release(environment.ac_root, "release", ac_derived)
+    _poll_public_target(
+        _artifact("ac-image").targets[0],
+        versions["ac-image"],
+        bases=bases,
+        timeout=timeout,
+        wait_seconds=work_timeout,
+    )
     digest_result = run_command(
         list(digest_command), cwd=environment.ac_root, timeout=work_timeout
     )

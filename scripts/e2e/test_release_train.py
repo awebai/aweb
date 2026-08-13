@@ -1267,6 +1267,11 @@ class ContinueTrainTests(_PipelineFixture):
         digest = Path(self.tmp.name) / "digest.py"
         digest.write_text(f"print('{DIGEST}')\n")
         self.digest_command = (sys.executable, str(digest))
+        # The AC release-branch push builds and serves the image in reality;
+        # the spool serves it so the digest edge's wait observes it.
+        (self.spool / urllib_quote("/v2/awebai/ac/manifests/0.7.13")).write_text(
+            json.dumps({"manifests": []})
+        )
         # The uv.lock must exist at the base so the derive diff stays inside
         # the allowlist.
         (self.ac / "backend/uv.lock").write_text("lock v1\n")
@@ -1492,6 +1497,47 @@ class ContinueTrainTests(_PipelineFixture):
         self.assertEqual(rt.read_card(self.aweb), card)
         summary = self._continue()
         self.assertEqual(summary["status"], "DONE")
+
+    def test_digest_edge_waits_for_the_ac_image_the_release_push_builds(self) -> None:
+        import threading
+
+        card = self._prepare()
+        manifest = self.spool / urllib_quote("/v2/awebai/ac/manifests/0.7.13")
+        manifest.unlink()
+        gated = Path(self.tmp.name) / "digest-when-present.py"
+        gated.write_text(
+            "from pathlib import Path\n"
+            f"if not Path({str(manifest)!r}).exists():\n"
+            "    raise SystemExit(1)\n"
+            f"print('{DIGEST}')\n"
+        )
+        timer = threading.Timer(
+            2.0, lambda: manifest.write_text(json.dumps({"manifests": []}))
+        )
+        timer.start()
+        try:
+            summary = rt.continue_train(
+                self.aweb,
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=self.ac_gate_command,
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=(sys.executable, str(gated)),
+                timeout=60,
+                work_timeout=30,
+            )
+        finally:
+            timer.cancel()
+        self.assertEqual(summary["status"], "DONE")
+        self.assertEqual(summary["ac_image_digest"], DIGEST)
 
     def test_partial_prior_derivation_is_adopted_on_retry(self) -> None:
         self._prepare()
