@@ -114,10 +114,14 @@ def _git(root: Path, *args: str) -> str:
     ).stdout
 
 
-def worktree_stops(repo_roots: dict[str, Path]) -> list[rn.Stop]:
-    """The normalizer's inputs are exact main SHAs from clean checkouts:
-    a dirty tree or an origin main that moved past the checkout is a
-    named stop before any capture (design section 6)."""
+def worktree_stops(
+    repo_roots: dict[str, Path], expected_shas: dict[str, str] | None = None
+) -> list[rn.Stop]:
+    """The normalizer's inputs are exact SHAs from clean checkouts: a
+    dirty tree stops; without a selected override the checkout must
+    equal origin main; with one (docs/release.md's AWEB_SHA/AC_SHA,
+    validated on-main upstream) the checkout must equal exactly the
+    selected commit (C4)."""
 
     stops: list[rn.Stop] = []
     for key, root in sorted(repo_roots.items()):
@@ -125,6 +129,11 @@ def worktree_stops(repo_roots: dict[str, Path]) -> list[rn.Stop]:
             stops.append(rn.Stop("dirty-checkout", key))
             continue
         head = _git(root, "rev-parse", "HEAD").strip()
+        selected = (expected_shas or {}).get(key)
+        if selected is not None:
+            if head != selected:
+                stops.append(rn.Stop("selected-sha-mismatch", key))
+            continue
         listing = _git(root, "ls-remote", "origin", "refs/heads/main").split()
         # An empty listing here is genuine absence, not unavailability:
         # _git runs with check=True, so a FAILED ls-remote (network,
@@ -252,19 +261,30 @@ def run_invariants(aweb_root: Path) -> rn.Stop | None:
     return None
 
 
-def run_phase() -> tuple[int, str, "rn.NormalizerResult | None", Path]:
+def run_phase(
+    roots: dict[str, Path] | None = None,
+    expected_shas: dict[str, str] | None = None,
+) -> tuple[int, str, "rn.NormalizerResult | None", dict]:
     """The whole normalizer phase, callable in-process: preconditions,
     capture, double-compute, apply, fixed point, exit re-observation,
     invariants, transport. Returns (exit code, report text, the
-    projection on success, the aweb root) so release-prepare consumes
-    the SAME in-memory result this phase validated (aben A5)."""
+    projection on success, {"aweb_root", "base_shas"}) so
+    release-prepare consumes the SAME in-memory result this phase
+    validated (A5) and can bind the card to the exact commits it was
+    computed from (C4). `roots` overrides the checkout pair (the
+    selected-SHA worktrees); `expected_shas` replaces the current-main
+    precondition per repo with equality against the selected commit.
+    """
 
     default_aweb_root = Path(__file__).resolve().parents[1]
     aweb_root = Path(
-        os.environ.get("AWEB_NORMALIZER_AWEB_ROOT", "") or default_aweb_root
+        (roots or {}).get("aweb")
+        or os.environ.get("AWEB_NORMALIZER_AWEB_ROOT", "")
+        or default_aweb_root
     ).resolve()
     ac_root = Path(
-        os.environ.get("AWEB_NORMALIZER_AC_ROOT", "")
+        (roots or {}).get("ac")
+        or os.environ.get("AWEB_NORMALIZER_AC_ROOT", "")
         or (default_aweb_root.parent / "ac")
     ).resolve()
     bases = registry_bases()
@@ -297,7 +317,7 @@ def run_phase() -> tuple[int, str, "rn.NormalizerResult | None", Path]:
             compatibility=compatibility,
         )
 
-    precondition_stops = worktree_stops(repo_roots)
+    precondition_stops = worktree_stops(repo_roots, expected_shas)
     if precondition_stops:
         report = "\n".join(
             f"STOP {stop.code} ({stop.artifact})" for stop in precondition_stops
@@ -369,12 +389,12 @@ def run_phase() -> tuple[int, str, "rn.NormalizerResult | None", Path]:
         outcome.exit_code,
         "\n".join(report_lines),
         outcome.result if outcome.exit_code == 0 else None,
-        aweb_root,
+        {"aweb_root": aweb_root, "base_shas": base_shas},
     )
 
 
 def main() -> int:
-    exit_code, report, _result, _root = run_phase()
+    exit_code, report, _result, _info = run_phase()
     print(report)
     return exit_code
 
