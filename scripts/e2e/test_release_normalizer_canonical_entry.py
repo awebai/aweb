@@ -69,9 +69,15 @@ def _write_manifest(root: Path, rel: str, kind: str, version: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if kind == "toml":
         name = rel.split("/", 1)[0]
-        path.write_text(f'[project]\nname = "{name}"\nversion = "{version}"\n')
+        path.write_text(
+            f'[project]\nname = "{name}"\nversion = "{version}"\n'
+            'dependencies = ["dep>=1"]\n'
+        )
     else:
-        path.write_text(json.dumps({"name": rel, "version": version}) + "\n")
+        path.write_text(
+            json.dumps({"name": rel, "version": version, "dependencies": {"dep": "^1"}})
+            + "\n"
+        )
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -206,6 +212,28 @@ class CanonicalEntry(unittest.TestCase):
             )
         finally:
             _git(self.aweb_root, "checkout", "-q", "awid/pyproject.toml")
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_dependency_only_manifest_change_moves_the_artifact(self) -> None:
+        # A3, the shipment gate's dependency blind spot: manifests carry
+        # shipped dependencies, so a dep-only edit is a content change.
+        # Only the owned version field is normalization noise; excluding
+        # the whole file recreated the narrow-card defect for
+        # dependency-only changes.
+        manifest = self.aweb_root / "awid/pyproject.toml"
+        manifest.write_text(manifest.read_text().replace("dep>=1", "dep>=2"))
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "dependency floor moves")
+        try:
+            completed = self.run_entry(self.world_at_rest())
+            self.assertEqual(
+                completed.returncode,
+                10,
+                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+            )
+            self.assertIn("awid-service: 0.5.16 -> 0.5.17", completed.stdout)
+            self.assertIn("awid-image: 0.5.16 -> 0.5.17", completed.stdout)
+        finally:
             _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
 
     def test_identityless_image_tag_is_captured_not_crashed(self) -> None:

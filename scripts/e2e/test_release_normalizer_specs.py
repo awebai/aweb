@@ -49,10 +49,15 @@ class SpecDerivation(unittest.TestCase):
                 self.assertEqual(spec.unit_targets, entry.occupancy_unit)
                 self.assertEqual(spec.repo_key, entry.repository)
 
-    def test_excluded_is_version_source_plus_owned_locks(self) -> None:
+    def test_locks_are_excluded_and_the_manifest_is_masked_not_excluded(self) -> None:
+        # A3: excluding the whole manifest hid dependency-only changes
+        # (the gate's blind-spot probe). Generated locks stay excluded
+        # wholesale; the manifest is masked - in scope with only the
+        # owned version field normalized.
         server = self.specs["aweb-server"]
-        self.assertIn("server/pyproject.toml", server.excluded)
         self.assertIn("server/uv.lock", server.excluded)
+        self.assertNotIn("server/pyproject.toml", server.excluded)
+        self.assertEqual(server.masked, ("server/pyproject.toml",))
 
     def test_cli_derivation_kind_follows_version_source(self) -> None:
         self.assertEqual(self.specs["aw-cli"].derivation, "tag-history")
