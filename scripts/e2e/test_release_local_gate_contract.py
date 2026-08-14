@@ -86,7 +86,6 @@ EXPECTED_STEPS = (
     ("node-dependencies", "contract", "_release-node-deps"),
     ("release-train-foundation", "unit", "test-release-train"),
     ("release-aben", "unit", "test-release-aben"),
-    ("column-b", "acceptance", "test-column-b"),
     ("server-unit", "unit", "test-server"),
     ("awid-unit", "unit", "test-awid"),
     ("cli-unit", "unit", "test-cli"),
@@ -315,7 +314,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
 
     def test_exact_suite_map_is_unique_and_every_target_exists(self) -> None:
         rows = self.read_map()
-        self.assertEqual(len(EXPECTED_STEPS), 53)
+        self.assertEqual(len(EXPECTED_STEPS), 52)
         self.assertEqual(
             rows,
             [
@@ -323,7 +322,7 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
                 *[tuple(row) for row in EXPECTED_STEPS],
             ],
         )
-        self.assertEqual(len(rows), 54)
+        self.assertEqual(len(rows), 53)
         self.assertEqual(len({row[0] for row in rows}), len(rows))
         self.assertEqual(len({row[2] for row in rows}), len(rows))
         makefile = MAKEFILE.read_text()
