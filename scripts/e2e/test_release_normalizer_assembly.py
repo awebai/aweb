@@ -61,6 +61,7 @@ class Assembly(unittest.TestCase):
             scope=("pkg/",),
             excluded=(),
             masked=("pkg/pyproject.toml",),
+            tag_prefixes={},
             anchor_kind="tag_pattern",
             anchor_value="pkg-v",
             unit_targets=("pypi:pkg",),
@@ -114,6 +115,7 @@ class Assembly(unittest.TestCase):
             scope=("pkg/",),
             excluded=(),
             masked=("pkg/pyproject.toml",),
+            tag_prefixes={},
             anchor_kind="tag_pattern",
             anchor_value="fresh-v",
             unit_targets=("pypi:fresh",),
@@ -126,6 +128,58 @@ class Assembly(unittest.TestCase):
             compatibility="none",
         )
         self.assertTrue(world.artifacts["fresh"].content_changed)
+
+
+class TagHistoryVersionSource(unittest.TestCase):
+    """The first real prepare stopped aw-cli with
+    manifest-version-behind-public because capture read
+    cli/go/npm/aw/package.json - a PUBLISH-TIME PLACEHOLDER reading
+    0.0.0 - as its version, and the movement table compared that
+    against the published 1.34.7. aw-cli's version source is the aw-v
+    tag history (docs/release.md's artifact table says so); the
+    placeholder was never a version at all."""
+
+    def test_tag_history_version_comes_from_the_tags_not_the_placeholder(self) -> None:
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "r"
+            repo.mkdir()
+
+            def run_git(*args):
+                subprocess.run(
+                    ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+                    cwd=repo, check=True, capture_output=True,
+                )
+
+            run_git("init", "-q", "-b", "main")
+            manifest = repo / "cli" / "go" / "npm" / "aw"
+            manifest.mkdir(parents=True)
+            # The real placeholder shape, verbatim.
+            (manifest / "package.json").write_text('{"name": "aw", "version": "0.0.0"}\n')
+            run_git("add", "-A")
+            run_git("commit", "-q", "-m", "cli")
+            for tag in ("aw-v1.34.5", "aw-v1.34.6", "aw-v1.34.7"):
+                run_git("tag", tag)
+            run_git("remote", "add", "origin", str(repo))
+            spec = cap.CaptureSpec(
+                name="aw-cli", repo_key="aweb",
+                manifest_path="cli/go/npm/aw/package.json",
+                derivation="tag-history", scope=("cli/go/",), excluded=(),
+                masked=("cli/go/npm/aw/package.json",),
+                tag_prefixes={},
+                anchor_kind="tag_pattern", anchor_value="aw-v",
+                unit_targets=("npm:@awebai/aw",),
+            )
+            world = cap.assemble_captured_world(
+                specs=[spec], repo_roots={"aweb": repo},
+                discover_target=lambda target: {"1.34.7": None},
+                equality_groups=(), compatibility="none",
+            )
+        captured = world.artifacts["aw-cli"]
+        self.assertEqual(captured.manifest_version, "1.34.7")
+        self.assertNotEqual(captured.manifest_version, "0.0.0")
 
 
 class OnlyMalformedAnchors(unittest.TestCase):
@@ -176,6 +230,7 @@ class OnlyMalformedAnchors(unittest.TestCase):
                 scope=("pkg/",),
                 excluded=(),
                 masked=("pkg/pyproject.toml",),
+                tag_prefixes={},
                 anchor_kind="tag_pattern",
                 anchor_value="pkg-v",
                 unit_targets=("pypi:pkg",),
