@@ -130,9 +130,35 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
         self.assertLess(workflow.index("  awid_service:\n"), workflow.index("  aweb:\n"))
         self.assertIn("awid/pyproject.toml", awid)
         self.assertIn("server/pyproject.toml", server)
-        self.assertIn("tomllib", workflow)
-        self.assertIn("awid-service>=", server)
         self.assertIn("Public AWID floor", server)
+        # The floor predicate and the served observation are the extracted
+        # shared implementations, invoked unconditionally with status
+        # propagation - no inline tomllib/curl reimplementation, and no
+        # suppression on either call line (the guard-present-refusal-
+        # discarded class).
+        floor_call = (
+            'bash scripts/check-release-floor.sh --pyproject '
+            'server/pyproject.toml --package awid-service --expected '
+            '"$AWID_VERSION"'
+        )
+        observe_call = (
+            'python3 scripts/observe_public_target.py '
+            '"pypi:awid-service" "$AWID_VERSION"'
+        )
+        self.assertIn(floor_call, server)
+        self.assertIn(observe_call, server)
+        for call in (floor_call, observe_call):
+            for line in server.splitlines():
+                if call in line:
+                    self.assertNotIn("|| true", line)
+                    self.assertNotIn("2>/dev/null", line)
+        floor_step = server[
+            server.index("Public AWID floor") : server.index(
+                "Build, publish or adopt, verify, and tag aweb"
+            )
+        ]
+        for reimplementation in ("tomllib", "curl"):
+            self.assertNotIn(reimplementation, floor_step)
         self.assertIn("https://pypi.org/pypi/", workflow)
         self.assertIn("--index-url https://pypi.org/simple", workflow)
         for job, package, tag, import_name in (

@@ -194,26 +194,10 @@ jobs:
           AWID_VERSION: ${{ needs.awid_service.outputs.version }}
         run: |
           set -euo pipefail
-          floor="$(python3 - <<'PY'
-          import re, tomllib
-          dependencies = tomllib.load(open("server/pyproject.toml", "rb"))["project"]["dependencies"]
-          dependency = next((item for item in dependencies if item.startswith("awid-service>=")), "")
-          match = re.fullmatch(r"awid-service>=([^,; ]+)", dependency)
-          if match is None:
-              raise SystemExit(f"REFUSE: expected one literal awid-service>= floor, found {dependency!r}")
-          print(match.group(1))
-          PY
-          )"
-          [[ "$floor" == "$AWID_VERSION" ]] \
-            || { echo "REFUSE: aweb floor $floor is not release awid-service $AWID_VERSION" >&2; exit 1; }
-          status="$(curl -sS --connect-timeout 15 --max-time 30 \
-            -o "$RUNNER_TEMP/awid-public.json" -w '%{http_code}' \
-            "https://pypi.org/pypi/awid-service/${AWID_VERSION}/json")"
-          [[ "$status" == 200 ]] \
-            || { echo "REFUSE: public PyPI does not serve intended AWID floor $AWID_VERSION (HTTP $status)" >&2; exit 1; }
-          observed="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["info"]["version"])' "$RUNNER_TEMP/awid-public.json")"
-          [[ "$observed" == "$AWID_VERSION" ]] \
-            || { echo "REFUSE: public PyPI served AWID version $observed, expected $AWID_VERSION" >&2; exit 1; }
+          # Both predicates are the extracted shared implementations; the
+          # normalizer runs the same bytes on the same semantic inputs.
+          bash scripts/check-release-floor.sh --pyproject server/pyproject.toml --package awid-service --expected "$AWID_VERSION"
+          python3 scripts/observe_public_target.py "pypi:awid-service" "$AWID_VERSION"
 
       - name: Build, publish or adopt, verify, and tag aweb
         env:
