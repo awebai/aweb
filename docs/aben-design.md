@@ -150,7 +150,7 @@ between the anchor at P and HEAD over the scope:
 - C=false, M==P: normal.
 - C=false, M>P: named stop `contentless-or-predeclared-version` (no
   mechanical rollback of reviewed intent).
-- C=false, M<P: named stop, always.
+- C=false, M<P: named stop `manifest-version-behind-public`, always.
 - C=true, M>P: accept iff M free on every declared target and monotonic
   against the reconciled maximum; occupied -> `version-occupied` stop.
 - C=true, M<=P: deterministic patch to next-patch(P) ONLY when the
@@ -218,11 +218,19 @@ before any lock work, and a new train artifact without an AC decision
 fails closed); (b) filter to moving rows with non-none rules and derive
 targets; (c) edit exactly the allowlisted floors; (d) `uv lock`; (e)
 verify the lock resolves each target package at exactly the served
-version (refusal names package/wanted/got). Compute and local-apply
-only; commit/push remain the train's. Controls: policy-row deletion ->
+version (refusal names package/wanted/got); (f) prove the AC project
+version is byte-equal before and after derivation AND equals the card's
+approved ac-image version - the derive edits allowlisted FILES, but the
+version field inside them is not the derivation's to touch, and
+`final_ac_sha` is REJECTED if it changed. The card is the holder of the
+approved AC version throughout: the ac-image `:VERSION`/`:SHA` output
+rows derive their expected version from the card, never by rereading the
+post-derivation manifest. Compute and local-apply only; commit/push
+remain the train's. Controls: policy-row deletion ->
 incomplete-derivation refusal at (a); forced partial floor application
--> lock verification refusal at (e); no-move card -> empty derivation,
-no lock regeneration.
+-> lock verification refusal at (e); a mutation changing the AC project
+version inside an otherwise-allowlisted derive diff -> refusal at (f);
+no-move card -> empty derivation, no lock regeneration.
 
 ## 6. The normalizer (first phase of release-prepare)
 
@@ -324,12 +332,18 @@ unavailability is never absence and never success):
   to the version digest (the publisher promises latest).
 - a2a-gateway-image: same shape; tag `a2a-gw-v{V}`; latest row.
 - aw-cli: aweb tag `aw-v{V}`; external tag `v{V}`; the exact tree
-  binding row; GitHub Release with every required binary asset; wrapper
-  plus six platform npm packages, each with integrity rows.
+  binding row; GitHub Release with the exact canonical asset template
+  the publisher enforces (aw-release.yml:87, contract-tested against
+  it): aw_{V}_linux_amd64.tar.gz, aw_{V}_linux_arm64.tar.gz,
+  aw_{V}_darwin_amd64.tar.gz, aw_{V}_darwin_arm64.tar.gz,
+  aw_{V}_windows_amd64.zip, aw_{V}_windows_arm64.zip, checksums.txt;
+  wrapper plus six platform npm packages, each with integrity rows.
 - channel-plugin / pi-extension: npm rows; tags `channel-v{V}` /
   `pi-v{V}`.
-- skills: npm rows; tag `skills-v{V}`; the zips release with every
-  required zip asset.
+- skills: npm rows; the `awebai/aweb` repository release at tag
+  `skills-v{V}` with every required zip asset - source tag and release
+  object are the same repository and namespace, stated so they cannot
+  be checked in different ones.
 - ac-image: `:VERSION` and `:SHA` rows (the workflow publishes exactly
   these two, no latest); `:SHA` digest must equal `:VERSION` digest;
   index platforms; OCI revision label == final AC SHA.
@@ -369,10 +383,17 @@ lookalike:
 - B1 narrow card. Repository state: aweb
   `5a55f7ce6b4dbb86dc2901f7c687e172e39db3af`, AC
   `47060200c53d30835cbb35cbcb5d073cbe3dc5d3` (the pre-bump mains).
-  Expected: the movement predicate emits the exact manifest patch
-  naming awid-service and awid-image (0.5.15 -> 0.5.16) and the AC
-  version (0.7.14 -> 0.7.15). Control: same SHAs with content anchored
-  at the prior tags -> normal form.
+  Expected: each artifact's OWN content predicate over its OWN scope
+  drives its row - awid-service/awid-image move because awid/ content
+  differs from the 0.5.15 anchors, and ac-image moves because AC's
+  canonical scope has release content since its last complete 0.7.14
+  anchor at `efd19f41` (measured at the fixture: backend/src and
+  backend/tests changes, 7 files - the pgcrypto stream-application
+  work). No wide-release policy exists and none is encoded: an AC
+  fixture WITHOUT scope changes since its anchor must yield no AC row
+  in the patch, and that variant is part of the fixture pair. Control:
+  the same SHAs with EACH artifact's scope content anchored at its own
+  prior tag/label -> normal form.
 - B2 stale pre-authorized CLI version. Fixture: recorded registry
   document set - npm @awebai/aw serving 1.34.5, aweb tag `aw-v1.34.5`
   at `2455e7a127ab5f216477a0af114cb69e5b0caa74` (provenance: the cycle
