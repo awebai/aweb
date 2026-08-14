@@ -31,15 +31,18 @@ nested exact keys and types):
   aw-cli's aw-v anchor is EXCLUDED from that test because its tags are
   created by train/sync code, not those workflows - it carries its own
   assertion against the code that creates them (R3, with the movement
-  predicate that consumes it); ac-image's oci_revision_label is verified
-  reader-side in aweb and stamper-side in the AC repository (landed at
-  AC 35e204a5) - both halves now hold.
-- `anchor`: a tagged union - `tag_pattern` (server-v*, awid-service-v*,
-  awid-v*, aw-v*, channel-v*, pi-v*, skills-v*, a2a-gw-v*) or
-  `oci_revision_label` (ac-image: `org.opencontainers.image.revision`,
-  which `Dockerfile.release` stamps and `verify_registry_adoption.py`
-  reads). A bidirectional contract test asserts each canonical anchor
-  value equals the actual publisher's tag/label emission, red on either
+  predicate that consumes it); ac-image's `v` anchor is excluded from
+  the same test for the same reason - continue creates it - and carries
+  its own assertion against the code that pushes it.
+- `anchor`: `tag_pattern` for EVERY artifact (server-v*,
+  awid-service-v*, awid-v*, aw-v*, channel-v*, pi-v*, skills-v*,
+  a2a-gw-v*, and ac-image's bare v* in the AC repository). A release's
+  identity is the tag in its own repository: it is all in the repo, so
+  the train never asks a registry what a release hash was. Identity
+  resolution therefore makes NO network calls; registries are asked
+  only which versions are published, which is the one fact git cannot
+  answer. A bidirectional contract test asserts each canonical anchor
+  value equals the actual publisher's tag emission, red on either
   side drifting.
 - `occupancy_unit`: the same-version targets that must reconcile to one
   published P (composites: aw = external GitHub Release v* plus all
@@ -369,7 +372,6 @@ unavailability is never absence and never success):
   sha256 rows, served-version row; tag `server-v{V}`.
 - awid-service: same shape; tag `awid-service-v{V}`.
 - awid-image: version-tag index digest; both platforms in the index;
-  per-child source-revision labels equal to the expected source SHA;
   source tag `awid-v{V}` as its own row; mutable `latest` digest equal
   to the version digest (the publisher promises latest).
 - a2a-gateway-image: same shape; tag `a2a-gw-v{V}`; latest row.
@@ -388,7 +390,15 @@ unavailability is never absence and never success):
   be checked in different ones.
 - ac-image: `:VERSION` and `:SHA` rows (the workflow publishes exactly
   these two, no latest); `:SHA` digest must equal `:VERSION` digest;
-  index platforms; OCI revision label == final AC SHA.
+  index platforms; source tag `v{V}` in the AC repository as its own
+  row, created by continue at the exact final derived AC SHA.
+Durable status proves two required facts per image - the immutable
+registry object and the exact source tag - and does NOT prove the
+first was built from the second. That correspondence is enforced at
+PUBLICATION, by the release-image verification and the publish-time
+byte comparison that gates exact-adopt, rather than re-derived on
+every prepare from a label the registry happens to carry.
+
 - Effects: aweb release pointer == card aweb SHA; ac release pointer ==
   final AC SHA; marketplace repository pointer via the
   pointer-adapter-marketplace-pointer read (claim limited to repository

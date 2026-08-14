@@ -41,7 +41,7 @@ set. Facts: audit on `aweb-abds.4`; binding decisions F1-F4 and C1-C4: coordinat
 | aweb | skills | npm `@awebai/claude-skills` + ZIPs on `skills-v*` GitHub Release | `packages/claude-skills/package.json` |
 | aweb | a2a-gateway image | `ghcr.io/awebai/a2a-gateway` | equals server version |
 | aweb | awid.ai site | Render static, branch `deploy-awid-landing` | n/a |
-| AC | product image | `ghcr.io/awebai/ac` | `backend/pyproject.toml` |
+| AC | product image | `ghcr.io/awebai/ac` + the `v{VERSION}` source tag in `awebai/ac` | `backend/pyproject.toml` |
 | AC | production deploy | Render `aweb-cloud`, by image digest | the image |
 | AC | aweb.ai site | Render static, branch `deploy-landing` | n/a |
 
