@@ -527,6 +527,77 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
                 "fixture rehearsal invoked a real registry/GitHub/provider command",
             )
 
+    def test_latest_pushing_workflows_equal_the_promises_latest_set(self) -> None:
+        """The record's mutable-latest promise is bound to what the
+        publishers actually do (release-review's C2 finding): the two
+        sets matched in both directions but nothing held them there, so
+        a workflow starting or stopping a latest push would red
+        nothing. The workflow-per-artifact map is the monitor script's
+        own --print-workflow, not a second copy of it.
+        """
+
+        import subprocess
+        import sys as _sys
+
+        _sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import release_train as rt
+
+        monitor = REPO_ROOT / "scripts" / "release-workflow-monitor.sh"
+        latest_push = re.compile(r'for image_tag in "\$VERSION" latest')
+
+        observed: set[str] = set()
+        checked_workflows: set[str] = set()
+        for entry in rt.ARTIFACTS:
+            if entry.key not in rt.CARD_ARTIFACT_ORDER:
+                continue
+            if entry.repository != "aweb":
+                # ac-image's publisher lives in the AC repository; its
+                # promise is asserted below rather than parsed here.
+                continue
+            resolved = subprocess.run(
+                ["bash", str(monitor), "--print-workflow", entry.key],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                resolved.returncode,
+                0,
+                f"{entry.key} has no mapped publication workflow: {resolved.stderr}",
+            )
+            workflow = WORKFLOWS / resolved.stdout.strip()
+            self.assertTrue(workflow.exists(), workflow)
+            checked_workflows.add(workflow.name)
+            if latest_push.search(workflow.read_text()):
+                observed.add(entry.key)
+
+        declared = {
+            entry.key
+            for entry in rt.ARTIFACTS
+            if entry.promises_latest and entry.repository == "aweb"
+        }
+        self.assertEqual(
+            observed,
+            declared,
+            "the workflows that push a mutable latest and the artifacts "
+            "declaring promises_latest must be the same set",
+        )
+        # Positive control: the pattern actually matches something, so a
+        # broken regex cannot produce a vacuous agreement of two empty
+        # sets (the failure mode that made the first sweep of this
+        # question wrong).
+        self.assertTrue(observed, "the latest-push pattern matched nothing")
+        # Negative control: a publisher that pushes no mutable tag must
+        # not match, so the pattern discriminates rather than matching
+        # every workflow it reads.
+        self.assertIn("pypi-release.yml", checked_workflows)
+        self.assertFalse(
+            latest_push.search((WORKFLOWS / "pypi-release.yml").read_text())
+        )
+        # The AC image publishes :VERSION and :SHA only - no latest -
+        # and its record says so; its workflow is out of this
+        # repository, so the declaration is what this suite pins.
+        self.assertFalse(rt._artifact("ac-image").promises_latest)
+
     def test_dead_hosted_gate_and_component_paths_are_deleted(self) -> None:
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
         for dead in (
