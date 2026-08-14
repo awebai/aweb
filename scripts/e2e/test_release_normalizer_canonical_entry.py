@@ -458,7 +458,9 @@ class PrepareEntry(_WorldFixture):
     runs the normalizer phase in-process and builds the card from its
     projection."""
 
-    def run_prepare(self, world: dict, *, gate: Path) -> subprocess.CompletedProcess:
+    def run_prepare(
+        self, world: dict, *, gate: Path, extra_env: dict | None = None
+    ) -> subprocess.CompletedProcess:
         with RegistryStandIn(world) as registry:
             env = dict(os.environ)
             env.update(
@@ -477,6 +479,7 @@ class PrepareEntry(_WorldFixture):
                     "AWEB_RELEASE_GATE_COMMAND": f"{sys.executable} {gate}",
                 }
             )
+            env.update(extra_env or {})
             return subprocess.run(
                 [sys.executable, str(REPO_ROOT / "scripts" / "release_train.py"), "prepare"],
                 cwd=self.aweb_root,
@@ -508,6 +511,36 @@ class PrepareEntry(_WorldFixture):
             self.assertTrue(marker.exists(), "the gate must run on normal form")
         finally:
             marker.unlink(missing_ok=True)
+
+    def test_selected_older_sha_produces_a_card_for_that_selection(self) -> None:
+        # C4, the critic's precision: a valid AWEB_SHA override selecting
+        # an older-on-main commit must WORK - the projection computed
+        # from that exact object, the card carrying that selection - not
+        # refuse, and not silently card the newer HEAD's world.
+        marker = self.aweb_root.parent / "gate-ran-override"
+        older = self.aweb_sha
+        _write_manifest(self.aweb_root, "server/moved.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "server content moves at HEAD")
+        newer = _git(self.aweb_root, "rev-parse", "HEAD").strip()
+        try:
+            completed = self.run_prepare(
+                self.world_at_rest(),
+                gate=self._gate_stub(marker),
+                extra_env={"AWEB_SHA": older},
+            )
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 0, out)
+            self.assertIn(f'"aweb_sha": "{older}"', completed.stdout, out)
+            self.assertNotIn(newer, completed.stdout, out)
+            # At the OLDER selection the world is at rest - nine unmoved
+            # rows; the HEAD world would have moved the server pair.
+            self.assertEqual(
+                completed.stdout.count('"disposition": "unmoved"'), 9, out
+            )
+        finally:
+            marker.unlink(missing_ok=True)
+            _git(self.aweb_root, "reset", "-q", "--hard", older)
 
     def test_patch_needed_ends_the_command_before_any_test(self) -> None:
         marker = self.aweb_root.parent / "gate-ran"

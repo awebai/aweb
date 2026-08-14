@@ -188,6 +188,7 @@ class FixedContractTests(unittest.TestCase):
                     anchor=rt.Anchor("tag_pattern", "awid-v"),
                     occupancy_unit=("ghcr.io/awebai/awid",),
                     required_current_outputs=rt.OCI_PLATFORMS,
+                    promises_latest=True,
                 ),
                 rt.Artifact(
                     "aw-cli",
@@ -256,6 +257,7 @@ class FixedContractTests(unittest.TestCase):
                     anchor=rt.Anchor("tag_pattern", "a2a-gw-v"),
                     occupancy_unit=("ghcr.io/awebai/a2a-gateway",),
                     required_current_outputs=rt.OCI_PLATFORMS,
+                    promises_latest=True,
                 ),
                 rt.Artifact(
                     "awid-site",
@@ -952,6 +954,25 @@ class PreparePipelineTests(_PipelineFixture):
         for repo in (self.aweb, self.ac):
             self.assertEqual(git("status", "--porcelain", cwd=repo), "")
 
+    def test_projection_base_mismatch_refuses_by_name(self) -> None:
+        # C4: a projection computed from one commit cannot become a card
+        # selecting another - refused naming both worlds, before any
+        # gate runs.
+        environment = {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"}
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.prepare(
+                self.aweb,
+                environment,
+                projection=_fixture_projection(self.aweb, environment),
+                projection_base={"aweb": "e" * 40},
+                gate_command=self.gate_command,
+                timeout=30,
+            )
+        self.assertIn("projection-base-mismatch", str(caught.exception))
+        self.assertIn("e" * 40, str(caught.exception))
+        with self.assertRaises(rt.CardUnavailable):
+            rt.read_card(self.aweb)
+
     def test_unmoved_projection_rows_reach_the_card_unmoved(self) -> None:
         # The sweep semantics themselves live in the normalizer (proven
         # at the canonical entry); the train's surviving claim is that
@@ -1105,6 +1126,34 @@ class ContinuePhaseTests(_PipelineFixture):
         card = self._card()
         observed = rt.continue_environment(self.aweb)
         self.assertEqual(observed.card, card)
+
+    def test_local_checkout_not_at_the_card_sha_stops_by_name(self) -> None:
+        # C4: the re-derivation claims capture over the exact card SHAs;
+        # a local checkout detached elsewhere (remote refs untouched, so
+        # the environment's remote checks pass) must stop
+        # card-checkout-mismatch before any capture, and a dirty tree
+        # stops card-checkout-dirty - never a silent capture of the
+        # wrong tree.
+        self._card()
+        environment = rt.continue_environment(self.aweb)
+        git("checkout", "-q", "--detach", "HEAD~1", cwd=self.aweb)
+        try:
+            stops = rt._default_rederive(environment)
+            self.assertIn(
+                ("card-checkout-mismatch", "aweb"),
+                [(s.code, s.artifact) for s in stops],
+            )
+        finally:
+            git("checkout", "-q", "main", cwd=self.aweb)
+        (self.aweb / "dirty.txt").write_text("x\n")
+        try:
+            stops = rt._default_rederive(environment)
+            self.assertIn(
+                ("card-checkout-dirty", "aweb"),
+                [(s.code, s.artifact) for s in stops],
+            )
+        finally:
+            (self.aweb / "dirty.txt").unlink()
 
     def test_moved_aweb_main_invalidates_the_card(self) -> None:
         self._card()
@@ -1509,6 +1558,7 @@ class ContinueTrainTests(_PipelineFixture):
                 verify_command=self.verify_command,
                 digest_command=self.digest_command,
                 marketplace_command=(sys.executable, str(tripwire)),
+                correction_command=self.correction_command,
                 timeout=60,
             )
         self.assertIn("marketplace mutation refused", str(caught.exception))
@@ -2058,6 +2108,177 @@ class ContinueTrainTests(_PipelineFixture):
         )
         self.assertIn("--version", bare.stderr)
 
+    def test_full_fixture_continue_reaches_done_through_the_default_terminal_gate(self) -> None:
+        # C2's capstone, the verdict's explicit demand: the full continue
+        # fixture with the DEFAULT terminal gate - no injected empty
+        # gate. Every registry fact the derivable domain requires is
+        # served over the wire-protocol stand-in; the AC image's
+        # revision label and the health SHA resolve DYNAMICALLY to the
+        # commit this very run derives, written by the ac-gate stub.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from registry_stand_in import RegistryStandIn
+
+        card = self._prepare()
+        sha = card.aweb_sha
+        for tag in (
+            "server-v1.27.2",
+            "awid-service-v0.5.16",
+            "awid-v0.5.16",
+            "aw-v1.34.4",
+            "channel-v1.7.7",
+            "pi-v0.3.7",
+            "skills-v0.2.13",
+            "a2a-gw-v1.27.2",
+        ):
+            git("tag", "-f", tag, sha, cwd=self.aweb)
+            git("push", "-qf", "origin", f"refs/tags/{tag}", cwd=self.aweb)
+        rev_file = Path(self.tmp.name) / "derived-sha"
+        gate_with_rev = Path(self.tmp.name) / "ac-gate-rev.py"
+        gate_with_rev.write_text(
+            "import subprocess\nfrom pathlib import Path\n"
+            "sha = subprocess.run(['git', 'rev-parse', 'HEAD'],"
+            " capture_output=True, text=True, check=True).stdout.strip()\n"
+            f"Path({str(rev_file)!r}).write_text(sha)\n"
+            "print('AC gate 16/16 PASSED')\n"
+        )
+        marketplace_read = Path(self.tmp.name) / "marketplace-read.py"
+        marketplace_read.write_text(
+            "import json\n"
+            'print(json.dumps({"advertised": {"channel": "1.7.7", "skills": "0.2.13"}}))\n'
+        )
+        standing = Path(self.tmp.name) / "standing.py"
+        standing.write_text("print('standing ok')\n")
+        aw_assets = [
+            f"aw_1.34.4_{platform}" for platform in (
+                "linux_amd64.tar.gz", "linux_arm64.tar.gz",
+                "darwin_amd64.tar.gz", "darwin_arm64.tar.gz",
+                "windows_amd64.zip", "windows_arm64.zip",
+            )
+        ] + ["checksums.txt"]
+        world = {
+            "pypi_files": {
+                "awid-service": {"0.5.16": {
+                    "awid_service-0.5.16.tar.gz": "a" * 64,
+                    "awid_service-0.5.16-py3-none-any.whl": "b" * 64,
+                }},
+                "aweb": {"1.27.2": {
+                    "aweb-1.27.2.tar.gz": "c" * 64,
+                    "aweb-1.27.2-py3-none-any.whl": "d" * 64,
+                }},
+            },
+            "npm_tarballs": {
+                f"{pkg}/{version}.tgz": f"{pkg}-{version}".encode()
+                for pkg, version in (
+                    ("@awebai/aw", "1.34.4"),
+                    ("@awebai/aw-linux-x64", "1.34.4"),
+                    ("@awebai/aw-linux-arm64", "1.34.4"),
+                    ("@awebai/aw-darwin-x64", "1.34.4"),
+                    ("@awebai/aw-darwin-arm64", "1.34.4"),
+                    ("@awebai/aw-windows-x64", "1.34.4"),
+                    ("@awebai/aw-windows-arm64", "1.34.4"),
+                    ("@awebai/claude-channel", "1.7.7"),
+                    ("@awebai/pi", "0.3.7"),
+                    ("@awebai/claude-skills", "0.2.13"),
+                )
+            },
+            "ghcr_index": {
+                "awebai/awid": {"0.5.16": {
+                    "digest": "sha256:" + "1" * 64,
+                    "platforms": [["linux", "amd64"], ["linux", "arm64"]],
+                }},
+                "awebai/a2a-gateway": {"1.27.2": {
+                    "digest": "sha256:" + "2" * 64,
+                    "platforms": [["linux", "amd64"], ["linux", "arm64"]],
+                }},
+                "awebai/awid": {"0.5.16": {
+                    "digest": "sha256:" + "1" * 64,
+                    "platforms": [["linux", "amd64"], ["linux", "arm64"]],
+                }, "latest": {
+                    "digest": "sha256:" + "1" * 64,
+                    "platforms": [["linux", "amd64"], ["linux", "arm64"]],
+                }},
+            },
+            "ghcr_index_revisions": {
+                "awebai/awid:0.5.16": sha,
+                "awebai/awid:latest": sha,
+                "awebai/a2a-gateway:1.27.2": sha,
+                "awebai/a2a-gateway:latest": sha,
+            },
+            "ghcr_dynamic": {
+                "awebai/ac": {
+                    "tag": "0.7.13",
+                    "digest": "sha256:" + "3" * 64,
+                    "revision_file": str(rev_file),
+                }
+            },
+            "github_releases": {
+                "awebai/aw": {"v1.34.4": aw_assets},
+                "awebai/aweb": {"skills-v0.2.13": [
+                    "aweb-coordination.zip", "aweb-messaging.zip",
+                    "aweb-team-membership.zip", "aweb-bootstrap.zip",
+                    "aweb-identity.zip",
+                ]},
+            },
+            "github_commits": {
+                "awebai/aw": {"v1.34.4": {
+                    "sha": "e" * 40,
+                    "message": f"Sync exact aweb {sha}",
+                }},
+            },
+            "health_git_sha_file": str(rev_file),
+        }
+        world["ghcr_index"]["awebai/a2a-gateway"]["latest"] = world[
+            "ghcr_index"
+        ]["awebai/a2a-gateway"]["1.27.2"]
+        if getattr(self, "_capstone_mutation", None) == "wrong-stamp":
+            world["github_commits"]["awebai/aw"]["v1.34.4"]["message"] = (
+                "Sync exact aweb " + "f" * 40
+            )
+        with RegistryStandIn(world) as registry:
+            summary = rt.continue_train(
+                self.aweb,
+                rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
+                marketplace_read_command=(
+                    sys.executable, str(marketplace_read),
+                ),
+                read_standing_command=(sys.executable, str(standing)),
+                health_url=f"{registry.base}/health",
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                bases={
+                    "pypi": registry.base,
+                    "npm": registry.base,
+                    "ghcr": registry.base,
+                    "github": registry.base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=(sys.executable, str(gate_with_rev)),
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+                work_timeout=30,
+            )
+        self.assertEqual(summary["status"], "DONE")
+
+    def test_default_gate_refuses_a_lying_external_binding(self) -> None:
+        # The capstone's mutation control: the same fully-served world
+        # with ONE fact falsified (the external sync stamp naming a
+        # foreign source) must refuse DONE through the DEFAULT gate,
+        # naming the binding row - the false-publication direction.
+        self._capstone_mutation = "wrong-stamp"
+        try:
+            with self.assertRaises(rt.ValidationError) as caught:
+                self.test_full_fixture_continue_reaches_done_through_the_default_terminal_gate()
+            self.assertIn("DONE refused", str(caught.exception))
+            self.assertIn("tree binding", str(caught.exception))
+        finally:
+            self._capstone_mutation = None
+
     def test_marketplace_edge_follows_the_card_not_command_presence(self) -> None:
         # C1: the pointer edge runs because the CARD moves channel or
         # skills - an unbound command is a named refusal, never a silent
@@ -2095,6 +2316,50 @@ class ContinueTrainTests(_PipelineFixture):
         self.assertTrue(
             self.marketplace_marker.exists(),
             "a card moving channel/skills must run the pointer edge",
+        )
+
+    def test_unbound_correction_refuses_when_the_card_needs_it(self) -> None:
+        # release-review's C1 note closed: correction_command defaults
+        # to None (inert), and a pending card with no binding refuses by
+        # name before the production step - the marketplace shape, not a
+        # silent default into a live production write.
+        self._prepare()
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.continue_train(
+                self.aweb,
+                rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=None,
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=self.ac_gate_command,
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+                work_timeout=30,
+            )
+        self.assertIn("no correction command is bound", str(caught.exception))
+        self.assertIn("at continue entry", str(caught.exception))
+        # alice's tripwire form: the refusal precedes EVERY edge - the
+        # release pointer never moved and no provider command ran.
+        listed = git(
+            "ls-remote", "origin", "refs/heads/release", cwd=self.aweb
+        )
+        self.assertEqual(listed, "", "the release pointer must not move")
+        self.assertFalse(
+            self.provider_log.exists(),
+            "no provider command (migrate included) may run past the refusal",
         )
 
     def test_pending_correction_is_executed_not_recorded(self) -> None:

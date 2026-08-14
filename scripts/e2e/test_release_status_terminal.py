@@ -144,11 +144,15 @@ class SourceAnchorRows(unittest.TestCase):
 
 
 class ImageAuth(unittest.TestCase):
-    def test_bearer_token_reaches_the_registry(self) -> None:
-        # The gate found the token deleted; a registry requiring auth
-        # must see it, and its absence must read as unavailability.
+    def test_bearer_reaches_every_oci_surface(self) -> None:
+        # C2, the second verdict: the token was sent only on the
+        # top-level manifest and dropped for child, config, and latest
+        # reads - so an authenticated registry answered PRESENT for the
+        # index and UNAVAILABLE for the load-bearing revision rows. The
+        # wire test requires the bearer at EVERY endpoint.
         world = {
-            "ghcr": {"awebai/awid": {"0.5.16": SHA}},
+            "ghcr": {"awebai/awid": {"0.5.16": SHA, "latest": SHA}},
+            "ghcr_index": {},
             "require_bearer": "real-token",
         }
         with RegistryStandIn(world) as registry:
@@ -157,7 +161,7 @@ class ImageAuth(unittest.TestCase):
                 "0.5.16",
                 expected_revision=SHA,
                 required_platforms=(),
-                check_latest=False,
+                check_latest=True,
                 base=registry.base,
                 token="real-token",
                 timeout=5,
@@ -167,13 +171,19 @@ class ImageAuth(unittest.TestCase):
                 "0.5.16",
                 expected_revision=SHA,
                 required_platforms=(),
-                check_latest=False,
+                check_latest=True,
                 base=registry.base,
                 token="",
                 timeout=5,
             )
-        self.assertTrue(with_token[0].present(), with_token)
-        self.assertEqual(without[0].state, "unavailable", without)
+        self.assertTrue(
+            all(row.present() for row in with_token),
+            [row.render() for row in with_token],
+        )
+        self.assertTrue(
+            all(row.state == "unavailable" for row in without),
+            [row.render() for row in without],
+        )
 
 
 class AssemblyCompleteness(unittest.TestCase):
@@ -193,7 +203,7 @@ class AssemblyCompleteness(unittest.TestCase):
                 card,
                 {a.name for a in card_artifacts},
                 bases={
-                    "pypi": f"{registry.base}/pypi",
+                    "pypi": registry.base,
                     "npm": registry.base,
                     "ghcr": registry.base,
                     "github": registry.base,
@@ -222,10 +232,100 @@ class AssemblyCompleteness(unittest.TestCase):
         }
         with RegistryStandIn(world) as registry:
             rows = builders.pypi_rows(
-                "aweb", "1.27.2", base=f"{registry.base}/pypi", timeout=5
+                "aweb", "1.27.2", base=registry.base, timeout=5
             )
         for row in rows:
             self.assertNotIn("anchor", row.evidence, row)
+
+
+class FactDomainEquality(unittest.TestCase):
+    """C2: the produced registry-fact domain must EQUAL the derivable
+    expected domain, both directions - a routed builder silently
+    dropping a fact is detectable, which AssemblyCompleteness alone
+    (no-unrouted-target) cannot see."""
+
+    def _full_card(self):
+        import release_train as rt
+
+        versions = {
+            "awid-service": "0.5.16",
+            "aweb-server": "1.27.2",
+            "awid-image": "0.5.16",
+            "aw-cli": "1.34.6",
+            "channel-plugin": "1.7.7",
+            "pi-extension": "0.3.7",
+            "skills": "0.2.13",
+            "a2a-gateway-image": "1.27.2",
+            "ac-image": "0.7.15",
+        }
+        artifacts = [
+            rt.ArtifactSelection(name=name, version=version, moves=True)
+            for name, version in versions.items()
+        ]
+        return type("C", (), {"artifacts": artifacts})(), versions
+
+    def test_expected_domain_matches_produced_domain_both_ways(self) -> None:
+        import release_status_gates as gates
+        import release_train as rt
+
+        card, versions = self._full_card()
+        names = set(versions)
+        expected_sources = {name: SHA for name in names}
+        world = {
+            "pypi_files": {
+                "awid-service": {"0.5.16": {}},
+                "aweb": {"1.27.2": {}},
+            },
+            "npm_tarballs": {},
+            "ghcr": {},
+            "ghcr_index": {},
+            "github_releases": {},
+            "github": {},
+            "github_commits": {},
+        }
+        with RegistryStandIn(world) as registry:
+            rows = gates.rows_for_artifacts(
+                card,
+                names,
+                bases={
+                    "pypi": registry.base,
+                    "npm": registry.base,
+                    "ghcr": registry.base,
+                    "github": registry.base,
+                },
+                expected_sources=expected_sources,
+                tokens={},
+                timeout=5,
+            )
+        produced = {row.fact for row in rows}
+        expected = gates.expected_fact_keys(
+            card, names, include_source_tags=False,
+            expected_sources=expected_sources,
+        )
+        self.assertEqual(
+            expected - produced, set(), "facts the assembly never produced"
+        )
+        self.assertEqual(
+            produced - expected, set(), "facts the derivation does not expect"
+        )
+        # The domain is nontrivial - a same-run positive control against
+        # two empty sets agreeing.
+        self.assertGreater(len(expected), 40, sorted(expected))
+
+    def test_a_dropped_fact_is_detected_by_the_domain_check(self) -> None:
+        # The omission mutation: filter one produced fact and the
+        # equality names it.
+        import release_status_gates as gates
+
+        card, versions = self._full_card()
+        names = set(versions)
+        expected = gates.expected_fact_keys(
+            card, names, include_source_tags=False,
+            expected_sources={name: SHA for name in names},
+        )
+        victim = sorted(expected)[0]
+        mutated = expected - {victim}
+        self.assertEqual(expected - mutated, {victim})
 
 
 class B5RealPath(unittest.TestCase):
@@ -247,10 +347,10 @@ class B5RealPath(unittest.TestCase):
     def rows(self, registry):
         return [
             *builders.pypi_rows(
-                "awid-service", "0.5.16", base=f"{registry.base}/pypi", timeout=5
+                "awid-service", "0.5.16", base=registry.base, timeout=5
             ),
             *builders.pypi_rows(
-                "aweb", "1.27.2", base=f"{registry.base}/pypi", timeout=5
+                "aweb", "1.27.2", base=registry.base, timeout=5
             ),
             builders.npm_tarball_row(
                 "@awebai/aw", "1.34.6", base=registry.base, timeout=5

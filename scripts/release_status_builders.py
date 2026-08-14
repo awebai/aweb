@@ -41,7 +41,9 @@ def pypi_rows(
     package: str, version: str, *, base: str, timeout: float
 ) -> list[Row]:
     normalized = package.replace("-", "_")
-    status, body = _fetch(f"{base}/{package}/{version}/json", timeout=timeout)
+    status, body = _fetch(
+        f"{base}/pypi/{package}/{version}/json", timeout=timeout
+    )
     facts = (
         f"pypi:{package} sdist {normalized}-{version}.tar.gz",
         f"pypi:{package} wheel",
@@ -84,11 +86,15 @@ def pypi_rows(
             Row(fact=facts[0], state="observed-absent", evidence="not served")
         )
     if len(wheels) == 1:
+        # The fact key is observation-independent (the wheel's name
+        # goes to evidence) so the expected fact domain is derivable
+        # from the card alone and missing facts are detectable by
+        # set equality (C2).
         rows.append(
             Row(
-                fact=f"pypi:{package} wheel {wheels[0]}",
+                fact=facts[1],
                 state="observed-present",
-                evidence=f"registry sha256 {files[wheels[0]]}",
+                evidence=f"{wheels[0]} registry sha256 {files[wheels[0]]}",
             )
         )
     else:
@@ -180,20 +186,29 @@ def image_rows(
     publisher promises it. The source tag is a separate repository-side
     row owned by the caller."""
 
+    # The fact family is STABLE across outcomes (C2): every branch
+    # emits the same keys, so the expected fact domain is derivable
+    # from the card alone and a dropped fact is set-detectable.
+    facts = [
+        f"ghcr:{image} {version} index digest",
+        *(
+            f"ghcr:{image} {version} {platform} revision label"
+            for platform in required_platforms
+        ),
+        *((f"ghcr:{image} latest == {version}",) if check_latest else ()),
+    ]
     status, body, digest = _fetch_manifest(
         f"{base}/v2/{image}/manifests/{version}", timeout, token
     )
     if status == -1 or status == 401 or status == 403 or status >= 500:
-        state, evidence = "unavailable", f"HTTP {status}"
-        return [Row(fact=f"ghcr:{image} {version} index digest", state=state, evidence=evidence)]
+        return [
+            Row(fact=fact, state="unavailable", evidence=f"HTTP {status}")
+            for fact in facts
+        ]
     if status == 404:
         return [
-            Row(
-                fact=f"ghcr:{image} {version} {suffix}",
-                state="observed-absent",
-                evidence="registry 404",
-            )
-            for suffix in ("index digest", *required_platforms)
+            Row(fact=fact, state="observed-absent", evidence="registry 404")
+            for fact in facts
         ]
     index = json.loads(body)
     rows = [
@@ -218,7 +233,7 @@ def image_rows(
                 )
             )
             continue
-        revision = _child_revision(base, image, child, timeout)
+        revision = _child_revision(base, image, child, timeout, token)
         if revision is None:
             rows.append(
                 Row(
@@ -245,7 +260,7 @@ def image_rows(
             )
     if check_latest:
         l_status, _l_body, l_digest = _fetch_manifest(
-            f"{base}/v2/{image}/manifests/latest", timeout
+            f"{base}/v2/{image}/manifests/latest", timeout, token
         )
         if l_status != 200:
             rows.append(
@@ -412,3 +427,120 @@ def source_tag_row(repo, tag: str, *, expected_identity: str) -> Row:
         state="conflict-unproven",
         evidence=f"tag peels to {identity}, card names {expected_identity}",
     )
+
+
+def image_alias_row(
+    image: str,
+    version: str,
+    alias: str,
+    *,
+    base: str,
+    token: str,
+    timeout: float,
+) -> Row:
+    """The AC :SHA contract: the alias tag must serve EXACTLY the
+    version tag's digest - equality of two independently fetched
+    Docker-Content-Digest values, never an assumption that two names
+    share bytes."""
+
+    fact = f"ghcr:{image} {alias} digest == {version} digest"
+    v_status, _v_body, v_digest = _fetch_manifest(
+        f"{base}/v2/{image}/manifests/{version}", timeout, token
+    )
+    a_status, _a_body, a_digest = _fetch_manifest(
+        f"{base}/v2/{image}/manifests/{alias}", timeout, token
+    )
+    if v_status in (-1, 401, 403) or v_status >= 500 or a_status in (-1, 401, 403) or a_status >= 500:
+        return Row(
+            fact=fact,
+            state="unavailable",
+            evidence=f"HTTP {v_status}/{a_status}",
+        )
+    if a_status == 404 or v_status == 404:
+        return Row(
+            fact=fact,
+            state="observed-absent",
+            evidence=f"version HTTP {v_status}, alias HTTP {a_status}",
+        )
+    if v_digest and v_digest == a_digest:
+        return Row(
+            fact=fact,
+            state="observed-present",
+            evidence=f"both tags serve {v_digest}",
+        )
+    return Row(
+        fact=fact,
+        state="conflict-unproven",
+        evidence=f"version serves {v_digest}, alias serves {a_digest}",
+    )
+
+
+def external_release_binding_rows(
+    repository: str,
+    tag: str,
+    *,
+    expected_source_sha: str,
+    base: str,
+    token: str,
+    timeout: float,
+) -> list[Row]:
+    """The external product repository's tag and its tree binding: the
+    sync commits are stamped 'Sync exact aweb <sha>', so the tag's
+    commit message binds the external tree to the exact aweb source the
+    card names."""
+
+    tag_fact = f"github:{repository} external tag {tag}"
+    binding_fact = f"github:{repository} {tag} tree binding"
+    status, body = _fetch(
+        f"{base}/repos/{repository}/commits/{tag}", timeout=timeout, token=token
+    )
+    if status == -1 or status >= 500:
+        return [
+            Row(fact=tag_fact, state="unavailable", evidence=f"HTTP {status}"),
+            Row(fact=binding_fact, state="unavailable", evidence=f"HTTP {status}"),
+        ]
+    if status == 404:
+        return [
+            Row(fact=tag_fact, state="observed-absent", evidence="tag 404"),
+            Row(
+                fact=binding_fact,
+                state="observed-absent",
+                evidence="no tag, no binding",
+            ),
+        ]
+    document = json.loads(body)
+    commit_sha = document.get("sha", "")
+    message = (document.get("commit") or {}).get("message", "")
+    rows = [
+        Row(
+            fact=tag_fact,
+            state="observed-present",
+            evidence=f"tag resolves commit {commit_sha}",
+        )
+    ]
+    stamp = f"Sync exact aweb {expected_source_sha}"
+    if stamp in message:
+        rows.append(
+            Row(
+                fact=binding_fact,
+                state="observed-present",
+                evidence=f"sync stamp names {expected_source_sha}",
+            )
+        )
+    elif "Sync exact aweb " in message:
+        rows.append(
+            Row(
+                fact=binding_fact,
+                state="conflict-unproven",
+                evidence=f"sync stamp differs: {message.splitlines()[0]!r}",
+            )
+        )
+    else:
+        rows.append(
+            Row(
+                fact=binding_fact,
+                state="conflict-unproven",
+                evidence="commit carries no sync stamp",
+            )
+        )
+    return rows

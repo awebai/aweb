@@ -82,7 +82,9 @@ break — the only judgment the agent supplies), then after the go exactly `make
 The script, no prompts:
 
 1. Fetches; selects the exact aweb and AC `main` commits (tips unless `AWEB_SHA=`/`AC_SHA=` name
-   older commits on `main`); refuses dirty trees or unpushed selections, printing the fix.
+   older commits on `main`); refuses dirty trees or unpushed selections, printing the fix. An
+   older selection is captured from a detached temporary worktree at that exact commit; if a
+   crash leaves its registration behind, `git worktree prune` in the checkout recovers it.
 2. Computes the artifact set: a component moves iff its manifest version is not in its registry (aw: next
    tag-history version; a2a-gateway: server version absent from GHCR); prints the set and versions.
 3. Runs the aweb gate once in clean Docker: builds every moving artifact release-shaped (wheels,
