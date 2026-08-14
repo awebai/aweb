@@ -144,6 +144,42 @@ class Reconciliation:
     stop: str | None = None
 
 
+def numeric_prefix(text: str) -> tuple[int, ...] | None:
+    """The numeric runs of a near-version candidate, so a malformed one
+    can be placed against the versions in play: "0.3" -> (0, 3),
+    "0.7.15rc1" -> (0, 7, 15, 1), "v2" -> (2,). None when the candidate
+    is not digit-led at all."""
+
+    body = text[1:] if text.startswith("v") else text
+    parts: list[int] = []
+    for chunk in re.split(r"[^0-9]+", body):
+        if not chunk:
+            break
+        parts.append(int(chunk))
+    return tuple(parts) or None
+
+
+def malformed_is_history(prefix: tuple[int, ...] | None, candidate) -> bool:
+    """Is a malformed candidate provably BELOW the candidate in play?
+
+    Component-wise until the FIRST difference decides it. Only a first
+    difference proving the malformed spelling lower makes it history.
+    Equal-but-incomplete ("0.7" against 0.7.15) and equal-with-suffix
+    ("0.7.15rc1" against 0.7.15) are ambiguous, not lower - they could
+    bear on the decision, so they stop. So does a candidate with no
+    numeric prefix at all. (plan-critic's binding conditions on the
+    narrowing; padding an incomplete spelling into history is exactly
+    the move they forbid.)
+    """
+
+    if prefix is None:
+        return False
+    for mine, theirs in zip(prefix, candidate):
+        if mine != theirs:
+            return mine < theirs
+    return False
+
+
 def reconcile_unit(
     *,
     members: list[UnitMember],
@@ -158,25 +194,37 @@ def reconcile_unit(
     carries a stable code.
     """
 
-    for m in members:
-        for version in m.occupied:
-            if parse_version(version) is None:
-                return Reconciliation(
-                    state="stop", stop="malformed-version-candidate"
-                )
-    for version in anchor_versions:
-        if parse_version(version) is None:
-            return Reconciliation(state="stop", stop="malformed-version-candidate")
-
-    all_versions = {v for m in members for v in m.occupied} | set(anchor_versions)
-    if not all_versions:
+    seen = {v for m in members for v in m.occupied} | set(anchor_versions)
+    parsed_versions = {
+        v: parsed for v in seen if (parsed := parse_version(v)) is not None
+    }
+    malformed = sorted(seen - set(parsed_versions))
+    if not parsed_versions:
+        # Only near-versions, or nothing at all. With no conforming
+        # version there is no candidate to place them against, so a
+        # malformed one cannot be shown to be history and stops.
+        if malformed:
+            return Reconciliation(
+                state="stop", stop="malformed-version-candidate"
+            )
         # Nothing published anywhere: trivially reconciled at no version;
         # movement derivation treats absent P via its own rules.
         return Reconciliation(state="reconciled", p=None)
 
-    candidate = format_version(
-        max(parsed for v in all_versions if (parsed := parse_version(v)) is not None)
-    )
+    top = max(parsed_versions.values())
+    # A malformed candidate stops only when it could BEAR on the
+    # decision - its numeric prefix sorting at or above the candidate in
+    # play. Anything strictly below is history, logged like latest and
+    # sha-* and never a halt (design section 2): the registry keeps old
+    # shapes forever and we do not mutate the world to quiet a checker.
+    for version in malformed:
+        if not malformed_is_history(numeric_prefix(version), top):
+            return Reconciliation(
+                state="stop", stop="malformed-version-candidate"
+            )
+
+    all_versions = set(parsed_versions)
+    candidate = format_version(top)
 
     occupied_members = [m for m in members if candidate in m.occupied]
     missing_members = [m for m in members if candidate not in m.occupied]

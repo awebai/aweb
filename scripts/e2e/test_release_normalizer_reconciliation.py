@@ -174,6 +174,83 @@ class Reconciliation(unittest.TestCase):
         self.assertEqual(r.state, "recoverable-partial")
         self.assertTrue(r.provisional)
 
+    def test_malformed_candidate_below_the_candidate_is_history(self) -> None:
+        # The design's own principle - "absence below P is history, never
+        # a stop" - applied to malformed candidates, which it was not.
+        # ghcr.io/awebai/ac really does serve a years-old two-component
+        # tag 0.3; it cannot collide with anything current, so it is
+        # logged like latest and sha-*, never a halt.
+        sha = "a" * 40
+        r = rn.reconcile_unit(
+            members=[member("ghcr.io/awebai/ac", {"0.3": sha, "0.7.14": sha})],
+            anchor_versions={"0.7.14": sha},
+            manifest_intent="0.7.14",
+        )
+        self.assertEqual(r.state, "reconciled", r)
+        self.assertEqual(r.p, "0.7.14")
+
+    def test_malformed_candidate_at_or_above_the_candidate_still_stops(self) -> None:
+        # The discriminating control: a near-version that COULD bear on
+        # the decision still halts, so the narrowing is a narrowing and
+        # not a removal.
+        sha = "a" * 40
+        r = rn.reconcile_unit(
+            members=[member("ghcr.io/awebai/ac", {"0.7.15-rc1": sha, "0.7.14": sha})],
+            anchor_versions={"0.7.14": sha},
+            manifest_intent="0.7.14",
+        )
+        self.assertEqual(r.state, "stop")
+        self.assertEqual(r.stop, "malformed-version-candidate")
+
+    def test_plan_critic_boundary_cases_are_pinned(self) -> None:
+        # The binding conditions: only a FIRST DIFFERING component that
+        # is lower makes a malformed spelling history. Equal-but-
+        # incomplete and equal-with-suffix are ambiguous and stop -
+        # padding them into history is the move the ruling forbids.
+        sha = "a" * 40
+        def reconcile(extra):
+            occupied = {"0.7.15": sha}
+            occupied.update({e: sha for e in extra})
+            return rn.reconcile_unit(
+                members=[member("ghcr.io/awebai/ac", occupied)],
+                anchor_versions={"0.7.15": sha},
+                manifest_intent="0.7.15",
+            )
+        self.assertEqual(reconcile(["0.3"]).state, "reconciled", "0.3 is history")
+        self.assertEqual(reconcile(["0.7"]).stop, "malformed-version-candidate")
+        self.assertEqual(
+            reconcile(["0.7.15rc1"]).stop, "malformed-version-candidate"
+        )
+        # And the comparison itself, at the unit that decides it.
+        self.assertTrue(rn.malformed_is_history((0, 3), (0, 7, 15)))
+        self.assertFalse(rn.malformed_is_history((0, 7), (0, 7, 15)))
+        self.assertFalse(rn.malformed_is_history((0, 7, 15, 1), (0, 7, 15)))
+        self.assertFalse(rn.malformed_is_history((0, 8), (0, 7, 15)))
+        self.assertFalse(rn.malformed_is_history(None, (0, 7, 15)))
+
+    def test_ignored_history_is_never_evidence_for_anything(self) -> None:
+        # The ruling's last condition: ignored history must never become
+        # P, a content anchor, previous-complete evidence, or recovery
+        # evidence. The malformed spelling here sorts LAST as a string,
+        # so a leak would be visible.
+        sha, other = "a" * 40, "b" * 40
+        r = rn.reconcile_unit(
+            members=[member("ghcr.io/awebai/ac", {"0.9": other, "0.7.14": sha, "0.7.15": sha})],
+            anchor_versions={"0.7.14": sha, "0.7.15": sha},
+            manifest_intent="0.7.15",
+        )
+        # 0.9 sorts above 0.7.x, so it must STOP rather than be adopted.
+        self.assertEqual(r.stop, "malformed-version-candidate")
+        below = rn.reconcile_unit(
+            members=[member("ghcr.io/awebai/ac", {"0.3": other, "0.7.14": sha, "0.7.15": sha})],
+            anchor_versions={"0.7.14": sha, "0.7.15": sha},
+            manifest_intent="0.7.15",
+        )
+        self.assertEqual(below.state, "reconciled")
+        self.assertEqual(below.p, "0.7.15")
+        self.assertEqual(below.candidate, "0.7.15")
+        self.assertNotEqual(below.source_identity, other, "history is not identity evidence")
+
     def test_malformed_candidate_in_version_namespace_stops(self) -> None:
         r = rn.reconcile_unit(
             members=[member("npm:a", {"1.2.3-rc1": None})],
