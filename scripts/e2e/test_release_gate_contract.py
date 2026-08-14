@@ -89,6 +89,70 @@ def pypi_observation(dist: Path) -> dict[str, object]:
     }
 
 
+class UnrecognizedTagPush(Exception):
+    """An image workflow's tag-push construct is not one this contract
+    knows how to read, so the detector REFUSES to classify rather than
+    reporting the reassuring absence (aben, alice's carve-3 hardening).
+    """
+
+
+# The enumerated tag-push spellings this contract can read. A workflow
+# that pushes tags some other way matches none of these and reds, so
+# the classification decision lands on a human when the spelling is
+# introduced instead of being assumed absent forever.
+RECOGNIZED_TAG_PUSHES = (
+    {
+        "name": "version-plus-mutable-latest shell loop",
+        "lines": (
+            re.compile(r'for image_tag in "\$VERSION" latest; do'),
+            re.compile(r'\[\[ "\$image_tag" == latest \]\] && kind=latest'),
+        ),
+        "pushes_latest": True,
+    },
+)
+
+# 'latest' occurrences that are not tag pushes at all. Each carries its
+# reason; anything outside these and the recognized constructs is an
+# unclassified construct and reds.
+BENIGN_LATEST = (
+    (re.compile(r"runs-on:\s*\S+-latest"), "GitHub runner image"),
+    (re.compile(r"^\s*#"), "comment"),
+)
+
+
+def classify_tag_push(text: str, workflow: str) -> bool:
+    """Does this image workflow push a mutable latest? Raises
+    UnrecognizedTagPush when it cannot tell - absence of a known
+    spelling is a refusal to classify, never a claim of absence."""
+
+    matched = [
+        spelling
+        for spelling in RECOGNIZED_TAG_PUSHES
+        if any(pattern.search(text) for pattern in spelling["lines"])
+    ]
+    if not matched:
+        raise UnrecognizedTagPush(
+            f"unrecognized tag-push construct in {workflow}; classify it "
+            "before this test can speak"
+        )
+    for line in text.splitlines():
+        if "latest" not in line:
+            continue
+        if any(pattern.search(line) for pattern, _reason in BENIGN_LATEST):
+            continue
+        if any(
+            pattern.search(line)
+            for spelling in matched
+            for pattern in spelling["lines"]
+        ):
+            continue
+        raise UnrecognizedTagPush(
+            f"unclassified 'latest' construct in {workflow}: {line.strip()!r}; "
+            "classify it before this test can speak"
+        )
+    return any(spelling["pushes_latest"] for spelling in matched)
+
+
 class ThinReleaseWorkflowContractTests(unittest.TestCase):
     def assert_release_trigger_only(self, workflow: str) -> None:
         triggers = workflow[workflow.index("\non:\n") : workflow.index("\njobs:\n")]
@@ -526,6 +590,118 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
                 network_attempt.exists(),
                 "fixture rehearsal invoked a real registry/GitHub/provider command",
             )
+
+    def test_latest_pushing_workflows_equal_the_promises_latest_set(self) -> None:
+        """The record's mutable-latest promise is bound to what the
+        publishers actually do (release-review's C2 finding): the two
+        sets matched in both directions but nothing held them there, so
+        a workflow starting or stopping a latest push would red
+        nothing. The workflow-per-artifact map is the monitor script's
+        own --print-workflow, not a second copy of it; which artifacts
+        are image publishers comes from canonical metadata (the
+        ghcr.io target), not from a list of workflow filenames, which
+        would be the same second-derivation gap this test closes.
+        """
+
+        import subprocess
+        import sys as _sys
+
+        _sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import release_train as rt
+
+        monitor = REPO_ROOT / "scripts" / "release-workflow-monitor.sh"
+
+        observed: set[str] = set()
+        image_workflows: set[str] = set()
+        other_workflows: set[str] = set()
+        for entry in rt.ARTIFACTS:
+            if entry.key not in rt.CARD_ARTIFACT_ORDER:
+                continue
+            if entry.repository != "aweb":
+                # ac-image's publisher lives in the AC repository; its
+                # promise is asserted below rather than parsed here.
+                continue
+            resolved = subprocess.run(
+                ["bash", str(monitor), "--print-workflow", entry.key],
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                resolved.returncode,
+                0,
+                f"{entry.key} has no mapped publication workflow: {resolved.stderr}",
+            )
+            workflow = WORKFLOWS / resolved.stdout.strip()
+            self.assertTrue(workflow.exists(), workflow)
+            publishes_image = any(
+                target.startswith("ghcr.io/") for target in entry.targets
+            )
+            if not publishes_image:
+                other_workflows.add(workflow.name)
+                continue
+            image_workflows.add(workflow.name)
+            if classify_tag_push(workflow.read_text(), workflow.name):
+                observed.add(entry.key)
+
+        declared = {
+            entry.key
+            for entry in rt.ARTIFACTS
+            if entry.promises_latest and entry.repository == "aweb"
+        }
+        self.assertEqual(
+            observed,
+            declared,
+            "the workflows that push a mutable latest and the artifacts "
+            "declaring promises_latest must be the same set",
+        )
+        # Positive control: the classification actually ran over real
+        # image publishers, so a scoping predicate that selected nothing
+        # cannot pass as two empty sets agreeing (the failure mode that
+        # made the first sweep of this question worthless).
+        self.assertTrue(observed, "no image publisher was classified")
+        self.assertTrue(image_workflows, "no image workflow was read")
+        # Negative control: a publisher with no image target is read and
+        # carries no recognized tag-push construct, so the recognized
+        # spellings discriminate rather than matching any workflow.
+        self.assertIn("pypi-release.yml", other_workflows)
+        with self.assertRaises(UnrecognizedTagPush):
+            classify_tag_push(
+                (WORKFLOWS / "pypi-release.yml").read_text(), "pypi-release.yml"
+            )
+        # The AC image publishes :VERSION and :SHA only - no latest -
+        # and its record says so; its workflow is out of this
+        # repository, so the declaration is what this suite pins.
+        self.assertFalse(rt._artifact("ac-image").promises_latest)
+
+    def test_a_novel_tag_push_spelling_refuses_instead_of_reading_as_absence(
+        self,
+    ) -> None:
+        """alice's carve-3 hardening, proven: an unrecognized construct
+        must REFUSE to classify. Absence of a known spelling read as
+        'pushes no latest' is silent absence in the reassuring
+        direction - the family this epic exists to eliminate."""
+
+        novel = (
+            "jobs:\n  publish:\n    runs-on: ubuntu-latest\n"
+            "    steps:\n      - run: |\n"
+            "          docker buildx build --push -t ghcr.io/awebai/x:$VERSION "
+            "-t ghcr.io/awebai/x:latest .\n"
+        )
+        with self.assertRaises(UnrecognizedTagPush) as caught:
+            classify_tag_push(novel, "novel-image-release.yml")
+        self.assertIn("novel-image-release.yml", str(caught.exception))
+        self.assertIn("classify it", str(caught.exception))
+        # And a workflow carrying a recognized construct ALONGSIDE an
+        # unclassified one refuses too - a known spelling does not
+        # license whatever else is in the file.
+        real = (WORKFLOWS / "awid-image-release.yml").read_text()
+        self.assertTrue(classify_tag_push(real, "awid-image-release.yml"))
+        with self.assertRaises(UnrecognizedTagPush) as caught:
+            classify_tag_push(
+                real + '\n          docker push "$IMAGE:latest"\n',
+                "awid-image-release.yml",
+            )
+        self.assertIn("unclassified", str(caught.exception))
 
     def test_dead_hosted_gate_and_component_paths_are_deleted(self) -> None:
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
