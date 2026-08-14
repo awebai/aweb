@@ -2,16 +2,19 @@
   "artifacts": {
     "aw-cli": {
       "members": [
-        {"name": "github:awebai/aw:release", "occupied": {}},
-        {"name": "npm:@awebai/aw", "occupied": {}},
-        {"name": "npm:@awebai/aw-linux-x64", "occupied": {}},
-        {"name": "npm:@awebai/aw-linux-arm64", "occupied": {}},
-        {"name": "npm:@awebai/aw-darwin-x64", "occupied": {}},
-        {"name": "npm:@awebai/aw-darwin-arm64", "occupied": {}},
-        {"name": "npm:@awebai/aw-windows-x64", "occupied": {}},
-        {"name": "npm:@awebai/aw-windows-arm64", "occupied": {}}
+        {
+          "name": "github:awebai/aw:release",
+          "occupied": {"1.34.4": "9cd5cbeb0045fe9bc3821dfe0875efab0f19ae16"}
+        },
+        {"name": "npm:@awebai/aw", "occupied": {"1.34.4": null}},
+        {"name": "npm:@awebai/aw-linux-x64", "occupied": {"1.34.4": null}},
+        {"name": "npm:@awebai/aw-linux-arm64", "occupied": {"1.34.4": null}},
+        {"name": "npm:@awebai/aw-darwin-x64", "occupied": {"1.34.4": null}},
+        {"name": "npm:@awebai/aw-darwin-arm64", "occupied": {"1.34.4": null}},
+        {"name": "npm:@awebai/aw-windows-x64", "occupied": {"1.34.4": null}},
+        {"name": "npm:@awebai/aw-windows-arm64", "occupied": {"1.34.4": null}}
       ],
-      "anchor_versions": {}
+      "anchor_versions": {"1.34.4": "9cd5cbeb0045fe9bc3821dfe0875efab0f19ae16"}
     }
   },
   "provenance": {
@@ -22,8 +25,31 @@
     "why_this_control_exists": "b2-stale-cli-version.json asserts that the resolver derives 1.34.6. On its own that green is consistent with a resolver that always returns 1.34.6, or that hardcodes next-patch of a constant, or that ignores the fixture entirely. This control differs from the primary in exactly ONE respect - whether 1.34.5 occupies - and must produce a different answer. If both fixtures yield the same version, the instrument is not reading occupancy and the primary's green means nothing.",
     "construction": {
       "method": "CONSTRUCTED, not observed",
-      "warning": "This is a counterfactual world: 1.34.5 IS published in reality (re-observed 2026-08-14, npm HTTP 200, tag aw-v1.34.5 at 2455e7a127ab5f216477a0af114cb69e5b0caa74). Nothing here was ever true. It is authored to isolate the single variable and must never be presented as a recorded registry state.",
-      "derived_from": "b2-stale-cli-version.json with every 1.34.5 occupancy and its anchor removed, and nothing else changed"
+      "warning": "This is a counterfactual world: 1.34.5 IS published in reality (re-observed 2026-08-14, npm HTTP 200, tag aw-v1.34.5 at 2455e7a127ab5f216477a0af114cb69e5b0caa74). Nothing here is offered as a recorded registry state at the moment of authoring. It is authored to isolate the single variable and must never be presented as one.",
+      "derived_from": "b2-stale-cli-version.json with every 1.34.5 occupancy and its anchor removed, and nothing else changed",
+      "what_is_NOT_counterfactual": "the 1.34.4 half. Those values are the primary's, re-observed rather than invented (aw-v1.34.4 at 9cd5cbeb0045fe9bc3821dfe0875efab0f19ae16; @awebai/aw 1.34.4 HTTP 200, both 2026-08-14) - which is what makes this a one-variable control rather than a second constructed world."
+    },
+    "values": {
+      "aw-cli.anchor_versions.1.34.4": {
+        "method": "inherited verbatim from the primary",
+        "recorded_in": "b2-stale-cli-version.json, provenance.values, key aw-cli.anchor_versions.1.34.4 - re-observed 2026-08-14 from the tag",
+        "why_not_restated_here": "one fact, one record. A second copy of the observation is a second thing to keep true, and the pair's whole claim is that these values are the primary's unchanged - which the assembly test enforces by comparing the two worlds directly, so an inherited mark is checkable rather than asserted."
+      },
+      "aw-cli.members.github:awebai/aw:release.occupied.1.34.4": {
+        "method": "inherited verbatim from the primary",
+        "recorded_in": "b2-stale-cli-version.json, provenance.values, key aw-cli.members.github:awebai/aw:release.occupied.1.34.4",
+        "carries": "that entry's DERIVED-NOT-OBSERVED mark and its unverified cross-repository binding, undiminished by being reused here"
+      },
+      "aw-cli.members.npm:*.occupied.1.34.4": {
+        "method": "inherited verbatim from the primary",
+        "recorded_in": "b2-stale-cli-version.json, provenance.values, key aw-cli.members.npm:*.occupied.1.34.4 - HTTP 200 re-observed 2026-08-14, controlled against a 404 in the same run",
+        "carries": "null identity by kind, and presence probed for @awebai/aw with the six platform packages recorded on the composite-unit contract"
+      }
+    },
+    "why_the_prior_history_stays": {
+      "rule": "the one-difference rule cuts both ways: removing anything the primary carries beyond 1.34.5 is a second difference, and the pair stops isolating the variable it names.",
+      "mechanism": "aw-cli's derivation is tag-history, so the history below the candidate IS the input. Strip 1.34.4 as well and the engine reads a world in which no CLI ever shipped; it has no predecessor to derive from and reconciles at no version at all. The honest answer to that world is a refusal, not 1.34.5 - so a control emptied that far tests the no-history path while still looking like an occupancy control, and the primary's green stays unguarded.",
+      "history": "this fixture WAS authored fully empty, and the assembly harness bridged the gap by supplying 1.34.4 from the test body. The bridge is gone: the fixture carries its own world, and the derivation reads every value from it."
     }
   }
 }

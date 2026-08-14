@@ -59,8 +59,9 @@ def registry_half(name: str) -> dict:
 class B1NarrowCard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._tmp = tempfile.TemporaryDirectory()
-        root = Path(cls._tmp.name)
+        # Probe before allocating: a SkipTest out of setUpClass skips
+        # tearDownClass with it, so a temporary directory created first
+        # leaks to interpreter exit and reports itself as a warning.
         ac_source = REPO_ROOT.parent / "ac-worktree"
         for repo, sha in ((REPO_ROOT, AWEB_B1_SHA), (ac_source, AC_B1_SHA)):
             probe = subprocess.run(
@@ -71,6 +72,8 @@ class B1NarrowCard(unittest.TestCase):
                 raise unittest.SkipTest(
                     f"{repo} lacks pinned commit {sha[:8]} - B1 needs the history"
                 )
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = Path(cls._tmp.name)
         cls.aweb = historical_checkout(REPO_ROOT, AWEB_B1_SHA, root / "aweb")
         cls.ac = historical_checkout(ac_source, AC_B1_SHA, root / "ac")
 
@@ -149,10 +152,6 @@ class B1NarrowCard(unittest.TestCase):
             control.unlink()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def load_world(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text())["artifacts"]
 
@@ -170,45 +169,73 @@ def reconcile_recorded(artifacts: dict, name: str, intent: str):
 
 
 class B2StaleCliVersion(unittest.TestCase):
-    def test_recorded_world_rederives_the_next_free_patch(self) -> None:
-        artifacts = load_world("b2-stale-cli-version.json")
+    PRIMARY = "b2-stale-cli-version.json"
+    CONTROL = "b2-stale-cli-version.control-unpublished.json"
+    # The row's premise, and it holds in both arms: the manifest still
+    # carries the pre-authorized 1.34.5. Everything the derivation reads
+    # beyond it comes from the fixture, so the fixture is the only thing
+    # that differs between the two arms.
+    MANIFEST_INTENT = "1.34.5"
+
+    def derive(self, fixture_name: str) -> rn.MovementDecision:
+        artifacts = load_world(fixture_name)
         recorded = artifacts["aw-cli"]
+        reconciliation = reconcile_recorded(artifacts, "aw-cli", self.MANIFEST_INTENT)
+        self.assertEqual(reconciliation.state, "reconciled")
+        if reconciliation.p is None:
+            # Reconciled at no version: the fixture records a world in
+            # which this artifact never shipped. tag-history derivation
+            # has nothing to count from, so say that rather than letting
+            # it surface as a TypeError inside the engine.
+            self.fail(f"{fixture_name} names no published predecessor to derive from")
         occupied = frozenset(
             v for m in recorded["members"] for v in m["occupied"]
         ) | set(recorded["anchor_versions"])
-        decision = rn.movement_decision(
+        return rn.movement_decision(
             content_changed=True,
-            manifest_version="1.34.5",
-            reconciled_p="1.34.5",
+            manifest_version=self.MANIFEST_INTENT,
+            reconciled_p=reconciliation.p,
             occupied_versions=occupied,
             compatibility="none",
             derivation="tag-history",
         )
+
+    def test_recorded_world_rederives_the_next_free_patch(self) -> None:
+        decision = self.derive(self.PRIMARY)
         self.assertEqual(decision.kind, "moving")
         self.assertEqual(decision.version, "1.34.6")
 
     def test_control_unpublished_accepts_the_original_intent(self) -> None:
-        # FIXTURE GAP, documented and mailed to dev2: the control's world
-        # is fully empty, but its own provenance requires a world
-        # differing from the primary in exactly ONE respect - whether
-        # 1.34.5 occupies. The one-difference world keeps the prior
-        # history (aw-v1.34.4, the true predecessor per the cycle
-        # record); the harness supplies it until the fixture carries it.
-        artifacts = load_world("b2-stale-cli-version.control-unpublished.json")
-        recorded = artifacts["aw-cli"]
-        occupied = frozenset(
-            v for m in recorded["members"] for v in m["occupied"]
-        ) | set(recorded["anchor_versions"]) | {"1.34.4"}
-        decision = rn.movement_decision(
-            content_changed=True,
-            manifest_version="1.34.5",
-            reconciled_p="1.34.4",
-            occupied_versions=occupied,
-            compatibility="none",
-            derivation="tag-history",
-        )
+        decision = self.derive(self.CONTROL)
         self.assertEqual(decision.kind, "moving")
         self.assertEqual(decision.version, "1.34.5")
+
+    def test_the_control_differs_only_in_whether_1_34_5_occupies(self) -> None:
+        # The control's discriminating power is exactly this property,
+        # and nothing else in the pair enforces it: a control that also
+        # drops the prior history answers a different question (the
+        # no-history refusal) while still looking like a control.
+        primary = load_world(self.PRIMARY)["aw-cli"]
+        control = load_world(self.CONTROL)["aw-cli"]
+        without_the_candidate = {
+            "members": [
+                {
+                    "name": m["name"],
+                    "occupied": {
+                        v: i for v, i in m["occupied"].items() if v != "1.34.5"
+                    },
+                }
+                for m in primary["members"]
+            ],
+            "anchor_versions": {
+                v: i
+                for v, i in primary["anchor_versions"].items()
+                if v != "1.34.5"
+            },
+        }
+        self.assertEqual(
+            {k: control[k] for k in without_the_candidate}, without_the_candidate
+        )
 
 
 class B4ImpossibleShape(unittest.TestCase):
@@ -318,7 +345,8 @@ class NormalizerDriftRow(unittest.TestCase):
             def recapture():
                 import tomllib
 
-                version = tomllib.load(manifest.open("rb"))["project"]["version"]
+                with manifest.open("rb") as handle:
+                    version = tomllib.load(handle)["project"]["version"]
                 return world(capture_world_data, version, changed=True)
 
             outcome = run.run_normalizer(
@@ -330,3 +358,7 @@ class NormalizerDriftRow(unittest.TestCase):
             )
         self.assertEqual(outcome.exit_code, run.STOP)
         self.assertIn("version-occupied", outcome.report)
+
+
+if __name__ == "__main__":
+    unittest.main()
