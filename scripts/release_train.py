@@ -111,6 +111,11 @@ class Artifact:
     occupancy_unit: tuple[str, ...] = ()
     required_current_outputs: tuple[str, ...] = ()
     owned_locks: tuple[OwnedLock, ...] = ()
+    # The publisher's mutable-latest promise, declared beside the other
+    # per-artifact facts so adding an image artifact FORCES the decision
+    # (release-review's C2 note: a bare set in the status module was the
+    # one domain input the two-way equality could never check).
+    promises_latest: bool = False
 
 
 @dataclasses.dataclass(frozen=True)
@@ -193,6 +198,7 @@ ARTIFACTS = (
         anchor=Anchor("tag_pattern", "awid-v"),
         occupancy_unit=("ghcr.io/awebai/awid",),
         required_current_outputs=OCI_PLATFORMS,
+        promises_latest=True,
     ),
     Artifact(
         "aw-cli",
@@ -261,6 +267,7 @@ ARTIFACTS = (
         anchor=Anchor("tag_pattern", "a2a-gw-v"),
         occupancy_unit=("ghcr.io/awebai/a2a-gateway",),
         required_current_outputs=OCI_PLATFORMS,
+        promises_latest=True,
     ),
     Artifact(
         "awid-site",

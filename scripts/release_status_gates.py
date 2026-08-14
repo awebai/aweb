@@ -24,9 +24,7 @@ _DEFAULT_BASES = {
     "github": "https://api.github.com",
 }
 
-# Images whose publisher promises a mutable latest equal to the version
-# digest; the AC image publishes :VERSION and :SHA instead, no latest.
-_LATEST_PROMISED = {"awid-image", "a2a-gateway-image"}
+
 
 
 def rows_for_artifacts(
@@ -74,7 +72,7 @@ def rows_for_artifacts(
                     item.version,
                     expected_revision=expected or "",
                     required_platforms=artifact.platforms,
-                    check_latest=item.name in _LATEST_PROMISED,
+                    check_latest=artifact.promises_latest,
                     base=resolved["ghcr"],
                     token=tokens.get("ghcr", ""),
                     timeout=timeout,
@@ -204,7 +202,7 @@ def expected_fact_keys(
                     keys.add(
                         f"ghcr:{image} {item.version} {platform} revision label"
                     )
-                if item.name in _LATEST_PROMISED:
+                if artifact.promises_latest:
                     keys.add(f"ghcr:{image} latest == {item.version}")
                 if item.name == "ac-image" and expected:
                     keys.add(

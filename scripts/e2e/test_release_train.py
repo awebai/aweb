@@ -188,6 +188,7 @@ class FixedContractTests(unittest.TestCase):
                     anchor=rt.Anchor("tag_pattern", "awid-v"),
                     occupancy_unit=("ghcr.io/awebai/awid",),
                     required_current_outputs=rt.OCI_PLATFORMS,
+                    promises_latest=True,
                 ),
                 rt.Artifact(
                     "aw-cli",
@@ -256,6 +257,7 @@ class FixedContractTests(unittest.TestCase):
                     anchor=rt.Anchor("tag_pattern", "a2a-gw-v"),
                     occupancy_unit=("ghcr.io/awebai/a2a-gateway",),
                     required_current_outputs=rt.OCI_PLATFORMS,
+                    promises_latest=True,
                 ),
                 rt.Artifact(
                     "awid-site",
