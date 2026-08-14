@@ -453,16 +453,71 @@ def _validate_bool(value: object, name: str) -> bool:
     return value
 
 
+_DISPOSITIONS = ("moving", "unmoved", "moving-with-recovery")
+_ANCHOR_KINDS = ("tag", "oci-revision-label")
+
+
+@dataclasses.dataclass(frozen=True)
+class PreviousCompleteAnchor:
+    """The prior complete anchored version and its source identity - the
+    card-time fact continuation cannot re-derive (aben design section 7).
+    An exact tagged variant: kind is "tag" or "oci-revision-label"."""
+
+    version: str
+    kind: str
+    source_identity: str
+
+    def __post_init__(self) -> None:
+        validate_version(self.version, "previous complete anchor version")
+        if self.kind not in _ANCHOR_KINDS:
+            raise ValidationError(
+                f"previous complete anchor kind must be one of {_ANCHOR_KINDS}"
+            )
+        validate_sha(self.source_identity, "previous complete anchor identity")
+
+
 @dataclasses.dataclass(frozen=True)
 class ArtifactSelection:
     name: str
     version: str
     moves: bool
+    # aben design section 7: the disposition enum strictly extends moves,
+    # and the anchor is REQUIRED for unmoved and moving-with-recovery
+    # rows, FORBIDDEN for moving rows. disposition defaults from moves so
+    # existing moving constructors stay valid; unmoved rows must supply
+    # their anchor from card generation.
+    disposition: str | None = None
+    previous_complete_anchor: PreviousCompleteAnchor | None = None
 
     def __post_init__(self) -> None:
         validate_line(self.name, "artifact name")
         validate_version(self.version, self.name)
         _validate_bool(self.moves, f"{self.name} moves")
+        if self.disposition is None:
+            object.__setattr__(
+                self, "disposition", "moving" if self.moves else "unmoved"
+            )
+        if self.disposition not in _DISPOSITIONS:
+            raise ValidationError(
+                f"{self.name} disposition must be one of {_DISPOSITIONS}"
+            )
+        expected_moves = self.disposition != "unmoved"
+        if self.moves != expected_moves:
+            raise ValidationError(
+                f"{self.name}: moves={self.moves} contradicts disposition "
+                f"{self.disposition}"
+            )
+        needs_anchor = self.disposition in ("unmoved", "moving-with-recovery")
+        if needs_anchor and self.previous_complete_anchor is None:
+            raise ValidationError(
+                f"{self.name}: disposition {self.disposition} requires "
+                "previous_complete_anchor"
+            )
+        if not needs_anchor and self.previous_complete_anchor is not None:
+            raise ValidationError(
+                f"{self.name}: disposition moving forbids "
+                "previous_complete_anchor"
+            )
 
 
 @dataclasses.dataclass(frozen=True)
