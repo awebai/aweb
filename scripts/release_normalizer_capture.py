@@ -27,11 +27,11 @@ def _git(repo: Path, *args: str) -> str:
 
 
 def discover_anchor_tags(repo: Path, prefix: str) -> dict[str, str]:
-    """All grammar-conforming anchor tags on origin, peeled to commits.
+    """All version-namespace anchor tags on origin, peeled to commits.
 
-    Non-grammar candidates under the prefix are excluded (logged by the
-    caller); the version-namespace ambiguity stop belongs to the
-    reconciler, which sees the raw listing when it needs it.
+    Near-matching non-conformers under the prefix are kept for the
+    reconciler's malformed-version-candidate stop; names outside the
+    version namespace are excluded.
     """
 
     lines = _git(repo, "ls-remote", "origin", f"refs/tags/{prefix}*").splitlines()
@@ -47,7 +47,9 @@ def discover_anchor_tags(repo: Path, prefix: str) -> dict[str, str]:
     tags: dict[str, str] = {}
     for name, sha in direct.items():
         version_text = name.removeprefix(prefix)
-        if parse_version(version_text) is None:
+        if parse_version(version_text) is None and not _NEAR_VERSION.match(
+            version_text
+        ):
             continue
         tags[version_text] = peeled.get(name, sha)
     return tags
@@ -84,6 +86,14 @@ class DiscoveryUnavailable(Exception):
     """The listing read failed; unavailability is never absence."""
 
 
+class RevisionLabelAbsent(DiscoveryUnavailable):
+    """The image exists but its config carries no revision label. For
+    the anchor-assertion path this is unavailability like any other
+    (hence the subclass); discovery-capture alone catches it narrowly,
+    because there an identityless image is a legitimate observation for
+    the reconciler to judge."""
+
+
 class DiscoveryBoundExceeded(Exception):
     """History exceeds the supported discovery bound; truncation is not
     weather, so this is its own stop, distinct from unavailable."""
@@ -109,26 +119,36 @@ def _get_json(url: str, *, timeout: float, headers: dict[str, str] | None = None
         raise DiscoveryUnavailable(f"{url}: {error}") from error
 
 
-def _grammar_versions(candidates) -> set[str]:
-    return {text for text in candidates if parse_version(text) is not None}
+_NEAR_VERSION = re.compile(r"^v?\d")
+
+
+def _version_namespace_candidates(candidates) -> set[str]:
+    """Every candidate that lives in the version namespace: grammar
+    conformers occupy, and near-matching non-conformers (digit-led, like
+    1.2 or 0.7.15-rc1) are KEPT so the reconciler can issue the named
+    malformed-version-candidate stop - a silent filter here would decide
+    the design's stop out of existence. Non-namespace names (latest,
+    sha-*, branch tags) never occupy and are dropped."""
+
+    return {text for text in candidates if _NEAR_VERSION.match(text)}
 
 
 def discover_pypi_versions(
     package: str, *, base: str = "https://pypi.org", timeout: float
 ) -> set[str]:
-    """Every grammar-conforming released version, yanked included (a
+    """Every version-namespace released version, yanked included (a
     yanked version is a burned number)."""
 
     document, _ = _get_json(f"{base}/pypi/{package}/json", timeout=timeout)
     if document is None:
         return set()
-    return _grammar_versions(document.get("releases", {}))
+    return _version_namespace_candidates(document.get("releases", {}))
 
 
 def discover_npm_versions(
     package: str, *, base: str = "https://registry.npmjs.org", timeout: float
 ) -> set[str]:
-    """Every grammar-conforming version, deprecated included."""
+    """Every version-namespace version, deprecated included."""
 
     import urllib.parse
 
@@ -136,13 +156,13 @@ def discover_npm_versions(
     document, _ = _get_json(f"{base}/{quoted}", timeout=timeout)
     if document is None:
         return set()
-    return _grammar_versions(document.get("versions", {}))
+    return _version_namespace_candidates(document.get("versions", {}))
 
 
 def discover_ghcr_versions(
     image: str, *, base: str = "https://ghcr.io", timeout: float, token: str
 ) -> set[str]:
-    """Grammar-conforming tags from the v2 tags list; Link-header
+    """Version-namespace tags from the v2 tags list; Link-header
     pagination traversed to a proven end or the product bound."""
 
     import re as _re
@@ -154,7 +174,7 @@ def discover_ghcr_versions(
         document, link = _get_json(url, timeout=timeout, headers=headers)
         if document is None:
             return versions
-        versions |= _grammar_versions(document.get("tags") or [])
+        versions |= _version_namespace_candidates(document.get("tags") or [])
         match = _re.search(r"<([^>]+)>;\s*rel=\"next\"", link)
         if match is None:
             return versions
@@ -173,7 +193,7 @@ def discover_github_release_versions(
     token: str,
     tag_prefix: str = "v",
 ) -> set[str]:
-    """Grammar-conforming release tags, drafts and prereleases included
+    """Version-namespace release tags, drafts and prereleases included
     (both occupy), paginated to a proven end or the bound."""
 
     headers = {"Authorization": f"Bearer {token}"} if token else {}
@@ -188,7 +208,7 @@ def discover_github_release_versions(
         for release in document:
             tag = release.get("tag_name", "")
             text = tag.removeprefix(tag_prefix)
-            if parse_version(text) is not None:
+            if _NEAR_VERSION.match(text):
                 versions.add(text)
         match = _re.search(r"<([^>]+)>;\s*rel=\"next\"", link)
         if match is None:
@@ -244,13 +264,22 @@ def assemble_captured_world(
     artifacts: dict[str, CapturedArtifact] = {}
     for spec in specs:
         repo = repo_roots[spec.repo_key]
+        members = [
+            UnitMember(name=target, occupied=dict(discover_target(target)))
+            for target in spec.unit_targets
+        ]
         if spec.anchor_kind == "tag_pattern":
             anchors = discover_anchor_tags(repo, spec.anchor_value)
         else:
-            # oci_revision_label anchors are registry-side facts; the
-            # discoverer supplies them per target and the repository
-            # contributes no tag history.
-            anchors = {}
+            # oci_revision_label anchors are registry-side facts: every
+            # identityful version the primary target serves IS an anchor
+            # (the revision label names the source commit); the
+            # repository contributes no tag history.
+            anchors = {
+                version: identity
+                for version, identity in members[0].occupied.items()
+                if identity is not None
+            }
         if anchors:
             from release_normalizer import parse_version as _parse
 
@@ -267,10 +296,6 @@ def assemble_captured_world(
             )
         else:
             changed = True
-        members = [
-            UnitMember(name=target, occupied=dict(discover_target(target)))
-            for target in spec.unit_targets
-        ]
         artifacts[spec.name] = CapturedArtifact(
             manifest_version=manifest_version(repo / spec.manifest_path),
             content_changed=changed,
@@ -402,7 +427,7 @@ def read_oci_revision(
     labels = ((config.get("config") or {}).get("Labels")) or {}
     revision = labels.get("org.opencontainers.image.revision")
     if not revision:
-        raise DiscoveryUnavailable(
+        raise RevisionLabelAbsent(
             f"{image}:{version}: config carries no "
             "org.opencontainers.image.revision label - anchorless image"
         )
