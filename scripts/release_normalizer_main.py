@@ -106,6 +106,50 @@ def route_discovery(
     raise ValueError(f"no discoverer routes target {target!r}")
 
 
+def _git(root: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def worktree_stops(repo_roots: dict[str, Path]) -> list[rn.Stop]:
+    """The normalizer's inputs are exact main SHAs from clean checkouts:
+    a dirty tree or an origin main that moved past the checkout is a
+    named stop before any capture (design section 6)."""
+
+    stops: list[rn.Stop] = []
+    for key, root in sorted(repo_roots.items()):
+        if _git(root, "status", "--porcelain").strip():
+            stops.append(rn.Stop("dirty-checkout", key))
+            continue
+        head = _git(root, "rev-parse", "HEAD").strip()
+        listing = _git(root, "ls-remote", "origin", "refs/heads/main").split()
+        remote_main = listing[0] if listing else ""
+        if remote_main and remote_main != head:
+            stops.append(rn.Stop("main-moved", key))
+    return stops
+
+
+def reobserve_result(result: rn.NormalizerResult, specs, discover) -> list[rn.Stop]:
+    """The exit re-observation: every moving artifact's intended version
+    must still be free on EVERY declared unit target - a composite
+    occupied mid-run on a secondary member is the same race with the
+    same name."""
+
+    stops: list[rn.Stop] = []
+    for name, artifact in sorted(result.artifacts.items()):
+        if artifact.disposition != "moving" or artifact.version is None:
+            continue
+        spec = next(s for s in specs if s.name == name)
+        for target in spec.unit_targets:
+            if artifact.version in discover(target):
+                stops.append(rn.Stop("version-occupied", name))
+                break
+    return stops
+
+
 def main() -> int:
     default_aweb_root = Path(__file__).resolve().parents[1]
     aweb_root = Path(
@@ -145,27 +189,32 @@ def main() -> int:
             compatibility=compatibility,
         )
 
-    def reobserve(result: rn.NormalizerResult):
-        # The exit re-observation: every moving artifact's intended
-        # version must still be free on its primary target. World
-        # movement stops under its real name.
-        stops = []
-        for name, artifact in sorted(result.artifacts.items()):
-            if artifact.disposition != "moving" or artifact.version is None:
-                continue
-            spec = next(s for s in specs if s.name == name)
-            occupied = discover(spec.unit_targets[0])
-            if artifact.version in occupied:
-                stops.append(rn.Stop("version-occupied", name))
-        return stops
+    precondition_stops = worktree_stops(repo_roots)
+    if precondition_stops:
+        for stop in precondition_stops:
+            print(f"STOP {stop.code} ({stop.artifact})")
+        return 1
+
+    base_shas = {
+        key: _git(root, "rev-parse", "HEAD").strip()
+        for key, root in sorted(repo_roots.items())
+    }
 
     outcome = run.run_normalizer(
         capture=capture,
         manifest_paths=manifest_paths,
-        reobserve=reobserve,
+        reobserve=lambda result: reobserve_result(result, specs, discover),
         normalize=rn.normalize,
     )
     print(outcome.report)
+    if outcome.exit_code == run.PATCH_NEEDED:
+        # Transport contract: review of the patch needs nothing but this
+        # output - the exact bases the edits apply to, and the edits.
+        for key, root in sorted(repo_roots.items()):
+            print(f"base {key}={base_shas[key]}")
+            tree_diff = _git(root, "diff")
+            if tree_diff.strip():
+                print(tree_diff, end="")
     return outcome.exit_code
 
 

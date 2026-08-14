@@ -236,6 +236,76 @@ class CanonicalEntry(unittest.TestCase):
         finally:
             _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
 
+    def test_dirty_checkout_stops_by_name(self) -> None:
+        # A4: the normalizer's inputs are exact SHAs from CLEAN
+        # checkouts; a dirty tree is a named stop before any capture.
+        marker = self.aweb_root / "channel/package.json"
+        original = marker.read_text()
+        marker.write_text(original + "\n")
+        try:
+            completed = self.run_entry(self.world_at_rest())
+            self.assertEqual(
+                completed.returncode,
+                1,
+                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+            )
+            self.assertIn("dirty-checkout", completed.stdout)
+            self.assertIn("aweb", completed.stdout)
+        finally:
+            marker.write_text(original)
+
+    def test_moved_main_stops_by_name(self) -> None:
+        # A4: origin's main advancing past the checkout is mains
+        # movement - a named stop, not a world computed from stale
+        # inputs.
+        with tempfile.TemporaryDirectory() as ahead_dir:
+            ahead = Path(ahead_dir) / "ahead"
+            subprocess.run(
+                ["git", "clone", "-q", str(self.ac_root), str(ahead)],
+                check=True,
+                capture_output=True,
+            )
+            _git(ahead, "config", "user.email", "test@aweb.ai")
+            _git(ahead, "config", "user.name", "canonical-entry test")
+            (ahead / "backend/note.txt").write_text("moved\n")
+            _git(ahead, "add", "-A")
+            _git(ahead, "commit", "-q", "-m", "main moves under the run")
+            _git(self.ac_root, "remote", "set-url", "origin", str(ahead))
+            try:
+                completed = self.run_entry(self.world_at_rest())
+                self.assertEqual(
+                    completed.returncode,
+                    1,
+                    f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+                )
+                self.assertIn("main-moved", completed.stdout)
+                self.assertIn("ac", completed.stdout)
+            finally:
+                _git(self.ac_root, "remote", "set-url", "origin", str(self.ac_root))
+
+    def test_patch_output_prints_base_shas_and_the_exact_diff(self) -> None:
+        # A4 transport contract: PATCH NEEDED prints the base SHAs of
+        # both repositories and the exact changed-file diff, so review
+        # of the patch needs nothing but this output.
+        manifest = self.aweb_root / "awid/pyproject.toml"
+        manifest.write_text(manifest.read_text().replace("dep>=1", "dep>=2"))
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "dependency floor moves")
+        sha = _git(self.aweb_root, "rev-parse", "HEAD").strip()
+        try:
+            completed = self.run_entry(self.world_at_rest())
+            self.assertEqual(
+                completed.returncode,
+                10,
+                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+            )
+            self.assertIn(f"base aweb={sha}", completed.stdout)
+            self.assertIn(f"base ac={self.ac_sha}", completed.stdout)
+            self.assertIn('-version = "0.5.16"', completed.stdout)
+            self.assertIn('+version = "0.5.17"', completed.stdout)
+        finally:
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
     def test_identityless_image_tag_is_captured_not_crashed(self) -> None:
         # A grammar-conforming tag whose config carries no revision label
         # is identityless occupancy - a legitimate observation the

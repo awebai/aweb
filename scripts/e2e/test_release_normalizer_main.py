@@ -56,6 +56,36 @@ class Routing(unittest.TestCase):
                 bases=main.registry_bases(),
             )
 
+    def test_exit_reobservation_covers_every_declared_target(self) -> None:
+        # A4: the exit re-observation must ask about EVERY unit target,
+        # not the primary alone - a composite whose intent got occupied
+        # on a secondary member mid-run is the same race with the same
+        # name.
+        specs = cap.derive_capture_specs(rt.ARTIFACTS)
+        skills_spec = next(s for s in specs if s.name == "skills")
+        secondary = skills_spec.unit_targets[1]
+        queried: list[str] = []
+
+        def discover(target: str):
+            queried.append(target)
+            return {"0.2.14": None} if target == secondary else {}
+
+        rn = __import__("release_normalizer")
+        result = rn.NormalizerResult(
+            outcome="patch-needed",
+            artifacts={
+                "skills": rn.ArtifactResult(
+                    disposition="moving", version="0.2.14"
+                )
+            },
+            patches=(("skills", "0.2.13", "0.2.14"),),
+            stops=(),
+        )
+        stops = main.reobserve_result(result, specs, discover)
+        self.assertEqual([(s.code, s.artifact) for s in stops],
+                         [("version-occupied", "skills")])
+        self.assertEqual(set(queried), set(skills_spec.unit_targets))
+
     def test_equality_groups_are_the_canonical_pairs(self) -> None:
         self.assertEqual(
             main.EQUALITY_GROUPS,
