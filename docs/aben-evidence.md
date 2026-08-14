@@ -49,18 +49,43 @@ ledger below them. AC quiescence stated for the audit pin.
   canonical record (reviewer-found, alice-carve-reviewed).
 
 ## 3. The design-conformance audit - STAMP-AT-SEND
-release-review's clause-by-clause audit (criteria: docs/aben-design.md,
-which they did not author) runs over the pinned pair before this packet
-is sent; its findings and closures are listed here with the pin SHAs
-and the auditor's own re-verification at deliverable time.
+release-review's audit (criteria: docs/aben-design.md, which they did
+not author) runs over the pinned pair before this packet is sent; its
+findings and closures are listed here with the pin SHAs and the
+auditor's own re-verification at deliverable time.
+
+**COVERAGE, stated so "clause-by-clause" is not read as complete.**
+Parts 1 and 2 walked design **section 1 and the migration lists**.
+Sections **2, 3 and 5-10 were NOT walked.** A reader should treat the
+unwalked sections as unaudited rather than as audited-and-clean; the
+audit's findings (F1/F2/F3) come from the covered part only. Recorded
+in the auditor's own terms at their request.
 
 ## 4. release.md conformance ledger
-One touch in the entire epic: the four-line override-mechanics note in
-step 1 (micro-round `8519b593`, release-review ACK; alice's scope
-ruling: conformance edits bounded - the document must stay TRUE of
-mechanics the epic changed; no prohibition or operator-surface change,
-and none made). Every other clause byte-unchanged - STAMP-AT-SEND with
-the empty diff over the full range.
+
+TWO touches in the epic, not one. This section said one until
+release-review set-compared it against a baseline they had pinned by
+blob digest before this packet existed; an undercounting ledger is
+exactly what alice's ruling was written to prevent, so the correction
+is recorded rather than quietly applied.
+
+| Touch | Landed | What | Review record |
+|---|---|---|---|
+| Override-mechanics note in step 1, four lines | `e8b7478c` (micro-round `8519b593`) | the document stays true of mechanics this epic changed | release-review ACK of the `8519b593` round |
+| `:197` marketplace-adapter correction + the `release-awid-site` line | `384865f6` | same bound: mechanics the rulings round changed | release-review ACK of the `1dc2aae9` round |
+
+Both sit inside alice's scope ruling - each describes mechanics its own
+round changed, neither touches a prohibition or the operator surface -
+and both were ACKed. Nothing is wrong with either edit; the ledger was
+wrong.
+
+Measured over the two-touch range: `docs/release.md` blob `33867ef9`
+at plan-critic's `cadfb4eb` baseline, `7d0e1ccf` at the landed head,
+cumulative +9/-3 (not the +3/-1 of the single touch). The
+"every other clause byte-unchanged" claim is STAMP-AT-SEND over THAT
+range - computed over the one-touch range it would have omitted a real
+edit and the empty-diff check would have been measuring the wrong
+thing.
 
 ## 5. Final focused record - STAMP-AT-SEND
 One warning-free run over the final landed heads, saved with SHA-256,
@@ -121,6 +146,84 @@ remote, is whether a COMPETING spelling exists: 15 `skills-v` tags and
 no other skills tag form anywhere. Had two spellings existed, encoding
 the real-but-wrong one would have looked identical to encoding truth,
 and "the tag exists" could not have told them apart.
+
+**The phase's cost, measured with both remote primitives
+instrumented.** The first successful run took a quarter of an hour,
+which is a broken release system rather than a slow one. Three
+findings, in the order they were made, because the ORDER is the
+lesson:
+
+| | phase | remote calls | ghcr.io |
+|---|---|---|---|
+| first successful run | 695.5s | 1672 | 1601 |
+| identity resolved only where compared | 60.7s | 111 | 41 |
+| one bulk ref read per remote | 37.0s | 97 | 41 |
+
+The first directive taken was to replace per-prefix ref queries with
+one bulk read, reasoned from a correct measurement (a round trip costs
+the same for 1 ref or 516) and a wrong model of where the volume was.
+The profile said that change addressed 21 of 695 seconds - THREE
+PERCENT - while 94% sat in per-tag OCI identity walks. It was done
+second, and by then it was 37% of what remained. A fix can be correct
+and still be the wrong thing to do first, and measuring before
+choosing is the only way to tell which.
+
+The bulk read is kept for a reason that is not speed: N sequential
+reads are not a snapshot. A tag created midway is present for the
+later queries and absent for the earlier ones, and the double-compute
+check cannot see it, because both computations read the same
+already-inconsistent capture.
+
+**One check was deliberately NOT optimised away.** For awid-image and
+a2a-gateway-image the anchor is a git tag and the target is a
+registry, and those are two different facts: what the tag points at,
+and what the published image says it was built from. Resolving the
+second from the first would have made them equal by construction -
+demonstrated against the engine: with a disagreeing label, today
+conflicting-partial, under that change reconciled. Duplicate
+derivation is two computations of ONE fact that must agree; this is
+two observations of two facts compared BECAUSE they can disagree.
+Cost of keeping it, measured: 12 of 97 calls, 3.7 of 37.0 seconds.
+ac-image is the one artifact with no such cross-check, because
+nothing independent exists to compare its label against.
+
+**The AC tag backfill, done before the reader that produced it was
+deleted** (plan-critic's boundary 1). Under Juan's ruling a release's
+identity is the tag in its own repository, so ac-image's
+revision-label path is removed; v0.7.13 and v0.7.14 had no AC tag, and
+the image label was the only surviving record of what they were built
+from. Read with the reader that is now deleted:
+
+| AC tag | commit | source of the identity |
+|---|---|---|
+| `v0.7.13` | `6c1bbe5c1f6fbb17318186216c9d00ab8f523fc5` | `ghcr.io/awebai/ac:0.7.13` revision label |
+| `v0.7.14` | `efd19f41bf6699264e6a7813df19c4b0070eb4a3` | `ghcr.io/awebai/ac:0.7.14` revision label, independently corroborated by the live `/health` endpoint |
+
+THE CONTROL THAT MAKES THE BACKFILL TRUSTWORTHY, run before creating
+either tag: `v0.7.12` already had both a tag and an image, and they
+agree - the tag peels to `559b5f5c...` and the image label reads
+`559b5f5c...`. So the label-equals-tag convention is demonstrated on a
+case where both facts existed, rather than assumed on the two cases
+where only one did.
+
+Both tags are ANNOTATED, matching all 13 existing AC release tags; the
+first attempt created them lightweight and was corrected before anyone
+consumed them, leaving 15 of 15 uniform. The removal path was proven
+before any real tag was created - a throwaway tag was pushed to
+`awebai/ac`, observed on the remote, deleted, and confirmed gone -
+because a cleanup obligation that has not been tested is not a
+constraint.
+
+**The image-to-source correspondence this removes, and where it now
+lives.** Reconciliation no longer compares the published image's
+revision label against its source tag. That property is enforced at
+PUBLICATION instead - AC's release-image verification proves a built
+image carries a label equal to its build SHA, with the publish-time
+byte comparison as the exact-adopt gate. Durable status now proves two
+required facts, the immutable registry object and the exact AC source
+tag, and no longer proves the first was built from the second. Stated
+that way deliberately, because the alternative is status language that
+implies a check nobody runs any more.
 
 **The re-run** - STAMP-AT-SEND: the classification the same launcher
 produces over the pair refreshed to `38a3b871` / AC `22ab8bbe`, with the

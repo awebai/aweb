@@ -378,3 +378,78 @@ class IdentityResolutionBound(unittest.TestCase):
         captured = world.artifacts["ac-image"]
         self.assertEqual(captured.members[0].occupied["0.9.9"], self.sha)
         self.assertIn("0.9.9", captured.anchor_versions)
+
+
+class RefSnapshotBound(unittest.TestCase):
+    """One bulk ref read per remote per run.
+
+    A git ls-remote round trip costs the same whether it returns one
+    ref or five hundred - measured on the real remote: 516 refs in
+    1.42s, a single ref in 1.27s. So one query per tag prefix is N
+    round trips for a fact one round trip answers.
+
+    The stronger reason is CONSISTENCY, and it belongs beside the
+    capture-once rule: sequential reads observe a moving target. A tag
+    created midway through is present for the later queries and absent
+    for the earlier ones, and double-computing cannot detect it because
+    both computations read the same already-inconsistent capture. One
+    bulk read makes the snapshot actually a snapshot.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        root = Path(self._tmp.name)
+        self.remote = root / "remote.git"
+        git("init", "-q", "--bare", str(self.remote), cwd=root)
+        self.work = root / "work"
+        git("init", "-q", str(self.work), cwd=root)
+        (self.work / "f.txt").write_text("x\n")
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "one", cwd=self.work)
+        git("remote", "add", "origin", str(self.remote), cwd=self.work)
+        git("push", "-q", "origin", "HEAD:main", cwd=self.work)
+        self.prefixes = ("alpha-v", "beta-v", "gamma-v")
+        for prefix in self.prefixes:
+            for patch in range(4):
+                git("tag", f"{prefix}1.0.{patch}", cwd=self.work)
+        git("push", "-q", "origin", "--tags", cwd=self.work)
+        self.sha = git("rev-parse", "HEAD", cwd=self.work)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_one_bulk_ref_read_answers_every_prefix(self) -> None:
+        calls: list[tuple[str, ...]] = []
+        real_git = cap._git
+
+        def counting_git(repo, *args):
+            calls.append(args)
+            return real_git(repo, *args)
+
+        try:
+            cap._git = counting_git
+            snapshot = cap.remote_ref_snapshot(self.work)
+            for prefix in self.prefixes:
+                tags = cap.anchor_tags_from(snapshot, prefix)
+                self.assertEqual(
+                    set(tags), {"1.0.0", "1.0.1", "1.0.2", "1.0.3"}, prefix
+                )
+                self.assertEqual(tags["1.0.3"], self.sha)
+        finally:
+            cap._git = real_git
+
+        remote_reads = [a for a in calls if a and a[0] == "ls-remote"]
+        self.assertEqual(
+            len(remote_reads), 1,
+            f"{len(remote_reads)} remote reads for {len(self.prefixes)} prefixes",
+        )
+
+    def test_snapshot_answers_the_same_tags_as_a_direct_read(self) -> None:
+        # The control: the snapshot must not be cheaper by being wrong.
+        snapshot = cap.remote_ref_snapshot(self.work)
+        for prefix in self.prefixes:
+            self.assertEqual(
+                cap.anchor_tags_from(snapshot, prefix),
+                cap.discover_anchor_tags(self.work, prefix),
+                prefix,
+            )

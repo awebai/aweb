@@ -26,6 +26,58 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout
 
 
+def remote_ref_snapshot(repo: Path) -> dict[str, str]:
+    """Every ref on origin, in ONE round trip.
+
+    A round trip costs the same whether it returns one ref or five
+    hundred - measured on the real remote: 516 refs in 1.42s against a
+    single ref in 1.27s - so one query per tag prefix is N round trips
+    for a fact one answers.
+
+    The stronger reason belongs beside the capture-once rule: N
+    sequential reads observe a moving target. A tag created midway is
+    present for the later queries and absent for the earlier ones, and
+    the double-compute check cannot see it, because both computations
+    read the same already-inconsistent capture. One bulk read is what
+    makes the snapshot a snapshot.
+    """
+
+    refs: dict[str, str] = {}
+    for line in _git(repo, "ls-remote", "origin").splitlines():
+        if not line.strip():
+            continue
+        sha, ref = line.split(None, 1)
+        refs[ref.strip()] = sha
+    return refs
+
+
+def anchor_tags_from(refs: dict[str, str], prefix: str) -> dict[str, str]:
+    """The version-namespace anchor tags under a prefix, peeled, read
+    out of a ref snapshot instead of off the network."""
+
+    direct: dict[str, str] = {}
+    peeled: dict[str, str] = {}
+    for ref, sha in refs.items():
+        name = ref.removeprefix("refs/tags/")
+        if name == ref:
+            continue
+        if name.endswith("^{}"):
+            peeled[name[:-3]] = sha
+        else:
+            direct[name] = sha
+    tags: dict[str, str] = {}
+    for name, sha in direct.items():
+        if not name.startswith(prefix):
+            continue
+        version_text = name.removeprefix(prefix)
+        if parse_version(version_text) is None and not _NEAR_VERSION.match(
+            version_text
+        ):
+            continue
+        tags[version_text] = peeled.get(name, sha)
+    return tags
+
+
 def discover_anchor_tags(repo: Path, prefix: str) -> dict[str, str]:
     """All version-namespace anchor tags on origin, peeled to commits.
 
@@ -435,6 +487,10 @@ def assemble_captured_world(
     """
 
     artifacts: dict[str, CapturedArtifact] = {}
+    # ONE bulk ref read per remote, shared by every artifact anchored
+    # in that repository - so the anchors are one snapshot rather than
+    # one per prefix taken at different moments.
+    ref_snapshots: dict[str, dict[str, str]] = {}
     for spec in specs:
         repo = repo_roots[spec.repo_key]
         members = [
@@ -442,7 +498,11 @@ def assemble_captured_world(
             for target in spec.unit_targets
         ]
         if spec.anchor_kind == "tag_pattern":
-            anchors = discover_anchor_tags(repo, spec.anchor_value)
+            if spec.repo_key not in ref_snapshots:
+                ref_snapshots[spec.repo_key] = remote_ref_snapshot(repo)
+            anchors = anchor_tags_from(
+                ref_snapshots[spec.repo_key], spec.anchor_value
+            )
             _resolve_candidate_identity(members, resolve_identity, anchors)
         else:
             # oci_revision_label anchors are registry-side facts: every

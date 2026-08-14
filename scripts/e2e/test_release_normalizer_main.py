@@ -3,6 +3,7 @@ spelling routes to a discoverer, and unknown spellings raise."""
 
 from __future__ import annotations
 
+import os
 import sys
 import unittest
 from unittest import mock
@@ -167,13 +168,64 @@ class Routing(unittest.TestCase):
         )
         self.assertEqual([(s.code, s.artifact) for s in stops], [])
 
+    def test_offline_is_scoped_to_the_invariant_that_resolves(self) -> None:
+        """UV_OFFLINE belongs to the check that RESOLVES.
+
+        check-python-locks.sh runs `uv lock` and `uv lock --check`;
+        proving those succeed offline is the point of the same-cycle
+        lock property. The migration invariant runs `uv run --frozen`,
+        which cannot resolve at all - offline there only blocks
+        INSTALL, so the check passes or fails on whether the local uv
+        cache happens to hold a dependency. That fired in the live run:
+        the phase stopped invariant-failed after the lock regeneration
+        pulled in a package the cache lacked, and it passed on the next
+        run only because a diagnostic had warmed the cache."""
+
+        commands = main.invariant_commands(Path("/x"))
+        offline_by_label = {c.label: c.offline for c in commands}
+        self.assertTrue(offline_by_label["python-locks"])
+        self.assertFalse(offline_by_label["migration-chain"])
+        for command in commands:
+            if command.offline:
+                continue
+            with self.subTest(label=command.label):
+                # A command exempted from offline must be one that
+                # cannot resolve; --frozen is what guarantees that.
+                if any(part == "uv" for part in command.argv):
+                    self.assertIn("--frozen", command.argv, command.label)
+
+    def test_a_failed_invariant_carries_the_reason_it_captured(self) -> None:
+        """The phase captures the invariant's output and then threw it
+        away, returning a bare label. Recovering the reason took a
+        manual re-run of a command the phase had already run - and an
+        operator has no way to know it is recoverable at all."""
+
+        import json
+
+        override = json.dumps([
+            {
+                "label": "always-fails",
+                "argv": ["bash", "-c", "echo NEEDLE-on-stdout; exit 3"],
+                "cwd": ".",
+            }
+        ])
+        with mock.patch.dict(
+            os.environ, {"AWEB_NORMALIZER_INVARIANT_COMMANDS": override}
+        ):
+            stop = main.run_invariants(Path("."))
+        self.assertIsNotNone(stop)
+        assert stop is not None
+        self.assertEqual(stop.code, "invariant-failed")
+        self.assertEqual(stop.artifact, "always-fails")
+        self.assertIn("NEEDLE-on-stdout", stop.detail or "")
+
     def test_default_invariant_commands_are_the_designed_three(self) -> None:
         # A4: the env override exists for hermetic entry tests; the
         # production defaults are the design's exact selectors, pinned
         # here so the override can never quietly become the real path.
         root = Path("/x")
         commands = main.invariant_commands(root)
-        by_label = {label: (argv, cwd) for label, argv, cwd in commands}
+        by_label = {c.label: (c.argv, c.cwd) for c in commands}
         self.assertEqual(
             set(by_label), {"python-locks", "migration-chain", "suite-map"}
         )

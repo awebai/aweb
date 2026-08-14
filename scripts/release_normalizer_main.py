@@ -11,6 +11,7 @@ condition stops by name. Exit codes: 0 normal form, 10 patch needed,
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 from pathlib import Path
@@ -217,9 +218,25 @@ def reobserve_result(
     return stops
 
 
+@dataclasses.dataclass(frozen=True)
+class InvariantCommand:
+    """One invariant check. `offline` marks the ones that RESOLVE:
+    UV_OFFLINE proves check-python-locks.sh re-derives from cache
+    rather than the live index, which is the point of that check. A
+    --frozen command cannot resolve at all, so forcing it offline only
+    blocks INSTALL and makes the result depend on whether the local uv
+    cache happens to hold a dependency - a flake that fires mid-release
+    and reads as a code problem."""
+
+    label: str
+    argv: tuple[str, ...]
+    cwd: Path
+    offline: bool = False
+
+
 def invariant_commands(
     aweb_root: Path,
-) -> tuple[tuple[str, tuple[str, ...], Path], ...]:
+) -> tuple[InvariantCommand, ...]:
     """The read-only invariant pass (design section 6): the same-cycle
     lock property's check half, the canonical migration chain, and
     suite-map exactness, each by its exact selector. The env override
@@ -231,16 +248,22 @@ def invariant_commands(
         import json
 
         return tuple(
-            (
-                entry["label"],
-                tuple(entry["argv"]),
-                aweb_root / entry.get("cwd", "."),
+            InvariantCommand(
+                label=entry["label"],
+                argv=tuple(entry["argv"]),
+                cwd=aweb_root / entry.get("cwd", "."),
+                offline=bool(entry.get("offline", False)),
             )
             for entry in json.loads(override)
         )
     return (
-        ("python-locks", ("bash", "scripts/check-python-locks.sh"), aweb_root),
-        (
+        InvariantCommand(
+            "python-locks",
+            ("bash", "scripts/check-python-locks.sh"),
+            aweb_root,
+            offline=True,
+        ),
+        InvariantCommand(
             "migration-chain",
             (
                 "uv",
@@ -253,7 +276,7 @@ def invariant_commands(
             ),
             aweb_root / "server",
         ),
-        (
+        InvariantCommand(
             "suite-map",
             (
                 sys.executable,
@@ -271,18 +294,31 @@ def invariant_commands(
 def run_invariants(aweb_root: Path) -> rn.Stop | None:
     import subprocess
 
-    env = {**os.environ, "UV_OFFLINE": "1"}
-    for label, argv, cwd in invariant_commands(aweb_root):
+    for command in invariant_commands(aweb_root):
+        env = {**os.environ}
+        if command.offline:
+            env["UV_OFFLINE"] = "1"
         try:
             completed = subprocess.run(
-                argv, cwd=cwd, env=env, capture_output=True, timeout=120
+                command.argv,
+                cwd=command.cwd,
+                env=env,
+                capture_output=True,
+                timeout=120,
             )
         except subprocess.TimeoutExpired:
             # A hung invariant with captured output is a silent hang at
             # the first phase; the bound turns it into a named stop.
-            return rn.Stop("invariant-timeout", label)
+            return rn.Stop("invariant-timeout", command.label)
         if completed.returncode != 0:
-            return rn.Stop("invariant-failed", label)
+            # The refusal carries what it already knows. Returning the
+            # bare label threw away output the phase had captured, and
+            # recovering it meant re-running the command by hand -
+            # which an operator has no reason to think is possible.
+            output = (completed.stdout or b"") + (completed.stderr or b"")
+            detail = output.decode(errors="replace").strip()
+            tail = "\n".join(detail.splitlines()[-20:])
+            return rn.Stop("invariant-failed", command.label, detail=tail)
     return None
 
 
