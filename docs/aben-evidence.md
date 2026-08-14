@@ -48,7 +48,8 @@ main-reachable commits re-read from git at assembly time.
 ### B5 false publication status
 - Test nodes: `test_release_status_report.B5.test_b5_fixture_renders_the_historically_true_world`; the two-failure injection `StopReport.test_two_injected_failures_both_visible` (+ reporter-bug case)
 - Fixture: `b5-false-publication-status.json` loaded VERBATIM in the shape committed to dev2 before authoring.
-- Green: the rendered table shows exactly THREE artifacts PRESENT (npm @awebai/aw 1.34.6, ghcr awid 0.5.16, ghcr a2a-gateway 1.27.2) and TWO ABSENT (pypi awid-service 0.5.16, pypi aweb 1.27.2); `done(rows)` is False. Rendered output included in section 3's saved record. The two-failure injection shows the original refusal primary, the probe failure as an UNAVAILABLE row, exit nonzero.
+- Green: the rendered table shows exactly THREE artifacts PRESENT (npm @awebai/aw 1.34.6, ghcr awid 0.5.16, ghcr a2a-gateway 1.27.2) and TWO ABSENT (pypi awid-service 0.5.16, pypi aweb 1.27.2); `done(rows)` is False.
+- RENDERED OUTPUT, produced by loading the fixture verbatim through `rows_from_recorded_observations` + `render()` outside any test harness: `agents/instances/release-dev/evidence/aben-b5-rendered-output.txt`, SHA-256 `d7cfbe5114c29ddf0fe021e57ea90cf88aad148019c1274b85b558fed23980c3` (fixture SHA-256 `ebda6ce80476aa8f29c842f0f7359a5079e0468ecf4d7aec2b92950c3c67bd66` recorded inside). The same file carries the two-failure injection through `stop_report_with_probes`: the injected refusal stays primary, the injected probe OSError becomes an UNAVAILABLE row, exit 1.
 
 ### Normalizer-drift named stop
 - Test nodes: seam half `test_release_normalizer_orchestration.test_nondeterministic_compute_is_the_drift_stop` (deliberately data-free — identical inputs are the point); data half `...NormalizerDriftRow.test_exit_reobservation_race_stops_by_its_real_name`
