@@ -59,8 +59,9 @@ def registry_half(name: str) -> dict:
 class B1NarrowCard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls._tmp = tempfile.TemporaryDirectory()
-        root = Path(cls._tmp.name)
+        # Probe before allocating: a SkipTest out of setUpClass skips
+        # tearDownClass with it, so a temporary directory created first
+        # leaks to interpreter exit and reports itself as a warning.
         ac_source = REPO_ROOT.parent / "ac-worktree"
         for repo, sha in ((REPO_ROOT, AWEB_B1_SHA), (ac_source, AC_B1_SHA)):
             probe = subprocess.run(
@@ -71,6 +72,8 @@ class B1NarrowCard(unittest.TestCase):
                 raise unittest.SkipTest(
                     f"{repo} lacks pinned commit {sha[:8]} - B1 needs the history"
                 )
+        cls._tmp = tempfile.TemporaryDirectory()
+        root = Path(cls._tmp.name)
         cls.aweb = historical_checkout(REPO_ROOT, AWEB_B1_SHA, root / "aweb")
         cls.ac = historical_checkout(ac_source, AC_B1_SHA, root / "ac")
 
@@ -149,10 +152,6 @@ class B1NarrowCard(unittest.TestCase):
             control.unlink()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 def load_world(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text())["artifacts"]
 
@@ -183,6 +182,12 @@ class B2StaleCliVersion(unittest.TestCase):
         recorded = artifacts["aw-cli"]
         reconciliation = reconcile_recorded(artifacts, "aw-cli", self.MANIFEST_INTENT)
         self.assertEqual(reconciliation.state, "reconciled")
+        if reconciliation.p is None:
+            # Reconciled at no version: the fixture records a world in
+            # which this artifact never shipped. tag-history derivation
+            # has nothing to count from, so say that rather than letting
+            # it surface as a TypeError inside the engine.
+            self.fail(f"{fixture_name} names no published predecessor to derive from")
         occupied = frozenset(
             v for m in recorded["members"] for v in m["occupied"]
         ) | set(recorded["anchor_versions"])
@@ -340,7 +345,8 @@ class NormalizerDriftRow(unittest.TestCase):
             def recapture():
                 import tomllib
 
-                version = tomllib.load(manifest.open("rb"))["project"]["version"]
+                with manifest.open("rb") as handle:
+                    version = tomllib.load(handle)["project"]["version"]
                 return world(capture_world_data, version, changed=True)
 
             outcome = run.run_normalizer(
@@ -352,3 +358,7 @@ class NormalizerDriftRow(unittest.TestCase):
             )
         self.assertEqual(outcome.exit_code, run.STOP)
         self.assertIn("version-occupied", outcome.report)
+
+
+if __name__ == "__main__":
+    unittest.main()
