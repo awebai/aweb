@@ -1,117 +1,112 @@
-# aben shipment-gate evidence
+# aben shipment-gate evidence, second submission
 
-Built to plan-critic's six-item packet specification (their mail
-af7e5b2b via alice). All aben code is LANDED; every range below names
-main-reachable commits re-read from git at assembly time.
+Built to plan-critic's re-entry protocol (their mails 95300228 verdict,
+de1e8dd9/48901647 alignment, and the protocol alice relayed): a fresh
+complete cumulative packet over the amended final heads, opening with
+the blocker-closure matrix. Sections marked STAMP-AT-LAND complete when
+the A9 code round lands; everything else is final. Every SHA is pasted
+from command output.
 
-## 1. Review ranges
+## 0. Blocker-closure matrix
 
-- **aweb**: the complete aben range is `69e2fd80..6f4a8bd0` on main —
-  pre-aben main to the landed R6 head
-  `6f4a8bd0d3c59db900f5ab581ef836116080f798`, 33 non-merge commits,
-  56 files changed, 6713 insertions / 73 deletions. Every commit in the
-  range belongs to a release-review-ACKed round listed in section 6.
-- **AC**: main head `35e204a5eefc0f4fd6c4354018104f7d98a1e580` = the
-  derive-script round `aa73f30a` (ACKed, alice integrated) + dev2's
-  stamper proof round `35e204a5` (ACKed in dev2's lane).
-- This document itself rides the branch after the R6 land as its own
-  docs-only round; it changes no code and section 3's record binds to
-  the landed code head, not to this file.
+Each of the seven verdict findings: the fix (landed main SHA), the
+real-entry regression test that reproduces the gate's probe, the red
+result recorded before the fix, and the enforcing source.
 
-## 2. Column B index — one row per control
+| # | Finding | Fix (aweb main) | Real-entry regression test | Recorded red | Enforcing source |
+|---|---------|-----------------|---------------------------|--------------|------------------|
+| 1a | OCI identity never captured; occupied-AC world cannot normalize | A1 `21e89fa6` | `test_release_normalizer_canonical_entry.CanonicalEntry.test_world_with_existing_ac_image_reaches_normal_form` (subprocess over OCI wire protocol) | `STOP anchorless-version (ac-image)` exit 1 where exit 0 was owed | `release_normalizer_main.route_discovery` GHCR branch; `assemble_captured_world` oci anchor derivation |
+| 1d | Silent malformed filter | A1 `21e89fa6` | `...test_malformed_near_version_candidate_stops_by_name` | clean pass where the named stop was owed | `_version_namespace_candidates` (capture) + reconciler stop |
+| 1b | Shared-manifest double apply crash | A2 `4fd621b0` | `...test_shared_manifest_pair_patches_once_and_converges` | `RuntimeError: expected exactly one 'version = "0.5.16"', found 0` | `release_normalizer_run` edits_by_path grouping + divergent-manifest-patch stop |
+| 1c | Apply covers only versions | A4 `13d7f6d9` | `...test_awid_move_cascades_floor_lock_and_server_by_policy`, `...test_failing_invariant_stops_by_name_after_the_patch`, `...test_patch_output_prints_base_shas_and_the_exact_diff`, `...test_dirty_checkout_stops_by_name`, `...test_moved_main_stops_by_name`; unit `test_release_normalizer_main.Routing.test_exit_reobservation_covers_every_declared_target` | one awid commit produced no floor/lock/server movement; no transport output; preconditions silent; primary-only reobservation | `release_normalizer.normalize` R1 closure; `release_normalizer_run` floor/lock apply; `release_normalizer_main.worktree_stops` / `run_invariants` / `reobserve_result` |
+| 2 | Prepare discards the projection; recovery cannot reach a card | A5 `322964cb` | `PrepareEntry.test_one_command_prepare_builds_the_card_from_the_projection`, `...test_patch_needed_ends_the_command_before_any_test` (the operator's subprocess); card bytes `test_release_prepare_projection` (5) | select_artifacts re-derived a weaker world; no moving-with-recovery construction path existed (select_artifacts DELETED) | `release_train.selections_from_projection`, `_main` prepare branch running `run_phase()` in-process |
+| 3 | Dependency-only changes invisible | A3 `857e9d9a` | `...test_dependency_only_manifest_change_moves_the_artifact` + 5 unit controls both kinds both directions | exit 0 "normal form" where the dep move was owed | `release_normalizer_capture.content_changed(masked=)`, `_mask_version_field` (structurally anchored per review) |
+| 4 | Wrong-source completion accepted | A6 `4ffa2ff5` | `SourceBinding` suite (7): wrong-source moving/recovery mutations, unproven, extra-artifact, patch-drift, card-SHA derivation | the gate's probe verbatim: fresh unmoved@V with arbitrary SHA returned no stops | `release_continue_check.verify_card_against_world(expected_sources=)`, `release_train.expected_completion_sources` |
+| 5 | Status not terminal authority | A7 `dc067ec6` | `test_release_status_terminal` (12: github rows, observed source tags, bearer-required registry, assembly completeness, B5 real-path re-drive w/ false-state mutation); train pins `test_terminal_gate_refusal_keeps_the_card_and_names_the_rows`, `test_default_terminal_gate_is_the_real_status_sweep`, `test_continue_failure_path_preserves_the_refusal_through_the_entry` | organic red: the terminal gate refused DONE against the existing fixtures with the full 46-row inventory rendered; `del token`; unrouted github targets | `release_status_gates.rows_for_artifacts` (complete routing), `release_train._default_terminal_gate` + effect rows, `_continue_main` via `stop_report_with_probes` |
+| 6 | Launcher strings the interface; opaque monitor | A8 `6409ea13` (aweb) + `22ab8bbe` (AC) | `test_fixed_continue_commands_are_the_reviewed_defaults`, `test_derive_receives_the_complete_card_projection` (argv-dumping stub), `test_monitor_record_is_required_typed_and_source_bound` (7 mutations incl. exactly-one), `test_release_workflow_monitor.sh` (stub-gh, both directions), AC `test_check_pending_migrations.sh` | the launcher's derive sed with versions baked in (quoted in ledger); monitor exec'd gh watch with no record | `release_train._CONTINUE_FIXED_COMMANDS` / `continue_commands` / `_require_monitor_record`; `release-workflow-monitor.sh` record emission; AC `check-pending-migrations.sh` |
+| 7 | b2 bridged world; noisy record | dev2 `1397df80` (fixture self-contained, bridge deleted) + A9 (STAMP-AT-LAND) | dev2's b2 pair + 3 mutations; zero-ResourceWarning full-scope run | the bridge; ResourceWarnings in the first packet's record | dev2's fixtures; leak closes in capture/builders/suite teardowns |
 
-### B1 narrow card
-- Test nodes: `test_release_column_b_assembly.B1NarrowCard.test_b1_emits_the_exact_expected_patch`, `...test_b1_control_no_scope_change_yields_no_ac_row`
-- Fixture: `scripts/e2e/fixtures/aben-column-b/b1-narrow-card.json` (dev2; provenance in-file, per-value re-observed/record-sourced marking) + shared clones of the real repositories at aweb `5a55f7ce6b4dbb86dc2901f7c687e172e39db3af` / AC `47060200c53d30835cbb35cbcb5d073cbe3dc5d3`
-- Red record: first run FAILED with FileNotFoundError on `cli/go/npm/package.json` — a REAL LANDED R3 DEFECT (derive_capture_specs guessed the wrapper manifest path; no mirroring test could see it). Fixed at cause (`cli/go/npm/aw/package.json`) with a per-spec existence check added (`test_every_spec_manifest_path_exists_in_this_repository`). **The acceptance run catching a landed defect is this packet's strongest line.**
-- Green: the exact patch — awid-service and awid-image `0.5.15 -> 0.5.16`, independently derived ac-image `0.7.14 -> 0.7.15`; any other emitted version fails the assertion.
-- Discriminating control: AC scope anchored at the fixture commit → NO ac-image row beside surviving awid rows.
+## 1. Final heads and ranges — STAMP-AT-LAND
 
-### B2 stale pre-authorized CLI version
-- Test nodes: `...B2StaleCliVersion.test_recorded_world_rederives_the_next_free_patch`, `...test_control_unpublished_accepts_the_original_intent`; engine root `test_release_normalizer_movement.test_cli_derivation_rederives_over_occupied_intent` (+ multi-occupied walk)
-- Fixture: `b2-stale-cli-version.json` (aw composite unit at 1.34.5, tag at `2455e7a1...`, re-observed provenance) + `.control-unpublished.json`
-- Green: the tag-history row derives `1.34.6` over the recorded occupancy; the control derives `1.34.5` when nothing occupies — the one-difference discrimination.
-- **THIS ROW'S CONTROL RUNS ON A BRIDGED WORLD, NOT THE RECORDED ONE** — weaker evidence than the other rows, stated here at the row (release-review's ACK note): the control fixture's authored world lacks the prior tag history its own one-difference provenance requires, and the harness supplies the implied `1.34.4` prior. Part of this control's world was SUPPLIED, not reconstructed from record. Commented in-test, mailed to dev2's lane (e06a8027); the clean fix deletes the bridge. The b2 row proper (occupied → rederive) runs on the recorded world unbridged.
+aweb main: pre-aben `69e2fd80` .. FINAL (A9 landing). Amendment landings
+in order, each the release-review-ACKed diff byte-identity-verified at
+push time (the held-ancestor mechanism, adopted by the reviewer after
+independent reproduction and used by alice for A8): A1 `21e89fa6`, A2
+`4fd621b0`, A3 `857e9d9a`, A4 `13d7f6d9`, A5 `322964cb`, A6 `4ffa2ff5`,
+A7 `dc067ec6`, A8 `6409ea13`; interleaved dev2 rounds `1397df80`,
+`81cf8d47`. AC main: `22ab8bbe` (= A8 AC + `35e204a5` lineage). R1-R6
+pre-verdict rounds as in the first packet's ledger (b4c0daca, d14ef611
++ aa73f30a, 12fb4e56, 95d1fc0e, 3af559ec, 1f0a1e63, 6f4a8bd0).
 
-### B3 single-floor derivation near-miss
-- Test nodes (AC repo): `scripts/test_derive_release_floors.py::test_incomplete_card_set_refuses_before_any_edit`, `::test_lock_resolving_stale_version_refuses_naming_wanted_and_got`, `::test_ac_version_mutation_inside_allowlisted_diff_refuses`
-- Fixture: `b3-single-floor-derivation.json` (recorded pyproject/lock state) + the preserved launcher-string variant in the task record
-- Red record: all 7 derive contracts written before the script existed (7 failures), then green; the near-miss reconstruction asserts BOTH `1.27.2` (wanted) and `1.27.1` (got) in the refusal.
-- Discriminating controls: policy-row deletion refuses INCOMPLETE-DERIVATION against the raw card set before any lock work; the AC-version mutation inside an allowlisted diff refuses naming `0.9.9`.
+## 2. The assembled entry points are the acceptance path
 
-### B4 impossible pre-registered shape
-- Test nodes: `...B4ImpossibleShape.test_the_impossible_shape_refuses_before_any_card`, `...test_control_lagging_absent_reuses_m_with_no_patch`, `...test_control_lagging_conflicting_mints_once_with_driver`; engine roots in `test_release_normalizer_equality_groups`
-- Fixtures: dev2's three b4 worlds, run VERBATIM.
-- Red record — TWO REAL ENGINE DEFECTS caught by the independent controls, failures recorded against the unfixed engine before any edit: (a) movable-at-M members sent to the mint path (the phantom-release direction); (b) identityful anchorless occupancy at the intended version stopping flat instead of feeding the conflicting fork. Both fixed at cause; the reconciliation refinement (design sections 2/3 meeting point) is flagged for the gate's independent trace.
-- Green: the impossible shape refuses `equality-invariant-violated` before any card exists; lagging-absent reuses M with recovery and NO patch; lagging-conflicting mints once to `1.27.3`, both manifests exactly once, driver-labeled `a2a-gateway-image`.
+Protocol item 4. Column B and the gate probes run through the ACTUAL
+entries, not component fixtures:
 
-### B5 false publication status
-- Test nodes: `test_release_status_report.B5.test_b5_fixture_renders_the_historically_true_world`; the two-failure injection `StopReport.test_two_injected_failures_both_visible` (+ reporter-bug case)
-- Fixture: `b5-false-publication-status.json` loaded VERBATIM in the shape committed to dev2 before authoring.
-- Green: the rendered table shows exactly THREE artifacts PRESENT (npm @awebai/aw 1.34.6, ghcr awid 0.5.16, ghcr a2a-gateway 1.27.2) and TWO ABSENT (pypi awid-service 0.5.16, pypi aweb 1.27.2); `done(rows)` is False.
-- RENDERED OUTPUT, produced by loading the fixture verbatim through `rows_from_recorded_observations` + `render()` outside any test harness: `agents/instances/release-dev/evidence/aben-b5-rendered-output.txt`, SHA-256 `d7cfbe5114c29ddf0fe021e57ea90cf88aad148019c1274b85b558fed23980c3` (fixture SHA-256 `ebda6ce80476aa8f29c842f0f7359a5079e0468ecf4d7aec2b92950c3c67bd66` recorded inside). The same file carries the two-failure injection through `stop_report_with_probes`: the injected refusal stays primary, the injected probe OSError becomes an UNAVAILABLE row, exit 1.
+- prepare-to-card: `release_train.py prepare` as a SUBPROCESS builds a
+  nine-row card equal to the normalizer projection over the synthetic
+  awebai pair and the wire-protocol stand-in; PATCH NEEDED ends the
+  command before any test with no card and no gate run
+  (`PrepareEntry`, both directions).
+- capture/patch: the canonical entry (release_normalizer_main
+  subprocess) carries B1's shape (AC image via real OCI reads), the
+  malformed stop, the A2 crash, the A3 blind spot, the A4 cascade with
+  locks and floor in one transport diff at a fixed point.
+- continue-to-DONE: the full-fixture continue reaches DONE only through
+  the terminal sweep; a blocking row refuses and keeps the card
+  (`ContinueTrainTests` terminal pins); the failure path is proven at
+  the operator's subprocess.
+- Column B recorded rows: dev2's self-contained fixtures (bridge
+  deleted, provenance per-value) run under `make test-column-b`; the
+  aben suite and Column B are GATE ROWS now (release-aben 33s,
+  column-b), so the acceptance evidence runs at every release.
+- B5 through the REAL path: the historically true world served over the
+  wire reads 3 present / 6 absent at exact cardinality, done() False,
+  lying integrity = conflict (test_release_status_terminal.B5RealPath).
 
-### Normalizer-drift named stop
-- Test nodes: seam half `test_release_normalizer_orchestration.test_nondeterministic_compute_is_the_drift_stop` (deliberately data-free — identical inputs are the point); data half `...NormalizerDriftRow.test_exit_reobservation_race_stops_by_its_real_name`
-- Fixture: `normalizer-drift.json` two-world race (capture-time absent, exit-time occupied) → `version-occupied` by name, never silent regeneration.
+## 3. Live-wire evidence (alice-authorized read-only probes)
 
-## 3. Final focused test record
+- `evidence/aben-live-ghcr-probe.txt` (sha256
+  `7e2e3103caafaac844e5a537765a1cbf5650d1da4de5dd1b0f09d051e2c4f338`):
+  BOTH halves preserved - the red 403 that exposed the raw-PAT gap
+  (fixed as `ghcr_bearer` at every env boundary) and the green reads:
+  live `awebai/awid:0.5.16` revision label == `e5524b4b...` and
+  `awebai/ac:0.7.14` == `efd19f41...`, the recorded publication SHAs
+  exactly. OPERATIONAL FINDING: live `awebai/ac` serves legacy tag
+  `0.3` - a real near-matching candidate; the first real prepare stops
+  malformed-version-candidate until the tag is removed (human-approved
+  registry write) or the stop is accepted. On alice's desk.
+- `evidence/aben-live-uv-lock-proof.txt` (sha256
+  `d32f6a86d920c31bc8daefb10b104a8e0f03b5634b17fb33dae959f9c14d748a`):
+  the A4 production lock command against a real awid copy with the
+  patch-phase version bump: lock changed (own-version entry
+  regenerated to 0.5.17), `uv lock --check` consistent.
 
-- **aweb** (landed head 6f4a8bd0; working tree ef5ac5e6, whose only
-  delta is this document — no code):
-  `python3 -m unittest` over the 23 aben-scope modules (artifact
-  metadata, card schema, Column B assembly, continue rederivation, gate
-  contract, the 10 normalizer suites, OCI reader, the 4 status suites,
-  anchor resolver, train, observe-CLI): **Ran 217 tests in 64.664s —
-  OK, exit 0**; `test_check_release_floor.sh` SELFTEST OK 7 assertions
-  exit 0; `test_release_tag_helpers.sh` SELFTEST OK 3 assertions exit 0.
-  Saved output: `agents/instances/release-dev/evidence/aben-final-test-record-6f4a8bd0.txt`,
-  SHA-256 `2876fee5c70abf7bc12d7438b45c99b55e54c883f77fe42d9afa87c6080a8f60`.
-  DISCLOSED: an identical run 6 minutes earlier also passed (exit 0)
-  but its capture pipeline truncated the unittest verdict line, so the
-  preserved record is the second run — two runs, one concrete reason,
-  per the operating policy.
-- **AC** (head 35e204a5 == origin/main):
-  `python3 -m unittest scripts.test_derive_release_floors -v`:
-  **Ran 7 tests in 0.371s — OK, exit 0**.
-  Saved output: `agents/instances/release-dev/evidence/aben-final-test-record-ac.txt`,
-  SHA-256 `76aee9a8ff5789505f381e1f52309a8eedde6b33b45fbec885171be34a11174c`.
+## 4. Final focused test record — STAMP-AT-LAND
+One run over the final landed heads, warning-free, saved with SHA-256.
 
-## 4. Design-to-code map
-- §1 canonical metadata → `release_train.py` (Anchor/OwnedLock/Artifact fields, edge obligations); tests `test_release_artifact_metadata.py`
-- §1 extractions → `check-release-floor.sh` (+`test_check_release_floor.sh`), `observe_public_target.py` (+CLI contract test), `release-tag-helpers.sh` (+executed test), AC `derive_release_floors.py` (+7 contracts); workflow one-line calls pinned in `test_release_gate_contract.py`
-- §2 grammar/discovery/reconciliation → `release_normalizer.py` (parse_version, reconcile_unit), `release_normalizer_capture.py` (discover_*, bounded pagination); tests `test_release_normalizer_{movement,reconciliation,capture_registry}.py`
-- §3 movement table + equality groups → `release_normalizer.movement_decision`, `group_decision`; tests movement/equality suites + b2/b4 rows
-- §5 AC derivation → AC `derive_release_floors.py` with steps (a)-(f) incl. version preservation
-- §6 normalizer phase → `release_normalizer_run.py` (double-compute, working-tree transport, fixed point, exit re-observation), `release_normalizer_main.py` (routing), Makefile `release-prepare` first line; exactly two operator commands preserved (no alias — tests invoke modules)
-- §7 card + continue → `release_train.py` (disposition enum, PreviousCompleteAnchor variant, card format, `_resolve_anchor_identity`, `_default_rederive` before the release-FF), `release_continue_check.py` (progress allowlist + anchor-missing guard); tests card-schema/rederivation/anchor-resolver + the drift-refusal tripwire
-- §8 status engine → `release_status.py` (uncollapsible four states, RemoteCompletion factory refusal, DONE), `release_status_builders.py` (per-fact pypi/npm/image rows), `release_status_gates.py` + the two continue gate sites (tripwire-proven), `release_status_report.py` (failure-preserving stops, recorded-observation loader), `read_oci_revision`
-- §9 acceptance → this packet's section 2
-- §10 gates → the round ledger (section 6)
+## 5. Evidence-reuse justifications (protocol item 5)
 
-## 5. Normative-doc conformance
+- First-packet component evidence (R1-R6): NOT reused - every A-round
+  changed subject code beneath it; the closure matrix's tests are the
+  replacements. The first packet remains fetchable at `7938cab9` for
+  the verdict trail only.
+- dev2's fixture provenance records: reused as landed on main
+  (`1397df80`); their subject (fixtures + loaders) changed only by
+  dev2's own reviewed rounds since.
+- The two live-probe files: fresh this submission, sealed above.
+- `aben-b5-rendered-output.txt` (first packet): SUPERSEDED by the
+  real-path B5 suite; retained for history only.
 
-`git diff 69e2fd80..6f4a8bd0 -- docs/release.md` is EMPTY — zero lines:
-the entire aben implementation changed the normative release document
-not at all; every prohibition and clause it carries stands byte-for-byte.
-The design doc entered as +474 lines in R1 with two later amendments.
-Design-doc wording changes after cadfb4eb: the coverage-table
-amendment (d14ef611, reviewed in R2's round) and the ac-image
-both-halves correction (12fb4e56, reviewed in R3's round) — each with
-its review record. The reconciliation refinement from the b4 controls is
-CODE-side only; the design text's §2 blanket anchorless wording vs §3's
-conflict classification meeting point is documented here for the gate's
-trace.
+## 6. Round review ledger — release-review ACKs
 
-## 6. Round review ledger
-- R1 `b4c0daca` (4 commits incl. design doc) — release-review ACK; landed
-- R2 aweb `d14ef611` (3) + AC `aa73f30a` (1) — ACK both repos; alice integrated
-- R3 `12fb4e56` (11) — seam-scoped ACK; landed
-- R4 `95d1fc0e` (4) — ACK with pre-registered criteria; landed
-- comparator hardening `3af559ec` (1, alice's finding) — ACK; landed
-- R5 `1f0a1e63` (6) — ACK, three invariants verified at source; landed
-- R6 code round `6f4a8bd0` (3) — release-review ACK (narrowing pinned on
-  both sides of its new boundary; b2 bridged-world note folded into
-  section 2); landed, main fast-forwarded to exactly the ACKed head
-- AC stamper round `35e204a5` (dev2's lane) — closes the ac-image anchor's stamper half
-- Deferred anchor assertions: aw-cli's aw-v anchor → its own assertion rides the movement predicate (`test_release_normalizer_movement` CLI rows + `derive_capture_specs`); ac-image stamper → AC `verify_release_image.py` (dev2's round) + reader `read_oci_revision`
+A1 d94a8f06→21e89fa6 (transfer verified 27690/27690 cmp 0); A2
+6efd7f7d→4fd621b0 (3631/3631); A3 5a9f1b70→857e9d9a; A4
+5f23a041→13d7f6d9 (6-commit range incl. landed A3); A5
+ba5358a3→322964cb; A6 85924926→4ffa2ff5; A7 27071487→dc067ec6; A8
+3a7abc27→6409ea13 + AC 22ab8bbe (alice integrated, AC-first per the
+reviewer's measured constraint); A9 STAMP-AT-LAND. Reviewer
+suggestions were never folded silently: each landed as its own
+reviewed commit in the following round (json mask anchor, ls-remote
+comment, invariant timeout, coupling guard, field rename, self-reported
+marks, tag-branch keying, exactly-one record).
