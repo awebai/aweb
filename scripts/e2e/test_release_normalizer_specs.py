@@ -59,6 +59,40 @@ class SpecDerivation(unittest.TestCase):
         self.assertNotIn("server/pyproject.toml", server.excluded)
         self.assertEqual(server.masked, ("server/pyproject.toml",))
 
+    def test_release_tag_prefix_has_exactly_one_owner(self) -> None:
+        """The first real prepare read skills' github member as EMPTY
+        because discovery stripped a bare "v" on its own authority
+        while the status builder looked up skills-v{version} from the
+        canonical record - two derivations of one fact, disagreeing.
+        The owner is release_tag_prefix; discovery and read-back must
+        both resolve through it."""
+
+        import release_train as rt
+
+        skills = rt._artifact("skills")
+        aw = rt._artifact("aw-cli")
+        # A release in the artifact's OWN source repository carries its
+        # canonical anchor prefix; an external product repository tags
+        # bare v.
+        self.assertEqual(
+            rt.release_tag_prefix(skills, "awebai/aweb"), "skills-v"
+        )
+        self.assertEqual(rt.release_tag_prefix(aw, "awebai/aw"), "v")
+        # And every github target in the canonical inventory resolves
+        # through the owner - no target left to a local guess.
+        for entry in rt.ARTIFACTS:
+            for target in entry.occupancy_unit or ():
+                if not target.startswith("github:"):
+                    continue
+                _, repository, _channel = target.split(":", 2)
+                prefix = rt.release_tag_prefix(entry, repository)
+                self.assertTrue(prefix, target)
+                spec = self.specs[entry.key]
+                self.assertEqual(
+                    spec.tag_prefixes[target], prefix,
+                    f"{target}: capture spec disagrees with the owner",
+                )
+
     def test_cli_derivation_kind_follows_version_source(self) -> None:
         self.assertEqual(self.specs["aw-cli"].derivation, "tag-history")
         self.assertEqual(self.specs["aweb-server"].derivation, "manifest")

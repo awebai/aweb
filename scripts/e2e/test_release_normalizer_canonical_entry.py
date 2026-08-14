@@ -154,6 +154,10 @@ class _WorldFixture(unittest.TestCase):
                 "awebai/ac": {"0.7.14": self.ac_sha},
             },
             "github": {"awebai/aw": ["1.34.6"], "awebai/aweb": ["0.2.13"]},
+            # skills' release lives in its OWN repository, so it is
+            # tagged with the canonical anchor prefix - the real shape
+            # the first live prepare taught us.
+            "github_tag_prefix": {"awebai/aweb": "skills-v"},
         }
 
     def run_entry(

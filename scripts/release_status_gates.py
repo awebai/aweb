@@ -98,14 +98,10 @@ def rows_for_artifacts(
                 # artifact's own source repository is tagged with its
                 # canonical anchor prefix (skills-v{V} on awebai/aweb);
                 # an external product repository (awebai/aw) tags v{V}.
-                own_repository = repository == f"awebai/{artifact.repository}"
-                tag = (
-                    f"{artifact.anchor.value}{item.version}"
-                    if own_repository
-                    and artifact.anchor is not None
-                    and artifact.anchor.kind == "tag_pattern"
-                    else f"v{item.version}"
-                )
+                # The canonical owner, not a local re-derivation.
+                prefix = rt.release_tag_prefix(artifact, repository)
+                own_repository = prefix != "v"
+                tag = f"{prefix}{item.version}"
                 required = tuple(
                     name.format(version=item.version)
                     for name in artifact.required_current_outputs
@@ -210,14 +206,10 @@ def expected_fact_keys(
                     )
             elif target.startswith("github:"):
                 _, repository, _channel = target.split(":", 2)
-                own_repository = repository == f"awebai/{artifact.repository}"
-                tag = (
-                    f"{artifact.anchor.value}{item.version}"
-                    if own_repository
-                    and artifact.anchor is not None
-                    and artifact.anchor.kind == "tag_pattern"
-                    else f"v{item.version}"
-                )
+                # The canonical owner, not a local re-derivation.
+                prefix = rt.release_tag_prefix(artifact, repository)
+                own_repository = prefix != "v"
+                tag = f"{prefix}{item.version}"
                 keys.add(f"github:{repository} release {tag}")
                 for name in artifact.required_current_outputs:
                     keys.add(
