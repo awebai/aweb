@@ -124,7 +124,11 @@ class _WorldFixture(unittest.TestCase):
         base = Path(cls._tmp.name) / "awebai"
         cls.aweb_sha = _build_repo(base / "aweb", MANIFESTS, AWEB_TAGS)
         cls.ac_sha = _build_repo(
-            base / "ac", {"backend/pyproject.toml": ("toml", "0.7.14")}, ()
+            base / "ac",
+            {"backend/pyproject.toml": ("toml", "0.7.14")},
+            # ac-image is tag-anchored like every other artifact now:
+            # its identity is the tag in its OWN repository.
+            ("v0.7.14",),
         )
         cls.aweb_root = base / "aweb"
         cls.ac_root = base / "ac"
@@ -440,13 +444,19 @@ class CanonicalEntry(_WorldFixture):
             marker.unlink(missing_ok=True)
 
     def test_identityless_image_tag_is_captured_not_crashed(self) -> None:
-        # A grammar-conforming tag whose config carries no revision label
+        # A published version with NO source tag in its own repository
         # is identityless occupancy - a legitimate observation the
-        # reconciler must judge, not a capture failure. With the only
-        # anchor identity gone, the AC image cannot reconcile and the
-        # run must stop with a named stop, not a traceback.
+        # reconciler must judge, not a capture failure. Under the tag
+        # ruling that is the shape the old missing-revision-label case
+        # became: the registry serves the version, nothing in the repo
+        # says what it was built from, and the run must stop BY NAME
+        # rather than traceback or guess.
         world = self.world_at_rest()
-        world["ghcr"]["awebai/ac"]["0.7.14"] = None
+        # The registry serves a version the repository never tagged.
+        # (Nulling the old revision LABEL would no longer test
+        # anything: identity comes from the tag now, and the fixture
+        # has one - the assertion would pass on a broken engine.)
+        world["ghcr"]["awebai/ac"]["0.7.15"] = None
         completed = self.run_entry(world)
         self.assertEqual(
             completed.returncode,
@@ -510,7 +520,7 @@ class PrepareEntry(_WorldFixture):
             self.assertEqual(completed.returncode, 0, out)
             self.assertIn("normal form", completed.stdout)
             self.assertEqual(completed.stdout.count('"disposition": "unmoved"'), 9, out)
-            self.assertIn('"kind": "oci-revision-label"', completed.stdout)
+            self.assertIn('"kind": "tag"', completed.stdout)
             self.assertIn(self.ac_sha, completed.stdout)
             self.assertTrue(marker.exists(), "the gate must run on normal form")
         finally:

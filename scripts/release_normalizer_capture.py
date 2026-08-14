@@ -200,14 +200,6 @@ class DiscoveryUnavailable(Exception):
     """The listing read failed; unavailability is never absence."""
 
 
-class RevisionLabelAbsent(DiscoveryUnavailable):
-    """The image exists but its config carries no revision label. For
-    the anchor-assertion path this is unavailability like any other
-    (hence the subclass); discovery-capture alone catches it narrowly,
-    because there an identityless image is a legitimate observation for
-    the reconciler to judge."""
-
-
 class DiscoveryBoundExceeded(Exception):
     """History exceeds the supported discovery bound; truncation is not
     weather, so this is its own stop, distinct from unavailable."""
@@ -399,78 +391,11 @@ class CaptureSpec:
     unit_targets: tuple[str, ...]
 
 
-def _unit_versions_descending(members) -> list[str]:
-    """Every conforming version any member occupies, newest first."""
-
-    from release_normalizer import format_version, parse_version
-
-    parsed = {
-        version
-        for member in members
-        for text in member.occupied
-        if (version := parse_version(text)) is not None
-    }
-    return [format_version(v) for v in sorted(parsed, reverse=True)]
-
-
-def _resolve_candidate_identity(members, resolve_identity, anchor_versions) -> None:
-    """Fill in member identity at the unit candidate, in place.
-
-    reconcile_unit compares member identity at exactly one version (its
-    `if v == candidate` filter), so that is the only version whose
-    identity has to be paid for. The candidate comes from
-    rn.unit_candidate rather than being recomputed here: which version
-    the reconciler will pick is its fact, not capture's.
-    """
-
-    from release_normalizer import unit_candidate
-
-    candidate = unit_candidate(
-        {text for member in members for text in member.occupied},
-        anchor_versions or (),
-    )
-    if candidate is None:
-        return
-    for member in members:
-        if candidate in member.occupied and member.occupied[candidate] is None:
-            member.occupied[candidate] = resolve_identity(member.name, candidate)
-
-
-def _resolve_descending_anchors(members, resolve_identity) -> dict[str, str]:
-    """Anchors for an oci_revision_label unit, resolved lazily.
-
-    Walks the unit's versions newest-first, resolving identity until the
-    first version that is anchored AND occupied by every member - the
-    only one `previous_complete` can select, since that scan also stops
-    at its first match. Versions below it are never compared to
-    anything, so their identity is never fetched.
-    """
-
-    anchors: dict[str, str] = {}
-    for version in _unit_versions_descending(members):
-        complete = True
-        for member in members:
-            if version not in member.occupied:
-                complete = False
-                continue
-            if member.occupied[version] is None:
-                member.occupied[version] = resolve_identity(member.name, version)
-        identity = members[0].occupied.get(version) if members else None
-        if identity is not None:
-            anchors[version] = identity
-        if complete and identity is not None and len(anchors) >= 2:
-            # The candidate itself plus one complete predecessor is
-            # everything the reconciler reads.
-            break
-    return anchors
-
-
 def assemble_captured_world(
     *,
     specs,
     repo_roots: dict[str, Path],
     discover_target,
-    resolve_identity=lambda target, version: None,
     equality_groups,
     compatibility: str,
 ) -> CapturedWorld:
@@ -497,26 +422,14 @@ def assemble_captured_world(
             UnitMember(name=target, occupied=dict(discover_target(target)))
             for target in spec.unit_targets
         ]
-        if spec.anchor_kind == "tag_pattern":
-            if spec.repo_key not in ref_snapshots:
-                ref_snapshots[spec.repo_key] = remote_ref_snapshot(repo)
-            anchors = anchor_tags_from(
-                ref_snapshots[spec.repo_key], spec.anchor_value
+        if spec.anchor_kind != "tag_pattern":
+            raise ValueError(
+                f"{spec.name}: unsupported anchor kind {spec.anchor_kind!r} - "
+                "a release's identity is the tag in its own repository"
             )
-            _resolve_candidate_identity(members, resolve_identity, anchors)
-        else:
-            # oci_revision_label anchors are registry-side facts: every
-            # identityful version the primary target serves IS an anchor
-            # (the revision label names the source commit); the
-            # repository contributes no tag history.
-            #
-            # Resolving identity for EVERY served version is what made
-            # the phase take a quarter of an hour: identity is a
-            # three-request walk per tag, and the reconciler reads it at
-            # the candidate and at the previous complete version only.
-            # So walk down from the candidate and stop at the first
-            # complete one, which is all `previous_complete` can select.
-            anchors = _resolve_descending_anchors(members, resolve_identity)
+        if spec.repo_key not in ref_snapshots:
+            ref_snapshots[spec.repo_key] = remote_ref_snapshot(repo)
+        anchors = anchor_tags_from(ref_snapshots[spec.repo_key], spec.anchor_value)
         from release_normalizer import parse_version as _parse
 
         conforming = [
@@ -648,67 +561,3 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
     return specs
 
 
-def read_oci_revision(
-    image: str,
-    version: str,
-    *,
-    base: str = "https://ghcr.io",
-    token: str,
-    timeout: float,
-) -> str:
-    """The org.opencontainers.image.revision label for a version tag -
-    the ac-image anchor (aben design sections 7 and 8). Resolves the
-    tag's manifest (following one index child when the tag is an index),
-    then the config blob, then the label. Absence of the tag, the
-    config, or the label raises with its own words; nothing here ever
-    answers None.
-    """
-
-    headers = {
-        "Accept": (
-            "application/vnd.oci.image.index.v1+json, "
-            "application/vnd.oci.image.manifest.v1+json, "
-            "application/vnd.docker.distribution.manifest.list.v2+json, "
-            "application/vnd.docker.distribution.manifest.v2+json"
-        )
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    manifest, _ = _get_json(
-        f"{base}/v2/{image}/manifests/{version}", timeout=timeout, headers=headers
-    )
-    if manifest is None:
-        raise DiscoveryUnavailable(
-            f"{image}:{version}: manifest absent while an anchor was expected"
-        )
-    if "manifests" in manifest:
-        children = manifest.get("manifests") or []
-        if not children:
-            raise DiscoveryUnavailable(f"{image}:{version}: empty index")
-        child_digest = children[0].get("digest")
-        manifest, _ = _get_json(
-            f"{base}/v2/{image}/manifests/{child_digest}",
-            timeout=timeout,
-            headers=headers,
-        )
-        if manifest is None:
-            raise DiscoveryUnavailable(
-                f"{image}:{version}: index child {child_digest} absent"
-            )
-    config_digest = (manifest.get("config") or {}).get("digest")
-    if not config_digest:
-        raise DiscoveryUnavailable(f"{image}:{version}: manifest has no config")
-    config, _ = _get_json(
-        f"{base}/v2/{image}/blobs/{config_digest}", timeout=timeout, headers=headers
-    )
-    if config is None:
-        raise DiscoveryUnavailable(f"{image}:{version}: config blob absent")
-    labels = ((config.get("config") or {}).get("Labels")) or {}
-    revision = labels.get("org.opencontainers.image.revision")
-    if not revision:
-        raise RevisionLabelAbsent(
-            f"{image}:{version}: config carries no "
-            "org.opencontainers.image.revision label - anchorless image"
-        )
-    return revision

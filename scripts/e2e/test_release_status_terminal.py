@@ -159,7 +159,6 @@ class ImageAuth(unittest.TestCase):
             with_token = builders.image_rows(
                 "awebai/awid",
                 "0.5.16",
-                expected_revision=SHA,
                 required_platforms=(),
                 check_latest=True,
                 base=registry.base,
@@ -169,7 +168,6 @@ class ImageAuth(unittest.TestCase):
             without = builders.image_rows(
                 "awebai/awid",
                 "0.5.16",
-                expected_revision=SHA,
                 required_platforms=(),
                 check_latest=True,
                 base=registry.base,
@@ -356,12 +354,12 @@ class B5RealPath(unittest.TestCase):
                 "@awebai/aw", "1.34.6", base=registry.base, timeout=5
             ),
             *builders.image_rows(
-                "awebai/awid", "0.5.16", expected_revision=SHA,
+                "awebai/awid", "0.5.16",
                 required_platforms=(), check_latest=False,
                 base=registry.base, token="", timeout=5,
             ),
             *builders.image_rows(
-                "awebai/a2a-gateway", "1.27.2", expected_revision=SHA,
+                "awebai/a2a-gateway", "1.27.2",
                 required_platforms=(), check_latest=False,
                 base=registry.base, token="", timeout=5,
             ),

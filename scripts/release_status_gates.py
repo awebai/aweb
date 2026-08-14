@@ -70,7 +70,7 @@ def rows_for_artifacts(
                 rows += builders.image_rows(
                     image,
                     item.version,
-                    expected_revision=expected or "",
+
                     required_platforms=artifact.platforms,
                     check_latest=artifact.promises_latest,
                     base=resolved["ghcr"],
@@ -196,7 +196,7 @@ def expected_fact_keys(
                 keys.add(f"ghcr:{image} {item.version} index digest")
                 for platform in artifact.platforms:
                     keys.add(
-                        f"ghcr:{image} {item.version} {platform} revision label"
+                        f"ghcr:{image} {item.version} {platform}"
                     )
                 if artifact.promises_latest:
                     keys.add(f"ghcr:{image} latest == {item.version}")

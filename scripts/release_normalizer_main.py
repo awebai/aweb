@@ -101,37 +101,6 @@ def route_discovery(
     raise ValueError(f"no discoverer routes target {target!r}")
 
 
-def route_identity(
-    target: str,
-    version: str,
-    *,
-    timeout: float,
-    ghcr_token: str,
-    bases: dict[str, str],
-) -> str | None:
-    """The source identity of ONE published version, fetched on demand.
-
-    Only OCI targets carry an observable source identity; pypi, npm and
-    GitHub releases are identityless by kind, which is why discovery
-    already returned None for them. Splitting this out of discovery is
-    what bounds the phase's cost to the facts consumed rather than to
-    registry history.
-    """
-
-    if not target.startswith("ghcr.io/"):
-        return None
-    try:
-        return cap.read_oci_revision(
-            target.removeprefix("ghcr.io/"),
-            version,
-            base=bases["ghcr"],
-            token=ghcr_token,
-            timeout=timeout,
-        )
-    except cap.RevisionLabelAbsent:
-        return None
-
-
 def _git(root: Path, *args: str) -> str:
     import subprocess
 
@@ -376,21 +345,11 @@ def run_phase(
             tag_prefix=prefixes.get(target, "v"),
         )
 
-    def resolve_identity(target: str, version: str):
-        return route_identity(
-            target,
-            version,
-            timeout=timeout,
-            ghcr_token=ghcr_token,
-            bases=bases,
-        )
-
     def capture() -> rn.CapturedWorld:
         return cap.assemble_captured_world(
             specs=specs,
             repo_roots=repo_roots,
             discover_target=discover,
-            resolve_identity=resolve_identity,
             equality_groups=EQUALITY_GROUPS,
             compatibility=compatibility,
         )

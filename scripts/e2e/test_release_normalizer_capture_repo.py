@@ -298,88 +298,6 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class IdentityResolutionBound(unittest.TestCase):
-    """Capture's cost must be bound to the facts it consumes, not to
-    how much history the registry holds.
-
-    The first successful phase took 695 seconds, 94% of it in 1601
-    ghcr.io requests: read_oci_revision is a three-request walk and it
-    ran for every version tag of every image, to build a map the
-    reconciler reads at exactly one version. This asserts the bound
-    that keeps it from coming back - and it is written over a namespace
-    with a HUNDRED versions, so it fails under the per-tag behaviour
-    instead of passing on a fixture too small to tell the difference.
-    """
-
-    def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name)
-        self.repo = self.root / "ac"
-        (self.repo / "backend").mkdir(parents=True)
-        (self.repo / "backend" / "pyproject.toml").write_text(
-            '[project]\nname = "ac"\nversion = "0.7.15"\n'
-        )
-        git("init", "-q", str(self.repo), cwd=self.root)
-        git("add", "-A", cwd=self.repo)
-        git("commit", "-q", "-m", "one", cwd=self.repo)
-        self.sha = git("rev-parse", "HEAD", cwd=self.repo)
-        # The captured world reads the server floor from the aweb root
-        # regardless of which specs are passed.
-        self.aweb = self.root / "aweb"
-        (self.aweb / "server").mkdir(parents=True)
-        (self.aweb / "server" / "pyproject.toml").write_text(
-            '[project]\nname = "aweb"\nversion = "1.27.2"\n'
-            'dependencies = ["awid-service>=0.5.16"]\n'
-        )
-
-    def tearDown(self):
-        self._tmp.cleanup()
-
-    def test_identity_calls_do_not_scale_with_registry_history(self) -> None:
-        import release_train as rt
-
-        spec = next(
-            s for s in cap.derive_capture_specs(rt.ARTIFACTS)
-            if s.name == "ac-image"
-        )
-        served = [f"0.{major}.{patch}" for major in range(10) for patch in range(10)]
-        self.assertEqual(len(served), 100)
-
-        listings: list[str] = []
-        resolved: list[str] = []
-
-        def discover(target: str):
-            listings.append(target)
-            return {version: None for version in served}
-
-        def resolve(target: str, version: str):
-            resolved.append(version)
-            return self.sha
-
-        world = cap.assemble_captured_world(
-            specs=[spec],
-            repo_roots={"ac": self.repo, "aweb": self.aweb},
-            discover_target=discover,
-            resolve_identity=resolve,
-            equality_groups=(),
-            compatibility="none",
-        )
-
-        self.assertEqual(listings, list(spec.unit_targets),
-                         "exactly one listing per unit target")
-        self.assertLessEqual(
-            len(resolved), 4,
-            f"identity resolved for {len(resolved)} of {len(served)} versions - "
-            "the cost is scaling with registry history again",
-        )
-        # ...and it must still resolve the ones that are READ: the
-        # candidate carries identity, so the row is not silently
-        # downgraded to identityless by the optimisation.
-        captured = world.artifacts["ac-image"]
-        self.assertEqual(captured.members[0].occupied["0.9.9"], self.sha)
-        self.assertIn("0.9.9", captured.anchor_versions)
-
-
 class RefSnapshotBound(unittest.TestCase):
     """One bulk ref read per remote per run.
 
@@ -453,3 +371,93 @@ class RefSnapshotBound(unittest.TestCase):
                 cap.discover_anchor_tags(self.work, prefix),
                 prefix,
             )
+
+
+class IdentityIsTheTag(unittest.TestCase):
+    """Juan's ruling: a release's identity is the tag in its own
+    repository, for every artifact. It is all in the repo, so we never
+    ask a registry what a release hash was.
+
+    Registry LISTINGS stay - which versions are published is the one
+    fact git cannot answer. What goes is asking a registry what a
+    published version was BUILT FROM.
+    """
+
+    def test_no_artifact_resolves_identity_over_the_network(self) -> None:
+        import release_train as rt
+
+        for entry in rt.ARTIFACTS:
+            if entry.anchor is None:
+                continue
+            with self.subTest(artifact=entry.key):
+                self.assertEqual(
+                    entry.anchor.kind, "tag_pattern",
+                    f"{entry.key} still resolves identity off the registry",
+                )
+
+    def test_capture_makes_no_http_call_of_its_own(self) -> None:
+        """The structural half. Capture no longer ACCEPTS an identity
+        resolver - the parameter is gone, not merely unused - so the
+        assertion is on the wire itself: with listings injected, a
+        capture pass must make no HTTP request whatsoever. Anything it
+        still needed from a registry would show up here."""
+
+        import urllib.request
+
+        import release_train as rt
+
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        repos = {}
+        for key, manifest in (("aweb", "server/pyproject.toml"),
+                              ("ac", "backend/pyproject.toml")):
+            repo = root / key
+            (repo / manifest).parent.mkdir(parents=True)
+            (repo / manifest).write_text(
+                '[project]\nname = "x"\nversion = "0.7.14"\n'
+                'dependencies = ["awid-service>=0.5.16"]\n'
+            )
+            (repo / "server").mkdir(exist_ok=True)
+            (repo / "server" / "pyproject.toml").write_text(
+                '[project]\nname = "x"\nversion = "1.0.0"\n'
+                'dependencies = ["awid-service>=0.5.16"]\n'
+            )
+            git("init", "-q", str(repo), cwd=root)
+            git("add", "-A", cwd=repo)
+            git("commit", "-q", "-m", "one", cwd=repo)
+            git("remote", "add", "origin", str(repo), cwd=repo)
+            git("tag", "-a", "v0.7.14", "-m", "v0.7.14", cwd=repo)
+            repos[key] = repo
+
+        requested: list[str] = []
+        real_urlopen = urllib.request.urlopen
+
+        def spy(request, *a, **k):
+            requested.append(getattr(request, "full_url", str(request)))
+            return real_urlopen(request, *a, **k)
+
+        specs = [
+            s for s in cap.derive_capture_specs(rt.ARTIFACTS)
+            if s.name == "ac-image"
+        ]
+        self.assertTrue(specs, "ac-image spec must exist")
+        try:
+            urllib.request.urlopen = spy
+            world = cap.assemble_captured_world(
+                specs=specs,
+                repo_roots=repos,
+                discover_target=lambda target: {"0.7.14": None},
+                equality_groups=(),
+                compatibility="none",
+            )
+        finally:
+            urllib.request.urlopen = real_urlopen
+
+        self.assertEqual(requested, [], "capture reached the network")
+        # ...and the identity it needs came from the TAG.
+        captured = world.artifacts["ac-image"]
+        self.assertEqual(
+            set(captured.anchor_versions), {"0.7.14"},
+            "the AC tag must supply the anchor identity",
+        )

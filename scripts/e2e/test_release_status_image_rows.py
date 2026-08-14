@@ -104,7 +104,6 @@ class ImageRows(unittest.TestCase):
         return rsb.image_rows(
             "org/img",
             "1.0.0",
-            expected_revision=EXPECTED_SHA,
             required_platforms=("linux/amd64", "linux/arm64"),
             check_latest=True,
             base=self.base,
@@ -118,7 +117,9 @@ class ImageRows(unittest.TestCase):
         self.assertTrue(any("index digest" in f for f in facts))
         self.assertTrue(any("linux/amd64" in f for f in facts))
         self.assertTrue(any("linux/arm64" in f for f in facts))
-        self.assertTrue(any("revision label" in f for f in facts))
+        # No revision-label fact: durable status no longer claims the
+        # image was built from a given source (the tag ruling).
+        self.assertFalse(any("revision label" in f for f in facts), facts)
         self.assertTrue(any("latest" in f for f in facts))
         self.assertTrue(all(r.present() for r in rows), [r.render() for r in rows])
 
@@ -126,7 +127,6 @@ class ImageRows(unittest.TestCase):
         rows = rsb.image_rows(
             "org/img",
             "1.0.0",
-            expected_revision=EXPECTED_SHA,
             required_platforms=("linux/amd64", "linux/arm64", "linux/s390x"),
             check_latest=False,
             base=self.base,
@@ -148,7 +148,6 @@ class ImageRows(unittest.TestCase):
         rows = rsb.image_rows(
             "org/ghost",
             "9.9.9",
-            expected_revision=EXPECTED_SHA,
             required_platforms=("linux/amd64",),
             check_latest=False,
             base=self.base,
@@ -156,6 +155,66 @@ class ImageRows(unittest.TestCase):
             timeout=3,
         )
         self.assertTrue(all(r.state == "observed-absent" for r in rows))
+
+
+class ImageRowsAfterTheTagRuling(ImageRows):
+    """Under Juan's tag ruling, durable status proves two required
+    facts - the immutable registry object and the exact source tag -
+    and NO LONGER proves the first was built from the second.
+
+    plan-critic's boundary 3 keeps registry artifact verification
+    (digest equality, platform completeness, immutable read-back);
+    boundary 5 requires status language not to imply the deleted
+    cross-check still exists. A revision-label row would imply exactly
+    that.
+    """
+
+    def rows_for(self, platforms):
+        return rsb.image_rows(
+            "org/img",
+            "1.0.0",
+            required_platforms=platforms,
+            check_latest=True,
+            base=self.base,
+            token="",
+            timeout=3,
+        )
+
+    def test_no_row_claims_a_label_matches_a_source(self) -> None:
+        for row in self.rows_for(("linux/amd64", "linux/arm64")):
+            with self.subTest(fact=row.fact):
+                self.assertNotIn("revision label", row.fact)
+                self.assertNotIn("label equals", row.evidence)
+
+    def test_platform_completeness_and_digest_survive(self) -> None:
+        rows = {r.fact: r for r in self.rows_for(("linux/amd64", "linux/arm64"))}
+        index = [f for f in rows if f.endswith("index digest")]
+        self.assertEqual(len(index), 1, sorted(rows))
+        self.assertEqual(rows[index[0]].state, "observed-present")
+        for platform in ("linux/amd64", "linux/arm64"):
+            matching = [f for f in rows if f.endswith(platform)]
+            self.assertEqual(len(matching), 1, f"{platform}: {sorted(rows)}")
+            self.assertEqual(rows[matching[0]].state, "observed-present")
+
+    def test_a_missing_platform_is_absent_under_the_same_fact_key(self) -> None:
+        """The key a PRESENT platform emits and the key an ABSENT one
+        emits must be the same, or the fact family is not stable across
+        outcomes and the two-way domain check compares different sets.
+        The old code emitted "... {platform} revision label" when
+        present and "... {platform}" when absent."""
+
+        rows = {r.fact: r for r in self.rows_for(("linux/amd64", "linux/s390x"))}
+        served = [f for f in rows if f.endswith("linux/amd64")]
+        missing = [f for f in rows if f.endswith("linux/s390x")]
+        self.assertEqual(len(served), 1, sorted(rows))
+        self.assertEqual(len(missing), 1, sorted(rows))
+        self.assertEqual(rows[served[0]].state, "observed-present")
+        self.assertEqual(rows[missing[0]].state, "observed-absent")
+        self.assertEqual(
+            served[0].removesuffix("linux/amd64"),
+            missing[0].removesuffix("linux/s390x"),
+            "present and absent platforms must share a fact-key shape",
+        )
 
 
 if __name__ == "__main__":

@@ -38,10 +38,12 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args) -> None:  # quiet server
         pass
 
-    def _json(self, payload, status: int = 200) -> None:
+    def _json(self, payload, status: int = 200, headers=None) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -208,7 +210,24 @@ class _Handler(BaseHTTPRequestHandler):
                 tags = world.get("ghcr", {}).get(image, {})
                 if tag not in tags:
                     return self._json({}, status=404)
-                return self._json({"config": {"digest": _config_digest(image, tag)}})
+                # Real registries always answer a manifest read with
+                # Docker-Content-Digest; the stand-in must too, or it
+                # exercises a shape production never serves.
+                # The MANIFEST digest is content-addressed, so two
+                # tags naming the same image share it - which is what
+                # makes "latest == VERSION" a real comparison. Deriving
+                # it from the tag NAME instead made every such row
+                # compare two different strings, or (before this header
+                # existed at all) two empty ones, which compared equal
+                # and read as present.
+                revision = tags[tag]
+                manifest_digest = "sha256:idx-" + urllib.parse.quote(
+                    f"{image}@{revision}", safe=""
+                )
+                return self._json(
+                    {"config": {"digest": _config_digest(image, tag)}},
+                    headers={"Docker-Content-Digest": manifest_digest},
+                )
             if "/blobs/" in rest:
                 image, digest = rest.split("/blobs/", 1)
                 prefix = "sha256:cfg-"

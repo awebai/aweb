@@ -80,16 +80,23 @@ class ArtifactMetadataContract(unittest.TestCase):
             "pi-extension": ("tag_pattern", "pi-v"),
             "skills": ("tag_pattern", "skills-v"),
             "a2a-gateway-image": ("tag_pattern", "a2a-gw-v"),
-            "ac-image": (
-                "oci_revision_label",
-                "org.opencontainers.image.revision",
-            ),
+            # ac-image joined the others under Juan's ruling: a
+            # release's identity is the tag in its own repository, for
+            # every artifact. AC's own convention is a bare v prefix.
+            "ac-image": ("tag_pattern", "v"),
         }
         for key, (kind, value) in expected.items():
             with self.subTest(artifact=key):
                 anchor = artifact(key).anchor
                 self.assertEqual(anchor.kind, kind)
                 self.assertEqual(anchor.value, value)
+        # The union is now a single kind, and that is the point rather
+        # than an accident: any other kind means something resolves
+        # identity somewhere other than local git.
+        self.assertEqual(
+            {a.anchor.kind for a in release_train.ARTIFACTS if a.anchor},
+            {"tag_pattern"},
+        )
 
     def test_tag_anchors_equal_publisher_emissions_both_directions(self) -> None:
         # Forward: each canonical tag prefix appears as the publisher's
@@ -108,7 +115,13 @@ class ArtifactMetadataContract(unittest.TestCase):
             artifact(key).anchor.value
             for key in self.VERSIONED
             if artifact(key).anchor.kind == "tag_pattern"
-            and key != "aw-cli"  # aw tags are created in train/sync code, not these workflows
+            # aw and ac tags are created by the train, not by these
+            # workflows. Excluding them here would leave their forward
+            # direction unasserted, so
+            # test_train_emits_the_tags_no_workflow_does covers them -
+            # the bidirectional property holds across both tests, not
+            # by dropping the cases that are inconvenient here.
+            and key not in ("aw-cli", "ac-image")
         }
         for prefix in canonical_prefixes:
             with self.subTest(prefix=prefix):
@@ -130,15 +143,31 @@ class ArtifactMetadataContract(unittest.TestCase):
                     f"publisher emits {prefix!r} which no canonical anchor claims",
                 )
 
-    def test_ac_image_revision_label_is_stamped_and_read(self) -> None:
-        # The label must exist where the design says it lives; the AC
-        # Dockerfile is in the sibling repository, so this half of the
-        # bidirectional test asserts the reader's side here and the AC
-        # repository's contract test asserts the stamper's side.
-        adoption = (REPO_ROOT.parent / "ac" / "scripts").glob("verify_registry_adoption.py")
-        del adoption  # reader-side location is AC's; asserted in AC's round
-        anchor = artifact("ac-image").anchor
-        self.assertEqual(anchor.kind, "oci_revision_label")
+    def test_train_emits_the_tags_no_workflow_does(self) -> None:
+        """The forward direction for the two artifacts whose tags the
+        TRAIN creates rather than a publisher workflow.
+
+        Without this, excluding them from the workflow scan would leave
+        them with a declared tag anchor and nothing asserted to emit
+        it - which is exactly the state that produced the live
+        prepare's empty skills member: a canonical claim with no
+        producer behind it."""
+
+        source = (REPO_ROOT / "scripts" / "release_train.py").read_text()
+        self.assertIn("def publish_source_tag(", source)
+        # ac-image's tag is pushed by continue at the derived SHA.
+        self.assertRegex(
+            source,
+            r"publish_source_tag\(\s*environment\.ac_root",
+            "continue does not publish the AC source tag",
+        )
+        ac_anchor = artifact("ac-image").anchor
+        self.assertEqual(ac_anchor.kind, "tag_pattern")
+        self.assertEqual(
+            release_train.release_tag_prefix(artifact("ac-image"), "awebai/ac"),
+            ac_anchor.value,
+            "the tag continue pushes must be the anchor prefix it declares",
+        )
 
     def test_occupancy_units_cover_composites_exactly(self) -> None:
         aw = artifact("aw-cli")

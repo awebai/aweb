@@ -321,7 +321,7 @@ test-release-aben:
 		scripts.e2e.test_release_normalizer_result scripts.e2e.test_release_normalizer_specs \
 		scripts.e2e.test_release_normalizer_floor scripts.e2e.test_release_normalizer_canonical_entry \
 		scripts.e2e.test_release_prepare_projection \
-		scripts.e2e.test_release_oci_revision_reader scripts.e2e.test_release_status_builders \
+		scripts.e2e.test_release_source_tag scripts.e2e.test_release_status_builders \
 		scripts.e2e.test_release_status_image_rows scripts.e2e.test_release_status_report \
 		scripts.e2e.test_release_status_rows scripts.e2e.test_release_status_terminal \
 		scripts.e2e.test_release_train_anchor_resolver

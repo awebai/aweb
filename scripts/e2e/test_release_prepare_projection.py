@@ -81,7 +81,7 @@ class SelectionsFromProjection(unittest.TestCase):
         self.assertTrue(recovery.moves)
         self.assertEqual(recovery.previous_complete_anchor.version, "1.27.1")
 
-    def test_oci_anchor_kind_comes_from_the_canonical_entry(self) -> None:
+    def test_anchor_kind_comes_from_the_canonical_entry(self) -> None:
         result = projection(
             **{
                 "ac-image": rn.ArtifactResult(
@@ -92,9 +92,11 @@ class SelectionsFromProjection(unittest.TestCase):
             }
         )
         rows = {s.name: s for s in rt.selections_from_projection(result)}
-        self.assertEqual(
-            rows["ac-image"].previous_complete_anchor.kind, "oci-revision-label"
-        )
+        # ac-image's anchor kind follows the canonical record, which
+        # under the tag ruling is a tag like every other artifact's -
+        # the point of deriving it rather than hardcoding it is that
+        # this test changed by changing the record, not the mapping.
+        self.assertEqual(rows["ac-image"].previous_complete_anchor.kind, "tag")
 
     def test_identityless_anchor_fails_closed_at_construction(self) -> None:
         result = projection(

@@ -71,9 +71,11 @@ class ObservationMalformed(ReleaseTrainError):
 class Anchor:
     """Source anchor for one artifact's published versions.
 
-    kind is "tag_pattern" (value: the tag prefix the publisher emits) or
-    "oci_revision_label" (value: the label name stamped into the image
-    config and read back from the registry).
+    kind is "tag_pattern": the tag prefix the publisher emits. A
+    release's identity is the tag in its own repository, for every
+    artifact - so identity resolution reads local git and never a
+    registry. Registry LISTINGS remain the source of occupancy, which
+    is the one fact git cannot answer.
     """
 
     kind: str
@@ -298,7 +300,7 @@ ARTIFACTS = (
         "backend/pyproject.toml",
         platforms=OCI_PLATFORMS,
         content_scope=("backend/", "frontend/", "Dockerfile.release"),
-        anchor=Anchor("oci_revision_label", "org.opencontainers.image.revision"),
+        anchor=Anchor("tag_pattern", "v"),
         occupancy_unit=("ghcr.io/awebai/ac",),
         required_current_outputs=OCI_PLATFORMS,
         owned_locks=(OwnedLock("backend/uv.lock", "uv-lock-offline"),),
@@ -1314,28 +1316,13 @@ def _resolve_anchor_identity(
                 "serves the version - anchorless unmoved row"
             )
         return PreviousCompleteAnchor(version, "tag", identity)
-    # oci_revision_label: the image config's revision label, read from
-    # the registry (aben R5 - the reader that made R4's refusal here
-    # unnecessary rather than tolerated).
-    import release_normalizer_capture as _cap
-
-    image = artifact.targets[0].removeprefix("ghcr.io/")
-    try:
-        identity = _cap.read_oci_revision(
-            image,
-            version,
-            token=_cap.ghcr_bearer(os.environ.get("AWEB_GHCR_READ_TOKEN", "")),
-            timeout=timeout,
-        )
-    except _cap.DiscoveryUnavailable as error:
-        raise ObservationUnavailable(str(error)) from error
-    return PreviousCompleteAnchor(version, "oci-revision-label", identity)
+    raise ValidationError(
+        f"{artifact.key}: unsupported anchor kind {artifact.anchor.kind!r} - "
+        "a release's identity is the tag in its own repository"
+    )
 
 
-_ANCHOR_KIND_BY_METADATA = {
-    "tag_pattern": "tag",
-    "oci_revision_label": "oci-revision-label",
-}
+_ANCHOR_KIND_BY_METADATA = {"tag_pattern": "tag"}
 
 
 def selections_from_projection(result) -> tuple[ArtifactSelection, ...]:
@@ -1783,6 +1770,47 @@ def continue_environment(repo_root: Path) -> ContinueEnvironment:
         card=card,
         ac_derived_sha=ac_derived_sha,
     )
+
+
+def publish_source_tag(repository: Path, tag: str, target_sha: str) -> None:
+    """Create the release's source tag, adopting an exact match.
+
+    Under Juan's ruling a release's identity IS the tag in its own
+    repository, so this is a publication OUTPUT, not bookkeeping - and
+    it gets the same exact-adopt semantics as the release branch
+    pointer, because continue must be retryable after a partial
+    failure without treating its own completed work as a conflict.
+
+    A tag already at a DIFFERENT commit is refused by name and left
+    untouched: tags are immutable here, and moving one would silently
+    rewrite what a published version claims to be built from.
+    Annotated, matching the existing release tags in these
+    repositories.
+    """
+
+    validate_sha(target_sha, f"{tag} target")
+    existing = _git(
+        repository, "ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"
+    ).stdout.strip()
+    if existing:
+        direct = peeled = None
+        for line in existing.splitlines():
+            sha, ref = line.split(None, 1)
+            if ref.strip().endswith("^{}"):
+                peeled = sha
+            else:
+                direct = sha
+        current = peeled or direct
+        if current == target_sha:
+            return
+        raise ValidationError(
+            f"refusing to move source tag {tag}: it already names "
+            f"{current}, not {target_sha}. Tags are immutable here - "
+            "moving one rewrites what a published version claims to be "
+            "built from. Resolve the disagreement before retrying."
+        )
+    _git(repository, "tag", "-a", tag, "-m", tag, target_sha)
+    _git(repository, "push", "origin", f"refs/tags/{tag}")
 
 
 def fast_forward_release(
@@ -2320,6 +2348,16 @@ def continue_train(
         )
     run_command(list(ac_gate_command), cwd=environment.ac_root, timeout=work_timeout)
     fast_forward_release(environment.ac_root, "release", ac_derived)
+    # The source tag is a publication output under the tag ruling, and
+    # it is created at the EXACT final derived SHA - the same commit the
+    # image is built from and the release branch points at - not at
+    # whatever HEAD happens to be later.
+    publish_source_tag(
+        environment.ac_root,
+        f"{release_tag_prefix(_artifact('ac-image'), 'awebai/ac')}"
+        f"{versions['ac-image']}",
+        ac_derived,
+    )
     _poll_public_target(
         _artifact("ac-image").targets[0],
         versions["ac-image"],
