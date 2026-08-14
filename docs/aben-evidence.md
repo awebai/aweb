@@ -225,6 +225,62 @@ tag, and no longer proves the first was built from the second. Stated
 that way deliberately, because the alternative is status language that
 implies a check nobody runs any more.
 
+**FOUR TIMES THE REAL WORLD CORRECTED A FIXTURE, and the fixtures
+were not careless.** This is the epic's most durable finding and it
+belongs above the individual defects:
+
+| what was asserted | against | what the real pair said |
+|---|---|---|
+| version candidates are version-shaped | constructed tags | ~90 BARE commit tags on ghcr.io/awebai/ac |
+| aw-cli's version is in its manifest | a manifest that existed | a publish-time 0.0.0 placeholder that was never a version |
+| skills' github member reads back | a fixture using one prefix | discovery and read-back derived the prefix twice, disagreeing |
+| aw's published tree equals aweb's cli/go tree | repositories I built | differ by exactly `.github`; tree ids hash the whole entry list, so the check could NEVER have passed |
+
+Each was asserted against inputs the author constructed, and each was
+wrong in a way only first contact could show. The fourth is the
+sharpest, because the failure direction was invisible from inside: a
+comparison that can never succeed passes every test that only ever
+asks it to refuse, and the constructed fixtures agreed precisely
+because one author built both sides. The design had already recorded
+the correct form (section 2's "excluding `.github`... not a
+subtree-hash shorthand unless byte-equivalence is separately proven")
+and it was not read before implementing.
+
+Measured after amendment, against the real repositories at three real
+release tags: v1.34.7 and v1.34.6 at 506 paths, v1.34.5 at 505,
+identical mode and object id, observed-present - the same three that
+were conflict-unproven before.
+
+**A CHECK THAT HAS NEVER BEEN ABLE TO FAIL IS INDISTINGUISHABLE FROM
+A CHECK THAT PASSES**, and one of these lived inside the capstone this
+packet cites as its strongest evidence. Removing the OCI identity path
+surfaced three, all of the same family:
+
+- the registry stand-in derived manifest digests from the TAG NAME,
+  and omitted the digest header entirely on one path - so
+  `latest == VERSION` compared two EMPTY strings, found them equal,
+  and reported PRESENT. That row has been decorative for its whole
+  existence. Digests are content-addressed in the stand-in now, so two
+  tags naming one image share one and the comparison is real.
+- an index-digest row could read `observed-present` with NO digest,
+  because the old evidence string appended the source anchor and was
+  therefore never empty. A missing `Docker-Content-Digest` is
+  `unavailable` now, which is what it means.
+- the platform fact key differed between the present and absent
+  branches, so the family was not stable across outcomes - a
+  RE-OCCURRENCE of C2's stable-family rule rather than a new finding.
+
+**Two control failures of my own, same shape, same day.** A landing
+check printed IDENTICAL for a base SHA I had hand-expanded and that
+did not exist: both sides of the comparison errored to empty and
+compared equal. And a landing gate printed the out-of-scope file
+rather than refusing on it, so a held packet document landed
+unreviewed alongside reviewed code. Both are now gates that refuse,
+and both require their inputs to be non-empty before comparing. I
+record them because the packet's evidence should be read as
+calibrated, not as advocacy - and because they are the same defect the
+code findings above describe, committed by the person auditing for it.
+
 **The re-run** - STAMP-AT-SEND: the classification the same launcher
 produces over the pair refreshed to `38a3b871` / AC `22ab8bbe`, with the
 equality-group resolution stated explicitly, and any remaining stop
