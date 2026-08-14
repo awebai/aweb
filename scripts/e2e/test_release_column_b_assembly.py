@@ -7,17 +7,21 @@ resolver emitting any other version fails the fixture. The
 no-scope-change control variant must yield no row for that artifact.
 
 Requires the local aweb/ac repositories to contain the pinned commits
-(they are ancestors of main); skips only if a checkout genuinely lacks
-them, and says so.
+(they are ancestors of main). If they cannot be resolved B1 REFUSES by
+name rather than skipping - a skip reads as a pass in a summary line -
+and the skip survives only as the explicit COLUMN_B_ALLOW_MISSING_AC
+opt-in.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +33,57 @@ import release_normalizer_capture as cap  # noqa: E402
 FIXTURES = REPO_ROOT / "scripts" / "e2e" / "fixtures" / "aben-column-b"
 AWEB_B1_SHA = "5a55f7ce6b4dbb86dc2901f7c687e172e39db3af"
 AC_B1_SHA = "47060200c53d30835cbb35cbcb5d073cbe3dc5d3"
+AC_SIBLING = "ac-worktree"
+ALLOW_MISSING_AC = "COLUMN_B_ALLOW_MISSING_AC"
+
+
+class MissingPinnedSource(Exception):
+    """B1's checkouts could not be resolved, and B1 did not run."""
+
+
+def pinned_sources(
+    *,
+    aweb: Path | None = None,
+    ac: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[Path, Path]:
+    """The two checkouts B1 replays, or a refusal naming what is missing.
+
+    The sibling AC checkout is found by name, so a checkout that calls it
+    anything else is unresolvable here. That used to skip; a skip is
+    indistinguishable from a pass in a summary line, so it refuses. The
+    skip remains available to environments that genuinely have no AC
+    checkout, by setting COLUMN_B_ALLOW_MISSING_AC.
+    """
+
+    settings: Mapping[str, str] = os.environ if environ is None else environ
+    aweb = REPO_ROOT if aweb is None else aweb
+    ac = REPO_ROOT.parent / AC_SIBLING if ac is None else ac
+
+    missing = []
+    for repo, sha in ((aweb, AWEB_B1_SHA), (ac, AC_B1_SHA)):
+        if not repo.exists():
+            missing.append(f"{repo} - checkout not found")
+            continue
+        probe = subprocess.run(
+            ["git", "-C", str(repo), "cat-file", "-e", f"{sha}^{{commit}}"],
+            capture_output=True,
+        )
+        if probe.returncode != 0:
+            missing.append(f"{repo} - present, but lacks pinned commit {sha}")
+    if not missing:
+        return aweb, ac
+
+    detail = (
+        "B1 replays the real repositories at pinned commits and cannot run: "
+        + "; ".join(missing)
+        + f". The AC checkout is looked for as the sibling directory named "
+        f"{AC_SIBLING}. Set {ALLOW_MISSING_AC}=1 to skip B1 where there is "
+        f"genuinely no AC checkout."
+    )
+    if settings.get(ALLOW_MISSING_AC):
+        raise unittest.SkipTest(detail)
+    raise MissingPinnedSource(detail)
 
 
 def historical_checkout(source: Path, sha: str, destination: Path) -> Path:
@@ -56,25 +111,65 @@ def registry_half(name: str) -> dict:
     return json.loads((FIXTURES / name).read_text())["artifacts"]
 
 
+class PinnedSourceResolution(unittest.TestCase):
+    """B1 either replays the pinned commits or says why it did not.
+
+    A skip is indistinguishable from a pass in a summary line, so an
+    absent checkout must refuse by name. The skip survives only as an
+    explicit opt-in, for environments that genuinely have no AC
+    checkout.
+    """
+
+    def test_unresolvable_checkout_refuses_and_names_what_it_looked_for(self) -> None:
+        absent = Path("/nonexistent/ac-worktree")
+        with self.assertRaises(MissingPinnedSource) as raised:
+            pinned_sources(ac=absent, environ={})
+        message = str(raised.exception)
+        self.assertIn(str(absent), message)
+        self.assertIn("not found", message)
+        self.assertIn(ALLOW_MISSING_AC, message)
+
+    def test_present_checkout_without_the_pinned_commit_refuses_differently(self) -> None:
+        # A checkout that exists but cannot reach the commit (a shallow
+        # clone) is a different fact and reads as one.
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp)
+            subprocess.run(
+                ["git", "-C", str(empty), "init", "-q"], check=True, capture_output=True
+            )
+            with self.assertRaises(MissingPinnedSource) as raised:
+                pinned_sources(ac=empty, environ={})
+        message = str(raised.exception)
+        self.assertIn(AC_B1_SHA, message)
+        self.assertIn("lacks pinned commit", message)
+
+    def test_the_opt_in_restores_the_skip(self) -> None:
+        with self.assertRaises(unittest.SkipTest) as raised:
+            pinned_sources(ac=Path("/nonexistent/ac-worktree"), environ={ALLOW_MISSING_AC: "1"})
+        self.assertIn("not found", str(raised.exception))
+
+    def test_resolvable_sources_are_returned(self) -> None:
+        # The positive control: without it, the two refusals above are
+        # equally consistent with a resolver that refuses everything.
+        # It reads the real environment on purpose - pinning an empty one
+        # here would refuse under the opt-in and defeat it, leaving an
+        # AC-less environment failing after asking not to.
+        aweb, ac = pinned_sources()
+        self.assertTrue((aweb / ".git").exists())
+        self.assertTrue((ac / ".git").exists() or (ac / ".git").is_file())
+
+
 class B1NarrowCard(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        # Probe before allocating: a SkipTest out of setUpClass skips
-        # tearDownClass with it, so a temporary directory created first
-        # leaks to interpreter exit and reports itself as a warning.
-        ac_source = REPO_ROOT.parent / "ac-worktree"
-        for repo, sha in ((REPO_ROOT, AWEB_B1_SHA), (ac_source, AC_B1_SHA)):
-            probe = subprocess.run(
-                ["git", "-C", str(repo), "cat-file", "-e", f"{sha}^{{commit}}"],
-                capture_output=True,
-            )
-            if probe.returncode != 0:
-                raise unittest.SkipTest(
-                    f"{repo} lacks pinned commit {sha[:8]} - B1 needs the history"
-                )
+        # Resolve before allocating: whichever way this ends, it leaves
+        # setUpClass by exception, and that skips tearDownClass with it -
+        # so a temporary directory created first leaks to interpreter
+        # exit and reports itself as a warning.
+        aweb_source, ac_source = pinned_sources()
         cls._tmp = tempfile.TemporaryDirectory()
         root = Path(cls._tmp.name)
-        cls.aweb = historical_checkout(REPO_ROOT, AWEB_B1_SHA, root / "aweb")
+        cls.aweb = historical_checkout(aweb_source, AWEB_B1_SHA, root / "aweb")
         cls.ac = historical_checkout(ac_source, AC_B1_SHA, root / "ac")
 
     @classmethod
