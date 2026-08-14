@@ -409,6 +409,12 @@ class CapturedWorld:
     artifacts: dict[str, CapturedArtifact]
     equality_groups: tuple[tuple[str, ...], ...]
     compatibility: str
+    # The same-cycle consumer floor (design section 4, R1): the awid
+    # floor literal read from server's manifest. None = not captured
+    # (direct-built fixture worlds; the policy is out of scope), "" =
+    # captured but the literal was not found (a named stop when awid
+    # moves), otherwise the literal version.
+    server_awid_floor: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -430,6 +436,9 @@ class NormalizerResult:
     artifacts: dict[str, ArtifactResult]
     patches: tuple[tuple[str, str, str], ...]
     stops: tuple[Stop, ...]
+    # (owner artifact, from, to) consumer-floor edits - the R1 policy's
+    # patch half; the owner's manifest file carries the literal.
+    floor_patches: tuple[tuple[str, str, str], ...] = ()
 
     def serialize(self) -> bytes:
         import json
@@ -442,6 +451,7 @@ class NormalizerResult:
                     for name, result in sorted(self.artifacts.items())
                 },
                 "patches": self.patches,
+                "floor_patches": self.floor_patches,
                 "stops": [dataclasses.asdict(s) for s in self.stops],
             },
             sort_keys=True,
@@ -506,8 +516,56 @@ def _artifact_result(
 
 
 def normalize(world: CapturedWorld) -> NormalizerResult:
-    """Compose reconciliation, equality groups, and the movement table
-    into the complete result. Pure over the captured world."""
+    """Compose reconciliation, equality groups, the movement table, and
+    the same-cycle consumer-floor policy into the complete result. Pure
+    over the captured world.
+
+    The R1 floor edge runs as a closure: if awid-service moves to M and
+    the captured floor literal differs, the floor edit changes server's
+    shipped content, so the whole computation reruns with aweb-server's
+    content flipped - the induced server (and by equality gateway)
+    movement comes out of THIS pass, which is what lets the fixed-point
+    pass on the patched tree come back empty.
+    """
+
+    result = _normalize_once(world)
+    floor = world.server_awid_floor
+    if floor is None:
+        return result
+    awid = result.artifacts.get("awid-service")
+    moving = awid is not None and awid.disposition in (
+        "moving",
+        "moving-with-recovery",
+    )
+    if not moving or awid.version is None or floor == awid.version:
+        return result
+    if not floor:
+        stops = tuple(
+            sorted(
+                [*result.stops, Stop("floor-literal-missing", "aweb-server")],
+                key=lambda s: (s.code, s.artifact or ""),
+            )
+        )
+        return dataclasses.replace(result, outcome="stop", stops=stops)
+    flipped = dataclasses.replace(
+        world,
+        artifacts={
+            **world.artifacts,
+            "aweb-server": dataclasses.replace(
+                world.artifacts["aweb-server"], content_changed=True
+            ),
+        },
+    )
+    induced = _normalize_once(flipped)
+    floor_patch = ("aweb-server", floor, awid.version)
+    outcome = "stop" if induced.stops else "patch-needed"
+    return dataclasses.replace(
+        induced, outcome=outcome, floor_patches=(floor_patch,)
+    )
+
+
+def _normalize_once(world: CapturedWorld) -> NormalizerResult:
+    """Reconciliation, equality groups, and the movement table alone."""
 
     grouped = {name for group in world.equality_groups for name in group}
     artifacts: dict[str, ArtifactResult] = {}

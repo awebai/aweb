@@ -34,7 +34,13 @@ from registry_stand_in import RegistryStandIn  # noqa: E402
 MAIN = REPO_ROOT / "scripts" / "release_normalizer_main.py"
 
 MANIFESTS = {
-    "server/pyproject.toml": ("toml", "1.27.1"),
+    "server/pyproject.toml": (
+        "raw",
+        '[project]\nname = "server"\nversion = "1.27.1"\n'
+        'dependencies = ["awid-service>=0.5.16"]\n',
+    ),
+    "server/uv.lock": ("raw", "# lock v1\n"),
+    "awid/uv.lock": ("raw", "# lock v1\n"),
     "awid/pyproject.toml": ("toml", "0.5.16"),
     "cli/go/npm/aw/package.json": ("json", "1.34.6"),
     "channel/package.json": ("json", "1.7.7"),
@@ -67,7 +73,9 @@ NPM_AW_PACKAGES = (
 def _write_manifest(root: Path, rel: str, kind: str, version: str) -> None:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    if kind == "toml":
+    if kind == "raw":
+        path.write_text(version)
+    elif kind == "toml":
         name = rel.split("/", 1)[0]
         path.write_text(
             f'[project]\nname = "{name}"\nversion = "{version}"\n'
@@ -75,7 +83,10 @@ def _write_manifest(root: Path, rel: str, kind: str, version: str) -> None:
         )
     else:
         path.write_text(
-            json.dumps({"name": rel, "version": version, "dependencies": {"dep": "^1"}})
+            json.dumps(
+                {"name": rel, "version": version, "dependencies": {"dep": "^1"}},
+                indent=2,
+            )
             + "\n"
         )
 
@@ -114,6 +125,9 @@ class CanonicalEntry(unittest.TestCase):
         )
         cls.aweb_root = base / "aweb"
         cls.ac_root = base / "ac"
+        cls.lock_script = base / "relock.sh"
+        cls.lock_script.write_text("#!/bin/sh\necho relocked >> uv.lock\n")
+        cls.lock_script.chmod(0o755)
 
     @classmethod
     def tearDownClass(cls):
@@ -136,11 +150,22 @@ class CanonicalEntry(unittest.TestCase):
             "github": {"awebai/aw": ["1.34.6"], "awebai/aweb": ["0.2.13"]},
         }
 
-    def run_entry(self, world: dict) -> subprocess.CompletedProcess:
+    def run_entry(
+        self,
+        world: dict,
+        *,
+        lock_command: str | None = None,
+        invariant_commands: str = "[]",
+    ) -> subprocess.CompletedProcess:
+        # Tests override the invariant pass explicitly (default: none);
+        # the production default list is pinned by its own unit test.
         with RegistryStandIn(world) as registry:
             env = dict(os.environ)
             env.update(
                 {
+                    "AWEB_NORMALIZER_INVARIANT_COMMANDS": invariant_commands,
+                    "AWEB_NORMALIZER_LOCK_COMMAND": lock_command
+                    or str(self.lock_script),
                     "AWEB_NORMALIZER_AWEB_ROOT": str(self.aweb_root),
                     "AWEB_NORMALIZER_AC_ROOT": str(self.ac_root),
                     "AWEB_NORMALIZER_PYPI_BASE": registry.base,
@@ -235,6 +260,166 @@ class CanonicalEntry(unittest.TestCase):
             self.assertIn("awid-image: 0.5.16 -> 0.5.17", completed.stdout)
         finally:
             _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_dirty_checkout_stops_by_name(self) -> None:
+        # A4: the normalizer's inputs are exact SHAs from CLEAN
+        # checkouts; a dirty tree is a named stop before any capture.
+        marker = self.aweb_root / "channel/package.json"
+        original = marker.read_text()
+        marker.write_text(original + "\n")
+        try:
+            completed = self.run_entry(self.world_at_rest())
+            self.assertEqual(
+                completed.returncode,
+                1,
+                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+            )
+            self.assertIn("dirty-checkout", completed.stdout)
+            self.assertIn("aweb", completed.stdout)
+        finally:
+            marker.write_text(original)
+
+    def test_moved_main_stops_by_name(self) -> None:
+        # A4: origin's main advancing past the checkout is mains
+        # movement - a named stop, not a world computed from stale
+        # inputs.
+        with tempfile.TemporaryDirectory() as ahead_dir:
+            ahead = Path(ahead_dir) / "ahead"
+            subprocess.run(
+                ["git", "clone", "-q", str(self.ac_root), str(ahead)],
+                check=True,
+                capture_output=True,
+            )
+            _git(ahead, "config", "user.email", "test@aweb.ai")
+            _git(ahead, "config", "user.name", "canonical-entry test")
+            (ahead / "backend/note.txt").write_text("moved\n")
+            _git(ahead, "add", "-A")
+            _git(ahead, "commit", "-q", "-m", "main moves under the run")
+            _git(self.ac_root, "remote", "set-url", "origin", str(ahead))
+            try:
+                completed = self.run_entry(self.world_at_rest())
+                self.assertEqual(
+                    completed.returncode,
+                    1,
+                    f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+                )
+                self.assertIn("main-moved", completed.stdout)
+                self.assertIn("ac", completed.stdout)
+            finally:
+                _git(self.ac_root, "remote", "set-url", "origin", str(self.ac_root))
+
+    def test_patch_output_prints_base_shas_and_the_exact_diff(self) -> None:
+        # A4 transport contract: PATCH NEEDED prints the base SHAs of
+        # both repositories and the exact changed-file diff, so review
+        # of the patch needs nothing but this output.
+        manifest = self.aweb_root / "awid/pyproject.toml"
+        manifest.write_text(manifest.read_text().replace("dep>=1", "dep>=2"))
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "dependency floor moves")
+        sha = _git(self.aweb_root, "rev-parse", "HEAD").strip()
+        try:
+            completed = self.run_entry(self.world_at_rest())
+            self.assertEqual(
+                completed.returncode,
+                10,
+                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+            )
+            self.assertIn(f"base aweb={sha}", completed.stdout)
+            self.assertIn(f"base ac={self.ac_sha}", completed.stdout)
+            self.assertIn('-version = "0.5.16"', completed.stdout)
+            self.assertIn('+version = "0.5.17"', completed.stdout)
+        finally:
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_awid_move_cascades_floor_lock_and_server_by_policy(self) -> None:
+        # A4, the whole allowlisted patch through the entry: awid content
+        # moves, so the R1 policy must ALSO edit server's floor literal,
+        # move server (and by equality the gateway), regenerate the
+        # owned locks of every patched manifest, and show all of it in
+        # the transport diff - reaching the fixed point in one pass.
+        _write_manifest(self.aweb_root, "awid/service.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "awid content moves")
+        try:
+            completed = self.run_entry(self.world_at_rest())
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 10, out)
+            self.assertIn("awid-service: 0.5.16 -> 0.5.17", completed.stdout)
+            self.assertIn("aweb-server: 1.27.1 -> 1.27.2", completed.stdout)
+            self.assertIn("a2a-gateway-image: 1.27.1 -> 1.27.2", completed.stdout)
+            server_manifest = (self.aweb_root / "server/pyproject.toml").read_text()
+            self.assertIn("awid-service>=0.5.17", server_manifest, out)
+            self.assertIn(
+                "relocked", (self.aweb_root / "awid/uv.lock").read_text(), out
+            )
+            self.assertIn(
+                "relocked", (self.aweb_root / "server/uv.lock").read_text(), out
+            )
+            self.assertIn('+dependencies = ["awid-service>=0.5.17"]', completed.stdout)
+            self.assertIn("+relocked", completed.stdout)
+        finally:
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_lock_regeneration_failure_stops_by_name(self) -> None:
+        # A failed lock command is a named stop, never a patch that
+        # quietly shipped stale locks.
+        _write_manifest(self.aweb_root, "awid/service.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "awid content moves")
+        try:
+            completed = self.run_entry(
+                self.world_at_rest(), lock_command="false"
+            )
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 1, out)
+            self.assertIn("lock-regeneration-failed", completed.stdout)
+        finally:
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_failing_invariant_stops_by_name_after_the_patch(self) -> None:
+        # A4: the read-only invariant pass runs after patch application;
+        # a failing invariant is the named stop, and the marker command
+        # proves the pass saw the PATCHED tree.
+        _write_manifest(self.aweb_root, "awid/service.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "awid content moves")
+        marker = self.aweb_root.parent / "invariant-saw.toml"
+        invariants = json.dumps(
+            [
+                {
+                    "label": "sees-patched-tree",
+                    "argv": ["cp", "awid/pyproject.toml", str(marker)],
+                },
+                {"label": "broken-invariant", "argv": ["false"]},
+            ]
+        )
+        try:
+            completed = self.run_entry(
+                self.world_at_rest(), invariant_commands=invariants
+            )
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 1, out)
+            self.assertIn("invariant-failed", completed.stdout)
+            self.assertIn("broken-invariant", completed.stdout)
+            self.assertIn('version = "0.5.17"', marker.read_text(), out)
+        finally:
+            marker.unlink(missing_ok=True)
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_invariants_run_on_normal_form_too(self) -> None:
+        marker = self.aweb_root.parent / "invariant-at-rest"
+        invariants = json.dumps(
+            [{"label": "at-rest", "argv": ["touch", str(marker)]}]
+        )
+        try:
+            completed = self.run_entry(
+                self.world_at_rest(), invariant_commands=invariants
+            )
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 0, out)
+            self.assertTrue(marker.exists(), out)
+        finally:
+            marker.unlink(missing_ok=True)
 
     def test_identityless_image_tag_is_captured_not_crashed(self) -> None:
         # A grammar-conforming tag whose config carries no revision label

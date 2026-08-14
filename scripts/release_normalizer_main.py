@@ -106,6 +106,112 @@ def route_discovery(
     raise ValueError(f"no discoverer routes target {target!r}")
 
 
+def _git(root: Path, *args: str) -> str:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=root, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def worktree_stops(repo_roots: dict[str, Path]) -> list[rn.Stop]:
+    """The normalizer's inputs are exact main SHAs from clean checkouts:
+    a dirty tree or an origin main that moved past the checkout is a
+    named stop before any capture (design section 6)."""
+
+    stops: list[rn.Stop] = []
+    for key, root in sorted(repo_roots.items()):
+        if _git(root, "status", "--porcelain").strip():
+            stops.append(rn.Stop("dirty-checkout", key))
+            continue
+        head = _git(root, "rev-parse", "HEAD").strip()
+        listing = _git(root, "ls-remote", "origin", "refs/heads/main").split()
+        remote_main = listing[0] if listing else ""
+        if remote_main and remote_main != head:
+            stops.append(rn.Stop("main-moved", key))
+    return stops
+
+
+def reobserve_result(result: rn.NormalizerResult, specs, discover) -> list[rn.Stop]:
+    """The exit re-observation: every moving artifact's intended version
+    must still be free on EVERY declared unit target - a composite
+    occupied mid-run on a secondary member is the same race with the
+    same name."""
+
+    stops: list[rn.Stop] = []
+    for name, artifact in sorted(result.artifacts.items()):
+        if artifact.disposition != "moving" or artifact.version is None:
+            continue
+        spec = next(s for s in specs if s.name == name)
+        for target in spec.unit_targets:
+            if artifact.version in discover(target):
+                stops.append(rn.Stop("version-occupied", name))
+                break
+    return stops
+
+
+def invariant_commands(
+    aweb_root: Path,
+) -> tuple[tuple[str, tuple[str, ...], Path], ...]:
+    """The read-only invariant pass (design section 6): the same-cycle
+    lock property's check half, the canonical migration chain, and
+    suite-map exactness, each by its exact selector. The env override
+    exists for hermetic entry tests; the defaults here are pinned by
+    test so the override can never quietly become the production path."""
+
+    override = os.environ.get("AWEB_NORMALIZER_INVARIANT_COMMANDS", "").strip()
+    if override:
+        import json
+
+        return tuple(
+            (
+                entry["label"],
+                tuple(entry["argv"]),
+                aweb_root / entry.get("cwd", "."),
+            )
+            for entry in json.loads(override)
+        )
+    return (
+        ("python-locks", ("bash", "scripts/check-python-locks.sh"), aweb_root),
+        (
+            "migration-chain",
+            (
+                "uv",
+                "run",
+                "--frozen",
+                "pytest",
+                "tests/test_package_data.py::"
+                "test_canonical_chain_starts_with_reset_baseline_then_forward_migrations",
+                "-q",
+            ),
+            aweb_root / "server",
+        ),
+        (
+            "suite-map",
+            (
+                sys.executable,
+                "-m",
+                "unittest",
+                "scripts.e2e.test_release_gate_contract."
+                "ThinReleaseWorkflowContractTests."
+                "test_dead_hosted_gate_and_component_paths_are_deleted",
+            ),
+            aweb_root,
+        ),
+    )
+
+
+def run_invariants(aweb_root: Path) -> rn.Stop | None:
+    import subprocess
+
+    env = {**os.environ, "UV_OFFLINE": "1"}
+    for label, argv, cwd in invariant_commands(aweb_root):
+        completed = subprocess.run(argv, cwd=cwd, env=env, capture_output=True)
+        if completed.returncode != 0:
+            return rn.Stop("invariant-failed", label)
+    return None
+
+
 def main() -> int:
     default_aweb_root = Path(__file__).resolve().parents[1]
     aweb_root = Path(
@@ -145,27 +251,64 @@ def main() -> int:
             compatibility=compatibility,
         )
 
-    def reobserve(result: rn.NormalizerResult):
-        # The exit re-observation: every moving artifact's intended
-        # version must still be free on its primary target. World
-        # movement stops under its real name.
-        stops = []
-        for name, artifact in sorted(result.artifacts.items()):
-            if artifact.disposition != "moving" or artifact.version is None:
-                continue
-            spec = next(s for s in specs if s.name == name)
-            occupied = discover(spec.unit_targets[0])
-            if artifact.version in occupied:
-                stops.append(rn.Stop("version-occupied", name))
-        return stops
+    precondition_stops = worktree_stops(repo_roots)
+    if precondition_stops:
+        for stop in precondition_stops:
+            print(f"STOP {stop.code} ({stop.artifact})")
+        return 1
+
+    base_shas = {
+        key: _git(root, "rev-parse", "HEAD").strip()
+        for key, root in sorted(repo_roots.items())
+    }
+
+    lock_paths = {
+        entry.key: tuple(
+            repo_roots[entry.repository] / lock.path
+            for lock in entry.owned_locks
+            if lock.path
+        )
+        for entry in rt.ARTIFACTS
+        if entry.owned_locks
+    }
+    lock_command = tuple(
+        __import__("shlex").split(
+            os.environ.get("AWEB_NORMALIZER_LOCK_COMMAND", "").strip() or "uv lock"
+        )
+    )
+
+    def regenerate_lock(lock: Path) -> None:
+        import subprocess
+
+        subprocess.run(
+            lock_command, cwd=lock.parent, check=True, capture_output=True
+        )
 
     outcome = run.run_normalizer(
         capture=capture,
         manifest_paths=manifest_paths,
-        reobserve=reobserve,
+        reobserve=lambda result: reobserve_result(result, specs, discover),
         normalize=rn.normalize,
+        lock_paths=lock_paths,
+        regenerate_lock=regenerate_lock,
     )
+    if outcome.exit_code in (0, run.PATCH_NEEDED):
+        # Read-only invariants over the (possibly patched) tree, after
+        # the computation and before anything else runs.
+        failed = run_invariants(aweb_root)
+        if failed is not None:
+            print(outcome.report)
+            print(f"STOP {failed.code} ({failed.artifact})")
+            return 1
     print(outcome.report)
+    if outcome.exit_code == run.PATCH_NEEDED:
+        # Transport contract: review of the patch needs nothing but this
+        # output - the exact bases the edits apply to, and the edits.
+        for key, root in sorted(repo_roots.items()):
+            print(f"base {key}={base_shas[key]}")
+            tree_diff = _git(root, "diff")
+            if tree_diff.strip():
+                print(tree_diff, end="")
     return outcome.exit_code
 
 
