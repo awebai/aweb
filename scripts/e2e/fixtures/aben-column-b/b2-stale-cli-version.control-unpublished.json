@@ -43,7 +43,7 @@
       "aw-cli.members.npm:*.occupied.1.34.4": {
         "method": "inherited verbatim from the primary",
         "recorded_in": "b2-stale-cli-version.json, provenance.values, key aw-cli.members.npm:*.occupied.1.34.4 - HTTP 200 re-observed 2026-08-14, controlled against a 404 in the same run",
-        "carries": "null identity by kind, and presence probed for @awebai/aw with the six platform packages recorded on the composite-unit contract"
+        "carries": "null identity by kind, and the primary's row-level mark that seven npm occupancies rest on one probe plus the composite-unit contract - inheriting a value inherits how well it is evidenced"
       }
     },
     "why_the_prior_history_stays": {
