@@ -113,3 +113,131 @@ def movement_decision(
         version=format_version(candidate),
         patch=(manifest_version, format_version(candidate)),
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class UnitMember:
+    """One publication-unit member's discovered occupancy: version ->
+    observable source identity, or None where the member kind carries no
+    source identity (pypi/npm listings)."""
+
+    name: str
+    occupied: dict[str, str | None]
+
+
+@dataclasses.dataclass(frozen=True)
+class Reconciliation:
+    """state: reconciled | recoverable-partial | conflicting-partial | stop.
+
+    p is the previous COMPLETE anchored version (the content-diff anchor);
+    for reconciled it equals the candidate. candidate is the version under
+    consideration when partial. provisional marks recoverability resting on
+    identityless occupancy alone (decided by the staged-byte check at
+    publication). stop carries the stable code for terminal states.
+    """
+
+    state: str
+    p: str | None = None
+    candidate: str | None = None
+    source_identity: str | None = None
+    provisional: bool = False
+    stop: str | None = None
+
+
+def reconcile_unit(
+    *,
+    members: list[UnitMember],
+    anchor_versions: dict[str, str],
+    manifest_intent: str,
+) -> Reconciliation:
+    """The four-state anchor reconciliation (design section 2), with the
+    recoverable-versus-conflicting fork.
+
+    anchor_versions maps each anchored version to its source identity.
+    History below the candidate never stops; every terminal condition
+    carries a stable code.
+    """
+
+    for m in members:
+        for version in m.occupied:
+            if parse_version(version) is None:
+                return Reconciliation(
+                    state="stop", stop="malformed-version-candidate"
+                )
+    for version in anchor_versions:
+        if parse_version(version) is None:
+            return Reconciliation(state="stop", stop="malformed-version-candidate")
+
+    all_versions = {v for m in members for v in m.occupied} | set(anchor_versions)
+    if not all_versions:
+        # Nothing published anywhere: trivially reconciled at no version;
+        # movement derivation treats absent P via its own rules.
+        return Reconciliation(state="reconciled", p=None)
+
+    candidate = format_version(
+        max(parsed for v in all_versions if (parsed := parse_version(v)) is not None)
+    )
+
+    occupied_members = [m for m in members if candidate in m.occupied]
+    missing_members = [m for m in members if candidate not in m.occupied]
+    anchor_identity = anchor_versions.get(candidate)
+
+    def complete_at(version: str) -> bool:
+        return version in anchor_versions and all(
+            version in m.occupied for m in members
+        )
+
+    previous_complete = None
+    lower = sorted(
+        (
+            parsed
+            for v in all_versions
+            if v != candidate and (parsed := parse_version(v)) is not None
+        ),
+        reverse=True,
+    )
+    for parsed in lower:
+        text = format_version(parsed)
+        if complete_at(text):
+            previous_complete = text
+            break
+
+    # Identity coherence: occupied members that carry identity must agree
+    # with each other and with the anchor. Provisionality is separate -
+    # it is about the occupied bytes' provenance, so the anchor's own
+    # identity never converts identityless occupancy into proven state.
+    member_identities = {
+        identity
+        for m in occupied_members
+        for v, identity in m.occupied.items()
+        if v == candidate and identity is not None
+    }
+    identities = set(member_identities)
+    if anchor_identity is not None:
+        identities.add(anchor_identity)
+    if len(identities) > 1:
+        return Reconciliation(state="conflicting-partial", candidate=candidate)
+
+    if not missing_members:
+        if anchor_identity is None:
+            return Reconciliation(state="stop", stop="anchorless-version")
+        return Reconciliation(
+            state="reconciled",
+            p=candidate,
+            candidate=candidate,
+            source_identity=anchor_identity,
+        )
+
+    # Partial: fork on evidence.
+    if manifest_intent != candidate:
+        return Reconciliation(state="conflicting-partial", candidate=candidate)
+    if previous_complete is None:
+        return Reconciliation(state="conflicting-partial", candidate=candidate)
+    provisional = bool(occupied_members) and not member_identities
+    return Reconciliation(
+        state="recoverable-partial",
+        p=previous_complete,
+        candidate=candidate,
+        source_identity=next(iter(identities)) if identities else None,
+        provisional=provisional,
+    )
