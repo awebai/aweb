@@ -16,6 +16,7 @@ import os
 import re
 import shlex
 import subprocess
+import contextlib
 import sys
 import tempfile
 import tomllib
@@ -1446,15 +1447,28 @@ def prepare(
     environment: Mapping[str, str],
     *,
     projection,
+    projection_base: Mapping[str, str] | None = None,
     gate_command: tuple[str, ...],
     timeout: float = 600,
     work_timeout: float = WORK_TIMEOUT,
 ) -> ReleaseCard:
     """The card is constructed from the normalizer's projection - the
     production entry computes that projection with the SAME phase that
-    validated it, in this one command (aben A5, shipment finding 2)."""
+    validated it, in this one command (aben A5, shipment finding 2) -
+    and the projection's base commits must BE the commits the card
+    selects (C4): a card naming one source while carrying versions
+    computed from another is refused by name."""
 
     prepared = prepare_environment(repo_root, environment)
+    if projection_base is not None:
+        selected = {"aweb": prepared.aweb_sha, "ac": prepared.ac_sha}
+        for key, base_sha in sorted(projection_base.items()):
+            if selected.get(key) != base_sha:
+                raise ValidationError(
+                    f"projection-base-mismatch: the projection was computed "
+                    f"from {key} {base_sha} but the card selects "
+                    f"{selected.get(key)}; one world per card"
+                )
     selections = selections_from_projection(projection)
     versions = {item.name: item.version for item in selections}
     if versions["a2a-gateway-image"] != versions["aweb-server"]:
@@ -1845,6 +1859,36 @@ def _default_rederive(environment) -> list:
     import release_normalizer_capture as cap
     import release_normalizer_main as rmain
 
+    # C4: the claim is capture over the exact card SHAs - so the LOCAL
+    # checkouts must actually be at them (clean, HEAD equal), not merely
+    # the remote refs continue_environment already checks. The AC
+    # checkout may legitimately sit at the adopted derived commit on a
+    # retry.
+    binding_stops: list[rn.Stop] = []
+    expected_heads = {
+        "aweb": (environment.aweb_root, {environment.card.aweb_sha}),
+        "ac": (
+            environment.ac_root,
+            {
+                sha
+                for sha in (
+                    environment.card.ac_base_sha,
+                    environment.ac_derived_sha,
+                )
+                if sha
+            },
+        ),
+    }
+    for key, (root, allowed) in sorted(expected_heads.items()):
+        if _git(root, "status", "--porcelain").stdout.strip():
+            binding_stops.append(rn.Stop("card-checkout-dirty", key))
+            continue
+        head = _git(root, "rev-parse", "HEAD").stdout.strip()
+        if head not in allowed:
+            binding_stops.append(rn.Stop("card-checkout-mismatch", key))
+    if binding_stops:
+        return binding_stops
+
     specs = cap.derive_capture_specs(ARTIFACTS)
     world = cap.assemble_captured_world(
         specs=specs,
@@ -2033,12 +2077,7 @@ def continue_train(
     verify_command: tuple[str, ...],
     digest_command: tuple[str, ...],
     marketplace_command: tuple[str, ...] | None = None,
-    correction_command: tuple[str, ...] = (
-        "python3",
-        "scripts/render_release_client.py",
-        "first-correction",
-        "--digest",
-    ),
+    correction_command: tuple[str, ...] | None = None,
     timeout: float = 600,
     work_timeout: float = WORK_TIMEOUT,
     rederive=None,
@@ -2222,7 +2261,17 @@ def continue_train(
         # The card's pending production correction is executed, not
         # merely recorded: first-correction pins the digest with
         # auto-deploy disabled and read back; a card without the
-        # pending flag deploys plainly.
+        # pending flag deploys plainly. An unbound correction command
+        # when the card needs it is a named refusal, never a silent
+        # default into a live production write (release-review's C1
+        # note: this was the one live-production default in the
+        # signature, the opposite of the pattern beside it).
+        if card.production_correction_pending and correction_command is None:
+            raise ValidationError(
+                "the card's production correction is pending but no "
+                "correction command is bound; the correction cannot be "
+                "silently skipped or defaulted"
+            )
         production_command = (
             correction_command
             if card.production_correction_pending
@@ -2436,34 +2485,88 @@ def _main(argv: Sequence[str]) -> int:
     # The normalizer phase runs in THIS command and its in-memory
     # projection is what the card is built from (aben A5); a stop or a
     # patch ends the run before any test, exactly as the phase reports.
+    # AWEB_SHA/AC_SHA overrides (docs/release.md) select older-on-main
+    # commits: the projection is computed FROM those exact objects in
+    # detached temporary worktrees, so a valid override produces a card
+    # for the older selection rather than a refusal (C4).
     import release_normalizer_main as normalizer_entry
 
-    phase_code, phase_report, projection, normalizer_root = (
-        normalizer_entry.run_phase()
-    )
-    print(phase_report)
-    if phase_code != 0:
-        return phase_code
-    if normalizer_root != Path.cwd().resolve():
-        print(
-            "release-prepare refused: the normalizer ran over "
-            f"{normalizer_root} but prepare runs from {Path.cwd().resolve()}; "
-            "one world per command",
-            file=sys.stderr,
-        )
-        return 2
+    roots: dict[str, Path] | None = None
+    expected_shas: dict[str, str] = {}
+    temp_worktrees: list[tuple[Path, Path]] = []
     try:
-        card = prepare(
-            Path.cwd(),
-            os.environ,
-            projection=projection,
-            gate_command=tuple(shlex.split(gate_raw)),
+        overrides = {
+            "aweb": os.environ.get("AWEB_SHA", "").strip(),
+            "ac": os.environ.get("AC_SHA", "").strip(),
+        }
+        if any(overrides.values()):
+            base_roots = {
+                "aweb": Path.cwd().resolve(),
+                "ac": (Path.cwd() / ".." / "ac").resolve(),
+            }
+            roots = dict(base_roots)
+            for key, selected in overrides.items():
+                if not selected:
+                    continue
+                temp = Path(
+                    tempfile.mkdtemp(prefix=f"release-selected-{key}-")
+                ) / "tree"
+                _git(
+                    base_roots[key],
+                    "worktree",
+                    "add",
+                    "--detach",
+                    str(temp),
+                    selected,
+                )
+                temp_worktrees.append((base_roots[key], temp))
+                roots[key] = temp
+                expected_shas[key] = _git(
+                    base_roots[key], "rev-parse", selected
+                ).stdout.strip()
+        phase_code, phase_report, projection, phase_info = (
+            normalizer_entry.run_phase(roots, expected_shas or None)
         )
-    except ReleaseTrainError as error:
-        print(f"release-prepare failed: {error}", file=sys.stderr)
-        return 1
-    print(json.dumps(dataclasses.asdict(card), indent=2))
-    return 0
+        print(phase_report)
+        if phase_code == 10 and temp_worktrees:
+            print(
+                "release-prepare: the SELECTED older commit needs a "
+                "normalizer patch; check that commit out properly and run "
+                "prepare there - the temporary worktree's edits are not a "
+                "reviewable patch transport.",
+                file=sys.stderr,
+            )
+            return 1
+        if phase_code != 0:
+            return phase_code
+        expected_root = (
+            roots["aweb"].resolve() if roots is not None else Path.cwd().resolve()
+        )
+        if phase_info["aweb_root"] != expected_root:
+            print(
+                "release-prepare refused: the normalizer ran over "
+                f"{phase_info['aweb_root']} but this command selected "
+                f"{expected_root}; one world per command",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            card = prepare(
+                Path.cwd(),
+                os.environ,
+                projection=projection,
+                projection_base=phase_info["base_shas"],
+                gate_command=tuple(shlex.split(gate_raw)),
+            )
+        except ReleaseTrainError as error:
+            print(f"release-prepare failed: {error}", file=sys.stderr)
+            return 1
+        print(json.dumps(dataclasses.asdict(card), indent=2))
+        return 0
+    finally:
+        for base_root, temp in temp_worktrees:
+            with contextlib.suppress(Exception):
+                _git(base_root, "worktree", "remove", "--force", str(temp))
 
 
 if __name__ == "__main__":

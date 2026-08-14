@@ -952,6 +952,25 @@ class PreparePipelineTests(_PipelineFixture):
         for repo in (self.aweb, self.ac):
             self.assertEqual(git("status", "--porcelain", cwd=repo), "")
 
+    def test_projection_base_mismatch_refuses_by_name(self) -> None:
+        # C4: a projection computed from one commit cannot become a card
+        # selecting another - refused naming both worlds, before any
+        # gate runs.
+        environment = {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"}
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.prepare(
+                self.aweb,
+                environment,
+                projection=_fixture_projection(self.aweb, environment),
+                projection_base={"aweb": "e" * 40},
+                gate_command=self.gate_command,
+                timeout=30,
+            )
+        self.assertIn("projection-base-mismatch", str(caught.exception))
+        self.assertIn("e" * 40, str(caught.exception))
+        with self.assertRaises(rt.CardUnavailable):
+            rt.read_card(self.aweb)
+
     def test_unmoved_projection_rows_reach_the_card_unmoved(self) -> None:
         # The sweep semantics themselves live in the normalizer (proven
         # at the canonical entry); the train's surviving claim is that
@@ -1105,6 +1124,34 @@ class ContinuePhaseTests(_PipelineFixture):
         card = self._card()
         observed = rt.continue_environment(self.aweb)
         self.assertEqual(observed.card, card)
+
+    def test_local_checkout_not_at_the_card_sha_stops_by_name(self) -> None:
+        # C4: the re-derivation claims capture over the exact card SHAs;
+        # a local checkout detached elsewhere (remote refs untouched, so
+        # the environment's remote checks pass) must stop
+        # card-checkout-mismatch before any capture, and a dirty tree
+        # stops card-checkout-dirty - never a silent capture of the
+        # wrong tree.
+        self._card()
+        environment = rt.continue_environment(self.aweb)
+        git("checkout", "-q", "--detach", "HEAD~1", cwd=self.aweb)
+        try:
+            stops = rt._default_rederive(environment)
+            self.assertIn(
+                ("card-checkout-mismatch", "aweb"),
+                [(s.code, s.artifact) for s in stops],
+            )
+        finally:
+            git("checkout", "-q", "main", cwd=self.aweb)
+        (self.aweb / "dirty.txt").write_text("x\n")
+        try:
+            stops = rt._default_rederive(environment)
+            self.assertIn(
+                ("card-checkout-dirty", "aweb"),
+                [(s.code, s.artifact) for s in stops],
+            )
+        finally:
+            (self.aweb / "dirty.txt").unlink()
 
     def test_moved_aweb_main_invalidates_the_card(self) -> None:
         self._card()
@@ -2096,6 +2143,39 @@ class ContinueTrainTests(_PipelineFixture):
             self.marketplace_marker.exists(),
             "a card moving channel/skills must run the pointer edge",
         )
+
+    def test_unbound_correction_refuses_when_the_card_needs_it(self) -> None:
+        # release-review's C1 note closed: correction_command defaults
+        # to None (inert), and a pending card with no binding refuses by
+        # name before the production step - the marketplace shape, not a
+        # silent default into a live production write.
+        self._prepare()
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.continue_train(
+                self.aweb,
+                rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=None,
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=self.ac_gate_command,
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+                work_timeout=30,
+            )
+        self.assertIn("no correction command is bound", str(caught.exception))
 
     def test_pending_correction_is_executed_not_recorded(self) -> None:
         # C1: production_correction_pending is READ - the pending card's
