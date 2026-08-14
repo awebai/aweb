@@ -56,7 +56,10 @@ def discover_anchor_tags(repo: Path, prefix: str) -> dict[str, str]:
 
 
 _VERSION_FIELD_TOML = re.compile(r'(?m)^version\s*=\s*"[^"]*"')
-_VERSION_FIELD_JSON = re.compile(r'"version"\s*:\s*"[^"]*"')
+# Structurally anchored to the top level (two-space indent), not first
+# occurrence: a dependencies block placed before the version field must
+# never absorb the mask (release-review's A3 hardening).
+_VERSION_FIELD_JSON = re.compile(r'(?m)^ {2}"version"\s*:\s*"[^"]*"')
 
 
 def _mask_version_field(text: str, name: str) -> str:

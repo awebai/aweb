@@ -166,6 +166,45 @@ class RepoCapture(unittest.TestCase):
             )
         )
 
+    def test_json_mask_is_structural_not_first_occurrence(self) -> None:
+        # release-review's A3 hardening: a dependencies block placed
+        # BEFORE the top-level version must not absorb the mask - a
+        # first-occurrence mask would normalize the dependency's version
+        # and read a dependency move as silence, the phantom direction.
+        pkg_json = self.work / "pkg" / "package.json"
+        pkg_json.write_text(
+            '{\n  "overrides": {\n    "dep": {\n      "version": "9.9.9"\n'
+            '    }\n  },\n  "version": "2.0.0"\n}\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "deps before version", cwd=self.work)
+        anchor = git("rev-parse", "HEAD", cwd=self.work)
+        pkg_json.write_text(
+            '{\n  "overrides": {\n    "dep": {\n      "version": "9.9.10"\n'
+            '    }\n  },\n  "version": "2.0.0"\n}\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "nested dep version moves", cwd=self.work)
+        self.assertTrue(
+            cap.content_changed(
+                self.work, anchor, scope=("pkg/",),
+                excluded=(), masked=("pkg/package.json",),
+            )
+        )
+        pkg_json.write_text(
+            '{\n  "overrides": {\n    "dep": {\n      "version": "9.9.10"\n'
+            '    }\n  },\n  "version": "2.0.1"\n}\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "own version bump only", cwd=self.work)
+        anchor2 = git("rev-parse", "HEAD~1", cwd=self.work)
+        self.assertFalse(
+            cap.content_changed(
+                self.work, anchor2, scope=("pkg/",),
+                excluded=(), masked=("pkg/package.json",),
+            )
+        )
+
     def test_manifest_absent_at_anchor_is_movement(self) -> None:
         # A masked file that did not exist at the anchor is new content.
         (self.work / "pkg" / "package.json").write_text(
