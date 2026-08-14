@@ -557,6 +557,22 @@ def normalize(world: CapturedWorld) -> NormalizerResult:
         },
     )
     induced = _normalize_once(flipped)
+    # The flip touches exactly one field of one artifact, and today's
+    # equality groups are disjoint - but that invariance is relied on,
+    # so it is checked: an awid row that changed across the two passes
+    # means a coupling this closure does not model.
+    for name in ("awid-service", "awid-image"):
+        if induced.artifacts.get(name) != result.artifacts.get(name):
+            return dataclasses.replace(
+                result,
+                outcome="stop",
+                stops=tuple(
+                    sorted(
+                        [*result.stops, Stop("floor-closure-coupling", name)],
+                        key=lambda s: (s.code, s.artifact or ""),
+                    )
+                ),
+            )
     floor_patch = ("aweb-server", floor, awid.version)
     outcome = "stop" if induced.stops else "patch-needed"
     return dataclasses.replace(
