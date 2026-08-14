@@ -50,13 +50,33 @@ class _Handler(BaseHTTPRequestHandler):
         world = self.world
 
         if path.startswith("/pypi/") and path.endswith("/json"):
-            package = path[len("/pypi/") : -len("/json")]
+            middle = path[len("/pypi/") : -len("/json")].strip("/")
+            parts = middle.split("/")
+            if len(parts) == 2:
+                package, version = parts
+                files = world.get("pypi_files", {}).get(package, {}).get(version)
+                if files is None:
+                    return self._json({}, status=404)
+                return self._json(
+                    {
+                        "urls": [
+                            {"filename": name, "digests": {"sha256": sha}}
+                            for name, sha in files.items()
+                        ]
+                    }
+                )
+            package = middle
             versions = world.get("pypi", {}).get(package)
             if versions is None:
                 return self._json({}, status=404)
             return self._json({"releases": {v: [] for v in versions}})
 
         if path.startswith("/v2/"):
+            expected_bearer = world.get("require_bearer")
+            if expected_bearer and self.headers.get("Authorization") != (
+                f"Bearer {expected_bearer}"
+            ):
+                return self._json({"errors": ["unauthorized"]}, status=401)
             rest = path[len("/v2/") :]
             if rest.endswith("/tags/list"):
                 image = rest[: -len("/tags/list")]
@@ -89,6 +109,15 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json({"config": {"Labels": labels}})
             return self._json({}, status=404)
 
+        if path.startswith("/repos/") and "/releases/tags/" in path:
+            repository, tag = path[len("/repos/") :].split("/releases/tags/", 1)
+            assets = world.get("github_releases", {}).get(repository, {}).get(tag)
+            if assets is None:
+                return self._json({}, status=404)
+            return self._json(
+                {"tag_name": tag, "assets": [{"name": name} for name in assets]}
+            )
+
         if path.startswith("/repos/") and path.endswith("/releases"):
             repository = path[len("/repos/") : -len("/releases")]
             versions = world.get("github", {}).get(repository)
@@ -96,7 +125,45 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json({}, status=404)
             return self._json([{"tag_name": f"v{v}"} for v in versions])
 
+        if path.startswith("/tarballs/"):
+            key = path[len("/tarballs/") :]
+            body = world.get("npm_tarballs", {}).get(key)
+            if body is None:
+                return self._json({}, status=404)
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return None
+
         package = path.lstrip("/")
+        # Listing first: a scoped package name itself contains a slash,
+        # so the version-document branch only takes paths whose prefix
+        # is not a known package listing.
+        if package not in world.get("npm", {}) and "/" in package:
+            name, version = package.rsplit("/", 1)
+            tarball = world.get("npm_tarballs", {}).get(f"{name}/{version}.tgz")
+            if tarball is None:
+                return self._json({}, status=404)
+            import base64 as _b64
+            import hashlib as _hashlib
+
+            integrity = "sha512-" + _b64.b64encode(
+                _hashlib.sha512(tarball).digest()
+            ).decode()
+            declared = (
+                world.get("npm_integrity_override", {}).get(f"{name}/{version}")
+                or integrity
+            )
+            host = self.headers.get("Host", "")
+            return self._json(
+                {
+                    "dist": {
+                        "integrity": declared,
+                        "tarball": f"http://{host}/tarballs/{name}/{version}.tgz",
+                    }
+                }
+            )
         versions = world.get("npm", {}).get(package)
         if versions is None:
             return self._json({}, status=404)
