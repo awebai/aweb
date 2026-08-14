@@ -187,6 +187,44 @@ Cost of keeping it, measured: 12 of 97 calls, 3.7 of 37.0 seconds.
 ac-image is the one artifact with no such cross-check, because
 nothing independent exists to compare its label against.
 
+**The AC tag backfill, done before the reader that produced it was
+deleted** (plan-critic's boundary 1). Under Juan's ruling a release's
+identity is the tag in its own repository, so ac-image's
+revision-label path is removed; v0.7.13 and v0.7.14 had no AC tag, and
+the image label was the only surviving record of what they were built
+from. Read with the reader that is now deleted:
+
+| AC tag | commit | source of the identity |
+|---|---|---|
+| `v0.7.13` | `6c1bbe5c1f6fbb17318186216c9d00ab8f523fc5` | `ghcr.io/awebai/ac:0.7.13` revision label |
+| `v0.7.14` | `efd19f41bf6699264e6a7813df19c4b0070eb4a3` | `ghcr.io/awebai/ac:0.7.14` revision label, independently corroborated by the live `/health` endpoint |
+
+THE CONTROL THAT MAKES THE BACKFILL TRUSTWORTHY, run before creating
+either tag: `v0.7.12` already had both a tag and an image, and they
+agree - the tag peels to `559b5f5c...` and the image label reads
+`559b5f5c...`. So the label-equals-tag convention is demonstrated on a
+case where both facts existed, rather than assumed on the two cases
+where only one did.
+
+Both tags are ANNOTATED, matching all 13 existing AC release tags; the
+first attempt created them lightweight and was corrected before anyone
+consumed them, leaving 15 of 15 uniform. The removal path was proven
+before any real tag was created - a throwaway tag was pushed to
+`awebai/ac`, observed on the remote, deleted, and confirmed gone -
+because a cleanup obligation that has not been tested is not a
+constraint.
+
+**The image-to-source correspondence this removes, and where it now
+lives.** Reconciliation no longer compares the published image's
+revision label against its source tag. That property is enforced at
+PUBLICATION instead - AC's release-image verification proves a built
+image carries a label equal to its build SHA, with the publish-time
+byte comparison as the exact-adopt gate. Durable status now proves two
+required facts, the immutable registry object and the exact AC source
+tag, and no longer proves the first was built from the second. Stated
+that way deliberately, because the alternative is status language that
+implies a check nobody runs any more.
+
 **The re-run** - STAMP-AT-SEND: the classification the same launcher
 produces over the pair refreshed to `38a3b871` / AC `22ab8bbe`, with the
 equality-group resolution stated explicitly, and any remaining stop
