@@ -55,7 +55,8 @@
         "observed_at": "2026-08-14",
         "observed_by": "aben-dev2",
         "control": "the same probe against 1.34.999 returned HTTP 404 in the same run, so the 200 reports presence rather than a registry that answers 200 for any path",
-        "note": "identity is null by kind, exactly as for 1.34.5 below. Presence was probed for @awebai/aw only; the six platform packages are recorded at 1.34.4 on the composite-unit contract, matching how the 1.34.5 row is recorded."
+        "evidence_is_weaker_than_it_looks": "SEVEN npm occupancies are recorded at this version and ONE was probed. The other six rest on the composite-unit contract - that the aw CLI's platform packages publish together - not on observation. If that contract is ever false, six of these values are wrong and nothing in this fixture would show it.",
+        "note": "identity is null by kind, exactly as for 1.34.5 below. Recorded this way to match how the 1.34.5 row was already recorded: probing one version per-package and the other on the contract would put a second difference into a pair whose whole point is having one."
       },
       "aw-cli.anchor_versions.1.34.5": {
         "method": "re-observed",
@@ -77,7 +78,8 @@
         "result": "HTTP 200, so 1.34.5 occupies npm",
         "observed_at": "2026-08-14",
         "observed_by": "aben-dev2",
-        "note": "identity is null for every npm member BY KIND, not by failure to observe: npm listings expose no source identity. This null is load-bearing - it drives provisional-by-occupancy recoverability, decided authoritatively by the staged-byte comparison at publication. Never replace it with a SHA. Presence was re-observed only for @awebai/aw; the six platform packages are recorded as occupied at 1.34.5 on the composite-unit contract, not individually probed."
+        "evidence_is_weaker_than_it_looks": "SEVEN npm occupancies are recorded at this version and ONE was probed. The other six rest on the composite-unit contract - that the aw CLI's platform packages publish together - not on observation. If that contract is ever false, six of these values are wrong and nothing in this fixture would show it.",
+        "note": "identity is null for every npm member BY KIND, not by failure to observe: npm listings expose no source identity. This null is load-bearing - it drives provisional-by-occupancy recoverability, decided authoritatively by the staged-byte comparison at publication. Never replace it with a SHA."
       }
     },
     "current_world_note": {
