@@ -1327,6 +1327,13 @@ paths = {
 }
 for path, payload in paths[artifact]:
     (spool / quote(path, safe="")).write_text(json.dumps(payload))
+# The typed remote-completion record (A8): the monitor's stdout IS the
+# record; the fixture publishes at the checkout's own HEAD.
+import subprocess
+sha = subprocess.run(
+    ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+).stdout.strip()
+print(json.dumps({"workflow": "fixture.yml", "run_sha": sha, "conclusion": "success"}))
 '''
 
 
@@ -1833,6 +1840,139 @@ class ContinueTrainTests(_PipelineFixture):
         self.assertEqual(rt.read_card(self.aweb), card)
         summary = self._continue()
         self.assertEqual(summary["status"], "DONE")
+
+    def test_monitor_record_is_required_typed_and_source_bound(self) -> None:
+        # A8: the workflow monitor's stdout must be the strictly typed
+        # remote-completion record - each way it can lie has its own
+        # named refusal, and an opaque successful subprocess is none of
+        # them.
+        good = '{"workflow": "w.yml", "run_sha": "%s", "conclusion": "success"}' % ("a" * 40)
+        rt._require_monitor_record(good, "a" * 40)  # the legit record passes
+        with self.assertRaisesRegex(rt.ObservationMalformed, "no remote-completion"):
+            rt._require_monitor_record("", "a" * 40)
+        with self.assertRaisesRegex(rt.ObservationMalformed, "not JSON"):
+            rt._require_monitor_record("watching run 123", "a" * 40)
+        with self.assertRaisesRegex(rt.ObservationMalformed, "wrong shape"):
+            rt._require_monitor_record(
+                '{"workflow": "w.yml", "conclusion": "success"}', "a" * 40
+            )
+        with self.assertRaisesRegex(rt.ObservationMalformed, "wrong shape"):
+            rt._require_monitor_record(
+                '{"workflow": "w", "run_sha": "x", "conclusion": "success", "extra": 1}',
+                "a" * 40,
+            )
+        with self.assertRaisesRegex(rt.ValidationError, "not success"):
+            rt._require_monitor_record(
+                '{"workflow": "w.yml", "run_sha": "%s", "conclusion": "failure"}'
+                % ("a" * 40),
+                "a" * 40,
+            )
+        with self.assertRaisesRegex(rt.ValidationError, "but the card releases"):
+            rt._require_monitor_record(
+                '{"workflow": "w.yml", "run_sha": "%s", "conclusion": "success"}'
+                % ("b" * 40),
+                "a" * 40,
+            )
+
+    def test_fixed_continue_commands_are_the_reviewed_defaults(self) -> None:
+        # A8: the env variables are hermetic-test seams; the production
+        # defaults are the fixed repository commands, pinned here so an
+        # override can never quietly become the real path.
+        from unittest import mock
+
+        clean = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith("AWEB_RELEASE_")
+        }
+        with mock.patch.dict(os.environ, clean, clear=True):
+            commands = rt.continue_commands()
+        self.assertEqual(
+            commands["AWEB_RELEASE_WORKFLOW_COMMAND"],
+            ("bash", "scripts/release-workflow-monitor.sh"),
+        )
+        self.assertEqual(
+            commands["AWEB_RELEASE_DERIVE_COMMAND"],
+            ("python3", "scripts/derive_release_floors.py", "--ac-root", "."),
+        )
+        self.assertEqual(
+            commands["AWEB_RELEASE_AC_GATE_COMMAND"],
+            ("bash", "scripts/release-local-gate.sh"),
+        )
+        self.assertEqual(
+            commands["AWEB_RELEASE_MIGRATE_COMMAND"],
+            ("bash", "scripts/check-pending-migrations.sh"),
+        )
+        self.assertEqual(
+            commands["AWEB_RELEASE_DEPLOY_COMMAND"],
+            ("python3", "scripts/render_release_client.py", "deploy", "--digest"),
+        )
+        self.assertEqual(
+            commands["AWEB_RELEASE_VERIFY_COMMAND"][:3],
+            ("python3", "scripts/render_release_client.py", "verify-deploy"),
+        )
+        self.assertEqual(commands["AWEB_RELEASE_VERIFY_COMMAND"][-1], "--digest")
+        self.assertEqual(
+            commands["AWEB_RELEASE_DIGEST_COMMAND"],
+            (
+                "python3",
+                "scripts/verify_registry_adoption.py",
+                "--image",
+                "ghcr.io/awebai/ac",
+                "--emit-digest",
+            ),
+        )
+
+    def test_derive_receives_the_complete_card_projection(self) -> None:
+        # A8, the gate's :1967 finding: the train itself binds
+        # --card-artifacts and --card-ac-version from the live card.
+        self._prepare()
+        argv_dump = Path(self.tmp.name) / "derive-argv.json"
+        dumper = Path(self.tmp.name) / "derive-dump.py"
+        dumper.write_text(
+            "import json, sys\n"
+            "from pathlib import Path\n"
+            f"Path({str(argv_dump)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+            "root = Path(sys.argv[1])\n"
+            "(root / 'backend/pyproject.toml').write_text("
+            "'[project]\\nversion = \"0.7.13\"\\n# floors bumped\\n')\n"
+            "(root / 'backend/uv.lock').write_text('lock v2\\n')\n"
+        )
+        self._continue_with_derive((sys.executable, str(dumper), str(self.ac)))
+        argv = json.loads(argv_dump.read_text())
+        self.assertIn("--card-artifacts", argv)
+        self.assertIn("--card-ac-version", argv)
+        rows = json.loads(argv[argv.index("--card-artifacts") + 1])
+        self.assertEqual(len(rows), 9)
+        self.assertEqual(
+            {row["name"] for row in rows},
+            set(rt.CARD_ARTIFACT_ORDER),
+        )
+        self.assertEqual(argv[argv.index("--card-ac-version") + 1], "0.7.13")
+
+    def _continue_with_derive(self, derive_command):
+        return rt.continue_train(
+            self.aweb,
+            rederive=lambda environment: [],
+            marketplace_gate=lambda card, bases, timeout: [],
+            ac_predecessor_gate=lambda card, bases, timeout: [],
+            terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
+            bases={
+                "pypi": self.spool_base,
+                "npm": self.spool_base,
+                "ghcr": self.spool_base,
+                "github": self.spool_base,
+            },
+            workflow_command=self.workflow_command,
+            derive_command=derive_command,
+            ac_gate_command=self.ac_gate_command,
+            migrate_command=self.migrate_command,
+            deploy_command=self.deploy_command,
+            verify_command=self.verify_command,
+            digest_command=self.digest_command,
+            timeout=60,
+            work_timeout=30,
+        )
 
     def test_continue_failure_path_preserves_the_refusal_through_the_entry(self) -> None:
         # A7: the real entry's failure path goes through the

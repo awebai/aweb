@@ -44,4 +44,14 @@ while :; do
   sleep 15
 done
 echo "watching $workflow run $run_id for $artifact $version at $sha" >&2
-exec gh run watch "$run_id" --exit-status >&2
+set +e
+gh run watch "$run_id" --exit-status >&2
+watch_status=$?
+set -e
+conclusion="$(gh run view "$run_id" --json conclusion --jq .conclusion 2>/dev/null || echo unknown)"
+# The typed remote-completion record (aben design section 8): the ONLY
+# stdout this script produces, so the caller can require exact shape
+# instead of trusting an opaque successful subprocess.
+printf '{"workflow":"%s","run_sha":"%s","conclusion":"%s"}\n' \
+  "$workflow" "$sha" "$conclusion"
+exit "$watch_status"
