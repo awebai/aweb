@@ -309,7 +309,10 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
         source = entry.version_source or ""
         if source.startswith("tag-history:"):
             derivation = "tag-history"
-            manifest_path = "cli/go/npm/package.json"
+            # The wrapper package's manifest; tag-history derivation does
+            # not consume its version for movement, but capture reads it
+            # and the path must be real (B1 caught the earlier guess).
+            manifest_path = "cli/go/npm/aw/package.json"
         elif source.startswith("equals:"):
             derivation = "manifest"
             manifest_path = source.removeprefix("equals:")

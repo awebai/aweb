@@ -58,6 +58,18 @@ class SpecDerivation(unittest.TestCase):
         self.assertEqual(self.specs["aw-cli"].derivation, "tag-history")
         self.assertEqual(self.specs["aweb-server"].derivation, "manifest")
 
+    def test_every_spec_manifest_path_exists_in_this_repository(self) -> None:
+        # B1's lesson made permanent: a guessed path passes mirroring
+        # tests and fails only at capture time; existence is the check.
+        for name, spec in self.specs.items():
+            if spec.repo_key != "aweb":
+                continue
+            with self.subTest(artifact=name):
+                self.assertTrue(
+                    (REPO_ROOT / spec.manifest_path).is_file(),
+                    f"{name}: {spec.manifest_path} does not exist",
+                )
+
     def test_a2a_manifest_resolves_the_equals_indirection(self) -> None:
         self.assertEqual(
             self.specs["a2a-gateway-image"].manifest_path, "server/pyproject.toml"
