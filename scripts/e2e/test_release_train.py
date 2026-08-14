@@ -459,7 +459,7 @@ class CardTests(unittest.TestCase):
             "purpose": "release the reviewed reliability fixes",
             "deployments": rt.DeploymentSet(True, True, False),
             "final_ac_sha": None,
-            "first_release_correction_pending": True,
+            "production_correction_pending": True,
         }
         values.update(changes)
         return rt.ReleaseCard.create(**values)
@@ -573,7 +573,7 @@ class CardTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(rt.ValidationError, "production deployment"):
             self.card(artifacts=ac_not_moving)
-        with self.assertRaisesRegex(rt.ValidationError, "first release correction"):
+        with self.assertRaisesRegex(rt.ValidationError, "production correction"):
             self.card(
                 artifacts=ac_not_moving,
                 deployments=rt.DeploymentSet(False, True, False),
@@ -944,7 +944,7 @@ class PreparePipelineTests(_PipelineFixture):
             {item.name: item.version for item in card.artifacts}["aw-cli"], "1.34.4"
         )
         self.assertIsNone(card.final_ac_sha)
-        self.assertTrue(card.first_release_correction_pending)
+        self.assertTrue(card.production_correction_pending)
         stored = rt.read_card(self.aweb)
         self.assertEqual(stored, card)
         for remote, listing in before.items():
