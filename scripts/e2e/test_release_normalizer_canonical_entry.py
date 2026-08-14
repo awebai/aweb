@@ -112,13 +112,16 @@ def _build_repo(root: Path, manifests: dict, tags: tuple[str, ...]) -> str:
     return _git(root, "rev-parse", "HEAD").strip()
 
 
-class CanonicalEntry(unittest.TestCase):
-    """The subprocess entry over a world at rest with published images."""
+class _WorldFixture(unittest.TestCase):
+    """The synthetic aweb/ac pair and registry stand-in shared by the
+    canonical entry proofs; carries no tests of its own."""
 
     @classmethod
     def setUpClass(cls):
         cls._tmp = tempfile.TemporaryDirectory()
-        base = Path(cls._tmp.name)
+        # The pair lives under awebai/ so each repo's origin (itself)
+        # satisfies the canonical-remote check the train enforces.
+        base = Path(cls._tmp.name) / "awebai"
         cls.aweb_sha = _build_repo(base / "aweb", MANIFESTS, AWEB_TAGS)
         cls.ac_sha = _build_repo(
             base / "ac", {"backend/pyproject.toml": ("toml", "0.7.14")}, ()
@@ -183,6 +186,9 @@ class CanonicalEntry(unittest.TestCase):
                 text=True,
                 timeout=120,
             )
+
+class CanonicalEntry(_WorldFixture):
+    """The normalizer subprocess entry over the world at rest."""
 
     def test_world_with_existing_ac_image_reaches_normal_form(self) -> None:
         # The shipment-gate probe: an AC image published at 0.7.14 whose
@@ -437,6 +443,79 @@ class CanonicalEntry(unittest.TestCase):
         )
         self.assertIn("STOP", completed.stdout)
         self.assertNotIn("Traceback", completed.stderr)
+
+
+class PrepareEntry(_WorldFixture):
+    """A5: the one-command production entry - release_train.py prepare
+    runs the normalizer phase in-process and builds the card from its
+    projection."""
+
+    def run_prepare(self, world: dict, *, gate: Path) -> subprocess.CompletedProcess:
+        with RegistryStandIn(world) as registry:
+            env = dict(os.environ)
+            env.update(
+                {
+                    "AWEB_NORMALIZER_INVARIANT_COMMANDS": "[]",
+                    "AWEB_NORMALIZER_LOCK_COMMAND": str(self.lock_script),
+                    "AWEB_NORMALIZER_AWEB_ROOT": str(self.aweb_root),
+                    "AWEB_NORMALIZER_AC_ROOT": str(self.ac_root),
+                    "AWEB_NORMALIZER_PYPI_BASE": registry.base,
+                    "AWEB_NORMALIZER_NPM_BASE": registry.base,
+                    "AWEB_NORMALIZER_GHCR_BASE": registry.base,
+                    "AWEB_NORMALIZER_GITHUB_BASE": registry.base,
+                    "AWEB_NORMALIZER_TIMEOUT": "10",
+                    "PURPOSE": "canonical entry proof",
+                    "COMPAT_BREAK": "none",
+                    "AWEB_RELEASE_GATE_COMMAND": f"{sys.executable} {gate}",
+                }
+            )
+            return subprocess.run(
+                [sys.executable, str(REPO_ROOT / "scripts" / "release_train.py"), "prepare"],
+                cwd=self.aweb_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+
+    def _gate_stub(self, marker: Path) -> Path:
+        gate = self.aweb_root.parent / "gate-stub.py"
+        gate.write_text(
+            "import json, pathlib, sys\n"
+            f"pathlib.Path({str(marker)!r}).write_text('ran')\n"
+            'print(json.dumps({"suites": ["fixture"], "reference": "fixture.log"}))\n'
+        )
+        return gate
+
+    def test_one_command_prepare_builds_the_card_from_the_projection(self) -> None:
+        marker = self.aweb_root.parent / "gate-ran"
+        try:
+            completed = self.run_prepare(self.world_at_rest(), gate=self._gate_stub(marker))
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 0, out)
+            self.assertIn("normal form", completed.stdout)
+            self.assertEqual(completed.stdout.count('"disposition": "unmoved"'), 9, out)
+            self.assertIn('"kind": "oci-revision-label"', completed.stdout)
+            self.assertIn(self.ac_sha, completed.stdout)
+            self.assertTrue(marker.exists(), "the gate must run on normal form")
+        finally:
+            marker.unlink(missing_ok=True)
+
+    def test_patch_needed_ends_the_command_before_any_test(self) -> None:
+        marker = self.aweb_root.parent / "gate-ran"
+        _write_manifest(self.aweb_root, "awid/service.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "awid content moves")
+        try:
+            completed = self.run_prepare(self.world_at_rest(), gate=self._gate_stub(marker))
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 10, out)
+            self.assertIn("PATCH NEEDED", completed.stdout)
+            self.assertFalse(marker.exists(), "no test may run past a patch stop")
+            self.assertNotIn('"artifacts"', completed.stdout)
+        finally:
+            marker.unlink(missing_ok=True)
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
 
 
 if __name__ == "__main__":
