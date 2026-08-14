@@ -117,6 +117,87 @@ class Orchestration(unittest.TestCase):
         )
         self.assertEqual(outcome.exit_code, run.STOP)
         self.assertIn("version-occupied", outcome.report)
+        # The code alone is not actionable. This assertion is the one
+        # this test was missing when the live prepare printed a bare
+        # "STOP version-occupied" and the operator had no subject.
+        self.assertIn("version-occupied (pkg)", outcome.report)
+
+    def test_every_stop_rendering_path_names_its_artifact(self) -> None:
+        """One owner for stop rendering. The runner rendered stops in
+        four places and only one of them kept the artifact, so which
+        stops were actionable depended on WHICH PATH produced them -
+        the same duplicate-derivation family as the tag prefix and the
+        version source. The live prepare hit a lossy path.
+
+        Each case below reaches a different rendering site."""
+
+        stop = rn.Stop("version-occupied", "pkg")
+        pristine = self.manifest.read_text()
+
+        def reset():
+            # Each case applies patches to the SAME working tree; a case
+            # that starts from the previous one's patched manifest is
+            # measuring the wrong thing.
+            self.manifest.write_text(pristine)
+            return True
+
+        # Exit re-observation after a normal-form pass.
+        reset()
+        normal_form = run.run_normalizer(
+            capture=lambda: captured_world("1.0.0", changed=False),
+            manifest_paths={"pkg": self.manifest},
+            reobserve=lambda result, world=None: [stop],
+            normalize=rn.normalize,
+        )
+        # Exit re-observation after a patch was applied - the path the
+        # real prepare took, and the one that printed bare.
+        reset()
+        after_patch = run.run_normalizer(
+            capture=lambda: captured_world("1.0.0", changed=True),
+            manifest_paths={"pkg": self.manifest},
+            reobserve=lambda result, world=None: [stop],
+            normalize=rn.normalize,
+            recapture=self.live_recapture(changed=True),
+        )
+        # A stop raised by the SECOND pass over the patched tree.
+        reset()
+        followup = run.run_normalizer(
+            capture=lambda: captured_world("1.0.0", changed=True),
+            manifest_paths={"pkg": self.manifest},
+            reobserve=lambda result, world=None: [],
+            normalize=rn.normalize,
+            recapture=self.live_recapture(changed=False),
+        )
+        # The engine's own stops, before any patch.
+        reset()
+        engine = run.run_normalizer(
+            capture=lambda: captured_world("0.9.0", changed=False),
+            manifest_paths={"pkg": self.manifest},
+            reobserve=lambda result, world=None: [],
+            normalize=rn.normalize,
+        )
+
+        for label, outcome in (
+            ("normal-form exit", normal_form),
+            ("post-patch exit", after_patch),
+            ("followup stop", followup),
+            ("engine stop", engine),
+        ):
+            with self.subTest(path=label):
+                self.assertEqual(outcome.exit_code, run.STOP)
+                stop_lines = [
+                    line for line in outcome.report.splitlines()
+                    if line.startswith("STOP ")
+                ]
+                self.assertTrue(stop_lines, f"{label}: no STOP line at all")
+                for line in stop_lines:
+                    # Actionable means one of two shapes: the artifact
+                    # in parentheses, or a self-describing detail after
+                    # a colon. A bare "STOP code" is neither.
+                    self.assertRegex(
+                        line, r"^STOP [a-z-]+(?: \(.+\)|: .+)",
+                        f"{label}: unattributed stop line {line!r}",
+                    )
 
     def test_fixed_point_failure_is_named(self) -> None:
         # A patched world that still wants a patch on the second pass is
