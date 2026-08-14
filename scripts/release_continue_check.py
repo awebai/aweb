@@ -34,17 +34,27 @@ class CardRow:
 
 
 def verify_card_against_world(
-    card_rows, result: rn.NormalizerResult
+    card_rows, result: rn.NormalizerResult, *, expected_sources=None
 ) -> list[rn.Stop]:
     """Stops describing every difference the allowlist does not permit.
 
-    A moving row observed complete at the card version is progress (an
-    earlier attempt or parallel publisher finished it); recoverable is
-    progress toward complete; any version difference, disposition
-    regression, or anchor identity change is drift, named.
+    A moving row observed complete at the card version is progress ONLY
+    when its fresh anchor identity equals the source the card names for
+    that artifact (expected_sources, derived from the card's SHAs) -
+    same-version completion from any other source is the named
+    mismatch, and a completion whose expected source cannot be derived
+    yet is unproven, never accepted. The comparison is two-way: fresh
+    artifacts the card does not carry, and a fresh wish for new patches,
+    are drift.
     """
 
+    expected_sources = expected_sources or {}
     stops: list[rn.Stop] = list(result.stops)
+    card_names = {row.name for row in card_rows}
+    for name in sorted(set(result.artifacts) - card_names):
+        stops.append(rn.Stop("card-world-extra-artifact", name))
+    if result.patches or getattr(result, "floor_patches", ()):
+        stops.append(rn.Stop("card-world-patch-drift"))
     for row in card_rows:
         fresh = result.artifacts.get(row.name)
         if fresh is None:
@@ -64,6 +74,22 @@ def verify_card_against_world(
                 # is missing or identityless is anchorless, named.
                 stops.append(rn.Stop("card-world-anchor-missing", row.name))
                 continue
+            if row.disposition in ("moving", "moving-with-recovery"):
+                # A completion: this train (or a legitimate parallel
+                # attempt of it) published the card's version, so the
+                # served bytes must bind to the card's OWN source.
+                if row.name not in (expected_sources or {}) or (
+                    expected_sources.get(row.name) is None
+                ):
+                    stops.append(
+                        rn.Stop("card-world-source-unproven", row.name)
+                    )
+                    continue
+                if fresh_anchor[1] != expected_sources[row.name]:
+                    stops.append(
+                        rn.Stop("card-world-source-mismatch", row.name)
+                    )
+                    continue
             if (
                 row.previous_complete_anchor is not None
                 and row.previous_complete_anchor[1] is not None
