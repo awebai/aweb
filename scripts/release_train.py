@@ -1848,6 +1848,35 @@ def _default_rederive(environment) -> list:
     return rcc.verify_card_against_world(rows, result)
 
 
+def _gate_rows_not_present(rows) -> list:
+    return [row.fact for row in rows if not row.present()]
+
+
+def _default_marketplace_gate(card, bases, timeout) -> list:
+    """Complete channel+skills rows before the pointer mutation."""
+
+    import release_status_gates as gates
+
+    return _gate_rows_not_present(
+        gates.rows_for_artifacts(card, ("channel-plugin", "skills"), bases=bases, timeout=timeout)
+    )
+
+
+def _default_ac_predecessor_gate(card, bases, timeout) -> list:
+    """Every intended aweb/AWID output present before AC derivation."""
+
+    import release_status_gates as gates
+
+    names = tuple(
+        item.name
+        for item in card.artifacts
+        if _artifact(item.name).repository == "aweb"
+    )
+    return _gate_rows_not_present(
+        gates.rows_for_artifacts(card, names, bases=bases, timeout=timeout)
+    )
+
+
 def continue_train(
     repo_root: Path,
     *,
@@ -1863,6 +1892,8 @@ def continue_train(
     timeout: float = 600,
     work_timeout: float = WORK_TIMEOUT,
     rederive=None,
+    marketplace_gate=None,
+    ac_predecessor_gate=None,
 ) -> dict[str, str]:
     """Execute the ten edges literally, idempotently, stopping named."""
 
@@ -1904,6 +1935,15 @@ def continue_train(
             )
         _poll_public_target(primary, selection.version, bases=bases, timeout=timeout)
     if marketplace_command is not None:
+        # aben design section 8: marketplace mutation is gated on the
+        # COMPLETE channel+skills output rows, not on monitored adoption
+        # alone. The gate returns the non-present rows; any -> refusal.
+        blocking = list((marketplace_gate or _default_marketplace_gate)(card, bases, timeout))
+        if blocking:
+            raise ValidationError(
+                "marketplace mutation refused: predecessor rows not present: "
+                + "; ".join(blocking)
+            )
         run_command(
             list(marketplace_command), cwd=environment.aweb_root, timeout=work_timeout
         )
@@ -1915,6 +1955,15 @@ def continue_train(
     ):
         ac_derived = card.ac_base_sha
     if ac_derived is None:
+        # aben design section 8: all intended aweb/AWID outputs must be
+        # PRESENT (complete per-output rows) immediately before the AC
+        # derivation - primary polls are not the enforcement.
+        blocking = list((ac_predecessor_gate or _default_ac_predecessor_gate)(card, bases, timeout))
+        if blocking:
+            raise ValidationError(
+                "AC derivation refused: predecessor rows not present: "
+                + "; ".join(blocking)
+            )
         run_command(list(derive_command), cwd=environment.ac_root, timeout=work_timeout)
         changed = _git(environment.ac_root, "status", "--porcelain").stdout.split()
         names = {line for line in changed if not line.startswith(("M", "A", "?"))} or {

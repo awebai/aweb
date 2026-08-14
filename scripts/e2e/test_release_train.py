@@ -1396,6 +1396,78 @@ class ContinueTrainTests(_PipelineFixture):
         cls.spool_thread.start()
         cls.spool_base = f"http://127.0.0.1:{cls.spool_server.server_port}"
 
+    def test_ac_predecessor_gate_refuses_before_derivation(self) -> None:
+        # aben design section 8: a non-present predecessor row must stop
+        # the walk BEFORE the derive command runs - proven by tripwire.
+        self._prepare()
+        marker = Path(self.tmp.name) / "derive-ran"
+        tripwire = Path(self.tmp.name) / "derive-tripwire.py"
+        tripwire.write_text(
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('ran')\n"
+        )
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.continue_train(
+                self.aweb,
+                rederive=lambda environment: [],
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [
+                    "pypi:aweb wheel (absent)"
+                ],
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=(sys.executable, str(tripwire)),
+                ac_gate_command=self.ac_gate_command,
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+            )
+        self.assertIn("predecessor rows not present", str(caught.exception))
+        self.assertIn("pypi:aweb wheel", str(caught.exception))
+        self.assertFalse(marker.exists(), "derive ran despite the gate")
+
+    def test_marketplace_gate_refuses_before_the_pointer_mutation(self) -> None:
+        self._prepare()
+        marker = Path(self.tmp.name) / "marketplace-ran"
+        tripwire = Path(self.tmp.name) / "marketplace-tripwire.py"
+        tripwire.write_text(
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('ran')\n"
+        )
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.continue_train(
+                self.aweb,
+                rederive=lambda environment: [],
+                marketplace_gate=lambda card, bases, timeout: [
+                    "npm:@awebai/claude-skills tarball (unproven)"
+                ],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=self.ac_gate_command,
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                marketplace_command=(sys.executable, str(tripwire)),
+                timeout=60,
+            )
+        self.assertIn("marketplace mutation refused", str(caught.exception))
+        self.assertFalse(marker.exists(), "marketplace ran despite the gate")
+
     def test_continue_rederivation_drift_refuses_before_the_release_move(self) -> None:
         # aben design section 7: an injected drift stop must refuse
         # BEFORE the release fast-forward - the first irreversible edge -
@@ -1507,6 +1579,8 @@ class ContinueTrainTests(_PipelineFixture):
         return rt.continue_train(
             self.aweb,
             rederive=lambda environment: [],
+            marketplace_gate=lambda card, bases, timeout: [],
+            ac_predecessor_gate=lambda card, bases, timeout: [],
             bases={
                 "pypi": self.spool_base,
                 "npm": self.spool_base,
@@ -1581,6 +1655,8 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+            marketplace_gate=lambda card, bases, timeout: [],
+            ac_predecessor_gate=lambda card, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1629,6 +1705,8 @@ class ContinueTrainTests(_PipelineFixture):
         summary = rt.continue_train(
             self.aweb,
             rederive=lambda environment: [],
+            marketplace_gate=lambda card, bases, timeout: [],
+            ac_predecessor_gate=lambda card, bases, timeout: [],
             bases={
                 "pypi": self.spool_base,
                 "npm": self.spool_base,
@@ -1658,6 +1736,8 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+            marketplace_gate=lambda card, bases, timeout: [],
+            ac_predecessor_gate=lambda card, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1687,6 +1767,8 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+            marketplace_gate=lambda card, bases, timeout: [],
+            ac_predecessor_gate=lambda card, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1733,6 +1815,8 @@ class ContinueTrainTests(_PipelineFixture):
             summary = rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+            marketplace_gate=lambda card, bases, timeout: [],
+            ac_predecessor_gate=lambda card, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1762,6 +1846,8 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+            marketplace_gate=lambda card, bases, timeout: [],
+            ac_predecessor_gate=lambda card, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
