@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import threading
 import urllib.parse
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -59,10 +60,11 @@ class _Handler(BaseHTTPRequestHandler):
                     return self._json({}, status=404)
                 return self._json(
                     {
+                        "info": {"version": version},
                         "urls": [
                             {"filename": name, "digests": {"sha256": sha}}
                             for name, sha in files.items()
-                        ]
+                        ],
                     }
                 )
             package = middle
@@ -71,6 +73,19 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json({}, status=404)
             return self._json({"releases": {v: [] for v in versions}})
 
+        if path == "/token":
+            return self._json({"token": "standin-bearer"})
+
+        if path == "/health":
+            sha_file = world.get("health_git_sha_file")
+            sha = ""
+            if sha_file:
+                try:
+                    sha = Path(sha_file).read_text().strip()
+                except OSError:
+                    sha = ""
+            return self._json({"build": {"git_sha": sha}})
+
         if path.startswith("/v2/"):
             expected_bearer = world.get("require_bearer")
             if expected_bearer and self.headers.get("Authorization") != (
@@ -78,16 +93,95 @@ class _Handler(BaseHTTPRequestHandler):
             ):
                 return self._json({"errors": ["unauthorized"]}, status=401)
             rest = path[len("/v2/") :]
+            dynamic = world.get("ghcr_dynamic", {})
+            for image, spec in dynamic.items():
+                if not rest.startswith(image + "/"):
+                    continue
+                revision = ""
+                try:
+                    revision = Path(spec["revision_file"]).read_text().strip()
+                except OSError:
+                    pass
+                digest = spec["digest"]
+                if rest == f"{image}/tags/list":
+                    return self._json(
+                        {"name": image, "tags": [spec["tag"], "latest"]}
+                    )
+                if rest.startswith(f"{image}/manifests/sha256:dyn-"):
+                    arch = rest.rsplit("sha256:dyn-", 1)[1]
+                    return self._json(
+                        {"config": {"digest": f"sha256:dyncfg-{arch}"}}
+                    )
+                if rest.startswith(f"{image}/manifests/"):
+                    body = json.dumps(
+                        {
+                            "manifests": [
+                                {
+                                    "platform": {
+                                        "os": "linux",
+                                        "architecture": arch,
+                                    },
+                                    "digest": f"sha256:dyn-{arch}",
+                                }
+                                for arch in ("amd64", "arm64")
+                            ]
+                        }
+                    ).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Docker-Content-Digest", digest)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return None
+                if rest.startswith(f"{image}/blobs/sha256:dyncfg-"):
+                    return self._json(
+                        {
+                            "config": {
+                                "Labels": {
+                                    "org.opencontainers.image.revision": revision
+                                }
+                            }
+                        }
+                    )
             if rest.endswith("/tags/list"):
                 image = rest[: -len("/tags/list")]
                 tags = world.get("ghcr", {}).get(image)
                 if tags is None:
                     return self._json({}, status=404)
                 return self._json({"name": image, "tags": sorted(tags)})
+            if "/manifests/sha256:idxchild-" in rest:
+                image, child = rest.split("/manifests/", 1)
+                return self._json(
+                    {
+                        "config": {
+                            "digest": "sha256:idxcfg-"
+                            + child.removeprefix("sha256:idxchild-")
+                        }
+                    }
+                )
+            if "/blobs/sha256:idxcfg-" in rest:
+                image, blob = rest.split("/blobs/", 1)
+                key = urllib.parse.unquote(
+                    blob.removeprefix("sha256:idxcfg-")
+                ).rsplit("-", 1)[0]
+                revision = (
+                    world.get("ghcr_index_revisions", {}).get(key, "")
+                )
+                return self._json(
+                    {
+                        "config": {
+                            "Labels": {
+                                "org.opencontainers.image.revision": revision
+                            }
+                        }
+                    }
+                )
             if "/manifests/" in rest:
                 image, tag = rest.split("/manifests/", 1)
                 index = world.get("ghcr_index", {}).get(image, {}).get(tag)
                 if index is not None:
+                    key = urllib.parse.quote(f"{image}:{tag}", safe="")
                     body = json.dumps(
                         {
                             "manifests": [
@@ -96,7 +190,7 @@ class _Handler(BaseHTTPRequestHandler):
                                         "os": os_name,
                                         "architecture": arch,
                                     },
-                                    "digest": f"sha256:{'c' * 63}{i}",
+                                    "digest": f"sha256:idxchild-{key}-{i}",
                                 }
                                 for i, (os_name, arch) in enumerate(
                                     index["platforms"]
@@ -133,6 +227,15 @@ class _Handler(BaseHTTPRequestHandler):
                 )
                 return self._json({"config": {"Labels": labels}})
             return self._json({}, status=404)
+
+        if path.startswith("/repos/") and "/commits/" in path:
+            repository, ref = path[len("/repos/") :].split("/commits/", 1)
+            record = world.get("github_commits", {}).get(repository, {}).get(ref)
+            if record is None:
+                return self._json({}, status=404)
+            return self._json(
+                {"sha": record["sha"], "commit": {"message": record["message"]}}
+            )
 
         if path.startswith("/repos/") and "/releases/tags/" in path:
             repository, tag = path[len("/repos/") :].split("/releases/tags/", 1)
@@ -183,10 +286,11 @@ class _Handler(BaseHTTPRequestHandler):
             host = self.headers.get("Host", "")
             return self._json(
                 {
+                    "version": version,
                     "dist": {
                         "integrity": declared,
                         "tarball": f"http://{host}/tarballs/{name}/{version}.tgz",
-                    }
+                    },
                 }
             )
         versions = world.get("npm", {}).get(package)
