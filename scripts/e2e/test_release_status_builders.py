@@ -109,7 +109,7 @@ class Builders(unittest.TestCase):
 
     def test_pypi_rows_are_per_fact_and_present_on_the_exact_contract(self) -> None:
         rows = rsb.pypi_rows(
-            "aweb", "1.27.2", anchor="server-v1.27.2@" + "f" * 40,
+            "aweb", "1.27.2",
             base=f"{self.base}/pypi", timeout=3,
         )
         facts = {row.fact: row for row in rows}
@@ -120,7 +120,7 @@ class Builders(unittest.TestCase):
 
     def test_pypi_extra_file_makes_the_set_row_conflict(self) -> None:
         rows = rsb.pypi_rows(
-            "extras", "1.0.0", anchor="x@" + "f" * 40,
+            "extras", "1.0.0",
             base=f"{self.base}/pypi", timeout=3,
         )
         set_row = next(r for r in rows if "filename set" in r.fact)
@@ -129,14 +129,14 @@ class Builders(unittest.TestCase):
 
     def test_pypi_absent_version_is_absent_rows(self) -> None:
         rows = rsb.pypi_rows(
-            "ghost", "9.9.9", anchor="x@" + "f" * 40,
+            "ghost", "9.9.9",
             base=f"{self.base}/pypi", timeout=3,
         )
         self.assertTrue(all(r.state == "observed-absent" for r in rows))
 
     def test_pypi_unavailable_is_unavailable_rows_never_absence(self) -> None:
         rows = rsb.pypi_rows(
-            "down", "1.0.0", anchor="x@" + "f" * 40,
+            "down", "1.0.0",
             base=f"{self.base}/pypi", timeout=3,
         )
         self.assertTrue(all(r.state == "unavailable" for r in rows))

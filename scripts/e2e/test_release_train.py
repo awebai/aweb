@@ -1612,12 +1612,14 @@ class ContinueTrainTests(_PipelineFixture):
             git("push", "origin", "main", cwd=repo)
             git("fetch", "origin", cwd=repo)
 
-    def _continue(self):
+    def _continue(self, terminal_gate=None):
         return rt.continue_train(
             self.aweb,
             rederive=lambda environment: [],
             marketplace_gate=lambda card, bases, timeout: [],
             ac_predecessor_gate=lambda card, bases, timeout: [],
+            terminal_gate=terminal_gate
+            or (lambda environment, ac_derived, effect_rows, bases, timeout: []),
             bases={
                 "pypi": self.spool_base,
                 "npm": self.spool_base,
@@ -1692,8 +1694,9 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
-            marketplace_gate=lambda card, bases, timeout: [],
-            ac_predecessor_gate=lambda card, bases, timeout: [],
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1741,6 +1744,7 @@ class ContinueTrainTests(_PipelineFixture):
             rederive=lambda environment: [],
             marketplace_gate=lambda card, bases, timeout: [],
             ac_predecessor_gate=lambda card, bases, timeout: [],
+            terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
             bases={
                 "pypi": self.spool_base,
                 "npm": self.spool_base,
@@ -1770,8 +1774,9 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
-            marketplace_gate=lambda card, bases, timeout: [],
-            ac_predecessor_gate=lambda card, bases, timeout: [],
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1801,8 +1806,9 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
-            marketplace_gate=lambda card, bases, timeout: [],
-            ac_predecessor_gate=lambda card, bases, timeout: [],
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1828,6 +1834,95 @@ class ContinueTrainTests(_PipelineFixture):
         summary = self._continue()
         self.assertEqual(summary["status"], "DONE")
 
+    def test_continue_failure_path_preserves_the_refusal_through_the_entry(self) -> None:
+        # A7: the real entry's failure path goes through the
+        # failure-preserving reporter - the refusal is primary, a probe
+        # that cannot even read a card becomes a diagnostic line, and
+        # exit stays nonzero. Run as the operator runs it.
+        import subprocess as _subprocess
+        import tempfile as _tempfile
+
+        with _tempfile.TemporaryDirectory() as tmp:
+            _subprocess.run(["git", "init", "-q", tmp], check=True, capture_output=True)
+            env = dict(os.environ)
+            for name in (
+                "AWEB_RELEASE_WORKFLOW_COMMAND", "AWEB_RELEASE_DERIVE_COMMAND",
+                "AWEB_RELEASE_AC_GATE_COMMAND", "AWEB_RELEASE_MIGRATE_COMMAND",
+                "AWEB_RELEASE_DEPLOY_COMMAND", "AWEB_RELEASE_VERIFY_COMMAND",
+                "AWEB_RELEASE_DIGEST_COMMAND",
+            ):
+                env[name] = "true"
+            completed = _subprocess.run(
+                [sys.executable, str(Path(rt.__file__)), "continue"],
+                cwd=tmp,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertIn("release-continue stopped:", completed.stderr)
+        self.assertIn("status reporting failed", completed.stderr)
+
+    def test_terminal_gate_refusal_keeps_the_card_and_names_the_rows(self) -> None:
+        # A7: DONE is the complete intended world; a blocking row
+        # refuses by name and the card survives for the retry.
+        self._prepare()
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._continue(
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [
+                    "ABSENT pypi:aweb wheel (registry 404)"
+                ]
+            )
+        self.assertIn("DONE refused", str(caught.exception))
+        self.assertIn("pypi:aweb wheel", str(caught.exception))
+        rt.read_card(self.aweb)  # the card is intact
+
+    def test_default_terminal_gate_is_the_real_status_sweep(self) -> None:
+        # The seam exists for fixtures; the default must be the real
+        # sweep - proven by monkeypatching the assembly it consumes and
+        # watching the refusal carry the assembly's row.
+        from unittest import mock
+
+        import release_status_gates as gates
+        from release_status import Row
+
+        self._prepare()
+        with mock.patch.object(
+            gates,
+            "rows_for_artifacts",
+            return_value=[
+                Row(fact="tripwire fact", state="observed-absent", evidence="wired")
+            ],
+        ):
+            with self.assertRaises(rt.ValidationError) as caught:
+                # Direct call, terminal_gate OMITTED - the default must
+                # be the real sweep (the fixture helper's empty-gate
+                # convenience must not be what production runs).
+                rt.continue_train(
+                    self.aweb,
+                    rederive=lambda environment: [],
+                    marketplace_gate=lambda card, bases, timeout: [],
+                    ac_predecessor_gate=lambda card, bases, timeout: [],
+                    bases={
+                        "pypi": self.spool_base,
+                        "npm": self.spool_base,
+                        "ghcr": self.spool_base,
+                        "github": self.spool_base,
+                    },
+                    workflow_command=self.workflow_command,
+                    derive_command=self.derive_command,
+                    ac_gate_command=self.ac_gate_command,
+                    migrate_command=self.migrate_command,
+                    deploy_command=self.deploy_command,
+                    verify_command=self.verify_command,
+                    digest_command=self.digest_command,
+                    timeout=60,
+                    work_timeout=30,
+                )
+        self.assertIn("DONE refused", str(caught.exception))
+        self.assertIn("tripwire fact", str(caught.exception))
+
     def test_digest_edge_waits_for_the_ac_image_the_release_push_builds(self) -> None:
         import threading
 
@@ -1849,8 +1944,9 @@ class ContinueTrainTests(_PipelineFixture):
             summary = rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
-            marketplace_gate=lambda card, bases, timeout: [],
-            ac_predecessor_gate=lambda card, bases, timeout: [],
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1880,8 +1976,9 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
-            marketplace_gate=lambda card, bases, timeout: [],
-            ac_predecessor_gate=lambda card, bases, timeout: [],
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,

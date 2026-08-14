@@ -22,9 +22,13 @@ import urllib.request
 from release_status import Row
 
 
-def _fetch(url: str, *, timeout: float) -> tuple[int, bytes]:
+def _fetch(
+    url: str, *, timeout: float, token: str = ""
+) -> tuple[int, bytes]:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         return error.code, b""
@@ -33,7 +37,7 @@ def _fetch(url: str, *, timeout: float) -> tuple[int, bytes]:
 
 
 def pypi_rows(
-    package: str, version: str, *, anchor: str, base: str, timeout: float
+    package: str, version: str, *, base: str, timeout: float
 ) -> list[Row]:
     normalized = package.replace("-", "_")
     status, body = _fetch(f"{base}/{package}/{version}/json", timeout=timeout)
@@ -71,7 +75,7 @@ def pypi_rows(
             Row(
                 fact=facts[0],
                 state="observed-present",
-                evidence=f"registry sha256 {files[sdist_name]}; anchor {anchor}",
+                evidence=f"registry sha256 {files[sdist_name]}",
             )
         )
     else:
@@ -83,7 +87,7 @@ def pypi_rows(
             Row(
                 fact=f"pypi:{package} wheel {wheels[0]}",
                 state="observed-present",
-                evidence=f"registry sha256 {files[wheels[0]]}; anchor {anchor}",
+                evidence=f"registry sha256 {files[wheels[0]]}",
             )
         )
     else:
@@ -175,9 +179,10 @@ def image_rows(
     publisher promises it. The source tag is a separate repository-side
     row owned by the caller."""
 
-    del token  # the hermetic path is anonymous; real GHCR adds a bearer
-    status, body, digest = _fetch_manifest(f"{base}/v2/{image}/manifests/{version}", timeout)
-    if status == -1 or status >= 500:
+    status, body, digest = _fetch_manifest(
+        f"{base}/v2/{image}/manifests/{version}", timeout, token
+    )
+    if status == -1 or status == 401 or status == 403 or status >= 500:
         state, evidence = "unavailable", f"HTTP {status}"
         return [Row(fact=f"ghcr:{image} {version} index digest", state=state, evidence=evidence)]
     if status == 404:
@@ -268,16 +273,18 @@ def image_rows(
     return rows
 
 
-def _fetch_manifest(url: str, timeout: float) -> tuple[int, bytes, str]:
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Accept": (
-                "application/vnd.oci.image.index.v1+json, "
-                "application/vnd.oci.image.manifest.v1+json"
-            )
-        },
-    )
+def _fetch_manifest(
+    url: str, timeout: float, token: str = ""
+) -> tuple[int, bytes, str]:
+    headers = {
+        "Accept": (
+            "application/vnd.oci.image.index.v1+json, "
+            "application/vnd.oci.image.manifest.v1+json"
+        )
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return (
@@ -291,9 +298,11 @@ def _fetch_manifest(url: str, timeout: float) -> tuple[int, bytes, str]:
         return -1, b"", ""
 
 
-def _child_revision(base: str, image: str, child_digest: str, timeout: float):
+def _child_revision(
+    base: str, image: str, child_digest: str, timeout: float, token: str = ""
+):
     status, body, _ = _fetch_manifest(
-        f"{base}/v2/{image}/manifests/{child_digest}", timeout
+        f"{base}/v2/{image}/manifests/{child_digest}", timeout, token
     )
     if status != 200:
         return None
@@ -301,9 +310,103 @@ def _child_revision(base: str, image: str, child_digest: str, timeout: float):
     if not config_digest:
         return None
     c_status, config, _ = _fetch_manifest(
-        f"{base}/v2/{image}/blobs/{config_digest}", timeout
+        f"{base}/v2/{image}/blobs/{config_digest}", timeout, token
     )
     if c_status != 200:
         return None
     labels = ((json.loads(config).get("config") or {}).get("Labels")) or {}
     return labels.get("org.opencontainers.image.revision")
+
+
+def github_release_rows(
+    repository: str,
+    tag: str,
+    *,
+    required_assets: tuple[str, ...],
+    base: str,
+    token: str,
+    timeout: float,
+) -> list[Row]:
+    """The release object at its tag and every required asset, each a
+    row of its own - a missing asset is absent beside present ones,
+    never collapsed into one verdict."""
+
+    release_fact = f"github:{repository} release {tag}"
+    status, body = _fetch(
+        f"{base}/repos/{repository}/releases/tags/{tag}",
+        timeout=timeout,
+        token=token,
+    )
+    if status == -1 or status >= 500:
+        return [
+            Row(fact=release_fact, state="unavailable", evidence=f"HTTP {status}")
+        ]
+    if status == 404:
+        return [
+            Row(fact=fact, state="observed-absent", evidence="release 404")
+            for fact in (
+                release_fact,
+                *(
+                    f"github:{repository} {tag} asset {name}"
+                    for name in required_assets
+                ),
+            )
+        ]
+    served = {
+        asset.get("name", "") for asset in json.loads(body).get("assets", [])
+    }
+    rows = [
+        Row(
+            fact=release_fact,
+            state="observed-present",
+            evidence=f"release object served with {len(served)} assets",
+        )
+    ]
+    for name in required_assets:
+        rows.append(
+            Row(
+                fact=f"github:{repository} {tag} asset {name}",
+                state="observed-present" if name in served else "observed-absent",
+                evidence="asset served" if name in served else "asset not served",
+            )
+        )
+    return rows
+
+
+def source_tag_row(repo, tag: str, *, expected_identity: str) -> Row:
+    """The source anchor OBSERVED: the tag on origin, peeled, compared
+    to the identity the card names. Positive equality only - a served
+    tag at any other commit is conflict, never presence."""
+
+    import subprocess
+
+    listing = subprocess.run(
+        ["git", "ls-remote", "origin", f"refs/tags/{tag}*"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    fact = f"source tag {tag}"
+    direct = ""
+    peeled = ""
+    for line in listing:
+        sha, ref = line.split(None, 1)
+        if ref == f"refs/tags/{tag}^{{}}":
+            peeled = sha
+        elif ref == f"refs/tags/{tag}":
+            direct = sha
+    identity = peeled or direct
+    if not identity:
+        return Row(fact=fact, state="observed-absent", evidence="tag not on origin")
+    if identity == expected_identity:
+        return Row(
+            fact=fact,
+            state="observed-present",
+            evidence=f"peeled to expected {identity}",
+        )
+    return Row(
+        fact=fact,
+        state="conflict-unproven",
+        evidence=f"tag peels to {identity}, card names {expected_identity}",
+    )

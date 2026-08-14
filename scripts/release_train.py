@@ -1884,13 +1884,27 @@ def _gate_rows_not_present(rows) -> list:
     return [row.fact for row in rows if not row.present()]
 
 
+def _status_tokens() -> dict[str, str]:
+    return {
+        "ghcr": os.environ.get("AWEB_GHCR_READ_TOKEN", ""),
+        "github": os.environ.get("GH_TOKEN", ""),
+    }
+
+
 def _default_marketplace_gate(card, bases, timeout) -> list:
     """Complete channel+skills rows before the pointer mutation."""
 
     import release_status_gates as gates
 
     return _gate_rows_not_present(
-        gates.rows_for_artifacts(card, ("channel-plugin", "skills"), bases=bases, timeout=timeout)
+        gates.rows_for_artifacts(
+            card,
+            ("channel-plugin", "skills"),
+            bases=bases,
+            expected_sources=expected_completion_sources(card),
+            tokens=_status_tokens(),
+            timeout=timeout,
+        )
     )
 
 
@@ -1905,8 +1919,47 @@ def _default_ac_predecessor_gate(card, bases, timeout) -> list:
         if _artifact(item.name).repository == "aweb"
     )
     return _gate_rows_not_present(
-        gates.rows_for_artifacts(card, names, bases=bases, timeout=timeout)
+        gates.rows_for_artifacts(
+            card,
+            names,
+            bases=bases,
+            expected_sources=expected_completion_sources(card),
+            tokens=_status_tokens(),
+            timeout=timeout,
+        )
     )
+
+
+def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout) -> list:
+    """DONE is the complete intended world (design section 8): fresh
+    OBSERVED-PRESENT registry rows for EVERY card artifact - moving,
+    recovery, and unmoved - each artifact's observed source anchor, and
+    every requested effect row. The returned list is what blocks DONE;
+    empty means done."""
+
+    import release_status as status
+    import release_status_gates as gates
+
+    card = environment.card
+    expected = expected_completion_sources(card)
+    if "ac-image" in expected and expected["ac-image"] is None:
+        expected["ac-image"] = ac_derived
+    rows = gates.rows_for_artifacts(
+        card,
+        {item.name for item in card.artifacts},
+        bases=bases,
+        expected_sources=expected,
+        tokens=_status_tokens(),
+        repo_roots={
+            "aweb": environment.aweb_root,
+            "ac": environment.ac_root,
+        },
+        timeout=timeout,
+    )
+    rows = [*rows, *effect_rows]
+    if status.done(rows):
+        return []
+    return [row.render() for row in rows if not row.present()]
 
 
 def continue_train(
@@ -1926,6 +1979,7 @@ def continue_train(
     rederive=None,
     marketplace_gate=None,
     ac_predecessor_gate=None,
+    terminal_gate=None,
 ) -> dict[str, str]:
     """Execute the ten edges literally, idempotently, stopping named."""
 
@@ -2046,6 +2100,15 @@ def continue_train(
         raise ObservationMalformed(
             f"AC image digest observation is not an exact digest: {digest!r}"
         )
+    from release_status import Row as _StatusRow
+
+    effect_rows = [
+        _StatusRow(
+            fact="ac image digest observation",
+            state="observed-present",
+            evidence=f"digest command answered {digest}",
+        )
+    ]
     if card.deployments.production:
         run_command(list(migrate_command), cwd=environment.ac_root, timeout=work_timeout)
         run_command(
@@ -2054,12 +2117,57 @@ def continue_train(
         run_command(
             [*verify_command, digest], cwd=environment.ac_root, timeout=work_timeout
         )
-    if card.deployments.awid_site:
-        fast_forward_release(
-            environment.aweb_root, "deploy-awid-landing", card.aweb_sha
+        # Design section 8: migration postcondition and production
+        # configured/running/health are claimed through their own
+        # commands' verdicts; each command above raises on failure, so
+        # reaching here IS the verdict, recorded as rows.
+        effect_rows += [
+            _StatusRow(
+                fact="production migration postcondition",
+                state="observed-present",
+                evidence="migration executor exited 0",
+            ),
+            _StatusRow(
+                fact=f"production deploy at {digest}",
+                state="observed-present",
+                evidence="deploy command exited 0 at the observed digest",
+            ),
+            _StatusRow(
+                fact=f"production verify at {digest}",
+                state="observed-present",
+                evidence="verify command exited 0 at the observed digest",
+            ),
+        ]
+    for wanted, repository, branch, expected_sha in (
+        (True, environment.ac_root, "release", ac_derived),
+        (card.deployments.awid_site, environment.aweb_root, "deploy-awid-landing", card.aweb_sha),
+        (card.deployments.aweb_site, environment.ac_root, "deploy-landing", ac_derived),
+    ):
+        if not wanted:
+            continue
+        if branch != "release":
+            fast_forward_release(repository, branch, expected_sha)
+        listed = _git(
+            repository, "ls-remote", "origin", f"refs/heads/{branch}"
+        ).stdout.split()
+        pointer = listed[0] if listed else ""
+        effect_rows.append(
+            _StatusRow(
+                fact=f"{branch} pointer",
+                state="observed-present" if pointer == expected_sha else "conflict-unproven",
+                evidence=f"origin serves {pointer or '<absent>'}, card names {expected_sha}",
+            )
         )
-    if card.deployments.aweb_site:
-        fast_forward_release(environment.ac_root, "deploy-landing", ac_derived)
+    blocking = list(
+        (terminal_gate or _default_terminal_gate)(
+            environment, ac_derived, effect_rows, bases, timeout
+        )
+    )
+    if blocking:
+        raise ValidationError(
+            "DONE refused: the intended world is not completely present: "
+            + "; ".join(blocking)
+        )
     consume_card(environment.aweb_root, card)
     summary = {
         "status": "DONE",
@@ -2117,8 +2225,29 @@ def _continue_main() -> int:
             ),
         )
     except ReleaseTrainError as error:
-        print(f"release-continue stopped: {error}", file=sys.stderr)
-        return 1
+        # Failure-preserving status (design section 8): the refusal is
+        # primary; the bounded probe sweep renders what it can and a
+        # probe failure becomes an UNAVAILABLE row, never a replacement
+        # of the diagnostic. Exit stays nonzero regardless.
+        import release_status_report as report
+
+        def probe():
+            card = read_card(Path.cwd())
+            import release_status_gates as gates
+
+            return gates.rows_for_artifacts(
+                card,
+                {item.name for item in card.artifacts},
+                expected_sources=expected_completion_sources(card),
+                tokens=_status_tokens(),
+                timeout=30,
+            )
+
+        rendered = report.stop_report_with_probes(
+            refusal=f"release-continue stopped: {error}", probe=probe
+        )
+        print(rendered.text, file=sys.stderr)
+        return rendered.exit_code
     del summary
     return 0
 
