@@ -3,9 +3,7 @@
 Built to plan-critic's re-entry protocol (their mails 95300228 verdict,
 de1e8dd9/48901647 alignment, and the protocol alice relayed): a fresh
 complete cumulative packet over the amended final heads, opening with
-the blocker-closure matrix. Sections marked STAMP-AT-LAND complete when
-the A9 code round lands; everything else is final. Every SHA is pasted
-from command output.
+the blocker-closure matrix. Every SHA is pasted from command output.
 
 ## 0. Blocker-closure matrix
 
@@ -24,11 +22,13 @@ result recorded before the fix, and the enforcing source.
 | 4 | Wrong-source completion accepted | A6 `4ffa2ff5` | `SourceBinding` suite (7): wrong-source moving/recovery mutations, unproven, extra-artifact, patch-drift, card-SHA derivation | the gate's probe verbatim: fresh unmoved@V with arbitrary SHA returned no stops | `release_continue_check.verify_card_against_world(expected_sources=)`, `release_train.expected_completion_sources` |
 | 5 | Status not terminal authority | A7 `dc067ec6` | `test_release_status_terminal` (12: github rows, observed source tags, bearer-required registry, assembly completeness, B5 real-path re-drive w/ false-state mutation); train pins `test_terminal_gate_refusal_keeps_the_card_and_names_the_rows`, `test_default_terminal_gate_is_the_real_status_sweep`, `test_continue_failure_path_preserves_the_refusal_through_the_entry` | organic red: the terminal gate refused DONE against the existing fixtures with the full 46-row inventory rendered; `del token`; unrouted github targets | `release_status_gates.rows_for_artifacts` (complete routing), `release_train._default_terminal_gate` + effect rows, `_continue_main` via `stop_report_with_probes` |
 | 6 | Launcher strings the interface; opaque monitor | A8 `6409ea13` (aweb) + `22ab8bbe` (AC) | `test_fixed_continue_commands_are_the_reviewed_defaults`, `test_derive_receives_the_complete_card_projection` (argv-dumping stub), `test_monitor_record_is_required_typed_and_source_bound` (7 mutations incl. exactly-one), `test_release_workflow_monitor.sh` (stub-gh, both directions), AC `test_check_pending_migrations.sh` | the launcher's derive sed with versions baked in (quoted in ledger); monitor exec'd gh watch with no record | `release_train._CONTINUE_FIXED_COMMANDS` / `continue_commands` / `_require_monitor_record`; `release-workflow-monitor.sh` record emission; AC `check-pending-migrations.sh` |
-| 7 | b2 bridged world; noisy record | dev2 `1397df80` (fixture self-contained, bridge deleted) + A9 (STAMP-AT-LAND) | dev2's b2 pair + 3 mutations; zero-ResourceWarning full-scope run | the bridge; ResourceWarnings in the first packet's record | dev2's fixtures; leak closes in capture/builders/suite teardowns |
+| 7 | b2 bridged world; noisy record | dev2 `1397df80` (fixture self-contained, bridge deleted) + A9 `e6e26295` | dev2's b2 pair + 3 mutations; zero-ResourceWarning full-scope run | the bridge; ResourceWarnings in the first packet's record | dev2's fixtures; leak closes in capture/builders/suite teardowns |
 
-## 1. Final heads and ranges — STAMP-AT-LAND
+## 1. Final heads and ranges
 
-aweb main: pre-aben `69e2fd80` .. FINAL (A9 landing). Amendment landings
+aweb main FINAL: `e6e2629575a1ef03e81ca09946cc4914ab1b62c5` (the A9
+landing); full aben range `69e2fd80..e6e26295`. AC main FINAL:
+`22ab8bbe3f22be47826edcf7fe1b9acf7a5bd615`. Amendment landings
 in order, each the release-review-ACKed diff byte-identity-verified at
 push time (the held-ancestor mechanism, adopted by the reviewer after
 independent reproduction and used by alice for A8): A1 `21e89fa6`, A2
@@ -82,8 +82,22 @@ entries, not component fixtures:
   patch-phase version bump: lock changed (own-version entry
   regenerated to 0.5.17), `uv lock --check` consistent.
 
-## 4. Final focused test record — STAMP-AT-LAND
-One run over the final landed heads, warning-free, saved with SHA-256.
+## 4. Final focused test record
+
+`evidence/aben-final-test-record-e6e26295.txt` — one run over the
+final landed heads at the branch stamp commit (whose only deltas vs
+main are this document and one test-teardown server_close line, in the
+stamp micro-round with release-review): the gate's own aben targets as
+the gate runs them (test-release-aben OK, test-column-b 13 OK with B1
+running for real), the full 28-module aben scope under
+`-W error::ResourceWarning` (OK), the four shell selftests (floor 7,
+tag helpers 3, workflow monitor 2, AC pending-migrations 2), and AC's
+derive contracts (7 OK). The first record of this run found ONE
+residual interpreter-shutdown socket from the observe-CLI suite's
+missing server_close; the source was closed and the record re-run -
+the record's SHA below is the clean second run, with the first
+preserved beside it as the red half
+(`aben-final-test-record-e6e26295.txt.first-run`, sha256 in-file).
 
 ## 5. Evidence-reuse justifications (protocol item 5)
 
@@ -105,7 +119,7 @@ A1 d94a8f06→21e89fa6 (transfer verified 27690/27690 cmp 0); A2
 5f23a041→13d7f6d9 (6-commit range incl. landed A3); A5
 ba5358a3→322964cb; A6 85924926→4ffa2ff5; A7 27071487→dc067ec6; A8
 3a7abc27→6409ea13 + AC 22ab8bbe (alice integrated, AC-first per the
-reviewer's measured constraint); A9 STAMP-AT-LAND. Reviewer
+reviewer's measured constraint); A9 b03cadf1→`e6e26295` (landed minus this document, which rides the branch until the verdict - the same hold as the first packet). Reviewer
 suggestions were never folded silently: each landed as its own
 reviewed commit in the following round (json mask anchor, ls-remote
 comment, invariant timeout, coupling guard, field rename, self-reported

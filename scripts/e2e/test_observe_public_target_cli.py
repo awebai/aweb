@@ -52,6 +52,7 @@ class ObserveCliContract(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
+        cls.server.server_close()
 
     def observe(self, target: str, version: str, port: int | None = None) -> int:
         port = port or self.port
