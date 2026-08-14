@@ -150,6 +150,68 @@ def reobserve_result(result: rn.NormalizerResult, specs, discover) -> list[rn.St
     return stops
 
 
+def invariant_commands(
+    aweb_root: Path,
+) -> tuple[tuple[str, tuple[str, ...], Path], ...]:
+    """The read-only invariant pass (design section 6): the same-cycle
+    lock property's check half, the canonical migration chain, and
+    suite-map exactness, each by its exact selector. The env override
+    exists for hermetic entry tests; the defaults here are pinned by
+    test so the override can never quietly become the production path."""
+
+    override = os.environ.get("AWEB_NORMALIZER_INVARIANT_COMMANDS", "").strip()
+    if override:
+        import json
+
+        return tuple(
+            (
+                entry["label"],
+                tuple(entry["argv"]),
+                aweb_root / entry.get("cwd", "."),
+            )
+            for entry in json.loads(override)
+        )
+    return (
+        ("python-locks", ("bash", "scripts/check-python-locks.sh"), aweb_root),
+        (
+            "migration-chain",
+            (
+                "uv",
+                "run",
+                "--frozen",
+                "pytest",
+                "tests/test_package_data.py::"
+                "test_canonical_chain_starts_with_reset_baseline_then_forward_migrations",
+                "-q",
+            ),
+            aweb_root / "server",
+        ),
+        (
+            "suite-map",
+            (
+                sys.executable,
+                "-m",
+                "unittest",
+                "scripts.e2e.test_release_gate_contract."
+                "ThinReleaseWorkflowContractTests."
+                "test_dead_hosted_gate_and_component_paths_are_deleted",
+            ),
+            aweb_root,
+        ),
+    )
+
+
+def run_invariants(aweb_root: Path) -> rn.Stop | None:
+    import subprocess
+
+    env = {**os.environ, "UV_OFFLINE": "1"}
+    for label, argv, cwd in invariant_commands(aweb_root):
+        completed = subprocess.run(argv, cwd=cwd, env=env, capture_output=True)
+        if completed.returncode != 0:
+            return rn.Stop("invariant-failed", label)
+    return None
+
+
 def main() -> int:
     default_aweb_root = Path(__file__).resolve().parents[1]
     aweb_root = Path(
@@ -230,6 +292,14 @@ def main() -> int:
         lock_paths=lock_paths,
         regenerate_lock=regenerate_lock,
     )
+    if outcome.exit_code in (0, run.PATCH_NEEDED):
+        # Read-only invariants over the (possibly patched) tree, after
+        # the computation and before anything else runs.
+        failed = run_invariants(aweb_root)
+        if failed is not None:
+            print(outcome.report)
+            print(f"STOP {failed.code} ({failed.artifact})")
+            return 1
     print(outcome.report)
     if outcome.exit_code == run.PATCH_NEEDED:
         # Transport contract: review of the patch needs nothing but this

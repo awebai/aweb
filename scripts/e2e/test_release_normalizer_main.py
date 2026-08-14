@@ -86,6 +86,33 @@ class Routing(unittest.TestCase):
                          [("version-occupied", "skills")])
         self.assertEqual(set(queried), set(skills_spec.unit_targets))
 
+    def test_default_invariant_commands_are_the_designed_three(self) -> None:
+        # A4: the env override exists for hermetic entry tests; the
+        # production defaults are the design's exact selectors, pinned
+        # here so the override can never quietly become the real path.
+        root = Path("/x")
+        commands = main.invariant_commands(root)
+        by_label = {label: (argv, cwd) for label, argv, cwd in commands}
+        self.assertEqual(
+            set(by_label), {"python-locks", "migration-chain", "suite-map"}
+        )
+        self.assertEqual(
+            by_label["python-locks"][0], ("bash", "scripts/check-python-locks.sh")
+        )
+        self.assertEqual(by_label["python-locks"][1], root)
+        self.assertIn(
+            "tests/test_package_data.py::"
+            "test_canonical_chain_starts_with_reset_baseline_then_forward_migrations",
+            by_label["migration-chain"][0],
+        )
+        self.assertEqual(by_label["migration-chain"][1], root / "server")
+        self.assertIn(
+            "scripts.e2e.test_release_gate_contract."
+            "ThinReleaseWorkflowContractTests."
+            "test_dead_hosted_gate_and_component_paths_are_deleted",
+            by_label["suite-map"][0],
+        )
+
     def test_equality_groups_are_the_canonical_pairs(self) -> None:
         self.assertEqual(
             main.EQUALITY_GROUPS,

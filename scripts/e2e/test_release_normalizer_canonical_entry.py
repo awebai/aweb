@@ -83,7 +83,10 @@ def _write_manifest(root: Path, rel: str, kind: str, version: str) -> None:
         )
     else:
         path.write_text(
-            json.dumps({"name": rel, "version": version, "dependencies": {"dep": "^1"}})
+            json.dumps(
+                {"name": rel, "version": version, "dependencies": {"dep": "^1"}},
+                indent=2,
+            )
             + "\n"
         )
 
@@ -148,12 +151,19 @@ class CanonicalEntry(unittest.TestCase):
         }
 
     def run_entry(
-        self, world: dict, *, lock_command: str | None = None
+        self,
+        world: dict,
+        *,
+        lock_command: str | None = None,
+        invariant_commands: str = "[]",
     ) -> subprocess.CompletedProcess:
+        # Tests override the invariant pass explicitly (default: none);
+        # the production default list is pinned by its own unit test.
         with RegistryStandIn(world) as registry:
             env = dict(os.environ)
             env.update(
                 {
+                    "AWEB_NORMALIZER_INVARIANT_COMMANDS": invariant_commands,
                     "AWEB_NORMALIZER_LOCK_COMMAND": lock_command
                     or str(self.lock_script),
                     "AWEB_NORMALIZER_AWEB_ROOT": str(self.aweb_root),
@@ -365,6 +375,51 @@ class CanonicalEntry(unittest.TestCase):
             self.assertIn("lock-regeneration-failed", completed.stdout)
         finally:
             _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_failing_invariant_stops_by_name_after_the_patch(self) -> None:
+        # A4: the read-only invariant pass runs after patch application;
+        # a failing invariant is the named stop, and the marker command
+        # proves the pass saw the PATCHED tree.
+        _write_manifest(self.aweb_root, "awid/service.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "awid content moves")
+        marker = self.aweb_root.parent / "invariant-saw.toml"
+        invariants = json.dumps(
+            [
+                {
+                    "label": "sees-patched-tree",
+                    "argv": ["cp", "awid/pyproject.toml", str(marker)],
+                },
+                {"label": "broken-invariant", "argv": ["false"]},
+            ]
+        )
+        try:
+            completed = self.run_entry(
+                self.world_at_rest(), invariant_commands=invariants
+            )
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 1, out)
+            self.assertIn("invariant-failed", completed.stdout)
+            self.assertIn("broken-invariant", completed.stdout)
+            self.assertIn('version = "0.5.17"', marker.read_text(), out)
+        finally:
+            marker.unlink(missing_ok=True)
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_invariants_run_on_normal_form_too(self) -> None:
+        marker = self.aweb_root.parent / "invariant-at-rest"
+        invariants = json.dumps(
+            [{"label": "at-rest", "argv": ["touch", str(marker)]}]
+        )
+        try:
+            completed = self.run_entry(
+                self.world_at_rest(), invariant_commands=invariants
+            )
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 0, out)
+            self.assertTrue(marker.exists(), out)
+        finally:
+            marker.unlink(missing_ok=True)
 
     def test_identityless_image_tag_is_captured_not_crashed(self) -> None:
         # A grammar-conforming tag whose config carries no revision label
