@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-release-gate-contract check-release-gate-residue release-prepare release-continue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-column-b test-release-gate-contract check-release-gate-residue release-prepare release-continue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -299,6 +299,13 @@ test-release-local-gate-contract:
 
 test-release-train:
 	python3 scripts/e2e/test_release_train.py
+
+# The Column B assembly: the recorded registry halves replayed through the
+# real normalizer. B1 refuses rather than skips when its pinned checkouts
+# cannot be resolved, so this target needs a sibling AC checkout named
+# ac-worktree; COLUMN_B_ALLOW_MISSING_AC=1 skips B1 where there is none.
+test-column-b:
+	python3 scripts/e2e/test_release_column_b_assembly.py
 
 check-release-gate-residue:
 	python3 scripts/check_release_gate_residue.py
