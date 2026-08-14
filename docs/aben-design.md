@@ -32,9 +32,8 @@ nested exact keys and types):
   created by train/sync code, not those workflows - it carries its own
   assertion against the code that creates them (R3, with the movement
   predicate that consumes it); ac-image's oci_revision_label is verified
-  reader-side in aweb and stamper-side in the AC repository's round -
-  until both land, that anchor is half-verified and says so here rather
-  than in a code comment.
+  reader-side in aweb and stamper-side in the AC repository (landed at
+  AC 35e204a5) - both halves now hold.
 - `anchor`: a tagged union - `tag_pattern` (server-v*, awid-service-v*,
   awid-v*, aw-v*, channel-v*, pi-v*, skills-v*, a2a-gw-v*) or
   `oci_revision_label` (ac-image: `org.opencontainers.image.revision`,
