@@ -102,6 +102,38 @@ class InducedFloorMovement(unittest.TestCase):
             [(s.code, s.artifact) for s in result.stops],
         )
 
+    def test_divergent_awid_rows_across_the_flip_fire_the_coupling_stop(self) -> None:
+        # release-review asked for the guard proven to fire. Measured
+        # first: no CapturedWorld can produce divergent awid rows today,
+        # not merely because groups are disjoint but because the flip
+        # only WIDENS the changed-content set - a group already moving
+        # keeps its candidate (verified by probing a world that couples
+        # awid to the server through one equality group: rows identical
+        # both passes). So the guard is pinned at the seam it guards:
+        # a compute whose two passes disagree about awid must stop.
+        from unittest import mock
+
+        base = world(floor="0.5.15")
+        first = rn._normalize_once(base)
+        divergent = rn.NormalizerResult(
+            outcome=first.outcome,
+            artifacts={
+                **first.artifacts,
+                "awid-service": rn.ArtifactResult(
+                    disposition="moving", version="0.5.17"
+                ),
+            },
+            patches=first.patches,
+            stops=first.stops,
+        )
+        with mock.patch.object(
+            rn, "_normalize_once", side_effect=[first, divergent]
+        ):
+            result = rn.normalize(base)
+        codes = [(s.code, s.artifact) for s in result.stops]
+        self.assertEqual(result.outcome, "stop", codes)
+        self.assertIn(("floor-closure-coupling", "awid-service"), codes)
+
     def test_floor_patch_is_in_the_serialized_determinism_surface(self) -> None:
         # The double-compute comparison must cover the floor patch, or
         # nondeterminism there escapes the drift stop.

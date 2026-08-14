@@ -159,7 +159,7 @@ class SelectionsFromProjection(unittest.TestCase):
                 production=True, awid_site=False, aweb_site=False
             ),
             final_ac_sha=None,
-            first_release_correction_pending=True,
+            production_correction_pending=True,
         )
         import subprocess
 
