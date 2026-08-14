@@ -84,6 +84,7 @@ class RegistryDiscovery(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
+        cls.server.server_close()
 
     def test_pypi_listing_includes_yanked_and_excludes_non_grammar(self) -> None:
         versions = cap.discover_pypi_versions("demo", base=self.base, timeout=3)

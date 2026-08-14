@@ -1550,6 +1550,7 @@ class ContinueTrainTests(_PipelineFixture):
     def tearDownClass(cls) -> None:
         cls.spool_server.shutdown()
         cls.spool_server.server_close()
+        cls.spool_server.server_close()
         cls.spool_thread.join(timeout=2)
         super().tearDownClass()
 
@@ -1873,6 +1874,17 @@ class ContinueTrainTests(_PipelineFixture):
                 % ("b" * 40),
                 "a" * 40,
             )
+        # release-review's A8 point, the ACCIDENT case: a retry loop or
+        # echoing wrapper emits two records; last-line would let a late
+        # success bury an earlier failure. The contract says the record
+        # is the ONLY stdout - so exactly one line is enforced, not the
+        # last of several.
+        failure_then_success = (
+            '{"workflow": "w.yml", "run_sha": "%s", "conclusion": "failure"}\n'
+            '{"workflow": "w.yml", "run_sha": "%s", "conclusion": "success"}'
+        ) % ("a" * 40, "a" * 40)
+        with self.assertRaisesRegex(rt.ObservationMalformed, "exactly one"):
+            rt._require_monitor_record(failure_then_success, "a" * 40)
 
     def test_fixed_continue_commands_are_the_reviewed_defaults(self) -> None:
         # A8: the env variables are hermetic-test seams; the production

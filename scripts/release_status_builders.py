@@ -31,6 +31,7 @@ def _fetch(
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
+        error.close()
         return error.code, b""
     except (urllib.error.URLError, TimeoutError):
         return -1, b""
@@ -293,6 +294,7 @@ def _fetch_manifest(
                 response.headers.get("Docker-Content-Digest", ""),
             )
     except urllib.error.HTTPError as error:
+        error.close()
         return error.code, b"", ""
     except (urllib.error.URLError, TimeoutError):
         return -1, b"", ""

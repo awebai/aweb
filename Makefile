@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-column-b test-release-gate-contract check-release-gate-residue release-prepare release-continue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-column-b test-release-aben test-release-gate-contract check-release-gate-residue release-prepare release-continue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -306,6 +306,26 @@ test-release-train:
 # ac-worktree; COLUMN_B_ALLOW_MISSING_AC=1 skips B1 where there is none.
 test-column-b:
 	python3 scripts/e2e/test_release_column_b_assembly.py
+
+# The aben engine, entry, and status suites - the amendment epic's whole
+# test surface as one gate suite, so the acceptance evidence runs at
+# every release rather than nowhere.
+test-release-aben:
+	python3 -m unittest \
+		scripts.e2e.test_release_artifact_metadata scripts.e2e.test_release_card_schema \
+		scripts.e2e.test_release_continue_rederivation \
+		scripts.e2e.test_release_normalizer_assembly scripts.e2e.test_release_normalizer_capture_registry \
+		scripts.e2e.test_release_normalizer_capture_repo scripts.e2e.test_release_normalizer_equality_groups \
+		scripts.e2e.test_release_normalizer_main scripts.e2e.test_release_normalizer_movement \
+		scripts.e2e.test_release_normalizer_orchestration scripts.e2e.test_release_normalizer_reconciliation \
+		scripts.e2e.test_release_normalizer_result scripts.e2e.test_release_normalizer_specs \
+		scripts.e2e.test_release_normalizer_floor scripts.e2e.test_release_normalizer_canonical_entry \
+		scripts.e2e.test_release_prepare_projection \
+		scripts.e2e.test_release_oci_revision_reader scripts.e2e.test_release_status_builders \
+		scripts.e2e.test_release_status_image_rows scripts.e2e.test_release_status_report \
+		scripts.e2e.test_release_status_rows scripts.e2e.test_release_status_terminal \
+		scripts.e2e.test_release_train_anchor_resolver
+	bash scripts/e2e/test_release_workflow_monitor.sh
 
 check-release-gate-residue:
 	python3 scripts/check_release_gate_residue.py

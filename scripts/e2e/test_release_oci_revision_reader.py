@@ -80,6 +80,7 @@ class OciRevisionReader(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
+        cls.server.server_close()
 
     def test_index_child_config_label_resolves(self) -> None:
         revision = cap.read_oci_revision(

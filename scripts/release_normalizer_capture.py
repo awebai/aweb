@@ -118,8 +118,20 @@ def manifest_version(path: Path) -> str:
     if path.name == "package.json":
         return json.loads(path.read_text())["version"]
     if path.suffix == ".toml":
-        return tomllib.load(path.open("rb"))["project"]["version"]
+        with path.open("rb") as handle:
+            return tomllib.load(handle)["project"]["version"]
     raise ValueError(f"unsupported manifest kind: {path}")
+
+
+def ghcr_bearer(raw_token: str) -> str:
+    """GHCR's registry API accepts the base64 of a GitHub token as the
+    bearer directly (the same transformation verify_registry_adoption
+    ships); a raw PAT gets 403 - measured by the A9 live probe, which
+    is why this lives at the boundary instead of in every caller."""
+
+    import base64
+
+    return base64.b64encode(raw_token.encode()).decode() if raw_token else ""
 
 
 class DiscoveryUnavailable(Exception):
@@ -152,6 +164,7 @@ def _get_json(url: str, *, timeout: float, headers: dict[str, str] | None = None
             link = response.headers.get("Link", "")
             return json.loads(response.read().decode()), link
     except urllib.error.HTTPError as error:
+        error.close()
         if error.code == 404:
             return None, ""
         raise DiscoveryUnavailable(f"{url}: HTTP {error.code}") from error
