@@ -86,6 +86,79 @@ class Routing(unittest.TestCase):
                          [("version-occupied", "skills")])
         self.assertEqual(set(queried), set(skills_spec.unit_targets))
 
+    def test_complete_group_member_at_m_is_unmoved_not_moving(self) -> None:
+        """The live world, measured: in the (aweb-server,
+        a2a-gateway-image) group at shared manifest M=1.27.2, the a2a
+        member is COMPLETE at M (refs/tags/a2a-gw-v1.27.2 exists) and
+        aweb-server is ABSENT at M (no server-v1.27.2, pypi aweb 1.27.2
+        404) and complete only at 1.27.1.
+
+        Design section 3 step 3 marks only the LAGGING members
+        moving/recovery at M; a member already complete at M is not
+        moving, because M is not a version it is about to take - its
+        occupancy of M is the PRECONDITION for sharing M. Labelling it
+        moving made the exit re-observation read its own existing
+        release as a collision, and the real prepare stopped
+        version-occupied on a world that is exactly the design's
+        reuse-M case.
+
+        group_decision was already correct and its own control passed:
+        the defect was one layer out, in turning that decision into
+        dispositions, which is why this test runs the seam - normalize
+        feeding the real re-observation over the real unit targets.
+        """
+
+        rn = __import__("release_normalizer")
+        specs = cap.derive_capture_specs(rt.ARTIFACTS)
+        server_target = rt._artifact("aweb-server").occupancy_unit[0]
+        a2a_target = rt._artifact("a2a-gateway-image").occupancy_unit[0]
+        a2a_sha = "e5524b4b" + "0" * 32
+
+        world = rn.CapturedWorld(
+            artifacts={
+                "aweb-server": rn.CapturedArtifact(
+                    manifest_version="1.27.2",
+                    # The awid floor bump is a real content change.
+                    content_changed=True,
+                    derivation="manifest",
+                    members=[rn.UnitMember(server_target, {"1.27.1": None})],
+                    anchor_versions={"1.27.1": "s" * 40},
+                ),
+                "a2a-gateway-image": rn.CapturedArtifact(
+                    manifest_version="1.27.2",
+                    content_changed=False,
+                    derivation="manifest",
+                    members=[rn.UnitMember(a2a_target, {"1.27.2": a2a_sha})],
+                    anchor_versions={"1.27.2": a2a_sha},
+                ),
+            },
+            equality_groups=(("aweb-server", "a2a-gateway-image"),),
+            compatibility="none",
+        )
+
+        result = rn.normalize(world)
+        self.assertEqual(result.outcome, "normal-form")
+        self.assertEqual(result.patches, ())
+        self.assertEqual(
+            result.artifacts["aweb-server"].disposition, "moving-with-recovery"
+        )
+        self.assertEqual(result.artifacts["aweb-server"].version, "1.27.2")
+        self.assertEqual(
+            result.artifacts["a2a-gateway-image"].disposition, "unmoved"
+        )
+        self.assertEqual(
+            result.artifacts["a2a-gateway-image"].version, "1.27.2"
+        )
+
+        # The decisive assertion: over the SAME world the run observed,
+        # the exit re-observation must produce no stop. This is the
+        # assertion the live prepare failed.
+        occupancy = {server_target: {"1.27.1": None}, a2a_target: {"1.27.2": a2a_sha}}
+        stops = main.reobserve_result(
+            result, specs, lambda t: occupancy.get(t, {}), world
+        )
+        self.assertEqual([(s.code, s.artifact) for s in stops], [])
+
     def test_default_invariant_commands_are_the_designed_three(self) -> None:
         # A4: the env override exists for hermetic entry tests; the
         # production defaults are the design's exact selectors, pinned

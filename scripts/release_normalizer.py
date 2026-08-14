@@ -693,7 +693,16 @@ def _normalize_once(world: CapturedWorld) -> NormalizerResult:
                     ),
                     candidate_source_identity=recon.source_identity,
                 )
-            elif decision.kind == "unmoved":
+            elif recon.state == "reconciled" and recon.p == decision.version:
+                # A member already COMPLETE at the group's candidate is
+                # not moving: the candidate is not a version it is about
+                # to take, and when the candidate is M its occupancy is
+                # the precondition for sharing M (design section 3 step
+                # 3 marks only the LAGGING members). Labelling it moving
+                # made the exit re-observation read the member's own
+                # existing release as a collision. This subsumes the
+                # whole-group unmoved decision, where every member is
+                # complete at M by construction.
                 artifacts[name] = ArtifactResult(
                     disposition="unmoved",
                     version=decision.version,
