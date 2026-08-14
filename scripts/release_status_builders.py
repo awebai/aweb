@@ -479,21 +479,60 @@ def _local_git(repo, *args: str) -> str:
     ).stdout
 
 
+# The published tree carries the external repository's own CI, which
+# has no place in the monorepo path. MEASURED on awebai/aw v1.34.5/6/7:
+# excluding it, the listings agree exactly - nothing missing, nothing
+# extra, no differing entry. This is the same exclusion aw-release.yml
+# applies (:156, `$4 !~ /^\.github\//`).
+EXTERNAL_LISTING_EXCLUDE = ".github/"
+
+
+def _listing(repo, ref: str, *, strip: str = "", exclude: str = "") -> dict:
+    """The recursive mode/blob/path listing, as path -> (mode, oid).
+
+    This is the design's required transform and NOT a subtree-hash
+    shorthand: the sync workflow compares `git ls-files -s` listings
+    (aw-release.yml:145 and :156), and the design forbids comparing
+    tree object ids unless byte-equivalence is separately proven.
+    `ls-tree -r` yields the same mode/oid/path information from a tag
+    without needing a checked-out index.
+    """
+
+    entries = {}
+    for line in _local_git(repo, "ls-tree", "-r", ref).splitlines():
+        if not line.strip():
+            continue
+        meta, path = line.split("\t", 1)
+        mode, _kind, oid = meta.split()
+        if strip:
+            if not path.startswith(strip):
+                continue
+            path = path[len(strip):]
+        if exclude and path.startswith(exclude):
+            continue
+        entries[path] = (mode, oid)
+    return entries
+
+
 def external_binding_rows_local(
-    *, aw_root: Path, aweb_root: Path, tag: str, aweb_sha: str
+    *, aw_root, aweb_root, tag: str, aweb_sha: str
 ) -> list:
     """The aw external binding, answered from local git.
 
     The aw product repository publishes aweb's cli/go tree, so once
-    both checkouts are local the binding is an OBJECT-ID comparison:
-    the external tag's root tree must equal aweb's cli/go tree at the
-    commit the card names. Git tree ids are content hashes, so equality
-    is exact by construction and needs no network - which is the whole
-    point of the move (it is all in the repo).
+    both checkouts are local this needs no network at all.
 
-    The GitHub Release object is a different question - which versions
-    are published - and stays a registry-side occupancy read.
+    The comparison is the design's own form: the external tree
+    EXCLUDING `.github` must equal the cli/go subtree of the aweb
+    commit over the exact mode/blob/path listing the sync workflow
+    itself uses. Comparing tree OBJECT IDS instead is the shorthand the
+    design forbids - and it is not merely weaker here, it can never
+    succeed: the external root carries `.github` and cli/go does not,
+    and a tree id hashes the entire entry list, so the two roots cannot
+    share one however identical their common content.
     """
+
+    from release_status import Row
 
     tag_fact = f"awebai/aw external tag {tag}"
     binding_fact = f"awebai/aw {tag} tree binding"
@@ -517,28 +556,36 @@ def external_binding_rows_local(
             evidence=f"tag resolves commit {commit}",
         )
     ]
-    external_tree = _local_git(aw_root, "rev-parse", f"{commit}^{{tree}}").strip()
-    source_tree = _local_git(aweb_root, "rev-parse", f"{aweb_sha}:cli/go").strip()
-    if external_tree == source_tree:
+    published = _listing(aw_root, commit, exclude=EXTERNAL_LISTING_EXCLUDE)
+    source = _listing(aweb_root, aweb_sha, strip="cli/go/")
+
+    missing = sorted(set(source) - set(published))
+    extra = sorted(set(published) - set(source))
+    differing = sorted(
+        path for path in set(source) & set(published)
+        if source[path] != published[path]
+    )
+    if not missing and not extra and not differing:
         rows.append(
             Row(
                 fact=binding_fact,
                 state="observed-present",
-                evidence=f"external tree equals aweb cli/go tree {source_tree}",
-            )
-        )
-    else:
-        rows.append(
-            Row(
-                fact=binding_fact,
-                state="conflict-unproven",
                 evidence=(
-                    f"external tree {external_tree} != aweb cli/go tree "
-                    f"{source_tree} at {aweb_sha}"
+                    f"{len(source)} paths, identical mode and object id, "
+                    f"against aweb {aweb_sha} cli/go"
                 ),
             )
         )
+    else:
+        detail = []
+        if missing:
+            detail.append(f"absent from the published tree: {missing[:5]}")
+        if extra:
+            detail.append(f"published but not in cli/go: {extra[:5]}")
+        if differing:
+            detail.append(f"differing mode or object id: {differing[:5]}")
+        rows.append(
+            Row(fact=binding_fact, state="conflict-unproven",
+                evidence="; ".join(detail))
+        )
     return rows
-
-
-
