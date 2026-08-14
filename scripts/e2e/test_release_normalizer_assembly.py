@@ -128,5 +128,64 @@ class Assembly(unittest.TestCase):
         self.assertTrue(world.artifacts["fresh"].content_changed)
 
 
+class OnlyMalformedAnchors(unittest.TestCase):
+    """C5, plan-critic's pkg-v0.3 reproduction: a repository whose only
+    anchor tag is a near-match must reach the reconciler's named stop,
+    never a ValueError from an empty max."""
+
+    def test_world_with_only_near_match_anchors_stops_by_name(self) -> None:
+        import subprocess
+        import tempfile
+
+        import release_normalizer as rn
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "r"
+            repo.mkdir()
+
+            def run_git(*args):
+                subprocess.run(
+                    ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                )
+
+            run_git("init", "-q", "-b", "main")
+            (repo / "pkg").mkdir()
+            (repo / "pkg" / "pyproject.toml").write_text(
+                '[project]\nname = "pkg"\nversion = "0.3.1"\n'
+            )
+            run_git("add", "-A")
+            run_git("commit", "-q", "-m", "x")
+            run_git("tag", "pkg-v0.3")
+            run_git("remote", "add", "origin", str(repo))
+            spec = cap.CaptureSpec(
+                name="pkg",
+                repo_key="aweb",
+                manifest_path="pkg/pyproject.toml",
+                derivation="manifest",
+                scope=("pkg/",),
+                excluded=(),
+                masked=("pkg/pyproject.toml",),
+                anchor_kind="tag_pattern",
+                anchor_value="pkg-v",
+                unit_targets=("pypi:pkg",),
+            )
+            world = cap.assemble_captured_world(
+                specs=[spec],
+                repo_roots={"aweb": repo},
+                discover_target=lambda target: {},
+                equality_groups=(),
+                compatibility="none",
+            )
+            result = rn.normalize(world)
+        self.assertEqual(result.outcome, "stop")
+        self.assertIn(
+            ("malformed-version-candidate", "pkg"),
+            [(s.code, s.artifact) for s in result.stops],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

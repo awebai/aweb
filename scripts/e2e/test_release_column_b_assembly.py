@@ -437,7 +437,7 @@ class NormalizerDriftRow(unittest.TestCase):
             manifest = Path(tmp) / "pyproject.toml"
             manifest.write_text('[project]\nname = "awid-service"\nversion = "0.5.15"\n')
 
-            def reobserve(result):
+            def reobserve(result, world=None):
                 exit_occupied = {
                     v
                     for m in exit_world_data["members"]

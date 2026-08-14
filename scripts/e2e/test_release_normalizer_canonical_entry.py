@@ -129,7 +129,10 @@ class _WorldFixture(unittest.TestCase):
         cls.aweb_root = base / "aweb"
         cls.ac_root = base / "ac"
         cls.lock_script = base / "relock.sh"
-        cls.lock_script.write_text("#!/bin/sh\necho relocked >> uv.lock\n")
+        cls.lock_script.write_text(
+            "#!/bin/sh\necho relocked >> uv.lock\n"
+            "echo offline=${UV_OFFLINE:-unset} >> uv.lock\n"
+        )
         cls.lock_script.chmod(0o755)
 
     @classmethod
@@ -357,6 +360,11 @@ class CanonicalEntry(_WorldFixture):
             self.assertIn("awid-service>=0.5.17", server_manifest, out)
             self.assertIn(
                 "relocked", (self.aweb_root / "awid/uv.lock").read_text(), out
+            )
+            # C5: the regeneration itself runs offline, not only the
+            # later invariant check.
+            self.assertIn(
+                "offline=1", (self.aweb_root / "awid/uv.lock").read_text(), out
             )
             self.assertIn(
                 "relocked", (self.aweb_root / "server/uv.lock").read_text(), out

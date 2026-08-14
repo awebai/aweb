@@ -113,6 +113,84 @@ class Routing(unittest.TestCase):
             by_label["suite-map"][0],
         )
 
+    def test_recovery_reobservation_classifies_progress_vs_conflict(self) -> None:
+        # C5: a recovery candidate's occupancy may only have grown
+        # identically to what capture saw - a member completing with a
+        # captured identity is progress; a changed identity on an
+        # already-occupied member, or a foreign identity appearing, is
+        # registry-conflict, never silence.
+        rn = __import__("release_normalizer")
+        specs = cap.derive_capture_specs(rt.ARTIFACTS)
+        good = "a" * 40
+        foreign = "b" * 40
+
+        def world_with(occupied_by_target):
+            return rn.CapturedWorld(
+                artifacts={
+                    "a2a-gateway-image": rn.CapturedArtifact(
+                        manifest_version="1.27.2",
+                        content_changed=True,
+                        derivation="manifest",
+                        members=[
+                            rn.UnitMember(name, dict(occ))
+                            for name, occ in occupied_by_target.items()
+                        ],
+                        anchor_versions={"1.27.1": good},
+                    )
+                },
+                equality_groups=(),
+                compatibility="none",
+            )
+
+        result = rn.NormalizerResult(
+            outcome="normal-form",
+            artifacts={
+                "a2a-gateway-image": rn.ArtifactResult(
+                    disposition="moving-with-recovery",
+                    version="1.27.2",
+                    previous_complete_anchor=("1.27.1", good),
+                )
+            },
+            patches=(),
+            stops=(),
+        )
+        target = "ghcr.io/awebai/a2a-gateway"
+        captured = world_with({target: {"1.27.2": good}})
+
+        # Unchanged occupancy: no stop.
+        stops = main.reobserve_result(
+            result, specs, lambda t: {"1.27.2": good}, captured
+        )
+        self.assertEqual(stops, [])
+        # Occupancy APPEARED since capture: nothing has published yet at
+        # this phase, so any growth is the world moving - conflict, and
+        # the rerun recomputes.
+        empty_capture = world_with({target: {}})
+        stops = main.reobserve_result(
+            result, specs, lambda t: {"1.27.2": good}, empty_capture
+        )
+        self.assertEqual(
+            [(s.code, s.artifact) for s in stops],
+            [("registry-conflict", "a2a-gateway-image")],
+        )
+        # Identity changed under the run: conflict.
+        stops = main.reobserve_result(
+            result, specs, lambda t: {"1.27.2": foreign}, captured
+        )
+        self.assertEqual(
+            [(s.code, s.artifact) for s in stops],
+            [("registry-conflict", "a2a-gateway-image")],
+        )
+        # Occupancy VANISHED since capture: the same movement, the same
+        # name.
+        stops = main.reobserve_result(
+            result, specs, lambda t: {}, captured
+        )
+        self.assertEqual(
+            [(s.code, s.artifact) for s in stops],
+            [("registry-conflict", "a2a-gateway-image")],
+        )
+
     def test_equality_groups_are_the_canonical_pairs(self) -> None:
         self.assertEqual(
             main.EQUALITY_GROUPS,
