@@ -117,6 +117,10 @@ class FixedContractTests(unittest.TestCase):
                     "aweb server",
                     ("pypi:aweb",),
                     "server/pyproject.toml",
+                    content_scope=("server/",),
+                    anchor=rt.Anchor("tag_pattern", "server-v"),
+                    occupancy_unit=("pypi:aweb",),
+                    owned_locks=(rt.OwnedLock("server/uv.lock", "uv-lock-offline"),),
                 ),
                 rt.Artifact(
                     "awid-service",
@@ -124,6 +128,10 @@ class FixedContractTests(unittest.TestCase):
                     "AWID service",
                     ("pypi:awid-service",),
                     "awid/pyproject.toml",
+                    content_scope=("awid/",),
+                    anchor=rt.Anchor("tag_pattern", "awid-service-v"),
+                    occupancy_unit=("pypi:awid-service",),
+                    owned_locks=(rt.OwnedLock("awid/uv.lock", "uv-lock-offline"),),
                 ),
                 rt.Artifact(
                     "awid-image",
@@ -133,6 +141,10 @@ class FixedContractTests(unittest.TestCase):
                     "awid/pyproject.toml",
                     platforms=rt.OCI_PLATFORMS,
                     bundled_inputs=("server-source",),
+                    content_scope=("awid/", "server/"),
+                    anchor=rt.Anchor("tag_pattern", "awid-v"),
+                    occupancy_unit=("ghcr.io/awebai/awid",),
+                    required_current_outputs=rt.OCI_PLATFORMS,
                 ),
                 rt.Artifact(
                     "aw-cli",
@@ -143,6 +155,11 @@ class FixedContractTests(unittest.TestCase):
                     "tag-history:aw-v*",
                     outputs=rt.AW_BINARIES,
                     external_repository="awebai/aw",
+                    content_scope=("cli/go/",),
+                    anchor=rt.Anchor("tag_pattern", "aw-v"),
+                    occupancy_unit=("github:awebai/aw:release",)
+                    + tuple(f"npm:{package}" for package in rt.AW_NPM_PACKAGES),
+                    required_current_outputs=rt.AW_RELEASE_ASSETS,
                 ),
                 rt.Artifact(
                     "channel-plugin",
@@ -151,6 +168,9 @@ class FixedContractTests(unittest.TestCase):
                     ("npm:@awebai/claude-channel",),
                     "channel/package.json",
                     bundled_inputs=("channel-core",),
+                    content_scope=("channel/", "channel-core/"),
+                    anchor=rt.Anchor("tag_pattern", "channel-v"),
+                    occupancy_unit=("npm:@awebai/claude-channel",),
                 ),
                 rt.Artifact(
                     "pi-extension",
@@ -159,6 +179,9 @@ class FixedContractTests(unittest.TestCase):
                     ("npm:@awebai/pi",),
                     "pi-extension/package.json",
                     bundled_inputs=("channel-core",) + rt.SKILL_SOURCES,
+                    content_scope=("pi-extension/", "channel-core/", "skills/"),
+                    anchor=rt.Anchor("tag_pattern", "pi-v"),
+                    occupancy_unit=("npm:@awebai/pi",),
                 ),
                 rt.Artifact(
                     "skills",
@@ -171,6 +194,13 @@ class FixedContractTests(unittest.TestCase):
                     "packages/claude-skills/package.json",
                     outputs=rt.SKILL_ZIPS,
                     bundled_inputs=rt.SKILL_SOURCES,
+                    content_scope=("packages/claude-skills/", "skills/"),
+                    anchor=rt.Anchor("tag_pattern", "skills-v"),
+                    occupancy_unit=(
+                        "npm:@awebai/claude-skills",
+                        "github:awebai/aweb:skills-release-zips",
+                    ),
+                    required_current_outputs=rt.SKILL_ZIPS,
                 ),
                 rt.Artifact(
                     "a2a-gateway-image",
@@ -179,6 +209,10 @@ class FixedContractTests(unittest.TestCase):
                     ("ghcr.io/awebai/a2a-gateway",),
                     "equals:server/pyproject.toml",
                     platforms=rt.OCI_PLATFORMS,
+                    content_scope=("cli/go/",),
+                    anchor=rt.Anchor("tag_pattern", "a2a-gw-v"),
+                    occupancy_unit=("ghcr.io/awebai/a2a-gateway",),
+                    required_current_outputs=rt.OCI_PLATFORMS,
                 ),
                 rt.Artifact(
                     "awid-site",
@@ -194,6 +228,13 @@ class FixedContractTests(unittest.TestCase):
                     ("ghcr.io/awebai/ac",),
                     "backend/pyproject.toml",
                     platforms=rt.OCI_PLATFORMS,
+                    content_scope=("backend/", "frontend/", "Dockerfile.release"),
+                    anchor=rt.Anchor(
+                        "oci_revision_label", "org.opencontainers.image.revision"
+                    ),
+                    occupancy_unit=("ghcr.io/awebai/ac",),
+                    required_current_outputs=rt.OCI_PLATFORMS,
+                    owned_locks=(rt.OwnedLock("backend/uv.lock", "uv-lock-offline"),),
                 ),
                 rt.Artifact(
                     "ac-production",

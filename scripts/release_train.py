@@ -67,6 +67,28 @@ class ObservationMalformed(ReleaseTrainError):
 
 
 @dataclasses.dataclass(frozen=True)
+class Anchor:
+    """Source anchor for one artifact's published versions.
+
+    kind is "tag_pattern" (value: the tag prefix the publisher emits) or
+    "oci_revision_label" (value: the label name stamped into the image
+    config and read back from the registry).
+    """
+
+    kind: str
+    value: str
+
+
+@dataclasses.dataclass(frozen=True)
+class OwnedLock:
+    """A lockfile whose content follows its artifact's manifest, with the
+    offline regeneration method that keeps it coherent pre-publication."""
+
+    path: str
+    method: str
+
+
+@dataclasses.dataclass(frozen=True)
 class Artifact:
     key: str
     repository: str
@@ -77,6 +99,17 @@ class Artifact:
     platforms: tuple[str, ...] = ()
     bundled_inputs: tuple[str, ...] = ()
     external_repository: str | None = None
+    # aben canonical metadata (docs/aben-design.md section 1). content_scope
+    # names the paths whose change constitutes movement, excluding the
+    # artifact's own version manifest and owned locks so normalization has
+    # a fixed point. occupancy_unit lists the same-version targets that
+    # must reconcile to one published version. required_current_outputs is
+    # the within-member completeness set the read-back verifies.
+    content_scope: tuple[str, ...] = ()
+    anchor: Anchor | None = None
+    occupancy_unit: tuple[str, ...] = ()
+    required_current_outputs: tuple[str, ...] = ()
+    owned_locks: tuple[OwnedLock, ...] = ()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -85,6 +118,12 @@ class ReleaseEdge:
     kind: str
     nodes: tuple[str, ...]
     rule: str
+    # aben typed obligations (docs/aben-design.md sections 1 and 4): each
+    # entry is (obligation_type, reference) where the reference names the
+    # rule-table row or the enforcing invariant. Domain equality per type
+    # is contract-tested; an edge may carry several obligations and the
+    # sites edge deliberately carries none.
+    obligations: tuple[tuple[str, str], ...] = ()
 
 
 AW_NPM_PACKAGES = (
@@ -97,6 +136,15 @@ AW_NPM_PACKAGES = (
     "@awebai/aw-windows-arm64",
 )
 AW_BINARIES = ("aw", "aweb-a2a-gw")
+AW_RELEASE_ASSETS = (
+    "aw_{version}_linux_amd64.tar.gz",
+    "aw_{version}_linux_arm64.tar.gz",
+    "aw_{version}_darwin_amd64.tar.gz",
+    "aw_{version}_darwin_arm64.tar.gz",
+    "aw_{version}_windows_amd64.zip",
+    "aw_{version}_windows_arm64.zip",
+    "checksums.txt",
+)
 SKILL_SOURCES = (
     "aweb-coordination",
     "aweb-messaging",
@@ -116,6 +164,10 @@ ARTIFACTS = (
         "aweb server",
         ("pypi:aweb",),
         "server/pyproject.toml",
+        content_scope=("server/",),
+        anchor=Anchor("tag_pattern", "server-v"),
+        occupancy_unit=("pypi:aweb",),
+        owned_locks=(OwnedLock("server/uv.lock", "uv-lock-offline"),),
     ),
     Artifact(
         "awid-service",
@@ -123,6 +175,10 @@ ARTIFACTS = (
         "AWID service",
         ("pypi:awid-service",),
         "awid/pyproject.toml",
+        content_scope=("awid/",),
+        anchor=Anchor("tag_pattern", "awid-service-v"),
+        occupancy_unit=("pypi:awid-service",),
+        owned_locks=(OwnedLock("awid/uv.lock", "uv-lock-offline"),),
     ),
     Artifact(
         "awid-image",
@@ -132,6 +188,10 @@ ARTIFACTS = (
         "awid/pyproject.toml",
         platforms=OCI_PLATFORMS,
         bundled_inputs=("server-source",),
+        content_scope=("awid/", "server/"),
+        anchor=Anchor("tag_pattern", "awid-v"),
+        occupancy_unit=("ghcr.io/awebai/awid",),
+        required_current_outputs=OCI_PLATFORMS,
     ),
     Artifact(
         "aw-cli",
@@ -142,6 +202,11 @@ ARTIFACTS = (
         "tag-history:aw-v*",
         outputs=AW_BINARIES,
         external_repository="awebai/aw",
+        content_scope=("cli/go/",),
+        anchor=Anchor("tag_pattern", "aw-v"),
+        occupancy_unit=("github:awebai/aw:release",)
+        + tuple(f"npm:{package}" for package in AW_NPM_PACKAGES),
+        required_current_outputs=AW_RELEASE_ASSETS,
     ),
     Artifact(
         "channel-plugin",
@@ -150,6 +215,9 @@ ARTIFACTS = (
         ("npm:@awebai/claude-channel",),
         "channel/package.json",
         bundled_inputs=("channel-core",),
+        content_scope=("channel/", "channel-core/"),
+        anchor=Anchor("tag_pattern", "channel-v"),
+        occupancy_unit=("npm:@awebai/claude-channel",),
     ),
     Artifact(
         "pi-extension",
@@ -158,6 +226,9 @@ ARTIFACTS = (
         ("npm:@awebai/pi",),
         "pi-extension/package.json",
         bundled_inputs=("channel-core",) + SKILL_SOURCES,
+        content_scope=("pi-extension/", "channel-core/", "skills/"),
+        anchor=Anchor("tag_pattern", "pi-v"),
+        occupancy_unit=("npm:@awebai/pi",),
     ),
     Artifact(
         "skills",
@@ -170,6 +241,13 @@ ARTIFACTS = (
         "packages/claude-skills/package.json",
         outputs=SKILL_ZIPS,
         bundled_inputs=SKILL_SOURCES,
+        content_scope=("packages/claude-skills/", "skills/"),
+        anchor=Anchor("tag_pattern", "skills-v"),
+        occupancy_unit=(
+            "npm:@awebai/claude-skills",
+            "github:awebai/aweb:skills-release-zips",
+        ),
+        required_current_outputs=SKILL_ZIPS,
     ),
     Artifact(
         "a2a-gateway-image",
@@ -178,6 +256,10 @@ ARTIFACTS = (
         ("ghcr.io/awebai/a2a-gateway",),
         "equals:server/pyproject.toml",
         platforms=OCI_PLATFORMS,
+        content_scope=("cli/go/",),
+        anchor=Anchor("tag_pattern", "a2a-gw-v"),
+        occupancy_unit=("ghcr.io/awebai/a2a-gateway",),
+        required_current_outputs=OCI_PLATFORMS,
     ),
     Artifact(
         "awid-site",
@@ -193,6 +275,11 @@ ARTIFACTS = (
         ("ghcr.io/awebai/ac",),
         "backend/pyproject.toml",
         platforms=OCI_PLATFORMS,
+        content_scope=("backend/", "frontend/", "Dockerfile.release"),
+        anchor=Anchor("oci_revision_label", "org.opencontainers.image.revision"),
+        occupancy_unit=("ghcr.io/awebai/ac",),
+        required_current_outputs=OCI_PLATFORMS,
+        owned_locks=(OwnedLock("backend/uv.lock", "uv-lock-offline"),),
     ),
     Artifact(
         "ac-production",
@@ -216,54 +303,79 @@ DAG_EDGES = (
         "ordering",
         ("awid-service", "aweb-server"),
         "public PyPI AWID dependency floor before aweb",
+        obligations=(
+            ("publication-order", "pypi-release needs:awid_service + floor-served check"),
+            ("consumer-version-policy", "R1"),
+        ),
     ),
     ReleaseEdge(
         2,
         "ordering",
         ("aw-cli-npm-set", "pi-extension"),
         "all seven aw npm packages served before Pi when its floor moves",
+        obligations=(
+            ("conditional-publication-order", "npm-release pi lane floor check (iff floor moves)"),
+            ("consumer-no-mutation-decision", "R4"),
+        ),
     ),
     ReleaseEdge(
         3,
         "ordering",
         ("channel-plugin", "skills", "marketplace-pointer"),
         "channel and skills served before marketplace advance",
+        obligations=(("publication-order", "predecessor-rows gate before pointer apply"),),
     ),
     ReleaseEdge(
         4,
         "ordering",
         ("intended-aweb-awid-public", "ac-dependency-commit", "ac-gate"),
         "public packages before derived AC dependency commit and gate",
+        obligations=(
+            ("publication-order", "predecessor-rows gate before AC derivation"),
+            ("post-publication-consumer-derivation", "R2"),
+            ("post-publication-consumer-derivation", "R3"),
+        ),
     ),
     ReleaseEdge(
         5,
         "ordering",
         ("ac-image", "ac-production", "digest-health-verification"),
         "AC image before deploy before digest and health verification",
+        obligations=(("deploy-order", "digest observation is the deploy edge input"),),
     ),
     ReleaseEdge(
         6,
         "same-commit",
         ("channel-core", "channel-plugin", "pi-extension"),
         "one channel-core input in channel and Pi",
+        obligations=(("same-commit-content", "content_scope: channel-plugin, pi-extension"),),
     ),
     ReleaseEdge(
         7,
         "same-commit",
         ("skill-source-set", "pi-extension", "skills", "skills-zips"),
         "the same five skill sources in every output",
+        obligations=(("same-commit-content", "content_scope: pi-extension, skills"),),
     ),
     ReleaseEdge(
         8,
         "same-commit",
         ("server-source", "awid-image"),
         "server source in the same-commit AWID image",
+        obligations=(
+            ("same-commit-content", "content_scope: awid-image"),
+            ("version-equality", "card invariant: awid-service == awid-image"),
+        ),
     ),
     ReleaseEdge(
         9,
         "equality",
         ("a2a-gateway-image", "aweb-server"),
         "a2a-gateway version equals server version",
+        obligations=(
+            ("same-commit-content", "content_scope: a2a-gateway-image"),
+            ("version-equality", "train invariant: a2a-gateway == aweb-server"),
+        ),
     ),
     ReleaseEdge(
         10,
