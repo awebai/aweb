@@ -422,6 +422,10 @@ class ArtifactResult:
     disposition: str  # moving | unmoved | moving-with-recovery
     version: str | None
     previous_complete_anchor: tuple[str, str | None] | None = None
+    # For recovery rows: the observable identity of the candidate's
+    # occupied members, so continue can bind a partial to the card's
+    # source (C3); None where the member kinds expose no identity.
+    candidate_source_identity: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -477,6 +481,7 @@ def _artifact_result(
                     reconciliation.p or "",
                     captured.anchor_versions.get(reconciliation.p or ""),
                 ),
+                candidate_source_identity=reconciliation.source_identity,
             ),
             None,
             None,
@@ -638,6 +643,7 @@ def _normalize_once(world: CapturedWorld) -> NormalizerResult:
                         recon.p or "",
                         world.artifacts[name].anchor_versions.get(recon.p or ""),
                     ),
+                    candidate_source_identity=recon.source_identity,
                 )
             elif decision.kind == "unmoved":
                 artifacts[name] = ArtifactResult(
