@@ -135,6 +135,57 @@ class SourceBinding(unittest.TestCase):
             [("card-world-patch-drift", None)],
         )
 
+    def test_retry_after_derivation_binds_ac_to_the_adopted_sha(self) -> None:
+        # C3, the critic's retry reproduction: on a resumed continue the
+        # derived AC commit exists (ContinueEnvironment.ac_derived_sha);
+        # an AC image completed FROM that commit is progress, not
+        # permanently source-unproven.
+        derived = "f" * 40
+        stops = verify(
+            [card_row("ac-image", "0.7.15", "moving")],
+            {"ac-image": result_row("0.7.15", "unmoved", ("0.7.15", derived))},
+            expected_sources={"ac-image": derived},
+        )
+        self.assertEqual(stops, [])
+
+    def test_recovery_partial_from_the_wrong_source_stops(self) -> None:
+        # C3: a moving card row observed as a recovery partial must bind
+        # its CANDIDATE occupancy to the card's source - a foreign
+        # identity crossing the release fast-forward is the defect the
+        # continue-start stop exists for, not the publisher's problem.
+        fresh = rn.ArtifactResult(
+            disposition="moving-with-recovery",
+            version="1.2.3",
+            previous_complete_anchor=("1.2.2", GOOD),
+            candidate_source_identity=WRONG,
+        )
+        stops = verify(
+            [card_row("a2a-gateway-image", "1.2.3", "moving")],
+            {"a2a-gateway-image": fresh},
+            expected_sources={"a2a-gateway-image": GOOD},
+        )
+        self.assertEqual(
+            [(s.code, s.artifact) for s in stops],
+            [("card-world-source-mismatch", "a2a-gateway-image")],
+        )
+
+    def test_identityless_recovery_candidate_is_not_failed_closed(self) -> None:
+        # Listing-only kinds (pypi/npm) expose no occupancy identity;
+        # None means this-kind-has-none, never could-not-observe, and
+        # the partial proceeds to the same-version identity checks the
+        # publishers enforce at their own boundary.
+        fresh = rn.ArtifactResult(
+            disposition="moving-with-recovery",
+            version="1.2.3",
+            previous_complete_anchor=("1.2.2", GOOD),
+        )
+        stops = verify(
+            [card_row("aweb-server", "1.2.3", "moving")],
+            {"aweb-server": fresh},
+            expected_sources={"aweb-server": GOOD},
+        )
+        self.assertEqual(stops, [])
+
     def test_expected_sources_derive_from_the_card_shas(self) -> None:
         import release_train as rt
 
@@ -166,10 +217,13 @@ class SourceBinding(unittest.TestCase):
         self.assertEqual(expected["aweb-server"], GOOD)
         self.assertEqual(expected["aw-cli"], GOOD)
         # The card's own validator keeps final_ac_sha pending, so an AC
-        # image completion is UNPROVABLE at continue start - exactly the
-        # fail-closed shape the wrong-source probe demanded: the derived
-        # SHA exists only at run time, never on the card.
+        # image completion is UNPROVABLE at continue start WITHOUT the
+        # adopted derivation - and binds to it on a retry where it
+        # exists (C3).
         self.assertIsNone(expected["ac-image"], "underived AC stays unproven")
+        retried = rt.expected_completion_sources(card, ac_derived_sha="f" * 40)
+        self.assertEqual(retried["ac-image"], "f" * 40)
+        self.assertEqual(retried["aweb-server"], GOOD)
 
 
 class Rederivation(unittest.TestCase):

@@ -66,6 +66,23 @@ def verify_card_against_world(
         if fresh.disposition not in _PROGRESS[row.disposition]:
             stops.append(rn.Stop("card-world-disposition-drift", row.name))
             continue
+        if (
+            fresh.disposition == "moving-with-recovery"
+            and row.disposition in ("moving", "moving-with-recovery")
+        ):
+            # A recovery partial's CANDIDATE occupancy binds to the
+            # card's source where the member kind exposes identity; a
+            # foreign identity must stop here, before the release
+            # fast-forward, never be left for a publisher to reject.
+            candidate = getattr(fresh, "candidate_source_identity", None)
+            expected = (expected_sources or {}).get(row.name)
+            if (
+                candidate is not None
+                and expected is not None
+                and candidate != expected
+            ):
+                stops.append(rn.Stop("card-world-source-mismatch", row.name))
+                continue
         if fresh.disposition == "unmoved":
             fresh_anchor = fresh.previous_complete_anchor
             if fresh_anchor is None or fresh_anchor[1] is None:

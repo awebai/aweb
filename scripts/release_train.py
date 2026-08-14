@@ -1812,12 +1812,16 @@ def _poll_public_target(
     )
 
 
-def expected_completion_sources(card: "ReleaseCard") -> dict[str, str | None]:
+def expected_completion_sources(
+    card: "ReleaseCard", ac_derived_sha: str | None = None
+) -> dict[str, str | None]:
     """The source identity a completed moving artifact must bind to,
     per artifact, derived from the card's own SHAs (aben A6): aweb-repo
     artifacts complete only from the card's aweb SHA; the AC image
-    completes only from the derived final AC SHA, and is unprovable -
-    never acceptable - before that derivation exists."""
+    completes only from the derived AC commit - the card keeps its
+    final SHA pending, so on a fresh run AC is unprovable, and on a
+    retry the ADOPTED derivation (ContinueEnvironment.ac_derived_sha)
+    is the binding (C3)."""
 
     sources: dict[str, str | None] = {}
     for entry in ARTIFACTS:
@@ -1826,7 +1830,7 @@ def expected_completion_sources(card: "ReleaseCard") -> dict[str, str | None]:
         if entry.repository == "aweb":
             sources[entry.key] = card.aweb_sha
         else:
-            sources[entry.key] = card.final_ac_sha
+            sources[entry.key] = ac_derived_sha or card.final_ac_sha
     return sources
 
 
@@ -1878,7 +1882,11 @@ def _default_rederive(environment) -> list:
         for item in environment.card.artifacts
     ]
     return rcc.verify_card_against_world(
-        rows, result, expected_sources=expected_completion_sources(environment.card)
+        rows,
+        result,
+        expected_sources=expected_completion_sources(
+            environment.card, environment.ac_derived_sha
+        ),
     )
 
 
