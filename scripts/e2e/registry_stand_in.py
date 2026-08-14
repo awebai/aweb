@@ -251,7 +251,8 @@ class _Handler(BaseHTTPRequestHandler):
             versions = world.get("github", {}).get(repository)
             if versions is None:
                 return self._json({}, status=404)
-            return self._json([{"tag_name": f"v{v}"} for v in versions])
+            prefix = world.get("github_tag_prefix", {}).get(repository, "v")
+            return self._json([{"tag_name": f"{prefix}{v}"} for v in versions])
 
         if path.startswith("/tarballs/"):
             key = path[len("/tarballs/") :]

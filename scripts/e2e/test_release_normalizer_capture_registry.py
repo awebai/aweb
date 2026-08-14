@@ -13,6 +13,7 @@ import json
 import sys
 import threading
 import unittest
+from unittest import mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -130,6 +131,74 @@ class RegistryDiscovery(unittest.TestCase):
             self.assertNotIn(commit, kept, commit)
         for version in ("0.7.14", "v0.7.12", "0.3"):
             self.assertIn(version, kept, version)
+
+    def test_oci_line_pointers_are_logged_not_occupancy(self) -> None:
+        """plan-critic's ruling, with the five REAL measured tags from
+        ghcr.io/awebai/ac. v?MAJOR and v?MAJOR.MINOR with wholly
+        numeric components are moving channel pointers: logged, never
+        occupancy. Exactly three numeric components occupy. Near-misses
+        and four-or-more components still stop by name."""
+
+        oci = cap._oci_namespace_candidates
+        served = {
+            # the five real line pointers, measured on the live registry
+            "0.3", "0.4", "0.5", "0.6", "0.7",
+            # one-component and optional-v forms
+            "1", "v2", "v0.7",
+            # valid three-component occupancy
+            "0.7.14", "v0.7.13",
+            # named stops: three-component near-miss and four components
+            "0.7.15rc1", "1.2.3.4",
+            # non-namespace
+            "latest", "sha-abc1234", "559b5f5",
+        }
+        kept = oci(served)
+        self.assertEqual(kept, {"0.7.14", "v0.7.13", "0.7.15rc1", "1.2.3.4"})
+        for pointer in ("0.3", "0.4", "0.5", "0.6", "0.7", "1", "v2", "v0.7"):
+            self.assertNotIn(pointer, kept, pointer)
+        # The near-misses survive discovery so the reconciler can stop
+        # them BY NAME - dropping them here would silence the stop.
+        for stops in ("0.7.15rc1", "1.2.3.4"):
+            self.assertIn(stops, kept, stops)
+
+    def test_the_exception_does_not_leak_out_of_oci(self) -> None:
+        """The non-OCI control the ruling requires: pypi, npm, GitHub
+        releases and source tags do NOT inherit the line-pointer
+        exception, so a two-component 0.7 there is still a candidate
+        the reconciler will judge."""
+
+        served = {"0.7", "0.7.14"}
+        self.assertEqual(cap._version_namespace_candidates(served), served)
+        self.assertEqual(cap._oci_namespace_candidates(served), {"0.7.14"})
+
+    def test_a_line_pointer_is_never_dereferenced(self) -> None:
+        """The sharpest condition, made structural rather than
+        unreached: a line pointer is dropped at discovery, so no code
+        path can read its manifest and adopt a channel tag's revision
+        label as a release identity. Proven by a spy - read_oci_revision
+        is never called with a pointer."""
+
+        import release_normalizer_main as main
+
+        asked: list[str] = []
+
+        def spy_revision(image, version, **kwargs):
+            asked.append(version)
+            return "a" * 40
+
+        with mock.patch.object(
+            cap, "discover_ghcr_versions",
+            lambda *a, **k: cap._oci_namespace_candidates(
+                {"0.7", "0.3", "0.7.14", "latest"}
+            ),
+        ), mock.patch.object(cap, "read_oci_revision", spy_revision):
+            occupied = main.route_discovery(
+                "ghcr.io/awebai/ac",
+                timeout=1, ghcr_token="t", gh_token="",
+                bases=main.registry_bases(),
+            )
+        self.assertEqual(set(occupied), {"0.7.14"})
+        self.assertEqual(asked, ["0.7.14"], "a line pointer was dereferenced")
 
     def test_unavailable_raises_not_empty(self) -> None:
         # A 500 must never read as an empty history.

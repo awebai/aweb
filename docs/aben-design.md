@@ -99,6 +99,20 @@ resolution):
 
 Grammar: `^v?MAJOR.MINOR.PATCH$`, numeric components, no prerelease or
 build metadata; ordering is numeric tuple comparison, implemented once.
+In OCI NAMESPACES ONLY, `v?MAJOR` and `v?MAJOR.MINOR` with wholly
+numeric components are LINE POINTERS - moving channel tags, not
+releases. They are logged and dropped at discovery, never occupancy,
+never P, never a source anchor, never previous-complete or recovery
+evidence, and never an expected release output. Dropping them at
+discovery is what makes that structural rather than merely unreached:
+a tag that never enters the world cannot be dereferenced, so a channel
+pointer's digest or revision label can never be adopted as a release's
+identity. Exactly three numeric components remain strict release
+candidates and occupy; three-component near-misses (`0.7.15rc1`),
+four-or-more components (`1.2.3.4`), and other digit-led shapes still
+stop by name. PyPI, npm, GitHub releases and source tags do NOT inherit
+this exception.
+
 Non-matching candidates in non-version namespaces never occupy and are
 logged: `latest`, `sha-*`, and BARE source-commit tags (`^[0-9a-f]{7,40}$`
 - the AC image publisher pushes its `:SHA` unprefixed, so roughly half
