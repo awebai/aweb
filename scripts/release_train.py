@@ -1145,6 +1145,27 @@ SITE_DEPLOYMENTS = {
 }
 
 
+def release_tag_prefix(artifact: "Artifact", repository: str) -> str:
+    """THE owner of release-tag prefixes (aben, first-contact finding).
+
+    A GitHub release living in the artifact's OWN source repository is
+    tagged with its canonical anchor prefix (skills-v0.2.12); a release
+    in an external product repository is tagged bare (awebai/aw's
+    v1.34.7). Discovery and read-back both resolve through here: they
+    disagreed once, each deriving it locally, and the first real
+    prepare read a complete skills release as an empty member.
+    """
+
+    own_repository = repository == f"awebai/{artifact.repository}"
+    if (
+        own_repository
+        and artifact.anchor is not None
+        and artifact.anchor.kind == "tag_pattern"
+    ):
+        return artifact.anchor.value
+    return "v"
+
+
 def _artifact(key: str) -> Artifact:
     for item in ARTIFACTS:
         if item.key == key:

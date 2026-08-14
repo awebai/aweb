@@ -180,6 +180,28 @@ _NEAR_VERSION = re.compile(r"^v?\d")
 # candidate and halt the train. Measured against the live registry:
 # ghcr.io/awebai/ac serves ~90 of these.
 _SOURCE_COMMIT_TAG = re.compile(r"^[0-9a-f]{7,40}$")
+# OCI LINE POINTERS (plan-critic's ruling, OCI namespaces ONLY): v?MAJOR
+# and v?MAJOR.MINOR with wholly numeric components are moving channel
+# pointers, not releases. They are logged and dropped here, which is
+# what makes the rest of their condition structural rather than merely
+# unreached: a dropped tag is never dereferenced, so no code path can
+# adopt a channel pointer's digest or revision label as a release
+# identity. Exactly three numeric components remain strict release
+# candidates; three-component near-misses (0.7.15rc1), four-or-more
+# (1.2.3.4), and other digit-led shapes still stop by name. pypi, npm,
+# GitHub releases and source tags do NOT inherit this exception.
+_OCI_LINE_POINTER = re.compile(r"^v?[0-9]+(\.[0-9]+)?$")
+
+
+def _oci_namespace_candidates(candidates) -> set[str]:
+    """The OCI variant: version-namespace candidates minus the moving
+    line pointers, which are logged rather than occupying."""
+
+    return {
+        text
+        for text in _version_namespace_candidates(candidates)
+        if not _OCI_LINE_POINTER.match(text)
+    }
 
 
 def _version_namespace_candidates(candidates) -> set[str]:
@@ -238,7 +260,7 @@ def discover_ghcr_versions(
         document, link = _get_json(url, timeout=timeout, headers=headers)
         if document is None:
             return versions
-        versions |= _version_namespace_candidates(document.get("tags") or [])
+        versions |= _oci_namespace_candidates(document.get("tags") or [])
         match = _re.search(r"<([^>]+)>;\s*rel=\"next\"", link)
         if match is None:
             return versions
@@ -285,7 +307,12 @@ def discover_github_release_versions(
 
 import dataclasses as _dataclasses
 
-from release_normalizer import CapturedArtifact, CapturedWorld, UnitMember
+from release_normalizer import (
+    CapturedArtifact,
+    CapturedWorld,
+    UnitMember,
+    format_version,
+)
 
 
 @_dataclasses.dataclass(frozen=True)
@@ -301,6 +328,10 @@ class CaptureSpec:
     scope: tuple[str, ...]
     excluded: tuple[str, ...]
     masked: tuple[str, ...]
+    # target -> release tag prefix, resolved from the canonical owner
+    # (release_train.release_tag_prefix) so discovery cannot re-derive
+    # it locally and drift from the read-back.
+    tag_prefixes: dict[str, str]
     anchor_kind: str
     anchor_value: str
     unit_targets: tuple[str, ...]
@@ -367,8 +398,17 @@ def assemble_captured_world(
             )
         else:
             changed = True
+        # A tag-history artifact's version source IS its tag history
+        # (docs/release.md's artifact table). Its manifest is a
+        # publish-time placeholder reading 0.0.0, and feeding that to
+        # the movement table compares a version against a value that
+        # was never one - which stopped the first real prepare.
+        if spec.derivation == "tag-history" and conforming:
+            captured_version = format_version(max(conforming)[0])
+        else:
+            captured_version = manifest_version(repo / spec.manifest_path)
         artifacts[spec.name] = CapturedArtifact(
-            manifest_version=manifest_version(repo / spec.manifest_path),
+            manifest_version=captured_version,
             content_changed=changed,
             derivation=spec.derivation,
             members=members,
@@ -438,6 +478,13 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
         # normalizer's own version patch is not (the dependency-only
         # blind spot closed at its cause).
         excluded = tuple(lock.path for lock in entry.owned_locks if lock.path)
+        from release_train import release_tag_prefix
+
+        tag_prefixes = {
+            target: release_tag_prefix(entry, target.split(":", 2)[1])
+            for target in (entry.occupancy_unit or ())
+            if target.startswith("github:")
+        }
         specs.append(
             CaptureSpec(
                 name=key,
@@ -447,6 +494,7 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
                 scope=entry.content_scope,
                 excluded=excluded,
                 masked=(manifest_path,),
+                tag_prefixes=tag_prefixes,
                 anchor_kind=entry.anchor.kind,
                 anchor_value=entry.anchor.value,
                 unit_targets=entry.occupancy_unit,
