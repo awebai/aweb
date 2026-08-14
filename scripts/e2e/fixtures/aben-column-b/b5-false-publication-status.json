@@ -1,0 +1,68 @@
+{
+  "observations": {
+    "npm:@awebai/aw": {
+      "1.34.6": {
+        "state": "present",
+        "evidence": "review-thread registry inventory, first continue stop of 2026-08-13 ~21:30Z; each fact verified against its public source at the time"
+      }
+    },
+    "ghcr.io/awebai/awid": {
+      "0.5.16": {
+        "state": "present",
+        "evidence": "review-thread registry inventory, first continue stop of 2026-08-13 ~21:30Z"
+      }
+    },
+    "ghcr.io/awebai/a2a-gateway": {
+      "1.27.2": {
+        "state": "present",
+        "evidence": "review-thread registry inventory, first continue stop of 2026-08-13 ~21:30Z"
+      }
+    },
+    "pypi:awid-service": {
+      "0.5.16": {
+        "state": "absent",
+        "evidence": "review-thread registry inventory, first continue stop of 2026-08-13 ~21:30Z; SUPERSEDED IN THE LIVE WORLD - see provenance.do_not_correct_this_file"
+      }
+    },
+    "pypi:aweb": {
+      "1.27.2": {
+        "state": "absent",
+        "evidence": "review-thread registry inventory, first continue stop of 2026-08-13 ~21:30Z; still absent when re-observed 2026-08-14 (HTTP 404)"
+      }
+    }
+  },
+  "provenance": {
+    "row": "B5",
+    "subject": "false publication status: the status table is the only status path, so 'nothing was published' is unwritable",
+    "design_reference": "docs/aben-design.md section 9, B5, and section 8's four-state row semantics",
+    "shape_note": "This file uses the read-back observation shape, NOT the CapturedWorld registry half the other B rows use, because its consumer is R5's status engine rather than the normalizer. release-dev committed to this exact shape in advance (mail, 2026-08-14) so that R5 loads it verbatim and no translation layer gets built; if R5's design review forces a change, that rework is release-dev's.",
+    "expected": {
+      "present_rows": ["npm:@awebai/aw@1.34.6", "ghcr.io/awebai/awid@0.5.16", "ghcr.io/awebai/a2a-gateway@1.27.2"],
+      "absent_rows": ["pypi:awid-service@0.5.16", "pypi:aweb@1.27.2"],
+      "assertion": "the status table renders exactly THREE rows PRESENT and TWO rows ABSENT",
+      "why_this_is_the_row": "the historical packet said 'nothing was published'. Three artifacts were, in fact, published. The claim under test is not that the table is accurate in general but that the packet's sentence is UNWRITABLE - because the table is the only status path, and a table with three PRESENT rows cannot render as nothing. A test that merely checks the five states and not the exclusivity of the path has tested the easier half."
+    },
+    "do_not_correct_this_file": {
+      "warning": "THIS IS A RECORDED HISTORICAL STATE. Re-observing these registries today will NOT reproduce it, and the difference is not a defect in this fixture.",
+      "known_divergence": {
+        "target": "pypi:awid-service 0.5.16",
+        "recorded_2026_08_13T21_30Z": "absent",
+        "re_observed_2026_08_14": "present (HTTP 200 at https://pypi.org/pypi/awid-service/0.5.16/json)",
+        "explanation": "the release completed after the stop this row reconstructs. The whole point of B5 is the moment when it had not.",
+        "instruction": "Do not update this value to 'present'. Doing so deletes the row's subject: with awid-service present there is no false-status scenario left to test, and the fixture would pass while proving nothing."
+      },
+      "values_re_observed_2026_08_14_by_aben_dev2": {
+        "pypi:aweb 1.27.2": "absent (HTTP 404) - agrees with the record",
+        "pypi:awid-service 0.5.16": "present (HTTP 200) - DIVERGES from the record, as explained above",
+        "npm:@awebai/aw 1.34.6": "present (HTTP 200) - agrees with the record",
+        "aweb tag server-v1.27.2": "does not exist - independently consistent with pypi aweb 1.27.2 never having been published"
+      },
+      "not_re_observed": "the two ghcr rows. GHCR manifest reads need a registry token this authoring pass did not have, so both ghcr values are record-sourced and were not independently confirmed. They are the two values in this row a reviewer should trust least."
+    },
+    "control": {
+      "subject": "probe layer failing must render UNAVAILABLE rows PLUS the original refusal PLUS a nonzero exit",
+      "design_reference": "section 9's B5 control and section 8's stop reporting: 'mutation-tested with an edge refusal and an independent probe failure injected in one run, both visible'",
+      "why_it_is_not_a_data_fixture": "the control injects a failing probe layer and an edge refusal simultaneously - it is a fault injection in one run, not a recorded registry state, so it cannot be authored as observation data. R5 must construct it. The property that matters: UNAVAILABLE must never render as PRESENT, unavailability is never absence and never success, and the original stop code stays primary with a nonzero exit regardless of what the sweep reports."
+    }
+  }
+}
