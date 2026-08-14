@@ -53,7 +53,71 @@ the empty diff over the full range.
 One warning-free run over the final landed heads, saved with SHA-256,
 per grace's standing verdict-line practice.
 
-## 6. Ledger
+## 6. First contact with the real world
+
+Every section above this one is evidence from fixtures and stand-ins.
+This section is the only one where the process met production, and it
+is the section to read hardest, because it is the only one whose
+instrument was not built by this epic.
+
+**The run.** `make release-prepare` over a pair of clean checkouts of
+the real landed heads, against the real registries with real
+credentials, publishing nothing (the prepare phase moves no pointer;
+the launcher is the reviewed one, unchanged between runs).
+
+**What the first run did: it stopped, by name, in seconds.** Three
+refusals, nothing published, no pointer moved. That is the designed
+behaviour and not a disappointment - but two of the three refusals were
+FALSE stops caused by defects in this epic's own code, and no fixture
+had found them in eight days.
+
+| Refusal | True or false stop | Cause |
+|---|---|---|
+| skills github member empty | FALSE | discovery stripped a bare `v` on its own authority while the status builder looked up `skills-v{version}` - two derivations of one fact |
+| aw-cli version `0.0.0` | FALSE | a tag-history artifact's version read from a publish-time placeholder manifest that was never a version |
+| ac-image `0.7` unparseable | TRUE, then ruled | a real channel line pointer, correctly refused; the ruling is that line pointers are dropped AT DISCOVERY so they can never become a release identity |
+
+**The finding that matters more than the three fixes.** Two of these
+were the DUPLICATE-DERIVATION family - the class this epic exists to
+eliminate - and that makes three instances of one pattern inside the
+epic itself: `_LATEST_PROMISED` as a bare set both sides read (invisible
+to the two-way check precisely because it fed both sides), the bare-`v`
+strip versus the canonical prefix lookup, and the aw-cli placeholder
+read. Each was found by a DIFFERENT instrument, and the third only by
+first contact. The honest reading is not that the epic is unusually
+buggy; it is that a rule against duplicate derivation is not
+self-enforcing, and that fixture confidence has a ceiling this run
+found. Recorded unsoftened at release-review's request, and I agree
+with them.
+
+**Fixes and their controls** (landed `38a3b871`, release-review ACK):
+one owner, `release_tag_prefix`, consumed by both discovery and
+read-back with a contract test pinning spec-equals-owner for every
+github target in the canonical inventory; the tag-history version
+derived from tag history, with the placeholder read measured as the
+inventory's only one; OCI line pointers (`v?MAJOR`, `v?MAJOR.MINOR`,
+wholly numeric) dropped at discovery and proven dropped by a spy -
+structural, not merely unreached. Three-component near-misses still
+survive discovery to be refused BY NAME: drop what cannot be valid,
+keep what might be invalid.
+
+**The fixture check that settles it, run by the reviewer, not by me.**
+I asked whether my fixture encoded the real tag shape. The stronger
+question, which release-review asked and answered against the live
+remote, is whether a COMPETING spelling exists: 15 `skills-v` tags and
+no other skills tag form anywhere. Had two spellings existed, encoding
+the real-but-wrong one would have looked identical to encoding truth,
+and "the tag exists" could not have told them apart.
+
+**The re-run** - STAMP-AT-SEND: the classification the same launcher
+produces over the pair refreshed to `38a3b871` / AC `22ab8bbe`, with the
+equality-group resolution stated explicitly, and any remaining stop
+named. Instrument note, so a reader does not mistake it for a product
+finding: the run produced no incremental output under my harness
+because Python block-buffers to a pipe: that is my launcher's
+redirection, not the tool's behaviour on an operator's terminal.
+
+## 7. Ledger
 First-verdict closure (A1-A9) as in the second submission (`2a43d235`,
 fetchable on the branch): A1 `21e89fa6` .. A9 `e6e26295` + stamp
 `612758b2`. Second-verdict rounds: C5 `287048dd`, C1 `918f4e75`, C3
