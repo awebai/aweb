@@ -158,6 +158,7 @@ lesson:
 | first successful run | 695.5s | 1672 | 1601 |
 | identity resolved only where compared | 60.7s | 111 | 41 |
 | one bulk ref read per remote | 37.0s | 97 | 41 |
+| identity is the tag (no registry identity at all) | 30.7s | 75 | 17 |
 
 The first directive taken was to replace per-prefix ref queries with
 one bulk read, reasoned from a correct measurement (a round trip costs
