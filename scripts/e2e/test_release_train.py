@@ -2176,6 +2176,17 @@ class ContinueTrainTests(_PipelineFixture):
                 work_timeout=30,
             )
         self.assertIn("no correction command is bound", str(caught.exception))
+        self.assertIn("at continue entry", str(caught.exception))
+        # alice's tripwire form: the refusal precedes EVERY edge - the
+        # release pointer never moved and no provider command ran.
+        listed = git(
+            "ls-remote", "origin", "refs/heads/release", cwd=self.aweb
+        )
+        self.assertEqual(listed, "", "the release pointer must not move")
+        self.assertFalse(
+            self.provider_log.exists(),
+            "no provider command (migrate included) may run past the refusal",
+        )
 
     def test_pending_correction_is_executed_not_recorded(self) -> None:
         # C1: production_correction_pending is READ - the pending card's

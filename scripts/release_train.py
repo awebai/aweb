@@ -2089,6 +2089,19 @@ def continue_train(
 
     environment = continue_environment(repo_root)
     card = environment.card
+    # Entry validation (alice's carve review): a statically-decidable
+    # unbound command stops HERE, before the release fast-forward and
+    # before any production write - not between two of them. All three
+    # inputs are known at continue start.
+    if (
+        card.deployments.production
+        and card.production_correction_pending
+        and correction_command is None
+    ):
+        raise ValidationError(
+            "the card's production correction is pending but no correction "
+            "command is bound; refused at continue entry, before any edge"
+        )
     # aben design section 7: before the first irreversible edge (this
     # fast-forward triggers every publisher at once), the same normalizer
     # re-derives the world and the card is exact-compared under the
