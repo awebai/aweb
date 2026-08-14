@@ -1851,7 +1851,9 @@ def _default_rederive(environment) -> list:
         discover_target=lambda target: rmain.route_discovery(
             target,
             timeout=30,
-            ghcr_token=os.environ.get("AWEB_GHCR_READ_TOKEN", ""),
+            ghcr_token=cap.ghcr_bearer(
+                os.environ.get("AWEB_GHCR_READ_TOKEN", "")
+            ),
             gh_token=os.environ.get("GH_TOKEN", ""),
             bases=rmain.registry_bases(),
         ),
@@ -1885,8 +1887,10 @@ def _gate_rows_not_present(rows) -> list:
 
 
 def _status_tokens() -> dict[str, str]:
+    import release_normalizer_capture as _cap
+
     return {
-        "ghcr": os.environ.get("AWEB_GHCR_READ_TOKEN", ""),
+        "ghcr": _cap.ghcr_bearer(os.environ.get("AWEB_GHCR_READ_TOKEN", "")),
         "github": os.environ.get("GH_TOKEN", ""),
     }
 
@@ -1974,11 +1978,20 @@ def _require_monitor_record(stdout: str, expected_sha: str) -> None:
         raise ObservationMalformed(
             "workflow monitor produced no remote-completion record"
         )
+    if len(lines) != 1:
+        # The record is the monitor's ONLY stdout by contract; two
+        # records is the retry-loop accident where a late success would
+        # bury an earlier failure, so plurality is refused rather than
+        # resolved.
+        raise ObservationMalformed(
+            f"workflow monitor must emit exactly one record line, got "
+            f"{len(lines)}"
+        )
     try:
-        record = json.loads(lines[-1])
+        record = json.loads(lines[0])
     except json.JSONDecodeError as error:
         raise ObservationMalformed(
-            f"workflow monitor record is not JSON: {lines[-1]!r}"
+            f"workflow monitor record is not JSON: {lines[0]!r}"
         ) from error
     if not isinstance(record, dict) or set(record) != {
         "workflow",

@@ -53,7 +53,8 @@ class Orchestration(unittest.TestCase):
         def recapture():
             import tomllib
 
-            version = tomllib.load(self.manifest.open("rb"))["project"]["version"]
+            with self.manifest.open("rb") as handle:
+                version = tomllib.load(handle)["project"]["version"]
             return captured_world(version, changed=changed)
 
         return recapture
@@ -135,7 +136,8 @@ class Orchestration(unittest.TestCase):
         def recapture():
             import tomllib
 
-            manifest = tomllib.load(self.manifest.open("rb"))["project"]["version"]
+            with self.manifest.open("rb") as handle:
+                manifest = tomllib.load(handle)["project"]["version"]
             return captured_world(manifest, changed=True)
 
         outcome = run.run_normalizer(

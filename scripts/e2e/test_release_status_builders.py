@@ -106,6 +106,7 @@ class Builders(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.server.shutdown()
+        cls.server.server_close()
 
     def test_pypi_rows_are_per_fact_and_present_on_the_exact_contract(self) -> None:
         rows = rsb.pypi_rows(

@@ -241,7 +241,7 @@ def run_phase() -> tuple[int, str, "rn.NormalizerResult | None", Path]:
     ).resolve()
     bases = registry_bases()
     timeout = float(os.environ.get("AWEB_NORMALIZER_TIMEOUT", "30"))
-    ghcr_token = os.environ.get("AWEB_GHCR_READ_TOKEN", "")
+    ghcr_token = cap.ghcr_bearer(os.environ.get("AWEB_GHCR_READ_TOKEN", ""))
     gh_token = os.environ.get("GH_TOKEN", "")
     compatibility = os.environ.get("COMPAT_BREAK", "none")
 
