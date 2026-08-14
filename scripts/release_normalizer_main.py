@@ -126,6 +126,11 @@ def worktree_stops(repo_roots: dict[str, Path]) -> list[rn.Stop]:
             continue
         head = _git(root, "rev-parse", "HEAD").strip()
         listing = _git(root, "ls-remote", "origin", "refs/heads/main").split()
+        # An empty listing here is genuine absence, not unavailability:
+        # _git runs with check=True, so a FAILED ls-remote (network,
+        # auth, no remote) raises before this branch is reached. That
+        # keyword is what keeps "cannot ask" from reading as "nothing
+        # to move" - do not relax it.
         remote_main = listing[0] if listing else ""
         if remote_main and remote_main != head:
             stops.append(rn.Stop("main-moved", key))
@@ -206,13 +211,26 @@ def run_invariants(aweb_root: Path) -> rn.Stop | None:
 
     env = {**os.environ, "UV_OFFLINE": "1"}
     for label, argv, cwd in invariant_commands(aweb_root):
-        completed = subprocess.run(argv, cwd=cwd, env=env, capture_output=True)
+        try:
+            completed = subprocess.run(
+                argv, cwd=cwd, env=env, capture_output=True, timeout=120
+            )
+        except subprocess.TimeoutExpired:
+            # A hung invariant with captured output is a silent hang at
+            # the first phase; the bound turns it into a named stop.
+            return rn.Stop("invariant-timeout", label)
         if completed.returncode != 0:
             return rn.Stop("invariant-failed", label)
     return None
 
 
-def main() -> int:
+def run_phase() -> tuple[int, str, "rn.NormalizerResult | None", Path]:
+    """The whole normalizer phase, callable in-process: preconditions,
+    capture, double-compute, apply, fixed point, exit re-observation,
+    invariants, transport. Returns (exit code, report text, the
+    projection on success, the aweb root) so release-prepare consumes
+    the SAME in-memory result this phase validated (aben A5)."""
+
     default_aweb_root = Path(__file__).resolve().parents[1]
     aweb_root = Path(
         os.environ.get("AWEB_NORMALIZER_AWEB_ROOT", "") or default_aweb_root
@@ -253,9 +271,10 @@ def main() -> int:
 
     precondition_stops = worktree_stops(repo_roots)
     if precondition_stops:
-        for stop in precondition_stops:
-            print(f"STOP {stop.code} ({stop.artifact})")
-        return 1
+        report = "\n".join(
+            f"STOP {stop.code} ({stop.artifact})" for stop in precondition_stops
+        )
+        return 1, report, None, aweb_root
 
     base_shas = {
         key: _git(root, "rev-parse", "HEAD").strip()
@@ -292,24 +311,34 @@ def main() -> int:
         lock_paths=lock_paths,
         regenerate_lock=regenerate_lock,
     )
+    report_lines = [outcome.report]
     if outcome.exit_code in (0, run.PATCH_NEEDED):
         # Read-only invariants over the (possibly patched) tree, after
         # the computation and before anything else runs.
         failed = run_invariants(aweb_root)
         if failed is not None:
-            print(outcome.report)
-            print(f"STOP {failed.code} ({failed.artifact})")
-            return 1
-    print(outcome.report)
+            report_lines.append(f"STOP {failed.code} ({failed.artifact})")
+            return 1, "\n".join(report_lines), None, aweb_root
     if outcome.exit_code == run.PATCH_NEEDED:
         # Transport contract: review of the patch needs nothing but this
         # output - the exact bases the edits apply to, and the edits.
         for key, root in sorted(repo_roots.items()):
-            print(f"base {key}={base_shas[key]}")
+            report_lines.append(f"base {key}={base_shas[key]}")
             tree_diff = _git(root, "diff")
             if tree_diff.strip():
-                print(tree_diff, end="")
-    return outcome.exit_code
+                report_lines.append(tree_diff.rstrip("\n"))
+    return (
+        outcome.exit_code,
+        "\n".join(report_lines),
+        outcome.result if outcome.exit_code == 0 else None,
+        aweb_root,
+    )
+
+
+def main() -> int:
+    exit_code, report, _result, _root = run_phase()
+    print(report)
+    return exit_code
 
 
 if __name__ == "__main__":

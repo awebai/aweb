@@ -28,6 +28,10 @@ STOP = 1
 class Outcome:
     exit_code: int
     report: str
+    # The computed projection, carried so the SAME in-memory result the
+    # orchestration validated is what prepare builds the card from
+    # (aben amendment A5); None on stops.
+    result: rn.NormalizerResult | None = None
 
 
 def _apply_floor_patch(path: Path, from_version: str, to_version: str) -> None:
@@ -150,9 +154,11 @@ def run_normalizer(
             "Normal review, commit, and integration are required before the "
             "next release-prepare; nothing was committed or stored."
         )
-        return Outcome(PATCH_NEEDED, "\n".join(lines))
+        return Outcome(PATCH_NEEDED, "\n".join(lines), result=first)
 
     moved = list(reobserve(first))
     if moved:
         return Outcome(STOP, "\n".join(f"STOP {stop.code}" for stop in moved))
-    return Outcome(0, "normal form: world and repositories agree; proceeding")
+    return Outcome(
+        0, "normal form: world and repositories agree; proceeding", result=first
+    )

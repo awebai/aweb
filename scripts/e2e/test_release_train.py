@@ -43,6 +43,34 @@ def _unmoved(item):
     )
 
 
+def _fixture_projection(aweb_root, environment, *, unmoved=()):
+    """An all-moving normalizer projection over the fixture checkouts'
+    real manifest versions; names in `unmoved` become unmoved rows with
+    the fixture anchor identity. Stands in for the normalizer phase the
+    production entry runs (its own contract lives in the canonical-entry
+    suite)."""
+
+    import release_normalizer as rn
+
+    prepared = rt.prepare_environment(aweb_root, environment)
+    artifacts = {}
+    for name in rt.CARD_ARTIFACT_ORDER:
+        version = rt._read_manifest_version(prepared, rt._artifact(name))
+        if name in unmoved:
+            artifacts[name] = rn.ArtifactResult(
+                disposition="unmoved",
+                version=version,
+                previous_complete_anchor=(version, "f" * 40),
+            )
+        else:
+            artifacts[name] = rn.ArtifactResult(
+                disposition="moving", version=version
+            )
+    return rn.NormalizerResult(
+        outcome="patch-needed", artifacts=artifacts, patches=(), stops=()
+    )
+
+
 
 VERSIONS = {
     "awid-service": "0.5.15",
@@ -719,11 +747,18 @@ class PrepareEnvironmentTests(unittest.TestCase):
         return environment
 
     def _prepare(self, repo_root: Path | None = None, **overrides: str):
+        environment = self._environment(**overrides)
+        try:
+            projection = _fixture_projection(self.aweb, environment)
+        except rt.ReleaseTrainError:
+            # Environment-refusal cases raise again inside prepare,
+            # which is the behavior under test; the projection is not
+            # reached.
+            projection = None
         return rt.prepare(
             repo_root or self.aweb,
-            self._environment(**overrides),
-            registry_base="http://127.0.0.1:9",
-            anchor_resolver=lambda a, v: _test_anchor(v),
+            environment,
+            projection=projection,
             gate_command=("true",),
             timeout=30,
         )
@@ -877,15 +912,16 @@ class _PipelineFixture(unittest.TestCase):
         )
         self.gate_command = (sys.executable, str(gate))
 
-    def _prepare(self, **overrides: str):
+    def _prepare(self, *, unmoved=(), projection=None, gate=None, **overrides: str):
         environment = {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"}
         environment.update(overrides)
         return rt.prepare(
             self.aweb,
             environment,
-            registry_base=self.registry,
-            anchor_resolver=lambda a, v: _test_anchor(v),
-            gate_command=self.gate_command,
+            projection=projection
+            if projection is not None
+            else _fixture_projection(self.aweb, environment, unmoved=unmoved),
+            gate_command=gate or self.gate_command,
             timeout=30,
         )
 
@@ -916,26 +952,32 @@ class PreparePipelineTests(_PipelineFixture):
         for repo in (self.aweb, self.ac):
             self.assertEqual(git("status", "--porcelain", cwd=repo), "")
 
-    def test_present_versions_are_excluded_from_the_move_set(self) -> None:
-        from urllib.parse import quote
+    def test_unmoved_projection_rows_reach_the_card_unmoved(self) -> None:
+        # The sweep semantics themselves live in the normalizer (proven
+        # at the canonical entry); the train's surviving claim is that
+        # an unmoved projection row reaches the card unmoved, anchored.
+        card = self._prepare(unmoved=("awid-service",))
+        by_name = {item.name: item for item in card.artifacts}
+        self.assertFalse(by_name["awid-service"].moves)
+        self.assertIsNotNone(by_name["awid-service"].previous_complete_anchor)
+        self.assertTrue(by_name["aweb-server"].moves)
 
-        _PresenceHandler.present[
-            "/" + quote("pypi:awid-service", safe="") + "/0.5.16"
-        ] = {"state": "present", "version": "0.5.16", "digest": DIGEST}
-        card = self._prepare()
-        moves = {item.name: item.moves for item in card.artifacts}
-        self.assertFalse(moves["awid-service"])
-        self.assertTrue(moves["aweb-server"])
+    def test_stopped_projection_never_becomes_a_card(self) -> None:
+        # Registry conflicts stop inside the normalizer; the train's
+        # guard is that a projection carrying stops is refused by name
+        # and leaves no card, even if a caller bypasses the phase gate.
+        import release_normalizer as rn
 
-    def test_registry_version_conflict_stops_naming_it(self) -> None:
-        from urllib.parse import quote
-
-        _PresenceHandler.present[
-            "/" + quote("pypi:awid-service", safe="") + "/0.5.16"
-        ] = {"state": "present", "version": "0.5.99", "digest": DIGEST}
-        with self.assertRaises(rt.ObservationMalformed) as caught:
-            self._prepare()
-        self.assertIn("same-version conflict", str(caught.exception))
+        stopped = rn.NormalizerResult(
+            outcome="stop",
+            artifacts={},
+            patches=(),
+            stops=(rn.Stop("registry-conflict", "awid-service"),),
+        )
+        with self.assertRaises(rt.ValidationError) as caught:
+            self._prepare(projection=stopped)
+        self.assertIn("registry-conflict", str(caught.exception))
+        self.assertIn("awid-service", str(caught.exception))
         with self.assertRaises(rt.CardUnavailable):
             rt.read_card(self.aweb)
 
@@ -949,17 +991,21 @@ class PreparePipelineTests(_PipelineFixture):
             self._prepare()
         self.assertIn("plugin.json", str(caught.exception))
 
-    def test_aw_cli_does_not_move_when_cli_scope_is_unchanged_since_the_tag(self) -> None:
-        from urllib.parse import quote
+    def test_unmoved_composite_keeps_its_served_version_in_the_card(self) -> None:
+        # Contentless-release prevention lives in the normalizer's
+        # movement table (tag-history rows, proven in its suites); the
+        # card must carry the composite's SERVED version when the
+        # projection says unmoved, not a freshly minted one.
+        import release_normalizer as rn
 
-        # The first release pushed aw-v1.34.4 back; nothing in cli/go moved
-        # since. Deriving newest+1 unconditionally would mint a contentless
-        # aw release every train run forever.
-        git("tag", "aw-v1.34.4", cwd=self.aweb)
-        _PresenceHandler.present[
-            "/" + quote("github:awebai/aw:release", safe="") + "/1.34.4"
-        ] = {"state": "present", "version": "1.34.4", "digest": DIGEST}
-        card = self._prepare()
+        environment = {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"}
+        projection = _fixture_projection(self.aweb, environment)
+        projection.artifacts["aw-cli"] = rn.ArtifactResult(
+            disposition="unmoved",
+            version="1.34.4",
+            previous_complete_anchor=("1.34.4", "f" * 40),
+        )
+        card = self._prepare(projection=projection)
         by_name = {item.name: item for item in card.artifacts}
         self.assertEqual(by_name["aw-cli"].version, "1.34.4")
         self.assertFalse(by_name["aw-cli"].moves)
@@ -968,14 +1014,7 @@ class PreparePipelineTests(_PipelineFixture):
         gate = Path(self.tmp.name) / "failing-gate.py"
         gate.write_text("raise SystemExit(1)\n")
         with self.assertRaises(rt.CommandFailed):
-            rt.prepare(
-                self.aweb,
-                {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"},
-                registry_base=self.registry,
-            anchor_resolver=lambda a, v: _test_anchor(v),
-                gate_command=(sys.executable, str(gate)),
-                timeout=30,
-            )
+            self._prepare(gate=(sys.executable, str(gate)))
         with self.assertRaises(rt.CardUnavailable):
             rt.read_card(self.aweb)
 
@@ -991,8 +1030,7 @@ class PreparePipelineTests(_PipelineFixture):
             rt.prepare(
                 self.aweb,
                 environment,
-                registry_base=self.registry,
-            anchor_resolver=lambda a, v: _test_anchor(v),
+                projection=_fixture_projection(self.aweb, environment),
                 gate_command=(sys.executable, str(slow)),
                 timeout=30,
                 work_timeout=1,
@@ -1005,8 +1043,7 @@ class PreparePipelineTests(_PipelineFixture):
         card = rt.prepare(
             self.aweb,
             environment,
-            registry_base=self.registry,
-            anchor_resolver=lambda a, v: _test_anchor(v),
+            projection=_fixture_projection(self.aweb, environment),
             gate_command=self.gate_command,
             timeout=30,
             work_timeout=700,
@@ -1680,11 +1717,8 @@ class ContinueTrainTests(_PipelineFixture):
     def test_no_floor_moves_skips_derivation_and_releases_ac_at_the_base(self) -> None:
         from urllib.parse import quote
 
-        for target, version in (("pypi:awid-service", "0.5.16"), ("pypi:aweb", "1.27.2")):
-            _PresenceHandler.present["/" + quote(target, safe="") + f"/{version}"] = {
-                "state": "present", "version": version, "digest": DIGEST,
-            }
-        card = self._prepare()
+        del quote
+        card = self._prepare(unmoved=("awid-service", "aweb-server"))
         moves = {item.name: item.moves for item in card.artifacts}
         self.assertFalse(moves["awid-service"])
         self.assertFalse(moves["aweb-server"])
@@ -1955,15 +1989,16 @@ class PrepareCompatRunTests(_PipelineFixture):
             f"open({str(gate_log)!r}, 'a').write(' '.join(sys.argv[1:]) + chr(10))\n"
             'print(json.dumps({"suites": ["make-test"], "reference": "fixture.log"}))\n'
         )
-        # aw-cli's next patch (1.34.4) is already served, so it does not move.
-        _PresenceHandler.present[
-            "/" + quote("github:awebai/aw:release", safe="") + "/1.34.4"
-        ] = {"state": "present", "version": "1.34.4", "digest": DIGEST}
+        # aw-cli's next patch is already served, so its projection row
+        # is unmoved - the mixed pairing.
+        del quote
+        environment = {"PURPOSE": "fixture", "COMPAT_BREAK": "none"}
         card = rt.prepare(
             self.aweb,
-            {"PURPOSE": "fixture", "COMPAT_BREAK": "none"},
-            registry_base=self.registry,
-            anchor_resolver=lambda a, v: _test_anchor(v),
+            environment,
+            projection=_fixture_projection(
+                self.aweb, environment, unmoved=("aw-cli",)
+            ),
             gate_command=(sys.executable, str(gate)),
             timeout=30,
         )
@@ -1971,53 +2006,6 @@ class PrepareCompatRunTests(_PipelineFixture):
         invocations = gate_log.read_text().splitlines()
         self.assertEqual(len(invocations), 2)
         self.assertIn("compat-pairing", invocations[1])
-
-
-class PrepareRealAdapterTests(_PipelineFixture):
-    """prepare's sweep speaks the real per-kind read APIs when no fixture
-    registry base is supplied - the shape the first real release runs."""
-
-    @classmethod
-    def setUpClass(cls) -> None:
-        super().setUpClass()
-        cls.api_server = ThreadingHTTPServer(("127.0.0.1", 0), _PublicApiHandler)
-        cls.api_thread = threading.Thread(
-            target=cls.api_server.serve_forever, daemon=True
-        )
-        cls.api_thread.start()
-        base = f"http://127.0.0.1:{cls.api_server.server_port}"
-        cls.adapter_bases = {"pypi": base, "npm": base, "ghcr": base, "github": base}
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls.api_server.shutdown()
-        cls.api_server.server_close()
-        cls.api_thread.join(timeout=2)
-        super().tearDownClass()
-
-    def test_prepare_sweeps_through_the_per_kind_adapters(self) -> None:
-        _PublicApiHandler.state = {
-            "/pypi/awid-service/0.5.16/json": (200, {"info": {"version": "0.5.16"}}),
-        }
-        for repo in ("awebai/awid", "awebai/a2a-gateway", "awebai/ac"):
-            _PublicApiHandler.state[
-                f"/token?scope=repository:{repo}:pull&service=ghcr.io"
-            ] = (200, {"token": "t"})
-        card = rt.prepare(
-            self.aweb,
-            {"PURPOSE": "real-adapter sweep", "COMPAT_BREAK": "none"},
-            bases=self.adapter_bases,
-            gate_command=self.gate_command,
-            timeout=30,
-            # This test's subject is the registry adapters; the anchor
-            # resolver has its own real-mechanism test against a tagged
-            # remote (test_release_train_anchor_resolver).
-            anchor_resolver=lambda a, v: _test_anchor(v),
-        )
-        moves = {item.name: item.moves for item in card.artifacts}
-        self.assertFalse(moves["awid-service"])
-        self.assertTrue(moves["aweb-server"])
-        self.assertTrue(moves["ac-image"])
 
 
 class PrepareGateWrapperTests(unittest.TestCase):

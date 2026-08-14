@@ -1289,62 +1289,69 @@ def _resolve_anchor_identity(
     return PreviousCompleteAnchor(version, "oci-revision-label", identity)
 
 
-def select_artifacts(
-    prepared: PreparedEnvironment,
-    *,
-    registry_base: str | None = None,
-    bases: Mapping[str, str] | None = None,
-    timeout: float,
-    anchor_resolver=None,
-) -> tuple[ArtifactSelection, ...]:
-    """Sweep the nine versioned artifacts.
+_ANCHOR_KIND_BY_METADATA = {
+    "tag_pattern": "tag",
+    "oci_revision_label": "oci-revision-label",
+}
 
-    With a fixture ``registry_base`` the presence evidence contract is used;
-    without one, the per-kind public read adapters speak each registry's real
-    API - the shape a real prepare runs. Unmoved rows carry their previous
-    complete anchor (aben design section 7), resolved by anchor_resolver -
-    the real resolver by default, injectable for fixture runs.
+
+def selections_from_projection(result) -> tuple[ArtifactSelection, ...]:
+    """Card rows from the normalizer's projection (aben amendment A5,
+    shipment finding 2): every disposition shape the reconciler can
+    produce - moving, unmoved, moving-with-recovery - reaches the card,
+    with anchors carried from the projection under the canonical
+    entry's anchor kind. A row whose disposition requires an anchor
+    fails closed when the projection cannot supply an identityful one;
+    a projection missing a canonical artifact fails closed by name.
     """
 
-    resolve = anchor_resolver or (
-        lambda artifact, version: _resolve_anchor_identity(
-            prepared, artifact, version, timeout=timeout
-        )
-    )
-    selections = []
-    versions: dict[str, str] = {}
-    for name in CARD_ARTIFACT_ORDER:
-        artifact = _artifact(name)
-        version = _read_manifest_version(prepared, artifact)
-        versions[name] = version
-        reference = artifact.targets[0]
-        if registry_base is not None:
-            validate_line(registry_base, "registry base")
-            url = f"{registry_base}/{urllib.parse.quote(reference, safe='')}/{version}"
-            present = observe_registry_presence(url, version, timeout=timeout)
-        else:
-            present = observe_public_target(
-                reference, version, bases=bases, timeout=timeout
-            )
-        if present:
-            selections.append(
-                ArtifactSelection(
-                    name=name,
-                    version=version,
-                    moves=False,
-                    disposition="unmoved",
-                    previous_complete_anchor=resolve(artifact, version),
-                )
-            )
-        else:
-            selections.append(
-                ArtifactSelection(name=name, version=version, moves=True)
-            )
-    if versions["a2a-gateway-image"] != versions["aweb-server"]:
+    if result.outcome == "stop":
         raise ValidationError(
-            "a2a-gateway version must equal the server version at set computation"
+            "the normalizer projection carries stops; a card is never built "
+            "past a refusal: "
+            + ", ".join(
+                f"{s.code}({s.artifact})" if s.artifact else s.code
+                for s in result.stops
+            )
+        )
+    selections = []
+    for name in CARD_ARTIFACT_ORDER:
+        row = result.artifacts.get(name)
+        if row is None or row.version is None:
+            raise ValidationError(
+                f"the normalizer projection carries no {name} row; a card "
+                "cannot be built from a partial projection"
+            )
+        anchor = None
+        if row.disposition in ("unmoved", "moving-with-recovery"):
+            pca = row.previous_complete_anchor
+            if pca is None or not pca[0] or pca[1] is None:
+                raise ValidationError(
+                    f"{name} is {row.disposition} but the projection's "
+                    "previous complete anchor is missing or identityless"
+                )
+            anchor = PreviousCompleteAnchor(
+                version=pca[0],
+                kind=_ANCHOR_KIND_BY_METADATA[_artifact_entry(name).anchor.kind],
+                source_identity=pca[1],
+            )
+        selections.append(
+            ArtifactSelection(
+                name=name,
+                version=row.version,
+                moves=row.disposition != "unmoved",
+                disposition=row.disposition,
+                previous_complete_anchor=anchor,
+            )
         )
     return tuple(selections)
+
+
+def _artifact_entry(key: str):
+    for entry in ARTIFACTS:
+        if entry.key == key:
+            return entry
+    raise ValidationError(f"unknown canonical artifact {key!r}")
 
 
 def check_plugin_equality(prepared: PreparedEnvironment) -> None:
@@ -1438,21 +1445,22 @@ def prepare(
     repo_root: Path,
     environment: Mapping[str, str],
     *,
-    registry_base: str | None = None,
-    bases: Mapping[str, str] | None = None,
+    projection,
     gate_command: tuple[str, ...],
     timeout: float = 600,
     work_timeout: float = WORK_TIMEOUT,
-    anchor_resolver=None,
 ) -> ReleaseCard:
+    """The card is constructed from the normalizer's projection - the
+    production entry computes that projection with the SAME phase that
+    validated it, in this one command (aben A5, shipment finding 2)."""
+
     prepared = prepare_environment(repo_root, environment)
-    selections = select_artifacts(
-        prepared,
-        registry_base=registry_base,
-        bases=bases,
-        timeout=timeout,
-        anchor_resolver=anchor_resolver,
-    )
+    selections = selections_from_projection(projection)
+    versions = {item.name: item.version for item in selections}
+    if versions["a2a-gateway-image"] != versions["aweb-server"]:
+        raise ValidationError(
+            "a2a-gateway version must equal the server version at set computation"
+        )
     check_plugin_equality(prepared)
     gate = run_gate_once(prepared, gate_command, work_timeout=work_timeout)
     gates = [gate]
@@ -1497,7 +1505,10 @@ def prepare(
         purpose=prepared.purpose,
         deployments=deployments,
         final_ac_sha=None,
-        first_release_correction_pending=True,
+        # Pending exactly when this card deploys production - the card's
+        # own validator forbids a pending correction without a deploy,
+        # and a world at rest must still be cardable.
+        first_release_correction_pending=deployments.production,
     )
     write_card(prepared.aweb_root, card)
     return card
@@ -2097,14 +2108,30 @@ def _main(argv: Sequence[str]) -> int:
     if list(argv) != ["prepare"]:
         print("usage: release_train.py prepare|continue", file=sys.stderr)
         return 2
-    registry_base = os.environ.get("AWEB_RELEASE_REGISTRY_BASE", "").strip() or None
     gate_raw = os.environ.get("AWEB_RELEASE_GATE_COMMAND", "").strip()
     if not gate_raw:
         print(
             "release-prepare refused: AWEB_RELEASE_GATE_COMMAND must name the "
-            "gate entry (the Make target supplies the real wrapper). Without "
-            "AWEB_RELEASE_REGISTRY_BASE the sweep reads the real public "
-            "registries through the per-kind adapters, read-only.",
+            "gate entry (the Make target supplies the real wrapper).",
+            file=sys.stderr,
+        )
+        return 2
+    # The normalizer phase runs in THIS command and its in-memory
+    # projection is what the card is built from (aben A5); a stop or a
+    # patch ends the run before any test, exactly as the phase reports.
+    import release_normalizer_main as normalizer_entry
+
+    phase_code, phase_report, projection, normalizer_root = (
+        normalizer_entry.run_phase()
+    )
+    print(phase_report)
+    if phase_code != 0:
+        return phase_code
+    if normalizer_root != Path.cwd().resolve():
+        print(
+            "release-prepare refused: the normalizer ran over "
+            f"{normalizer_root} but prepare runs from {Path.cwd().resolve()}; "
+            "one world per command",
             file=sys.stderr,
         )
         return 2
@@ -2112,7 +2139,7 @@ def _main(argv: Sequence[str]) -> int:
         card = prepare(
             Path.cwd(),
             os.environ,
-            registry_base=registry_base,
+            projection=projection,
             gate_command=tuple(shlex.split(gate_raw)),
         )
     except ReleaseTrainError as error:
