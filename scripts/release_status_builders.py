@@ -156,3 +156,154 @@ def npm_tarball_row(
             f"{algorithm or 'sha512'}-{fetched_hex[:16]}..."
         ),
     )
+
+
+def image_rows(
+    image: str,
+    version: str,
+    *,
+    expected_revision: str,
+    required_platforms: tuple[str, ...],
+    check_latest: bool,
+    base: str,
+    token: str,
+    timeout: float,
+) -> list[Row]:
+    """Per-fact rows for one OCI image: index digest, each required
+    platform, each child's source-revision label against the expected
+    SHA, and mutable latest equal to the version digest where the
+    publisher promises it. The source tag is a separate repository-side
+    row owned by the caller."""
+
+    del token  # the hermetic path is anonymous; real GHCR adds a bearer
+    status, body, digest = _fetch_manifest(f"{base}/v2/{image}/manifests/{version}", timeout)
+    if status == -1 or status >= 500:
+        state, evidence = "unavailable", f"HTTP {status}"
+        return [Row(fact=f"ghcr:{image} {version} index digest", state=state, evidence=evidence)]
+    if status == 404:
+        return [
+            Row(
+                fact=f"ghcr:{image} {version} {suffix}",
+                state="observed-absent",
+                evidence="registry 404",
+            )
+            for suffix in ("index digest", *required_platforms)
+        ]
+    index = json.loads(body)
+    rows = [
+        Row(
+            fact=f"ghcr:{image} {version} index digest",
+            state="observed-present",
+            evidence=f"{digest}; source anchor {expected_revision}",
+        )
+    ]
+    children = {
+        f"{m.get('platform', {}).get('os', '?')}/{m.get('platform', {}).get('architecture', '?')}": m.get("digest")
+        for m in index.get("manifests", [])
+    }
+    for platform in required_platforms:
+        child = children.get(platform)
+        if child is None:
+            rows.append(
+                Row(
+                    fact=f"ghcr:{image} {version} {platform}",
+                    state="observed-absent",
+                    evidence=f"index children: {sorted(children)!r}",
+                )
+            )
+            continue
+        revision = _child_revision(base, image, child, timeout)
+        if revision is None:
+            rows.append(
+                Row(
+                    fact=f"ghcr:{image} {version} {platform} revision label",
+                    state="unavailable",
+                    evidence="config unreadable",
+                )
+            )
+        elif revision == expected_revision:
+            rows.append(
+                Row(
+                    fact=f"ghcr:{image} {version} {platform} revision label",
+                    state="observed-present",
+                    evidence=f"label equals source anchor {expected_revision}",
+                )
+            )
+        else:
+            rows.append(
+                Row(
+                    fact=f"ghcr:{image} {version} {platform} revision label",
+                    state="conflict-unproven",
+                    evidence=f"label {revision} != expected {expected_revision}",
+                )
+            )
+    if check_latest:
+        l_status, _l_body, l_digest = _fetch_manifest(
+            f"{base}/v2/{image}/manifests/latest", timeout
+        )
+        if l_status != 200:
+            rows.append(
+                Row(
+                    fact=f"ghcr:{image} latest == {version}",
+                    state="unavailable" if l_status != 404 else "observed-absent",
+                    evidence=f"latest HTTP {l_status}",
+                )
+            )
+        elif l_digest == digest:
+            rows.append(
+                Row(
+                    fact=f"ghcr:{image} latest == {version}",
+                    state="observed-present",
+                    evidence=f"latest digest equals version digest {digest}",
+                )
+            )
+        else:
+            rows.append(
+                Row(
+                    fact=f"ghcr:{image} latest == {version}",
+                    state="conflict-unproven",
+                    evidence=f"latest {l_digest} != version {digest}",
+                )
+            )
+    return rows
+
+
+def _fetch_manifest(url: str, timeout: float) -> tuple[int, bytes, str]:
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": (
+                "application/vnd.oci.image.index.v1+json, "
+                "application/vnd.oci.image.manifest.v1+json"
+            )
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return (
+                response.status,
+                response.read(),
+                response.headers.get("Docker-Content-Digest", ""),
+            )
+    except urllib.error.HTTPError as error:
+        return error.code, b"", ""
+    except (urllib.error.URLError, TimeoutError):
+        return -1, b"", ""
+
+
+def _child_revision(base: str, image: str, child_digest: str, timeout: float):
+    status, body, _ = _fetch_manifest(
+        f"{base}/v2/{image}/manifests/{child_digest}", timeout
+    )
+    if status != 200:
+        return None
+    config_digest = (json.loads(body).get("config") or {}).get("digest")
+    if not config_digest:
+        return None
+    c_status, config, _ = _fetch_manifest(
+        f"{base}/v2/{image}/blobs/{config_digest}", timeout
+    )
+    if c_status != 200:
+        return None
+    labels = ((json.loads(config).get("config") or {}).get("Labels")) or {}
+    return labels.get("org.opencontainers.image.revision")
