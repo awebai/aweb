@@ -376,7 +376,14 @@ unavailability is never absence and never success):
   to the version digest (the publisher promises latest).
 - a2a-gateway-image: same shape; tag `a2a-gw-v{V}`; latest row.
 - aw-cli: aweb tag `aw-v{V}`; external tag `v{V}`; the exact tree
-  binding row; GitHub Release with the exact canonical asset template
+  binding row - both answered from a LOCAL checkout of `awebai/aw`
+  that joins the run pair (a sibling of the aweb checkout, named
+  `aw`), fetched once and read with local git. The binding is an
+  object-id comparison: the external tag's root tree must equal
+  aweb's `cli/go` tree at the commit the card names. prepare
+  refuses by name if that checkout is absent, unavailable, dirty
+  or stale - a binding that cannot run must stop the release, not
+  degrade to unchecked; GitHub Release with the exact canonical asset template
   the publisher enforces (aw-release.yml:87, contract-tested against
   it): aw_{V}_linux_amd64.tar.gz, aw_{V}_linux_arm64.tar.gz,
   aw_{V}_darwin_amd64.tar.gz, aw_{V}_darwin_arm64.tar.gz,

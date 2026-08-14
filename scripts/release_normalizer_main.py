@@ -109,6 +109,54 @@ def _git(root: Path, *args: str) -> str:
     ).stdout
 
 
+AW_CHECKOUT_DIRNAME = "aw"
+
+
+def aw_root(aweb_root: Path) -> Path:
+    """THE canonical location of the aw product checkout: a sibling of
+    the aweb checkout, named `aw` - the same shape as the AC sibling,
+    overridable by env for hermetic tests exactly like the AC one."""
+
+    return Path(
+        os.environ.get("AWEB_NORMALIZER_AW_ROOT", "")
+        or (aweb_root.parent / AW_CHECKOUT_DIRNAME)
+    )
+
+
+def aw_checkout_stops(root: Path) -> list[rn.Stop]:
+    """Each way the aw checkout can be unusable refuses BY ITS OWN
+    NAME.
+
+    The binding it answers - the external v{V} tag and the exact
+    tree-equals-cli/go comparison - is now read from this checkout with
+    local git. A missing or stale checkout must therefore stop the run
+    rather than silently degrade the binding to "not checked": an
+    unrunnable check that reports nothing is the column-b defect, where
+    a row could not run where it was supposed to and nobody noticed.
+    """
+
+    if not root.exists():
+        return [rn.Stop("aw-checkout-absent", "aw-cli",
+                        detail=f"expected a checkout of awebai/aw at {root}")]
+    if not (root / ".git").exists():
+        return [rn.Stop("aw-checkout-unavailable", "aw-cli",
+                        detail=f"{root} exists but is not a git repository")]
+    try:
+        dirty = _git(root, "status", "--porcelain").strip()
+    except Exception as error:  # noqa: BLE001 - named stop, never a traceback
+        return [rn.Stop("aw-checkout-unavailable", "aw-cli", detail=str(error))]
+    if dirty:
+        return [rn.Stop("aw-checkout-dirty", "aw-cli",
+                        detail="the binding must read published trees, not local edits")]
+    head = _git(root, "rev-parse", "HEAD").strip()
+    listing = _git(root, "ls-remote", "origin", "refs/heads/main").split()
+    remote_main = listing[0] if listing else ""
+    if remote_main and remote_main != head:
+        return [rn.Stop("aw-checkout-stale", "aw-cli",
+                        detail=f"checkout at {head}, origin/main at {remote_main}")]
+    return []
+
+
 def worktree_stops(
     repo_roots: dict[str, Path], expected_shas: dict[str, str] | None = None
 ) -> list[rn.Stop]:
@@ -354,11 +402,14 @@ def run_phase(
             compatibility=compatibility,
         )
 
+    # The aw checkout is a PRECONDITION of the run, not an optional
+    # convenience: the external binding is read from it with local git,
+    # so an absent or stale one must refuse rather than let the binding
+    # quietly become unchecked.
     precondition_stops = worktree_stops(repo_roots, expected_shas)
+    precondition_stops += aw_checkout_stops(aw_root(aweb_root))
     if precondition_stops:
-        report = "\n".join(
-            f"STOP {stop.code} ({stop.artifact})" for stop in precondition_stops
-        )
+        report = run.render_stops(precondition_stops)
         return 1, report, None, aweb_root
 
     base_shas = {

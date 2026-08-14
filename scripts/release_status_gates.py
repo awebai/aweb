@@ -116,16 +116,34 @@ def rows_for_artifacts(
                 )
                 if not own_repository and expected:
                     # The external product repository (awebai/aw): its
-                    # own tag and the sync-stamp tree binding to the
-                    # exact aweb source the card names.
-                    rows += builders.external_release_binding_rows(
-                        repository,
-                        tag,
-                        expected_source_sha=expected,
-                        base=resolved["github"],
-                        token=tokens.get("github", ""),
-                        timeout=timeout,
-                    )
+                    # own tag and the exact tree binding to the aweb
+                    # source the card names - answered from the LOCAL
+                    # checkout with local git, because it is all in the
+                    # repo. A missing checkout is reported, never
+                    # skipped: the phase refuses without it, and a row
+                    # that silently does not run is the column-b defect.
+                    aw_checkout = (repo_roots or {}).get("aw")
+                    aweb_checkout = (repo_roots or {}).get("aweb")
+                    if aw_checkout and aweb_checkout:
+                        rows += builders.external_binding_rows_local(
+                            aw_root=aw_checkout,
+                            aweb_root=aweb_checkout,
+                            tag=tag,
+                            aweb_sha=expected,
+                        )
+                    else:
+                        rows += [
+                            Row(
+                                fact=f"awebai/aw external tag {tag}",
+                                state="unavailable",
+                                evidence="no aw checkout supplied to the assembly",
+                            ),
+                            Row(
+                                fact=f"awebai/aw {tag} tree binding",
+                                state="unavailable",
+                                evidence="no aw checkout supplied to the assembly",
+                            ),
+                        ]
             else:
                 rows.append(
                     Row(
@@ -218,8 +236,8 @@ def expected_fact_keys(
                     )
                 if not own_repository and expected:
                     keys |= {
-                        f"github:{repository} external tag {tag}",
-                        f"github:{repository} {tag} tree binding",
+                        f"awebai/aw external tag {tag}",
+                        f"awebai/aw {tag} tree binding",
                     }
         if (
             include_source_tags

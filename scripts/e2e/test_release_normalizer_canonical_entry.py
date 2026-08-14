@@ -130,8 +130,13 @@ class _WorldFixture(unittest.TestCase):
             # its identity is the tag in its OWN repository.
             ("v0.7.14",),
         )
+        # The aw product checkout joins the run pair: the external
+        # binding is read from it with local git, so the phase refuses
+        # without it rather than letting the binding go unchecked.
+        cls.aw_sha = _build_repo(base / "aw", {"main.go": ("raw", "package main\n")}, ())
         cls.aweb_root = base / "aweb"
         cls.ac_root = base / "ac"
+        cls.aw_root = base / "aw"
         cls.lock_script = base / "relock.sh"
         cls.lock_script.write_text(
             "#!/bin/sh\necho relocked >> uv.lock\n"
@@ -170,6 +175,7 @@ class _WorldFixture(unittest.TestCase):
         *,
         lock_command: str | None = None,
         invariant_commands: str = "[]",
+        aw_root: str | None = None,
     ) -> subprocess.CompletedProcess:
         # Tests override the invariant pass explicitly (default: none);
         # the production default list is pinned by its own unit test.
@@ -182,6 +188,7 @@ class _WorldFixture(unittest.TestCase):
                     or str(self.lock_script),
                     "AWEB_NORMALIZER_AWEB_ROOT": str(self.aweb_root),
                     "AWEB_NORMALIZER_AC_ROOT": str(self.ac_root),
+                    "AWEB_NORMALIZER_AW_ROOT": aw_root or str(self.aw_root),
                     "AWEB_NORMALIZER_PYPI_BASE": registry.base,
                     "AWEB_NORMALIZER_NPM_BASE": registry.base,
                     "AWEB_NORMALIZER_GHCR_BASE": registry.base,
@@ -443,6 +450,39 @@ class CanonicalEntry(_WorldFixture):
         finally:
             marker.unlink(missing_ok=True)
 
+    def test_the_aw_binding_cannot_be_skipped_at_the_real_entry(self) -> None:
+        """plan-critic's decisive requirement, and the one that decides
+        whether the checkout's named stops are decoration.
+
+        The external binding is answered from the local aw checkout, so
+        a missing checkout must STOP THE RUN through the actual entry
+        point - not degrade the binding to "not checked". That is the
+        column-b lesson: a row that cannot run where it is supposed to,
+        reporting nothing, is indistinguishable from a row that passed.
+
+        Run as a subprocess against the real entry, with a CONTROL: the
+        same world WITH the checkout reaches normal form. Without the
+        control this would pass on an entry that refuses everything."""
+
+        world = self.world_at_rest()
+
+        # Control: the binding is satisfiable, and the run proceeds.
+        healthy = self.run_entry(world)
+        self.assertEqual(healthy.returncode, 0, healthy.stdout + healthy.stderr)
+
+        # The same world, with the aw checkout taken away.
+        missing = self.run_entry(world, aw_root=str(self.aw_root) + "-gone")
+        self.assertEqual(
+            missing.returncode, 1, missing.stdout + missing.stderr
+        )
+        self.assertIn("aw-checkout-absent", missing.stdout)
+        self.assertIn("aw-cli", missing.stdout)
+        self.assertNotIn("Traceback", missing.stderr)
+        # It stops at the PRECONDITION - before any registry work - so
+        # a run that cannot check the binding does no work at all.
+        self.assertNotIn("normal form", missing.stdout)
+        self.assertNotIn("PATCH NEEDED", missing.stdout)
+
     def test_identityless_image_tag_is_captured_not_crashed(self) -> None:
         # A published version with NO source tag in its own repository
         # is identityless occupancy - a legitimate observation the
@@ -483,6 +523,7 @@ class PrepareEntry(_WorldFixture):
                     "AWEB_NORMALIZER_LOCK_COMMAND": str(self.lock_script),
                     "AWEB_NORMALIZER_AWEB_ROOT": str(self.aweb_root),
                     "AWEB_NORMALIZER_AC_ROOT": str(self.ac_root),
+                    "AWEB_NORMALIZER_AW_ROOT": str(self.aw_root),
                     "AWEB_NORMALIZER_PYPI_BASE": registry.base,
                     "AWEB_NORMALIZER_NPM_BASE": registry.base,
                     "AWEB_NORMALIZER_GHCR_BASE": registry.base,

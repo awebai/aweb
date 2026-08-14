@@ -87,6 +87,36 @@ class SourceTagPublication(unittest.TestCase):
         # ...and it did NOT move the existing tag.
         self.assertEqual(self.remote_tag_commit("v0.7.15"), self.first)
 
+    def test_the_published_tag_name_is_DERIVED_not_literal(self) -> None:
+        """The link the other tests leave open.
+
+        Every test above names the tag "v0.7.15" literally, so none of
+        them notices if ac-image's canonical prefix is renamed. This
+        one composes the name the way continue does - from
+        release_tag_prefix over the canonical entry - so it pins that
+        publication DERIVES the name rather than hardcoding one.
+
+        What it does NOT do, measured rather than assumed: it does not
+        catch the rename either. Both sides of its comparison move
+        together, which is the same trap it was written to close. The
+        rename is caught by the literal pin in
+        test_anchor_is_an_exact_tagged_union - verified by mutating the
+        prefix to "ac-v" and observing which suite goes red. Recorded
+        here so the next reader does not credit this test with a
+        guarantee it has not got."""
+
+        version = "0.7.15"
+        tag = rt.release_tag_prefix(rt._artifact("ac-image"), "awebai/ac") + version
+        rt.publish_source_tag(self.work, tag, self.second)
+        remote = git("ls-remote", "--tags", "origin", cwd=self.work)
+        self.assertIn(f"refs/tags/{tag}", remote, remote)
+        self.assertEqual(self.remote_tag_commit(tag), self.second)
+        # ...and it is the version-namespace shape the reconciler will
+        # read back, so publication and discovery agree by construction.
+        self.assertEqual(
+            tag, rt._artifact("ac-image").anchor.value + version
+        )
+
     def test_a_malformed_sha_is_refused_before_any_remote_write(self) -> None:
         with self.assertRaises(rt.ValidationError):
             rt.publish_source_tag(self.work, "v0.7.15", "not-a-sha")
