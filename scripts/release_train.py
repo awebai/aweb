@@ -2025,6 +2025,12 @@ def continue_train(
     verify_command: tuple[str, ...],
     digest_command: tuple[str, ...],
     marketplace_command: tuple[str, ...] | None = None,
+    correction_command: tuple[str, ...] = (
+        "python3",
+        "scripts/render_release_client.py",
+        "first-correction",
+        "--digest",
+    ),
     timeout: float = 600,
     work_timeout: float = WORK_TIMEOUT,
     rederive=None,
@@ -2072,7 +2078,17 @@ def continue_train(
             )
             _require_monitor_record(monitor_result.stdout, card.aweb_sha)
         _poll_public_target(primary, selection.version, bases=bases, timeout=timeout)
-    if marketplace_command is not None:
+    marketplace_moves = any(
+        selection.moves
+        for selection in card.artifacts
+        if selection.name in ("channel-plugin", "skills")
+    )
+    if marketplace_moves and marketplace_command is None:
+        raise ValidationError(
+            "the card moves channel/skills but no marketplace command is "
+            "bound; the pointer edge cannot be silently skipped"
+        )
+    if marketplace_moves:
         # aben design section 8: marketplace mutation is gated on the
         # COMPLETE channel+skills output rows, not on monitored adoption
         # alone. The gate returns the non-present rows; any -> refusal.
@@ -2164,7 +2180,15 @@ def continue_train(
         wait_seconds=work_timeout,
     )
     digest_result = run_command(
-        list(digest_command), cwd=environment.ac_root, timeout=work_timeout
+        [
+            *digest_command,
+            "--version",
+            versions["ac-image"],
+            "--source-sha",
+            ac_derived,
+        ],
+        cwd=environment.ac_root,
+        timeout=work_timeout,
     )
     digest_lines = [
         line.removeprefix("digest=")
@@ -2187,8 +2211,19 @@ def continue_train(
     ]
     if card.deployments.production:
         run_command(list(migrate_command), cwd=environment.ac_root, timeout=work_timeout)
+        # The card's pending production correction is executed, not
+        # merely recorded: first-correction pins the digest with
+        # auto-deploy disabled and read back; a card without the
+        # pending flag deploys plainly.
+        production_command = (
+            correction_command
+            if card.production_correction_pending
+            else deploy_command
+        )
         run_command(
-            [*deploy_command, digest], cwd=environment.ac_root, timeout=work_timeout
+            [*production_command, digest],
+            cwd=environment.ac_root,
+            timeout=work_timeout,
         )
         run_command(
             [*verify_command, digest, "--expect-git-sha", ac_derived],
@@ -2203,12 +2238,20 @@ def continue_train(
             _StatusRow(
                 fact="production migration postcondition",
                 state="observed-present",
-                evidence="self-reported: migration executor exited 0",
+                evidence="self-reported: the migration executor "
+                "(aweb_cloud.cli migrate) exited 0 with its own "
+                "database-backed verdict",
             ),
             _StatusRow(
                 fact=f"production deploy at {digest}",
                 state="observed-present",
-                evidence="self-reported: deploy command exited 0 at the observed digest",
+                evidence="self-reported: "
+                + (
+                    "first-correction pinned the digest (card correction "
+                    "pending executed)"
+                    if card.production_correction_pending
+                    else "deploy command exited 0 at the observed digest"
+                ),
             ),
             _StatusRow(
                 fact=f"production verify at {digest}",
@@ -2276,10 +2319,10 @@ _CONTINUE_FIXED_COMMANDS = {
         ".",
     ),
     "AWEB_RELEASE_AC_GATE_COMMAND": ("bash", "scripts/release-local-gate.sh"),
-    "AWEB_RELEASE_MIGRATE_COMMAND": (
-        "bash",
-        "scripts/check-pending-migrations.sh",
-    ),
+    # The REAL migration executor with its database-backed verdict
+    # (aweb_cloud.cli migrate under PROD_ENV_FILE); the zero-pending
+    # source check is a different fact and no longer wears this label.
+    "AWEB_RELEASE_MIGRATE_COMMAND": ("make", "prod-migrate-direct"),
     "AWEB_RELEASE_DEPLOY_COMMAND": (
         "python3",
         "scripts/render_release_client.py",
@@ -2301,24 +2344,32 @@ _CONTINUE_FIXED_COMMANDS = {
         "ghcr.io/awebai/ac",
         "--emit-digest",
     ),
+    "AWEB_RELEASE_MARKETPLACE_COMMAND": (
+        "python3",
+        "scripts/pointer-adapter-marketplace-pointer.py",
+        "apply",
+    ),
+    "AWEB_RELEASE_CORRECTION_COMMAND": (
+        "python3",
+        "scripts/render_release_client.py",
+        "first-correction",
+        "--digest",
+    ),
 }
 _CONTINUE_COMMAND_ENVS = tuple(_CONTINUE_FIXED_COMMANDS)
 
 
 def continue_commands() -> dict[str, tuple[str, ...]]:
-    return {
-        name: (
-            tuple(shlex.split(os.environ[name]))
-            if os.environ.get(name, "").strip()
-            else default
-        )
-        for name, default in _CONTINUE_FIXED_COMMANDS.items()
-    }
+    """The fixed reviewed boundary commands, period: operator
+    environment overrides were removed on the second gate verdict -
+    test injection happens below this boundary, through
+    continue_train's own parameters."""
+
+    return dict(_CONTINUE_FIXED_COMMANDS)
 
 
 def _continue_main() -> int:
     commands = continue_commands()
-    marketplace_raw = os.environ.get("AWEB_RELEASE_MARKETPLACE_COMMAND", "").strip()
     try:
         summary = continue_train(
             Path.cwd(),
@@ -2329,9 +2380,8 @@ def _continue_main() -> int:
             deploy_command=commands["AWEB_RELEASE_DEPLOY_COMMAND"],
             verify_command=commands["AWEB_RELEASE_VERIFY_COMMAND"],
             digest_command=commands["AWEB_RELEASE_DIGEST_COMMAND"],
-            marketplace_command=(
-                tuple(shlex.split(marketplace_raw)) if marketplace_raw else None
-            ),
+            marketplace_command=commands["AWEB_RELEASE_MARKETPLACE_COMMAND"],
+            correction_command=commands["AWEB_RELEASE_CORRECTION_COMMAND"],
         )
     except ReleaseTrainError as error:
         # Failure-preserving status (design section 8): the refusal is

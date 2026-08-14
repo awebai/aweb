@@ -1453,6 +1453,8 @@ class ContinueTrainTests(_PipelineFixture):
         with self.assertRaises(rt.ValidationError) as caught:
             rt.continue_train(
                 self.aweb,
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
                 rederive=lambda environment: [],
                 marketplace_gate=lambda card, bases, timeout: [],
                 ac_predecessor_gate=lambda card, bases, timeout: [
@@ -1520,6 +1522,8 @@ class ContinueTrainTests(_PipelineFixture):
         with self.assertRaises(rt.ValidationError) as caught:
             rt.continue_train(
                 self.aweb,
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
                 rederive=lambda environment: [
                     __import__("release_normalizer").Stop(
                         "card-world-version-drift", "aweb-server"
@@ -1593,6 +1597,14 @@ class ContinueTrainTests(_PipelineFixture):
         digest = Path(self.tmp.name) / "digest.py"
         digest.write_text(f"print('{DIGEST}')\n")
         self.digest_command = (sys.executable, str(digest))
+        marketplace = Path(self.tmp.name) / "marketplace.py"
+        self.marketplace_marker = Path(self.tmp.name) / "marketplace-applied"
+        marketplace.write_text(
+            "from pathlib import Path\n"
+            f"Path({str(self.marketplace_marker)!r}).write_text('applied')\n"
+        )
+        self.marketplace_command = (sys.executable, str(marketplace))
+        self.correction_command = (sys.executable, str(provider), "correction")
         # The AC release-branch push builds and serves the image in reality;
         # the spool serves it so the digest edge's wait observes it.
         (self.spool / urllib_quote("/v2/awebai/ac/manifests/0.7.13")).write_text(
@@ -1624,6 +1636,8 @@ class ContinueTrainTests(_PipelineFixture):
         return rt.continue_train(
             self.aweb,
             rederive=lambda environment: [],
+            marketplace_command=self.marketplace_command,
+            correction_command=self.correction_command,
             marketplace_gate=lambda card, bases, timeout: [],
             ac_predecessor_gate=lambda card, bases, timeout: [],
             terminal_gate=terminal_gate
@@ -1665,12 +1679,14 @@ class ContinueTrainTests(_PipelineFixture):
         # AC release advanced to the derived commit.
         ac_release = git("ls-remote", "origin", "refs/heads/release", cwd=self.ac)
         self.assertEqual(ac_release.split()[0], ac_main)
-        # Provider order: migrate before deploy before verify.
+        # Provider order: migrate, then the production step - which for
+        # a card with the correction pending is first-correction, the
+        # digest pin with auto-deploy off - then verify.
         provider = [
             line.split() for line in self.provider_log.read_text().splitlines()
         ]
         self.assertEqual(
-            [line[0] for line in provider], ["migrate", "deploy", "verify"]
+            [line[0] for line in provider], ["migrate", "correction", "verify"]
         )
         self.assertEqual(provider[1][1], DIGEST)
         self.assertEqual(provider[2][1], DIGEST)
@@ -1702,6 +1718,8 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
                 marketplace_gate=lambda card, bases, timeout: [],
                 ac_predecessor_gate=lambda card, bases, timeout: [],
                 terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
@@ -1750,6 +1768,8 @@ class ContinueTrainTests(_PipelineFixture):
         summary = rt.continue_train(
             self.aweb,
             rederive=lambda environment: [],
+            marketplace_command=self.marketplace_command,
+            correction_command=self.correction_command,
             marketplace_gate=lambda card, bases, timeout: [],
             ac_predecessor_gate=lambda card, bases, timeout: [],
             terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
@@ -1782,6 +1802,8 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
                 marketplace_gate=lambda card, bases, timeout: [],
                 ac_predecessor_gate=lambda card, bases, timeout: [],
                 terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
@@ -1814,6 +1836,8 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
                 marketplace_gate=lambda card, bases, timeout: [],
                 ac_predecessor_gate=lambda card, bases, timeout: [],
                 terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
@@ -1913,8 +1937,34 @@ class ContinueTrainTests(_PipelineFixture):
         )
         self.assertEqual(
             commands["AWEB_RELEASE_MIGRATE_COMMAND"],
-            ("bash", "scripts/check-pending-migrations.sh"),
+            ("make", "prod-migrate-direct"),
         )
+        self.assertEqual(
+            commands["AWEB_RELEASE_MARKETPLACE_COMMAND"],
+            (
+                "python3",
+                "scripts/pointer-adapter-marketplace-pointer.py",
+                "apply",
+            ),
+        )
+        self.assertEqual(
+            commands["AWEB_RELEASE_CORRECTION_COMMAND"],
+            (
+                "python3",
+                "scripts/render_release_client.py",
+                "first-correction",
+                "--digest",
+            ),
+        )
+        # C1: operator env overrides are GONE - an env value must not
+        # change what production resolves.
+        with mock.patch.dict(
+            os.environ, {"AWEB_RELEASE_MIGRATE_COMMAND": "echo hijacked"}
+        ):
+            self.assertEqual(
+                rt.continue_commands()["AWEB_RELEASE_MIGRATE_COMMAND"],
+                ("make", "prod-migrate-direct"),
+            )
         self.assertEqual(
             commands["AWEB_RELEASE_DEPLOY_COMMAND"],
             ("python3", "scripts/render_release_client.py", "deploy", "--digest"),
@@ -1934,6 +1984,132 @@ class ContinueTrainTests(_PipelineFixture):
                 "--emit-digest",
             ),
         )
+
+    def test_digest_argv_composed_by_the_train_executes_the_real_ac_contract(self) -> None:
+        # C1, the critic's probe in both directions: the FIXED digest
+        # command plus the train-appended card arguments must be
+        # accepted and answer digest= against the real AC script; the
+        # bare fixed tuple (the A8 defect) must be refused by argparse -
+        # pinning that the appending is load-bearing.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from registry_stand_in import RegistryStandIn
+
+        ac_root = Path(__file__).resolve().parents[2].parent / "ac-worktree"
+        script = ac_root / "scripts" / "verify_registry_adoption.py"
+        if not script.exists():
+            ac_root = Path(__file__).resolve().parents[2].parent / "ac"
+            script = ac_root / "scripts" / "verify_registry_adoption.py"
+        if not script.exists():
+            self.fail(
+                "no AC checkout with verify_registry_adoption.py beside this "
+                "repository; the digest contract cannot be executed"
+            )
+        digest_value = "sha256:" + "ab" * 32
+        world = {
+            "ghcr_index": {
+                "awebai/ac": {
+                    "0.7.15": {
+                        "digest": digest_value,
+                        "platforms": [
+                            ["linux", "amd64"],
+                            ["linux", "arm64"],
+                        ],
+                    }
+                }
+            }
+        }
+        fixed = rt._CONTINUE_FIXED_COMMANDS["AWEB_RELEASE_DIGEST_COMMAND"]
+        with RegistryStandIn(world) as registry:
+            env = {
+                **os.environ,
+                "AC_REGISTRY_BASE": registry.base,
+                "GH_TOKEN": "fixture-token",
+            }
+            composed = subprocess.run(
+                [
+                    *fixed,
+                    "--version",
+                    "0.7.15",
+                    "--source-sha",
+                    "c" * 40,
+                ],
+                cwd=ac_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            bare = subprocess.run(
+                list(fixed),
+                cwd=ac_root,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        self.assertEqual(
+            composed.returncode,
+            0,
+            f"stdout:{composed.stdout} stderr:{composed.stderr}",
+        )
+        self.assertIn(f"digest={digest_value}", composed.stdout)
+        self.assertEqual(
+            bare.returncode, 2, "the bare fixed tuple must be refused"
+        )
+        self.assertIn("--version", bare.stderr)
+
+    def test_marketplace_edge_follows_the_card_not_command_presence(self) -> None:
+        # C1: the pointer edge runs because the CARD moves channel or
+        # skills - an unbound command is a named refusal, never a silent
+        # skip, and a card moving neither runs nothing.
+        self._prepare()
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.continue_train(
+                self.aweb,
+                rederive=lambda environment: [],
+                marketplace_command=None,
+                correction_command=self.correction_command,
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=self.ac_gate_command,
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+                work_timeout=30,
+            )
+        self.assertIn("no marketplace command is bound", str(caught.exception))
+        self.marketplace_marker.unlink(missing_ok=True)
+        summary = self._continue()
+        self.assertEqual(summary["status"], "DONE")
+        self.assertTrue(
+            self.marketplace_marker.exists(),
+            "a card moving channel/skills must run the pointer edge",
+        )
+
+    def test_pending_correction_is_executed_not_recorded(self) -> None:
+        # C1: production_correction_pending is READ - the pending card's
+        # production step is first-correction with the digest, and the
+        # plain deploy stub must NOT run.
+        self._prepare()
+        summary = self._continue()
+        self.assertEqual(summary["status"], "DONE")
+        steps = [
+            line.split()[0]
+            for line in self.provider_log.read_text().splitlines()
+        ]
+        self.assertIn("correction", steps)
+        self.assertNotIn("deploy", steps)
 
     def test_derive_receives_the_complete_card_projection(self) -> None:
         # A8, the gate's :1967 finding: the train itself binds
@@ -1966,6 +2142,8 @@ class ContinueTrainTests(_PipelineFixture):
         return rt.continue_train(
             self.aweb,
             rederive=lambda environment: [],
+            marketplace_command=self.marketplace_command,
+            correction_command=self.correction_command,
             marketplace_gate=lambda card, bases, timeout: [],
             ac_predecessor_gate=lambda card, bases, timeout: [],
             terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
@@ -2053,6 +2231,8 @@ class ContinueTrainTests(_PipelineFixture):
                 # convenience must not be what production runs).
                 rt.continue_train(
                     self.aweb,
+                    marketplace_command=self.marketplace_command,
+                    correction_command=self.correction_command,
                     rederive=lambda environment: [],
                     marketplace_gate=lambda card, bases, timeout: [],
                     ac_predecessor_gate=lambda card, bases, timeout: [],
@@ -2096,6 +2276,8 @@ class ContinueTrainTests(_PipelineFixture):
             summary = rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
                 marketplace_gate=lambda card, bases, timeout: [],
                 ac_predecessor_gate=lambda card, bases, timeout: [],
                 terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],
@@ -2128,6 +2310,8 @@ class ContinueTrainTests(_PipelineFixture):
             rt.continue_train(
                 self.aweb,
                 rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
                 marketplace_gate=lambda card, bases, timeout: [],
                 ac_predecessor_gate=lambda card, bases, timeout: [],
                 terminal_gate=lambda environment, ac_derived, effect_rows, bases, timeout: [],

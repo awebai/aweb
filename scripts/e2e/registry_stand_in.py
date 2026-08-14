@@ -86,6 +86,31 @@ class _Handler(BaseHTTPRequestHandler):
                 return self._json({"name": image, "tags": sorted(tags)})
             if "/manifests/" in rest:
                 image, tag = rest.split("/manifests/", 1)
+                index = world.get("ghcr_index", {}).get(image, {}).get(tag)
+                if index is not None:
+                    body = json.dumps(
+                        {
+                            "manifests": [
+                                {
+                                    "platform": {
+                                        "os": os_name,
+                                        "architecture": arch,
+                                    },
+                                    "digest": f"sha256:{'c' * 63}{i}",
+                                }
+                                for i, (os_name, arch) in enumerate(
+                                    index["platforms"]
+                                )
+                            ]
+                        }
+                    ).encode()
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Docker-Content-Digest", index["digest"])
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return None
                 tags = world.get("ghcr", {}).get(image, {})
                 if tag not in tags:
                     return self._json({}, status=404)
