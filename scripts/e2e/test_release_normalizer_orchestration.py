@@ -63,7 +63,7 @@ class Orchestration(unittest.TestCase):
         return run.run_normalizer(
             capture=lambda: world,
             manifest_paths={"pkg": self.manifest},
-            reobserve=reobserve or (lambda result: []),
+            reobserve=reobserve or (lambda result, world=None: []),
             normalize=rn.normalize,
             recapture=recapture,
         )
@@ -102,7 +102,7 @@ class Orchestration(unittest.TestCase):
         outcome = run.run_normalizer(
             capture=lambda: captured_world("1.0.0", changed=False),
             manifest_paths={"pkg": self.manifest},
-            reobserve=lambda result: [],
+            reobserve=lambda result, world=None: [],
             normalize=flapping_normalize,
         )
         self.assertEqual(outcome.exit_code, run.STOP)
@@ -112,7 +112,7 @@ class Orchestration(unittest.TestCase):
         outcome = run.run_normalizer(
             capture=lambda: captured_world("1.0.0", changed=False),
             manifest_paths={"pkg": self.manifest},
-            reobserve=lambda result: [rn.Stop("version-occupied", "pkg")],
+            reobserve=lambda result, world=None: [rn.Stop("version-occupied", "pkg")],
             normalize=rn.normalize,
         )
         self.assertEqual(outcome.exit_code, run.STOP)
@@ -125,7 +125,7 @@ class Orchestration(unittest.TestCase):
         outcome = run.run_normalizer(
             capture=lambda: captured_world("1.0.0", changed=True),
             manifest_paths={"pkg": self.manifest},
-            reobserve=lambda result: [],
+            reobserve=lambda result, world=None: [],
             normalize=rn.normalize,
             recapture=lambda: captured_world("1.0.0", changed=True),
         )
@@ -143,7 +143,7 @@ class Orchestration(unittest.TestCase):
         outcome = run.run_normalizer(
             capture=lambda: captured_world("1.0.0", changed=True),
             manifest_paths={"pkg": self.manifest},
-            reobserve=lambda result: [],
+            reobserve=lambda result, world=None: [],
             normalize=rn.normalize,
             recapture=recapture,
         )

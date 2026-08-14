@@ -63,7 +63,7 @@ def run_normalizer(
     *,
     capture: Callable[[], rn.CapturedWorld],
     manifest_paths: dict[str, Path],
-    reobserve: Callable[[rn.NormalizerResult], Iterable[rn.Stop]],
+    reobserve: Callable[..., Iterable[rn.Stop]],
     normalize: Callable[[rn.CapturedWorld], rn.NormalizerResult] = rn.normalize,
     recapture: Callable[[], rn.CapturedWorld] | None = None,
     lock_paths: dict[str, tuple[Path, ...]] | None = None,
@@ -136,7 +136,7 @@ def run_normalizer(
         if followup.outcome == "stop":
             lines = [f"STOP {stop.code}" for stop in followup.stops]
             return Outcome(STOP, "\n".join(lines))
-        moved = list(reobserve(first))
+        moved = list(reobserve(first, world))
         if moved:
             return Outcome(
                 STOP, "\n".join(f"STOP {stop.code}" for stop in moved)
@@ -156,7 +156,7 @@ def run_normalizer(
         )
         return Outcome(PATCH_NEEDED, "\n".join(lines), result=first)
 
-    moved = list(reobserve(first))
+    moved = list(reobserve(first, world))
     if moved:
         return Outcome(STOP, "\n".join(f"STOP {stop.code}" for stop in moved))
     return Outcome(

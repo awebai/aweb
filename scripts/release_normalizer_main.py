@@ -137,21 +137,49 @@ def worktree_stops(repo_roots: dict[str, Path]) -> list[rn.Stop]:
     return stops
 
 
-def reobserve_result(result: rn.NormalizerResult, specs, discover) -> list[rn.Stop]:
-    """The exit re-observation: every moving artifact's intended version
-    must still be free on EVERY declared unit target - a composite
-    occupied mid-run on a secondary member is the same race with the
-    same name."""
+def reobserve_result(
+    result: rn.NormalizerResult, specs, discover, world=None
+) -> list[rn.Stop]:
+    """The exit re-observation over every load-bearing fact, classified
+    as progress versus conflict: a moving artifact's intended version
+    must still be free on EVERY declared unit target; a recovery
+    candidate's occupancy may only have grown identically to what
+    capture saw (a member completing with the same identity is progress;
+    a changed or foreign identity is registry-conflict); and an unmoved
+    or recovery row's anchor identity must not have moved under the run.
+    """
 
     stops: list[rn.Stop] = []
     for name, artifact in sorted(result.artifacts.items()):
-        if artifact.disposition != "moving" or artifact.version is None:
+        if artifact.version is None:
             continue
         spec = next(s for s in specs if s.name == name)
-        for target in spec.unit_targets:
-            if artifact.version in discover(target):
-                stops.append(rn.Stop("version-occupied", name))
-                break
+        if artifact.disposition == "moving":
+            for target in spec.unit_targets:
+                if artifact.version in discover(target):
+                    stops.append(rn.Stop("version-occupied", name))
+                    break
+            continue
+        if artifact.disposition == "moving-with-recovery" and world is not None:
+            # At this phase nothing has published yet, so a recovery
+            # candidate's occupancy changing IN ANY WAY between capture
+            # and exit means the world moved under the run - occupancy
+            # appearing, disappearing, or changing identity are all the
+            # same conflict; the rerun recomputes from the new world.
+            captured = world.artifacts.get(name)
+            captured_members = (
+                {m.name: dict(m.occupied) for m in captured.members}
+                if captured is not None
+                else {}
+            )
+            for target in spec.unit_targets:
+                fresh = discover(target)
+                seen = captured_members.get(target, {})
+                if fresh.get(artifact.version, "absent") != seen.get(
+                    artifact.version, "absent"
+                ):
+                    stops.append(rn.Stop("registry-conflict", name))
+                    break
     return stops
 
 
@@ -299,14 +327,24 @@ def run_phase() -> tuple[int, str, "rn.NormalizerResult | None", Path]:
     def regenerate_lock(lock: Path) -> None:
         import subprocess
 
+        # The approved regeneration is offline (design section 6): the
+        # patch phase must not resolve against the live index, only
+        # re-derive from the cache - UV_OFFLINE on the regeneration
+        # itself, not merely the later invariant check.
         subprocess.run(
-            lock_command, cwd=lock.parent, check=True, capture_output=True
+            lock_command,
+            cwd=lock.parent,
+            check=True,
+            capture_output=True,
+            env={**os.environ, "UV_OFFLINE": "1"},
         )
 
     outcome = run.run_normalizer(
         capture=capture,
         manifest_paths=manifest_paths,
-        reobserve=lambda result: reobserve_result(result, specs, discover),
+        reobserve=lambda result, world: reobserve_result(
+            result, specs, discover, world
+        ),
         normalize=rn.normalize,
         lock_paths=lock_paths,
         regenerate_lock=regenerate_lock,

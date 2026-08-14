@@ -334,14 +334,19 @@ def assemble_captured_world(
                 for version, identity in members[0].occupied.items()
                 if identity is not None
             }
-        if anchors:
-            from release_normalizer import parse_version as _parse
+        from release_normalizer import parse_version as _parse
 
-            newest = max(
-                (parsed, text)
-                for text in anchors
-                if (parsed := _parse(text)) is not None
-            )[1]
+        conforming = [
+            (parsed, text)
+            for text in anchors
+            if (parsed := _parse(text)) is not None
+        ]
+        # Anchors that are ALL near-matches carry no usable commit to
+        # compare against; content is treated as changed and the
+        # malformed keys flow to the reconciler's named stop - never a
+        # ValueError from an empty max (the pkg-v0.3 world).
+        if conforming:
+            newest = max(conforming)[1]
             changed = content_changed(
                 repo,
                 anchors[newest],
