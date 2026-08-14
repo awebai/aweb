@@ -1,0 +1,29 @@
+{
+  "artifacts": {
+    "aw-cli": {
+      "members": [
+        {"name": "github:awebai/aw:release", "occupied": {}},
+        {"name": "npm:@awebai/aw", "occupied": {}},
+        {"name": "npm:@awebai/aw-linux-x64", "occupied": {}},
+        {"name": "npm:@awebai/aw-linux-arm64", "occupied": {}},
+        {"name": "npm:@awebai/aw-darwin-x64", "occupied": {}},
+        {"name": "npm:@awebai/aw-darwin-arm64", "occupied": {}},
+        {"name": "npm:@awebai/aw-windows-x64", "occupied": {}},
+        {"name": "npm:@awebai/aw-windows-arm64", "occupied": {}}
+      ],
+      "anchor_versions": {}
+    }
+  },
+  "provenance": {
+    "row": "B2 control",
+    "subject": "the discriminating control: without 1.34.5 published, the same mechanism derives 1.34.5 rather than 1.34.6",
+    "design_reference": "docs/aben-design.md section 9, B2: 'Control: fixture without 1.34.5 published -> 1.34.5 derived'",
+    "expected": {"derived_version": "1.34.5"},
+    "why_this_control_exists": "b2-stale-cli-version.json asserts that the resolver derives 1.34.6. On its own that green is consistent with a resolver that always returns 1.34.6, or that hardcodes next-patch of a constant, or that ignores the fixture entirely. This control differs from the primary in exactly ONE respect - whether 1.34.5 occupies - and must produce a different answer. If both fixtures yield the same version, the instrument is not reading occupancy and the primary's green means nothing.",
+    "construction": {
+      "method": "CONSTRUCTED, not observed",
+      "warning": "This is a counterfactual world: 1.34.5 IS published in reality (re-observed 2026-08-14, npm HTTP 200, tag aw-v1.34.5 at 2455e7a127ab5f216477a0af114cb69e5b0caa74). Nothing here was ever true. It is authored to isolate the single variable and must never be presented as a recorded registry state.",
+      "derived_from": "b2-stale-cli-version.json with every 1.34.5 occupancy and its anchor removed, and nothing else changed"
+    }
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "artifacts": {
+    "awid-service": {
+      "members": [
+        {"name": "pypi:awid-service", "occupied": {"0.5.15": null}}
+      ],
+      "anchor_versions": {"0.5.15": "41008e6cb236c473546e84bd46660a9c852b264a"}
+    },
+    "awid-image": {
+      "members": [
+        {
+          "name": "ghcr.io/awebai/awid",
+          "occupied": {"0.5.15": "41008e6cb236c473546e84bd46660a9c852b264a"}
+        }
+      ],
+      "anchor_versions": {"0.5.15": "41008e6cb236c473546e84bd46660a9c852b264a"}
+    },
+    "ac-image": {
+      "members": [
+        {
+          "name": "ghcr.io/awebai/ac",
+          "occupied": {"0.7.14": "efd19f41bf6699264e6a7813df19c4b0070eb4a3"}
+        }
+      ],
+      "anchor_versions": {"0.7.14": "efd19f41bf6699264e6a7813df19c4b0070eb4a3"}
+    }
+  },
+  "provenance": {
+    "row": "B1",
+    "subject": "narrow card: each artifact's own content predicate over its own scope drives its own row",
+    "design_reference": "docs/aben-design.md section 9, B1",
+    "repository_state": {
+      "aweb": "5a55f7ce6b4dbb86dc2901f7c687e172e39db3af",
+      "ac": "47060200c53d30835cbb35cbcb5d073cbe3dc5d3",
+      "note": "the pre-bump mains named by the design; the repository half of CapturedArtifact (manifest_version, content_changed, derivation) is captured at these SHAs by the normalizer, NOT supplied by this file"
+    },
+    "expected": {
+      "awid-service": {"patch": ["0.5.15", "0.5.16"]},
+      "awid-image": {"patch": ["0.5.15", "0.5.16"]},
+      "ac-image": {"patch": ["0.7.14", "0.7.15"]},
+      "note": "a resolver emitting any other version fails this fixture; ac-image's row is derived independently from AC's own scope, never from the awid movement"
+    },
+    "values": {
+      "awid-service.anchor_versions.0.5.15": {
+        "method": "re-observed",
+        "source": "aweb repository tag awid-service-v0.5.15",
+        "command": "git rev-list -1 awid-service-v0.5.15",
+        "observed_at": "2026-08-14",
+        "observed_by": "aben-dev2"
+      },
+      "awid-image.anchor_versions.0.5.15": {
+        "method": "re-observed",
+        "source": "aweb repository tag awid-v0.5.15",
+        "command": "git rev-list -1 awid-v0.5.15",
+        "observed_at": "2026-08-14",
+        "observed_by": "aben-dev2",
+        "note": "resolves to the same commit as awid-service-v0.5.15; the two artifacts are tagged together at one commit, which is what the awid card equality invariant asserts"
+      },
+      "awid-image.members.ghcr.io/awebai/awid.occupied.0.5.15": {
+        "method": "DERIVED-NOT-OBSERVED",
+        "source": "the source SHA of tag awid-v0.5.15, which the publisher stamps as the image's source-revision label",
+        "warning": "GHCR manifest reads need a registry token, which this authoring pass did not have. This is the value the publisher is contracted to stamp, not a value read back off the registry. R6 must either re-observe it with a token or accept it as intended-value. It is NOT null: the ghcr member kind DOES expose a source identity, and writing null here would silently convert an unobserved identity into the identityless case that drives provisional recoverability."
+      },
+      "ac-image.members.ghcr.io/awebai/ac.occupied.0.7.14": {
+        "method": "DERIVED-NOT-OBSERVED",
+        "source": "AC commit efd19f41bf6699264e6a7813df19c4b0070eb4a3, the 0.7.14-era anchor named by the design's B1 movement evidence",
+        "warning": "same GHCR-token limitation as above; the anchor for ac-image is the OCI revision label, so this identity is exactly what the stamper round makes checkable"
+      },
+      "ac-image.anchor_versions.0.7.14": {
+        "method": "re-observed",
+        "source": "AC repository: backend/pyproject.toml at efd19f41 declares version 0.7.14, and at 47060200 still declares 0.7.14 (pre-bump), so efd19f41 is a valid 0.7.14 anchor for the diff",
+        "command": "git show efd19f41:backend/pyproject.toml | grep -m1 '^version'",
+        "observed_at": "2026-08-14",
+        "observed_by": "aben-dev2"
+      }
+    },
+    "independent_rederivation": {
+      "claim": "the design's B1 AC movement evidence: 14 files in the whole diff, 5 under backend/src + backend/tests",
+      "method": "re-observed",
+      "command": "git diff --name-only efd19f41 47060200 | wc -l  and  ... | grep -E '^backend/(src|tests)/' | wc -l",
+      "result": "14 total, 5 under backend/src+tests",
+      "observed_at": "2026-08-14",
+      "observed_by": "aben-dev2",
+      "note": "matches the corrected figure in the critic's amendment (7 -> 5). Re-derived from the AC repository rather than copied from the design text, so this fixture and the design agree by measurement and not by transcription. The exhaustive in-scope count is fixed by the canonical content_scope field, and the fixture binds to that field rather than to this count."
+    },
+    "controls": {
+      "note": "B1's two controls are REPOSITORY-half, not registry-half, so they need no separate registry fixture: (1) the same SHAs with each artifact's scope content anchored at its own prior tag/label must yield normal form; (2) an AC variant WITHOUT scope changes since its anchor must yield no AC row in the patch. Both vary content_changed, which the normalizer captures from the pinned SHAs. Do not encode them here by editing occupancy - that would test a different thing."
+    }
+  }
+}

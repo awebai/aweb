@@ -1,0 +1,40 @@
+{
+  "artifacts": {
+    "aweb-server": {
+      "members": [
+        {"name": "pypi:aweb", "occupied": {"1.27.1": null, "1.27.2": null}}
+      ],
+      "anchor_versions": {
+        "1.27.1": "6801b7c88339b45acfe6569de30c45732d43ba92",
+        "1.27.2": "e5524b4b68828154446300ea9a79a5adce8a666f"
+      }
+    },
+    "a2a-gateway-image": {
+      "members": [
+        {
+          "name": "ghcr.io/awebai/a2a-gateway",
+          "occupied": {"1.27.1": "6801b7c88339b45acfe6569de30c45732d43ba92"}
+        }
+      ],
+      "anchor_versions": {"1.27.1": "6801b7c88339b45acfe6569de30c45732d43ba92"}
+    }
+  },
+  "provenance": {
+    "row": "B4 control 1 of 2 - the first phantom-release direction",
+    "subject": "lagging member ABSENT at M must produce recovery at M with NO patch",
+    "design_reference": "docs/aben-design.md section 9, B4 control pair, and section 3's mutation controls: 'lagging-member-absent-at-M must produce recovery at M with no patch'",
+    "shared_manifest_version_M": "1.27.2",
+    "expected": {
+      "aweb-server": {"disposition": "unmoved or complete at 1.27.2", "patch": null},
+      "a2a-gateway-image": {"disposition": "moving-with-recovery", "version": "1.27.2", "patch": null},
+      "group_decision": "candidate is M; NO next-patch mint",
+      "why": "step 3 of the shared-candidate algorithm: if every moving/lagging member can publish or recover AT M and every complete member is exact at M, the candidate is M. Minting a patch here would be the bug - it would burn a version number because one member lagged, which is the phantom-release direction this control pins."
+    },
+    "construction": {
+      "method": "CONSTRUCTED, not observed",
+      "warning": "This is a counterfactual world and the inversion of reality is deliberate: in the real 0.7.15 cycle pypi aweb 1.27.2 was ABSENT and ghcr a2a-gateway 1.27.2 was PRESENT (see b5-false-publication-status.json). This control asserts the OPPOSITE occupancy in order to exercise the lagging-absent direction. Nothing in this file was ever true and it must never be cited as a recorded registry state.",
+      "anchor_reuse_note": "the SHAs are real commits (server-v1.27.1 and the 0.7.15 card SHA, both re-observed 2026-08-14) used as plausible identities so the fixture exercises identity comparison rather than degenerate placeholder strings. Their reuse here carries no claim that those commits ever produced these artifacts."
+    },
+    "discriminates_against": "b4-impossible-pre-registered-shape.control-lagging-conflicting.json, which differs ONLY in whether the lagging member's occupancy at M conflicts, and must produce a shared next patch instead of recovery. If both controls yield the same group decision, the algorithm is not reading the evidence fork and both greens are empty."
+  }
+}
