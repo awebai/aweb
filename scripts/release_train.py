@@ -1790,6 +1790,53 @@ def _poll_public_target(
     )
 
 
+def _default_rederive(environment) -> list:
+    """The real continue-start re-derivation: capture over the checkouts
+    at the card SHAs with fresh registry observations, normalize, and
+    compare to the card's projection. Lazy imports break the module
+    cycle with the entry-point module."""
+
+    import release_continue_check as rcc
+    import release_normalizer as rn
+    import release_normalizer_capture as cap
+    import release_normalizer_main as rmain
+
+    specs = cap.derive_capture_specs(ARTIFACTS)
+    world = cap.assemble_captured_world(
+        specs=specs,
+        repo_roots={
+            "aweb": environment.aweb_root,
+            "ac": environment.ac_root,
+        },
+        discover_target=lambda target: rmain.route_discovery(
+            target,
+            timeout=30,
+            ghcr_token=os.environ.get("AWEB_GHCR_READ_TOKEN", ""),
+            gh_token=os.environ.get("GH_TOKEN", ""),
+        ),
+        equality_groups=rmain.EQUALITY_GROUPS,
+        compatibility=environment.card.compatibility,
+    )
+    result = rn.normalize(world)
+    rows = [
+        rcc.CardRow(
+            name=item.name,
+            version=item.version,
+            disposition=item.disposition,
+            previous_complete_anchor=(
+                (
+                    item.previous_complete_anchor.version,
+                    item.previous_complete_anchor.source_identity,
+                )
+                if item.previous_complete_anchor is not None
+                else None
+            ),
+        )
+        for item in environment.card.artifacts
+    ]
+    return rcc.verify_card_against_world(rows, result)
+
+
 def continue_train(
     repo_root: Path,
     *,
@@ -1804,11 +1851,26 @@ def continue_train(
     marketplace_command: tuple[str, ...] | None = None,
     timeout: float = 600,
     work_timeout: float = WORK_TIMEOUT,
+    rederive=None,
 ) -> dict[str, str]:
     """Execute the ten edges literally, idempotently, stopping named."""
 
     environment = continue_environment(repo_root)
     card = environment.card
+    # aben design section 7: before the first irreversible edge (this
+    # fast-forward triggers every publisher at once), the same normalizer
+    # re-derives the world and the card is exact-compared under the
+    # progress allowlist. rederive is injectable for fixture runs; the
+    # default runs the real capture and comparator.
+    drift = (rederive or _default_rederive)(environment)
+    if drift:
+        names = ", ".join(
+            f"{stop.code}({stop.artifact})" if stop.artifact else stop.code
+            for stop in drift
+        )
+        raise ValidationError(
+            f"continue re-derivation refuses before the release move: {names}"
+        )
     fast_forward_release(environment.aweb_root, "release", card.aweb_sha)
     versions = {item.name: item.version for item in card.artifacts}
     for selection in card.artifacts:

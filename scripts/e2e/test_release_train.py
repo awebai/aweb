@@ -1396,6 +1396,40 @@ class ContinueTrainTests(_PipelineFixture):
         cls.spool_thread.start()
         cls.spool_base = f"http://127.0.0.1:{cls.spool_server.server_port}"
 
+    def test_continue_rederivation_drift_refuses_before_the_release_move(self) -> None:
+        # aben design section 7: an injected drift stop must refuse
+        # BEFORE the release fast-forward - the first irreversible edge -
+        # leaving both release pointers untouched.
+        self._prepare()
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.continue_train(
+                self.aweb,
+                rederive=lambda environment: [
+                    __import__("release_normalizer").Stop(
+                        "card-world-version-drift", "aweb-server"
+                    )
+                ],
+                bases={
+                    "pypi": self.spool_base,
+                    "npm": self.spool_base,
+                    "ghcr": self.spool_base,
+                    "github": self.spool_base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=self.ac_gate_command,
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+            )
+        self.assertIn("card-world-version-drift", str(caught.exception))
+        aweb_release = git(
+            "ls-remote", "origin", "refs/heads/release", cwd=self.aweb
+        )
+        self.assertEqual(aweb_release, "")
+
     @classmethod
     def tearDownClass(cls) -> None:
         cls.spool_server.shutdown()
@@ -1472,6 +1506,7 @@ class ContinueTrainTests(_PipelineFixture):
     def _continue(self):
         return rt.continue_train(
             self.aweb,
+            rederive=lambda environment: [],
             bases={
                 "pypi": self.spool_base,
                 "npm": self.spool_base,
@@ -1545,6 +1580,7 @@ class ContinueTrainTests(_PipelineFixture):
         with self.assertRaises(rt.CommandFailed):
             rt.continue_train(
                 self.aweb,
+                rederive=lambda environment: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1592,6 +1628,7 @@ class ContinueTrainTests(_PipelineFixture):
         )
         summary = rt.continue_train(
             self.aweb,
+            rederive=lambda environment: [],
             bases={
                 "pypi": self.spool_base,
                 "npm": self.spool_base,
@@ -1620,6 +1657,7 @@ class ContinueTrainTests(_PipelineFixture):
         with self.assertRaises(rt.CommandUnavailable) as caught:
             rt.continue_train(
                 self.aweb,
+                rederive=lambda environment: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1648,6 +1686,7 @@ class ContinueTrainTests(_PipelineFixture):
         with self.assertRaises(rt.CommandFailed):
             rt.continue_train(
                 self.aweb,
+                rederive=lambda environment: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1693,6 +1732,7 @@ class ContinueTrainTests(_PipelineFixture):
         try:
             summary = rt.continue_train(
                 self.aweb,
+                rederive=lambda environment: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
@@ -1721,6 +1761,7 @@ class ContinueTrainTests(_PipelineFixture):
         with self.assertRaises(rt.CommandFailed):
             rt.continue_train(
                 self.aweb,
+                rederive=lambda environment: [],
                 bases={
                     "pypi": self.spool_base,
                     "npm": self.spool_base,
