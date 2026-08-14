@@ -1,15 +1,22 @@
-# aben shipment-gate evidence (assembling; final-head fields stamp at the R6 land)
+# aben shipment-gate evidence
 
 Built to plan-critic's six-item packet specification (their mail
-af7e5b2b via alice). Sections marked STAMP-AT-LAND complete when the R6
-code round lands; everything else is final.
+af7e5b2b via alice). All aben code is LANDED; every range below names
+main-reachable commits re-read from git at assembly time.
 
-## 1. Review ranges — STAMP-AT-LAND
+## 1. Review ranges
 
-aweb: final head, merge base vs main, non-merge count/list, three-dot
-cumulative file list. AC: final head 35e204a5 lineage (derive script
-round aa73f30a + stamper round). Composed heads stamped after the R6
-land.
+- **aweb**: the complete aben range is `69e2fd80..6f4a8bd0` on main —
+  pre-aben main to the landed R6 head
+  `6f4a8bd0d3c59db900f5ab581ef836116080f798`, 33 non-merge commits,
+  56 files changed, 6713 insertions / 73 deletions. Every commit in the
+  range belongs to a release-review-ACKed round listed in section 6.
+- **AC**: main head `35e204a5eefc0f4fd6c4354018104f7d98a1e580` = the
+  derive-script round `aa73f30a` (ACKed, alice integrated) + dev2's
+  stamper proof round `35e204a5` (ACKed in dev2's lane).
+- This document itself rides the branch after the R6 land as its own
+  docs-only round; it changes no code and section 3's record binds to
+  the landed code head, not to this file.
 
 ## 2. Column B index — one row per control
 
@@ -24,7 +31,7 @@ land.
 - Test nodes: `...B2StaleCliVersion.test_recorded_world_rederives_the_next_free_patch`, `...test_control_unpublished_accepts_the_original_intent`; engine root `test_release_normalizer_movement.test_cli_derivation_rederives_over_occupied_intent` (+ multi-occupied walk)
 - Fixture: `b2-stale-cli-version.json` (aw composite unit at 1.34.5, tag at `2455e7a1...`, re-observed provenance) + `.control-unpublished.json`
 - Green: the tag-history row derives `1.34.6` over the recorded occupancy; the control derives `1.34.5` when nothing occupies — the one-difference discrimination.
-- DISCLOSED HARNESS BRIDGE: the control fixture's authored world lacks the prior tag history its own provenance requires; the harness supplies the implied `1.34.4` prior, commented in-test and mailed to dev2's lane (e06a8027). Clean fix deletes the bridge.
+- **THIS ROW'S CONTROL RUNS ON A BRIDGED WORLD, NOT THE RECORDED ONE** — weaker evidence than the other rows, stated here at the row (release-review's ACK note): the control fixture's authored world lacks the prior tag history its own one-difference provenance requires, and the harness supplies the implied `1.34.4` prior. Part of this control's world was SUPPLIED, not reconstructed from record. Commented in-test, mailed to dev2's lane (e06a8027); the clean fix deletes the bridge. The b2 row proper (occupied → rederive) runs on the recorded world unbridged.
 
 ### B3 single-floor derivation near-miss
 - Test nodes (AC repo): `scripts/test_derive_release_floors.py::test_incomplete_card_set_refuses_before_any_edit`, `::test_lock_resolving_stale_version_refuses_naming_wanted_and_got`, `::test_ac_version_mutation_inside_allowlisted_diff_refuses`
@@ -47,9 +54,27 @@ land.
 - Test nodes: seam half `test_release_normalizer_orchestration.test_nondeterministic_compute_is_the_drift_stop` (deliberately data-free — identical inputs are the point); data half `...NormalizerDriftRow.test_exit_reobservation_race_stops_by_its_real_name`
 - Fixture: `normalizer-drift.json` two-world race (capture-time absent, exit-time occupied) → `version-occupied` by name, never silent regeneration.
 
-## 3. Final focused test record — STAMP-AT-LAND
-Commands, exit status, duration, saved output path + SHA-256, run once
-over the final landed head.
+## 3. Final focused test record
+
+- **aweb** (landed head 6f4a8bd0; working tree ef5ac5e6, whose only
+  delta is this document — no code):
+  `python3 -m unittest` over the 23 aben-scope modules (artifact
+  metadata, card schema, Column B assembly, continue rederivation, gate
+  contract, the 10 normalizer suites, OCI reader, the 4 status suites,
+  anchor resolver, train, observe-CLI): **Ran 217 tests in 64.664s —
+  OK, exit 0**; `test_check_release_floor.sh` SELFTEST OK 7 assertions
+  exit 0; `test_release_tag_helpers.sh` SELFTEST OK 3 assertions exit 0.
+  Saved output: `agents/instances/release-dev/evidence/aben-final-test-record-6f4a8bd0.txt`,
+  SHA-256 `2876fee5c70abf7bc12d7438b45c99b55e54c883f77fe42d9afa87c6080a8f60`.
+  DISCLOSED: an identical run 6 minutes earlier also passed (exit 0)
+  but its capture pipeline truncated the unittest verdict line, so the
+  preserved record is the second run — two runs, one concrete reason,
+  per the operating policy.
+- **AC** (head 35e204a5 == origin/main):
+  `python3 -m unittest scripts.test_derive_release_floors -v`:
+  **Ran 7 tests in 0.371s — OK, exit 0**.
+  Saved output: `agents/instances/release-dev/evidence/aben-final-test-record-ac.txt`,
+  SHA-256 `76aee9a8ff5789505f381e1f52309a8eedde6b33b45fbec885171be34a11174c`.
 
 ## 4. Design-to-code map
 - §1 canonical metadata → `release_train.py` (Anchor/OwnedLock/Artifact fields, edge obligations); tests `test_release_artifact_metadata.py`
@@ -63,9 +88,13 @@ over the final landed head.
 - §9 acceptance → this packet's section 2
 - §10 gates → the round ledger (section 6)
 
-## 5. Normative-doc conformance — STAMP-AT-LAND
-`docs/release.md` diff over the full range (expected: unchanged clauses
-listed); design-doc wording changes after cadfb4eb: the coverage-table
+## 5. Normative-doc conformance
+
+`git diff 69e2fd80..6f4a8bd0 -- docs/release.md` is EMPTY — zero lines:
+the entire aben implementation changed the normative release document
+not at all; every prohibition and clause it carries stands byte-for-byte.
+The design doc entered as +474 lines in R1 with two later amendments.
+Design-doc wording changes after cadfb4eb: the coverage-table
 amendment (d14ef611, reviewed in R2's round) and the ac-image
 both-halves correction (12fb4e56, reviewed in R3's round) — each with
 its review record. The reconciliation refinement from the b4 controls is
@@ -73,13 +102,15 @@ CODE-side only; the design text's §2 blanket anchorless wording vs §3's
 conflict classification meeting point is documented here for the gate's
 trace.
 
-## 6. Round review ledger — STAMP-AT-LAND completes SHAs
+## 6. Round review ledger
 - R1 `b4c0daca` (4 commits incl. design doc) — release-review ACK; landed
 - R2 aweb `d14ef611` (3) + AC `aa73f30a` (1) — ACK both repos; alice integrated
 - R3 `12fb4e56` (11) — seam-scoped ACK; landed
 - R4 `95d1fc0e` (4) — ACK with pre-registered criteria; landed
 - comparator hardening `3af559ec` (1, alice's finding) — ACK; landed
 - R5 `1f0a1e63` (6) — ACK, three invariants verified at source; landed
-- R6 code round — STAMP-AT-LAND
+- R6 code round `6f4a8bd0` (3) — release-review ACK (narrowing pinned on
+  both sides of its new boundary; b2 bridged-world note folded into
+  section 2); landed, main fast-forwarded to exactly the ACKed head
 - AC stamper round `35e204a5` (dev2's lane) — closes the ac-image anchor's stamper half
 - Deferred anchor assertions: aw-cli's aw-v anchor → its own assertion rides the movement predicate (`test_release_normalizer_movement` CLI rows + `derive_capture_specs`); ac-image stamper → AC `verify_release_image.py` (dev2's round) + reader `read_oci_revision`
