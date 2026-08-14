@@ -31,6 +31,19 @@ ledger below them. AC quiescence stated for the audit pin.
   unified on host root.
 - The falsified-stamp mutation proves the binding row is COMPARED, not
   merely present - the control that makes the capstone mean something.
+- Two errors in MY OWN justifications, disclosed because a gate reader
+  is weighing whether my claims can be trusted, not only whether the
+  code is right. (a) I justified the source-commit-tag predicate with an
+  inverted argument - that a swallowed tag "would have stopped anyway" -
+  when swallowing a tag as a commit id is precisely what REMOVES the
+  stop; release-review caught it. The predicate is right for structural
+  and measured reasons instead (a dotless string cannot be
+  version-shaped; ~90 such tags on the live registry), and the code
+  comment states those, never the inverted one. (b) I twice sorted
+  version strings lexically and read the result as an ordering; I caught
+  the second myself and re-measured numerically before reporting. Both
+  are the same failure mode - a plausible argument produced faster than
+  it was checked.
 - The `promises_latest` metadata gap: the one two-way-domain input the
   equality could never check, closed by declaring the promise on the
   canonical record (reviewer-found, alice-carve-reviewed).
