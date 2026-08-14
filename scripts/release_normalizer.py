@@ -220,6 +220,17 @@ def reconcile_unit(
 
     if not missing_members:
         if anchor_identity is None:
+            if manifest_intent == candidate and member_identities:
+                # Occupied at the intended version by bytes whose source
+                # cannot be bound to any anchor: the conflicting fork,
+                # not a flat anchorless stop - the equality group's mint
+                # path consumes this (design section 3, the
+                # lagging-conflicting control).
+                return Reconciliation(
+                    state="conflicting-partial",
+                    candidate=candidate,
+                    source_identity=next(iter(member_identities)),
+                )
             return Reconciliation(state="stop", stop="anchorless-version")
         return Reconciliation(
             state="reconciled",
@@ -306,9 +317,23 @@ def group_decision(
     conflicting = [
         m for m in members if m.reconciliation.state == "conflicting-partial"
     ]
+    # A member complete at a LOWER version whose unit therefore does not
+    # occupy M can publish or recover AT M (design section 3 step 3) -
+    # minting for it would burn a number because one member lagged, the
+    # phantom-release direction. Only p > M (non-monotonic) joins the
+    # mint path.
+    movable_at_m = [
+        m for m in members
+        if m.reconciliation.state == "reconciled"
+        and m.reconciliation.p is not None
+        and (p := parse_version(m.reconciliation.p)) is not None
+        and p < m_parsed
+    ]
     lagging_complete = [
         m for m in members
-        if m.reconciliation.state == "reconciled" and m.reconciliation.p != m_text
+        if m.reconciliation.state == "reconciled"
+        and m.reconciliation.p != m_text
+        and m not in movable_at_m
     ]
 
     if not conflicting and not lagging_complete:
@@ -331,12 +356,15 @@ def group_decision(
                 ),
                 driver=changed[0].name,
             )
-        # Everyone is either complete at M or recoverable at M: reuse M.
+        # Everyone is complete at M, recoverable at M, or movable to M:
+        # reuse M; lagging members walk recovery there.
         return GroupDecision(
             kind="shared-candidate",
             version=m_text,
             patch=None,
-            recovering=tuple(sorted(m.name for m in recoverable_at_m)),
+            recovering=tuple(
+                sorted(m.name for m in (*recoverable_at_m, *movable_at_m))
+            ),
         )
 
     # M cannot serve: a member conflicts at it, or a complete member sits

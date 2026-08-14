@@ -151,3 +151,115 @@ class B1NarrowCard(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def load_world(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text())["artifacts"]
+
+
+def reconcile_recorded(artifacts: dict, name: str, intent: str):
+    recorded = artifacts[name]
+    return rn.reconcile_unit(
+        members=[
+            rn.UnitMember(m["name"], dict(m["occupied"]))
+            for m in recorded["members"]
+        ],
+        anchor_versions=dict(recorded["anchor_versions"]),
+        manifest_intent=intent,
+    )
+
+
+class B2StaleCliVersion(unittest.TestCase):
+    def test_recorded_world_rederives_the_next_free_patch(self) -> None:
+        artifacts = load_world("b2-stale-cli-version.json")
+        recorded = artifacts["aw-cli"]
+        occupied = frozenset(
+            v for m in recorded["members"] for v in m["occupied"]
+        ) | set(recorded["anchor_versions"])
+        decision = rn.movement_decision(
+            content_changed=True,
+            manifest_version="1.34.5",
+            reconciled_p="1.34.5",
+            occupied_versions=occupied,
+            compatibility="none",
+            derivation="tag-history",
+        )
+        self.assertEqual(decision.kind, "moving")
+        self.assertEqual(decision.version, "1.34.6")
+
+    def test_control_unpublished_accepts_the_original_intent(self) -> None:
+        # FIXTURE GAP, documented and mailed to dev2: the control's world
+        # is fully empty, but its own provenance requires a world
+        # differing from the primary in exactly ONE respect - whether
+        # 1.34.5 occupies. The one-difference world keeps the prior
+        # history (aw-v1.34.4, the true predecessor per the cycle
+        # record); the harness supplies it until the fixture carries it.
+        artifacts = load_world("b2-stale-cli-version.control-unpublished.json")
+        recorded = artifacts["aw-cli"]
+        occupied = frozenset(
+            v for m in recorded["members"] for v in m["occupied"]
+        ) | set(recorded["anchor_versions"]) | {"1.34.4"}
+        decision = rn.movement_decision(
+            content_changed=True,
+            manifest_version="1.34.5",
+            reconciled_p="1.34.4",
+            occupied_versions=occupied,
+            compatibility="none",
+            derivation="tag-history",
+        )
+        self.assertEqual(decision.kind, "moving")
+        self.assertEqual(decision.version, "1.34.5")
+
+
+class B4ImpossibleShape(unittest.TestCase):
+    MANIFESTS = {"aweb-server": "1.27.2", "a2a-gateway-image": "1.27.3"}
+
+    def group(self, artifacts, manifests):
+        return rn.group_decision(
+            members=[
+                rn.GroupMember(
+                    name=name,
+                    reconciliation=reconcile_recorded(
+                        artifacts, name, manifests[name]
+                    ),
+                    content_changed=True,
+                )
+                for name in ("aweb-server", "a2a-gateway-image")
+            ],
+            manifest_versions=manifests,
+            compatibility="none",
+        )
+
+    def test_the_impossible_shape_refuses_before_any_card(self) -> None:
+        artifacts = load_world("b4-impossible-pre-registered-shape.json")
+        decision = self.group(artifacts, self.MANIFESTS)
+        self.assertEqual(decision.kind, "stop")
+        self.assertEqual(decision.stop, "equality-invariant-violated")
+
+    def test_control_lagging_absent_reuses_m_with_no_patch(self) -> None:
+        artifacts = load_world(
+            "b4-impossible-pre-registered-shape.control-lagging-absent.json"
+        )
+        manifests = {"aweb-server": "1.27.2", "a2a-gateway-image": "1.27.2"}
+        decision = self.group(artifacts, manifests)
+        self.assertEqual(decision.kind, "shared-candidate")
+        self.assertEqual(decision.version, "1.27.2")
+        self.assertIsNone(decision.patch)
+        self.assertIn("a2a-gateway-image", decision.recovering)
+
+    def test_control_lagging_conflicting_mints_once_with_driver(self) -> None:
+        artifacts = load_world(
+            "b4-impossible-pre-registered-shape.control-lagging-conflicting.json"
+        )
+        manifests = {"aweb-server": "1.27.2", "a2a-gateway-image": "1.27.2"}
+        decision = self.group(artifacts, manifests)
+        self.assertEqual(decision.kind, "shared-candidate")
+        self.assertEqual(decision.version, "1.27.3")
+        self.assertEqual(
+            decision.patch,
+            (
+                ("a2a-gateway-image", "1.27.2", "1.27.3"),
+                ("aweb-server", "1.27.2", "1.27.3"),
+            ),
+        )
+        self.assertEqual(decision.driver, "a2a-gateway-image")

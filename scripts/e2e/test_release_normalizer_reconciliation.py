@@ -123,12 +123,36 @@ class Reconciliation(unittest.TestCase):
         )
         self.assertEqual(r.state, "recoverable-partial")
 
-    def test_all_members_but_no_anchor_is_anchorless(self) -> None:
+    def test_anchorless_at_intent_with_identity_is_the_conflicting_fork(self) -> None:
+        # Refined during R6 assembly (the b4 lagging-conflicting control):
+        # occupied at the INTENDED version by identityful bytes with no
+        # anchor means the source cannot be bound - the conflicting fork,
+        # which the equality group's mint path consumes. The flat
+        # anchorless stop remains for the other-intent and identityless
+        # cases below.
         r = rn.reconcile_unit(
             members=[
                 member("npm:a", {"1.2.3": None}),
                 member("github:rel", {"1.2.3": "sha-x"}),
             ],
+            anchor_versions={},
+            manifest_intent="1.2.3",
+        )
+        self.assertEqual(r.state, "conflicting-partial")
+        self.assertEqual(r.source_identity, "sha-x")
+
+    def test_anchorless_at_other_intent_still_stops(self) -> None:
+        r = rn.reconcile_unit(
+            members=[member("github:rel", {"1.2.3": "sha-x"})],
+            anchor_versions={},
+            manifest_intent="1.2.4",
+        )
+        self.assertEqual(r.state, "stop")
+        self.assertEqual(r.stop, "anchorless-version")
+
+    def test_anchorless_identityless_still_stops(self) -> None:
+        r = rn.reconcile_unit(
+            members=[member("pypi:a", {"1.2.3": None})],
             anchor_versions={},
             manifest_intent="1.2.3",
         )
