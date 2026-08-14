@@ -495,9 +495,10 @@ release-awid-site:
 	@if ! git diff --cached --quiet -- $(AWID_SITE_DOC_MIRRORS); then \
 		git commit -m "Sync identity-guide and trust-model into awid site"; \
 	fi
-	git checkout deploy-awid-landing
-	git merge main -m "Deploy awid site from main"
-	git push origin deploy-awid-landing
+	@echo "Docs synced. The site DEPLOY is release-continue's, pinned to the card's aweb SHA"
+	@echo "(fast-forward-only, refusing a non-FF move by name). This target no longer"
+	@echo "publishes: a second, unpinned writer of deploy-awid-landing could move a pointer"
+	@echo "that DONE asserts, silently, after the release record was written."
 	git checkout main
 	@echo "Awid site deployed via deploy-awid-landing."
 

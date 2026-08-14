@@ -131,7 +131,15 @@ class Assembly(unittest.TestCase):
 class OnlyMalformedAnchors(unittest.TestCase):
     """C5, plan-critic's pkg-v0.3 reproduction: a repository whose only
     anchor tag is a near-match must reach the reconciler's named stop,
-    never a ValueError from an empty max."""
+    never a ValueError from an empty max.
+
+    The narrowing SUPERSEDES this case's original rationale (their
+    ruling says so): a near-match is no longer stopped for being
+    malformed, it is stopped for being unplaceable - this unit carries
+    no conforming version to compare it against, so it cannot be proven
+    below anything. Where a conforming candidate does exist, the same
+    tag would be history.
+    """
 
     def test_world_with_only_near_match_anchors_stops_by_name(self) -> None:
         import subprocess

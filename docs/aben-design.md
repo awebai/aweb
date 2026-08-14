@@ -99,9 +99,27 @@ resolution):
 
 Grammar: `^v?MAJOR.MINOR.PATCH$`, numeric components, no prerelease or
 build metadata; ordering is numeric tuple comparison, implemented once.
-Non-matching candidates in non-version namespaces (latest, sha-*) never
-occupy and are logged. Near-matching candidates in a version namespace
-are a named stop (`malformed-version-candidate`). Yanked PyPI releases,
+Non-matching candidates in non-version namespaces never occupy and are
+logged: `latest`, `sha-*`, and BARE source-commit tags (`^[0-9a-f]{7,40}$`
+- the AC image publisher pushes its `:SHA` unprefixed, so roughly half
+of them begin with a digit and would otherwise read as near-versions).
+A source-commit tag is a commit identifier, not a version, and the
+`:SHA` output has its own inventory row rather than an occupancy claim. A near-matching candidate in a version namespace
+is a named stop (`malformed-version-candidate`) unless it is PROVABLY
+below the candidate in play, in which case it is history and is logged
+- the same principle as "absence below P is history", which this rule
+previously failed to apply. Provably below means: comparing numeric
+components pairwise, the FIRST differing component is lower. Equal-but-
+incomplete (`0.7` against 0.7.15) and equal-with-suffix (`0.7.15rc1`
+against 0.7.15) are ambiguous rather than lower and still stop; so does
+a candidate with no numeric prefix, and so does any near-match in a
+unit carrying no conforming version to place it against. Ignored
+history is ignored completely: it can never become P, a content anchor,
+previous-complete evidence, or recovery evidence. The rule applies to
+every version-bearing unit and source-anchor namespace, not to images
+alone. Registries keep old shapes
+(ghcr.io/awebai/ac serves a two-component `0.3` from 2026), and the
+train does not mutate the published world to quiet its own checker. Yanked PyPI releases,
 deprecated npm versions, and draft/prerelease GitHub releases with
 grammar-conforming tags ALL occupy (a yanked version is a burned
 number). A deleted registry version with a surviving source tag: the tag

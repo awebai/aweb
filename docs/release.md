@@ -192,8 +192,12 @@ Replace (aweb): `pypi-release.yml`, `npm-release.yml`, `awid-image-release.yml` 
 `release`; drop stage/continuation provenance; keep exact-match publish + cheap verify);
 `aw-release.yml`, `a2a-gateway-release.yml` (trigger from `release`; no tag-triggered
 publication remains); `library-ci.yml`, `federation-e2e.yml`, `server-ci.yml`, `a2a-copy-guardrails.yml`,
-and `cli-e2e.yml` lose their `push: main` triggers, keeping PR checks; both pointer-adapter scripts (become
-continue steps); `make release-awid-site` (invoked by continue); `.claude/skills/release`,
+and `cli-e2e.yml` lose their `push: main` triggers, keeping PR checks; `scripts/pointer-adapter-marketplace-pointer.py` (becomes a
+continue step; the AC dependency derivation is NOT an adapter's job - it is owned by
+`derive_release_floors.py`, invoked by the train with card-bound arguments, so
+`pointer-adapter-ac-pin.py` stays out of the production path rather than becoming a second
+implementation of it); `make release-awid-site` (its DEPLOY half retired - continue pushes the
+card's exact aweb SHA to `deploy-awid-landing`, fast-forward-only; the target keeps the docs sync); `.claude/skills/release`,
 `deploy-awid-site`, `cross-repo-change`, and `docs/contributing.md` release sections
 (rewritten).
 

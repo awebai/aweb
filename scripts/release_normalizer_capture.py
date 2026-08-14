@@ -173,6 +173,13 @@ def _get_json(url: str, *, timeout: float, headers: dict[str, str] | None = None
 
 
 _NEAR_VERSION = re.compile(r"^v?\d")
+# Source-commit tags are not versions. The AC image publisher pushes
+# exactly :VERSION and :SHA (design section 8), and it pushes the SHA
+# BARE - no sha- prefix - so a short commit id beginning with a digit
+# (about half of them) would otherwise be read as a near-version
+# candidate and halt the train. Measured against the live registry:
+# ghcr.io/awebai/ac serves ~90 of these.
+_SOURCE_COMMIT_TAG = re.compile(r"^[0-9a-f]{7,40}$")
 
 
 def _version_namespace_candidates(candidates) -> set[str]:
@@ -183,7 +190,11 @@ def _version_namespace_candidates(candidates) -> set[str]:
     the design's stop out of existence. Non-namespace names (latest,
     sha-*, branch tags) never occupy and are dropped."""
 
-    return {text for text in candidates if _NEAR_VERSION.match(text)}
+    return {
+        text
+        for text in candidates
+        if _NEAR_VERSION.match(text) and not _SOURCE_COMMIT_TAG.match(text)
+    }
 
 
 def discover_pypi_versions(
