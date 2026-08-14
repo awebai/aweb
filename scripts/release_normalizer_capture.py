@@ -55,21 +55,58 @@ def discover_anchor_tags(repo: Path, prefix: str) -> dict[str, str]:
     return tags
 
 
+_VERSION_FIELD_TOML = re.compile(r'(?m)^version\s*=\s*"[^"]*"')
+_VERSION_FIELD_JSON = re.compile(r'"version"\s*:\s*"[^"]*"')
+
+
+def _mask_version_field(text: str, name: str) -> str:
+    """The owned version field replaced by a constant, so the
+    normalizer's own patch is invisible while every other manifest byte
+    - dependencies, build metadata - still counts as content."""
+
+    pattern = (
+        _VERSION_FIELD_JSON if name.endswith("package.json") else _VERSION_FIELD_TOML
+    )
+    return pattern.sub("version-masked", text, count=1)
+
+
 def content_changed(
     repo: Path,
     anchor_sha: str,
     *,
     scope: tuple[str, ...],
     excluded: tuple[str, ...],
+    masked: tuple[str, ...] = (),
 ) -> bool:
-    """Does the scope's content differ between the anchor commit and HEAD,
-    ignoring the excluded version manifests and owned locks?"""
+    """Does the scope's content differ between the anchor commit and HEAD?
+
+    excluded paths (generated owned locks) are ignored entirely; masked
+    paths (version manifests) are compared with only the owned version
+    field normalized, so a dependency-only edit is movement while the
+    fixed point's version patch is not. A masked file absent on either
+    side is new or removed content.
+    """
 
     names = _git(
         repo, "diff", "--name-only", f"{anchor_sha}..HEAD", "--", *scope
     ).splitlines()
     remaining = [name for name in names if name not in excluded]
-    return bool(remaining)
+    hard = [name for name in remaining if name not in masked]
+    if hard:
+        return True
+    for name in remaining:
+        try:
+            anchored = _git(repo, "show", f"{anchor_sha}:{name}")
+        except subprocess.CalledProcessError:
+            return True
+        current_path = repo / name
+        if not current_path.exists():
+            return True
+        if _mask_version_field(anchored, name) != _mask_version_field(
+            current_path.read_text(), name
+        ):
+            return True
+    return False
 
 
 def manifest_version(path: Path) -> str:
@@ -236,6 +273,7 @@ class CaptureSpec:
     derivation: str
     scope: tuple[str, ...]
     excluded: tuple[str, ...]
+    masked: tuple[str, ...]
     anchor_kind: str
     anchor_value: str
     unit_targets: tuple[str, ...]
@@ -293,6 +331,7 @@ def assemble_captured_world(
                 anchors[newest],
                 scope=spec.scope,
                 excluded=spec.excluded,
+                masked=spec.masked,
             )
         else:
             changed = True
@@ -344,14 +383,12 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
         else:
             derivation = "manifest"
             manifest_path = source
-        excluded = tuple(
-            path
-            for path in (
-                manifest_path,
-                *(lock.path for lock in entry.owned_locks),
-            )
-            if path
-        )
+        # Owned locks are generated wholesale and excluded; the manifest
+        # stays IN the scope with only its owned version field masked,
+        # so dependency and build-metadata edits are movement while the
+        # normalizer's own version patch is not (the dependency-only
+        # blind spot closed at its cause).
+        excluded = tuple(lock.path for lock in entry.owned_locks if lock.path)
         specs.append(
             CaptureSpec(
                 name=key,
@@ -360,6 +397,7 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
                 derivation=derivation,
                 scope=entry.content_scope,
                 excluded=excluded,
+                masked=(manifest_path,),
                 anchor_kind=entry.anchor.kind,
                 anchor_value=entry.anchor.value,
                 unit_targets=entry.occupancy_unit,

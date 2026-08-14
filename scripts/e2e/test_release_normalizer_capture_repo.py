@@ -101,6 +101,85 @@ class RepoCapture(unittest.TestCase):
             )
         )
 
+    def test_dependency_only_manifest_change_is_movement(self) -> None:
+        # A3: the manifest stays IN scope with only the owned version
+        # field masked; a dependency edit is shipped content.
+        (self.work / "pkg" / "pyproject.toml").write_text(
+            '[project]\nname = "pkg"\nversion = "1.0.0"\n'
+            'dependencies = ["dep>=2"]\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "dep floor", cwd=self.work)
+        self.assertTrue(
+            cap.content_changed(
+                self.work, self.anchor_sha, scope=("pkg/",),
+                excluded=(), masked=("pkg/pyproject.toml",),
+            )
+        )
+
+    def test_version_only_manifest_change_is_masked_not_movement(self) -> None:
+        # The fixed-point half: the normalizer's own version patch must
+        # not read back as content change.
+        (self.work / "pkg" / "pyproject.toml").write_text(
+            '[project]\nname = "pkg"\nversion = "1.0.1"\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "bump", cwd=self.work)
+        self.assertFalse(
+            cap.content_changed(
+                self.work, self.anchor_sha, scope=("pkg/",),
+                excluded=(), masked=("pkg/pyproject.toml",),
+            )
+        )
+
+    def test_package_json_dependency_change_is_movement_version_is_not(self) -> None:
+        pkg_json = self.work / "pkg" / "package.json"
+        pkg_json.write_text(
+            '{\n  "name": "pkg",\n  "version": "2.0.0",\n'
+            '  "dependencies": {"dep": "^1"}\n}\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "npm manifest", cwd=self.work)
+        anchor = git("rev-parse", "HEAD", cwd=self.work)
+        pkg_json.write_text(
+            '{\n  "name": "pkg",\n  "version": "2.0.1",\n'
+            '  "dependencies": {"dep": "^1"}\n}\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "bump only", cwd=self.work)
+        self.assertFalse(
+            cap.content_changed(
+                self.work, anchor, scope=("pkg/",),
+                excluded=(), masked=("pkg/package.json",),
+            )
+        )
+        pkg_json.write_text(
+            '{\n  "name": "pkg",\n  "version": "2.0.1",\n'
+            '  "dependencies": {"dep": "^2"}\n}\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "dep moves", cwd=self.work)
+        self.assertTrue(
+            cap.content_changed(
+                self.work, anchor, scope=("pkg/",),
+                excluded=(), masked=("pkg/package.json",),
+            )
+        )
+
+    def test_manifest_absent_at_anchor_is_movement(self) -> None:
+        # A masked file that did not exist at the anchor is new content.
+        (self.work / "pkg" / "package.json").write_text(
+            '{"name": "pkg", "version": "0.1.0"}\n'
+        )
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "new manifest", cwd=self.work)
+        self.assertTrue(
+            cap.content_changed(
+                self.work, self.anchor_sha, scope=("pkg/",),
+                excluded=(), masked=("pkg/package.json",),
+            )
+        )
+
     def test_manifest_version_reads_toml_and_json(self) -> None:
         self.assertEqual(
             cap.manifest_version(self.work / "pkg" / "pyproject.toml"), "1.0.0"
