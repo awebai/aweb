@@ -60,12 +60,8 @@ jobs:
             [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || fail "checkout is not github.sha $SOURCE_SHA"
             git merge-base --is-ancestor "$SOURCE_SHA" origin/main || fail "release SHA $SOURCE_SHA is not an ancestor of main"
           }
-          remote_tag_sha() {
-            lines="$(git ls-remote origin "refs/tags/$1" "refs/tags/$1^{}")"
-            direct="$(awk '$2 !~ /\^\{\}$/ {print $1}' <<<"$lines" | head -1)"
-            peeled="$(awk '$2 ~ /\^\{\}$/ {print $1}' <<<"$lines" | head -1)"
-            printf '%s\n' "${peeled:-$direct}"
-          }
+          # remote_tag_sha comes from the one shared implementation.
+          source scripts/release-tag-helpers.sh
           publish_tag() {
             tag="$1"; observed="$(remote_tag_sha "$tag")"
             if [[ "$observed" == "$SOURCE_SHA" ]]; then echo "adopted existing tag $tag"; return; fi

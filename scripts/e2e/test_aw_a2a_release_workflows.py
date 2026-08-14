@@ -256,7 +256,9 @@ class AwA2AReleaseWorkflowTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(checkout), "push", "-q", "origin", "HEAD:main"], check=True)
             for workflow, tag in ((AW, "aw-v1.2.3"), (A2A, "a2a-gw-v1.2.3")):
                 functions = "fail() { printf 'REFUSE: %s\\n' \"$1\" >&2; exit 1; }\n"
-                functions += shell_function(workflow, "remote_tag_sha")
+                functions += (
+                    ROOT / "scripts" / "release-tag-helpers.sh"
+                ).read_text()
                 functions += shell_function(workflow, "publish_tag")
                 path = root / (tag + ".sh"); path.write_text(functions)
                 command = f'source "{path}"; publish_tag "{tag}"'

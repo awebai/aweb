@@ -470,13 +470,21 @@ class ThinReleaseWorkflowContractTests(unittest.TestCase):
             # remote, rather than rehearsing a test-side rendering of them.
             pypi_job = job_block(PYPI, "awid_service")
             image_job = job_block(AWID_IMAGE, "publish_image")
-            names = ("remote_tag_sha", "require_tag_compatible", "publish_tag")
+            # remote_tag_sha is the shared sourced implementation; the
+            # workflows must source it and define no inline copy, and the
+            # remaining publisher-only pair must stay identical across jobs.
+            helper = (REPO_ROOT / "scripts" / "release-tag-helpers.sh").read_text()
+            for job in (pypi_job, image_job):
+                self.assertIn("source scripts/release-tag-helpers.sh", job)
+                self.assertNotIn("remote_tag_sha() {", job)
+            names = ("require_tag_compatible", "publish_tag")
             pypi_functions = "".join(shell_function(pypi_job, name) for name in names)
             image_functions = "".join(shell_function(image_job, name) for name in names)
             self.assertEqual(pypi_functions, image_functions)
             functions = root / "publication-tag-functions.sh"
             functions.write_text(
                 "fail() { printf 'REFUSE: %s\\n' \"$1\" >&2; exit 1; }\n"
+                + helper
                 + pypi_functions,
                 encoding="utf-8",
             )

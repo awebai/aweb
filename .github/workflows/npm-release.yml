@@ -159,13 +159,8 @@ jobs:
         run: |
           set -euo pipefail
           fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
-          remote_tag_sha() {
-            local tag="$1" lines direct peeled
-            lines="$(git ls-remote origin "refs/tags/$tag" "refs/tags/$tag^{}")"
-            direct="$(awk '$2 !~ /\^\{\}$/ {print $1}' <<<"$lines" | head -1)"
-            peeled="$(awk '$2 ~ /\^\{\}$/ {print $1}' <<<"$lines" | head -1)"
-            printf '%s\n' "${peeled:-$direct}"
-          }
+          # remote_tag_sha comes from the one shared implementation.
+          source scripts/release-tag-helpers.sh
           require_release_sha() {
             git fetch --no-tags origin \
               +refs/heads/main:refs/remotes/origin/main \
