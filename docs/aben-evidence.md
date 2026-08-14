@@ -2,7 +2,7 @@
 
 Built to the re-entry protocol over the SECOND verdict's amendments
 (C1-C6), on top of the second submission's closure of the first
-verdict (A1-A9, all landed; ledger in section 6). Sections marked
+verdict (A1-A9, all landed; ledger in section 7). Sections marked
 STAMP-AT-SEND are completed at send time from a fresh fetch, per the
 dated-stamp practice, and re-verified at any later landing.
 
