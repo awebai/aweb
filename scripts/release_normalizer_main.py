@@ -28,7 +28,33 @@ EQUALITY_GROUPS = (
 )
 
 
-def route_discovery(target: str, *, timeout: float, ghcr_token: str, gh_token: str):
+_REGISTRY_BASES = {
+    "pypi": ("AWEB_NORMALIZER_PYPI_BASE", "https://pypi.org"),
+    "npm": ("AWEB_NORMALIZER_NPM_BASE", "https://registry.npmjs.org"),
+    "ghcr": ("AWEB_NORMALIZER_GHCR_BASE", "https://ghcr.io"),
+    "github": ("AWEB_NORMALIZER_GITHUB_BASE", "https://api.github.com"),
+}
+
+
+def registry_bases() -> dict[str, str]:
+    """Production registry endpoints, each overridable through its env
+    seam (the observe_public_target --base precedent) so end-to-end
+    tests drive this exact process over the real wire protocols."""
+
+    return {
+        key: os.environ.get(env_name, "").strip() or default
+        for key, (env_name, default) in _REGISTRY_BASES.items()
+    }
+
+
+def route_discovery(
+    target: str,
+    *,
+    timeout: float,
+    ghcr_token: str,
+    gh_token: str,
+    bases: dict[str, str],
+):
     """One listing call per unit target, by spelling. Unknown spellings
     raise: a new target kind is a reviewed decision, never a skip."""
 
@@ -36,38 +62,60 @@ def route_discovery(target: str, *, timeout: float, ghcr_token: str, gh_token: s
         return {
             v: None
             for v in cap.discover_pypi_versions(
-                target.removeprefix("pypi:"), timeout=timeout
+                target.removeprefix("pypi:"), base=bases["pypi"], timeout=timeout
             )
         }
     if target.startswith("npm:"):
         return {
             v: None
             for v in cap.discover_npm_versions(
-                target.removeprefix("npm:"), timeout=timeout
+                target.removeprefix("npm:"), base=bases["npm"], timeout=timeout
             )
         }
     if target.startswith("ghcr.io/"):
         image = target.removeprefix("ghcr.io/")
-        return {
-            v: None
-            for v in cap.discover_ghcr_versions(
-                image, timeout=timeout, token=ghcr_token
-            )
-        }
+        tags = cap.discover_ghcr_versions(
+            image, base=bases["ghcr"], timeout=timeout, token=ghcr_token
+        )
+        occupied: dict[str, str | None] = {}
+        for tag in sorted(tags):
+            if rn.parse_version(tag) is None:
+                # Near-matching candidates occupy identityless; the
+                # reconciler stops them by name.
+                occupied[tag] = None
+                continue
+            try:
+                occupied[tag] = cap.read_oci_revision(
+                    image,
+                    tag,
+                    base=bases["ghcr"],
+                    token=ghcr_token,
+                    timeout=timeout,
+                )
+            except cap.RevisionLabelAbsent:
+                occupied[tag] = None
+        return occupied
     if target.startswith("github:"):
         _, repository, _channel = target.split(":", 2)
         return {
             v: None
             for v in cap.discover_github_release_versions(
-                repository, timeout=timeout, token=gh_token
+                repository, base=bases["github"], timeout=timeout, token=gh_token
             )
         }
     raise ValueError(f"no discoverer routes target {target!r}")
 
 
 def main() -> int:
-    aweb_root = Path(__file__).resolve().parents[1]
-    ac_root = (aweb_root.parent / "ac").resolve()
+    default_aweb_root = Path(__file__).resolve().parents[1]
+    aweb_root = Path(
+        os.environ.get("AWEB_NORMALIZER_AWEB_ROOT", "") or default_aweb_root
+    ).resolve()
+    ac_root = Path(
+        os.environ.get("AWEB_NORMALIZER_AC_ROOT", "")
+        or (default_aweb_root.parent / "ac")
+    ).resolve()
+    bases = registry_bases()
     timeout = float(os.environ.get("AWEB_NORMALIZER_TIMEOUT", "30"))
     ghcr_token = os.environ.get("AWEB_GHCR_READ_TOKEN", "")
     gh_token = os.environ.get("GH_TOKEN", "")
@@ -81,7 +129,11 @@ def main() -> int:
 
     def discover(target: str):
         return route_discovery(
-            target, timeout=timeout, ghcr_token=ghcr_token, gh_token=gh_token
+            target,
+            timeout=timeout,
+            ghcr_token=ghcr_token,
+            gh_token=gh_token,
+            bases=bases,
         )
 
     def capture() -> rn.CapturedWorld:
