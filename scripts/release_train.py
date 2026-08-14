@@ -567,7 +567,13 @@ _CARD_FIELDS = {
     "final_ac_sha",
     "first_release_correction_pending",
 }
-_ARTIFACT_FIELDS = {"name", "version", "moves"}
+_ARTIFACT_FIELDS = {
+    "name",
+    "version",
+    "moves",
+    "disposition",
+    "previous_complete_anchor",
+}
 _GATE_FIELDS = {"name", "sha", "result", "reference", "suites"}
 _DEPLOYMENT_FIELDS = {"production", "awid_site", "aweb_site"}
 
@@ -668,9 +674,32 @@ class ReleaseCard:
         for index, raw in enumerate(raw_artifacts):
             item = _require_mapping(raw, f"artifact {index}")
             _require_keys(item, _ARTIFACT_FIELDS, f"artifact {index}")
+            raw_anchor = item["previous_complete_anchor"]
+            anchor = None
+            if raw_anchor is not None:
+                anchor_map = _require_mapping(raw_anchor, f"artifact {index} anchor")
+                _require_keys(
+                    anchor_map,
+                    {"version", "kind", "source_identity"},
+                    f"artifact {index} anchor",
+                )
+                try:
+                    anchor = PreviousCompleteAnchor(
+                        anchor_map["version"],
+                        anchor_map["kind"],
+                        anchor_map["source_identity"],
+                    )
+                except ValidationError as error:
+                    raise CardFormatError(str(error)) from error
             try:
                 artifacts.append(
-                    ArtifactSelection(item["name"], item["version"], item["moves"])
+                    ArtifactSelection(
+                        item["name"],
+                        item["version"],
+                        item["moves"],
+                        disposition=item["disposition"],
+                        previous_complete_anchor=anchor,
+                    )
                 )
             except ValidationError as error:
                 raise CardFormatError(str(error)) from error
@@ -1204,20 +1233,73 @@ def observe_registry_presence(url: str, expected_version: str, *, timeout: float
     return True
 
 
+def _resolve_anchor_identity(
+    prepared: PreparedEnvironment, artifact: Artifact, version: str, *, timeout: float
+) -> PreviousCompleteAnchor:
+    """The unmoved row's anchor: its published version's source identity,
+    read from where the anchor actually lives (aben design section 7).
+
+    Tag anchors resolve on the artifact's repository origin with annotated
+    tags peeled - the same direct/peeled semantics as the shared shell
+    helper. The OCI revision label resolves from the registry through the
+    adoption reader's contract; unavailability raises rather than
+    guessing, because an unmoved row without a provable anchor is not an
+    unmoved row.
+    """
+
+    if artifact.anchor is None:
+        raise ValidationError(f"{artifact.key} has no canonical anchor")
+    if artifact.anchor.kind == "tag_pattern":
+        repository = (
+            prepared.aweb_root if artifact.repository == "aweb" else prepared.ac_root
+        )
+        tag = f"{artifact.anchor.value}{version}"
+        lines = _git(
+            repository, "ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"
+        ).stdout.splitlines()
+        direct = peeled = None
+        for line in lines:
+            sha, ref = line.split(None, 1)
+            if ref.endswith("^{}"):
+                peeled = sha
+            else:
+                direct = sha
+        identity = peeled or direct
+        if identity is None:
+            raise ObservationUnavailable(
+                f"{artifact.key}: anchor tag {tag} absent while the registry "
+                "serves the version - anchorless unmoved row"
+            )
+        return PreviousCompleteAnchor(version, "tag", identity)
+    # oci_revision_label: the image config's revision label, via the
+    # injected reader the caller supplies at real-prepare time.
+    raise ObservationUnavailable(
+        f"{artifact.key}: oci revision anchor requires the registry reader"
+    )
+
+
 def select_artifacts(
     prepared: PreparedEnvironment,
     *,
     registry_base: str | None = None,
     bases: Mapping[str, str] | None = None,
     timeout: float,
+    anchor_resolver=None,
 ) -> tuple[ArtifactSelection, ...]:
     """Sweep the nine versioned artifacts.
 
     With a fixture ``registry_base`` the presence evidence contract is used;
     without one, the per-kind public read adapters speak each registry's real
-    API - the shape a real prepare runs.
+    API - the shape a real prepare runs. Unmoved rows carry their previous
+    complete anchor (aben design section 7), resolved by anchor_resolver -
+    the real resolver by default, injectable for fixture runs.
     """
 
+    resolve = anchor_resolver or (
+        lambda artifact, version: _resolve_anchor_identity(
+            prepared, artifact, version, timeout=timeout
+        )
+    )
     selections = []
     versions: dict[str, str] = {}
     for name in CARD_ARTIFACT_ORDER:
@@ -1233,7 +1315,20 @@ def select_artifacts(
             present = observe_public_target(
                 reference, version, bases=bases, timeout=timeout
             )
-        selections.append(ArtifactSelection(name=name, version=version, moves=not present))
+        if present:
+            selections.append(
+                ArtifactSelection(
+                    name=name,
+                    version=version,
+                    moves=False,
+                    disposition="unmoved",
+                    previous_complete_anchor=resolve(artifact, version),
+                )
+            )
+        else:
+            selections.append(
+                ArtifactSelection(name=name, version=version, moves=True)
+            )
     if versions["a2a-gateway-image"] != versions["aweb-server"]:
         raise ValidationError(
             "a2a-gateway version must equal the server version at set computation"
@@ -1337,10 +1432,15 @@ def prepare(
     gate_command: tuple[str, ...],
     timeout: float = 600,
     work_timeout: float = WORK_TIMEOUT,
+    anchor_resolver=None,
 ) -> ReleaseCard:
     prepared = prepare_environment(repo_root, environment)
     selections = select_artifacts(
-        prepared, registry_base=registry_base, bases=bases, timeout=timeout
+        prepared,
+        registry_base=registry_base,
+        bases=bases,
+        timeout=timeout,
+        anchor_resolver=anchor_resolver,
     )
     check_plugin_equality(prepared)
     gate = run_gate_once(prepared, gate_command, work_timeout=work_timeout)

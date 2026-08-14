@@ -29,6 +29,21 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import release_train as rt
 
 
+def _test_anchor(version: str) -> "rt.PreviousCompleteAnchor":
+    return rt.PreviousCompleteAnchor(version, "tag", "f" * 40)
+
+
+def _unmoved(item):
+    import dataclasses as _dc
+    return _dc.replace(
+        item,
+        moves=False,
+        disposition="unmoved",
+        previous_complete_anchor=_test_anchor(item.version),
+    )
+
+
+
 VERSIONS = {
     "awid-service": "0.5.15",
     "aweb-server": "1.27.1",
@@ -466,7 +481,7 @@ class CardTests(unittest.TestCase):
     def test_every_material_change_is_detected(self) -> None:
         original = self.card()
         selection = list(original.artifacts)
-        selection[0] = dataclasses.replace(selection[0], moves=False)
+        selection[0] = _unmoved(selection[0])
         changes = {
             "purpose": self.card(purpose="a different release purpose"),
             "compatibility": self.card(compatibility="drops a removed field"),
@@ -523,7 +538,7 @@ class CardTests(unittest.TestCase):
     def test_production_and_first_correction_are_inferred_from_ac_image(self) -> None:
         original = self.card()
         ac_not_moving = tuple(
-            dataclasses.replace(item, moves=False)
+            _unmoved(item)
             if item.name == "ac-image"
             else item
             for item in original.artifacts
@@ -708,6 +723,7 @@ class PrepareEnvironmentTests(unittest.TestCase):
             repo_root or self.aweb,
             self._environment(**overrides),
             registry_base="http://127.0.0.1:9",
+            anchor_resolver=lambda a, v: _test_anchor(v),
             gate_command=("true",),
             timeout=30,
         )
@@ -868,6 +884,7 @@ class _PipelineFixture(unittest.TestCase):
             self.aweb,
             environment,
             registry_base=self.registry,
+            anchor_resolver=lambda a, v: _test_anchor(v),
             gate_command=self.gate_command,
             timeout=30,
         )
@@ -955,6 +972,7 @@ class PreparePipelineTests(_PipelineFixture):
                 self.aweb,
                 {"PURPOSE": "fixture release", "COMPAT_BREAK": "none"},
                 registry_base=self.registry,
+            anchor_resolver=lambda a, v: _test_anchor(v),
                 gate_command=(sys.executable, str(gate)),
                 timeout=30,
             )
@@ -974,6 +992,7 @@ class PreparePipelineTests(_PipelineFixture):
                 self.aweb,
                 environment,
                 registry_base=self.registry,
+            anchor_resolver=lambda a, v: _test_anchor(v),
                 gate_command=(sys.executable, str(slow)),
                 timeout=30,
                 work_timeout=1,
@@ -987,6 +1006,7 @@ class PreparePipelineTests(_PipelineFixture):
             self.aweb,
             environment,
             registry_base=self.registry,
+            anchor_resolver=lambda a, v: _test_anchor(v),
             gate_command=self.gate_command,
             timeout=30,
             work_timeout=700,
@@ -1769,7 +1789,17 @@ class CompatPairingTests(unittest.TestCase):
         rows = []
         for name in rt.CARD_ARTIFACT_ORDER:
             moves = {"aw-cli": cli_moves, "aweb-server": server_moves}.get(name, True)
-            rows.append(rt.ArtifactSelection(name=name, version="1.2.3", moves=moves))
+            rows.append(
+                rt.ArtifactSelection(
+                    name=name,
+                    version="1.2.3",
+                    moves=moves,
+                    disposition=None if moves else "unmoved",
+                    previous_complete_anchor=(
+                        None if moves else _test_anchor("1.2.3")
+                    ),
+                )
+            )
         return tuple(rows)
 
     def test_pairing_fires_only_when_exactly_one_side_moves(self) -> None:
@@ -1806,6 +1836,7 @@ class PrepareCompatRunTests(_PipelineFixture):
             self.aweb,
             {"PURPOSE": "fixture", "COMPAT_BREAK": "none"},
             registry_base=self.registry,
+            anchor_resolver=lambda a, v: _test_anchor(v),
             gate_command=(sys.executable, str(gate)),
             timeout=30,
         )
@@ -1851,6 +1882,10 @@ class PrepareRealAdapterTests(_PipelineFixture):
             bases=self.adapter_bases,
             gate_command=self.gate_command,
             timeout=30,
+            # This test's subject is the registry adapters; the anchor
+            # resolver has its own real-mechanism test against a tagged
+            # remote (test_release_train_anchor_resolver).
+            anchor_resolver=lambda a, v: _test_anchor(v),
         )
         moves = {item.name: item.moves for item in card.artifacts}
         self.assertFalse(moves["awid-service"])
