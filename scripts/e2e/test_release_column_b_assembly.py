@@ -263,3 +263,70 @@ class B4ImpossibleShape(unittest.TestCase):
             ),
         )
         self.assertEqual(decision.driver, "a2a-gateway-image")
+
+
+class NormalizerDriftRow(unittest.TestCase):
+    """The drift stop's data half: the world moved between capture and
+    the exit re-observation - version-occupied by its real name, never a
+    silent regeneration. The double-compute half is the seam test in
+    test_release_normalizer_orchestration (deliberately no data: identical
+    inputs are the point)."""
+
+    def test_exit_reobservation_race_stops_by_its_real_name(self) -> None:
+        import release_normalizer_run as run
+
+        document = json.loads((FIXTURES / "normalizer-drift.json").read_text())
+        capture_world_data = document["artifacts"]["awid-service"]
+        exit_world_data = document["exit_reobservation"]["artifacts"]["awid-service"]
+
+        def world(recorded, manifest, changed):
+            return rn.CapturedWorld(
+                artifacts={
+                    "awid-service": rn.CapturedArtifact(
+                        manifest_version=manifest,
+                        content_changed=changed,
+                        derivation="manifest",
+                        members=[
+                            rn.UnitMember(m["name"], dict(m["occupied"]))
+                            for m in recorded["members"]
+                        ],
+                        anchor_versions=dict(recorded["anchor_versions"]),
+                    )
+                },
+                equality_groups=(),
+                compatibility="none",
+            )
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "pyproject.toml"
+            manifest.write_text('[project]\nname = "awid-service"\nversion = "0.5.15"\n')
+
+            def reobserve(result):
+                exit_occupied = {
+                    v
+                    for m in exit_world_data["members"]
+                    for v in m["occupied"]
+                }
+                stops = []
+                for name, artifact in result.artifacts.items():
+                    if artifact.disposition == "moving" and artifact.version in exit_occupied:
+                        stops.append(rn.Stop("version-occupied", name))
+                return stops
+
+            def recapture():
+                import tomllib
+
+                version = tomllib.load(manifest.open("rb"))["project"]["version"]
+                return world(capture_world_data, version, changed=True)
+
+            outcome = run.run_normalizer(
+                capture=lambda: world(capture_world_data, "0.5.15", changed=True),
+                manifest_paths={"awid-service": manifest},
+                reobserve=reobserve,
+                normalize=rn.normalize,
+                recapture=recapture,
+            )
+        self.assertEqual(outcome.exit_code, run.STOP)
+        self.assertIn("version-occupied", outcome.report)
