@@ -1556,6 +1556,7 @@ class ContinueTrainTests(_PipelineFixture):
                 verify_command=self.verify_command,
                 digest_command=self.digest_command,
                 marketplace_command=(sys.executable, str(tripwire)),
+                correction_command=self.correction_command,
                 timeout=60,
             )
         self.assertIn("marketplace mutation refused", str(caught.exception))
