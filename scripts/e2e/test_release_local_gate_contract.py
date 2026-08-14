@@ -85,6 +85,8 @@ EXPECTED_STEPS = (
     ("channel-version-equality", "contract", "_release-gate-channel-version"),
     ("node-dependencies", "contract", "_release-node-deps"),
     ("release-train-foundation", "unit", "test-release-train"),
+    ("release-aben", "unit", "test-release-aben"),
+    ("column-b", "acceptance", "test-column-b"),
     ("server-unit", "unit", "test-server"),
     ("awid-unit", "unit", "test-awid"),
     ("cli-unit", "unit", "test-cli"),

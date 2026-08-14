@@ -35,6 +35,7 @@ AWEB_B1_SHA = "5a55f7ce6b4dbb86dc2901f7c687e172e39db3af"
 AC_B1_SHA = "47060200c53d30835cbb35cbcb5d073cbe3dc5d3"
 AC_SIBLING = "ac-worktree"
 ALLOW_MISSING_AC = "COLUMN_B_ALLOW_MISSING_AC"
+AC_PATH_OVERRIDE = "COLUMN_B_AC_PATH"
 
 
 class MissingPinnedSource(Exception):
@@ -58,7 +59,18 @@ def pinned_sources(
 
     settings: Mapping[str, str] = os.environ if environ is None else environ
     aweb = REPO_ROOT if aweb is None else aweb
-    ac = REPO_ROOT.parent / AC_SIBLING if ac is None else ac
+    if ac is None:
+        # COLUMN_B_AC_PATH names the AC checkout explicitly; without it
+        # the agent-home sibling (ac-worktree) is tried first and the
+        # release pair's sibling (ac) second, so both canonical layouts
+        # resolve without a symlink. Neither resolving still refuses.
+        override = settings.get(AC_PATH_OVERRIDE, "").strip()
+        if override:
+            ac = Path(override)
+        else:
+            ac = REPO_ROOT.parent / AC_SIBLING
+            if not ac.exists() and (REPO_ROOT.parent / "ac").exists():
+                ac = REPO_ROOT.parent / "ac"
 
     missing = []
     for repo, sha in ((aweb, AWEB_B1_SHA), (ac, AC_B1_SHA)):
