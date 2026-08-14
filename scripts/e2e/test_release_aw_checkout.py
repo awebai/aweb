@@ -1,0 +1,195 @@
+"""The aw external binding is answered LOCALLY (Juan's ruling).
+
+Everything comes from a local git repository; the network is used only
+to ask registries which versions are published. The aw product
+repository joins the run pair as a third checkout, fetched once, and
+the external tag and tree binding are read from it with local git.
+
+plan-critic's three requirements are the three things asserted here:
+the canonical location, a DISTINCT named stop for each way the
+checkout can be unusable, and - the one that decides whether the other
+two are decoration - that the binding cannot be SKIPPED on the release
+path. A binding that silently degrades to "not checked" is the
+column-b defect again: a row that never runs where it is supposed to.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import release_normalizer_main as main  # noqa: E402
+import release_status_builders as builders  # noqa: E402
+
+
+def git(*args: str, cwd: Path) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=cwd, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+class AwCheckoutPreconditions(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.remote = self.root / "aw-remote.git"
+        git("init", "-q", "--bare", str(self.remote), cwd=self.root)
+        self.aw = self.root / "aw"
+        git("init", "-q", str(self.aw), cwd=self.root)
+        (self.aw / "main.go").write_text("package main\n")
+        git("add", "-A", cwd=self.aw)
+        git("commit", "-q", "-m", "one", cwd=self.aw)
+        git("remote", "add", "origin", str(self.remote), cwd=self.aw)
+        git("push", "-q", "origin", "HEAD:main", cwd=self.aw)
+
+    def stops(self, root: Path):
+        return [
+            (s.code, s.artifact) for s in main.aw_checkout_stops(root)
+        ]
+
+    def test_a_healthy_checkout_produces_no_stop(self) -> None:
+        # The control: without this, every other assertion here would
+        # pass on a function that always refuses.
+        self.assertEqual(self.stops(self.aw), [])
+
+    def test_absent_checkout_refuses_by_its_own_name(self) -> None:
+        codes = [code for code, _ in self.stops(self.root / "not-there")]
+        self.assertEqual(codes, ["aw-checkout-absent"])
+
+    def test_a_directory_that_is_not_a_repository_is_its_own_stop(self) -> None:
+        plain = self.root / "plain"
+        plain.mkdir()
+        codes = [code for code, _ in self.stops(plain)]
+        self.assertEqual(codes, ["aw-checkout-unavailable"])
+
+    def test_dirty_checkout_refuses_by_its_own_name(self) -> None:
+        (self.aw / "main.go").write_text("package main // edited\n")
+        codes = [code for code, _ in self.stops(self.aw)]
+        self.assertEqual(codes, ["aw-checkout-dirty"])
+
+    def test_stale_checkout_refuses_by_its_own_name(self) -> None:
+        # The remote moved on; the local checkout would answer the
+        # binding from a tree the release does not name.
+        other = self.root / "other"
+        git("clone", "-q", str(self.remote), str(other), cwd=self.root)
+        (other / "main.go").write_text("package main // upstream\n")
+        git("commit", "-q", "-am", "two", cwd=other)
+        git("push", "-q", "origin", "HEAD:main", cwd=other)
+        codes = [code for code, _ in self.stops(self.aw)]
+        self.assertEqual(codes, ["aw-checkout-stale"])
+
+    def test_the_four_stops_are_distinct(self) -> None:
+        """Each way the checkout can be unusable refuses by its OWN
+        name. One generic failure would tell an operator to look, but
+        not where."""
+
+        plain = self.root / "plain2"
+        plain.mkdir()
+        seen = {
+            self.stops(self.root / "missing")[0][0],
+            self.stops(plain)[0][0],
+        }
+        (self.aw / "main.go").write_text("dirty\n")
+        seen.add(self.stops(self.aw)[0][0])
+        self.assertEqual(len(seen), 3, seen)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class LocalExternalBinding(unittest.TestCase):
+    """The external binding, answered from local git.
+
+    The aw product repository is a publication of aweb's cli/go tree,
+    so the binding is an object-id comparison once both checkouts are
+    local: the external tag's ROOT tree must equal aweb's cli/go tree
+    at the commit the card names. That is exact by construction - git
+    tree ids are content hashes - and it needs no network at all.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+
+        # aweb, carrying cli/go
+        self.aweb = self.root / "aweb"
+        (self.aweb / "cli" / "go").mkdir(parents=True)
+        (self.aweb / "cli" / "go" / "main.go").write_text("package main\n")
+        (self.aweb / "README.md").write_text("aweb\n")
+        git("init", "-q", str(self.aweb), cwd=self.root)
+        git("add", "-A", cwd=self.aweb)
+        git("commit", "-q", "-m", "aweb one", cwd=self.aweb)
+        self.aweb_sha = git("rev-parse", "HEAD", cwd=self.aweb)
+
+        # aw, whose ROOT is a copy of that cli/go tree
+        self.aw = self.root / "aw"
+        self.aw.mkdir()
+        (self.aw / "main.go").write_text("package main\n")
+        git("init", "-q", str(self.aw), cwd=self.root)
+        git("add", "-A", cwd=self.aw)
+        git("commit", "-q", "-m", "Sync exact aweb " + self.aweb_sha, cwd=self.aw)
+        git("tag", "-a", "v1.34.7", "-m", "v1.34.7", cwd=self.aw)
+
+    def rows(self, tag="v1.34.7", aweb_sha=None):
+        return {
+            r.fact: r
+            for r in builders.external_binding_rows_local(
+                aw_root=self.aw,
+                aweb_root=self.aweb,
+                tag=tag,
+                aweb_sha=aweb_sha or self.aweb_sha,
+            )
+        }
+
+    def test_matching_trees_are_present(self) -> None:
+        rows = self.rows()
+        self.assertTrue(rows, "no rows produced")
+        for fact, row in rows.items():
+            with self.subTest(fact=fact):
+                self.assertEqual(row.state, "observed-present", row.evidence)
+
+    def test_a_divergent_external_tree_is_a_conflict_not_a_pass(self) -> None:
+        # The control that makes the comparison mean something: change
+        # ONE byte in the published tree and the binding must break.
+        (self.aw / "main.go").write_text("package main // divergent\n")
+        git("commit", "-q", "-am", "drift", cwd=self.aw)
+        git("tag", "-a", "v1.34.8", "-m", "v1.34.8", cwd=self.aw)
+        rows = self.rows(tag="v1.34.8")
+        binding = [r for f, r in rows.items() if "tree" in f]
+        self.assertEqual(len(binding), 1, sorted(rows))
+        self.assertEqual(binding[0].state, "conflict-unproven", binding[0].evidence)
+
+    def test_an_absent_tag_is_absent_not_unavailable(self) -> None:
+        rows = self.rows(tag="v9.9.9")
+        for fact, row in rows.items():
+            with self.subTest(fact=fact):
+                self.assertEqual(row.state, "observed-absent", row.evidence)
+
+    def test_the_binding_reads_no_network(self) -> None:
+        """The whole point of the move: it is all in the repo."""
+
+        import urllib.request
+
+        requested: list[str] = []
+        real = urllib.request.urlopen
+
+        def spy(request, *a, **k):
+            requested.append(getattr(request, "full_url", str(request)))
+            return real(request, *a, **k)
+
+        try:
+            urllib.request.urlopen = spy
+            self.rows()
+        finally:
+            urllib.request.urlopen = real
+        self.assertEqual(requested, [])

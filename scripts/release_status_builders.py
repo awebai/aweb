@@ -467,64 +467,64 @@ def image_alias_row(
     )
 
 
-def external_release_binding_rows(
-    repository: str,
-    tag: str,
-    *,
-    expected_source_sha: str,
-    base: str,
-    token: str,
-    timeout: float,
-) -> list[Row]:
-    """The external product repository's tag and its tree binding: the
-    sync commits are stamped 'Sync exact aweb <sha>', so the tag's
-    commit message binds the external tree to the exact aweb source the
-    card names."""
+def _local_git(repo, *args: str) -> str:
+    """Local git for repository-side status facts. Everything the
+    external binding needs is in a checkout after one fetch, so these
+    rows cost no network at all."""
 
-    tag_fact = f"github:{repository} external tag {tag}"
-    binding_fact = f"github:{repository} {tag} tree binding"
-    status, body = _fetch(
-        f"{base}/repos/{repository}/commits/{tag}", timeout=timeout, token=token
-    )
-    if status == -1 or status >= 500:
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout
+
+
+def external_binding_rows_local(
+    *, aw_root: Path, aweb_root: Path, tag: str, aweb_sha: str
+) -> list:
+    """The aw external binding, answered from local git.
+
+    The aw product repository publishes aweb's cli/go tree, so once
+    both checkouts are local the binding is an OBJECT-ID comparison:
+    the external tag's root tree must equal aweb's cli/go tree at the
+    commit the card names. Git tree ids are content hashes, so equality
+    is exact by construction and needs no network - which is the whole
+    point of the move (it is all in the repo).
+
+    The GitHub Release object is a different question - which versions
+    are published - and stays a registry-side occupancy read.
+    """
+
+    tag_fact = f"awebai/aw external tag {tag}"
+    binding_fact = f"awebai/aw {tag} tree binding"
+    try:
+        commit = _local_git(aw_root, "rev-list", "-n", "1", tag).strip()
+    except Exception:  # noqa: BLE001 - an absent tag is absence, not failure
+        commit = ""
+    if not commit:
         return [
-            Row(fact=tag_fact, state="unavailable", evidence=f"HTTP {status}"),
-            Row(fact=binding_fact, state="unavailable", evidence=f"HTTP {status}"),
-        ]
-    if status == 404:
-        return [
-            Row(fact=tag_fact, state="observed-absent", evidence="tag 404"),
+            Row(fact=tag_fact, state="observed-absent", evidence="no such tag"),
             Row(
                 fact=binding_fact,
                 state="observed-absent",
                 evidence="no tag, no binding",
             ),
         ]
-    document = json.loads(body)
-    commit_sha = document.get("sha", "")
-    message = (document.get("commit") or {}).get("message", "")
     rows = [
         Row(
             fact=tag_fact,
             state="observed-present",
-            evidence=f"tag resolves commit {commit_sha}",
+            evidence=f"tag resolves commit {commit}",
         )
     ]
-    stamp = f"Sync exact aweb {expected_source_sha}"
-    if stamp in message:
+    external_tree = _local_git(aw_root, "rev-parse", f"{commit}^{{tree}}").strip()
+    source_tree = _local_git(aweb_root, "rev-parse", f"{aweb_sha}:cli/go").strip()
+    if external_tree == source_tree:
         rows.append(
             Row(
                 fact=binding_fact,
                 state="observed-present",
-                evidence=f"sync stamp names {expected_source_sha}",
-            )
-        )
-    elif "Sync exact aweb " in message:
-        rows.append(
-            Row(
-                fact=binding_fact,
-                state="conflict-unproven",
-                evidence=f"sync stamp differs: {message.splitlines()[0]!r}",
+                evidence=f"external tree equals aweb cli/go tree {source_tree}",
             )
         )
     else:
@@ -532,7 +532,13 @@ def external_release_binding_rows(
             Row(
                 fact=binding_fact,
                 state="conflict-unproven",
-                evidence="commit carries no sync stamp",
+                evidence=(
+                    f"external tree {external_tree} != aweb cli/go tree "
+                    f"{source_tree} at {aweb_sha}"
+                ),
             )
         )
     return rows
+
+
+
