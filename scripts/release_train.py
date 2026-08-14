@@ -2000,9 +2000,10 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
     expected = expected_completion_sources(card)
     if "ac-image" in expected and expected["ac-image"] is None:
         expected["ac-image"] = ac_derived
+    names = {item.name for item in card.artifacts}
     rows = gates.rows_for_artifacts(
         card,
-        {item.name for item in card.artifacts},
+        names,
         bases=bases,
         expected_sources=expected,
         tokens=_status_tokens(),
@@ -2012,7 +2013,26 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
         },
         timeout=timeout,
     )
+    # The omission control runs in PRODUCTION, not only in tests: the
+    # produced registry-fact domain must equal the derivable expected
+    # domain in both directions - a routed builder silently dropping a
+    # fact blocks DONE by name (C2).
+    produced = {row.fact for row in rows}
+    expected_keys = gates.expected_fact_keys(
+        card, names, include_source_tags=True, expected_sources=expected
+    )
+    domain_lines = [
+        f"missing registry fact: {key}"
+        for key in sorted(expected_keys - produced)
+    ] + [
+        f"unexpected registry fact: {key}"
+        for key in sorted(produced - expected_keys)
+    ]
     rows = [*rows, *effect_rows]
+    if domain_lines:
+        return domain_lines + [
+            row.render() for row in rows if not row.present()
+        ]
     if status.done(rows):
         return []
     return [row.render() for row in rows if not row.present()]
@@ -2078,6 +2098,19 @@ def continue_train(
     digest_command: tuple[str, ...],
     marketplace_command: tuple[str, ...] | None = None,
     correction_command: tuple[str, ...] | None = None,
+    marketplace_read_command: tuple[str, ...] = (
+        "python3",
+        "scripts/pointer-adapter-marketplace-pointer.py",
+        "read",
+        "--component",
+        "marketplace-pointer",
+    ),
+    read_standing_command: tuple[str, ...] = (
+        "python3",
+        "scripts/render_release_client.py",
+        "read-standing",
+    ),
+    health_url: str = "https://app.aweb.ai/health",
     timeout: float = 600,
     work_timeout: float = WORK_TIMEOUT,
     rederive=None,
@@ -2159,7 +2192,20 @@ def continue_train(
                 + "; ".join(blocking)
             )
         run_command(
-            list(marketplace_command), cwd=environment.aweb_root, timeout=work_timeout
+            [
+                *marketplace_command,
+                "--component",
+                "marketplace-pointer",
+                "--updates",
+                json.dumps(
+                    {
+                        "channel": versions["channel-plugin"],
+                        "skills": versions["skills"],
+                    }
+                ),
+            ],
+            cwd=environment.aweb_root,
+            timeout=work_timeout,
         )
     ac_derived = environment.ac_derived_sha
     if ac_derived is None and not any(
@@ -2329,7 +2375,100 @@ def continue_train(
                 evidence="self-reported: verify command exited 0 at the observed digest",
             ),
         ]
+    if marketplace_moves:
+        # Design section 8: the marketplace claim is limited to the
+        # repository pointer state, read back through the adapter's own
+        # read operation - a real clone-and-read, never the apply's
+        # answer trusted.
+        try:
+            read_result = run_command(
+                list(marketplace_read_command),
+                cwd=environment.aweb_root,
+                timeout=work_timeout,
+            )
+            advertised = json.loads(read_result.stdout.strip()).get(
+                "advertised", {}
+            )
+        except (ReleaseTrainError, ValueError) as error:
+            effect_rows.append(
+                _StatusRow(
+                    fact="marketplace pointer read-back",
+                    state="unavailable",
+                    evidence=f"read adapter: {error}",
+                )
+            )
+        else:
+            for component, artifact_name in (
+                ("channel", "channel-plugin"),
+                ("skills", "skills"),
+            ):
+                wanted_version = versions[artifact_name]
+                served = advertised.get(component, "")
+                effect_rows.append(
+                    _StatusRow(
+                        fact=f"marketplace pointer {component}",
+                        state="observed-present"
+                        if served == wanted_version
+                        else "conflict-unproven",
+                        evidence=f"repository advertises {served or '<absent>'}, "
+                        f"card names {wanted_version}",
+                    )
+                )
+    if card.deployments.production:
+        # Design section 8's production facts as separate rows: health
+        # is a genuine public observation; standing is the provider
+        # client's own read verdict, marked self-reported.
+        try:
+            import urllib.request as _urllib_request
+
+            with _urllib_request.urlopen(health_url, timeout=30) as response:
+                health = _parse_json_bytes(response.read(), "health document")
+            running_sha = (
+                (health.get("build") or {}).get("git_sha", "")
+                if isinstance(health, dict)
+                else ""
+            )
+            effect_rows.append(
+                _StatusRow(
+                    fact="live health build.git_sha",
+                    state="observed-present"
+                    if running_sha == ac_derived
+                    else "conflict-unproven",
+                    evidence=f"health serves {running_sha or '<absent>'}, "
+                    f"run derived {ac_derived}",
+                )
+            )
+        except OSError as error:
+            effect_rows.append(
+                _StatusRow(
+                    fact="live health build.git_sha",
+                    state="unavailable",
+                    evidence=str(error),
+                )
+            )
+        try:
+            run_command(
+                list(read_standing_command),
+                cwd=environment.ac_root,
+                timeout=work_timeout,
+            )
+            effect_rows.append(
+                _StatusRow(
+                    fact="provider standing (configured and running)",
+                    state="observed-present",
+                    evidence="self-reported: read-standing exited 0",
+                )
+            )
+        except ReleaseTrainError as error:
+            effect_rows.append(
+                _StatusRow(
+                    fact="provider standing (configured and running)",
+                    state="unavailable",
+                    evidence=f"read-standing: {error}",
+                )
+            )
     for wanted, repository, branch, expected_sha in (
+        (True, environment.aweb_root, "release", card.aweb_sha),
         (True, environment.ac_root, "release", ac_derived),
         (card.deployments.awid_site, environment.aweb_root, "deploy-awid-landing", card.aweb_sha),
         (card.deployments.aweb_site, environment.ac_root, "deploy-landing", ac_derived),

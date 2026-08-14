@@ -2106,6 +2106,177 @@ class ContinueTrainTests(_PipelineFixture):
         )
         self.assertIn("--version", bare.stderr)
 
+    def test_full_fixture_continue_reaches_done_through_the_default_terminal_gate(self) -> None:
+        # C2's capstone, the verdict's explicit demand: the full continue
+        # fixture with the DEFAULT terminal gate - no injected empty
+        # gate. Every registry fact the derivable domain requires is
+        # served over the wire-protocol stand-in; the AC image's
+        # revision label and the health SHA resolve DYNAMICALLY to the
+        # commit this very run derives, written by the ac-gate stub.
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from registry_stand_in import RegistryStandIn
+
+        card = self._prepare()
+        sha = card.aweb_sha
+        for tag in (
+            "server-v1.27.2",
+            "awid-service-v0.5.16",
+            "awid-v0.5.16",
+            "aw-v1.34.4",
+            "channel-v1.7.7",
+            "pi-v0.3.7",
+            "skills-v0.2.13",
+            "a2a-gw-v1.27.2",
+        ):
+            git("tag", "-f", tag, sha, cwd=self.aweb)
+            git("push", "-qf", "origin", f"refs/tags/{tag}", cwd=self.aweb)
+        rev_file = Path(self.tmp.name) / "derived-sha"
+        gate_with_rev = Path(self.tmp.name) / "ac-gate-rev.py"
+        gate_with_rev.write_text(
+            "import subprocess\nfrom pathlib import Path\n"
+            "sha = subprocess.run(['git', 'rev-parse', 'HEAD'],"
+            " capture_output=True, text=True, check=True).stdout.strip()\n"
+            f"Path({str(rev_file)!r}).write_text(sha)\n"
+            "print('AC gate 16/16 PASSED')\n"
+        )
+        marketplace_read = Path(self.tmp.name) / "marketplace-read.py"
+        marketplace_read.write_text(
+            "import json\n"
+            'print(json.dumps({"advertised": {"channel": "1.7.7", "skills": "0.2.13"}}))\n'
+        )
+        standing = Path(self.tmp.name) / "standing.py"
+        standing.write_text("print('standing ok')\n")
+        aw_assets = [
+            f"aw_1.34.4_{platform}" for platform in (
+                "linux_amd64.tar.gz", "linux_arm64.tar.gz",
+                "darwin_amd64.tar.gz", "darwin_arm64.tar.gz",
+                "windows_amd64.zip", "windows_arm64.zip",
+            )
+        ] + ["checksums.txt"]
+        world = {
+            "pypi_files": {
+                "awid-service": {"0.5.16": {
+                    "awid_service-0.5.16.tar.gz": "a" * 64,
+                    "awid_service-0.5.16-py3-none-any.whl": "b" * 64,
+                }},
+                "aweb": {"1.27.2": {
+                    "aweb-1.27.2.tar.gz": "c" * 64,
+                    "aweb-1.27.2-py3-none-any.whl": "d" * 64,
+                }},
+            },
+            "npm_tarballs": {
+                f"{pkg}/{version}.tgz": f"{pkg}-{version}".encode()
+                for pkg, version in (
+                    ("@awebai/aw", "1.34.4"),
+                    ("@awebai/aw-linux-x64", "1.34.4"),
+                    ("@awebai/aw-linux-arm64", "1.34.4"),
+                    ("@awebai/aw-darwin-x64", "1.34.4"),
+                    ("@awebai/aw-darwin-arm64", "1.34.4"),
+                    ("@awebai/aw-windows-x64", "1.34.4"),
+                    ("@awebai/aw-windows-arm64", "1.34.4"),
+                    ("@awebai/claude-channel", "1.7.7"),
+                    ("@awebai/pi", "0.3.7"),
+                    ("@awebai/claude-skills", "0.2.13"),
+                )
+            },
+            "ghcr_index": {
+                "awebai/awid": {"0.5.16": {
+                    "digest": "sha256:" + "1" * 64,
+                    "platforms": [["linux", "amd64"], ["linux", "arm64"]],
+                }},
+                "awebai/a2a-gateway": {"1.27.2": {
+                    "digest": "sha256:" + "2" * 64,
+                    "platforms": [["linux", "amd64"], ["linux", "arm64"]],
+                }},
+                "awebai/awid": {"0.5.16": {
+                    "digest": "sha256:" + "1" * 64,
+                    "platforms": [["linux", "amd64"], ["linux", "arm64"]],
+                }, "latest": {
+                    "digest": "sha256:" + "1" * 64,
+                    "platforms": [["linux", "amd64"], ["linux", "arm64"]],
+                }},
+            },
+            "ghcr_index_revisions": {
+                "awebai/awid:0.5.16": sha,
+                "awebai/awid:latest": sha,
+                "awebai/a2a-gateway:1.27.2": sha,
+                "awebai/a2a-gateway:latest": sha,
+            },
+            "ghcr_dynamic": {
+                "awebai/ac": {
+                    "tag": "0.7.13",
+                    "digest": "sha256:" + "3" * 64,
+                    "revision_file": str(rev_file),
+                }
+            },
+            "github_releases": {
+                "awebai/aw": {"v1.34.4": aw_assets},
+                "awebai/aweb": {"skills-v0.2.13": [
+                    "aweb-coordination.zip", "aweb-messaging.zip",
+                    "aweb-team-membership.zip", "aweb-bootstrap.zip",
+                    "aweb-identity.zip",
+                ]},
+            },
+            "github_commits": {
+                "awebai/aw": {"v1.34.4": {
+                    "sha": "e" * 40,
+                    "message": f"Sync exact aweb {sha}",
+                }},
+            },
+            "health_git_sha_file": str(rev_file),
+        }
+        world["ghcr_index"]["awebai/a2a-gateway"]["latest"] = world[
+            "ghcr_index"
+        ]["awebai/a2a-gateway"]["1.27.2"]
+        if getattr(self, "_capstone_mutation", None) == "wrong-stamp":
+            world["github_commits"]["awebai/aw"]["v1.34.4"]["message"] = (
+                "Sync exact aweb " + "f" * 40
+            )
+        with RegistryStandIn(world) as registry:
+            summary = rt.continue_train(
+                self.aweb,
+                rederive=lambda environment: [],
+                marketplace_command=self.marketplace_command,
+                correction_command=self.correction_command,
+                marketplace_read_command=(
+                    sys.executable, str(marketplace_read),
+                ),
+                read_standing_command=(sys.executable, str(standing)),
+                health_url=f"{registry.base}/health",
+                marketplace_gate=lambda card, bases, timeout: [],
+                ac_predecessor_gate=lambda card, bases, timeout: [],
+                bases={
+                    "pypi": registry.base,
+                    "npm": registry.base,
+                    "ghcr": registry.base,
+                    "github": registry.base,
+                },
+                workflow_command=self.workflow_command,
+                derive_command=self.derive_command,
+                ac_gate_command=(sys.executable, str(gate_with_rev)),
+                migrate_command=self.migrate_command,
+                deploy_command=self.deploy_command,
+                verify_command=self.verify_command,
+                digest_command=self.digest_command,
+                timeout=60,
+                work_timeout=30,
+            )
+        self.assertEqual(summary["status"], "DONE")
+
+    def test_default_gate_refuses_a_lying_external_binding(self) -> None:
+        # The capstone's mutation control: the same fully-served world
+        # with ONE fact falsified (the external sync stamp naming a
+        # foreign source) must refuse DONE through the DEFAULT gate,
+        # naming the binding row - the false-publication direction.
+        self._capstone_mutation = "wrong-stamp"
+        try:
+            with self.assertRaises(rt.ValidationError) as caught:
+                self.test_full_fixture_continue_reaches_done_through_the_default_terminal_gate()
+            self.assertIn("DONE refused", str(caught.exception))
+            self.assertIn("tree binding", str(caught.exception))
+        finally:
+            self._capstone_mutation = None
+
     def test_marketplace_edge_follows_the_card_not_command_presence(self) -> None:
         # C1: the pointer edge runs because the CARD moves channel or
         # skills - an unbound command is a named refusal, never a silent
