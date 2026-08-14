@@ -384,16 +384,23 @@ lookalike:
   `5a55f7ce6b4dbb86dc2901f7c687e172e39db3af`, AC
   `47060200c53d30835cbb35cbcb5d073cbe3dc5d3` (the pre-bump mains).
   Expected: each artifact's OWN content predicate over its OWN scope
-  drives its row - awid-service/awid-image move because awid/ content
-  differs from the 0.5.15 anchors, and ac-image moves because AC's
-  canonical scope has release content since its last complete 0.7.14
-  anchor at `efd19f41` (measured at the fixture: backend/src and
-  backend/tests changes, 7 files - the pgcrypto stream-application
-  work). No wide-release policy exists and none is encoded: an AC
-  fixture WITHOUT scope changes since its anchor must yield no AC row
-  in the patch, and that variant is part of the fixture pair. Control:
-  the same SHAs with EACH artifact's scope content anchored at its own
-  prior tag/label -> normal form.
+  drives its row, and the patch is EXACT: awid-service and awid-image
+  0.5.15 -> 0.5.16 (awid/ content differs from the 0.5.15 anchors), and
+  independently derived ac-image 0.7.14 -> 0.7.15. A resolver emitting
+  any other version fails the fixture. AC's movement evidence, measured
+  at the fixture commits (efd19f41..47060200): 14 files in the whole
+  diff; 12 after this design's own exclusions (backend/pyproject.toml
+  as version source, backend/uv.lock as owned lock); 5 under
+  backend/src + backend/tests, among them
+  backend/src/aweb_cloud/migration_paths.py - product source the image
+  ships, which alone justifies movement. The exhaustive in-scope count
+  is fixed by the canonical `content_scope` populated in R1 and the
+  fixture binds to that field, not to a prose count. No wide-release
+  policy exists and none is encoded: an AC fixture WITHOUT scope
+  changes since its anchor must yield no AC row in the patch, and that
+  variant is part of the fixture pair. Control: the same SHAs with EACH
+  artifact's scope content anchored at its own prior tag/label ->
+  normal form.
 - B2 stale pre-authorized CLI version. Fixture: recorded registry
   document set - npm @awebai/aw serving 1.34.5, aweb tag `aw-v1.34.5`
   at `2455e7a127ab5f216477a0af114cb69e5b0caa74` (provenance: the cycle
