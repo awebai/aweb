@@ -283,3 +283,58 @@ def assemble_captured_world(
         equality_groups=tuple(equality_groups),
         compatibility=compatibility,
     )
+
+
+VERSIONED_ARTIFACTS = (
+    "aweb-server",
+    "awid-service",
+    "awid-image",
+    "aw-cli",
+    "channel-plugin",
+    "pi-extension",
+    "skills",
+    "a2a-gateway-image",
+    "ac-image",
+)
+
+
+def derive_capture_specs(artifacts) -> list[CaptureSpec]:
+    """CaptureSpecs from the canonical entries - the one-owner rule: every
+    field mirrors the entry; nothing is restated."""
+
+    by_key = {entry.key: entry for entry in artifacts}
+    specs: list[CaptureSpec] = []
+    for key in VERSIONED_ARTIFACTS:
+        entry = by_key[key]
+        source = entry.version_source or ""
+        if source.startswith("tag-history:"):
+            derivation = "tag-history"
+            manifest_path = "cli/go/npm/package.json"
+        elif source.startswith("equals:"):
+            derivation = "manifest"
+            manifest_path = source.removeprefix("equals:")
+        else:
+            derivation = "manifest"
+            manifest_path = source
+        excluded = tuple(
+            path
+            for path in (
+                manifest_path,
+                *(lock.path for lock in entry.owned_locks),
+            )
+            if path
+        )
+        specs.append(
+            CaptureSpec(
+                name=key,
+                repo_key=entry.repository,
+                manifest_path=manifest_path,
+                derivation=derivation,
+                scope=entry.content_scope,
+                excluded=excluded,
+                anchor_kind=entry.anchor.kind,
+                anchor_value=entry.anchor.value,
+                unit_targets=entry.occupancy_unit,
+            )
+        )
+    return specs
