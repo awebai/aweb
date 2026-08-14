@@ -30,6 +30,16 @@ class Outcome:
     report: str
 
 
+def _apply_floor_patch(path: Path, from_version: str, to_version: str) -> None:
+    text = path.read_text()
+    pattern = f"awid-service>={from_version}"
+    if text.count(pattern) != 1:
+        raise RuntimeError(
+            f"{path}: expected exactly one {pattern!r}, found {text.count(pattern)}"
+        )
+    path.write_text(text.replace(pattern, f"awid-service>={to_version}", 1))
+
+
 def _apply_manifest_patch(path: Path, from_version: str, to_version: str) -> None:
     text = path.read_text()
     if path.name == "package.json":
@@ -52,6 +62,8 @@ def run_normalizer(
     reobserve: Callable[[rn.NormalizerResult], Iterable[rn.Stop]],
     normalize: Callable[[rn.CapturedWorld], rn.NormalizerResult] = rn.normalize,
     recapture: Callable[[], rn.CapturedWorld] | None = None,
+    lock_paths: dict[str, tuple[Path, ...]] | None = None,
+    regenerate_lock: Callable[[Path], None] | None = None,
 ) -> Outcome:
     world = capture()
     first = normalize(world)
@@ -89,6 +101,27 @@ def run_normalizer(
                 )
         for path, (from_version, to_version) in edits_by_path.items():
             _apply_manifest_patch(path, from_version, to_version)
+        for owner, floor_from, floor_to in first.floor_patches:
+            _apply_floor_patch(manifest_paths[owner], floor_from, floor_to)
+        # The owned locks of every patched manifest (the floor owner's
+        # included) regenerate now, so the patch the operator reviews is
+        # the complete allowlisted edit, never a stale-lock ship.
+        patched = {name for name, _f, _t in first.patches} | {
+            owner for owner, _f, _t in first.floor_patches
+        }
+        lock_targets: list[Path] = []
+        for name in sorted(patched):
+            for lock in (lock_paths or {}).get(name, ()):
+                if lock not in lock_targets:
+                    lock_targets.append(lock)
+        if lock_targets and regenerate_lock is not None:
+            for lock in lock_targets:
+                try:
+                    regenerate_lock(lock)
+                except Exception as error:  # noqa: BLE001 - named stop
+                    return Outcome(
+                        STOP, f"STOP lock-regeneration-failed: {lock}: {error}"
+                    )
         followup = normalize((recapture or capture)())
         if followup.outcome == "patch-needed":
             return Outcome(
@@ -108,6 +141,10 @@ def run_normalizer(
         lines += [
             f"  {name}: {from_version} -> {to_version}"
             for name, from_version, to_version in first.patches
+        ]
+        lines += [
+            f"  {owner} floor: awid-service>={floor_from} -> >={floor_to}"
+            for owner, floor_from, floor_to in first.floor_patches
         ]
         lines.append(
             "Normal review, commit, and integration are required before the "

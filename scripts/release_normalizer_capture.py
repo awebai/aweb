@@ -346,7 +346,24 @@ def assemble_captured_world(
         artifacts=artifacts,
         equality_groups=tuple(equality_groups),
         compatibility=compatibility,
+        server_awid_floor=read_server_awid_floor(repo_roots),
     )
+
+
+_AWID_FLOOR = re.compile(r'"awid-service>=([0-9]+\.[0-9]+\.[0-9]+)"')
+
+
+def read_server_awid_floor(repo_roots: dict[str, Path]) -> str:
+    """The R1 consumer floor literal from server's manifest. Captured
+    worlds always carry the literal or the empty marker - the engine
+    stops by name on the marker when awid moves, so a missing literal
+    can never silently skip the policy."""
+
+    manifest = repo_roots["aweb"] / "server" / "pyproject.toml"
+    if not manifest.exists():
+        return ""
+    match = _AWID_FLOOR.search(manifest.read_text())
+    return match.group(1) if match else ""
 
 
 VERSIONED_ARTIFACTS = (

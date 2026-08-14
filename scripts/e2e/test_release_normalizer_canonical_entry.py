@@ -34,7 +34,13 @@ from registry_stand_in import RegistryStandIn  # noqa: E402
 MAIN = REPO_ROOT / "scripts" / "release_normalizer_main.py"
 
 MANIFESTS = {
-    "server/pyproject.toml": ("toml", "1.27.1"),
+    "server/pyproject.toml": (
+        "raw",
+        '[project]\nname = "server"\nversion = "1.27.1"\n'
+        'dependencies = ["awid-service>=0.5.16"]\n',
+    ),
+    "server/uv.lock": ("raw", "# lock v1\n"),
+    "awid/uv.lock": ("raw", "# lock v1\n"),
     "awid/pyproject.toml": ("toml", "0.5.16"),
     "cli/go/npm/aw/package.json": ("json", "1.34.6"),
     "channel/package.json": ("json", "1.7.7"),
@@ -67,7 +73,9 @@ NPM_AW_PACKAGES = (
 def _write_manifest(root: Path, rel: str, kind: str, version: str) -> None:
     path = root / rel
     path.parent.mkdir(parents=True, exist_ok=True)
-    if kind == "toml":
+    if kind == "raw":
+        path.write_text(version)
+    elif kind == "toml":
         name = rel.split("/", 1)[0]
         path.write_text(
             f'[project]\nname = "{name}"\nversion = "{version}"\n'
@@ -114,6 +122,9 @@ class CanonicalEntry(unittest.TestCase):
         )
         cls.aweb_root = base / "aweb"
         cls.ac_root = base / "ac"
+        cls.lock_script = base / "relock.sh"
+        cls.lock_script.write_text("#!/bin/sh\necho relocked >> uv.lock\n")
+        cls.lock_script.chmod(0o755)
 
     @classmethod
     def tearDownClass(cls):
@@ -136,11 +147,15 @@ class CanonicalEntry(unittest.TestCase):
             "github": {"awebai/aw": ["1.34.6"], "awebai/aweb": ["0.2.13"]},
         }
 
-    def run_entry(self, world: dict) -> subprocess.CompletedProcess:
+    def run_entry(
+        self, world: dict, *, lock_command: str | None = None
+    ) -> subprocess.CompletedProcess:
         with RegistryStandIn(world) as registry:
             env = dict(os.environ)
             env.update(
                 {
+                    "AWEB_NORMALIZER_LOCK_COMMAND": lock_command
+                    or str(self.lock_script),
                     "AWEB_NORMALIZER_AWEB_ROOT": str(self.aweb_root),
                     "AWEB_NORMALIZER_AC_ROOT": str(self.ac_root),
                     "AWEB_NORMALIZER_PYPI_BASE": registry.base,
@@ -303,6 +318,51 @@ class CanonicalEntry(unittest.TestCase):
             self.assertIn(f"base ac={self.ac_sha}", completed.stdout)
             self.assertIn('-version = "0.5.16"', completed.stdout)
             self.assertIn('+version = "0.5.17"', completed.stdout)
+        finally:
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_awid_move_cascades_floor_lock_and_server_by_policy(self) -> None:
+        # A4, the whole allowlisted patch through the entry: awid content
+        # moves, so the R1 policy must ALSO edit server's floor literal,
+        # move server (and by equality the gateway), regenerate the
+        # owned locks of every patched manifest, and show all of it in
+        # the transport diff - reaching the fixed point in one pass.
+        _write_manifest(self.aweb_root, "awid/service.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "awid content moves")
+        try:
+            completed = self.run_entry(self.world_at_rest())
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 10, out)
+            self.assertIn("awid-service: 0.5.16 -> 0.5.17", completed.stdout)
+            self.assertIn("aweb-server: 1.27.1 -> 1.27.2", completed.stdout)
+            self.assertIn("a2a-gateway-image: 1.27.1 -> 1.27.2", completed.stdout)
+            server_manifest = (self.aweb_root / "server/pyproject.toml").read_text()
+            self.assertIn("awid-service>=0.5.17", server_manifest, out)
+            self.assertIn(
+                "relocked", (self.aweb_root / "awid/uv.lock").read_text(), out
+            )
+            self.assertIn(
+                "relocked", (self.aweb_root / "server/uv.lock").read_text(), out
+            )
+            self.assertIn('+dependencies = ["awid-service>=0.5.17"]', completed.stdout)
+            self.assertIn("+relocked", completed.stdout)
+        finally:
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
+    def test_lock_regeneration_failure_stops_by_name(self) -> None:
+        # A failed lock command is a named stop, never a patch that
+        # quietly shipped stale locks.
+        _write_manifest(self.aweb_root, "awid/service.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "awid content moves")
+        try:
+            completed = self.run_entry(
+                self.world_at_rest(), lock_command="false"
+            )
+            out = f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}"
+            self.assertEqual(completed.returncode, 1, out)
+            self.assertIn("lock-regeneration-failed", completed.stdout)
         finally:
             _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
 

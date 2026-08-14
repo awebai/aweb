@@ -200,11 +200,35 @@ def main() -> int:
         for key, root in sorted(repo_roots.items())
     }
 
+    lock_paths = {
+        entry.key: tuple(
+            repo_roots[entry.repository] / lock.path
+            for lock in entry.owned_locks
+            if lock.path
+        )
+        for entry in rt.ARTIFACTS
+        if entry.owned_locks
+    }
+    lock_command = tuple(
+        __import__("shlex").split(
+            os.environ.get("AWEB_NORMALIZER_LOCK_COMMAND", "").strip() or "uv lock"
+        )
+    )
+
+    def regenerate_lock(lock: Path) -> None:
+        import subprocess
+
+        subprocess.run(
+            lock_command, cwd=lock.parent, check=True, capture_output=True
+        )
+
     outcome = run.run_normalizer(
         capture=capture,
         manifest_paths=manifest_paths,
         reobserve=lambda result: reobserve_result(result, specs, discover),
         normalize=rn.normalize,
+        lock_paths=lock_paths,
+        regenerate_lock=regenerate_lock,
     )
     print(outcome.report)
     if outcome.exit_code == run.PATCH_NEEDED:
