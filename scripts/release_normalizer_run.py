@@ -72,8 +72,23 @@ def run_normalizer(
         return Outcome(STOP, "\n".join(lines))
 
     if first.outcome == "patch-needed":
+        # Equality-group members share physical manifests (both AWID
+        # rows own awid/pyproject.toml): the edit is applied once per
+        # FILE, and rows disagreeing about that file's edit are an
+        # engine inconsistency stopped by name, never a blind second
+        # application.
+        edits_by_path: dict[Path, tuple[str, str]] = {}
         for name, from_version, to_version in first.patches:
-            _apply_manifest_patch(manifest_paths[name], from_version, to_version)
+            path = manifest_paths[name]
+            edit = (from_version, to_version)
+            if edits_by_path.setdefault(path, edit) != edit:
+                return Outcome(
+                    STOP,
+                    f"STOP divergent-manifest-patch: {path} wanted both "
+                    f"{edits_by_path[path]} and {edit}",
+                )
+        for path, (from_version, to_version) in edits_by_path.items():
+            _apply_manifest_patch(path, from_version, to_version)
         followup = normalize((recapture or capture)())
         if followup.outcome == "patch-needed":
             return Outcome(
