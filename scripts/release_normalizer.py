@@ -241,3 +241,122 @@ def reconcile_unit(
         source_identity=next(iter(identities)) if identities else None,
         provisional=provisional,
     )
+
+
+@dataclasses.dataclass(frozen=True)
+class GroupMember:
+    """One equality-group member: its own unit reconciliation and whether
+    its content scope moved since its anchor."""
+
+    name: str
+    reconciliation: Reconciliation
+    content_changed: bool
+
+
+@dataclasses.dataclass(frozen=True)
+class GroupDecision:
+    """kind: unmoved | shared-candidate | stop. For shared-candidate,
+    version is the group's one version; patch lists (member, from, to)
+    manifest edits (None when manifests already carry the version);
+    recovering names members walking recovery at the version; driver
+    labels the member whose state forced any mint."""
+
+    kind: str
+    version: str | None = None
+    patch: tuple[tuple[str, str, str], ...] | None = None
+    recovering: tuple[str, ...] = ()
+    driver: str | None = None
+    stop: str | None = None
+
+
+def group_decision(
+    *,
+    members: list[GroupMember],
+    manifest_versions: dict[str, str],
+    compatibility: str,
+) -> GroupDecision:
+    """The shared-candidate algorithm (design section 3): validate
+    manifest equality; reuse M when every lagging member can publish or
+    recover at it; mint one shared next patch only when M cannot serve,
+    compat-gated, driver-labeled."""
+
+    versions = {manifest_versions[m.name] for m in members}
+    if len(versions) != 1:
+        return GroupDecision(kind="stop", stop="equality-invariant-violated")
+    m_text = next(iter(versions))
+    m_parsed = parse_version(m_text)
+    if m_parsed is None:
+        return GroupDecision(kind="stop", stop="malformed-version-candidate")
+
+    for member in members:
+        if member.reconciliation.state == "stop":
+            return GroupDecision(
+                kind="stop", stop=member.reconciliation.stop or "member-stop"
+            )
+
+    complete_at_m = [
+        m for m in members
+        if m.reconciliation.state == "reconciled" and m.reconciliation.p == m_text
+    ]
+    recoverable_at_m = [
+        m for m in members
+        if m.reconciliation.state == "recoverable-partial"
+        and m.reconciliation.candidate == m_text
+    ]
+    conflicting = [
+        m for m in members if m.reconciliation.state == "conflicting-partial"
+    ]
+    lagging_complete = [
+        m for m in members
+        if m.reconciliation.state == "reconciled" and m.reconciliation.p != m_text
+    ]
+
+    if not conflicting and not lagging_complete:
+        if len(complete_at_m) == len(members):
+            changed = [m for m in members if m.content_changed]
+            if not changed:
+                return GroupDecision(kind="unmoved", version=m_text)
+            # Content moved on some side while every unit is complete at
+            # M: the group needs the next version, driver-labeled.
+            if compatibility != "none":
+                return GroupDecision(
+                    kind="stop", stop="compat-version-decision-needed"
+                )
+            minted = format_version(next_patch(m_parsed))
+            return GroupDecision(
+                kind="shared-candidate",
+                version=minted,
+                patch=tuple(
+                    (m.name, m_text, minted) for m in sorted(members, key=lambda g: g.name)
+                ),
+                driver=changed[0].name,
+            )
+        # Everyone is either complete at M or recoverable at M: reuse M.
+        return GroupDecision(
+            kind="shared-candidate",
+            version=m_text,
+            patch=None,
+            recovering=tuple(sorted(m.name for m in recoverable_at_m)),
+        )
+
+    # M cannot serve: a member conflicts at it, or a complete member sits
+    # at a different version while manifests claim M. One shared next
+    # patch over the group's greatest complete/occupied version.
+    if compatibility != "none":
+        return GroupDecision(kind="stop", stop="compat-version-decision-needed")
+    greatest = m_parsed
+    for member in members:
+        for text in (member.reconciliation.p, member.reconciliation.candidate):
+            if text and (parsed := parse_version(text)) and parsed > greatest:
+                greatest = parsed
+    minted = format_version(next_patch(greatest))
+    driver = (conflicting or lagging_complete)[0].name
+    return GroupDecision(
+        kind="shared-candidate",
+        version=minted,
+        patch=tuple(
+            (m.name, manifest_versions[m.name], minted)
+            for m in sorted(members, key=lambda g: g.name)
+        ),
+        driver=driver,
+    )
