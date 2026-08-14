@@ -2657,6 +2657,20 @@ def _main(argv: Sequence[str]) -> int:
                 "ac": (Path.cwd() / ".." / "ac").resolve(),
             }
             roots = dict(base_roots)
+            # The on-main validation runs BEFORE any worktree exists
+            # (release-review's C4 note): naming a reviewed-but-unlanded
+            # commit is the likeliest operator mistake, and it must get
+            # THE refusal, not patch advice about an off-main commit
+            # after a full capture.
+            try:
+                for key, selected in overrides.items():
+                    if selected:
+                        expected_shas[key] = _select_tip(
+                            base_roots[key], key, selected
+                        )
+            except ReleaseTrainError as error:
+                print(f"release-prepare refused: {error}", file=sys.stderr)
+                return 2
             for key, selected in overrides.items():
                 if not selected:
                     continue
@@ -2669,13 +2683,10 @@ def _main(argv: Sequence[str]) -> int:
                     "add",
                     "--detach",
                     str(temp),
-                    selected,
+                    expected_shas[key],
                 )
                 temp_worktrees.append((base_roots[key], temp))
                 roots[key] = temp
-                expected_shas[key] = _git(
-                    base_roots[key], "rev-parse", selected
-                ).stdout.strip()
         phase_code, phase_report, projection, phase_info = (
             normalizer_entry.run_phase(roots, expected_shas or None)
         )
@@ -2717,8 +2728,18 @@ def _main(argv: Sequence[str]) -> int:
         return 0
     finally:
         for base_root, temp in temp_worktrees:
-            with contextlib.suppress(Exception):
+            try:
                 _git(base_root, "worktree", "remove", "--force", str(temp))
+                with contextlib.suppress(OSError):
+                    temp.parent.rmdir()
+            except Exception:  # noqa: BLE001 - cleanup must not mask the error
+                # Audible, not silent: the registration survives in the
+                # operator's checkout until pruned.
+                print(
+                    f"release-prepare: temporary worktree {temp} could not "
+                    "be removed; run 'git worktree prune' in the checkout",
+                    file=sys.stderr,
+                )
 
 
 if __name__ == "__main__":
