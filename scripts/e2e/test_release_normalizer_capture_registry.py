@@ -197,8 +197,23 @@ class RegistryDiscovery(unittest.TestCase):
                 timeout=1, ghcr_token="t", gh_token="",
                 bases=main.registry_bases(),
             )
-        self.assertEqual(set(occupied), {"0.7.14"})
+            # Discovery no longer dereferences ANYTHING - identity is
+            # resolved lazily - so asserting "no pointer was asked for"
+            # here would now pass without the drop being in place at
+            # all. The claim is kept honest by driving the LAZY path,
+            # which is the only thing that dereferences, and requiring
+            # it to reach the real version and never the pointer.
+            self.assertEqual(set(occupied), {"0.7.14"})
+            self.assertEqual(asked, [], "discovery must not dereference")
+
+            for version in sorted(occupied):
+                main.route_identity(
+                    "ghcr.io/awebai/ac", version,
+                    timeout=1, ghcr_token="t", bases=main.registry_bases(),
+                )
         self.assertEqual(asked, ["0.7.14"], "a line pointer was dereferenced")
+        self.assertNotIn("0.7", asked)
+        self.assertNotIn("0.3", asked)
 
     def test_unavailable_raises_not_empty(self) -> None:
         # A 500 must never read as an empty history.

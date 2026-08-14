@@ -83,17 +83,27 @@ def content_changed(
 ) -> bool:
     """Does the scope's content differ between the anchor commit and HEAD?
 
-    excluded paths (generated owned locks) are ignored entirely; masked
-    paths (version manifests) are compared with only the owned version
-    field normalized, so a dependency-only edit is movement while the
-    fixed point's version patch is not. A masked file absent on either
-    side is new or removed content.
+    excluded paths (generated owned locks, and directories whose
+    contents cannot reach the published artifact) are ignored entirely;
+    masked paths (version manifests) are compared with only the owned
+    version field normalized, so a dependency-only edit is movement
+    while the fixed point's version patch is not. A masked file absent
+    on either side is new or removed content.
+
+    An excluded entry ending in "/" excludes that whole directory: a
+    non-shipping directory holds many files and naming them one by one
+    would go stale the moment someone adds another.
     """
 
     names = _git(
         repo, "diff", "--name-only", f"{anchor_sha}..HEAD", "--", *scope
     ).splitlines()
-    remaining = [name for name in names if name not in excluded]
+    prefixes = tuple(entry for entry in excluded if entry.endswith("/"))
+    remaining = [
+        name
+        for name in names
+        if name not in excluded and not name.startswith(prefixes)
+    ]
     hard = [name for name in remaining if name not in masked]
     if hard:
         return True
@@ -337,11 +347,78 @@ class CaptureSpec:
     unit_targets: tuple[str, ...]
 
 
+def _unit_versions_descending(members) -> list[str]:
+    """Every conforming version any member occupies, newest first."""
+
+    from release_normalizer import format_version, parse_version
+
+    parsed = {
+        version
+        for member in members
+        for text in member.occupied
+        if (version := parse_version(text)) is not None
+    }
+    return [format_version(v) for v in sorted(parsed, reverse=True)]
+
+
+def _resolve_candidate_identity(members, resolve_identity, anchor_versions) -> None:
+    """Fill in member identity at the unit candidate, in place.
+
+    reconcile_unit compares member identity at exactly one version (its
+    `if v == candidate` filter), so that is the only version whose
+    identity has to be paid for. The candidate comes from
+    rn.unit_candidate rather than being recomputed here: which version
+    the reconciler will pick is its fact, not capture's.
+    """
+
+    from release_normalizer import unit_candidate
+
+    candidate = unit_candidate(
+        {text for member in members for text in member.occupied},
+        anchor_versions or (),
+    )
+    if candidate is None:
+        return
+    for member in members:
+        if candidate in member.occupied and member.occupied[candidate] is None:
+            member.occupied[candidate] = resolve_identity(member.name, candidate)
+
+
+def _resolve_descending_anchors(members, resolve_identity) -> dict[str, str]:
+    """Anchors for an oci_revision_label unit, resolved lazily.
+
+    Walks the unit's versions newest-first, resolving identity until the
+    first version that is anchored AND occupied by every member - the
+    only one `previous_complete` can select, since that scan also stops
+    at its first match. Versions below it are never compared to
+    anything, so their identity is never fetched.
+    """
+
+    anchors: dict[str, str] = {}
+    for version in _unit_versions_descending(members):
+        complete = True
+        for member in members:
+            if version not in member.occupied:
+                complete = False
+                continue
+            if member.occupied[version] is None:
+                member.occupied[version] = resolve_identity(member.name, version)
+        identity = members[0].occupied.get(version) if members else None
+        if identity is not None:
+            anchors[version] = identity
+        if complete and identity is not None and len(anchors) >= 2:
+            # The candidate itself plus one complete predecessor is
+            # everything the reconciler reads.
+            break
+    return anchors
+
+
 def assemble_captured_world(
     *,
     specs,
     repo_roots: dict[str, Path],
     discover_target,
+    resolve_identity=lambda target, version: None,
     equality_groups,
     compatibility: str,
 ) -> CapturedWorld:
@@ -366,16 +443,20 @@ def assemble_captured_world(
         ]
         if spec.anchor_kind == "tag_pattern":
             anchors = discover_anchor_tags(repo, spec.anchor_value)
+            _resolve_candidate_identity(members, resolve_identity, anchors)
         else:
             # oci_revision_label anchors are registry-side facts: every
             # identityful version the primary target serves IS an anchor
             # (the revision label names the source commit); the
             # repository contributes no tag history.
-            anchors = {
-                version: identity
-                for version, identity in members[0].occupied.items()
-                if identity is not None
-            }
+            #
+            # Resolving identity for EVERY served version is what made
+            # the phase take a quarter of an hour: identity is a
+            # three-request walk per tag, and the reconciler reads it at
+            # the candidate and at the previous complete version only.
+            # So walk down from the candidate and stop at the first
+            # complete one, which is all `previous_complete` can select.
+            anchors = _resolve_descending_anchors(members, resolve_identity)
         from release_normalizer import parse_version as _parse
 
         conforming = [
@@ -477,7 +558,11 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
         # so dependency and build-metadata edits are movement while the
         # normalizer's own version patch is not (the dependency-only
         # blind spot closed at its cause).
-        excluded = tuple(lock.path for lock in entry.owned_locks if lock.path)
+        # ... and paths the artifact declares as unable to reach its
+        # published bytes, which are equally not movement.
+        excluded = tuple(
+            lock.path for lock in entry.owned_locks if lock.path
+        ) + tuple(entry.content_exclusions)
         from release_train import release_tag_prefix
 
         tag_prefixes = {
