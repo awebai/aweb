@@ -80,12 +80,17 @@ def rows_for_artifacts(
                 )
             elif target.startswith("github:"):
                 _, repository, _channel = target.split(":", 2)
-                prefix = (
-                    f"{artifact.anchor.value}" if artifact.anchor else "v"
-                )
+                # release-review's A7 point: the tag choice keys on
+                # DATA, not on an artifact's name. A release in the
+                # artifact's own source repository is tagged with its
+                # canonical anchor prefix (skills-v{V} on awebai/aweb);
+                # an external product repository (awebai/aw) tags v{V}.
+                own_repository = repository == f"awebai/{artifact.repository}"
                 tag = (
-                    f"{prefix}{item.version}"
-                    if artifact.anchor and artifact.anchor.kind == "tag_pattern"
+                    f"{artifact.anchor.value}{item.version}"
+                    if own_repository
+                    and artifact.anchor is not None
+                    and artifact.anchor.kind == "tag_pattern"
                     else f"v{item.version}"
                 )
                 required = tuple(
@@ -94,7 +99,7 @@ def rows_for_artifacts(
                 )
                 rows += builders.github_release_rows(
                     repository,
-                    tag if item.name == "skills" else f"v{item.version}",
+                    tag,
                     required_assets=required,
                     base=resolved["github"],
                     token=tokens.get("github", ""),

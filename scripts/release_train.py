@@ -1962,6 +1962,44 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
     return [row.render() for row in rows if not row.present()]
 
 
+def _require_monitor_record(stdout: str, expected_sha: str) -> None:
+    """The workflow monitor's stdout must be the strictly typed
+    remote-completion record - {workflow, run_sha, conclusion}, exactly
+    those keys, conclusion success, run_sha the card's release SHA
+    (aben design section 8). An opaque successful subprocess is not a
+    precondition."""
+
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    if not lines:
+        raise ObservationMalformed(
+            "workflow monitor produced no remote-completion record"
+        )
+    try:
+        record = json.loads(lines[-1])
+    except json.JSONDecodeError as error:
+        raise ObservationMalformed(
+            f"workflow monitor record is not JSON: {lines[-1]!r}"
+        ) from error
+    if not isinstance(record, dict) or set(record) != {
+        "workflow",
+        "run_sha",
+        "conclusion",
+    }:
+        raise ObservationMalformed(
+            f"workflow monitor record has the wrong shape: {record!r}"
+        )
+    if record["conclusion"] != "success":
+        raise ValidationError(
+            f"workflow {record['workflow']} concluded "
+            f"{record['conclusion']!r}, not success"
+        )
+    if record["run_sha"] != expected_sha:
+        raise ValidationError(
+            f"workflow {record['workflow']} ran at {record['run_sha']}, "
+            f"but the card releases {expected_sha}"
+        )
+
+
 def continue_train(
     repo_root: Path,
     *,
@@ -2014,11 +2052,12 @@ def continue_train(
         if not observe_public_target(
             primary, selection.version, bases=bases, timeout=timeout
         ):
-            run_command(
+            monitor_result = run_command(
                 [*workflow_command, selection.name, selection.version],
                 cwd=environment.aweb_root,
                 timeout=work_timeout,
             )
+            _require_monitor_record(monitor_result.stdout, card.aweb_sha)
         _poll_public_target(primary, selection.version, bases=bases, timeout=timeout)
     if marketplace_command is not None:
         # aben design section 8: marketplace mutation is gated on the
@@ -2050,7 +2089,26 @@ def continue_train(
                 "AC derivation refused: predecessor rows not present: "
                 + "; ".join(blocking)
             )
-        run_command(list(derive_command), cwd=environment.ac_root, timeout=work_timeout)
+        run_command(
+            [
+                *derive_command,
+                "--card-artifacts",
+                json.dumps(
+                    [
+                        {
+                            "name": item.name,
+                            "version": item.version,
+                            "moves": item.moves,
+                        }
+                        for item in card.artifacts
+                    ]
+                ),
+                "--card-ac-version",
+                versions["ac-image"],
+            ],
+            cwd=environment.ac_root,
+            timeout=work_timeout,
+        )
         changed = _git(environment.ac_root, "status", "--porcelain").stdout.split()
         names = {line for line in changed if not line.startswith(("M", "A", "?"))} or {
             item.split()[-1] for item in _git(
@@ -2095,7 +2153,12 @@ def continue_train(
     digest_result = run_command(
         list(digest_command), cwd=environment.ac_root, timeout=work_timeout
     )
-    digest = digest_result.stdout.strip()
+    digest_lines = [
+        line.removeprefix("digest=")
+        for line in digest_result.stdout.splitlines()
+        if line.startswith("digest=")
+    ]
+    digest = (digest_lines[-1] if digest_lines else digest_result.stdout).strip()
     if not _DIGEST_RE.fullmatch(digest):
         raise ObservationMalformed(
             f"AC image digest observation is not an exact digest: {digest!r}"
@@ -2106,7 +2169,7 @@ def continue_train(
         _StatusRow(
             fact="ac image digest observation",
             state="observed-present",
-            evidence=f"digest command answered {digest}",
+            evidence=f"self-reported: digest command answered {digest}",
         )
     ]
     if card.deployments.production:
@@ -2115,7 +2178,9 @@ def continue_train(
             [*deploy_command, digest], cwd=environment.ac_root, timeout=work_timeout
         )
         run_command(
-            [*verify_command, digest], cwd=environment.ac_root, timeout=work_timeout
+            [*verify_command, digest, "--expect-git-sha", ac_derived],
+            cwd=environment.ac_root,
+            timeout=work_timeout,
         )
         # Design section 8: migration postcondition and production
         # configured/running/health are claimed through their own
@@ -2125,17 +2190,17 @@ def continue_train(
             _StatusRow(
                 fact="production migration postcondition",
                 state="observed-present",
-                evidence="migration executor exited 0",
+                evidence="self-reported: migration executor exited 0",
             ),
             _StatusRow(
                 fact=f"production deploy at {digest}",
                 state="observed-present",
-                evidence="deploy command exited 0 at the observed digest",
+                evidence="self-reported: deploy command exited 0 at the observed digest",
             ),
             _StatusRow(
                 fact=f"production verify at {digest}",
                 state="observed-present",
-                evidence="verify command exited 0 at the observed digest",
+                evidence="self-reported: verify command exited 0 at the observed digest",
             ),
         ]
     for wanted, repository, branch, expected_sha in (
@@ -2183,32 +2248,63 @@ def continue_train(
     return summary
 
 
-_CONTINUE_COMMAND_ENVS = (
-    "AWEB_RELEASE_WORKFLOW_COMMAND",
-    "AWEB_RELEASE_DERIVE_COMMAND",
-    "AWEB_RELEASE_AC_GATE_COMMAND",
-    "AWEB_RELEASE_MIGRATE_COMMAND",
-    "AWEB_RELEASE_DEPLOY_COMMAND",
-    "AWEB_RELEASE_VERIFY_COMMAND",
-    "AWEB_RELEASE_DIGEST_COMMAND",
-)
+# The fixed reviewed boundary commands (aben design sections 5, 6, 8):
+# repository scripts with card-derived arguments bound by the train at
+# the call sites. The env variables are hermetic-test override seams;
+# the defaults here are pinned by test so an override can never quietly
+# become the production path. The trailing flag convention: commands the
+# train completes by appending a value end with the flag they expect.
+_CONTINUE_FIXED_COMMANDS = {
+    "AWEB_RELEASE_WORKFLOW_COMMAND": ("bash", "scripts/release-workflow-monitor.sh"),
+    "AWEB_RELEASE_DERIVE_COMMAND": (
+        "python3",
+        "scripts/derive_release_floors.py",
+        "--ac-root",
+        ".",
+    ),
+    "AWEB_RELEASE_AC_GATE_COMMAND": ("bash", "scripts/release-local-gate.sh"),
+    "AWEB_RELEASE_MIGRATE_COMMAND": (
+        "bash",
+        "scripts/check-pending-migrations.sh",
+    ),
+    "AWEB_RELEASE_DEPLOY_COMMAND": (
+        "python3",
+        "scripts/render_release_client.py",
+        "deploy",
+        "--digest",
+    ),
+    "AWEB_RELEASE_VERIFY_COMMAND": (
+        "python3",
+        "scripts/render_release_client.py",
+        "verify-deploy",
+        "--health-url",
+        "https://app.aweb.ai/health",
+        "--digest",
+    ),
+    "AWEB_RELEASE_DIGEST_COMMAND": (
+        "python3",
+        "scripts/verify_registry_adoption.py",
+        "--image",
+        "ghcr.io/awebai/ac",
+        "--emit-digest",
+    ),
+}
+_CONTINUE_COMMAND_ENVS = tuple(_CONTINUE_FIXED_COMMANDS)
+
+
+def continue_commands() -> dict[str, tuple[str, ...]]:
+    return {
+        name: (
+            tuple(shlex.split(os.environ[name]))
+            if os.environ.get(name, "").strip()
+            else default
+        )
+        for name, default in _CONTINUE_FIXED_COMMANDS.items()
+    }
 
 
 def _continue_main() -> int:
-    missing = [name for name in _CONTINUE_COMMAND_ENVS if not os.environ.get(name, "").strip()]
-    if missing:
-        print(
-            "release-continue refused: the boundary commands are not named: "
-            + ", ".join(missing)
-            + ". The epic ends at non-production readiness; nothing here "
-            "guesses real workflow, provider, or migration entry points.",
-            file=sys.stderr,
-        )
-        return 2
-    commands = {
-        name: tuple(shlex.split(os.environ[name]))
-        for name in _CONTINUE_COMMAND_ENVS
-    }
+    commands = continue_commands()
     marketplace_raw = os.environ.get("AWEB_RELEASE_MARKETPLACE_COMMAND", "").strip()
     try:
         summary = continue_train(
