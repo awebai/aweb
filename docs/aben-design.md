@@ -24,6 +24,17 @@ nested exact keys and types):
   manifest and its owned locks/version mirrors (normalized metadata,
   not content drivers) - this exclusion is what makes normalization a
   fixed point by construction.
+- Anchor coverage table (what the bidirectional contract test proves,
+  and its two named boundaries): the workflow-emitted tag prefixes
+  (server-v, awid-service-v, awid-v, channel-v, pi-v, skills-v,
+  a2a-gw-v) are verified against the publishers in both directions;
+  aw-cli's aw-v anchor is EXCLUDED from that test because its tags are
+  created by train/sync code, not those workflows - it carries its own
+  assertion against the code that creates them (R3, with the movement
+  predicate that consumes it); ac-image's oci_revision_label is verified
+  reader-side in aweb and stamper-side in the AC repository's round -
+  until both land, that anchor is half-verified and says so here rather
+  than in a code comment.
 - `anchor`: a tagged union - `tag_pattern` (server-v*, awid-service-v*,
   awid-v*, aw-v*, channel-v*, pi-v*, skills-v*, a2a-gw-v*) or
   `oci_revision_label` (ac-image: `org.opencontainers.image.revision`,
