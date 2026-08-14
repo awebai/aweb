@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+from collections.abc import Iterable
 
 _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 
@@ -198,6 +199,9 @@ def reconcile_unit(
     parsed_versions = {
         v: parsed for v in seen if (parsed := parse_version(v)) is not None
     }
+    # unit_candidate below derives the same top from the same inputs; it
+    # exists so capture can resolve identity for exactly this version
+    # without a second implementation of which version that is.
     malformed = sorted(seen - set(parsed_versions))
     if not parsed_versions:
         # Only near-versions, or nothing at all. With no conforming
@@ -211,7 +215,8 @@ def reconcile_unit(
         # movement derivation treats absent P via its own rules.
         return Reconciliation(state="reconciled", p=None)
 
-    top = max(parsed_versions.values())
+    candidate_text = unit_candidate(seen, ())
+    top = parse_version(candidate_text or "")
     # A malformed candidate stops only when it could BEAR on the
     # decision - its numeric prefix sorting at or above the candidate in
     # play. Anything strictly below is history, logged like latest and
@@ -224,7 +229,8 @@ def reconcile_unit(
             )
 
     all_versions = set(parsed_versions)
-    candidate = format_version(top)
+    candidate = candidate_text or ""
+    assert top is not None  # parsed_versions non-empty implies a candidate
 
     occupied_members = [m for m in members if candidate in m.occupied]
     missing_members = [m for m in members if candidate not in m.occupied]
@@ -300,6 +306,30 @@ def reconcile_unit(
         source_identity=next(iter(identities)) if identities else None,
         provisional=provisional,
     )
+
+
+def unit_candidate(
+    occupied_versions: Iterable[str], anchor_versions: Iterable[str]
+) -> str | None:
+    """The one version whose source identity the reconciler compares.
+
+    reconcile_unit derives its candidate as the greatest conforming
+    version across the unit's occupancy and its anchors, and reads
+    member identity ONLY at that version (`if v == candidate`). Capture
+    calls this to resolve identity for exactly that version instead of
+    walking every tag in the namespace, so the expensive read is bound
+    to the fact that consumes it rather than to registry history.
+
+    Returns None when no conforming version exists, where there is no
+    candidate to place anything against.
+    """
+
+    parsed = [
+        version
+        for text in {*occupied_versions, *anchor_versions}
+        if (version := parse_version(text)) is not None
+    ]
+    return format_version(max(parsed)) if parsed else None
 
 
 @dataclasses.dataclass(frozen=True)

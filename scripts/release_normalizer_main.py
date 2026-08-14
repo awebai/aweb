@@ -78,24 +78,13 @@ def route_discovery(
         tags = cap.discover_ghcr_versions(
             image, base=bases["ghcr"], timeout=timeout, token=ghcr_token
         )
-        occupied: dict[str, str | None] = {}
-        for tag in sorted(tags):
-            if rn.parse_version(tag) is None:
-                # Near-matching candidates occupy identityless; the
-                # reconciler stops them by name.
-                occupied[tag] = None
-                continue
-            try:
-                occupied[tag] = cap.read_oci_revision(
-                    image,
-                    tag,
-                    base=bases["ghcr"],
-                    token=ghcr_token,
-                    timeout=timeout,
-                )
-            except cap.RevisionLabelAbsent:
-                occupied[tag] = None
-        return occupied
+        # OCCUPANCY ONLY. Resolving each tag's source identity here is
+        # a three-request walk per tag and was 94% of the phase's wall
+        # time (1601 of 1672 remote calls, measured), to build a map
+        # whose entries the reconciler reads at exactly one version.
+        # route_identity below is called for the versions that
+        # are actually compared.
+        return {tag: None for tag in sorted(tags)}
     if target.startswith("github:"):
         _, repository, _channel = target.split(":", 2)
         return {
@@ -109,6 +98,37 @@ def route_discovery(
             )
         }
     raise ValueError(f"no discoverer routes target {target!r}")
+
+
+def route_identity(
+    target: str,
+    version: str,
+    *,
+    timeout: float,
+    ghcr_token: str,
+    bases: dict[str, str],
+) -> str | None:
+    """The source identity of ONE published version, fetched on demand.
+
+    Only OCI targets carry an observable source identity; pypi, npm and
+    GitHub releases are identityless by kind, which is why discovery
+    already returned None for them. Splitting this out of discovery is
+    what bounds the phase's cost to the facts consumed rather than to
+    registry history.
+    """
+
+    if not target.startswith("ghcr.io/"):
+        return None
+    try:
+        return cap.read_oci_revision(
+            target.removeprefix("ghcr.io/"),
+            version,
+            base=bases["ghcr"],
+            token=ghcr_token,
+            timeout=timeout,
+        )
+    except cap.RevisionLabelAbsent:
+        return None
 
 
 def _git(root: Path, *args: str) -> str:
@@ -320,11 +340,21 @@ def run_phase(
             tag_prefix=prefixes.get(target, "v"),
         )
 
+    def resolve_identity(target: str, version: str):
+        return route_identity(
+            target,
+            version,
+            timeout=timeout,
+            ghcr_token=ghcr_token,
+            bases=bases,
+        )
+
     def capture() -> rn.CapturedWorld:
         return cap.assemble_captured_world(
             specs=specs,
             repo_roots=repo_roots,
             discover_target=discover,
+            resolve_identity=resolve_identity,
             equality_groups=EQUALITY_GROUPS,
             compatibility=compatibility,
         )

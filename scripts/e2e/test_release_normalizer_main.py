@@ -18,8 +18,12 @@ import release_train as rt  # noqa: E402
 
 class Routing(unittest.TestCase):
     def test_every_canonical_unit_target_routes(self) -> None:
-        # Image targets carry their revision identity out of discovery;
-        # listing-only targets (pypi/npm/github) are identityless.
+        # EVERY target is identityless out of discovery: identity is a
+        # three-request walk per version and discovery must cost one
+        # listing per target. Image identity is still reachable - the
+        # second half of this test requires route_identity to supply it
+        # for exactly the image targets - so the coverage this test had
+        # is preserved rather than dropped with the old contract.
         specs = cap.derive_capture_specs(rt.ARTIFACTS)
         with mock.patch.multiple(
             cap,
@@ -39,12 +43,16 @@ class Routing(unittest.TestCase):
                             gh_token="",
                             bases=main.registry_bases(),
                         )
-                        expected = (
-                            {"1.0.0": "a" * 40}
-                            if target.startswith("ghcr.io/")
-                            else {"1.0.0": None}
+                        self.assertEqual(occupied, {"1.0.0": None})
+                        identity = main.route_identity(
+                            target, "1.0.0",
+                            timeout=1, ghcr_token="", bases=main.registry_bases(),
                         )
-                        self.assertEqual(occupied, expected)
+                        self.assertEqual(
+                            identity,
+                            "a" * 40 if target.startswith("ghcr.io/") else None,
+                            f"{target}: identity must be reachable lazily",
+                        )
 
     def test_unknown_spelling_raises_not_skips(self) -> None:
         with self.assertRaises(ValueError):

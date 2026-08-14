@@ -296,3 +296,85 @@ class RepoCapture(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdentityResolutionBound(unittest.TestCase):
+    """Capture's cost must be bound to the facts it consumes, not to
+    how much history the registry holds.
+
+    The first successful phase took 695 seconds, 94% of it in 1601
+    ghcr.io requests: read_oci_revision is a three-request walk and it
+    ran for every version tag of every image, to build a map the
+    reconciler reads at exactly one version. This asserts the bound
+    that keeps it from coming back - and it is written over a namespace
+    with a HUNDRED versions, so it fails under the per-tag behaviour
+    instead of passing on a fixture too small to tell the difference.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.repo = self.root / "ac"
+        (self.repo / "backend").mkdir(parents=True)
+        (self.repo / "backend" / "pyproject.toml").write_text(
+            '[project]\nname = "ac"\nversion = "0.7.15"\n'
+        )
+        git("init", "-q", str(self.repo), cwd=self.root)
+        git("add", "-A", cwd=self.repo)
+        git("commit", "-q", "-m", "one", cwd=self.repo)
+        self.sha = git("rev-parse", "HEAD", cwd=self.repo)
+        # The captured world reads the server floor from the aweb root
+        # regardless of which specs are passed.
+        self.aweb = self.root / "aweb"
+        (self.aweb / "server").mkdir(parents=True)
+        (self.aweb / "server" / "pyproject.toml").write_text(
+            '[project]\nname = "aweb"\nversion = "1.27.2"\n'
+            'dependencies = ["awid-service>=0.5.16"]\n'
+        )
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_identity_calls_do_not_scale_with_registry_history(self) -> None:
+        import release_train as rt
+
+        spec = next(
+            s for s in cap.derive_capture_specs(rt.ARTIFACTS)
+            if s.name == "ac-image"
+        )
+        served = [f"0.{major}.{patch}" for major in range(10) for patch in range(10)]
+        self.assertEqual(len(served), 100)
+
+        listings: list[str] = []
+        resolved: list[str] = []
+
+        def discover(target: str):
+            listings.append(target)
+            return {version: None for version in served}
+
+        def resolve(target: str, version: str):
+            resolved.append(version)
+            return self.sha
+
+        world = cap.assemble_captured_world(
+            specs=[spec],
+            repo_roots={"ac": self.repo, "aweb": self.aweb},
+            discover_target=discover,
+            resolve_identity=resolve,
+            equality_groups=(),
+            compatibility="none",
+        )
+
+        self.assertEqual(listings, list(spec.unit_targets),
+                         "exactly one listing per unit target")
+        self.assertLessEqual(
+            len(resolved), 4,
+            f"identity resolved for {len(resolved)} of {len(served)} versions - "
+            "the cost is scaling with registry history again",
+        )
+        # ...and it must still resolve the ones that are READ: the
+        # candidate carries identity, so the row is not silently
+        # downgraded to identityless by the optimisation.
+        captured = world.artifacts["ac-image"]
+        self.assertEqual(captured.members[0].occupied["0.9.9"], self.sha)
+        self.assertIn("0.9.9", captured.anchor_versions)
