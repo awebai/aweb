@@ -106,6 +106,31 @@ class RegistryDiscovery(unittest.TestCase):
                 "org/endless", base=self.base, timeout=3, token=""
             )
 
+    def test_source_commit_tags_are_not_version_candidates(self) -> None:
+        # Measured against the live registry: ghcr.io/awebai/ac serves
+        # ~90 BARE source-commit tags because its publisher pushes
+        # :VERSION and :SHA unprefixed (design section 8). Roughly half
+        # begin with a digit, so a digit-led classifier reads them as
+        # near-versions and halts the train on 90 counts. These are the
+        # real shapes.
+        classify = cap._version_namespace_candidates
+        served = {
+            "0.7.14", "0.7.13", "v0.7.12",      # versions
+            "0.3", "0.7",                        # legacy two-component
+            "latest", "sha-abc1234",             # non-namespace
+            "0006499", "559b5f5", "9fa8e59",     # digit-led short commits
+            "abc1234", "6c1bbe5c1f6fbb17318186216c9d00ab8f523fc5",  # hex commits
+        }
+        kept = classify(served)
+        self.assertEqual(kept, {"0.7.14", "0.7.13", "v0.7.12", "0.3", "0.7"})
+        # The discrimination that matters, stated both ways: every
+        # commit-shaped tag is dropped, and no version-shaped one is.
+        for commit in ("0006499", "559b5f5", "9fa8e59", "abc1234",
+                       "6c1bbe5c1f6fbb17318186216c9d00ab8f523fc5"):
+            self.assertNotIn(commit, kept, commit)
+        for version in ("0.7.14", "v0.7.12", "0.3"):
+            self.assertIn(version, kept, version)
+
     def test_unavailable_raises_not_empty(self) -> None:
         # A 500 must never read as an empty history.
         with self.assertRaises(cap.DiscoveryUnavailable):
