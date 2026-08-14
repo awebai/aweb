@@ -338,3 +338,69 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
             )
         )
     return specs
+
+
+def read_oci_revision(
+    image: str,
+    version: str,
+    *,
+    base: str = "https://ghcr.io",
+    token: str,
+    timeout: float,
+) -> str:
+    """The org.opencontainers.image.revision label for a version tag -
+    the ac-image anchor (aben design sections 7 and 8). Resolves the
+    tag's manifest (following one index child when the tag is an index),
+    then the config blob, then the label. Absence of the tag, the
+    config, or the label raises with its own words; nothing here ever
+    answers None.
+    """
+
+    headers = {
+        "Accept": (
+            "application/vnd.oci.image.index.v1+json, "
+            "application/vnd.oci.image.manifest.v1+json, "
+            "application/vnd.docker.distribution.manifest.list.v2+json, "
+            "application/vnd.docker.distribution.manifest.v2+json"
+        )
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    manifest, _ = _get_json(
+        f"{base}/v2/{image}/manifests/{version}", timeout=timeout, headers=headers
+    )
+    if manifest is None:
+        raise DiscoveryUnavailable(
+            f"{image}:{version}: manifest absent while an anchor was expected"
+        )
+    if "manifests" in manifest:
+        children = manifest.get("manifests") or []
+        if not children:
+            raise DiscoveryUnavailable(f"{image}:{version}: empty index")
+        child_digest = children[0].get("digest")
+        manifest, _ = _get_json(
+            f"{base}/v2/{image}/manifests/{child_digest}",
+            timeout=timeout,
+            headers=headers,
+        )
+        if manifest is None:
+            raise DiscoveryUnavailable(
+                f"{image}:{version}: index child {child_digest} absent"
+            )
+    config_digest = (manifest.get("config") or {}).get("digest")
+    if not config_digest:
+        raise DiscoveryUnavailable(f"{image}:{version}: manifest has no config")
+    config, _ = _get_json(
+        f"{base}/v2/{image}/blobs/{config_digest}", timeout=timeout, headers=headers
+    )
+    if config is None:
+        raise DiscoveryUnavailable(f"{image}:{version}: config blob absent")
+    labels = ((config.get("config") or {}).get("Labels")) or {}
+    revision = labels.get("org.opencontainers.image.revision")
+    if not revision:
+        raise DiscoveryUnavailable(
+            f"{image}:{version}: config carries no "
+            "org.opencontainers.image.revision label - anchorless image"
+        )
+    return revision

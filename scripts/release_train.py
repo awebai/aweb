@@ -1271,11 +1271,22 @@ def _resolve_anchor_identity(
                 "serves the version - anchorless unmoved row"
             )
         return PreviousCompleteAnchor(version, "tag", identity)
-    # oci_revision_label: the image config's revision label, via the
-    # injected reader the caller supplies at real-prepare time.
-    raise ObservationUnavailable(
-        f"{artifact.key}: oci revision anchor requires the registry reader"
-    )
+    # oci_revision_label: the image config's revision label, read from
+    # the registry (aben R5 - the reader that made R4's refusal here
+    # unnecessary rather than tolerated).
+    import release_normalizer_capture as _cap
+
+    image = artifact.targets[0].removeprefix("ghcr.io/")
+    try:
+        identity = _cap.read_oci_revision(
+            image,
+            version,
+            token=os.environ.get("AWEB_GHCR_READ_TOKEN", ""),
+            timeout=timeout,
+        )
+    except _cap.DiscoveryUnavailable as error:
+        raise ObservationUnavailable(str(error)) from error
+    return PreviousCompleteAnchor(version, "oci-revision-label", identity)
 
 
 def select_artifacts(
