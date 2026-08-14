@@ -1281,7 +1281,7 @@ def _resolve_anchor_identity(
         identity = _cap.read_oci_revision(
             image,
             version,
-            token=os.environ.get("AWEB_GHCR_READ_TOKEN", ""),
+            token=_cap.ghcr_bearer(os.environ.get("AWEB_GHCR_READ_TOKEN", "")),
             timeout=timeout,
         )
     except _cap.DiscoveryUnavailable as error:

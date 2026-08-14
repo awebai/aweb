@@ -297,6 +297,22 @@ class ReleaseLocalGateContractTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("reachable.txt: SHIP_SUITES", result.stderr)
 
+    def test_runner_vocabulary_covers_every_map_category(self) -> None:
+        # The runner validates the map against its CLOSED category set
+        # before anything runs; the contract test used to validate only
+        # its own expected tuples - two independent notions of a valid
+        # map, one updated. Both are pinned together now: the runner's
+        # vocabulary, the map's categories within it, and the map
+        # actually LOADING through the instrument that consumes it.
+        self.assertEqual(
+            runner.CATEGORIES,
+            {"contract", "unit", "artifact", "journey", "audit", "acceptance"},
+        )
+        steps = runner.load_map(MAP)
+        self.assertEqual(len(steps), len(EXPECTED_STEPS) + 1)
+        for step in steps:
+            self.assertIn(step.category, runner.CATEGORIES)
+
     def test_exact_suite_map_is_unique_and_every_target_exists(self) -> None:
         rows = self.read_map()
         self.assertEqual(len(EXPECTED_STEPS), 53)

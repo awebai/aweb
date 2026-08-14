@@ -79,7 +79,10 @@ class Step:
     target: str
 
 
-CATEGORIES = {"contract", "unit", "artifact", "journey", "audit"}
+# acceptance: the Column B recorded-world replays (aben A9) - added
+# deliberately; the contract test pins this set so the runner's closed
+# vocabulary and the map's expected rows cannot diverge again.
+CATEGORIES = {"contract", "unit", "artifact", "journey", "audit", "acceptance"}
 
 
 def load_map(path: Path) -> tuple[Step, ...]:
