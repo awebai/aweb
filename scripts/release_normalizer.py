@@ -510,6 +510,10 @@ class ArtifactResult:
 class Stop:
     code: str
     artifact: str | None = None
+    # What the refusal knows beyond its name: the failing command's
+    # output, the conflicting value. A stop the operator cannot act on
+    # is a stop that sends them to re-run the thing by hand.
+    detail: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)

@@ -67,7 +67,9 @@ def render_stops(stops) -> str:
     names its subject or it is not a refusal an operator can act on."""
 
     return "\n".join(
-        f"STOP {stop.code}" + (f" ({stop.artifact})" if stop.artifact else "")
+        f"STOP {stop.code}"
+        + (f" ({stop.artifact})" if stop.artifact else "")
+        + (f": {stop.detail}" if stop.detail else "")
         for stop in stops
     )
 
