@@ -56,15 +56,19 @@ def verify_card_against_world(
         if fresh.disposition not in _PROGRESS[row.disposition]:
             stops.append(rn.Stop("card-world-disposition-drift", row.name))
             continue
-        if (
-            row.disposition == "unmoved"
-            and fresh.disposition == "unmoved"
-            and row.previous_complete_anchor is not None
-            and fresh.previous_complete_anchor is not None
-            and row.previous_complete_anchor[1] is not None
-            and fresh.previous_complete_anchor[1] is not None
-            and row.previous_complete_anchor[1]
-            != fresh.previous_complete_anchor[1]
-        ):
-            stops.append(rn.Stop("card-world-anchor-drift", row.name))
+        if fresh.disposition == "unmoved":
+            fresh_anchor = fresh.previous_complete_anchor
+            if fresh_anchor is None or fresh_anchor[1] is None:
+                # Correct on its own terms, not because no construction
+                # path produces this: an unmoved row whose fresh anchor
+                # is missing or identityless is anchorless, named.
+                stops.append(rn.Stop("card-world-anchor-missing", row.name))
+                continue
+            if (
+                row.previous_complete_anchor is not None
+                and row.previous_complete_anchor[1] is not None
+                and row.previous_complete_anchor[1] != fresh_anchor[1]
+                and row.disposition == "unmoved"
+            ):
+                stops.append(rn.Stop("card-world-anchor-drift", row.name))
     return stops

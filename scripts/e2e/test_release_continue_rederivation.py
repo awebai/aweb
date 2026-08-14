@@ -119,6 +119,24 @@ class Rederivation(unittest.TestCase):
         )
         self.assertIn("version-occupied", [s.code for s in stops])
 
+    def test_fresh_unmoved_row_without_anchor_stops_not_skips(self) -> None:
+        # alice's finding: the guard must be correct on its own terms,
+        # not correct-because-no-other-path-constructs-this. A fresh
+        # unmoved row with a missing anchor is anchorless, named.
+        stops = verify(
+            [card_row("pkg", "1.2.3", "unmoved", ("1.2.3", "sha-x"))],
+            {"pkg": result_row("1.2.3", "unmoved", None)},
+        )
+        self.assertEqual([s.code for s in stops], ["card-world-anchor-missing"])
+
+    def test_fresh_unmoved_row_with_identityless_anchor_stops(self) -> None:
+        stops = verify(
+            [card_row("pkg", "1.2.3", "unmoved", ("1.2.3", "sha-x"))],
+            {"pkg": result_row("1.2.3", "unmoved", ("1.2.3", None))},
+        )
+        self.assertEqual([s.code for s in stops], ["card-world-anchor-missing"])
+
+
 
 if __name__ == "__main__":
     unittest.main()
