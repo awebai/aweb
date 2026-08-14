@@ -4,17 +4,23 @@
       "members": [
         {
           "name": "github:awebai/aw:release",
-          "occupied": {"1.34.5": "2455e7a127ab5f216477a0af114cb69e5b0caa74"}
+          "occupied": {
+            "1.34.4": "9cd5cbeb0045fe9bc3821dfe0875efab0f19ae16",
+            "1.34.5": "2455e7a127ab5f216477a0af114cb69e5b0caa74"
+          }
         },
-        {"name": "npm:@awebai/aw", "occupied": {"1.34.5": null}},
-        {"name": "npm:@awebai/aw-linux-x64", "occupied": {"1.34.5": null}},
-        {"name": "npm:@awebai/aw-linux-arm64", "occupied": {"1.34.5": null}},
-        {"name": "npm:@awebai/aw-darwin-x64", "occupied": {"1.34.5": null}},
-        {"name": "npm:@awebai/aw-darwin-arm64", "occupied": {"1.34.5": null}},
-        {"name": "npm:@awebai/aw-windows-x64", "occupied": {"1.34.5": null}},
-        {"name": "npm:@awebai/aw-windows-arm64", "occupied": {"1.34.5": null}}
+        {"name": "npm:@awebai/aw", "occupied": {"1.34.4": null, "1.34.5": null}},
+        {"name": "npm:@awebai/aw-linux-x64", "occupied": {"1.34.4": null, "1.34.5": null}},
+        {"name": "npm:@awebai/aw-linux-arm64", "occupied": {"1.34.4": null, "1.34.5": null}},
+        {"name": "npm:@awebai/aw-darwin-x64", "occupied": {"1.34.4": null, "1.34.5": null}},
+        {"name": "npm:@awebai/aw-darwin-arm64", "occupied": {"1.34.4": null, "1.34.5": null}},
+        {"name": "npm:@awebai/aw-windows-x64", "occupied": {"1.34.4": null, "1.34.5": null}},
+        {"name": "npm:@awebai/aw-windows-arm64", "occupied": {"1.34.4": null, "1.34.5": null}}
       ],
-      "anchor_versions": {"1.34.5": "2455e7a127ab5f216477a0af114cb69e5b0caa74"}
+      "anchor_versions": {
+        "1.34.4": "9cd5cbeb0045fe9bc3821dfe0875efab0f19ae16",
+        "1.34.5": "2455e7a127ab5f216477a0af114cb69e5b0caa74"
+      }
     }
   },
   "provenance": {
@@ -27,6 +33,30 @@
       "note": "this must NOT reach the manifest-backed version-occupied stop. Section 3 states these are different rows of the same table: aw-cli's next version is mechanically derived from tag history plus content diff, so an occupied lower intent re-derives the next free patch. A fixture that produces version-occupied here has exercised the wrong row."
     },
     "values": {
+      "aw-cli.anchor_versions.1.34.4": {
+        "method": "re-observed",
+        "source": "aweb repository tag aw-v1.34.4",
+        "command": "git rev-list -1 aw-v1.34.4",
+        "result": "9cd5cbeb0045fe9bc3821dfe0875efab0f19ae16",
+        "observed_at": "2026-08-14",
+        "observed_by": "aben-dev2",
+        "why_the_predecessor_is_in_the_row": "aw-cli derives its next version from TAG HISTORY, so the history below the candidate is not decoration - it is the input the derivation reads. Recording 1.34.5 alone made the row's world one in which no CLI had ever shipped, which is not the state this row reconstructs and not a state the derivation can answer from. It also left the control (which removes 1.34.5) with no world at all; see that fixture's own note.",
+        "predecessor_check": "aw-v1.34.4 is the aw-v tag immediately below aw-v1.34.5 in version order (git tag --sort=v:refname: 1.34.3, 1.34.4, 1.34.5 - nothing between), and its commit is an ancestor of aw-v1.34.5's (git merge-base --is-ancestor, exit 0). Established from the tags themselves; the design document does not mention 1.34.4, so no record was available to copy and none is cited."
+      },
+      "aw-cli.members.github:awebai/aw:release.occupied.1.34.4": {
+        "method": "DERIVED-NOT-OBSERVED",
+        "source": "the peeled commit of aw-v1.34.4 in the aweb repository",
+        "warning": "carries the same unverified cross-repository binding as the 1.34.5 entry below, for the same reason and with the same remedy - the external awebai/aw Release object was not queried in this authoring pass."
+      },
+      "aw-cli.members.npm:*.occupied.1.34.4": {
+        "method": "re-observed (presence only)",
+        "source": "https://registry.npmjs.org/@awebai/aw/1.34.4",
+        "result": "HTTP 200, so 1.34.4 occupies npm",
+        "observed_at": "2026-08-14",
+        "observed_by": "aben-dev2",
+        "control": "the same probe against 1.34.999 returned HTTP 404 in the same run, so the 200 reports presence rather than a registry that answers 200 for any path",
+        "note": "identity is null by kind, exactly as for 1.34.5 below. Presence was probed for @awebai/aw only; the six platform packages are recorded at 1.34.4 on the composite-unit contract, matching how the 1.34.5 row is recorded."
+      },
       "aw-cli.anchor_versions.1.34.5": {
         "method": "re-observed",
         "source": "aweb repository tag aw-v1.34.5",
