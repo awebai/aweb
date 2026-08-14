@@ -173,7 +173,6 @@ def image_rows(
     image: str,
     version: str,
     *,
-    expected_revision: str,
     required_platforms: tuple[str, ...],
     check_latest: bool,
     base: str,
@@ -181,20 +180,26 @@ def image_rows(
     timeout: float,
 ) -> list[Row]:
     """Per-fact rows for one OCI image: index digest, each required
-    platform, each child's source-revision label against the expected
-    SHA, and mutable latest equal to the version digest where the
-    publisher promises it. The source tag is a separate repository-side
-    row owned by the caller."""
+    platform present in the index, and mutable latest equal to the
+    version digest where the publisher promises it. The source tag is a
+    separate repository-side row owned by the caller.
+
+    NO SOURCE-REVISION ROW. Under the tag ruling a release's identity
+    is the tag in its own repository, so durable status proves two
+    required facts - the immutable registry object and the exact source
+    tag - and does NOT prove the first was built from the second. That
+    correspondence is enforced at PUBLICATION instead. A row here
+    comparing the image's label to a source SHA would imply a durable
+    check nobody runs (plan-critic's boundary 5). What stays is
+    artifact verification: digest equality, platform completeness, and
+    the immutable-digest read-back (boundary 3)."""
 
     # The fact family is STABLE across outcomes (C2): every branch
     # emits the same keys, so the expected fact domain is derivable
     # from the card alone and a dropped fact is set-detectable.
     facts = [
         f"ghcr:{image} {version} index digest",
-        *(
-            f"ghcr:{image} {version} {platform} revision label"
-            for platform in required_platforms
-        ),
+        *(f"ghcr:{image} {version} {platform}" for platform in required_platforms),
         *((f"ghcr:{image} latest == {version}",) if check_latest else ()),
     ]
     status, body, digest = _fetch_manifest(
@@ -211,11 +216,16 @@ def image_rows(
             for fact in facts
         ]
     index = json.loads(body)
+    # An index digest row is the immutable-object fact, so it cannot be
+    # observed-present without the digest. The previous evidence string
+    # appended the source anchor, which made it non-empty even when the
+    # registry sent no Docker-Content-Digest header - so a row could
+    # read present while proving nothing. Absent header is unavailable.
     rows = [
         Row(
             fact=f"ghcr:{image} {version} index digest",
-            state="observed-present",
-            evidence=f"{digest}; source anchor {expected_revision}",
+            state="observed-present" if digest else "unavailable",
+            evidence=digest or "no Docker-Content-Digest header",
         )
     ]
     children = {
@@ -233,31 +243,13 @@ def image_rows(
                 )
             )
             continue
-        revision = _child_revision(base, image, child, timeout, token)
-        if revision is None:
-            rows.append(
-                Row(
-                    fact=f"ghcr:{image} {version} {platform} revision label",
-                    state="unavailable",
-                    evidence="config unreadable",
-                )
+        rows.append(
+            Row(
+                fact=f"ghcr:{image} {version} {platform}",
+                state="observed-present",
+                evidence=f"child digest {child}",
             )
-        elif revision == expected_revision:
-            rows.append(
-                Row(
-                    fact=f"ghcr:{image} {version} {platform} revision label",
-                    state="observed-present",
-                    evidence=f"label equals source anchor {expected_revision}",
-                )
-            )
-        else:
-            rows.append(
-                Row(
-                    fact=f"ghcr:{image} {version} {platform} revision label",
-                    state="conflict-unproven",
-                    evidence=f"label {revision} != expected {expected_revision}",
-                )
-            )
+        )
     if check_latest:
         l_status, _l_body, l_digest = _fetch_manifest(
             f"{base}/v2/{image}/manifests/latest", timeout, token

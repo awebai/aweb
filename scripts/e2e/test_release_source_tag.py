@@ -1,0 +1,97 @@
+"""The source tag is a publication output (aben, Juan's tag ruling).
+
+Under the ruling a release's identity IS the tag in its own
+repository, so the AC tag stops being bookkeeping and becomes an
+output the release produces, adopted exact-match on retry exactly like
+the release branch pointer. These tests drive it against a real local
+git remote - no mocks - because the failure modes that matter are
+git's, not ours.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+
+import release_train as rt  # noqa: E402
+
+
+def git(*args: str, cwd: Path) -> str:
+    return subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=cwd, check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+class SourceTagPublication(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        self.remote = root / "remote.git"
+        git("init", "-q", "--bare", str(self.remote), cwd=root)
+        self.work = root / "work"
+        git("init", "-q", str(self.work), cwd=root)
+        (self.work / "f.txt").write_text("one\n")
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "one", cwd=self.work)
+        git("remote", "add", "origin", str(self.remote), cwd=self.work)
+        git("push", "-q", "origin", "HEAD:main", cwd=self.work)
+        self.first = git("rev-parse", "HEAD", cwd=self.work)
+        (self.work / "f.txt").write_text("two\n")
+        git("commit", "-q", "-am", "two", cwd=self.work)
+        git("push", "-q", "origin", "HEAD:main", cwd=self.work)
+        self.second = git("rev-parse", "HEAD", cwd=self.work)
+
+    def remote_tag_commit(self, tag: str) -> str | None:
+        out = git("ls-remote", "--tags", "origin", cwd=self.work)
+        direct = peeled = None
+        for line in out.splitlines():
+            sha, ref = line.split(None, 1)
+            name = ref.strip().removeprefix("refs/tags/")
+            if name == f"{tag}^{{}}":
+                peeled = sha
+            elif name == tag:
+                direct = sha
+        return peeled or direct
+
+    def test_tag_is_pushed_at_the_exact_sha_and_is_annotated(self) -> None:
+        rt.publish_source_tag(self.work, "v0.7.15", self.second)
+        self.assertEqual(self.remote_tag_commit("v0.7.15"), self.second)
+        # Annotated, matching AC's own 13 existing release tags: the
+        # peeled ref must exist, which only an annotated tag produces.
+        refs = git("ls-remote", "--tags", "origin", cwd=self.work)
+        self.assertIn("refs/tags/v0.7.15^{}", refs)
+
+    def test_retry_adopts_an_identical_existing_tag(self) -> None:
+        rt.publish_source_tag(self.work, "v0.7.15", self.second)
+        # The retry path: continue re-runs after a partial failure and
+        # must not treat its own completed work as a conflict.
+        rt.publish_source_tag(self.work, "v0.7.15", self.second)
+        self.assertEqual(self.remote_tag_commit("v0.7.15"), self.second)
+
+    def test_a_tag_at_a_different_commit_refuses_by_name(self) -> None:
+        rt.publish_source_tag(self.work, "v0.7.15", self.first)
+        with self.assertRaises(rt.ValidationError) as caught:
+            rt.publish_source_tag(self.work, "v0.7.15", self.second)
+        message = str(caught.exception)
+        self.assertIn("v0.7.15", message)
+        self.assertIn(self.first[:12], message)
+        self.assertIn(self.second[:12], message)
+        # ...and it did NOT move the existing tag.
+        self.assertEqual(self.remote_tag_commit("v0.7.15"), self.first)
+
+    def test_a_malformed_sha_is_refused_before_any_remote_write(self) -> None:
+        with self.assertRaises(rt.ValidationError):
+            rt.publish_source_tag(self.work, "v0.7.15", "not-a-sha")
+        self.assertIsNone(self.remote_tag_commit("v0.7.15"))
+
+
+if __name__ == "__main__":
+    unittest.main()

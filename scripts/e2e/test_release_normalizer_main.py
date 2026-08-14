@@ -19,12 +19,11 @@ import release_train as rt  # noqa: E402
 
 class Routing(unittest.TestCase):
     def test_every_canonical_unit_target_routes(self) -> None:
-        # EVERY target is identityless out of discovery: identity is a
-        # three-request walk per version and discovery must cost one
-        # listing per target. Image identity is still reachable - the
-        # second half of this test requires route_identity to supply it
-        # for exactly the image targets - so the coverage this test had
-        # is preserved rather than dropped with the old contract.
+        # EVERY target is identityless out of discovery. Discovery
+        # reports OCCUPANCY - which versions are published, the one
+        # fact git cannot answer - and nothing else. Identity comes
+        # from the tag in the artifact's own repository, which is
+        # asserted at the capture seam (IdentityIsTheTag), not here.
         specs = cap.derive_capture_specs(rt.ARTIFACTS)
         with mock.patch.multiple(
             cap,
@@ -32,7 +31,6 @@ class Routing(unittest.TestCase):
             discover_npm_versions=lambda *a, **k: {"1.0.0"},
             discover_ghcr_versions=lambda *a, **k: {"1.0.0"},
             discover_github_release_versions=lambda *a, **k: {"1.0.0"},
-            read_oci_revision=lambda *a, **k: "a" * 40,
         ):
             for spec in specs:
                 for target in spec.unit_targets:
@@ -45,15 +43,6 @@ class Routing(unittest.TestCase):
                             bases=main.registry_bases(),
                         )
                         self.assertEqual(occupied, {"1.0.0": None})
-                        identity = main.route_identity(
-                            target, "1.0.0",
-                            timeout=1, ghcr_token="", bases=main.registry_bases(),
-                        )
-                        self.assertEqual(
-                            identity,
-                            "a" * 40 if target.startswith("ghcr.io/") else None,
-                            f"{target}: identity must be reachable lazily",
-                        )
 
     def test_unknown_spelling_raises_not_skips(self) -> None:
         with self.assertRaises(ValueError):

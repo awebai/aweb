@@ -171,49 +171,38 @@ class RegistryDiscovery(unittest.TestCase):
         self.assertEqual(cap._version_namespace_candidates(served), served)
         self.assertEqual(cap._oci_namespace_candidates(served), {"0.7.14"})
 
-    def test_a_line_pointer_is_never_dereferenced(self) -> None:
+    def test_a_line_pointer_never_becomes_occupancy(self) -> None:
         """The sharpest condition, made structural rather than
-        unreached: a line pointer is dropped at discovery, so no code
-        path can read its manifest and adopt a channel tag's revision
-        label as a release identity. Proven by a spy - read_oci_revision
-        is never called with a pointer."""
+        unreached: a line pointer is dropped AT DISCOVERY, so no code
+        path downstream can adopt a channel tag as a release.
+
+        This used to be proven with a spy on the OCI revision reader.
+        That reader is gone - identity is the tag in its own repository
+        now - so the spy would assert that a deleted function was not
+        called, which is true however broken the drop is. The claim
+        that survives is the one about occupancy: the pointer must not
+        appear in what discovery RETURNS, which is the only thing
+        downstream can see."""
 
         import release_normalizer_main as main
-
-        asked: list[str] = []
-
-        def spy_revision(image, version, **kwargs):
-            asked.append(version)
-            return "a" * 40
 
         with mock.patch.object(
             cap, "discover_ghcr_versions",
             lambda *a, **k: cap._oci_namespace_candidates(
                 {"0.7", "0.3", "0.7.14", "latest"}
             ),
-        ), mock.patch.object(cap, "read_oci_revision", spy_revision):
+        ):
             occupied = main.route_discovery(
                 "ghcr.io/awebai/ac",
                 timeout=1, ghcr_token="t", gh_token="",
                 bases=main.registry_bases(),
             )
-            # Discovery no longer dereferences ANYTHING - identity is
-            # resolved lazily - so asserting "no pointer was asked for"
-            # here would now pass without the drop being in place at
-            # all. The claim is kept honest by driving the LAZY path,
-            # which is the only thing that dereferences, and requiring
-            # it to reach the real version and never the pointer.
-            self.assertEqual(set(occupied), {"0.7.14"})
-            self.assertEqual(asked, [], "discovery must not dereference")
-
-            for version in sorted(occupied):
-                main.route_identity(
-                    "ghcr.io/awebai/ac", version,
-                    timeout=1, ghcr_token="t", bases=main.registry_bases(),
-                )
-        self.assertEqual(asked, ["0.7.14"], "a line pointer was dereferenced")
-        self.assertNotIn("0.7", asked)
-        self.assertNotIn("0.3", asked)
+        self.assertEqual(set(occupied), {"0.7.14"})
+        for pointer in ("0.7", "0.3", "latest"):
+            self.assertNotIn(pointer, occupied, pointer)
+        # Identityless by construction now: discovery reports occupancy
+        # and nothing else.
+        self.assertEqual(set(occupied.values()), {None})
 
     def test_unavailable_raises_not_empty(self) -> None:
         # A 500 must never read as an empty history.
