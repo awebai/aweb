@@ -59,6 +59,19 @@ def _apply_manifest_patch(path: Path, from_version: str, to_version: str) -> Non
     path.write_text(text.replace(pattern, replacement, 1))
 
 
+def render_stops(stops) -> str:
+    """THE rendering of a stop line. The runner reached this text from
+    four places and three of them dropped the artifact, so whether a
+    refusal was actionable depended on which path raised it - one fact,
+    several derivations, the family this epic exists to remove. A stop
+    names its subject or it is not a refusal an operator can act on."""
+
+    return "\n".join(
+        f"STOP {stop.code}" + (f" ({stop.artifact})" if stop.artifact else "")
+        for stop in stops
+    )
+
+
 def run_normalizer(
     *,
     capture: Callable[[], rn.CapturedWorld],
@@ -80,12 +93,7 @@ def run_normalizer(
         )
 
     if first.outcome == "stop":
-        lines = [
-            f"STOP {stop.code}"
-            + (f" ({stop.artifact})" if stop.artifact else "")
-            for stop in first.stops
-        ]
-        return Outcome(STOP, "\n".join(lines))
+        return Outcome(STOP, render_stops(first.stops))
 
     if first.outcome == "patch-needed":
         # Equality-group members share physical manifests (both AWID
@@ -134,13 +142,10 @@ def run_normalizer(
                 f"wants {followup.patches}",
             )
         if followup.outcome == "stop":
-            lines = [f"STOP {stop.code}" for stop in followup.stops]
-            return Outcome(STOP, "\n".join(lines))
+            return Outcome(STOP, render_stops(followup.stops))
         moved = list(reobserve(first, world))
         if moved:
-            return Outcome(
-                STOP, "\n".join(f"STOP {stop.code}" for stop in moved)
-            )
+            return Outcome(STOP, render_stops(moved))
         lines = ["PATCH NEEDED - allowlisted working-tree edits applied:"]
         lines += [
             f"  {name}: {from_version} -> {to_version}"
@@ -158,7 +163,7 @@ def run_normalizer(
 
     moved = list(reobserve(first, world))
     if moved:
-        return Outcome(STOP, "\n".join(f"STOP {stop.code}" for stop in moved))
+        return Outcome(STOP, render_stops(moved))
     return Outcome(
         0, "normal form: world and repositories agree; proceeding", result=first
     )
