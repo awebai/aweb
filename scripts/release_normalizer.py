@@ -360,3 +360,209 @@ def group_decision(
         ),
         driver=driver,
     )
+
+
+@dataclasses.dataclass
+class CapturedArtifact:
+    """One artifact's captured world: repository facts (manifest version,
+    content-changed against its anchor, derivation kind) plus registry
+    observations (unit member occupancy, anchor versions). Capture is
+    I/O; everything after is pure."""
+
+    manifest_version: str
+    content_changed: bool
+    derivation: str
+    members: list[UnitMember]
+    anchor_versions: dict[str, str]
+
+
+@dataclasses.dataclass
+class CapturedWorld:
+    artifacts: dict[str, CapturedArtifact]
+    equality_groups: tuple[tuple[str, ...], ...]
+    compatibility: str
+
+
+@dataclasses.dataclass(frozen=True)
+class ArtifactResult:
+    disposition: str  # moving | unmoved | moving-with-recovery
+    version: str | None
+    previous_complete_anchor: tuple[str, str | None] | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class Stop:
+    code: str
+    artifact: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class NormalizerResult:
+    outcome: str  # normal-form | patch-needed | stop
+    artifacts: dict[str, ArtifactResult]
+    patches: tuple[tuple[str, str, str], ...]
+    stops: tuple[Stop, ...]
+
+    def serialize(self) -> bytes:
+        import json
+
+        return json.dumps(
+            {
+                "outcome": self.outcome,
+                "artifacts": {
+                    name: dataclasses.asdict(result)
+                    for name, result in sorted(self.artifacts.items())
+                },
+                "patches": self.patches,
+                "stops": [dataclasses.asdict(s) for s in self.stops],
+            },
+            sort_keys=True,
+        ).encode()
+
+
+def _artifact_result(
+    name: str,
+    captured: CapturedArtifact,
+    reconciliation: Reconciliation,
+    compatibility: str,
+) -> tuple[ArtifactResult | None, tuple[str, str, str] | None, Stop | None]:
+    if reconciliation.state == "stop":
+        return None, None, Stop(reconciliation.stop or "member-stop", name)
+    if reconciliation.state == "conflicting-partial":
+        return None, None, Stop("conflicting-partial", name)
+    if reconciliation.state == "recoverable-partial":
+        return (
+            ArtifactResult(
+                disposition="moving-with-recovery",
+                version=reconciliation.candidate,
+                previous_complete_anchor=(
+                    reconciliation.p or "",
+                    captured.anchor_versions.get(reconciliation.p or ""),
+                ),
+            ),
+            None,
+            None,
+        )
+    # reconciled (p may be None when nothing was ever published)
+    p = reconciliation.p or "0.0.0"
+    occupied = frozenset(
+        v for m in captured.members for v in m.occupied
+    ) | set(captured.anchor_versions) | {p}
+    decision = movement_decision(
+        content_changed=captured.content_changed,
+        manifest_version=captured.manifest_version,
+        reconciled_p=p,
+        occupied_versions=frozenset(occupied),
+        compatibility=compatibility,
+        derivation=captured.derivation,
+    )
+    if decision.kind == "stop":
+        return None, None, Stop(decision.stop or "movement-stop", name)
+    if decision.kind == "unmoved":
+        return (
+            ArtifactResult(
+                disposition="unmoved",
+                version=decision.version,
+                previous_complete_anchor=(
+                    p,
+                    captured.anchor_versions.get(p),
+                ),
+            ),
+            None,
+            None,
+        )
+    patch = None
+    if decision.patch is not None:
+        patch = (name, decision.patch[0], decision.patch[1])
+    return ArtifactResult(disposition="moving", version=decision.version), patch, None
+
+
+def normalize(world: CapturedWorld) -> NormalizerResult:
+    """Compose reconciliation, equality groups, and the movement table
+    into the complete result. Pure over the captured world."""
+
+    grouped = {name for group in world.equality_groups for name in group}
+    artifacts: dict[str, ArtifactResult] = {}
+    patches: list[tuple[str, str, str]] = []
+    stops: list[Stop] = []
+
+    reconciliations = {
+        name: reconcile_unit(
+            members=captured.members,
+            anchor_versions=captured.anchor_versions,
+            manifest_intent=captured.manifest_version,
+        )
+        for name, captured in world.artifacts.items()
+    }
+
+    for name, captured in world.artifacts.items():
+        if name in grouped:
+            continue
+        result, patch, stop = _artifact_result(
+            name, captured, reconciliations[name], world.compatibility
+        )
+        if stop is not None:
+            stops.append(stop)
+        if result is not None:
+            artifacts[name] = result
+        if patch is not None:
+            patches.append(patch)
+
+    for group in world.equality_groups:
+        decision = group_decision(
+            members=[
+                GroupMember(
+                    name=name,
+                    reconciliation=reconciliations[name],
+                    content_changed=world.artifacts[name].content_changed,
+                )
+                for name in group
+            ],
+            manifest_versions={
+                name: world.artifacts[name].manifest_version for name in group
+            },
+            compatibility=world.compatibility,
+        )
+        if decision.kind == "stop":
+            stops.append(Stop(decision.stop or "group-stop", "+".join(group)))
+            continue
+        for name in group:
+            recon = reconciliations[name]
+            if name in decision.recovering:
+                artifacts[name] = ArtifactResult(
+                    disposition="moving-with-recovery",
+                    version=decision.version,
+                    previous_complete_anchor=(
+                        recon.p or "",
+                        world.artifacts[name].anchor_versions.get(recon.p or ""),
+                    ),
+                )
+            elif decision.kind == "unmoved":
+                artifacts[name] = ArtifactResult(
+                    disposition="unmoved",
+                    version=decision.version,
+                    previous_complete_anchor=(
+                        recon.p or "",
+                        world.artifacts[name].anchor_versions.get(recon.p or ""),
+                    ),
+                )
+            else:
+                artifacts[name] = ArtifactResult(
+                    disposition="moving", version=decision.version
+                )
+        if decision.patch:
+            patches.extend(decision.patch)
+
+    patches.sort()
+    if stops:
+        outcome = "stop"
+    elif patches:
+        outcome = "patch-needed"
+    else:
+        outcome = "normal-form"
+    return NormalizerResult(
+        outcome=outcome,
+        artifacts=artifacts,
+        patches=tuple(patches),
+        stops=tuple(sorted(stops, key=lambda s: (s.code, s.artifact or ""))),
+    )
