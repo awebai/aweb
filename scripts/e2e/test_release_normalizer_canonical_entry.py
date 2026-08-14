@@ -180,6 +180,34 @@ class CanonicalEntry(unittest.TestCase):
         self.assertIn("malformed-version-candidate", completed.stdout)
         self.assertIn("ac-image", completed.stdout)
 
+    def test_shared_manifest_pair_patches_once_and_converges(self) -> None:
+        # A2, the shipment gate's duplicate-manifest probe: awid-service
+        # and awid-image both derive 0.5.16 from the one physical
+        # awid/pyproject.toml. The apply path must edit that file
+        # exactly once and reach the fixed point - not crash on the
+        # second application finding nothing left to patch.
+        _write_manifest(self.aweb_root, "awid/service.py", "json", "0.0.0")
+        _git(self.aweb_root, "add", "-A")
+        _git(self.aweb_root, "commit", "-q", "-m", "awid content moves")
+        try:
+            completed = self.run_entry(self.world_at_rest())
+            self.assertEqual(
+                completed.returncode,
+                10,
+                f"stdout:\n{completed.stdout}\nstderr:\n{completed.stderr}",
+            )
+            self.assertNotIn("Traceback", completed.stderr)
+            self.assertIn("awid-service: 0.5.16 -> 0.5.17", completed.stdout)
+            self.assertIn("awid-image: 0.5.16 -> 0.5.17", completed.stdout)
+            self.assertEqual(
+                (self.aweb_root / "awid/pyproject.toml").read_text().count("0.5.17"),
+                1,
+                "the shared manifest carries the new version exactly once",
+            )
+        finally:
+            _git(self.aweb_root, "checkout", "-q", "awid/pyproject.toml")
+            _git(self.aweb_root, "reset", "-q", "--hard", "HEAD~1")
+
     def test_identityless_image_tag_is_captured_not_crashed(self) -> None:
         # A grammar-conforming tag whose config carries no revision label
         # is identityless occupancy - a legitimate observation the
