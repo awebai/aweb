@@ -565,7 +565,7 @@ _CARD_FIELDS = {
     "purpose",
     "deployments",
     "final_ac_sha",
-    "first_release_correction_pending",
+    "production_correction_pending",
 }
 _ARTIFACT_FIELDS = {
     "name",
@@ -588,7 +588,7 @@ class ReleaseCard:
     purpose: str
     deployments: DeploymentSet
     final_ac_sha: None
-    first_release_correction_pending: bool
+    production_correction_pending: bool
 
     def __post_init__(self) -> None:
         validate_sha(self.aweb_sha, "aweb SHA")
@@ -623,12 +623,12 @@ class ReleaseCard:
                 "production deployment must be inferred exactly from AC image movement"
             )
         _validate_bool(
-            self.first_release_correction_pending,
-            "first release correction pending",
+            self.production_correction_pending,
+            "production correction pending",
         )
-        if self.first_release_correction_pending and not ac_moves:
+        if self.production_correction_pending and not ac_moves:
             raise ValidationError(
-                "first release correction cannot be pending without production deployment"
+                "production correction cannot be pending without production deployment"
             )
         if self.final_ac_sha is not None:
             raise ValidationError("final AC SHA must remain pending on the release card")
@@ -647,7 +647,7 @@ class ReleaseCard:
             "purpose": self.purpose,
             "deployments": dataclasses.asdict(self.deployments),
             "final_ac_sha": self.final_ac_sha,
-            "first_release_correction_pending": self.first_release_correction_pending,
+            "production_correction_pending": self.production_correction_pending,
         }
 
     def canonical_bytes(self) -> bytes:
@@ -744,7 +744,7 @@ class ReleaseCard:
                 card["purpose"],
                 deployments,
                 card["final_ac_sha"],
-                card["first_release_correction_pending"],
+                card["production_correction_pending"],
             )
         except ValidationError as error:
             raise CardFormatError(str(error)) from error
@@ -1508,7 +1508,7 @@ def prepare(
         # Pending exactly when this card deploys production - the card's
         # own validator forbids a pending correction without a deploy,
         # and a world at rest must still be cardable.
-        first_release_correction_pending=deployments.production,
+        production_correction_pending=deployments.production,
     )
     write_card(prepared.aweb_root, card)
     return card
@@ -1812,6 +1812,24 @@ def _poll_public_target(
     )
 
 
+def expected_completion_sources(card: "ReleaseCard") -> dict[str, str | None]:
+    """The source identity a completed moving artifact must bind to,
+    per artifact, derived from the card's own SHAs (aben A6): aweb-repo
+    artifacts complete only from the card's aweb SHA; the AC image
+    completes only from the derived final AC SHA, and is unprovable -
+    never acceptable - before that derivation exists."""
+
+    sources: dict[str, str | None] = {}
+    for entry in ARTIFACTS:
+        if entry.key not in CARD_ARTIFACT_ORDER:
+            continue
+        if entry.repository == "aweb":
+            sources[entry.key] = card.aweb_sha
+        else:
+            sources[entry.key] = card.final_ac_sha
+    return sources
+
+
 def _default_rederive(environment) -> list:
     """The real continue-start re-derivation: capture over the checkouts
     at the card SHAs with fresh registry observations, normalize, and
@@ -1835,6 +1853,7 @@ def _default_rederive(environment) -> list:
             timeout=30,
             ghcr_token=os.environ.get("AWEB_GHCR_READ_TOKEN", ""),
             gh_token=os.environ.get("GH_TOKEN", ""),
+            bases=rmain.registry_bases(),
         ),
         equality_groups=rmain.EQUALITY_GROUPS,
         compatibility=environment.card.compatibility,
@@ -1856,7 +1875,9 @@ def _default_rederive(environment) -> list:
         )
         for item in environment.card.artifacts
     ]
-    return rcc.verify_card_against_world(rows, result)
+    return rcc.verify_card_against_world(
+        rows, result, expected_sources=expected_completion_sources(environment.card)
+    )
 
 
 def _gate_rows_not_present(rows) -> list:
