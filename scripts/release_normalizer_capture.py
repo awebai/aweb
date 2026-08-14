@@ -83,17 +83,27 @@ def content_changed(
 ) -> bool:
     """Does the scope's content differ between the anchor commit and HEAD?
 
-    excluded paths (generated owned locks) are ignored entirely; masked
-    paths (version manifests) are compared with only the owned version
-    field normalized, so a dependency-only edit is movement while the
-    fixed point's version patch is not. A masked file absent on either
-    side is new or removed content.
+    excluded paths (generated owned locks, and directories whose
+    contents cannot reach the published artifact) are ignored entirely;
+    masked paths (version manifests) are compared with only the owned
+    version field normalized, so a dependency-only edit is movement
+    while the fixed point's version patch is not. A masked file absent
+    on either side is new or removed content.
+
+    An excluded entry ending in "/" excludes that whole directory: a
+    non-shipping directory holds many files and naming them one by one
+    would go stale the moment someone adds another.
     """
 
     names = _git(
         repo, "diff", "--name-only", f"{anchor_sha}..HEAD", "--", *scope
     ).splitlines()
-    remaining = [name for name in names if name not in excluded]
+    prefixes = tuple(entry for entry in excluded if entry.endswith("/"))
+    remaining = [
+        name
+        for name in names
+        if name not in excluded and not name.startswith(prefixes)
+    ]
     hard = [name for name in remaining if name not in masked]
     if hard:
         return True
@@ -477,7 +487,11 @@ def derive_capture_specs(artifacts) -> list[CaptureSpec]:
         # so dependency and build-metadata edits are movement while the
         # normalizer's own version patch is not (the dependency-only
         # blind spot closed at its cause).
-        excluded = tuple(lock.path for lock in entry.owned_locks if lock.path)
+        # ... and paths the artifact declares as unable to reach its
+        # published bytes, which are equally not movement.
+        excluded = tuple(
+            lock.path for lock in entry.owned_locks if lock.path
+        ) + tuple(entry.content_exclusions)
         from release_train import release_tag_prefix
 
         tag_prefixes = {

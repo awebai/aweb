@@ -86,6 +86,56 @@ class RepoCapture(unittest.TestCase):
             )
         )
 
+    def test_non_shipping_directory_is_excluded_by_prefix(self) -> None:
+        """A path the package cannot publish does not move its content.
+
+        The live patch wanted to publish channel-plugin 1.7.7 whose only
+        in-scope change was channel/test/integration.test.ts - a file
+        outside package.json's files allowlist AND outside tsconfig's
+        include, so the published bytes are identical either way.
+
+        Exclusions are declared as DIRECTORY PREFIXES, which the
+        previous exact-match membership could not express: a test
+        directory holds many files and none of them ship."""
+
+        (self.work / "pkg" / "test").mkdir()
+        (self.work / "pkg" / "test" / "a.test.ts").write_text("expect(1)\n")
+        (self.work / "pkg" / "test" / "b.test.ts").write_text("expect(2)\n")
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "tests only", cwd=self.work)
+        self.assertFalse(
+            cap.content_changed(
+                self.work, self.anchor_sha, scope=("pkg/",),
+                excluded=("pkg/pyproject.toml", "pkg/test/"),
+            ),
+            "a change confined to a non-shipping directory is not movement",
+        )
+
+    def test_source_change_beside_an_excluded_directory_is_still_movement(
+        self,
+    ) -> None:
+        """The control that makes the exclusion safe rather than
+        dangerous. The two failure modes are ASYMMETRIC: an extra
+        version bump publishes identical bytes, while a missed one
+        ships new code under an old version. So the rule must be
+        "exclude what provably cannot ship", never "include only the
+        declared allowlist" - the channel allowlist names `dist`, which
+        is gitignored and built from `src/`, so following the allowlist
+        literally would make every source change invisible."""
+
+        (self.work / "pkg" / "test").mkdir()
+        (self.work / "pkg" / "test" / "a.test.ts").write_text("expect(1)\n")
+        (self.work / "pkg" / "code.py").write_text("v2\n")
+        git("add", "-A", cwd=self.work)
+        git("commit", "-q", "-m", "source and tests", cwd=self.work)
+        self.assertTrue(
+            cap.content_changed(
+                self.work, self.anchor_sha, scope=("pkg/",),
+                excluded=("pkg/pyproject.toml", "pkg/test/"),
+            ),
+            "a source change must still be movement when tests move too",
+        )
+
     def test_excluded_manifest_change_is_not_movement(self) -> None:
         # The fixed-point construction: a version bump alone never
         # re-triggers content change.

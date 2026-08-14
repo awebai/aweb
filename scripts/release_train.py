@@ -111,6 +111,18 @@ class Artifact:
     occupancy_unit: tuple[str, ...] = ()
     required_current_outputs: tuple[str, ...] = ()
     owned_locks: tuple[OwnedLock, ...] = ()
+    # Paths INSIDE content_scope whose change cannot reach the published
+    # artifact: the package manifest's files allowlist excludes them and
+    # no build step consumes them, so the shipped bytes are identical
+    # either way. An entry ending in "/" excludes that directory.
+    #
+    # Declared as exclusions rather than deriving the scope FROM the
+    # allowlist, because the two failure modes are asymmetric: a
+    # spurious bump publishes identical bytes, a missed one ships new
+    # code under an old version. The npm allowlists name `dist`, which
+    # is gitignored and built from src/, so following them literally
+    # would make every source change invisible.
+    content_exclusions: tuple[str, ...] = ()
     # The publisher's mutable-latest promise, declared beside the other
     # per-artifact facts so adding an image artifact FORCES the decision
     # (release-review's C2 note: a bare set in the status module was the
@@ -223,6 +235,7 @@ ARTIFACTS = (
         "channel/package.json",
         bundled_inputs=("channel-core",),
         content_scope=("channel/", "channel-core/"),
+        content_exclusions=("channel/test/", "channel-core/test/"),
         anchor=Anchor("tag_pattern", "channel-v"),
         occupancy_unit=("npm:@awebai/claude-channel",),
     ),
@@ -234,6 +247,7 @@ ARTIFACTS = (
         "pi-extension/package.json",
         bundled_inputs=("channel-core",) + SKILL_SOURCES,
         content_scope=("pi-extension/", "channel-core/", "skills/"),
+        content_exclusions=("pi-extension/test/", "channel-core/test/"),
         anchor=Anchor("tag_pattern", "pi-v"),
         occupancy_unit=("npm:@awebai/pi",),
     ),

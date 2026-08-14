@@ -93,6 +93,64 @@ class SpecDerivation(unittest.TestCase):
                     f"{target}: capture spec disagrees with the owner",
                 )
 
+    def test_declared_exclusions_are_verified_against_the_real_manifests(
+        self,
+    ) -> None:
+        """Every content exclusion must be provably non-shipping.
+
+        The live patch wanted channel-plugin 1.7.7 whose only in-scope
+        change was channel/test/integration.test.ts: outside
+        package.json's `files` allowlist and outside tsconfig's
+        `include`, so the published bytes were identical either way.
+
+        This reads the REAL package.json and tsconfig.json rather than
+        restating the declaration, so an exclusion that stops being
+        true - someone adds test/ to `files`, or a build starts
+        consuming it - fails here instead of silently suppressing a
+        real release."""
+
+        import json
+        import re
+
+        checked = 0
+        for entry in rt.ARTIFACTS:
+            for excluded in entry.content_exclusions:
+                package_dir = REPO_ROOT / excluded.rstrip("/").rsplit("/", 1)[0]
+                manifest = package_dir / "package.json"
+                if not manifest.is_file():
+                    continue
+                relative = excluded.rstrip("/").rsplit("/", 1)[1]
+                with self.subTest(artifact=entry.key, path=excluded):
+                    files = json.loads(manifest.read_text()).get("files")
+                    self.assertIsNotNone(
+                        files, f"{manifest} has no files allowlist"
+                    )
+                    self.assertNotIn(
+                        relative, files,
+                        f"{excluded} IS published - it must not be excluded",
+                    )
+                    tsconfig = package_dir / "tsconfig.json"
+                    if tsconfig.is_file():
+                        raw = re.sub(r"(?m)//.*$", "", tsconfig.read_text())
+                        config = json.loads(raw)
+                        self.assertIn(
+                            relative, config.get("exclude", []),
+                            f"{excluded} is compiled - it can reach dist",
+                        )
+                    checked += 1
+        self.assertGreater(checked, 0, "no exclusion was actually verified")
+
+    def test_exclusions_live_inside_their_artifact_scope(self) -> None:
+        # An exclusion outside the scope excludes nothing and is a typo
+        # that would read as deliberate.
+        for entry in rt.ARTIFACTS:
+            for excluded in entry.content_exclusions:
+                with self.subTest(artifact=entry.key, path=excluded):
+                    self.assertTrue(
+                        any(excluded.startswith(s) for s in entry.content_scope),
+                        f"{excluded} is not inside {entry.content_scope}",
+                    )
+
     def test_cli_derivation_kind_follows_version_source(self) -> None:
         self.assertEqual(self.specs["aw-cli"].derivation, "tag-history")
         self.assertEqual(self.specs["aweb-server"].derivation, "manifest")
