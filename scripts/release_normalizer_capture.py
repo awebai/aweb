@@ -197,3 +197,89 @@ def discover_github_release_versions(
     raise DiscoveryBoundExceeded(
         f"{repository}: release history exceeds {_DISCOVERY_PAGE_BOUND} pages"
     )
+
+
+import dataclasses as _dataclasses
+
+from release_normalizer import CapturedArtifact, CapturedWorld, UnitMember
+
+
+@_dataclasses.dataclass(frozen=True)
+class CaptureSpec:
+    """One artifact's capture instructions, assembled from the canonical
+    ARTIFACTS entry (the wiring derives these; nothing here is a second
+    inventory)."""
+
+    name: str
+    repo_key: str
+    manifest_path: str
+    derivation: str
+    scope: tuple[str, ...]
+    excluded: tuple[str, ...]
+    anchor_kind: str
+    anchor_value: str
+    unit_targets: tuple[str, ...]
+
+
+def assemble_captured_world(
+    *,
+    specs,
+    repo_roots: dict[str, Path],
+    discover_target,
+    equality_groups,
+    compatibility: str,
+) -> CapturedWorld:
+    """Build the pure normalizer's CapturedWorld: anchors and content
+    facts from the repositories, occupancy through the injected
+    discoverer (one call per unit target), manifests from version_source.
+
+    content_changed is computed against the NEWEST anchor commit; for
+    recoverable partials the reconciler pins its own previous complete P
+    and the movement table is not consulted for the recovering artifact,
+    so the newest-anchor comparison is the correct repository-side fact
+    for every path that reads it. An artifact with no anchor at all is
+    all new content.
+    """
+
+    artifacts: dict[str, CapturedArtifact] = {}
+    for spec in specs:
+        repo = repo_roots[spec.repo_key]
+        if spec.anchor_kind == "tag_pattern":
+            anchors = discover_anchor_tags(repo, spec.anchor_value)
+        else:
+            # oci_revision_label anchors are registry-side facts; the
+            # discoverer supplies them per target and the repository
+            # contributes no tag history.
+            anchors = {}
+        if anchors:
+            from release_normalizer import parse_version as _parse
+
+            newest = max(
+                (parsed, text)
+                for text in anchors
+                if (parsed := _parse(text)) is not None
+            )[1]
+            changed = content_changed(
+                repo,
+                anchors[newest],
+                scope=spec.scope,
+                excluded=spec.excluded,
+            )
+        else:
+            changed = True
+        members = [
+            UnitMember(name=target, occupied=dict(discover_target(target)))
+            for target in spec.unit_targets
+        ]
+        artifacts[spec.name] = CapturedArtifact(
+            manifest_version=manifest_version(repo / spec.manifest_path),
+            content_changed=changed,
+            derivation=spec.derivation,
+            members=members,
+            anchor_versions=anchors,
+        )
+    return CapturedWorld(
+        artifacts=artifacts,
+        equality_groups=tuple(equality_groups),
+        compatibility=compatibility,
+    )
