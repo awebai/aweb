@@ -282,7 +282,50 @@ record them because the packet's evidence should be read as
 calibrated, not as advocacy - and because they are the same defect the
 code findings above describe, committed by the person auditing for it.
 
-**The re-run** - STAMP-AT-SEND: the classification the same launcher
+**THE RE-RUN, over the trio at main.** aweb `25577c1d`, AC
+`22ab8bbe`, aw `23391f30`, all clean and at origin/main. Exit 10,
+PATCH NEEDED, in THIRTY-FIVE SECONDS:
+
+    awid-image:   0.5.16 -> 0.5.17
+    awid-service: 0.5.16 -> 0.5.17
+    skills:       0.2.12 -> 0.2.13
+    aweb-server floor: awid-service>=0.5.16 -> >=0.5.17
+
+Nothing published, no pointer moved, working-tree edits only. Four
+things this run establishes that no fixture could:
+
+- the equality group resolves correctly against the real world -
+  aweb-server holds at 1.27.2 with only its floor moving, the opposite
+  of the phantom-release direction, which is the row pre-registered
+  before the run;
+- no channel-plugin row: a test file that cannot ship no longer moves
+  an artifact;
+- the aw external binding ran for real against a live checkout rather
+  than being skipped, which is what the precondition exists to
+  guarantee;
+- and the whole phase costs half a minute against 695 seconds at first
+  contact.
+
+**A PATCH RUN CANNOT PRODUCE A CARD, and that is the designed
+behaviour rather than a shortfall.** PATCH NEEDED is terminal for the
+prepare: the edits go to normal review, and only once they are
+committed and landed does the next prepare reach normal form, run the
+gate and mint a card. The remaining distance to the first release
+through the fixed process is therefore one reviewed version-bump
+change, not another repair.
+
+One row of that patch is a policy question rather than a mechanical
+one and is deliberately unresolved here: awid-service moves only
+because the equality group ties it to awid-image, its own scope has
+zero changed files, and committing it publishes a PyPI package
+byte-identical to its predecessor. Committing the patch IS that
+decision - there is no later point at which it returns - so it sits
+with the human rather than being reconciled by the engine or by me.
+
+**The card** - STAMP-AT-SEND, and its known gap named in advance: the
+AC source-tag rows (card, ordering, recovery) will be absent by
+DECLARATION, because the tag is created during continue and a prepare
+does not reach it. the classification the same launcher
 produces over the pair refreshed to `38a3b871` / AC `22ab8bbe`, with the
 equality-group resolution stated explicitly, and any remaining stop
 named. Instrument note, so a reader does not mistake it for a product
