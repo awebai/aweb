@@ -28,17 +28,21 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+# fixture_git lives beside this module; the suite loads it as
+# scripts.e2e.<name>, so the package directory is not on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import release_normalizer_capture as cap  # noqa: E402
 import release_train as rt  # noqa: E402
+from fixture_git import git as _fixture_git  # noqa: E402
 
 MOVED_SCRIPT = REPO_ROOT / "scripts" / "release_artifact_moved.py"
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
-    ).stdout.strip()
+    """Through the one owner - see fixture_git."""
+
+    return _fixture_git(*args, cwd=cwd)
 
 
 class ArtifactMovement(unittest.TestCase):
@@ -50,10 +54,8 @@ class ArtifactMovement(unittest.TestCase):
         root = Path(self.tmp.name)
         self.origin = root / "origin.git"
         self.repo = root / "checkout"
-        subprocess.run(
-            ["git", "init", "--bare", "-q", str(self.origin)], check=True
-        )
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        _git(Path(self.tmp.name), "init", "--bare", "-q", str(self.origin))
+        _git(Path(self.tmp.name), "init", "-q", str(self.repo))
         _git(self.repo, "config", "user.name", "fixture")
         _git(self.repo, "config", "user.email", "fixture@example.invalid")
         self._write("cli/go/main.go", "package main\n")
@@ -152,10 +154,8 @@ class MovedCommand(unittest.TestCase):
         root = Path(self.tmp.name)
         self.origin = root / "origin.git"
         self.repo = root / "checkout"
-        subprocess.run(
-            ["git", "init", "--bare", "-q", str(self.origin)], check=True
-        )
-        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        _git(Path(self.tmp.name), "init", "--bare", "-q", str(self.origin))
+        _git(Path(self.tmp.name), "init", "-q", str(self.repo))
         _git(self.repo, "config", "user.name", "fixture")
         _git(self.repo, "config", "user.email", "fixture@example.invalid")
         path = self.repo / "cli/go/npm/aw"

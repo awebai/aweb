@@ -27,15 +27,21 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
+# fixture_git lives beside this module; the suite loads it as
+# scripts.e2e.<name>, so the package directory is not on sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import release_status_builders as builders  # noqa: E402
 import release_train as rt  # noqa: E402
+from fixture_git import git as _fixture_git  # noqa: E402
 
 
 def _git(cwd: Path, *args: str) -> str:
-    return subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
-    ).stdout.strip()
+    """Through the one owner: init.defaultBranch and identity differ
+    between this host and the gate container, and an unpinned bare
+    remote leaves a clone with an unborn HEAD."""
+
+    return _fixture_git(*args, cwd=cwd)
 
 
 class TerminalRefresh(unittest.TestCase):
@@ -44,11 +50,9 @@ class TerminalRefresh(unittest.TestCase):
         root = Path(self.tmp.name)
         self.origin = root / "origin.git"
         self.checkout = root / "checkout"
-        subprocess.run(
-            ["git", "init", "--bare", "-q", str(self.origin)], check=True
-        )
+        _git(Path(self.tmp.name), "init", "--bare", "-q", str(self.origin))
         seed = root / "seed"
-        subprocess.run(["git", "init", "-q", str(seed)], check=True)
+        _git(Path(self.tmp.name), "init", "-q", str(seed))
         _git(seed, "config", "user.name", "fixture")
         _git(seed, "config", "user.email", "fixture@example.invalid")
         (seed / "file").write_text("published\n")
@@ -58,10 +62,7 @@ class TerminalRefresh(unittest.TestCase):
         _git(seed, "remote", "add", "origin", str(self.origin))
         _git(seed, "push", "-q", "origin", "HEAD:main")
         self.seed = seed
-        subprocess.run(
-            ["git", "clone", "-q", str(self.origin), str(self.checkout)],
-            check=True,
-        )
+        _git(Path(self.tmp.name), "clone", "-q", str(self.origin), str(self.checkout))
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -126,9 +127,7 @@ class TerminalRefresh(unittest.TestCase):
         others reading stale - the shape of a fix that looks applied."""
 
         second = Path(self.tmp.name) / "second"
-        subprocess.run(
-            ["git", "clone", "-q", str(self.origin), str(second)], check=True
-        )
+        _git(Path(self.tmp.name), "clone", "-q", str(self.origin), str(second))
         tag = "a2a-gw-v1.27.2"
         self._publish_tag_after_the_checkout_was_fetched(tag)
 

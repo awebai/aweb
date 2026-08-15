@@ -318,6 +318,7 @@ test-column-b:
 # every release rather than nowhere.
 ABEN_MODULES = scripts.e2e.test_release_artifact_metadata \
 	scripts.e2e.test_release_artifact_moved \
+	scripts.e2e.test_release_fixture_git_ownership \
 	scripts.e2e.test_release_card_schema \
 	scripts.e2e.test_release_command_argv_contract \
 	scripts.e2e.test_release_continue_rederivation \
