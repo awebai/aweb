@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sys
 
-from release import npm_present, pypi_present
+from release import Refusal, npm_present, pypi_present
 
 
 def main(argv: list[str]) -> int:
@@ -16,12 +16,16 @@ def main(argv: list[str]) -> int:
         )
         return 2
     kind, package = argv[0].split(":", 1)
-    if kind == "pypi":
-        present = pypi_present(package, argv[1])
-    elif kind == "npm":
-        present = npm_present(package, argv[1])
-    else:
-        print(f"unsupported registry: {kind}", file=sys.stderr)
+    try:
+        if kind == "pypi":
+            present = pypi_present(package, argv[1])
+        elif kind == "npm":
+            present = npm_present(package, argv[1])
+        else:
+            print(f"unsupported registry: {kind}", file=sys.stderr)
+            return 2
+    except Refusal as exc:
+        print(f"public registry unavailable: {exc}", file=sys.stderr)
         return 2
     return 0 if present else 1
 

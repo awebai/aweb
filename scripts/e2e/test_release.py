@@ -19,6 +19,19 @@ assert SPEC and SPEC.loader
 release = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = release
 SPEC.loader.exec_module(release)
+sys.modules["release"] = release
+
+
+def load_script(name: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+observe_public_target = load_script("observe_public_target")
+release_artifact_moved = load_script("release_artifact_moved")
 
 
 def command(root: Path, *args: str) -> str:
@@ -189,6 +202,7 @@ class CrashRecoveryTest(unittest.TestCase):
             release,
             require_clean=mock.DEFAULT,
             fetch=mock.DEFAULT,
+            require_expected_head=mock.DEFAULT,
             open_intent=mock.Mock(side_effect=open_values),
             compute_intent=mock.Mock(
                 return_value=(self.intent, {"aweb-server", "ac-image"})
@@ -239,6 +253,7 @@ class CrashRecoveryTest(unittest.TestCase):
             self.assertEqual(release.compute_intent.call_count, 0)
             self.assertEqual(release.reconcile_ac.call_count, 2)
             self.assertEqual(mocks["mark_done"].call_count, 1)
+            self.assertEqual(mocks["require_expected_head"].call_count, 4)
 
     def test_absent_unchanged_output_refuses_before_intent_or_gate(self) -> None:
         with self.patches([None]) as mocks:
@@ -253,6 +268,194 @@ class CrashRecoveryTest(unittest.TestCase):
                     for call in mocks["run"].call_args_list
                 )
             )
+
+
+class PublicObservationTest(unittest.TestCase):
+    def versions(self) -> dict[str, str]:
+        values = {artifact.key: "1.2.3" for artifact in release.ARTIFACTS}
+        values["ac-image"] = "4.5.6"
+        return values
+
+    def test_registry_unavailability_is_not_reported_as_absence(self) -> None:
+        completed = subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="connection refused"
+        )
+        with mock.patch.object(release.subprocess, "run", return_value=completed):
+            with self.assertRaisesRegex(
+                release.Refusal, "cannot observe public target"
+            ):
+                release.command_present(
+                    Path("/repo"),
+                    "docker",
+                    "buildx",
+                    "imagetools",
+                    "inspect",
+                    "example",
+                    absent_markers=("manifest unknown",),
+                )
+
+    def test_exact_not_found_response_is_absence(self) -> None:
+        completed = subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="manifest unknown"
+        )
+        with mock.patch.object(release.subprocess, "run", return_value=completed):
+            self.assertFalse(
+                release.command_present(
+                    Path("/repo"),
+                    "docker",
+                    "buildx",
+                    "imagetools",
+                    "inspect",
+                    "example",
+                    absent_markers=("manifest unknown",),
+                )
+            )
+
+    def test_oci_digest_distinguishes_absent_from_unavailable(self) -> None:
+        absent = subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="example: not found"
+        )
+        unavailable = subprocess.CompletedProcess(
+            [], 1, stdout="", stderr="connection refused"
+        )
+        with mock.patch.object(release.subprocess, "run", return_value=absent):
+            self.assertIsNone(release.oci_digest(Path("/repo"), "example"))
+        with mock.patch.object(release.subprocess, "run", return_value=unavailable):
+            with self.assertRaisesRegex(
+                release.Refusal, "cannot observe public target"
+            ):
+                release.oci_digest(Path("/repo"), "example")
+
+    def test_oci_digest_requires_one_exact_digest(self) -> None:
+        wanted = "sha256:" + "a" * 64
+        completed = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps(wanted), stderr=""
+        )
+        with mock.patch.object(release.subprocess, "run", return_value=completed):
+            self.assertEqual(release.oci_digest(Path("/repo"), "example"), wanted)
+
+    def test_higher_public_package_version_is_refused(self) -> None:
+        with mock.patch.object(
+            release, "published_package_versions", return_value={"1.2.3", "1.2.4"}
+        ):
+            with self.assertRaisesRegex(release.Refusal, "above reviewed"):
+                release.refuse_higher_public_versions(self.versions())
+
+    def test_older_and_prerelease_versions_do_not_conflict(self) -> None:
+        with (
+            mock.patch.object(
+                release,
+                "published_package_versions",
+                return_value={"1.2.2", "1.2.3", "1.2.4rc1", "latest"},
+            ),
+            mock.patch.object(release, "npm_latest", return_value="1.2.3"),
+        ):
+            release.refuse_higher_public_versions(self.versions())
+
+    def test_wrong_npm_latest_is_refused_even_without_a_higher_version(self) -> None:
+        with (
+            mock.patch.object(
+                release, "published_package_versions", return_value={"1.2.3"}
+            ),
+            mock.patch.object(release, "npm_latest", return_value="1.2.2"),
+        ):
+            with self.assertRaisesRegex(release.Refusal, "latest is 1.2.2"):
+                release.refuse_higher_public_versions(self.versions())
+
+    def test_workflow_observer_has_three_distinct_outcomes(self) -> None:
+        with mock.patch.object(
+            observe_public_target, "pypi_present", return_value=True
+        ):
+            self.assertEqual(observe_public_target.main(["pypi:aweb", "1.2.3"]), 0)
+        with mock.patch.object(
+            observe_public_target, "pypi_present", return_value=False
+        ):
+            self.assertEqual(observe_public_target.main(["pypi:aweb", "1.2.3"]), 1)
+        with mock.patch.object(
+            observe_public_target,
+            "pypi_present",
+            side_effect=release.Refusal("network down"),
+        ):
+            self.assertEqual(observe_public_target.main(["pypi:aweb", "1.2.3"]), 2)
+
+    def test_workflow_movement_tokens_are_stable(self) -> None:
+        with (
+            mock.patch.object(
+                release_artifact_moved.release,
+                "latest_release",
+                return_value=("1.2.3", "v1.2.3"),
+            ),
+            mock.patch.object(
+                release_artifact_moved.release, "git", return_value="a" * 40
+            ),
+            mock.patch.object(
+                release_artifact_moved.release,
+                "content_changed",
+                side_effect=[False, True],
+            ),
+            mock.patch("builtins.print") as output,
+        ):
+            self.assertEqual(release_artifact_moved.main(["aw-cli"]), 0)
+            output.assert_called_with("unmoved")
+            self.assertEqual(release_artifact_moved.main(["aw-cli"]), 0)
+            output.assert_called_with("moving")
+
+
+class AcDigestTest(unittest.TestCase):
+    source = "c" * 40
+    version = "4.5.6"
+
+    def record(self, digest: str, **updates: str) -> str:
+        value = {
+            "digest": digest,
+            "source_sha": self.source,
+            "version": self.version,
+            **updates,
+        }
+        return "release-index=" + json.dumps(
+            value, sort_keys=True, separators=(",", ":")
+        )
+
+    def test_only_explicit_publisher_digest_is_accepted(self) -> None:
+        wanted = "sha256:" + "a" * 64
+        noise = "sha256:" + "b" * 64
+        with mock.patch.object(
+            release,
+            "run",
+            return_value=f"base {noise}\n{self.record(wanted)}\nchild {noise}",
+        ):
+            self.assertEqual(
+                release.ac_digest_from_run(Path("/ac"), 42, self.source, self.version),
+                wanted,
+            )
+
+    def test_arbitrary_log_digests_are_refused(self) -> None:
+        with mock.patch.object(release, "run", return_value="layer sha256:" + "b" * 64):
+            with self.assertRaisesRegex(release.Refusal, "no release-index record"):
+                release.ac_digest_from_run(Path("/ac"), 42, self.source, self.version)
+
+    def test_conflicting_explicit_digests_are_refused(self) -> None:
+        first = "sha256:" + "a" * 64
+        second = "sha256:" + "b" * 64
+        with mock.patch.object(
+            release,
+            "run",
+            return_value=f"{self.record(first)}\n{self.record(second)}",
+        ):
+            with self.assertRaisesRegex(
+                release.Refusal, "conflicting release-index digests"
+            ):
+                release.ac_digest_from_run(Path("/ac"), 42, self.source, self.version)
+
+    def test_record_for_another_source_is_refused(self) -> None:
+        digest = "sha256:" + "a" * 64
+        with mock.patch.object(
+            release,
+            "run",
+            return_value=self.record(digest, source_sha="d" * 40),
+        ):
+            with self.assertRaisesRegex(release.Refusal, "does not bind source"):
+                release.ac_digest_from_run(Path("/ac"), 42, self.source, self.version)
 
 
 class WorkflowContractTest(unittest.TestCase):

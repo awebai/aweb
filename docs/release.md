@@ -22,7 +22,9 @@ does not choose new commits or versions.
 - The `aw` CLI has no manifest. Its next patch comes from `aw-v*` history.
 - Source tags identify the commit that produced an artifact.
 - Public registries and exact-publish verification establish that the expected
-  bytes are served.
+  bytes are served. A higher strict-semver PyPI/npm publication than the
+  reviewed intent is a conflict, including one left by a workflow that died
+  before tagging. OCI version and `latest` must resolve to the same digest.
 - `backend/pyproject.toml` and `backend/uv.lock` together declare the complete
   aweb dependency set inside AC. The release never filters this check by what
   happened to publish in the current process.
@@ -41,6 +43,10 @@ does not choose new commits or versions.
 | `packages/claude-skills/` + `skills/` | npm package and release ZIPs | package manifest |
 | `cli/go/` + server version | `ghcr.io/awebai/a2a-gateway` | server version |
 | AC application | `ghcr.io/awebai/ac` and Render production | `backend/pyproject.toml` |
+
+The A2A gateway shares the server version. Consequently a `cli/go/` change also
+requires a reviewed server version bump even when the Python server did not
+otherwise change.
 
 Static sites are deliberately independent. Their deploy targets are not part of
 an application/artifact release.
@@ -80,14 +86,18 @@ an AC version or redeploy an unchanged application.
 - Before the intent tags, failure has made no publication decision; fix source
   on `main` and rerun.
 - After the intent tags, the intent is authoritative until done. Rerun the same
-  command. Exact matches are adopted and completed workflows are reused.
+  command from checkouts still at the two commits named by the intent. Exact
+  matches are adopted and completed workflows are reused; an unrelated live
+  checkout can never supply tooling to a resumed release.
 - A public version containing different bytes, a conflicting tag, a non-fast-
   forward pointer, a changed AC base before derivation, an incomplete lock, or
   a failed gate stops the run. Nothing turns those conditions into success.
 - There is no “resume” command and no editable state file.
 - Tests do not justify a content mismatch. Publication workflows compare or
   verify the built output; AC's dependency content is checked before build and
-  again before deploy.
+  again before deploy. AC's workflow emits one canonical release-index record
+  binding the immutable two-platform digest to its source SHA and version; only
+  that record can reach the deployment client.
 
 ## Burned artifact
 

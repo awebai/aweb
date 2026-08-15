@@ -27,7 +27,6 @@ from typing import Sequence
 
 
 SEMVER = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 INTENT_PREFIX = "release-intent-"
 DONE_PREFIX = "release-done-"
 MARKETPLACE_REPOSITORY = "git@github.com:awebai/claude-plugins.git"
@@ -225,6 +224,12 @@ def require_main_tip(repo: Path) -> None:
         raise Refusal(f"{repo} must be checked out at origin/main ({main}), not {head}")
 
 
+def require_expected_head(repo: Path, expected: str, label: str) -> None:
+    head = git(repo, "rev-parse", "HEAD")
+    if head != expected:
+        raise Refusal(f"{repo} must be checked out at {label} ({expected}), not {head}")
+
+
 def version_tuple(value: str) -> tuple[int, int, int]:
     if not SEMVER.fullmatch(value):
         raise Refusal(f"version {value!r} is not MAJOR.MINOR.PATCH")
@@ -342,15 +347,127 @@ def npm_present(package: str, version: str) -> bool:
     return data.get("name") == package and data.get("version") == version
 
 
-def command_present(root: Path, *argv: str) -> bool:
-    result = subprocess.run(
-        argv, cwd=root, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60
+def published_package_versions(kind: str, package: str) -> set[str]:
+    if kind == "pypi":
+        try:
+            data = read_url(f"https://pypi.org/pypi/{package}/json")
+        except FileNotFoundError:
+            return set()
+        values = data.get("releases", {})
+    elif kind == "npm":
+        quoted = urllib.parse.quote(package, safe="")
+        try:
+            data = read_url(f"https://registry.npmjs.org/{quoted}")
+        except FileNotFoundError:
+            return set()
+        values = data.get("versions", {})
+    else:
+        raise Refusal(f"unsupported package registry {kind!r}")
+    if not isinstance(values, dict):
+        raise Refusal(f"{kind} returned malformed version metadata for {package}")
+    return {value for value in values if SEMVER.fullmatch(value)}
+
+
+def npm_latest(package: str) -> str | None:
+    quoted = urllib.parse.quote(package, safe="")
+    try:
+        data = read_url(f"https://registry.npmjs.org/{quoted}")
+    except FileNotFoundError:
+        return None
+    tags = data.get("dist-tags", {})
+    latest = tags.get("latest") if isinstance(tags, dict) else None
+    if not isinstance(latest, str) or not SEMVER.fullmatch(latest):
+        raise Refusal(f"npm returned no valid latest version for {package}")
+    return latest
+
+
+def refuse_higher_public_versions(versions: dict[str, str]) -> None:
+    targets = [
+        ("aweb-server", "pypi", "aweb"),
+        ("awid-service", "pypi", "awid-service"),
+        ("channel-plugin", "npm", "@awebai/claude-channel"),
+        ("pi-extension", "npm", "@awebai/pi"),
+        ("skills", "npm", "@awebai/claude-skills"),
+        *(("aw-cli", "npm", package) for package in AW_PACKAGES),
+    ]
+    for artifact, kind, package in targets:
+        expected = versions[artifact]
+        higher = sorted(
+            (
+                value
+                for value in published_package_versions(kind, package)
+                if SEMVER.fullmatch(value)
+                and version_tuple(value) > version_tuple(expected)
+            ),
+            key=version_tuple,
+        )
+        if higher:
+            raise Refusal(
+                f"{kind}:{package} serves versions above reviewed {artifact} "
+                f"{expected}: {higher}"
+            )
+        if kind == "npm":
+            latest = npm_latest(package)
+            if latest is not None and latest != expected:
+                raise Refusal(
+                    f"npm:{package} latest is {latest}, not reviewed {artifact} "
+                    f"{expected}"
+                )
+
+
+def command_present(root: Path, *argv: str, absent_markers: tuple[str, ...]) -> bool:
+    result = subprocess.run(argv, cwd=root, text=True, capture_output=True, timeout=60)
+    if result.returncode == 0:
+        return True
+    detail = "\n".join(
+        value.strip() for value in (result.stdout, result.stderr) if value.strip()
     )
-    return result.returncode == 0
+    if any(marker in detail.lower() for marker in absent_markers):
+        return False
+    raise Refusal(
+        f"cannot observe public target with {' '.join(argv)}: "
+        f"{detail or f'exit {result.returncode}'}"
+    )
+
+
+def oci_digest(root: Path, reference: str) -> str | None:
+    argv = (
+        "docker",
+        "buildx",
+        "imagetools",
+        "inspect",
+        reference,
+        "--format",
+        "{{json .Manifest.Digest}}",
+    )
+    result = subprocess.run(argv, cwd=root, text=True, capture_output=True, timeout=60)
+    if result.returncode:
+        detail = "\n".join(
+            value.strip() for value in (result.stdout, result.stderr) if value.strip()
+        )
+        if any(
+            marker in detail.lower()
+            for marker in ("manifest unknown", ": not found", "no such manifest")
+        ):
+            return None
+        raise Refusal(
+            f"cannot observe public target with {' '.join(argv)}: "
+            f"{detail or f'exit {result.returncode}'}"
+        )
+    try:
+        digest = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise Refusal(
+            f"OCI registry returned a malformed digest for {reference}"
+        ) from exc
+    if not isinstance(digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+        raise Refusal(f"OCI registry returned an invalid digest for {reference}")
+    return digest
 
 
 def missing_aweb_workflows(versions: dict[str, str], root: Path) -> set[str]:
     """Return the publisher workflows needed to repair absent desired outputs."""
+    refuse_higher_public_versions(versions)
     missing: set[str] = set()
     if not pypi_present("aweb", versions["aweb-server"]) or not pypi_present(
         "awid-service", versions["awid-service"]
@@ -368,33 +485,39 @@ def missing_aweb_workflows(versions: dict[str, str], root: Path) -> set[str]:
             f"skills-v{versions['skills']}",
             "--repo",
             "awebai/aweb",
+            absent_markers=("release not found", "could not resolve to a release"),
         )
     ):
         missing.add("npm-release.yml")
     if any(
         not npm_present(package, versions["aw-cli"]) for package in AW_PACKAGES
     ) or not command_present(
-        root, "gh", "release", "view", f"v{versions['aw-cli']}", "--repo", "awebai/aw"
+        root,
+        "gh",
+        "release",
+        "view",
+        f"v{versions['aw-cli']}",
+        "--repo",
+        "awebai/aw",
+        absent_markers=("release not found", "could not resolve to a release"),
     ):
         missing.add("aw-release.yml")
-    if not command_present(
-        root,
-        "docker",
-        "buildx",
-        "imagetools",
-        "inspect",
-        f"ghcr.io/awebai/awid:{versions['awid-image']}",
-    ):
+    awid_digest = oci_digest(root, f"ghcr.io/awebai/awid:{versions['awid-image']}")
+    if awid_digest is None:
         missing.add("awid-image-release.yml")
-    if not command_present(
-        root,
-        "docker",
-        "buildx",
-        "imagetools",
-        "inspect",
-        f"ghcr.io/awebai/a2a-gateway:{versions['a2a-gateway-image']}",
-    ):
+    elif awid_digest != oci_digest(root, "ghcr.io/awebai/awid:latest"):
+        raise Refusal(
+            "ghcr.io/awebai/awid:latest does not resolve to the reviewed version"
+        )
+    a2a_digest = oci_digest(
+        root, f"ghcr.io/awebai/a2a-gateway:{versions['a2a-gateway-image']}"
+    )
+    if a2a_digest is None:
         missing.add("a2a-gateway-release.yml")
+    elif a2a_digest != oci_digest(root, "ghcr.io/awebai/a2a-gateway:latest"):
+        raise Refusal(
+            "ghcr.io/awebai/a2a-gateway:latest does not resolve to the reviewed version"
+        )
     return missing
 
 
@@ -771,18 +894,43 @@ def ensure_ac_content(ac: Path, sha: str, intent: Intent) -> None:
             git(ac, "worktree", "remove", "--force", str(worktree))
 
 
-def ac_digest_from_run(ac: Path, run_id: int) -> str:
+def ac_digest_from_run(ac: Path, run_id: int, source_sha: str, version: str) -> str:
     log = run(
         ("gh", "run", "view", str(run_id), "--repo", "awebai/ac", "--log"),
         cwd=ac,
         timeout=300,
     )
-    matches = re.findall(r"digest=(sha256:[0-9a-f]{64})", log)
-    if not matches:
-        matches = DIGEST.findall(log)
-    if not matches:
-        raise Refusal(f"AC workflow {run_id} emitted no immutable digest")
-    return matches[-1]
+    raw_records = re.findall(r"release-index=(\{[^\r\n]+\})", log)
+    if not raw_records:
+        raise Refusal(f"AC workflow {run_id} emitted no release-index record")
+    records = []
+    for raw in raw_records:
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise Refusal(
+                f"AC workflow {run_id} emitted a malformed release-index record"
+            ) from exc
+        if (
+            not isinstance(record, dict)
+            or set(record) != {"digest", "source_sha", "version"}
+            or not isinstance(record["digest"], str)
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", record["digest"])
+            or record["source_sha"] != source_sha
+            or record["version"] != version
+        ):
+            raise Refusal(
+                f"AC workflow {run_id} emitted a release-index record that does not "
+                f"bind source {source_sha} and version {version}"
+            )
+        records.append(record)
+    digests = {record["digest"] for record in records}
+    if len(digests) != 1:
+        raise Refusal(
+            f"AC workflow {run_id} emitted conflicting release-index digests: "
+            f"{sorted(digests)}"
+        )
+    return records[0]["digest"]
 
 
 def reconcile_ac(ac: Path, intent: Intent) -> tuple[str, str]:
@@ -809,7 +957,7 @@ def reconcile_ac(ac: Path, intent: Intent) -> tuple[str, str]:
     )
     fast_forward(ac, "release", final)
     run_id = monitor_workflow(ac, "aweb-cloud-ci-cd.yml", final, repository="awebai/ac")
-    return final, ac_digest_from_run(ac, run_id)
+    return final, ac_digest_from_run(ac, run_id, final, intent.versions["ac-image"])
 
 
 def health_sha(url: str) -> str:
@@ -894,6 +1042,8 @@ def release(aweb: Path, ac: Path) -> None:
         ensure_intent_tags(aweb, ac, intent)
     else:
         moving = set(intent.publish)
+    require_expected_head(aweb, intent.aweb_sha, "release intent aweb source")
+    require_expected_head(ac, intent.ac_base_sha, "release intent AC base")
     ensure_intent_tags(aweb, ac, intent)
     print(
         f"reconciling {intent.tag}: aweb={intent.aweb_sha} ac-base={intent.ac_base_sha}"
