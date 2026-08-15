@@ -52,6 +52,62 @@ and server source in the AWID image (bundled inputs); `packages/codex-plugin`, `
 `packages/hermes-aweb-platform`, `resource-packs/`, `oats/`, `test-vectors/`. The marketplace pointer and
 AC pin/lock are publication effects. Sites deploy by branch push, invoked by continue, outside the ordering.
 
+## Known states: published artifacts that must NOT be used
+
+A public artifact cannot be unpublished, so anything published in error stays
+visible in the registry looking entirely ordinary. This table is where such an
+artifact is recorded. Check it before reaching for the newest version of
+anything here.
+
+| Artifact | Version | Index digest | Date | Status | Why |
+|---|---|---|---|---|---|
+| AC product image `ghcr.io/awebai/ac` | **0.7.15** | `sha256:52f7b45bf53729b80dc7cd233a14b63e3331eccdc9883427ed1ac9c866063779` | 2026-08-15 | **DO NOT DEPLOY** | Built from `22ab8bbe`, whose `backend/uv.lock` pins `aweb 1.27.1` and `awid-service 0.5.15`. It does **not** contain the release it is named for, which published `aweb 1.27.2` and `awid-service 0.5.17`. It was never deployed. Use the next AC version instead. |
+
+The **digest** column is not decoration. AC images deploy by digest -
+`render_release_client.py deploy --digest <digest>` - so the identifier an
+operator holds at the dangerous moment is the digest, not the version string. A
+table listing only versions is one an operator cannot match against what they are
+about to deploy.
+
+The 0.7.15 entry exists because a release was interrupted after publishing its
+aweb artifacts and before deriving AC's dependency floors. The recovery card
+correctly marked those artifacts unmoved - they were already public - and AC's
+floor derivation keys on artifacts *moving in the current card*, so it derived
+nothing and reported success. The image was then built from an unchanged base.
+Every check that ran was a provenance check and passed correctly: the image
+genuinely was built from the commit the card named. Nothing asked whether that
+commit consumed the versions the release had just published.
+
+The version number is spent either way: it is public and immutable, and
+republishing different bytes under it is exactly what the exact-publish rule
+forbids.
+
+**This table is currently the only guard, and it is a guard that has to be
+consulted.** Two tooling checks are planned, at two different boundaries, and they
+do different jobs:
+
+- **build-time**, in the train before the push that triggers an AC image build:
+  refuses to build an image whose lock does not resolve the versions the card
+  names. It prevents the *next* wrong image. It cannot help with one that already
+  exists, and it will never re-examine `0.7.15`, because `0.7.15` is already built.
+- **deploy-time**, in the render client: from the digest it is about to deploy, it
+  resolves the image's revision label to a commit, reads that commit's
+  `backend/uv.lock`, and refuses unless the lock resolves every floor-mapped
+  package at the version the card names. It is the one that reaches the operator
+  this table is written for, and **it does not exist yet.**
+
+  Note what it is not: a list of bad digests. A list is a copy of a fact that
+  someone has to maintain, and it fails exactly when someone forgets an entry.
+  Asking the content question instead refuses `0.7.15` for what it **is** -
+  permanently, with nothing maintained - and refuses every future image with the
+  same problem, including ones nobody has anticipated.
+
+Until the deploy-time refusal lands, nothing stops a burned image being deployed
+except someone reading this page first - and the person who most needs it is
+reading a registry listing in a hurry, probably mid-rollback, not this file. A
+document is found by someone who reads it; a refusal is met by someone who does
+not.
+
 ## The static DAG (all ten audited edges)
 
 Ordering (O), same-commit bundle (S), equality (E), independent (I):
