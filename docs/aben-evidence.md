@@ -284,6 +284,24 @@ row. When the mechanism under test changes, every control over it must
 be re-derived rather than carried - and the packet should be read with
 that applied to its other controls too.
 
+**ONE FACT, THREE COPIES, THREE DIFFERENT DETECTORS.** The tag
+prefix was derived in three separate places, and no single mechanism
+found them:
+
+| copy | how it was found |
+|---|---|
+| discovery stripped a bare `v` while the status builder looked up the canonical prefix | a read-back disagreeing with discovery, in the first live prepare |
+| (the owner was introduced here - `release_tag_prefix`) | |
+| continue's world assembly omitted the prefix argument entirely | THE TWO HALVES DISAGREEING at continue, two runs later |
+
+The second copy was found by first contact with the real world; the
+third by prepare and continue disagreeing about the same world. Three
+detectors, one fact. That is the argument for the remedy being
+STRUCTURAL rather than vigilant: the third copy existed for as long as
+the parameter had a default, and no amount of care at the call sites
+would have found it - the parameter is what allowed it, so the
+parameter is gone.
+
 **THE ANSWER TO THE WHOLE CLASS: REMOVE THE COPY AND ASK THE OWNER.**
 One fact with two implementations bit this epic six times. The fix is
 not "keep the copies in sync" - it is to delete the copy and ask
