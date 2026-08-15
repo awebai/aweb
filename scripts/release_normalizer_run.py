@@ -92,8 +92,13 @@ def _mirror_lag(manifest_paths, version_mirrors):
     import tomllib
 
     def version_of(path):
+        # Both shapes RAISE on a missing version rather than one
+        # returning None: a None comparing unequal to a string would
+        # register as lagging and reach _apply_manifest_patch with
+        # current=None, turning a malformed declaration into a
+        # confusing patch failure instead of a clear read failure.
         if path.suffix == ".json":
-            return json.loads(path.read_text()).get("version")
+            return json.loads(path.read_text())["version"]
         with path.open("rb") as handle:
             return tomllib.load(handle)["project"]["version"]
 
