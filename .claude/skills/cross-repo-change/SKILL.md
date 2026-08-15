@@ -1,6 +1,6 @@
 ---
 name: cross-repo-change
-description: Coordinate changes that touch both the aweb OSS repo and the hosted ac repo. OSS lands first, releases through the two-command train, and continue derives the AC pin and deploys.
+description: Coordinate changes that touch both the aweb OSS repo and the hosted ac repo. OSS lands first; the hosted repository owns dependency derivation and deployment.
 ---
 
 # Cross-repo change coordination
@@ -66,10 +66,11 @@ This is the ONLY boundary with that property. Do not generalise it.
 2. **OSS first** — land the OSS change on aweb main after the relevant focused
    tests pass.
 
-3. **Release** — run `make release AC_ROOT=/path/to/ac` from aweb (`release`
-   skill; `docs/release.md` is authoritative). It gates, publishes, derives AC,
-   gates AC, and deploys without a card or second phase. Do not maintain a
-   parallel tag/push/verification sequence here.
+3. **Release** — for an OSS-only release, run `make release` from aweb (`release`
+   skill; `docs/release.md` is authoritative). For a SaaS release, follow
+   `ac/docs/release.md` from the AC repository; its single command invokes the OSS
+   release first, then owns dependency derivation, gating, and deployment. Do not
+   maintain a parallel tag/push/verification sequence here.
 
 4. **Cloud pins** — the reconciler derives `backend/pyproject.toml` floors and
    `backend/uv.lock` mechanically at the recorded AC base and gates the

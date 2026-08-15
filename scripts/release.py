@@ -406,10 +406,11 @@ def refuse_higher_public_versions(versions: dict[str, str]) -> None:
     ]
     for artifact, kind, package in targets:
         expected = versions[artifact]
+        published = published_package_versions(kind, package)
         higher = sorted(
             (
                 value
-                for value in published_package_versions(kind, package)
+                for value in published
                 if SEMVER.fullmatch(value)
                 and version_tuple(value) > version_tuple(expected)
             ),
@@ -420,7 +421,7 @@ def refuse_higher_public_versions(versions: dict[str, str]) -> None:
                 f"{kind}:{package} serves versions above reviewed {artifact} "
                 f"{expected}: {higher}"
             )
-        if kind == "npm":
+        if kind == "npm" and expected in published:
             latest = npm_latest(package)
             if latest is not None and latest != expected:
                 raise Refusal(
@@ -800,7 +801,6 @@ def release(aweb: Path) -> Intent | None:
                 print("nothing to release")
                 return completed
             run(("scripts/release-gate.sh",), cwd=aweb, timeout=7200, capture=False)
-            ensure_intent_tag(aweb, intent)
         else:
             moving = set(intent.publish)
         if git(aweb, "rev-parse", "HEAD") == intent.aweb_sha:

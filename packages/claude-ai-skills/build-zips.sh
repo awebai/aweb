@@ -5,7 +5,7 @@
 # (Claude.ai docs document one-skill-per-ZIP. Multi-skill ZIPs are
 # undocumented behavior and we don't rely on them.)
 #
-# Output: dist/<skill-name>.zip for each default customer skill in ../../skills/.
+# Output: dist/<skill-name>.zip for each canonical skill in ../../skills/.
 #
 # To publish: skills-release.yml workflow attaches these as GH Release
 # assets on each skills-v* tag, downloadable at e.g.

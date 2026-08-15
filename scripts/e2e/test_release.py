@@ -318,6 +318,16 @@ class PublicObservationTest(unittest.TestCase):
             with self.assertRaisesRegex(release.Refusal, "latest is 1.2.2"):
                 release.refuse_higher_public_versions(self.versions())
 
+    def test_old_npm_latest_is_allowed_before_expected_version_exists(self) -> None:
+        with (
+            mock.patch.object(
+                release, "published_package_versions", return_value={"1.2.2"}
+            ),
+            mock.patch.object(release, "npm_latest") as latest,
+        ):
+            release.refuse_higher_public_versions(self.versions())
+        latest.assert_not_called()
+
     def test_workflow_observer_has_three_distinct_outcomes(self) -> None:
         with mock.patch.object(
             observe_public_target, "pypi_present", return_value=True
