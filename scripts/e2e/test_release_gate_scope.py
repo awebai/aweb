@@ -41,6 +41,14 @@ DECLARED_OUT_OF_GATE = {
         "needs a built image and a docker daemon the gate container "
         "does not provide; runs against the image after it is built"
     ),
+    "test_release_ac_digest_contract": (
+        "executes the real AC script and so needs an AC checkout BESIDE "
+        "this one; the gate container mounts only the aweb checkout at "
+        "an absolute path, so no sibling can exist inside it under any "
+        "host layout - the column-b condition. Runs as make "
+        "test-release-ac-digest, where it FAILS rather than skips if "
+        "the sibling is missing"
+    ),
     "test_release_local_gate_contract": (
         "the local gate wrapper's contract, a tooling test with its own "
         "target"

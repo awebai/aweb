@@ -300,6 +300,12 @@ test-release-local-gate-contract:
 test-release-train:
 	python3 scripts/e2e/test_release_train.py
 
+# Needs an AC checkout beside this repository, which the gate container
+# cannot provide - so it runs here rather than as a gate row, and fails
+# rather than skips when the sibling is absent.
+test-release-ac-digest:
+	python3 scripts/e2e/test_release_ac_digest_contract.py
+
 # The Column B assembly: the recorded registry halves replayed through the
 # real normalizer. B1 refuses rather than skips when its pinned checkouts
 # cannot be resolved, so this target needs a sibling AC checkout named
