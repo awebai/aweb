@@ -315,6 +315,20 @@ nothing. `env -u HOME` suppresses a VARIABLE; git's fallback does not
 read that variable. The reviewer reproduced both environments
 independently and got their own name from the first one.
 
+**The class was then swept rather than assumed closed.** Every
+release test module - including the ones OUTSIDE the aben gate, which
+is where the last scope gap hid - was run under the faithful
+container condition: 28 modules, all green, two skipped for needing a
+docker daemon or recorded halves. So the identity gap was the only one
+of its kind, established by enumeration rather than by fixing the
+instances that happened to fail.
+
+No new mechanism was added to guard it, deliberately. The gate
+container has no git identity, so the gate ITSELF is the guard; the
+defect was not that the guard was missing but that it had not run.
+Adding a second guard would have been a second implementation of one
+fact.
+
 **THE GATE FOUND WHAT THE DEVELOPER HOST STRUCTURALLY COULD NOT.**
 That is the argument for the gate being a real environment rather than
 a faster one: the developer host HAS a git identity and the container

@@ -23,6 +23,16 @@ import release_normalizer_capture as cap  # noqa: E402
 
 
 def git(*args: str, cwd: Path) -> str:
+    # The default branch is PINNED here, not at call sites: git's
+    # init.defaultBranch differs between a developer host and the gate
+    # container, and an unpinned bare remote ends up with HEAD on a
+    # branch nothing was pushed to - so a later clone checks out
+    # NOTHING and `commit -am` fails with "nothing to commit". Same
+    # shape as the identity: a host setting the container does not have.
+    if args and args[0] == "init" and not any(
+        a in ("-b", "--initial-branch") for a in args
+    ):
+        args = (args[0], "-b", "main") + tuple(args[1:])
     return subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
         cwd=cwd,
