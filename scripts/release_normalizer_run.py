@@ -77,6 +77,46 @@ def render_stops(stops) -> str:
     )
 
 
+def _mirror_lag(manifest_paths, version_mirrors):
+    """Mirrors whose version disagrees with their manifest's.
+
+    A mirror is only carried along by a version PATCH, so a tree whose
+    manifest already sits at its intended version while a mirror lags
+    produces no patch, no sync, and a guard that refuses forever. That
+    is exactly what a half-applied patch leaves behind, and it would be
+    unrecoverable except by hand. Disagreement is therefore itself a
+    reason to patch, independent of whether the version moves.
+    """
+
+    import json
+    import tomllib
+
+    def version_of(path):
+        # Both shapes RAISE on a missing version rather than one
+        # returning None: a None comparing unequal to a string would
+        # register as lagging and reach _apply_manifest_patch with
+        # current=None, turning a malformed declaration into a
+        # confusing patch failure instead of a clear read failure.
+        if path.suffix == ".json":
+            return json.loads(path.read_text())["version"]
+        with path.open("rb") as handle:
+            return tomllib.load(handle)["project"]["version"]
+
+    lagging = []
+    for name, mirrors in (version_mirrors or {}).items():
+        manifest = manifest_paths.get(name)
+        if manifest is None or not manifest.exists():
+            continue
+        intended = version_of(manifest)
+        for mirror in mirrors:
+            if not mirror.exists():
+                continue
+            current = version_of(mirror)
+            if current != intended:
+                lagging.append((name, mirror, current, intended))
+    return lagging
+
+
 def run_normalizer(
     *,
     capture: Callable[[], rn.CapturedWorld],
@@ -100,6 +140,23 @@ def run_normalizer(
 
     if first.outcome == "stop":
         return Outcome(STOP, render_stops(first.stops))
+
+    lagging = _mirror_lag(manifest_paths, version_mirrors)
+    if first.outcome == "normal-form" and lagging:
+        for _name, mirror, current, intended in lagging:
+            _apply_manifest_patch(mirror, current, intended)
+        lines = ["PATCH NEEDED - allowlisted working-tree edits applied:"]
+        lines += [
+            f"  {name} mirror {mirror.name}: {current} -> {intended}"
+            for name, mirror, current, intended in lagging
+        ]
+        lines.append(
+            "A mirrored version disagreed with its manifest; the tree "
+            "contradicted itself and no version move would have fixed it. "
+            "Normal review, commit, and integration are required before "
+            "the next release-prepare; nothing was committed or stored."
+        )
+        return Outcome(PATCH_NEEDED, "\n".join(lines), result=first)
 
     if first.outcome == "patch-needed":
         # Equality-group members share physical manifests (both AWID

@@ -232,6 +232,44 @@ class Orchestration(unittest.TestCase):
             "the mirror was left behind - the tree contradicts itself",
         )
 
+    def test_a_lagging_mirror_is_reconciled_even_with_no_version_move(
+        self,
+    ) -> None:
+        """The state my first mirror fix could not escape.
+
+        Mirrors were synced only as part of a version PATCH. So a tree
+        whose manifest already sits at the target version while its
+        mirror lags produces no patch, no sync, and a guard that
+        refuses forever - which is precisely the state a half-applied
+        patch leaves behind, and it is unrecoverable except by hand.
+
+        A mirror disagreeing with its manifest is itself a reason to
+        patch, independent of whether the version moves."""
+
+        import json
+
+        # The mirror LAGS its manifest. The manifest is already at the
+        # published-and-intended version, so nothing moves and nothing
+        # would patch - which is how the lag becomes permanent.
+        mirror = self.root / "pkg" / ".claude-plugin" / "plugin.json"
+        mirror.parent.mkdir(parents=True)
+        mirror.write_text(json.dumps({"version": "0.9.0"}, indent=2) + "\n")
+        self.manifest.write_text(
+            '[project]\nname = "pkg"\nversion = "1.0.0"\n'
+        )
+
+        outcome = run.run_normalizer(
+            capture=lambda: captured_world("1.0.0", changed=False),
+            manifest_paths={"pkg": self.manifest},
+            version_mirrors={"pkg": (mirror,)},
+            reobserve=lambda result, world=None: [],
+            normalize=rn.normalize,
+            recapture=self.live_recapture(changed=False),
+        )
+        self.assertEqual(outcome.exit_code, run.PATCH_NEEDED, outcome.report)
+        self.assertEqual(json.loads(mirror.read_text())["version"], "1.0.0")
+        self.assertIn("mirror", outcome.report.lower(), outcome.report)
+
     def test_fixed_point_failure_is_named(self) -> None:
         # A patched world that still wants a patch on the second pass is
         # non-convergent normalization. Simulate by a capture whose

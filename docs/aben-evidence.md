@@ -284,6 +284,40 @@ row. When the mechanism under test changes, every control over it must
 be re-derived rather than carried - and the packet should be read with
 that applied to its other controls too.
 
+**AN ALLOWLISTED PATCHER MUST BE ABLE TO CONVERGE FROM ANY STATE IT
+CAN ITSELF CREATE.** The sharpest finding of the epic, and it
+generalises past the case that produced it.
+
+skills carries its version in a manifest and again in a plugin mirror.
+The normalizer patched the manifest and left the mirror, and prepare
+refused the resulting tree - correctly. The first fix made the patcher
+carry mirrors along with a version patch. That closed the symptom and
+left a WORSE defect: the only path that synced mirrors ran inside a
+version move, and the wedged state is exactly the one where no version
+moves. The manifest already sat at its intended version, so nothing
+moved, so nothing patched, so the mirror stayed behind and the guard
+refused at the same place forever - repairable only by a human editing
+a file by hand.
+
+The tool could produce a state it could not repair. Not slowly,
+not awkwardly - unreachably. A refusal in front of a state the tool
+cannot leave is not a safety property; it is a trap with a guard in
+front of it.
+
+The fix that closes it is making a mirror disagreement its OWN reason
+to patch, independent of any version move - the reachability gap
+rather than the symptom. And the repair of the already-committed tree
+was produced BY the normalizer and asserted byte-identical to its
+output rather than typed, because a hand-written repair would have
+been one more unverified human edit in the one place we had just
+proved humans and the tool disagree.
+
+It was invisible until someone asked what the next run would DO rather
+than running it again. Two pieces of work hide in "the fix commit
+completes it": repairing the producer, and repairing the product. Only
+one of them had happened, and the coordinator caught it by reading
+origin rather than believing the claim.
+
 **THE GATE ITSELF WAS THE FIFTH INSTRUMENT THAT COULD NOT FIRE.**
 `test_release_train` was not in `test-release-aben`, so the suite
 quoted throughout this epic as its whole test surface excluded the
