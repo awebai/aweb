@@ -181,7 +181,7 @@ pinned commit, while later runs reuse and reset the repository-owned cache.
 
 ## Comprehensive release proof
 
-The release train runs one complete gate in a clean local Docker environment
+The release command runs one complete gate in a clean local Docker environment
 before publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
 packages/images, unit and contract suites, OATS and real-stack journeys, freshness,
 process guards, and vulnerability audits. Hosted workflows retain focused pull

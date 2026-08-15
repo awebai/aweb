@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copy canonical skill bodies from ../../skills into ./skills.
+# Copy the default customer skill bodies from ../../skills into ./skills.
 # Run before committing changes to packages/codex-plugin/ or aweb/skills/
 # so the Codex plugin ships current bodies.
 #

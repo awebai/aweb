@@ -26,7 +26,7 @@ FORBIDDEN = (
 
 PRODUCTION_EXCLUSIONS = frozenset(
     {
-        "docs/release.md",  # authoritative migration specification
+        "docs/release.md",  # authoritative release specification
         "scripts/e2e/test_release_local_gate_contract.py",  # protective literals
     }
 )

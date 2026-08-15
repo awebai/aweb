@@ -21,8 +21,8 @@ CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plu
 # aw CLI releases have independent semver. Derive the next patch from the
 # published aw-v* history; the release guard below rejects stale overrides.
 CLI_VERSION = $(shell ./scripts/cli-release-version.sh next)
-# The A2A gateway workflow requires its tag to match server/pyproject.toml.
-A2A_GATEWAY_VERSION := $(SERVER_VERSION)
+# The gateway is a Go artifact with independent patch history.
+A2A_GATEWAY_VERSION = $(shell python3 scripts/release_artifact_version.py a2a-gateway-image)
 # OATS seam tests default to an immutable reviewed upstream commit materialized
 # under this repository's ignored cache. That makes local and CI runs consume the
 # same clean input instead of a colleague's mutable sibling checkout. Deliberate
@@ -85,8 +85,8 @@ help:
 	@echo "  awid-prod-restore   Restore a dump into awid prod (DUMP=path)"
 	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
 	@echo ""
-	@echo "  RELEASING - one rerunnable command, no prompt or release-time judgment:"
-	@echo "    make release AC_ROOT=/path/to/ac"
+	@echo "  RELEASING - one rerunnable OSS command, no prompt or release-time judgment:"
+	@echo "    make release"
 	@echo "    docs/release.md is the authoritative specification."
 	@echo ""
 	@echo "  release-awid-site                     deploy awid landing page"
@@ -443,7 +443,7 @@ check-awid-locked-suite:
 # ── Awid site deploy ────────────────────────────────────────────────
 
 release:
-	python3 scripts/release.py $(if $(AC_ROOT),--ac-root "$(AC_ROOT)",)
+	python3 scripts/release.py
 
 release-awid-site:
 	@echo "Syncing docs into awid site..."

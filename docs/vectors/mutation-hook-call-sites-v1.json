@@ -57,16 +57,6 @@
       "event": "chat.message_sent"
     },
     {
-      "source": "server/src/aweb/routes/federation.py",
-      "function": "receive_federated_message",
-      "event": "chat.message_sent"
-    },
-    {
-      "source": "server/src/aweb/routes/federation.py",
-      "function": "receive_federated_message",
-      "event": "message.sent"
-    },
-    {
       "source": "server/src/aweb/routes/messages.py",
       "function": "_deliver_remote_mail_and_project_locally",
       "event": "message.sent"

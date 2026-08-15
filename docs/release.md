@@ -1,127 +1,106 @@
-# Release process
+# Releasing aweb
 
-`make release` is the release process for aweb and aweb Cloud (AC). It has no
-prepare/continue split, release card, prompt, or release-time compatibility
-question. If the reviewed source declares valid versions and both clean-Docker
-gates pass, the command publishes and, when AC changed, deploys production.
-
-Run it from a clean aweb checkout at `origin/main`, with a clean AC checkout:
+This repository owns the aweb open-source artifacts. Its complete release is one
+rerunnable command from a clean checkout at `origin/main`:
 
 ```sh
-make release AC_ROOT=/path/to/ac
+make release
 ```
 
-The command is safe to rerun after a process, network, workflow, or credential
-failure. A rerun discovers the unfinished intent from Git and reconciles it; it
-does not choose new commits or versions.
+There is no prepare/continue split, release card, prompt, or release-time
+compatibility decision. Reviewed source declares the versions. When the clean
+gate passes, the command publishes every owed artifact and verifies the public
+result. It never changes a running service.
 
 ## Authority
 
-- Reviewed manifests declare versions. A changed manifest is release content;
-  major and minor releases do not need a second release-time declaration.
-- The `aw` CLI has no manifest. Its next patch comes from `aw-v*` history.
-- Source tags identify the commit that produced an artifact.
-- Public registries and exact-publish verification establish that the expected
-  bytes are served. A higher strict-semver PyPI/npm publication than the
-  reviewed intent is a conflict, including one left by a workflow that died
-  before tagging. OCI version and `latest` must resolve to the same digest.
-- `backend/pyproject.toml` and `backend/uv.lock` together declare the complete
-  aweb dependency set inside AC. The release never filters this check by what
-  happened to publish in the current process.
-- AC deploys by immutable image digest, never by a mutable tag.
+- Package manifests declare package versions.
+- Artifacts without manifests derive their next patch from their immutable tag
+  history.
+- An artifact's source tag identifies the commit that produced it.
+- Registry observation establishes whether the desired output exists.
+- Exact-publish helpers compare staged and served output. An occupied version
+  with different bytes is a refusal, never an adoption.
+- For OCI artifacts, the version tag and `latest` must resolve to the same
+  immutable index digest.
 
-## Artifacts
+## Artifact and dependency graph
 
-| Source | Output | Version |
+The graph is explicit in `scripts/release.py`. `content_paths` is the
+maintained build-input closure for each artifact: a change in any listed path
+makes that artifact move. Package-manager dependencies remain in their normal
+manifests; the release graph records additional bundled and shared-source edges.
+
+| Artifact | Build-input closure | Version authority |
 |---|---|---|
-| `server/` | PyPI `aweb` | `server/pyproject.toml` |
-| `awid/` | PyPI `awid-service` | `awid/pyproject.toml` |
-| `awid/` + `server/` | `ghcr.io/awebai/awid` | `awid/pyproject.toml` |
-| `cli/go/` | GitHub release, seven `@awebai/aw*` npm packages | next `aw-v*` patch |
-| `channel/` + `channel-core/` | npm `@awebai/claude-channel` | `channel/package.json` |
-| `pi-extension/` + bundled sources | npm `@awebai/pi` | `pi-extension/package.json` |
-| `packages/claude-skills/` + `skills/` | npm package and release ZIPs | package manifest |
-| `cli/go/` + server version | `ghcr.io/awebai/a2a-gateway` | server version |
-| AC application | `ghcr.io/awebai/ac` and Render production | `backend/pyproject.toml` |
+| PyPI `aweb` | `server/` | `server/pyproject.toml` |
+| PyPI `awid-service` | `awid/` | `awid/pyproject.toml` |
+| AWID image | `awid/` and `server/` | AWID manifest |
+| `aw` CLI and platform npm packages | `cli/go/` | next `aw-v*` patch |
+| Claude channel | `channel/` and bundled `channel-core/` | channel manifest |
+| Pi extension | `pi-extension/`, bundled `channel-core/`, and the five default skills | Pi manifest |
+| Skills packages and archives | both package layouts and the five default skills | skills manifest |
+| A2A gateway image | `cli/go/` | next `a2a-gw-v*` patch |
 
-The A2A gateway shares the server version. Consequently a `cli/go/` change also
-requires a reviewed server version bump even when the Python server did not
-otherwise change.
+The Python `aweb` package declares its `awid-service` floor in
+`server/pyproject.toml`. Release selection requires that floor to equal the
+exact desired AWID version, so an AWID version change also requires a reviewed
+`aweb` floor and version change. The Pi extension's compatible `@awebai/aw`
+range is not an exact co-release edge. Shared or copied sources are release
+edges because their bytes are bundled into the consumer.
 
-Static sites are deliberately independent. Their deploy targets are not part of
-an application/artifact release.
+Any edit to this table in code requires a matching contract-test and
+documentation update. This makes a new bundled dependency a visible reviewed
+decision instead of an inferred side effect.
 
-## What one run does
+## What the command does
 
-1. Fetch both repositories and reject dirty checkouts.
-2. If an unfinished intent exists, use it. Otherwise select the two exact
-   `origin/main` commits, compare artifact-owned paths with their newest source
-   tags, validate declared versions, and run the complete aweb clean-Docker gate.
-3. Write the same annotated `release-intent-*` tag in both repositories. Its
-   canonical JSON binds the aweb SHA, AC base SHA, every desired version, and
-   the exact set of artifacts that must publish. This is automatic crash state,
-   not an operator document or approval surface.
-4. Fast-forward aweb's `release` branch. Path-scoped workflows build the exact
-   commit, publish or adopt exact bytes, verify the public result, then create
-   source tags. The command waits for every expected workflow and verifies the
-   complete desired public aweb set before continuing.
-5. Update the marketplace pointer to the public channel and skills versions.
-6. If AC's source or complete dependency state differs, mechanically update
-   both dependency floors, regenerate `backend/uv.lock`, and commit only those
-   two files. Re-check the complete desired dependency set, then run AC's full
-   clean-Docker gate at that exact commit.
-7. Fast-forward AC's `release` branch. Its thin workflow builds and verifies the
-   exact image and reports the immutable digest.
-8. Immediately before production, check the complete dependency floor and lock
-   again. Run migrations (pgdbm serializes concurrent runners with advisory
-   locks), converge Render to auto-deploy disabled and the exact digest, and
-   verify provider state and health at the expected AC commit.
-9. Write matching `release-done-*` tags in both repositories.
+1. Fetch tags and branches, reject a dirty checkout, and require the exact
+   `origin/main` commit.
+2. Find any unfinished intent. If none exists, compare every artifact's complete
+   build-input closure with its newest source tag and validate all versions.
+3. Observe the complete desired public artifact set. An absent artifact whose
+   source did not move is not silently rebuilt under an occupied version; the
+   command requires a version bump.
+4. Run the fixed clean-Docker gate once, before creating publication state.
+5. Write `release-intent-<source>`, whose canonical JSON binds the source SHA,
+   all desired versions, and every publication still owed.
+6. Fast-forward the path-scoped `release` branch. Workflows build the exact
+   commit, publish or adopt exact bytes, verify the public result, and create
+   source tags.
+7. Re-observe the complete desired public set, update the public marketplace
+   pointer when its packages moved, and write the matching
+   `release-done-<source>` tag.
 
-If AC did not change, steps 6–8 are skipped. An aweb-only release does not mint
-an AC version or redeploy an unchanged application.
+Publication grouping is only an execution optimization. The intent and final
+observation always cover the complete desired artifact set.
 
-## Failure and retry rules
+## Failure and retry
 
-- Before the intent tags, failure has made no publication decision; fix source
-  on `main` and rerun.
-- After the intent tags, the intent is authoritative until done. Rerun the same
-  command from checkouts still at the two commits named by the intent. Exact
-  matches are adopted and completed workflows are reused; an unrelated live
-  checkout can never supply tooling to a resumed release.
-- A public version containing different bytes, a conflicting tag, a non-fast-
-  forward pointer, a changed AC base before derivation, an incomplete lock, or
-  a failed gate stops the run. Nothing turns those conditions into success.
-- There is no “resume” command and no editable state file.
-- Tests do not justify a content mismatch. Publication workflows compare or
-  verify the built output; AC's dependency content is checked before build and
-  again before deploy. AC's workflow emits one canonical release-index record
-  binding the immutable two-platform digest to its source SHA and version; only
-  that record can reach the deployment client.
+Run `make release` again.
 
-## Burned artifact
+Before an intent tag exists, a failure made no publication decision. After the
+tag exists, it is authoritative: a rerun uses its exact source, versions, and
+owed publications. Already-correct public outputs are adopted; missing work is
+continued; conflicting bytes, tags, or branch ancestry stop the run.
 
-`ghcr.io/awebai/ac:0.7.15`, digest
-`sha256:52f7b45bf53729b80dc7cd233a14b63e3331eccdc9883427ed1ac9c866063779`,
-must never be deployed. It was built from commit `22ab8bbe`, whose lock contains
-`aweb 1.27.1` and `awid-service 0.5.15`, although the release had published
-`aweb 1.27.2` and `awid-service 0.5.17`. The version is permanently spent.
+If the checkout's current `main` advanced while an older intent was unfinished,
+the command finishes the recorded intent from an automatic detached worktree,
+then continues through the current `main` desired state in the same invocation.
 
-The replacement process prevents this class of failure structurally: the full
-desired dependency map is the input to both derivation and verification, and AC
-cannot build or deploy until its floor and lock exactly match that map.
+There is no resume subcommand and no editable operator state file. A terminated
+shell, expired credential, workflow failure, or temporary registry outage does
+not require a person to reconstruct context.
 
-## Kept low-level mechanisms
+## Implementation map
 
-The large orchestration stack was deleted. The remaining release-specific code
-keeps only boundaries that independently prevent corruption:
+- `scripts/release.py`: desired-state selection and reconciliation.
+- `scripts/release-gate.sh`: fixed clean gate.
+- `release-gate/suite-map.tsv`: named gate inventory.
+- `scripts/*-exact-publish.sh`: exact npm, PyPI, and OCI decisions.
+- `scripts/release-tag-helpers.sh`: immutable tag observation.
+- `.github/workflows/*release.yml`: thin, path-scoped publishers.
+- `scripts/e2e/test_release.py`: intent, retry, registry, and ownership
+  contracts.
 
-- clean-Docker aweb and AC gates;
-- exact npm, PyPI, and OCI publication/adoption helpers;
-- release-tag helpers;
-- the marketplace pointer updater; and
-- the single reconciler in `scripts/release.py`.
-
-If GitHub is unavailable, the normal release stops. Direct use of low-level
-publish helpers is an emergency operation requiring an explicit human decision;
-it is not a second maintained release path.
+Low-level helpers are mechanisms, not alternate maintained release commands.

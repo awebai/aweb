@@ -8,7 +8,6 @@ on:
     branches: [release]
     paths:
       - "cli/go/**"
-      - "server/pyproject.toml"
 
 permissions:
   contents: write
@@ -48,7 +47,7 @@ jobs:
       - name: Derive A2A gateway version
         id: version
         run: |
-          version="$(python3 -c 'import tomllib; print(tomllib.load(open("server/pyproject.toml", "rb"))["project"]["version"])')"
+          version="$(python3 scripts/release_artifact_version.py a2a-gateway-image)"
           printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
 
       - name: Validate derived A2A gateway identity

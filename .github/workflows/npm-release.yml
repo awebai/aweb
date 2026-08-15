@@ -12,14 +12,18 @@ on:
       - "pi-extension/**"
       - "packages/claude-skills/**"
       - "packages/claude-ai-skills/**"
-      - "skills/**"
+      - "skills/aweb-bootstrap/**"
+      - "skills/aweb-coordination/**"
+      - "skills/aweb-identity/**"
+      - "skills/aweb-messaging/**"
+      - "skills/aweb-team-membership/**"
 
 permissions:
   contents: write
 
 env:
   SOURCE_SHA: ${{ github.sha }}
-  CANONICAL_SKILLS: aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership
+  DEFAULT_SKILLS: aweb-bootstrap aweb-coordination aweb-identity aweb-messaging aweb-team-membership
 
 concurrency:
   group: npm-release
@@ -85,7 +89,7 @@ jobs:
           fi
           if [[ "$PACKAGE" == pi || "$PACKAGE" == skills ]]; then
             paths=()
-            for skill in $CANONICAL_SKILLS; do paths+=("skills/$skill"); done
+            for skill in $DEFAULT_SKILLS; do paths+=("skills/$skill"); done
             digest="$(git archive "$SOURCE_SHA" "${paths[@]}" | sha256sum | awk '{print $1}')"
             echo "canonical skills source bundle: $digest"
           fi

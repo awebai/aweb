@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
 import importlib.util
 import json
 import subprocess
@@ -110,8 +109,7 @@ class VersionSelectionTest(unittest.TestCase):
 class IntentTest(unittest.TestCase):
     def intent(self) -> object:
         versions = {artifact.key: "1.2.3" for artifact in release.ARTIFACTS}
-        versions["ac-image"] = "4.5.6"
-        return release.Intent("a" * 40, "b" * 40, versions, ("ac-image", "aweb-server"))
+        return release.Intent("a" * 40, versions, ("aweb-server",))
 
     def test_round_trip_is_canonical_and_carries_publication_work(self) -> None:
         intent = self.intent()
@@ -136,94 +134,54 @@ class IntentTest(unittest.TestCase):
         with self.assertRaisesRegex(release.Refusal, "publish set"):
             release.Intent.parse(json.dumps(value))
 
-    def test_publish_set_may_include_ac_image(self) -> None:
-        self.assertIn(
-            "ac-image", release.Intent.parse(self.intent().document()).publish
-        )
+    def test_unknown_intent_field_is_refused(self) -> None:
+        value = json.loads(self.intent().document())
+        value["foreign_sha"] = "b" * 40
+        with self.assertRaisesRegex(release.Refusal, "unsupported shape"):
+            release.Intent.parse(json.dumps(value))
 
 
-class DependencyClosureTest(unittest.TestCase):
-    def selections(self, ac_version: str, ac_changed: bool) -> list[tuple[str, bool]]:
-        selected = [("1.2.3", False) for _artifact in release.ARTIFACTS]
-        selected.append((ac_version, ac_changed))
-        return selected
-
-    def test_stale_ac_dependency_state_cannot_reuse_released_image_version(
-        self,
-    ) -> None:
-        completed = subprocess.CompletedProcess([], 1, "", "stale")
+class DependencyContractTest(unittest.TestCase):
+    def test_awid_release_requires_matching_aweb_floor_before_gate(self) -> None:
+        selections = [("1.2.3", False) for _artifact in release.ARTIFACTS]
+        selections[1] = ("0.5.7", True)
         with (
-            mock.patch.object(release, "git", side_effect=["a" * 40, "b" * 40]),
-            mock.patch.object(
-                release, "choose_version", side_effect=self.selections("4.5.6", False)
-            ),
-            mock.patch.object(
-                release, "latest_release", return_value=("4.5.6", "v4.5.6")
-            ),
-            mock.patch.object(release.subprocess, "run", return_value=completed),
+            mock.patch.object(release, "git", return_value="a" * 40),
+            mock.patch.object(release, "choose_version", side_effect=selections),
+            mock.patch.object(release, "dependency_floor", return_value="0.5.6"),
         ):
-            with self.assertRaisesRegex(
-                release.Refusal, "must consume new aweb dependencies"
-            ):
-                release.compute_intent(Path("/aweb"), Path("/ac"))
-
-    def test_stale_dependency_state_puts_reviewed_new_ac_version_in_intent(
-        self,
-    ) -> None:
-        completed = subprocess.CompletedProcess([], 1, "", "stale")
-        with (
-            mock.patch.object(release, "git", side_effect=["a" * 40, "b" * 40]),
-            mock.patch.object(
-                release, "choose_version", side_effect=self.selections("4.5.7", True)
-            ),
-            mock.patch.object(
-                release, "latest_release", return_value=("4.5.6", "v4.5.6")
-            ),
-            mock.patch.object(release.subprocess, "run", return_value=completed),
-        ):
-            intent, moving = release.compute_intent(Path("/aweb"), Path("/ac"))
-        self.assertEqual(intent.versions["ac-image"], "4.5.7")
-        self.assertIn("ac-image", intent.publish)
-        self.assertIn("ac-image", moving)
+            with self.assertRaisesRegex(release.Refusal, "awid-service floor.*0.5.7"):
+                release.compute_intent(Path("/aweb"))
 
 
 class CrashRecoveryTest(unittest.TestCase):
     def setUp(self) -> None:
         versions = {artifact.key: "1.2.3" for artifact in release.ARTIFACTS}
-        versions["ac-image"] = "4.5.6"
-        self.intent = release.Intent(
-            "a" * 40, "b" * 40, versions, ("ac-image", "aweb-server")
-        )
+        self.intent = release.Intent("a" * 40, versions, ("aweb-server",))
         self.aweb = Path("/aweb")
-        self.ac = Path("/ac")
 
     def patches(self, open_values: list[object | None]):
         return mock.patch.multiple(
             release,
             require_clean=mock.DEFAULT,
+            require_main_tip=mock.DEFAULT,
             fetch=mock.DEFAULT,
-            require_expected_head=mock.DEFAULT,
+            git=mock.Mock(return_value="a" * 40),
             open_intent=mock.Mock(side_effect=open_values),
-            compute_intent=mock.Mock(
-                return_value=(self.intent, {"aweb-server", "ac-image"})
-            ),
+            compute_intent=mock.Mock(return_value=(self.intent, {"aweb-server"})),
             missing_aweb_workflows=mock.Mock(return_value=set()),
             run=mock.DEFAULT,
-            ensure_intent_tags=mock.DEFAULT,
+            ensure_intent_tag=mock.DEFAULT,
             reconcile_aweb=mock.DEFAULT,
-            reconcile_ac=mock.Mock(return_value=("c" * 40, "sha256:" + "d" * 64)),
-            deploy=mock.DEFAULT,
             mark_done=mock.DEFAULT,
         )
 
-    def test_crash_after_intent_does_not_rerun_the_gate_or_choose_new_versions(
-        self,
-    ) -> None:
+    def test_crash_after_intent_does_not_rerun_gate_or_choose_versions(self) -> None:
         with self.patches([None, self.intent]) as mocks:
             mocks["reconcile_aweb"].side_effect = [release.Refusal("crash"), None]
             with self.assertRaisesRegex(release.Refusal, "crash"):
-                release.release(self.aweb, self.ac)
-            release.release(self.aweb, self.ac)
+                release.release(self.aweb)
+            release.release(self.aweb)
             self.assertEqual(release.compute_intent.call_count, 1)
             gates = [
                 call
@@ -231,37 +189,36 @@ class CrashRecoveryTest(unittest.TestCase):
                 if call.args and call.args[0] == ("scripts/release-gate.sh",)
             ]
             self.assertEqual(len(gates), 1)
-            self.assertEqual(mocks["deploy"].call_count, 1)
             self.assertEqual(mocks["mark_done"].call_count, 1)
 
-    def test_non_ac_release_does_not_build_or_deploy_ac(self) -> None:
-        no_ac = dataclasses.replace(self.intent, publish=("aweb-server",))
-        with self.patches([no_ac]) as mocks:
-            release.release(self.aweb, self.ac)
-            self.assertEqual(release.reconcile_ac.call_count, 0)
-            self.assertEqual(mocks["deploy"].call_count, 0)
-            mocks["mark_done"].assert_called_once_with(
-                self.aweb, self.ac, no_ac, no_ac.ac_base_sha, None
+    def test_resume_reconciles_recorded_publication_set(self) -> None:
+        with self.patches([self.intent]) as mocks:
+            release.release(self.aweb)
+            mocks["reconcile_aweb"].assert_called_once_with(
+                self.aweb, self.intent, {"aweb-server"}
             )
-
-    def test_crash_after_image_build_reuses_same_intent_and_digest_path(self) -> None:
-        with self.patches([self.intent, self.intent]) as mocks:
-            mocks["deploy"].side_effect = [release.Refusal("lost process"), None]
-            with self.assertRaisesRegex(release.Refusal, "lost process"):
-                release.release(self.aweb, self.ac)
-            release.release(self.aweb, self.ac)
+            mocks["mark_done"].assert_called_once_with(self.aweb, self.intent)
             self.assertEqual(release.compute_intent.call_count, 0)
-            self.assertEqual(release.reconcile_ac.call_count, 2)
-            self.assertEqual(mocks["mark_done"].call_count, 1)
-            self.assertEqual(mocks["require_expected_head"].call_count, 4)
+
+    def test_resume_materializes_recorded_source_when_checkout_advanced(self) -> None:
+        with self.patches([self.intent]) as mocks:
+            release.git.side_effect = ["c" * 40, "", "", "a" * 40]
+            release.release(self.aweb)
+            self.assertTrue(
+                any(
+                    call.args[1:4] == ("worktree", "add", "--detach")
+                    for call in release.git.call_args_list
+                )
+            )
+            self.assertEqual(mocks["reconcile_aweb"].call_count, 1)
 
     def test_absent_unchanged_output_refuses_before_intent_or_gate(self) -> None:
         with self.patches([None]) as mocks:
-            release.compute_intent.return_value = (self.intent, {"ac-image"})
+            release.compute_intent.return_value = (self.intent, set())
             release.missing_aweb_workflows.return_value = {"aw-release.yml"}
             with self.assertRaisesRegex(release.Refusal, "source is unchanged"):
-                release.release(self.aweb, self.ac)
-            self.assertEqual(mocks["ensure_intent_tags"].call_count, 0)
+                release.release(self.aweb)
+            self.assertEqual(mocks["ensure_intent_tag"].call_count, 0)
             self.assertFalse(
                 any(
                     call.args and call.args[0] == ("scripts/release-gate.sh",)
@@ -273,7 +230,6 @@ class CrashRecoveryTest(unittest.TestCase):
 class PublicObservationTest(unittest.TestCase):
     def versions(self) -> dict[str, str]:
         values = {artifact.key: "1.2.3" for artifact in release.ARTIFACTS}
-        values["ac-image"] = "4.5.6"
         return values
 
     def test_registry_unavailability_is_not_reported_as_absence(self) -> None:
@@ -401,71 +357,30 @@ class PublicObservationTest(unittest.TestCase):
             output.assert_called_with("moving")
 
 
-class AcDigestTest(unittest.TestCase):
-    source = "c" * 40
-    version = "4.5.6"
-
-    def record(self, digest: str, **updates: str) -> str:
-        value = {
-            "digest": digest,
-            "source_sha": self.source,
-            "version": self.version,
-            **updates,
-        }
-        return "release-index=" + json.dumps(
-            value, sort_keys=True, separators=(",", ":")
+class WorkflowContractTest(unittest.TestCase):
+    def test_a2a_gateway_has_independent_version_history(self) -> None:
+        artifact = next(
+            item for item in release.ARTIFACTS if item.key == "a2a-gateway-image"
         )
+        self.assertIsNone(artifact.manifest)
+        self.assertEqual(artifact.tag_prefix, "a2a-gw-v")
+        self.assertEqual(artifact.content_paths, ("cli/go/",))
 
-    def test_only_explicit_publisher_digest_is_accepted(self) -> None:
-        wanted = "sha256:" + "a" * 64
-        noise = "sha256:" + "b" * 64
-        with mock.patch.object(
-            release,
-            "run",
-            return_value=f"base {noise}\n{self.record(wanted)}\nchild {noise}",
-        ):
-            self.assertEqual(
-                release.ac_digest_from_run(Path("/ac"), 42, self.source, self.version),
-                wanted,
+    def test_internal_operator_skill_does_not_move_customer_packages(self) -> None:
+        for key in ("pi-extension", "skills"):
+            artifact = next(item for item in release.ARTIFACTS if item.key == key)
+            self.assertNotIn("skills/aweb-agent-instantiation/", artifact.content_paths)
+            self.assertTrue(
+                set(release.DEFAULT_SKILL_PATHS) <= set(artifact.content_paths)
             )
 
-    def test_arbitrary_log_digests_are_refused(self) -> None:
-        with mock.patch.object(release, "run", return_value="layer sha256:" + "b" * 64):
-            with self.assertRaisesRegex(release.Refusal, "no release-index record"):
-                release.ac_digest_from_run(Path("/ac"), 42, self.source, self.version)
-
-    def test_conflicting_explicit_digests_are_refused(self) -> None:
-        first = "sha256:" + "a" * 64
-        second = "sha256:" + "b" * 64
-        with mock.patch.object(
-            release,
-            "run",
-            return_value=f"{self.record(first)}\n{self.record(second)}",
-        ):
-            with self.assertRaisesRegex(
-                release.Refusal, "conflicting release-index digests"
-            ):
-                release.ac_digest_from_run(Path("/ac"), 42, self.source, self.version)
-
-    def test_record_for_another_source_is_refused(self) -> None:
-        digest = "sha256:" + "a" * 64
-        with mock.patch.object(
-            release,
-            "run",
-            return_value=self.record(digest, source_sha="d" * 40),
-        ):
-            with self.assertRaisesRegex(release.Refusal, "does not bind source"):
-                release.ac_digest_from_run(Path("/ac"), 42, self.source, self.version)
-
-
-class WorkflowContractTest(unittest.TestCase):
     def test_publishers_are_path_scoped_and_release_has_no_prompt(self) -> None:
         expectations = {
             "pypi-release.yml": ("awid/**", "server/**"),
-            "npm-release.yml": ("channel/**", "skills/**"),
+            "npm-release.yml": ("channel/**", "skills/aweb-coordination/**"),
             "awid-image-release.yml": ("awid/**", "server/**"),
             "aw-release.yml": ("cli/go/**",),
-            "a2a-gateway-release.yml": ("cli/go/**", "server/pyproject.toml"),
+            "a2a-gateway-release.yml": ("cli/go/**",),
         }
         for workflow, paths in expectations.items():
             text = (ROOT / ".github" / "workflows" / workflow).read_text()
@@ -476,17 +391,6 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertNotIn("input(", source)
         self.assertNotIn("COMPAT_BREAK", source)
         self.assertNotIn("PURPOSE", source)
-
-    def test_ac_gate_and_total_lock_check_precede_release_and_deploy(self) -> None:
-        source = (ROOT / "scripts" / "release.py").read_text()
-        self.assertLess(
-            source.index('"scripts/release-local-gate.sh"'),
-            source.index('fast_forward(ac, "release", final)'),
-        )
-        deploy = source[source.index("def deploy(") : source.index("def mark_done(")]
-        self.assertLess(
-            deploy.index("ensure_ac_content"), deploy.index("prod-migrate-direct")
-        )
 
     def test_publication_workflows_keep_exact_output_checks(self) -> None:
         checks = {

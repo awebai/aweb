@@ -29,7 +29,7 @@ From a clean reviewed candidate in the aweb repository:
 
 ```bash
 make test-a2a
-make release AC_ROOT=/path/to/ac
+make release
 ```
 
 `make test-a2a` runs:

@@ -448,6 +448,35 @@ for (const dir of ['channel', 'packages/claude-skills']) {
 NODE
 ok "committed channel/skills plugin versions equal package versions"
 
+python3 - "$ROOT" <<'PYSKILLS'
+import os
+import sys
+
+root = sys.argv[1]
+default = {
+    "aweb-bootstrap",
+    "aweb-coordination",
+    "aweb-identity",
+    "aweb-messaging",
+    "aweb-team-membership",
+}
+internal = {"aweb-agent-instantiation"}
+canonical = {
+    name
+    for name in os.listdir(os.path.join(root, "skills"))
+    if os.path.isfile(os.path.join(root, "skills", name, "SKILL.md"))
+}
+if default & internal:
+    raise SystemExit("default and internal skill sets overlap")
+if canonical != default | internal:
+    raise SystemExit(
+        "canonical skills must be explicitly default or internal: "
+        f"canonical={sorted(canonical)} default={sorted(default)} "
+        f"internal={sorted(internal)}"
+    )
+PYSKILLS
+ok "every canonical skill is explicitly default-shipped or internal"
+
 ziproot="$tmp/zip-repo"
 mkdir -p "$ziproot/packages/claude-ai-skills" "$ziproot/skills"
 cp "$ROOT/packages/claude-ai-skills/build-zips.sh" "$ziproot/packages/claude-ai-skills/"
@@ -477,7 +506,7 @@ for skill in expected:
     if actual != wanted:
         raise SystemExit(f"ZIP {skill} bytes differ from canonical source")
 PYZIP
-ok "exact five ZIP names and bytes equal the five canonical skill sources"
+ok "exact five ZIP names and bytes equal the five default skill sources"
 rm -rf "$ziproot/skills/aweb-identity"
 if (cd "$ziproot/packages/claude-ai-skills" && ./build-zips.sh >/dev/null 2>&1); then
   fail "ZIP build accepted a missing canonical skill source"

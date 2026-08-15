@@ -647,10 +647,10 @@ def self_test(root: Path) -> int:
             encoding="utf-8",
         )
 
-        makefile = tmp / "Makefile"
-        makefile.write_text(
-            makefile.read_text(encoding="utf-8").replace(
-                '-v "$$workspace:/workspace:ro"', '-v "$(CURDIR):/workspace:ro"', 1
+        gateway_e2e = tmp / "scripts/e2e-a2a-gateway-docker.sh"
+        gateway_e2e.write_text(
+            gateway_e2e.read_text(encoding="utf-8").replace(
+                '-v "$GATEWAY_DIR:/workspace:ro"', '-v "$ROOT:/workspace:ro"', 1
             ),
             encoding="utf-8",
         )

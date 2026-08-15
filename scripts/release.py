@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""One-command, crash-resumable release of aweb and AC.
+"""One-command, crash-resumable release of aweb OSS artifacts.
 
-There is no release card and no human checkpoint.  A pair of annotated git tags
-binds the exact source commits and desired versions after the aweb gate passes.
-Every rerun either completes that intent from observed external state or fails
-closed on a conflict.
+There is no release card or human checkpoint.  An annotated git tag binds the
+exact source commit and desired versions after the clean gate passes.  Every
+rerun either completes that intent from observed public state or fails closed
+on a conflict.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
-import os
 import re
 import subprocess
 import sys
@@ -54,6 +53,16 @@ class Artifact:
     excluded_paths: tuple[str, ...] = ()
 
 
+DEFAULT_SKILLS = (
+    "aweb-bootstrap",
+    "aweb-coordination",
+    "aweb-identity",
+    "aweb-messaging",
+    "aweb-team-membership",
+)
+DEFAULT_SKILL_PATHS = tuple(f"skills/{name}/" for name in DEFAULT_SKILLS)
+
+
 ARTIFACTS = (
     Artifact(
         "aweb-server",
@@ -88,41 +97,41 @@ ARTIFACTS = (
         "pi-extension",
         "pi-v",
         "pi-extension/package.json",
-        ("pi-extension/", "channel-core/", "skills/"),
-        ("pi-extension/package-lock.json", "pi-extension/test/", "channel-core/test/"),
+        ("pi-extension/", "channel-core/", *DEFAULT_SKILL_PATHS),
+        (
+            "pi-extension/package-lock.json",
+            "pi-extension/test/",
+            "channel-core/test/",
+        ),
     ),
     Artifact(
         "skills",
         "skills-v",
         "packages/claude-skills/package.json",
-        ("packages/claude-skills/", "packages/claude-ai-skills/", "skills/"),
+        (
+            "packages/claude-skills/",
+            "packages/claude-ai-skills/",
+            *DEFAULT_SKILL_PATHS,
+        ),
     ),
     Artifact(
         "a2a-gateway-image",
         "a2a-gw-v",
-        "server/pyproject.toml",
-        ("cli/go/", "server/pyproject.toml"),
-        (),
+        None,
+        ("cli/go/",),
     ),
-)
-AC_ARTIFACT = Artifact(
-    "ac-image",
-    "v",
-    "backend/pyproject.toml",
-    ("backend/", "frontend/", "Dockerfile.release"),
 )
 
 
 @dataclasses.dataclass(frozen=True)
 class Intent:
     aweb_sha: str
-    ac_base_sha: str
     versions: dict[str, str]
     publish: tuple[str, ...]
 
     @property
     def identifier(self) -> str:
-        return f"{self.aweb_sha[:12]}-{self.ac_base_sha[:12]}"
+        return self.aweb_sha
 
     @property
     def tag(self) -> str:
@@ -137,7 +146,6 @@ class Intent:
             {
                 "schema": 1,
                 "aweb_sha": self.aweb_sha,
-                "ac_base_sha": self.ac_base_sha,
                 "versions": dict(sorted(self.versions.items())),
                 "publish": list(self.publish),
             },
@@ -153,18 +161,16 @@ class Intent:
             raise Refusal(f"release intent is malformed: {exc}") from exc
         if (
             not isinstance(value, dict)
-            or set(value)
-            != {"schema", "aweb_sha", "ac_base_sha", "versions", "publish"}
+            or set(value) != {"schema", "aweb_sha", "versions", "publish"}
             or value["schema"] != 1
         ):
             raise Refusal("release intent has an unsupported shape")
-        for field in ("aweb_sha", "ac_base_sha"):
-            if not isinstance(value[field], str) or not re.fullmatch(
-                r"[0-9a-f]{40}", value[field]
-            ):
-                raise Refusal(f"release intent {field} is invalid")
+        if not isinstance(value["aweb_sha"], str) or not re.fullmatch(
+            r"[0-9a-f]{40}", value["aweb_sha"]
+        ):
+            raise Refusal("release intent aweb_sha is invalid")
         versions = value["versions"]
-        expected = {artifact.key for artifact in ARTIFACTS} | {"ac-image"}
+        expected = {artifact.key for artifact in ARTIFACTS}
         if not isinstance(versions, dict) or set(versions) != expected:
             raise Refusal(
                 f"release intent version domain differs: expected {sorted(expected)}"
@@ -182,7 +188,7 @@ class Intent:
             or publish != sorted(set(publish))
         ):
             raise Refusal("release intent publish set is invalid")
-        return cls(value["aweb_sha"], value["ac_base_sha"], versions, tuple(publish))
+        return cls(value["aweb_sha"], versions, tuple(publish))
 
 
 def run(
@@ -224,12 +230,6 @@ def require_main_tip(repo: Path) -> None:
         raise Refusal(f"{repo} must be checked out at origin/main ({main}), not {head}")
 
 
-def require_expected_head(repo: Path, expected: str, label: str) -> None:
-    head = git(repo, "rev-parse", "HEAD")
-    if head != expected:
-        raise Refusal(f"{repo} must be checked out at {label} ({expected}), not {head}")
-
-
 def version_tuple(value: str) -> tuple[int, int, int]:
     if not SEMVER.fullmatch(value):
         raise Refusal(f"version {value!r} is not MAJOR.MINOR.PATCH")
@@ -250,6 +250,20 @@ def manifest_version(repo: Path, sha: str, path: str) -> str:
     if not isinstance(value, str) or not SEMVER.fullmatch(value):
         raise Refusal(f"{path} at {sha} has invalid version {value!r}")
     return value
+
+
+def dependency_floor(repo: Path, sha: str, path: str, package: str) -> str:
+    project = tomllib.loads(git(repo, "show", f"{sha}:{path}"))["project"]
+    prefix = f"{package}>="
+    matches = [item for item in project["dependencies"] if item.startswith(prefix)]
+    if len(matches) != 1:
+        raise Refusal(
+            f"{path} at {sha} must declare exactly one literal {package}>= floor"
+        )
+    floor = matches[0][len(prefix) :]
+    if not SEMVER.fullmatch(floor):
+        raise Refusal(f"{path} at {sha} has invalid {package} floor {floor!r}")
+    return floor
 
 
 def version_tags(
@@ -525,9 +539,8 @@ def public_aweb_complete(versions: dict[str, str], root: Path) -> bool:
     return not missing_aweb_workflows(versions, root)
 
 
-def compute_intent(aweb: Path, ac: Path) -> tuple[Intent, set[str]]:
+def compute_intent(aweb: Path) -> tuple[Intent, set[str]]:
     aweb_sha = git(aweb, "rev-parse", "origin/main")
-    ac_sha = git(ac, "rev-parse", "origin/main")
     versions: dict[str, str] = {}
     moving: set[str] = set()
     for artifact in ARTIFACTS:
@@ -535,41 +548,15 @@ def compute_intent(aweb: Path, ac: Path) -> tuple[Intent, set[str]]:
         versions[artifact.key] = version
         if changed:
             moving.add(artifact.key)
-    if versions["a2a-gateway-image"] != versions["aweb-server"]:
-        raise Refusal("a2a-gateway-image version must equal aweb-server")
-    ac_version, ac_changed = choose_version(ac, ac_sha, AC_ARTIFACT)
-    versions["ac-image"] = ac_version
-    targets = {
-        "aweb": versions["aweb-server"],
-        "awid-service": versions["awid-service"],
-    }
-    check = subprocess.run(
-        [
-            "python3",
-            "scripts/derive_release_floors.py",
-            "--ac-root",
-            str(ac),
-            "--targets",
-            json.dumps(targets),
-            "--check",
-        ],
-        cwd=ac,
-        text=True,
-        capture_output=True,
+    awid_floor = dependency_floor(
+        aweb, aweb_sha, "server/pyproject.toml", "awid-service"
     )
-    if check.returncode:
-        previous = latest_release(ac, AC_ARTIFACT)
-        if previous is not None and version_tuple(ac_version) <= version_tuple(
-            previous[0]
-        ):
-            raise Refusal(
-                "AC must consume new aweb dependencies but backend/pyproject.toml "
-                f"is still {ac_version}; bump it above released {previous[0]}"
-            )
-        ac_changed = True
-    if ac_changed:
-        moving.add("ac-image")
-    return Intent(aweb_sha, ac_sha, versions, tuple(sorted(moving))), moving
+    if awid_floor != versions["awid-service"]:
+        raise Refusal(
+            "server/pyproject.toml must set awid-service floor to the desired "
+            f"release {versions['awid-service']}, not {awid_floor}"
+        )
+    return Intent(aweb_sha, versions, tuple(sorted(moving))), moving
 
 
 def remote_tags(repo: Path, pattern: str) -> set[str]:
@@ -631,9 +618,9 @@ def push_annotated_tag(repo: Path, tag: str, target: str, document: str) -> None
             raise
 
 
-def open_intent(aweb: Path, ac: Path) -> Intent | None:
-    tags = remote_tags(aweb, f"{INTENT_PREFIX}*") | remote_tags(ac, f"{INTENT_PREFIX}*")
-    done = remote_tags(aweb, f"{DONE_PREFIX}*") & remote_tags(ac, f"{DONE_PREFIX}*")
+def open_intent(aweb: Path) -> Intent | None:
+    tags = remote_tags(aweb, f"{INTENT_PREFIX}*")
+    done = remote_tags(aweb, f"{DONE_PREFIX}*")
     open_tags = sorted(
         tag for tag in tags if DONE_PREFIX + tag[len(INTENT_PREFIX) :] not in done
     )
@@ -642,22 +629,15 @@ def open_intent(aweb: Path, ac: Path) -> Intent | None:
     if not open_tags:
         return None
     tag = open_tags[0]
-    documents = []
-    for repo in (aweb, ac):
-        if tag in remote_tags(repo, tag):
-            fetch(repo)
-            documents.append(tag_document(repo, tag))
-    if not documents or len(set(documents)) != 1:
-        raise Refusal(f"intent tag {tag} disagrees across repositories")
-    intent = Intent.parse(documents[0])
+    fetch(aweb)
+    intent = Intent.parse(tag_document(aweb, tag))
     if intent.tag != tag:
         raise Refusal(f"intent tag {tag} does not match its source commits")
     return intent
 
 
-def ensure_intent_tags(aweb: Path, ac: Path, intent: Intent) -> None:
+def ensure_intent_tag(aweb: Path, intent: Intent) -> None:
     push_annotated_tag(aweb, intent.tag, intent.aweb_sha, intent.document())
-    push_annotated_tag(ac, intent.tag, intent.ac_base_sha, intent.document())
 
 
 def fast_forward(repo: Path, branch: str, target: str) -> None:
@@ -780,291 +760,75 @@ def reconcile_aweb(aweb: Path, intent: Intent, moving: set[str]) -> None:
         )
 
 
-def find_derived_ac(ac: Path, intent: Intent) -> str | None:
-    version_tag = f"v{intent.versions['ac-image']}"
-    if version_tag in remote_tags(ac, version_tag):
-        fetch(ac)
-        candidate = git(ac, "rev-list", "-n", "1", version_tag)
-        if subprocess.run(
-            ["git", "merge-base", "--is-ancestor", intent.ac_base_sha, candidate],
-            cwd=ac,
-        ).returncode:
-            raise Refusal(f"{version_tag} is not descended from the intent's AC base")
-        return candidate
-    log = git(
-        ac,
-        "log",
-        "origin/main",
-        "--format=%H",
-        "--fixed-strings",
-        f"--grep=Release-Intent: {intent.identifier}",
-    )
-    return log.splitlines()[0] if log else None
-
-
-def derive_ac(ac: Path, intent: Intent) -> str:
-    existing = find_derived_ac(ac, intent)
-    if existing:
-        return existing
-    if git(ac, "rev-parse", "origin/main") != intent.ac_base_sha:
-        raise Refusal(
-            "AC main moved before dependency derivation; the active intent remains authoritative and requires an engineering rebase"
-        )
-    targets = json.dumps(
-        {
-            "aweb": intent.versions["aweb-server"],
-            "awid-service": intent.versions["awid-service"],
-        },
-        sort_keys=True,
-    )
-    with tempfile.TemporaryDirectory(prefix="aweb-release-ac-") as raw:
-        worktree = Path(raw) / "worktree"
-        git(ac, "worktree", "add", "--detach", str(worktree), intent.ac_base_sha)
-        try:
-            run(
-                (
-                    "python3",
-                    "scripts/derive_release_floors.py",
-                    "--ac-root",
-                    str(worktree),
-                    "--targets",
-                    targets,
-                ),
-                cwd=worktree,
-                timeout=600,
-            )
-            changed = {
-                line[3:]
-                for line in git(worktree, "status", "--porcelain").splitlines()
-                if len(line) > 3
-            }
-            if not changed:
-                return intent.ac_base_sha
-            allowed = {"backend/pyproject.toml", "backend/uv.lock"}
-            if not changed <= allowed:
-                raise Refusal(
-                    f"AC derivation changed files outside {sorted(allowed)}: {sorted(changed)}"
-                )
-            git(worktree, "add", *sorted(allowed))
-            run(
-                (
-                    "git",
-                    "-c",
-                    "user.name=aweb release",
-                    "-c",
-                    "user.email=release@aweb.ai",
-                    "commit",
-                    "-m",
-                    f"release: consume public aweb dependencies\n\nRelease-Intent: {intent.identifier}",
-                ),
-                cwd=worktree,
-            )
-            final = git(worktree, "rev-parse", "HEAD")
-            git(worktree, "push", "origin", "HEAD:refs/heads/main")
-            return final
-        finally:
-            git(ac, "worktree", "remove", "--force", str(worktree))
-
-
-def ensure_ac_content(ac: Path, sha: str, intent: Intent) -> None:
-    targets = json.dumps(
-        {
-            "aweb": intent.versions["aweb-server"],
-            "awid-service": intent.versions["awid-service"],
-        },
-        sort_keys=True,
-    )
-    with tempfile.TemporaryDirectory(prefix="aweb-release-ac-check-") as raw:
-        worktree = Path(raw) / "worktree"
-        git(ac, "worktree", "add", "--detach", str(worktree), sha)
-        try:
-            run(
-                (
-                    "python3",
-                    "scripts/derive_release_floors.py",
-                    "--ac-root",
-                    str(worktree),
-                    "--targets",
-                    targets,
-                    "--check",
-                ),
-                cwd=worktree,
-            )
-        finally:
-            git(ac, "worktree", "remove", "--force", str(worktree))
-
-
-def ac_digest_from_run(ac: Path, run_id: int, source_sha: str, version: str) -> str:
-    log = run(
-        ("gh", "run", "view", str(run_id), "--repo", "awebai/ac", "--log"),
-        cwd=ac,
-        timeout=300,
-    )
-    raw_records = re.findall(r"release-index=(\{[^\r\n]+\})", log)
-    if not raw_records:
-        raise Refusal(f"AC workflow {run_id} emitted no release-index record")
-    records = []
-    for raw in raw_records:
-        try:
-            record = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise Refusal(
-                f"AC workflow {run_id} emitted a malformed release-index record"
-            ) from exc
-        if (
-            not isinstance(record, dict)
-            or set(record) != {"digest", "source_sha", "version"}
-            or not isinstance(record["digest"], str)
-            or not re.fullmatch(r"sha256:[0-9a-f]{64}", record["digest"])
-            or record["source_sha"] != source_sha
-            or record["version"] != version
-        ):
-            raise Refusal(
-                f"AC workflow {run_id} emitted a release-index record that does not "
-                f"bind source {source_sha} and version {version}"
-            )
-        records.append(record)
-    digests = {record["digest"] for record in records}
-    if len(digests) != 1:
-        raise Refusal(
-            f"AC workflow {run_id} emitted conflicting release-index digests: "
-            f"{sorted(digests)}"
-        )
-    return records[0]["digest"]
-
-
-def reconcile_ac(ac: Path, intent: Intent) -> tuple[str, str]:
-    final = derive_ac(ac, intent)
-    ensure_ac_content(ac, final, intent)
-    with tempfile.TemporaryDirectory(prefix="aweb-release-ac-gate-") as raw:
-        worktree = Path(raw) / "worktree"
-        git(ac, "worktree", "add", "--detach", str(worktree), final)
-        try:
-            run(
-                ("scripts/release-local-gate.sh",),
-                cwd=worktree,
-                timeout=7200,
-                capture=False,
-            )
-        finally:
-            git(ac, "worktree", "remove", "--force", str(worktree))
-    source_tag = f"v{intent.versions['ac-image']}"
-    push_annotated_tag(
-        ac,
-        source_tag,
-        final,
-        json.dumps({"release_intent": intent.identifier}, sort_keys=True),
-    )
-    fast_forward(ac, "release", final)
-    run_id = monitor_workflow(ac, "aweb-cloud-ci-cd.yml", final, repository="awebai/ac")
-    return final, ac_digest_from_run(ac, run_id, final, intent.versions["ac-image"])
-
-
-def health_sha(url: str) -> str:
-    try:
-        return str((read_url(url).get("build") or {}).get("git_sha", ""))
-    except FileNotFoundError:
-        return ""
-
-
-def deploy(ac: Path, intent: Intent, final: str, digest: str) -> None:
-    ensure_ac_content(ac, final, intent)
-    health_url = os.environ.get("RELEASE_HEALTH_URL", "https://app.aweb.ai/health")
-    verify = (
-        "python3",
-        "scripts/render_release_client.py",
-        "verify-deploy",
-        "--digest",
-        digest,
-        "--health-url",
-        health_url,
-        "--expect-git-sha",
-        final,
-    )
-    if health_sha(health_url) == final:
-        try:
-            run(verify, cwd=ac, timeout=1200, capture=False)
-        except Refusal:
-            print(
-                "production serves the commit but standing state is not exact; reconciling"
-            )
-        else:
-            print(f"production already serves exact release {final} at {digest}")
-            return
-    prod_env = os.environ.get("PROD_ENV_FILE", ".env.production")
-    run(
-        ("make", "prod-migrate-direct", f"PROD_ENV_FILE={prod_env}"),
-        cwd=ac,
-        timeout=1800,
-        capture=False,
-    )
-    run(
-        ("python3", "scripts/render_release_client.py", "deploy", "--digest", digest),
-        cwd=ac,
-        timeout=300,
-        capture=False,
-    )
-    run(verify, cwd=ac, timeout=1200, capture=False)
-
-
-def mark_done(
-    aweb: Path, ac: Path, intent: Intent, final: str, digest: str | None
-) -> None:
+def mark_done(aweb: Path, intent: Intent) -> None:
     document = json.dumps(
-        {"release_intent": intent.identifier, "ac_sha": final, "digest": digest},
+        {
+            "release_intent": intent.identifier,
+            "aweb_sha": intent.aweb_sha,
+            "versions": dict(sorted(intent.versions.items())),
+        },
         sort_keys=True,
         separators=(",", ":"),
     )
     push_annotated_tag(aweb, intent.done_tag, intent.aweb_sha, document)
-    push_annotated_tag(ac, intent.done_tag, final, document)
 
 
-def release(aweb: Path, ac: Path) -> None:
-    for repo in (aweb, ac):
-        require_clean(repo)
-        fetch(repo)
-    intent = open_intent(aweb, ac)
-    if intent is None:
-        require_main_tip(aweb)
-        require_main_tip(ac)
-        intent, moving = compute_intent(aweb, ac)
-        missing = missing_aweb_workflows(intent.versions, aweb)
-        repairable = expected_aweb_workflows(moving)
-        if missing - repairable:
-            raise Refusal(
-                "desired public outputs are absent but their source is unchanged; "
-                f"bump the owning version to repair workflows {sorted(missing - repairable)}"
-            )
-        if not moving and not missing:
-            print("nothing to release")
-            return
-        run(("scripts/release-gate.sh",), cwd=aweb, timeout=7200, capture=False)
-        ensure_intent_tags(aweb, ac, intent)
-    else:
-        moving = set(intent.publish)
-    require_expected_head(aweb, intent.aweb_sha, "release intent aweb source")
-    require_expected_head(ac, intent.ac_base_sha, "release intent AC base")
-    ensure_intent_tags(aweb, ac, intent)
-    print(
-        f"reconciling {intent.tag}: aweb={intent.aweb_sha} ac-base={intent.ac_base_sha}"
-    )
-    reconcile_aweb(aweb, intent, moving)
-    final, digest = intent.ac_base_sha, None
-    if "ac-image" in moving:
-        final, digest = reconcile_ac(ac, intent)
-        deploy(ac, intent, final, digest)
-    mark_done(aweb, ac, intent, final, digest)
-    print(f"release DONE: aweb={intent.aweb_sha} ac={final} digest={digest}")
+def reconcile_intent(source: Path, intent: Intent, moving: set[str]) -> None:
+    ensure_intent_tag(source, intent)
+    print(f"reconciling {intent.tag}: source={intent.aweb_sha}")
+    reconcile_aweb(source, intent, moving)
+    mark_done(source, intent)
+
+
+def release(aweb: Path) -> Intent | None:
+    require_clean(aweb)
+    completed: Intent | None = None
+    while True:
+        fetch(aweb)
+        intent = open_intent(aweb)
+        if intent is None:
+            require_main_tip(aweb)
+            intent, moving = compute_intent(aweb)
+            missing = missing_aweb_workflows(intent.versions, aweb)
+            repairable = expected_aweb_workflows(moving)
+            if missing - repairable:
+                raise Refusal(
+                    "desired public outputs are absent but their source is unchanged; "
+                    f"bump the owning version to repair workflows {sorted(missing - repairable)}"
+                )
+            if not moving and not missing:
+                print("nothing to release")
+                return completed
+            run(("scripts/release-gate.sh",), cwd=aweb, timeout=7200, capture=False)
+            ensure_intent_tag(aweb, intent)
+        else:
+            moving = set(intent.publish)
+        if git(aweb, "rev-parse", "HEAD") == intent.aweb_sha:
+            reconcile_intent(aweb, intent, moving)
+        else:
+            with tempfile.TemporaryDirectory(prefix="aweb-release-source-") as raw:
+                worktree = Path(raw) / "worktree"
+                git(aweb, "worktree", "add", "--detach", str(worktree), intent.aweb_sha)
+                try:
+                    reconcile_intent(worktree, intent, moving)
+                finally:
+                    git(aweb, "worktree", "remove", "--force", str(worktree))
+        print(
+            "release DONE: "
+            + intent.aweb_sha
+            + " "
+            + json.dumps(dict(sorted(intent.versions.items())), sort_keys=True)
+        )
+        completed = intent
+        if git(aweb, "rev-parse", "origin/main") == intent.aweb_sha:
+            return completed
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ac-root", type=Path, default=None)
-    args = parser.parse_args(argv)
-    aweb = Path.cwd().resolve()
-    ac = (args.ac_root or Path(os.environ.get("AC_ROOT", aweb.parent / "ac"))).resolve()
+    parser.parse_args(argv)
     try:
-        release(aweb, ac)
+        release(Path.cwd().resolve())
     except (
         OSError,
         Refusal,
