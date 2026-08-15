@@ -1414,6 +1414,14 @@ def check_plugin_equality(prepared: PreparedEnvironment) -> None:
                 prepared.aweb_root, "show", f"{prepared.aweb_sha}:{plugin_path}"
             ).stdout
         except CommandFailed:
+            # A declared mirror ABSENT at the card's SHA is skipped, not
+            # refused - deliberately. With AWEB_SHA selecting an older
+            # commit, a newly-declared mirror genuinely did not exist
+            # there, and refusing would break that override path. Do not
+            # "fix" this into a refusal. A mistyped or missing mirror
+            # path is caught instead by the specs test (every declared
+            # mirror must exist and carry a version field) and by the
+            # literal ARTIFACTS pin.
             continue
         package_body = _git(
             prepared.aweb_root, "show", f"{prepared.aweb_sha}:{package_path}"
