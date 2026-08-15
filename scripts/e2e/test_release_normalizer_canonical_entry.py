@@ -34,6 +34,10 @@ from registry_stand_in import RegistryStandIn  # noqa: E402
 MAIN = REPO_ROOT / "scripts" / "release_normalizer_main.py"
 
 MANIFESTS = {
+    # The aweb checkout carries the marketplace adapter the continue
+    # command invokes; prepare refuses without it, so the fixture
+    # models a checkout that could actually run a release.
+    "scripts/pointer-adapter-marketplace-pointer.py": ("raw", "#\n"),
     "server/pyproject.toml": (
         "raw",
         '[project]\nname = "server"\nversion = "1.27.1"\n'
@@ -123,9 +127,18 @@ class _WorldFixture(unittest.TestCase):
         # satisfies the canonical-remote check the train enforces.
         base = Path(cls._tmp.name) / "awebai"
         cls.aweb_sha = _build_repo(base / "aweb", MANIFESTS, AWEB_TAGS)
+        # A resolved AC checkout carries the scripts the continue
+        # commands invoke; prepare refuses without them, by name, at
+        # the fail-fast phase. The fixture models that rather than a
+        # checkout that could never work.
         cls.ac_sha = _build_repo(
             base / "ac",
-            {"backend/pyproject.toml": ("toml", "0.7.14")},
+            {
+                "backend/pyproject.toml": ("toml", "0.7.14"),
+                "scripts/derive_release_floors.py": ("raw", "#\n"),
+                "scripts/render_release_client.py": ("raw", "#\n"),
+                "scripts/verify_registry_adoption.py": ("raw", "#\n"),
+            },
             # ac-image is tag-anchored like every other artifact now:
             # its identity is the tag in its OWN repository.
             ("v0.7.14",),

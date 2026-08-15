@@ -1,5 +1,13 @@
-"""Every fixed continue command, checked against the argparse of the
-script it actually invokes.
+"""The fixed continue commands whose scripts live in THIS repository,
+checked against what those scripts actually demand.
+
+The cross-repository half - resolving the AC-side scripts - lives in
+test_release_ac_digest_contract, which is declared out of the gate
+because the gate container mounts only the aweb checkout. Keeping it
+here made this module fail in the container: the column-b condition,
+introduced by me for the SECOND time, in the very test written to stop
+argv defects. A test that cannot run where the gate runs proves
+nothing there.
 
 TWO OF NINE have now shipped missing a required argument, and both
 were found by EXECUTING them rather than by reading:
@@ -30,9 +38,6 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import release_train as rt  # noqa: E402
 
-AC_ROOT = REPO_ROOT.parent / "ac"
-
-
 def _load(path: Path):
     spec = importlib.util.spec_from_file_location(path.stem.replace("-", "_"), path)
     module = importlib.util.module_from_spec(spec)
@@ -45,7 +50,7 @@ def _script_of(argv) -> Path | None:
 
     for token in argv:
         if token.endswith(".py"):
-            for root in (REPO_ROOT, AC_ROOT, REPO_ROOT.parent / "ac-worktree"):
+            for root in (REPO_ROOT,):
                 candidate = root / token
                 if candidate.is_file():
                     return candidate
@@ -54,19 +59,6 @@ def _script_of(argv) -> Path | None:
 
 
 class FixedCommandArgv(unittest.TestCase):
-    def test_every_python_command_resolves_to_a_real_script(self) -> None:
-        missing = []
-        for env, argv in rt._CONTINUE_FIXED_COMMANDS.items():
-            if not any(t.endswith(".py") for t in argv):
-                continue
-            if _script_of(argv) is None:
-                missing.append((env, argv))
-        self.assertEqual(
-            missing, [],
-            "a fixed command names a script that does not exist in either "
-            "repository - it can only fail at release time",
-        )
-
     def test_the_marketplace_argv_the_train_composes_is_accepted(self) -> None:
         """The defect that stopped a half-published release."""
 
