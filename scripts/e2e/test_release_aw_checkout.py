@@ -30,10 +30,27 @@ import release_status_builders as builders  # noqa: E402
 
 
 def git(*args: str, cwd: Path) -> str:
-    return subprocess.run(
+    """Identity is passed here AND stamped into every repository this
+    initialises: production code under test runs git in these
+    repositories too, and a developer host has a global git config
+    where the gate container has none."""
+
+    result = subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
         cwd=cwd, check=True, capture_output=True, text=True,
-    ).stdout.strip()
+    )
+    if args and args[0] == "init" and "--bare" not in args:
+        candidates = [cwd] + [
+            Path(a) if Path(a).is_absolute() else cwd / a
+            for a in args[1:] if not a.startswith("-")
+        ]
+        target = next(
+            (c for c in reversed(candidates) if (c / ".git").exists()), cwd
+        )
+        for key, value in (("user.email", "t@t"), ("user.name", "t")):
+            subprocess.run(["git", "config", key, value], cwd=target,
+                           check=True, capture_output=True)
+    return result.stdout.strip()
 
 
 class AwCheckoutPreconditions(unittest.TestCase):

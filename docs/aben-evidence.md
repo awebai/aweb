@@ -284,6 +284,65 @@ row. When the mechanism under test changes, every control over it must
 be re-derived rather than carried - and the packet should be read with
 that applied to its other controls too.
 
+**ENVIRONMENT SUPPRESSION IS NOT ENVIRONMENT REPRODUCTION.** The
+first gate run to complete failed three rows, and two of them were one
+cause: fixtures that commit and tag through git with no identity. A
+developer host has a global git config and the gate container has
+none, so the code passed everywhere it was written and failed where it
+counted.
+
+The finding is not the defect, it is what happened next. I reproduced
+the container by suppressing `HOME` and the git config, got the whole
+suite green, and was one step from calling that proof. It was not:
+macOS git SYNTHESISES an identity from the OS user, so the "bare"
+environment still had one - `git var GIT_COMMITTER_IDENT` returned my
+own name under it. That is why this passed locally for as long as it
+did, and why the suppression looked like a reproduction.
+
+The faithful stand-in needed `user.useConfigOnly=true` as well, which
+forbids git to guess. Under it the container's exact refusal
+reproduces, the suite is green with the fix, and the control
+discriminates - reverting the fix fails the same tests with "Committer
+identity unknown".
+
+**Absence of a setting is not absence of the behaviour. A
+reproduction is faithful only once you have measured the thing you
+assumed you removed.** The tell is specific and worth knowing: in a
+"bare environment" test, a PLAUSIBLE-LOOKING identity is evidence the
+host leaked in, not evidence of isolation - and it is worse than a
+blank, because it reads as a successful identity read rather than as
+nothing. `env -u HOME` suppresses a VARIABLE; git's fallback does not
+read that variable. The reviewer reproduced both environments
+independently and got their own name from the first one.
+
+**THE GATE FOUND WHAT THE DEVELOPER HOST STRUCTURALLY COULD NOT.**
+That is the argument for the gate being a real environment rather than
+a faster one: the developer host HAS a git identity and the container
+does not, so no amount of care on the host could have surfaced this.
+It sits beside the first-contact findings for the same reason - four
+of those came from the real registries rather than fixtures, and this
+one came from the real container rather than the real registries.
+
+The fix's second half is the durable one: identity is stamped into
+every repository the fixture helper INITIALISES, not only passed by
+the helper, because production code under test runs git in those
+repositories - the annotated source tag, continue's derive commit. A
+helper-only fix would have left the gap for everything the tests
+drive rather than call.
+
+**A check that cannot fail where it runs is worse than no check.** The
+same gate run surfaced a latent cross-repo reference: the design named
+AC's `derive_release_floors.py` as a path the aweb checker resolves
+against aweb. Red since the document landed, invisible until the first
+gate run of the cycle. It was fixed in the DOCUMENT rather than the
+checker - the reference is now the true sibling path, out of the
+checker's scope by construction rather than by an allowlist entry that
+would have made the name permanently unverifiable. The trade was
+stated rather than glossed: the path is now unvalidated, a typo in it
+goes unnoticed. Teaching the checker to resolve siblings was the
+alternative and it is worse, because the sibling is absent in the gate
+container, so that check would pass vacuously exactly where it runs.
+
 **AN ALLOWLISTED PATCHER MUST BE ABLE TO CONVERGE FROM ANY STATE IT
 CAN ITSELF CREATE.** The sharpest finding of the epic, and it
 generalises past the case that produced it.
