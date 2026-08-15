@@ -92,7 +92,7 @@ help:
 	@echo ""
 	@echo "  verify-site  Verify the awid.ai Hugo site without deploying"
 	@echo "  deploy-site  Advance the verified origin/main commit to $(SITE_DEPLOY_BRANCH)"
-	@echo "  release                               test, reconcile, publish, and deploy the desired state"
+	@echo "  release                               test, reconcile, and publish the desired OSS artifacts"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
