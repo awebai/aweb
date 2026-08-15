@@ -46,7 +46,10 @@ def _apply_floor_patch(path: Path, from_version: str, to_version: str) -> None:
 
 def _apply_manifest_patch(path: Path, from_version: str, to_version: str) -> None:
     text = path.read_text()
-    if path.name == "package.json":
+    # Chosen by SUFFIX, not by the exact filename: the version mirrors
+    # are .claude-plugin/plugin.json, which is JSON and was falling to
+    # the TOML form because it is not literally named package.json.
+    if path.suffix == ".json":
         pattern = f'"version": "{from_version}"'
         replacement = f'"version": "{to_version}"'
     else:
@@ -78,6 +81,7 @@ def run_normalizer(
     *,
     capture: Callable[[], rn.CapturedWorld],
     manifest_paths: dict[str, Path],
+    version_mirrors: dict[str, tuple[Path, ...]] | None = None,
     reobserve: Callable[..., Iterable[rn.Stop]],
     normalize: Callable[[rn.CapturedWorld], rn.NormalizerResult] = rn.normalize,
     recapture: Callable[[], rn.CapturedWorld] | None = None,
@@ -115,6 +119,14 @@ def run_normalizer(
                 )
         for path, (from_version, to_version) in edits_by_path.items():
             _apply_manifest_patch(path, from_version, to_version)
+        # A version that is MIRRORED in other committed files moves in
+        # all of them or the tree contradicts itself. The live prepare
+        # patched skills' package.json, left its .claude-plugin mirror
+        # behind, and was refused by the equality guard - correctly, but
+        # the patch should never have produced that tree.
+        for name, _from, _to in first.patches:
+            for mirror in (version_mirrors or {}).get(name, ()):
+                _apply_manifest_patch(mirror, _from, _to)
         for owner, floor_from, floor_to in first.floor_patches:
             _apply_floor_patch(manifest_paths[owner], floor_from, floor_to)
         # The owned locks of every patched manifest (the floor owner's

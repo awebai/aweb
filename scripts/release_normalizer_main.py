@@ -376,6 +376,16 @@ def run_phase(
     manifest_paths = {
         spec.name: repo_roots[spec.repo_key] / spec.manifest_path for spec in specs
     }
+    # Files that mirror an artifact's version and must move with it,
+    # from the canonical record - the guard that enforces the equality
+    # and the patcher that must satisfy it now read one declaration.
+    version_mirrors = {
+        entry.key: tuple(
+            repo_roots[entry.repository] / mirror for mirror in entry.version_mirrors
+        )
+        for entry in rt.ARTIFACTS
+        if entry.version_mirrors
+    }
 
     prefixes = {
         target: prefix
@@ -450,6 +460,7 @@ def run_phase(
     outcome = run.run_normalizer(
         capture=capture,
         manifest_paths=manifest_paths,
+        version_mirrors=version_mirrors,
         reobserve=lambda result, world: reobserve_result(
             result, specs, discover, world
         ),
