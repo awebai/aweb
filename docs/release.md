@@ -52,6 +52,30 @@ and server source in the AWID image (bundled inputs); `packages/codex-plugin`, `
 `packages/hermes-aweb-platform`, `resource-packs/`, `oats/`, `test-vectors/`. The marketplace pointer and
 AC pin/lock are publication effects. Sites deploy by branch push, invoked by continue, outside the ordering.
 
+## Known states: published artifacts that must NOT be used
+
+A public artifact cannot be unpublished, so anything published in error stays
+visible in the registry looking entirely ordinary. This table is where such an
+artifact is recorded. Check it before reaching for the newest version of
+anything here.
+
+| Artifact | Version | Date | Status | Why |
+|---|---|---|---|---|
+| AC product image `ghcr.io/awebai/ac` | **0.7.15** | 2026-08-15 | **DO NOT DEPLOY** | Built from `22ab8bbe`, whose `backend/uv.lock` pins `aweb 1.27.1` and `awid-service 0.5.15`. It does **not** contain the release it is named for, which published `aweb 1.27.2` and `awid-service 0.5.17`. It was never deployed. Use the next AC version instead. |
+
+The 0.7.15 entry exists because a release was interrupted after publishing its
+aweb artifacts and before deriving AC's dependency floors. The recovery card
+correctly marked those artifacts unmoved - they were already public - and AC's
+floor derivation keys on artifacts *moving in the current card*, so it derived
+nothing and reported success. The image was then built from an unchanged base.
+Every check that ran was a provenance check and passed correctly: the image
+genuinely was built from the commit the card named. Nothing asked whether that
+commit consumed the versions the release had just published.
+
+The version number is spent either way: it is public and immutable, and
+republishing different bytes under it is exactly what the exact-publish rule
+forbids.
+
 ## The static DAG (all ten audited edges)
 
 Ordering (O), same-commit bundle (S), equality (E), independent (I):
