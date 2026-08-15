@@ -284,6 +284,35 @@ row. When the mechanism under test changes, every control over it must
 be re-derived rather than carried - and the packet should be read with
 that applied to its other controls too.
 
+**AN ARGPARSE AUDIT REPORTED THE BROKEN COMMAND CLEAN.** The
+release stopped half-published at the marketplace pointer: the fixed
+command did not pass `--expect-repository`, which the script requires,
+and it refused on its first ever production execution with four
+artifacts already public.
+
+Sweeping the nine fixed commands for `required=True` arguments - the
+plausible audit, run first - reported marketplace as fine.
+`--expect-repository` is OPTIONAL to argparse and required at RUNTIME
+by the script's own `require_expected`. Inspecting declarations passes
+it; executing it refuses. The audit told its author what he wanted to
+hear.
+
+The only method that found it was composing the real argv and handing
+it to the real script - the same lesson as the container, the live
+registries and the real repositories: **the artifact answers, the
+model does not.** Nine commands swept that way: two had the defect
+(the digest tuple, found earlier by the same method; the marketplace
+tuple, found by production), no third.
+
+The fix had an available wrong version worth recording, because it
+would have passed every test: pass the adapter's own `DEFAULT_REMOTE`
+back to it. That satisfies the argument and compares a value against
+itself. `--expect-repository` exists so the CALLER states an
+independent expectation the adapter can refuse, so the release
+declares the repository itself and a test asserts the two declarations
+AGREE WHILE REMAINING TWO. Both call sites bound - the read tuple had
+the same gap and had simply never run.
+
 **ONE FACT, THREE COPIES, THREE DIFFERENT DETECTORS.** The tag
 prefix was derived in three separate places, and no single mechanism
 found them:

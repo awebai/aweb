@@ -154,6 +154,14 @@ class ReleaseEdge:
     obligations: tuple[tuple[str, str], ...] = ()
 
 
+# The marketplace repository this release expects to advance. Declared
+# HERE rather than read from the adapter, because that is the whole
+# point of --expect-repository: the caller states an expectation from an
+# independent source and the adapter refuses if the remote it would act
+# on differs. Passing the adapter's own DEFAULT_REMOTE back to it would
+# compare a value against itself - a check that cannot fail.
+MARKETPLACE_REPOSITORY = "git@github.com:awebai/claude-plugins.git"
+
 AW_NPM_PACKAGES = (
     "@awebai/aw",
     "@awebai/aw-linux-x64",
@@ -2207,6 +2215,8 @@ def continue_train(
         "read",
         "--component",
         "marketplace-pointer",
+        "--expect-repository",
+        MARKETPLACE_REPOSITORY,
     ),
     read_standing_command: tuple[str, ...] = (
         "python3",
@@ -2273,6 +2283,14 @@ def continue_train(
                 timeout=work_timeout,
             )
             _require_monitor_record(monitor_result.stdout, card.aweb_sha)
+        # NOTE: the primary only. Every unit member must be present for
+        # DONE, and publication is asynchronous, so a SECONDARY member
+        # (skills' GitHub release, aw-cli's seven npm packages) can
+        # still be settling when the terminal sweep reads it. That is a
+        # real race - but its consequence is the terminal gate's named,
+        # resumable stop, not a bad publication, and widening the wait
+        # here changes behaviour mid-release. Recorded rather than
+        # changed under a partially completed release.
         _poll_public_target(primary, selection.version, bases=bases, timeout=timeout)
     marketplace_moves = any(
         selection.moves
@@ -2299,6 +2317,8 @@ def continue_train(
                 *marketplace_command,
                 "--component",
                 "marketplace-pointer",
+                "--expect-repository",
+                MARKETPLACE_REPOSITORY,
                 "--updates",
                 json.dumps(
                     {
