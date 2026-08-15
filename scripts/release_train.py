@@ -2063,6 +2063,7 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
     every requested effect row. The returned list is what blocks DONE;
     empty means done."""
 
+    import release_normalizer_main as rmain
     import release_status as status
     import release_status_gates as gates
 
@@ -2080,6 +2081,11 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
         repo_roots={
             "aweb": environment.aweb_root,
             "ac": environment.ac_root,
+            # The aw checkout answers the external binding locally. The
+            # prepare phase refuses without it, so by the time continue
+            # runs it exists; passing it here is what lets the terminal
+            # sweep read the binding rather than report it unavailable.
+            "aw": rmain.aw_root(environment.aweb_root),
         },
         timeout=timeout,
     )
