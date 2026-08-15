@@ -383,31 +383,37 @@ def github_release_rows(
 
 
 def source_tag_row(repo, tag: str, *, expected_identity: str) -> Row:
-    """The source anchor OBSERVED: the tag on origin, peeled, compared
-    to the identity the card names. Positive equality only - a served
-    tag at any other commit is conflict, never presence."""
+    """The source anchor OBSERVED: the tag peeled from the LOCAL
+    checkout, compared to the identity the card names. Positive
+    equality only - a tag at any other commit is conflict, never
+    presence.
+
+    Read locally rather than by `ls-remote refs/tags/<tag>`: under the
+    tag ruling every identity question is answered from a repository
+    that was fetched once, so a per-tag remote query is both a round
+    trip per artifact and a second moment of observation. The
+    checkout's refs ARE origin's tags after that fetch.
+    """
 
     import subprocess
 
-    listing = subprocess.run(
-        ["git", "ls-remote", "origin", f"refs/tags/{tag}*"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
     fact = f"source tag {tag}"
-    direct = ""
-    peeled = ""
-    for line in listing:
-        sha, ref = line.split(None, 1)
-        if ref == f"refs/tags/{tag}^{{}}":
-            peeled = sha
-        elif ref == f"refs/tags/{tag}":
-            direct = sha
-    identity = peeled or direct
+    try:
+        identity = subprocess.run(
+            ["git", "rev-list", "-n", "1", f"refs/tags/{tag}"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except subprocess.CalledProcessError:
+        identity = ""
     if not identity:
-        return Row(fact=fact, state="observed-absent", evidence="tag not on origin")
+        return Row(
+            fact=fact,
+            state="observed-absent",
+            evidence="no such tag in the fetched checkout",
+        )
     if identity == expected_identity:
         return Row(
             fact=fact,

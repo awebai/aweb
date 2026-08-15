@@ -78,35 +78,6 @@ def anchor_tags_from(refs: dict[str, str], prefix: str) -> dict[str, str]:
     return tags
 
 
-def discover_anchor_tags(repo: Path, prefix: str) -> dict[str, str]:
-    """All version-namespace anchor tags on origin, peeled to commits.
-
-    Near-matching non-conformers under the prefix are kept for the
-    reconciler's malformed-version-candidate stop; names outside the
-    version namespace are excluded.
-    """
-
-    lines = _git(repo, "ls-remote", "origin", f"refs/tags/{prefix}*").splitlines()
-    direct: dict[str, str] = {}
-    peeled: dict[str, str] = {}
-    for line in lines:
-        sha, ref = line.split(None, 1)
-        name = ref.removeprefix("refs/tags/")
-        if name.endswith("^{}"):
-            peeled[name[:-3]] = sha
-        else:
-            direct[name] = sha
-    tags: dict[str, str] = {}
-    for name, sha in direct.items():
-        version_text = name.removeprefix(prefix)
-        if parse_version(version_text) is None and not _NEAR_VERSION.match(
-            version_text
-        ):
-            continue
-        tags[version_text] = peeled.get(name, sha)
-    return tags
-
-
 _VERSION_FIELD_TOML = re.compile(r'(?m)^version\s*=\s*"[^"]*"')
 # Structurally anchored to the top level (two-space indent), not first
 # occurrence: a dependencies block placed before the version field must
