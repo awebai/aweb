@@ -103,6 +103,5 @@ class AcDigestContract(unittest.TestCase):
         self.assertIn("--version", bare.stderr)
 
 
-
 if __name__ == "__main__":
     unittest.main()

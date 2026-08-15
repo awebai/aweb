@@ -208,6 +208,57 @@ class Routing(unittest.TestCase):
         )
         self.assertEqual([(s.code, s.artifact) for s in stops], [])
 
+    def test_a_continue_command_script_missing_from_the_resolved_checkout_stops(
+        self,
+    ) -> None:
+        """Prepare checks the commands against the checkouts it
+        RESOLVED, which is the only claim a release cares about.
+
+        A static "the script exists in either repository" assertion is
+        a different claim, and it cannot be answered where the gate
+        runs - the container mounts only aweb, so five AC-side commands
+        looked missing and the test failed in the one environment that
+        matters. Prepare already resolves the AC checkout, so it is the
+        place that can see the script AND the place where its absence
+        actually stops a release."""
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            aweb = root / "aweb"; ac = root / "ac"
+            (aweb / "scripts").mkdir(parents=True)
+            (ac / "scripts").mkdir(parents=True)
+            # The AC side is EMPTY, so every AC-side command is missing.
+            stops = main.continue_command_script_stops({"aweb": aweb, "ac": ac})
+            codes = {s.code for s in stops}
+            self.assertEqual(codes, {"continue-command-script-missing"})
+            named = {s.artifact for s in stops}
+            self.assertIn("AWEB_RELEASE_DIGEST_COMMAND", named)
+            self.assertTrue(
+                all(s.detail for s in stops),
+                "each stop must say which script and which checkout",
+            )
+
+    def test_the_real_checkouts_satisfy_every_continue_command(self) -> None:
+        # The control: against checkouts that DO carry the scripts,
+        # there is no stop - so the check is not simply always-refusing.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            aweb = root / "aweb"; ac = root / "ac"
+            for repo in (aweb, ac):
+                (repo / "scripts").mkdir(parents=True)
+            for env, argv in rt._CONTINUE_FIXED_COMMANDS.items():
+                for token in argv:
+                    if token.endswith(".py"):
+                        for repo in (aweb, ac):
+                            (repo / token).write_text("#\n")
+            self.assertEqual(
+                main.continue_command_script_stops({"aweb": aweb, "ac": ac}), []
+            )
+
     def test_offline_is_scoped_to_the_invariant_that_resolves(self) -> None:
         """UV_OFFLINE belongs to the check that RESOLVES.
 

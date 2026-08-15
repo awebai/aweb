@@ -177,6 +177,49 @@ def aw_checkout_stops(root: Path) -> list[rn.Stop]:
     return []
 
 
+def continue_command_script_stops(repo_roots: dict) -> list[rn.Stop]:
+    """Every fixed continue command's script must exist in the checkout
+    prepare RESOLVED - refused here, by name, at the fail-fast phase.
+
+    This is deliberately a RUN-TIME check rather than a test. A test
+    can only ask "does this script exist in either repository", which
+    is a different claim from the one a release depends on, and it
+    cannot even be answered where the gate runs: the container mounts
+    only the aweb checkout, so the five AC-side commands look missing.
+    Prepare already resolves the AC checkout, so it is both the only
+    place that can see these scripts and the place where their absence
+    actually stops a release - before anything publishes rather than
+    at the edge that needs them.
+    """
+
+    stops: list[rn.Stop] = []
+    for env, argv in sorted(rt._CONTINUE_FIXED_COMMANDS.items()):
+        for token in argv:
+            if not token.endswith(".py"):
+                continue
+            found = [
+                key for key, root in repo_roots.items() if (root / token).is_file()
+            ]
+            if not found:
+                stops.append(
+                    rn.Stop(
+                        "continue-command-script-missing",
+                        env,
+                        detail=(
+                            f"{token} is in none of the resolved checkouts "
+                            f"({', '.join(f'{k}={v}' for k, v in sorted(repo_roots.items()))})"
+                        ),
+                    )
+                )
+            # Only the FIRST .py token is checked: it is the script
+            # being invoked, and a later one would be an argument
+            # rather than an interpreter target. True of every current
+            # command; stated so the next reader does not have to
+            # infer it from the loop.
+            break
+    return stops
+
+
 def worktree_stops(
     repo_roots: dict[str, Path], expected_shas: dict[str, str] | None = None
 ) -> list[rn.Stop]:
@@ -431,6 +474,7 @@ def run_phase(
     # quietly become unchecked.
     precondition_stops = worktree_stops(repo_roots, expected_shas)
     precondition_stops += aw_checkout_stops(aw_root(aweb_root))
+    precondition_stops += continue_command_script_stops(repo_roots)
     if precondition_stops:
         report = run.render_stops(precondition_stops)
         return 1, report, None, aweb_root
