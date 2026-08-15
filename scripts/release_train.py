@@ -2716,11 +2716,24 @@ def _continue_main() -> int:
             card = read_card(Path.cwd())
             import release_status_gates as gates
 
+            import release_normalizer_main as rmain
+
+            aweb_root = Path.cwd()
             return gates.rows_for_artifacts(
                 card,
                 {item.name for item in card.artifacts},
                 expected_sources=expected_completion_sources(card),
                 tokens=_status_tokens(),
+                # The FAILURE DIAGNOSTIC needs the checkouts too. Without
+                # them the aw binding rows render UNAVAILABLE "no aw
+                # checkout supplied to the assembly" - in the very output
+                # an operator reads to understand a failure, and it looks
+                # like a finding rather than like the probe's own gap.
+                repo_roots={
+                    "aweb": aweb_root,
+                    "ac": aweb_root.parent / "ac",
+                    "aw": rmain.aw_root(aweb_root),
+                },
                 timeout=30,
             )
 
