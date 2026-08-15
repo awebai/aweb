@@ -66,19 +66,18 @@ This is the ONLY boundary with that property. Do not generalise it.
 2. **OSS first** — land the OSS change on aweb main after the relevant focused
    tests pass.
 
-3. **Release** — the two-command train (`release` skill; `docs/release.md` is
-   authoritative): `release-prepare` gates once in clean Docker and generates
-   the card, Juan gives one go, `release-continue` publishes and then derives
-   the AC dependency-only commit itself. Do not maintain a parallel
-   tag/push/verification sequence here.
+3. **Release** — run `make release AC_ROOT=/path/to/ac` from aweb (`release`
+   skill; `docs/release.md` is authoritative). It gates, publishes, derives AC,
+   gates AC, and deploys without a card or second phase. Do not maintain a
+   parallel tag/push/verification sequence here.
 
-4. **Cloud pins** — continue derives `backend/pyproject.toml` floors and
+4. **Cloud pins** — the reconciler derives `backend/pyproject.toml` floors and
    `backend/uv.lock` mechanically at the recorded AC base and gates the
    derived commit in clean Docker; do not hand-edit the pin as part of the
-   release.
+   release. The complete desired dependency set is always checked.
 
 5. **Cloud change** — land the cloud-side source change on AC main before
-   prepare records the base, or after the train completes; the derived commit
+   the release selects its base, or after the release completes; the derived commit
    itself stays dependency-only.
 
 6. **Verify** — cloud tests pass against the real aweb package (not

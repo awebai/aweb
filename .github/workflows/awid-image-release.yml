@@ -6,6 +6,9 @@ name: AWID Image Release
 on:
   push:
     branches: [release]
+    paths:
+      - "awid/**"
+      - "server/**"
 
 permissions:
   contents: write

@@ -6,6 +6,9 @@ name: A2A Gateway Image Release
 on:
   push:
     branches: [release]
+    paths:
+      - "cli/go/**"
+      - "server/pyproject.toml"
 
 permissions:
   contents: write

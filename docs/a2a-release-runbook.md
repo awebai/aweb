@@ -29,7 +29,7 @@ From a clean reviewed candidate in the aweb repository:
 
 ```bash
 make test-a2a
-PURPOSE="..." COMPAT_BREAK=none make release-prepare
+make release AC_ROOT=/path/to/ac
 ```
 
 `make test-a2a` runs:
@@ -39,9 +39,9 @@ PURPOSE="..." COMPAT_BREAK=none make release-prepare
 - AWID publication route tests; and
 - the public-copy wording guard.
 
-`PURPOSE="..." COMPAT_BREAK=none make release-prepare` additionally builds the release Docker image,
-validates the maintained public YAML inside the container, and runs the real
-Docker gateway journey against aweb and AWID.
+`make release` runs the complete clean-Docker gate before publication. That
+gate builds the release image, validates the maintained public YAML inside the
+container, and runs the real Docker gateway journey against aweb and AWID.
 
 Also run:
 
@@ -63,7 +63,7 @@ Record:
 
 - exact candidate commit from `git rev-parse HEAD`;
 - exact non-merge commit count reviewed;
-- `make test-a2a` results and the release card's gate evidence;
+- `make test-a2a` results and the release gate evidence;
 - the gateway image tag and source repository/commit stamped into the image;
 - AWID service version and confirmation that migration
   `007_a2a_publications.sql` is applied on the target registry;

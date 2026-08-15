@@ -3,6 +3,8 @@ name: aw Sync and Release
 on:
   push:
     branches: [release]
+    paths:
+      - "cli/go/**"
 
 permissions:
   contents: write

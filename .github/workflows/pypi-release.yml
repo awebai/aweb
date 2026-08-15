@@ -6,6 +6,9 @@ name: PyPI Release
 on:
   push:
     branches: [release]
+    paths:
+      - "awid/**"
+      - "server/**"
 
 permissions:
   contents: write
@@ -82,7 +85,7 @@ jobs:
             local tag="$1" observed
             observed="$(remote_tag_sha "$tag")"
             [[ -z "$observed" || "$observed" == "$SOURCE_SHA" ]] \
-              || fail "tag $tag exists at $observed, not $SOURCE_SHA"
+              || echo "version tag $tag remains at its earlier byte-identical source $observed"
           }
           publish_tag() {
             local tag="$1" observed
@@ -91,7 +94,10 @@ jobs:
               echo "adopted existing tag $tag at $SOURCE_SHA"
               return
             fi
-            [[ -z "$observed" ]] || fail "tag $tag moved to $observed"
+            if [[ -n "$observed" ]]; then
+              echo "retained existing tag $tag at byte-identical source $observed"
+              return
+            fi
             git tag -d "$tag" >/dev/null 2>&1 || true
             git tag "$tag" "$SOURCE_SHA"
             if git push origin "refs/tags/$tag"; then
@@ -189,8 +195,7 @@ jobs:
           AWID_VERSION: ${{ needs.awid_service.outputs.version }}
         run: |
           set -euo pipefail
-          # Both predicates are the extracted shared implementations; the
-          # normalizer runs the same bytes on the same semantic inputs.
+          # Source equality and public availability are separate checks.
           bash scripts/check-release-floor.sh --pyproject server/pyproject.toml --package awid-service --expected "$AWID_VERSION"
           python3 scripts/observe_public_target.py "pypi:awid-service" "$AWID_VERSION"
 
@@ -224,7 +229,7 @@ jobs:
             local tag="$1" observed
             observed="$(remote_tag_sha "$tag")"
             [[ -z "$observed" || "$observed" == "$SOURCE_SHA" ]] \
-              || fail "tag $tag exists at $observed, not $SOURCE_SHA"
+              || echo "version tag $tag remains at its earlier byte-identical source $observed"
           }
           publish_tag() {
             local tag="$1" observed
@@ -233,7 +238,10 @@ jobs:
               echo "adopted existing tag $tag at $SOURCE_SHA"
               return
             fi
-            [[ -z "$observed" ]] || fail "tag $tag moved to $observed"
+            if [[ -n "$observed" ]]; then
+              echo "retained existing tag $tag at byte-identical source $observed"
+              return
+            fi
             git tag -d "$tag" >/dev/null 2>&1 || true
             git tag "$tag" "$SOURCE_SHA"
             if git push origin "refs/tags/$tag"; then

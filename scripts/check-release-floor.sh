@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# The declared-floor==expected-version predicate (aben, docs/aben-design.md
-# section 1). One implementation, two callers on the same semantic inputs:
-# the pypi publish workflow (floor must equal the release it is about to
-# depend on) and the normalizer (floor must equal the intended version).
-# Public-served observation is deliberately a SEPARATE predicate
-# (scripts/observe_public_target.py); this one reads only the repository.
+# The declared-floor==expected-version predicate used by the PyPI workflow.
+# It reads only committed source; public registry verification is separate.
 #
 # Usage: check-release-floor.sh --pyproject <path> --package <name> --expected <version>
 # Exit 0 iff the pyproject declares exactly one literal "<name>>=<version>"

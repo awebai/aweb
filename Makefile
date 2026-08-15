@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release-local-gate-contract test-release-train test-column-b test-release-aben test-release-gate-contract check-release-gate-residue release-prepare release-continue test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release check-release-gate-residue release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -8,7 +8,7 @@
 	test-release-cli-version \
 	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	test-pointer-adapter test-pointer-adapter-ac-pin test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _release-gate-version-authority _release-gate-channel-version _release-node-deps \
 	_release-unit-channel _release-unit-channel-core _release-unit-pi _release-oats _release-marketplace-pointer \
 	_release-artifact-server _release-artifact-awid-package _release-artifact-awid-image \
@@ -85,14 +85,12 @@ help:
 	@echo "  awid-prod-restore   Restore a dump into awid prod (DUMP=path)"
 	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
 	@echo ""
-	@echo "  RELEASING - exactly two operator commands, run from this root:"
-	@echo '    PURPOSE="..." COMPAT_BREAK=none make release-prepare'
-	@echo "    make release-continue          (after the one human go)"
+	@echo "  RELEASING - one rerunnable command, no prompt or release-time judgment:"
+	@echo "    make release AC_ROOT=/path/to/ac"
 	@echo "    docs/release.md is the authoritative specification."
 	@echo ""
 	@echo "  release-awid-site                     deploy awid landing page"
-	@echo '  PURPOSE="..." COMPAT_BREAK=none make release-prepare   run all pre-go selection, gates, and card generation'
-	@echo "  release-continue                      execute the go: the idempotent ten-edge train from the fixed card"
+	@echo "  release                               test, reconcile, publish, and deploy the desired state"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
@@ -102,7 +100,7 @@ build:
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: check-aw-commit-repo-stamp test-release-local-gate-contract test-release-train test-release-gate-contract check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp test-release check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -294,98 +292,11 @@ test-channel-core-process-guard:
 test-pi-extension:
 	cd pi-extension && npm test
 
-test-release-local-gate-contract:
-	python3 scripts/e2e/test_release_local_gate_contract.py
-
-test-release-train:
-	python3 scripts/e2e/test_release_train.py
-
-# Needs an AC checkout beside this repository, which the gate container
-# cannot provide - so it runs here rather than as a gate row, and fails
-# rather than skips when the sibling is absent.
-test-release-ac-digest:
-	python3 scripts/e2e/test_release_ac_digest_contract.py
-
-# The Column B assembly: the recorded registry halves replayed through the
-# real normalizer. B1 refuses rather than skips when its pinned checkouts
-# cannot be resolved, so this target needs a sibling AC checkout named
-# ac-worktree; COLUMN_B_ALLOW_MISSING_AC=1 skips B1 where there is none.
-test-column-b:
-	python3 scripts/e2e/test_release_column_b_assembly.py
-
-# The aben engine, entry, and status suites - the amendment epic's whole
-# test surface as one gate suite, so the acceptance evidence runs at
-# every release rather than nowhere.
-ABEN_MODULES = scripts.e2e.test_release_artifact_metadata \
-	scripts.e2e.test_release_artifact_moved \
-	scripts.e2e.test_release_fixture_git_ownership \
-	scripts.e2e.test_release_card_schema \
-	scripts.e2e.test_release_command_argv_contract \
-	scripts.e2e.test_release_continue_rederivation \
-	scripts.e2e.test_release_normalizer_assembly \
-	scripts.e2e.test_release_normalizer_capture_registry \
-	scripts.e2e.test_release_normalizer_capture_repo \
-	scripts.e2e.test_release_normalizer_equality_groups \
-	scripts.e2e.test_release_normalizer_main \
-	scripts.e2e.test_release_normalizer_movement \
-	scripts.e2e.test_release_normalizer_orchestration \
-	scripts.e2e.test_release_normalizer_reconciliation \
-	scripts.e2e.test_release_normalizer_result \
-	scripts.e2e.test_release_normalizer_specs \
-	scripts.e2e.test_release_normalizer_floor \
-	scripts.e2e.test_release_normalizer_canonical_entry \
-	scripts.e2e.test_release_prepare_projection \
-	scripts.e2e.test_release_source_tag \
-	scripts.e2e.test_release_aw_checkout \
-	scripts.e2e.test_release_status_builders \
-	scripts.e2e.test_release_status_image_rows \
-	scripts.e2e.test_release_status_report \
-	scripts.e2e.test_release_status_rows \
-	scripts.e2e.test_release_status_terminal \
-	scripts.e2e.test_release_terminal_refresh \
-	scripts.e2e.test_release_unauthorized_publication \
-	scripts.e2e.test_release_gate_scope \
-	scripts.e2e.test_release_train_anchor_resolver \
-	scripts.e2e.test_release_train
-
-# The gate-scope guard asks MAKE what the suite expands to rather than
-# parsing the Makefile - the same reason the in-container target exists:
-# read the thing itself, not a model of it.
-print-aben-modules:
-	@echo $(ABEN_MODULES)
-
-test-release-aben:
-	python3 -m unittest $(ABEN_MODULES)
-	bash scripts/e2e/test_release_workflow_monitor.sh
-
-# The same suite, run INSIDE the gate container image.
-#
-# A stand-in assembled from known differences can only catch
-# differences already known: git identity, then init.defaultBranch,
-# then the next one. Each fix makes the model faithful to one more
-# property and the next unknown property fails exactly the same way.
-# This runs the suite in the environment itself, so it tracks the
-# container rather than a model of it - which is the same argument the
-# gate rests on, applied to the developer loop.
-#
-# Needs an aweb-release-gate image, which a gate run builds.
-test-release-aben-in-container:
-	@image=$$(docker images --format '{{.Repository}}:{{.Tag}}' \
-		| grep '^aweb-release-gate:' | head -1); \
-	if [ -z "$$image" ]; then \
-		echo "no aweb-release-gate image; run the gate once to build one" >&2; \
-		exit 1; \
-	fi; \
-	echo "running the aben suite in $$image"; \
-	docker run --rm -v "$(CURDIR):$(CURDIR)" -w "$(CURDIR)" -e HOME=/tmp/h \
-		"$$image" python3 -m unittest $(ABEN_MODULES)
+test-release:
+	python3 scripts/e2e/test_release.py
 
 check-release-gate-residue:
 	python3 scripts/check_release_gate_residue.py
-
-test-release-gate-contract:
-	python3 scripts/e2e/test_release_gate_contract.py
-	python3 scripts/e2e/test_aw_a2a_release_workflows.py
 
 prepare-oats-test-root:
 	@if [ "$(abspath $(OATS_TEST_ROOT))" = "$(abspath $(OATS_PINNED_ROOT))" ]; then \
@@ -531,15 +442,8 @@ check-awid-locked-suite:
 
 # ── Awid site deploy ────────────────────────────────────────────────
 
-release-prepare:
-	@test -n "$(PURPOSE)" || { echo 'PURPOSE is required: PURPOSE="..." COMPAT_BREAK=none make release-prepare'; exit 2; }
-	@test -n "$(COMPAT_BREAK)" || { echo 'COMPAT_BREAK is required: none, or one explicit intentional break line'; exit 2; }
-	COMPAT_BREAK="$(COMPAT_BREAK)" \
-		AWEB_RELEASE_GATE_COMMAND="$${AWEB_RELEASE_GATE_COMMAND:-scripts/release-prepare-gate.sh}" \
-		python3 scripts/release_train.py prepare
-
-release-continue:
-	python3 scripts/release_train.py continue
+release:
+	python3 scripts/release.py $(if $(AC_ROOT),--ac-root "$(AC_ROOT)",)
 
 release-awid-site:
 	@echo "Syncing docs into awid site..."
@@ -548,19 +452,12 @@ release-awid-site:
 	@if ! git diff --cached --quiet -- $(AWID_SITE_DOC_MIRRORS); then \
 		git commit -m "Sync identity-guide and trust-model into awid site"; \
 	fi
-	@echo "Docs synced. The site DEPLOY is release-continue's, pinned to the card's aweb SHA"
-	@echo "(fast-forward-only, refusing a non-FF move by name). This target no longer"
-	@echo "publishes: a second, unpinned writer of deploy-awid-landing could move a pointer"
-	@echo "that DONE asserts, silently, after the release record was written."
+	@echo "Docs synced. Static-site deployment is deliberately independent of artifact release."
 	git checkout main
 	@echo "Awid site deployed via deploy-awid-landing."
 
 test-pointer-adapter:
 	python3 scripts/e2e/test_pointer_adapter_marketplace.py
-	$(MAKE) test-pointer-adapter-ac-pin
-
-test-pointer-adapter-ac-pin:
-	python3 scripts/e2e/test_pointer_adapter_ac_pin.py
 
 test-npm-exact-publish:
 	bash scripts/e2e/test_npm_exact_publish.sh
@@ -577,7 +474,7 @@ test-release-cli-version:
 # ── Unified release ──────────────────────────────────────────────────
 
 # Internal steps consumed only by scripts/release-local-gate.sh's fixed map.
-# They are intentionally absent from help; release-prepare will invoke the gate.
+# They are intentionally absent from help; the release reconciler invokes the gate.
 _release-gate-docker-boundaries:
 	@test -n "$(RELEASE_GATE_IMAGE)" || (echo "RELEASE_GATE_IMAGE is required"; exit 2)
 	python3 scripts/e2e/test_release_gate_docker_boundaries.py --image "$(RELEASE_GATE_IMAGE)"

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Self-test for scripts/check-release-floor.sh - the extracted
-# declared-floor==expected-version predicate (aben R2, design section 1).
+# declared-floor==expected-version predicate.
 # No network. The predicate parses exactly one awid-service>= literal from
 # a pyproject and compares equality against the expected version; multi,
 # absent, and malformed floors are their own refusals.

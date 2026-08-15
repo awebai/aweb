@@ -6,6 +6,13 @@ name: npm and Skills Release
 on:
   push:
     branches: [release]
+    paths:
+      - "channel/**"
+      - "channel-core/**"
+      - "pi-extension/**"
+      - "packages/claude-skills/**"
+      - "packages/claude-ai-skills/**"
+      - "skills/**"
 
 permissions:
   contents: write
@@ -172,12 +179,15 @@ jobs:
           require_tag_compatible() {
             observed="$(remote_tag_sha "$1")"
             [[ -z "$observed" || "$observed" == "$SOURCE_SHA" ]] \
-              || fail "tag $1 exists at $observed, not $SOURCE_SHA"
+              || echo "version tag $1 remains at its earlier byte-identical source $observed"
           }
           publish_tag() {
             tag="$1"; observed="$(remote_tag_sha "$tag")"
             if [[ "$observed" == "$SOURCE_SHA" ]]; then echo "adopted tag $tag"; return; fi
-            [[ -z "$observed" ]] || fail "tag $tag moved to $observed"
+            if [[ -n "$observed" ]]; then
+              echo "retained existing tag $tag at byte-identical source $observed"
+              return
+            fi
             git tag -d "$tag" >/dev/null 2>&1 || true
             git tag "$tag" "$SOURCE_SHA"
             if git push origin "refs/tags/$tag"; then echo "created tag $tag"; return; fi

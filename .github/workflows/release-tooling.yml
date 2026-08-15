@@ -1,19 +1,6 @@
 name: Release tooling
 
-# The aben release-tooling regression suites, run where tooling CHANGES are
-# made rather than where releases are cut. They were briefly release-gate rows;
-# that was wrong twice over - the gate exists to prove the code being shipped
-# works, and at release time the tooling is not hypothetical but running, so
-# replaying historical registry states there protects nothing while costing a
-# second-repository dependency the release path must not have.
-#
-# test-column-b is NOT run here yet. It replays the real aweb and AC
-# repositories at pinned historical commits, so it needs both checked out as
-# siblings with full history (fetch-depth: 0) and read access to awebai/ac for
-# this workflow's token. That is an environment obligation a PR check may take
-# on, but it is not trivial and it is not verifiable from a laptop, so it is
-# stated rather than guessed at. Until it is arranged, test-column-b runs on
-# demand: make test-column-b, with an AC checkout beside this one.
+# Focused tests for the automatic, crash-resumable release reconciler.
 
 on:
   pull_request:
@@ -28,10 +15,10 @@ concurrency:
 
 jobs:
   tooling-suites:
-    name: aben tooling suites
+    name: automatic release tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: aben engine, entry, and status suites
-        run: make test-release-aben
+      - name: Test release reconciler
+        run: make test-release
