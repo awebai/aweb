@@ -2123,6 +2123,21 @@ def unauthorized_publications(card, *, discover=None, **discover_kwargs) -> list
     findings: list[str] = []
     for selection in card.artifacts:
         authorized = rn.parse_version(selection.version)
+        if authorized is None:
+            # NOT unreachable, though it reads that way. The card is
+            # validated by validate_version, which accepts full semver
+            # including prerelease and build metadata; parse_version is
+            # strict numeric MAJOR.MINOR.PATCH. So a card naming
+            # 1.2.3-rc1 is valid and lands here. Skipping would exempt
+            # that artifact from the only check that can see an extra
+            # publication - silently, and for the one artifact whose
+            # version was unusual enough to be worth watching.
+            findings.append(
+                f"{selection.name}: the card names {selection.version}, which "
+                f"this check cannot order against published versions, so an "
+                f"unauthorised publication cannot be ruled out"
+            )
+            continue
         for target in _artifact(selection.name).occupancy_unit or ():
             try:
                 occupied = route(target, **discover_kwargs)

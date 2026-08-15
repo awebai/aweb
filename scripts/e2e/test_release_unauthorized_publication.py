@@ -176,6 +176,30 @@ class UnauthorizedPublication(unittest.TestCase):
             [],
         )
 
+    def test_a_card_version_this_check_cannot_compare_is_reported(self) -> None:
+        """The two grammars are not the same grammar.
+
+        `validate_version` (release_train) accepts full semver, so a
+        card naming 1.2.3-rc1 is VALID. `parse_version`
+        (release_normalizer) is strict numeric MAJOR.MINOR.PATCH and
+        returns None for it. A card version this check cannot parse is
+        therefore reachable, and skipping it would silently exempt that
+        artifact from the only check that can see an extra publication.
+
+        Reported for the same reason an unreadable target is: this
+        check's blind result must never look like its clean result."""
+
+        self.assertIsNotNone(rt.validate_version("1.2.3-rc1", "probe"))
+        card = _card(("aw-cli", "1.2.3-rc1", False))
+        findings = self._findings(
+            card, {"github:awebai/aw:release": {"9.9.9"}}
+        )
+        self.assertTrue(findings)
+        self.assertTrue(
+            any("aw-cli" in line and "1.2.3-rc1" in line for line in findings),
+            findings,
+        )
+
     def test_an_unreadable_target_refuses_rather_than_reporting_clean(
         self,
     ) -> None:
