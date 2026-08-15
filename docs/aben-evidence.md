@@ -284,6 +284,38 @@ row. When the mechanism under test changes, every control over it must
 be re-derived rather than carried - and the packet should be read with
 that applied to its other controls too.
 
+**THE GATE ITSELF WAS THE FIFTH INSTRUMENT THAT COULD NOT FIRE.**
+`test_release_train` was not in `test-release-aben`, so the suite
+quoted throughout this epic as its whole test surface excluded the
+continue pipeline - and the literal `ARTIFACTS` pin inside it, which
+is the guard against unacknowledged changes to the canonical record
+and the mechanism that caught an undeclared field in C2. The record
+changed twice while that pin could not fire.
+
+Two people enumerated the window independently and it is CLEAN: every
+canonical-record change during it went through review, and the one the
+pin would have flagged is the one the reviewer examined most closely.
+Measured from the last commit where the pin PROVABLY passed
+(established by running it there, not assumed): 13 raw field
+differences reducing to two semantic changes, both directed. No third.
+
+The quantified gap: **236 tests quoted, 328 actual - 86 tests of
+coverage claimed implicitly and not run.** Several rounds' headline
+verdict numbers therefore measured a narrower surface than they read.
+The substance of those rounds was separately exercised and in several
+cases independently verified by the reviewer; the corrected cumulative
+run is the evidence of record.
+
+Two practices came out of it. Verdict lines name the SCOPE, not a
+count - "328 tests across the engine, entry, status and continue
+pipeline" - because a number is not a scope and nobody downstream can
+check a number. And the gate's module list is now checked against the
+modules on disk: every module is in the gate or declared out of it
+with a reason, with mutations proving both directions, and the guard
+runs inside the gate it guards. (Its first version declared itself
+out, which would have placed the guard against tests-that-do-not-run
+among the tests that do not run.)
+
 **Two control failures of my own, same shape, same day.** A landing
 check printed IDENTICAL for a base SHA I had hand-expanded and that
 did not exist: both sides of the comparison errored to empty and
