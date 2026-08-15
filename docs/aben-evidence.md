@@ -284,6 +284,25 @@ row. When the mechanism under test changes, every control over it must
 be re-derived rather than carried - and the packet should be read with
 that applied to its other controls too.
 
+**THE ANSWER TO THE WHOLE CLASS: REMOVE THE COPY AND ASK THE OWNER.**
+One fact with two implementations bit this epic six times. The fix is
+not "keep the copies in sync" - it is to delete the copy and ask
+whatever owns the fact. That move was made three times, and the table
+is more useful than the six incident reports, because it is what
+someone would apply to a seventh case nobody has found yet:
+
+| the fact | the copy that existed | the owner it now asks |
+|---|---|---|
+| which workflow publishes an artifact | a second map inside the test | the monitor's `--print-workflow` |
+| which manifests mirror a version | pairs hardcoded in the guard | `ARTIFACTS.version_mirrors` |
+| which modules the release suite runs | a Makefile parser in the guard | `make` itself, via an echo target |
+
+The same shape appears in the environment work below: a stand-in
+assembled from known differences is a COPY of the container, and
+running the suite inside the image is asking the container. Every one
+of these replaced a thing that had to be kept true with a thing that
+cannot be false.
+
 **ENVIRONMENT SUPPRESSION IS NOT ENVIRONMENT REPRODUCTION.** The
 first gate run to complete failed three rows, and two of them were one
 cause: fixtures that commit and tag through git with no identity. A
