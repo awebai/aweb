@@ -29,6 +29,48 @@ def marked_block(text: str, begin: str, end: str) -> str:
     return "\n".join(line[10:] for line in lines[first:last]) + "\n"
 
 
+def _write_movement_stub(checkout: Path) -> None:
+    """Stands in for release_artifact_moved.py so the BLOCK's handling
+    of the answer can be tested without a real anchor history. The
+    helper's own correctness is tested against the canonical record in
+    test_release_artifact_moved."""
+
+    stub = checkout / "scripts/release_artifact_moved.py"
+    stub.write_text(
+        "import os, sys\n"
+        "answer = os.environ.get('MOVED_ANSWER', 'moved')\n"
+        "if answer == 'fail':\n"
+        "    sys.exit(1)\n"
+        "print(answer)\n"
+    )
+
+
+def _movement_fixture(root: Path) -> tuple[Path, str]:
+    """A checkout whose origin carries no aw tag, so version selection
+    takes the deriving branch - the branch that mints."""
+
+    remote = root / "origin.git"; checkout = root / "checkout"
+    subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run(["git", "init", "-q", str(checkout)], check=True)
+    subprocess.run(["git", "-C", str(checkout), "config", "user.name", "fixture"], check=True)
+    subprocess.run(["git", "-C", str(checkout), "config", "user.email", "fixture@example.invalid"], check=True)
+    (checkout / "scripts").mkdir()
+    tool = checkout / "scripts/cli-release-version.sh"
+    tool.write_text("#!/usr/bin/env bash\necho called >> \"$DERIVE_LOG\"\necho 1.2.3\n")
+    tool.chmod(0o755)
+    _write_movement_stub(checkout)
+    (checkout / "source").write_text("accepted\n")
+    subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(checkout), "commit", "-qm", "accepted"], check=True)
+    sha = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        text=True, capture_output=True, check=True,
+    ).stdout.strip()
+    subprocess.run(["git", "-C", str(checkout), "remote", "add", "origin", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(checkout), "push", "-q", "origin", "HEAD:main"], check=True)
+    return checkout, sha
+
+
 def make_oci_archive(path: Path) -> str:
     blobs: dict[str, bytes] = {}
     def add(data: bytes) -> str:
@@ -204,6 +246,82 @@ class AwA2AReleaseWorkflowTests(unittest.TestCase):
                 if os.environ.get("AW_A2A_MUTATION_REPORT") == "1":
                     print(f"MUTATION RED: {name}: {actual.splitlines()[0][:200]}")
 
+    def test_the_block_does_not_derive_a_version_for_an_unmoved_artifact(
+        self,
+    ) -> None:
+        """The live defect: a release-branch move minted aw-cli 1.34.8
+        from a tree byte-identical to 1.34.7, because this block derives
+        its version from the world rather than the tree.
+
+        The stub stands in for the movement helper - what is under test
+        here is that the BLOCK obeys the answer and never reaches the
+        deriving tool. Whether the helper's answer is correct is tested
+        against real ARTIFACTS in test_release_artifact_moved."""
+
+        block = marked_block(AW, "AW_VERSION_SELECT_BEGIN", "AW_VERSION_SELECT_END")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            checkout, sha = _movement_fixture(root)
+            script = root / "select.sh"; script.write_text(block)
+            output = root / "output"; derive = root / "derived"
+            env = os.environ | {
+                "SOURCE_SHA": sha,
+                "GITHUB_OUTPUT": str(output),
+                "DERIVE_LOG": str(derive),
+                "MOVED_ANSWER": "unmoved",
+            }
+            result = subprocess.run(
+                ["bash", str(script)], cwd=checkout, env=env, text=True,
+                capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(output.read_text(), "publish=no\n")
+            self.assertFalse(
+                derive.exists(), "an unmoved artifact reached the version deriver"
+            )
+            self.assertIn("nothing to publish", result.stdout)
+
+            # CONTROL: the same fixture with the same block publishes
+            # when the artifact HAS moved, so the assertions above
+            # measure the answer rather than a block that never derives.
+            output.unlink()
+            moved = subprocess.run(
+                ["bash", str(script)], cwd=checkout,
+                env=env | {"MOVED_ANSWER": "moved"}, text=True,
+                capture_output=True,
+            )
+            self.assertEqual(moved.returncode, 0, moved.stderr)
+            self.assertEqual(output.read_text(), "publish=yes\nversion=1.2.3\n")
+            self.assertEqual(derive.read_text(), "called\n")
+
+    def test_an_undeterminable_movement_refuses_rather_than_publishing(
+        self,
+    ) -> None:
+        """Observation failure is never permission to write. A helper
+        that cannot answer must stop the workflow, not fall through to
+        the deriving tool - which is precisely the fall-through that
+        published a contentless release."""
+
+        block = marked_block(AW, "AW_VERSION_SELECT_BEGIN", "AW_VERSION_SELECT_END")
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            checkout, sha = _movement_fixture(root)
+            script = root / "select.sh"; script.write_text(block)
+            output = root / "output"; derive = root / "derived"
+            env = os.environ | {
+                "SOURCE_SHA": sha,
+                "GITHUB_OUTPUT": str(output),
+                "DERIVE_LOG": str(derive),
+                "MOVED_ANSWER": "fail",
+            }
+            result = subprocess.run(
+                ["bash", str(script)], cwd=checkout, env=env, text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("movement could not be determined", result.stderr)
+            self.assertFalse(derive.exists(), "a refusal still derived a version")
+
     def test_exact_version_selection_derives_once_then_adopts_same_sha(self) -> None:
         block = marked_block(AW, "AW_VERSION_SELECT_BEGIN", "AW_VERSION_SELECT_END")
         with tempfile.TemporaryDirectory() as raw:
@@ -214,6 +332,7 @@ class AwA2AReleaseWorkflowTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(checkout), "config", "user.email", "fixture@example.invalid"], check=True)
             (checkout / "scripts").mkdir(); tool = checkout / "scripts/cli-release-version.sh"
             tool.write_text("#!/usr/bin/env bash\necho called >> \"$DERIVE_LOG\"\necho 1.2.3\n"); tool.chmod(0o755)
+            _write_movement_stub(checkout)
             (checkout / "source").write_text("accepted\n")
             subprocess.run(["git", "-C", str(checkout), "add", "."], check=True)
             subprocess.run(["git", "-C", str(checkout), "commit", "-qm", "accepted"], check=True)
@@ -225,14 +344,14 @@ class AwA2AReleaseWorkflowTests(unittest.TestCase):
             env = os.environ | {"SOURCE_SHA": sha, "GITHUB_OUTPUT": str(output), "DERIVE_LOG": str(derive)}
             first = subprocess.run(["bash", str(script)], cwd=checkout, env=env, text=True, capture_output=True)
             self.assertEqual(first.returncode, 0, first.stderr)
-            self.assertEqual(output.read_text(), "version=1.2.3\n")
+            self.assertEqual(output.read_text(), "publish=yes\nversion=1.2.3\n")
             self.assertEqual(derive.read_text(), "called\n")
             output.unlink(); derive.unlink()
             subprocess.run(["git", "-C", str(checkout), "tag", "aw-v1.2.3", sha], check=True)
             subprocess.run(["git", "-C", str(checkout), "push", "-q", "origin", "refs/tags/aw-v1.2.3"], check=True)
             retry = subprocess.run(["bash", str(script)], cwd=checkout, env=env, text=True, capture_output=True)
             self.assertEqual(retry.returncode, 0, retry.stderr)
-            self.assertEqual(output.read_text(), "version=1.2.3\n")
+            self.assertEqual(output.read_text(), "publish=yes\nversion=1.2.3\n")
             self.assertFalse(derive.exists(), "same-SHA retry derived a second version")
             subprocess.run(["git", "-C", str(checkout), "tag", "aw-v1.2.4", sha], check=True)
             subprocess.run(["git", "-C", str(checkout), "push", "-q", "origin", "refs/tags/aw-v1.2.4"], check=True)

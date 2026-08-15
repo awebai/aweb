@@ -317,6 +317,7 @@ test-column-b:
 # test surface as one gate suite, so the acceptance evidence runs at
 # every release rather than nowhere.
 ABEN_MODULES = scripts.e2e.test_release_artifact_metadata \
+	scripts.e2e.test_release_artifact_moved \
 	scripts.e2e.test_release_card_schema \
 	scripts.e2e.test_release_command_argv_contract \
 	scripts.e2e.test_release_continue_rederivation \
@@ -340,6 +341,8 @@ ABEN_MODULES = scripts.e2e.test_release_artifact_metadata \
 	scripts.e2e.test_release_status_report \
 	scripts.e2e.test_release_status_rows \
 	scripts.e2e.test_release_status_terminal \
+	scripts.e2e.test_release_terminal_refresh \
+	scripts.e2e.test_release_unauthorized_publication \
 	scripts.e2e.test_release_gate_scope \
 	scripts.e2e.test_release_train_anchor_resolver \
 	scripts.e2e.test_release_train
