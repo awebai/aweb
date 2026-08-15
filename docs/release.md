@@ -59,9 +59,15 @@ visible in the registry looking entirely ordinary. This table is where such an
 artifact is recorded. Check it before reaching for the newest version of
 anything here.
 
-| Artifact | Version | Date | Status | Why |
-|---|---|---|---|---|
-| AC product image `ghcr.io/awebai/ac` | **0.7.15** | 2026-08-15 | **DO NOT DEPLOY** | Built from `22ab8bbe`, whose `backend/uv.lock` pins `aweb 1.27.1` and `awid-service 0.5.15`. It does **not** contain the release it is named for, which published `aweb 1.27.2` and `awid-service 0.5.17`. It was never deployed. Use the next AC version instead. |
+| Artifact | Version | Index digest | Date | Status | Why |
+|---|---|---|---|---|---|
+| AC product image `ghcr.io/awebai/ac` | **0.7.15** | `sha256:52f7b45bf53729b80dc7cd233a14b63e3331eccdc9883427ed1ac9c866063779` | 2026-08-15 | **DO NOT DEPLOY** | Built from `22ab8bbe`, whose `backend/uv.lock` pins `aweb 1.27.1` and `awid-service 0.5.15`. It does **not** contain the release it is named for, which published `aweb 1.27.2` and `awid-service 0.5.17`. It was never deployed. Use the next AC version instead. |
+
+The **digest** column is not decoration. AC images deploy by digest -
+`render_release_client.py deploy --digest <digest>` - so the identifier an
+operator holds at the dangerous moment is the digest, not the version string. A
+table listing only versions is one an operator cannot match against what they are
+about to deploy.
 
 The 0.7.15 entry exists because a release was interrupted after publishing its
 aweb artifacts and before deriving AC's dependency floors. The recovery card
@@ -75,6 +81,19 @@ commit consumed the versions the release had just published.
 The version number is spent either way: it is public and immutable, and
 republishing different bytes under it is exactly what the exact-publish rule
 forbids.
+
+**Until the deploy-time content check lands, this table is the only guard.** After
+it lands, the table is documentation of something the tooling enforces, and you do
+not have to remember to consult it. Know which of those two situations you are in:
+the first asks you to be careful, the second does not.
+
+That check reaches the person a document cannot. Someone about to deploy a burned
+image by mistake is reading a registry listing, in a hurry, probably mid-rollback -
+not this file, which is found only by someone who already suspects there is
+something to check. The content check needs no prior suspicion, and it covers this
+entry for free and permanently: `0.7.15`'s lock pins `aweb 1.27.1` immutably, so
+any future card naming `1.27.2` or later makes the check refuse that image without
+anyone maintaining a list.
 
 ## The static DAG (all ten audited edges)
 
