@@ -316,24 +316,64 @@ test-column-b:
 # The aben engine, entry, and status suites - the amendment epic's whole
 # test surface as one gate suite, so the acceptance evidence runs at
 # every release rather than nowhere.
+ABEN_MODULES = scripts.e2e.test_release_artifact_metadata \
+	scripts.e2e.test_release_card_schema \
+	scripts.e2e.test_release_continue_rederivation \
+	scripts.e2e.test_release_normalizer_assembly \
+	scripts.e2e.test_release_normalizer_capture_registry \
+	scripts.e2e.test_release_normalizer_capture_repo \
+	scripts.e2e.test_release_normalizer_equality_groups \
+	scripts.e2e.test_release_normalizer_main \
+	scripts.e2e.test_release_normalizer_movement \
+	scripts.e2e.test_release_normalizer_orchestration \
+	scripts.e2e.test_release_normalizer_reconciliation \
+	scripts.e2e.test_release_normalizer_result \
+	scripts.e2e.test_release_normalizer_specs \
+	scripts.e2e.test_release_normalizer_floor \
+	scripts.e2e.test_release_normalizer_canonical_entry \
+	scripts.e2e.test_release_prepare_projection \
+	scripts.e2e.test_release_source_tag \
+	scripts.e2e.test_release_aw_checkout \
+	scripts.e2e.test_release_status_builders \
+	scripts.e2e.test_release_status_image_rows \
+	scripts.e2e.test_release_status_report \
+	scripts.e2e.test_release_status_rows \
+	scripts.e2e.test_release_status_terminal \
+	scripts.e2e.test_release_gate_scope \
+	scripts.e2e.test_release_train_anchor_resolver \
+	scripts.e2e.test_release_train
+
+# The gate-scope guard asks MAKE what the suite expands to rather than
+# parsing the Makefile - the same reason the in-container target exists:
+# read the thing itself, not a model of it.
+print-aben-modules:
+	@echo $(ABEN_MODULES)
+
 test-release-aben:
-	python3 -m unittest \
-		scripts.e2e.test_release_artifact_metadata scripts.e2e.test_release_card_schema \
-		scripts.e2e.test_release_continue_rederivation \
-		scripts.e2e.test_release_normalizer_assembly scripts.e2e.test_release_normalizer_capture_registry \
-		scripts.e2e.test_release_normalizer_capture_repo scripts.e2e.test_release_normalizer_equality_groups \
-		scripts.e2e.test_release_normalizer_main scripts.e2e.test_release_normalizer_movement \
-		scripts.e2e.test_release_normalizer_orchestration scripts.e2e.test_release_normalizer_reconciliation \
-		scripts.e2e.test_release_normalizer_result scripts.e2e.test_release_normalizer_specs \
-		scripts.e2e.test_release_normalizer_floor scripts.e2e.test_release_normalizer_canonical_entry \
-		scripts.e2e.test_release_prepare_projection \
-		scripts.e2e.test_release_source_tag scripts.e2e.test_release_aw_checkout scripts.e2e.test_release_status_builders \
-		scripts.e2e.test_release_status_image_rows scripts.e2e.test_release_status_report \
-		scripts.e2e.test_release_status_rows scripts.e2e.test_release_status_terminal \
-		scripts.e2e.test_release_gate_scope \
-		scripts.e2e.test_release_train_anchor_resolver \
-		scripts.e2e.test_release_train
+	python3 -m unittest $(ABEN_MODULES)
 	bash scripts/e2e/test_release_workflow_monitor.sh
+
+# The same suite, run INSIDE the gate container image.
+#
+# A stand-in assembled from known differences can only catch
+# differences already known: git identity, then init.defaultBranch,
+# then the next one. Each fix makes the model faithful to one more
+# property and the next unknown property fails exactly the same way.
+# This runs the suite in the environment itself, so it tracks the
+# container rather than a model of it - which is the same argument the
+# gate rests on, applied to the developer loop.
+#
+# Needs an aweb-release-gate image, which a gate run builds.
+test-release-aben-in-container:
+	@image=$$(docker images --format '{{.Repository}}:{{.Tag}}' \
+		| grep '^aweb-release-gate:' | head -1); \
+	if [ -z "$$image" ]; then \
+		echo "no aweb-release-gate image; run the gate once to build one" >&2; \
+		exit 1; \
+	fi; \
+	echo "running the aben suite in $$image"; \
+	docker run --rm -v "$(CURDIR):$(CURDIR)" -w "$(CURDIR)" -e HOME=/tmp/h \
+		"$$image" python3 -m unittest $(ABEN_MODULES)
 
 check-release-gate-residue:
 	python3 scripts/check_release_gate_residue.py

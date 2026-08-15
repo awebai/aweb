@@ -57,13 +57,23 @@ DECLARED_OUT_OF_GATE = {
 
 
 def _target_modules() -> set[str]:
-    """The modules `make test-release-aben` actually runs."""
+    """The modules `make test-release-aben` actually runs.
 
-    text = MAKEFILE.read_text()
-    start = text.index("\ntest-release-aben:")
-    end = text.index("\n\n", start)
-    body = text[start:end]
-    return set(re.findall(r"scripts\.e2e\.(test_release_[A-Za-z0-9_]+)", body))
+    Asked of MAKE rather than parsed out of the Makefile: the list
+    lives in a variable shared with the in-container target, and a
+    parser would have to re-implement make's expansion to see it. This
+    reads what make itself resolves, so the guard cannot drift from the
+    thing it guards - the same reason the in-container target runs the
+    suite in the image instead of modelling it.
+    """
+
+    import subprocess
+
+    output = subprocess.run(
+        ["make", "--no-print-directory", "print-aben-modules"],
+        cwd=REPO_ROOT, check=True, capture_output=True, text=True,
+    ).stdout
+    return set(re.findall(r"scripts\.e2e\.(test_release_[A-Za-z0-9_]+)", output))
 
 
 def _disk_modules() -> set[str]:
