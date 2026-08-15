@@ -211,6 +211,11 @@ def continue_command_script_stops(repo_roots: dict) -> list[rn.Stop]:
                         ),
                     )
                 )
+            # Only the FIRST .py token is checked: it is the script
+            # being invoked, and a later one would be an argument
+            # rather than an interpreter target. True of every current
+            # command; stated so the next reader does not have to
+            # infer it from the loop.
             break
     return stops
 

@@ -35,6 +35,28 @@ an unavailable listing refuses, a served file that differs refuses
 permanently, a served file that is EXTRA refuses too - the direction
 that catches a foreign artifact rather than a missing one.
 
+**Convenience selects for the weaker claim.** Two claims about the
+same script:
+
+> *"the script exists in either repository"* - a static fact
+> *"the script exists in the AC checkout PREPARE RESOLVED"* - the only
+> claim a release depends on
+
+Only the second protects anything. The static form is the one testable
+in a hermetic module, which is exactly why it is the one that gets
+written - and the weaker claim looks like coverage. The same shape as
+the rest of this table, arriving through a new door: a check placed
+where it is easy to write rather than where the answer lives.
+
+**A fixture whose checkout could never satisfy the preconditions is
+not modelling the release - it is modelling a release that could not
+run.** That is the general statement of the constructed-inputs family:
+the tree comparison against repositories built to agree, the
+derived-SHA assertion in a fixture where HEAD and the derived commit
+coincided, the aw checkout absent from the trio, the AC scripts absent
+from the fixture's AC repo. Each modelled a world the release could
+not occur in, and each passed.
+
 **The mechanical test for the family**, which takes one reading and
 would have caught the worst instance above in a sentence: *can the two
 sides of this comparison be edited independently?* One editable site
