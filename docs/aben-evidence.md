@@ -271,6 +271,19 @@ surfaced three, all of the same family:
   branches, so the family was not stable across outcomes - a
   RE-OCCURRENCE of C2's stable-family rule rather than a new finding.
 
+**A CONTROL DOES NOT SURVIVE A CHANGE TO WHAT IT CONTROLS.** C2's
+falsified-binding control proved the aw binding row was COMPARED and
+not merely present, by falsifying the tag's commit message. The tag
+ruling stopped that message being read at all - so a mechanical port
+would have kept falsifying a field nothing consumes, gone green, and
+proved nothing, while sitting in the packet as the control that makes
+the capstone mean something. It was re-derived instead: the mutation
+now smuggles an extra file into the published tree, which is what a
+bad sync actually leaves behind, and DONE refuses naming the binding
+row. When the mechanism under test changes, every control over it must
+be re-derived rather than carried - and the packet should be read with
+that applied to its other controls too.
+
 **Two control failures of my own, same shape, same day.** A landing
 check printed IDENTICAL for a base SHA I had hand-expanded and that
 did not exist: both sides of the comparison errored to empty and

@@ -324,7 +324,8 @@ test-release-aben:
 		scripts.e2e.test_release_source_tag scripts.e2e.test_release_aw_checkout scripts.e2e.test_release_status_builders \
 		scripts.e2e.test_release_status_image_rows scripts.e2e.test_release_status_report \
 		scripts.e2e.test_release_status_rows scripts.e2e.test_release_status_terminal \
-		scripts.e2e.test_release_train_anchor_resolver
+		scripts.e2e.test_release_train_anchor_resolver \
+		scripts.e2e.test_release_train
 	bash scripts/e2e/test_release_workflow_monitor.sh
 
 check-release-gate-residue:

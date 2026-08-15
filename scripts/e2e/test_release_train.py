@@ -213,6 +213,7 @@ class FixedContractTests(unittest.TestCase):
                     "channel/package.json",
                     bundled_inputs=("channel-core",),
                     content_scope=("channel/", "channel-core/"),
+                    content_exclusions=("channel/test/", "channel-core/test/"),
                     anchor=rt.Anchor("tag_pattern", "channel-v"),
                     occupancy_unit=("npm:@awebai/claude-channel",),
                 ),
@@ -224,6 +225,7 @@ class FixedContractTests(unittest.TestCase):
                     "pi-extension/package.json",
                     bundled_inputs=("channel-core",) + rt.SKILL_SOURCES,
                     content_scope=("pi-extension/", "channel-core/", "skills/"),
+                    content_exclusions=("pi-extension/test/", "channel-core/test/"),
                     anchor=rt.Anchor("tag_pattern", "pi-v"),
                     occupancy_unit=("npm:@awebai/pi",),
                 ),
@@ -274,9 +276,9 @@ class FixedContractTests(unittest.TestCase):
                     "backend/pyproject.toml",
                     platforms=rt.OCI_PLATFORMS,
                     content_scope=("backend/", "frontend/", "Dockerfile.release"),
-                    anchor=rt.Anchor(
-                        "oci_revision_label", "org.opencontainers.image.revision"
-                    ),
+                    # Juan's tag ruling: a release's identity is the
+                    # tag in its own repository, ac-image included.
+                    anchor=rt.Anchor("tag_pattern", "v"),
                     occupancy_unit=("ghcr.io/awebai/ac",),
                     required_current_outputs=rt.OCI_PLATFORMS,
                     owned_locks=(rt.OwnedLock("backend/uv.lock", "uv-lock-offline"),),
@@ -1818,6 +1820,46 @@ class ContinueTrainTests(_PipelineFixture):
             "the tag names HEAD rather than the derived release commit",
         )
 
+    def test_the_source_tag_is_published_BEFORE_the_terminal_sweep(self) -> None:
+        """Ordering, asserted where it is consumed rather than by
+        reading the sequence in the source.
+
+        The terminal sweep proves DONE by reading the source tag back.
+        If the tag were pushed after the sweep - or not at all - the
+        sweep would be proving a world that did not yet exist. So the
+        assertion is made FROM INSIDE the gate: at the moment the
+        sweep runs, the tag must already be on the AC remote, naming
+        the derived SHA.
+
+        Card and recovery are covered by their own tests; this is the
+        third of boundary 2's words that nothing else pins."""
+
+        card = self._prepare()
+        version = next(a.version for a in card.artifacts if a.name == "ac-image")
+        tag = rt.release_tag_prefix(rt._artifact("ac-image"), "awebai/ac") + version
+        seen = {}
+
+        def gate(environment, ac_derived, effect_rows, bases, timeout):
+            listing = git("ls-remote", "--tags", "origin", cwd=self.ac)
+            seen["listing"] = listing
+            seen["derived"] = ac_derived
+            return []
+
+        summary = self._continue(terminal_gate=gate)
+        self.assertEqual(summary["status"], "DONE")
+        self.assertIn("listing", seen, "the terminal gate never ran")
+        self.assertIn(
+            f"refs/tags/{tag}", seen["listing"],
+            "the terminal sweep ran BEFORE the source tag was published:\n"
+            + seen["listing"],
+        )
+        peeled = [
+            line.split()[0]
+            for line in seen["listing"].splitlines()
+            if line.endswith(f"refs/tags/{tag}^{{}}")
+        ]
+        self.assertEqual(peeled, [seen["derived"]])
+
     def test_continue_is_retryable_over_the_tag_it_already_pushed(self) -> None:
         """The retry path, with its premise corrected.
 
@@ -2368,6 +2410,13 @@ class ContinueTrainTests(_PipelineFixture):
             "github_commits": {
                 "awebai/aw": {"v1.34.4": {
                     "sha": "e" * 40,
+                    # INERT. Nothing reads this message: the binding
+                    # compares the published TREE against aweb's cli/go
+                    # from the local checkout, not a stamp the commit
+                    # makes about itself. Kept only so the stand-in
+                    # answers the commits endpoint at all - a reader who
+                    # infers from it that the stamp is verified would be
+                    # re-deriving a guarantee from a fixture field.
                     "message": f"Sync exact aweb {sha}",
                 }},
             },
