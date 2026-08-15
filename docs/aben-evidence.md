@@ -284,6 +284,24 @@ row. When the mechanism under test changes, every control over it must
 be re-derived rather than carried - and the packet should be read with
 that applied to its other controls too.
 
+**ONE FACT, THREE COPIES, THREE DIFFERENT DETECTORS.** The tag
+prefix was derived in three separate places, and no single mechanism
+found them:
+
+| copy | how it was found |
+|---|---|
+| discovery stripped a bare `v` while the status builder looked up the canonical prefix | a read-back disagreeing with discovery, in the first live prepare |
+| (the owner was introduced here - `release_tag_prefix`) | |
+| continue's world assembly omitted the prefix argument entirely | THE TWO HALVES DISAGREEING at continue, two runs later |
+
+The second copy was found by first contact with the real world; the
+third by prepare and continue disagreeing about the same world. Three
+detectors, one fact. That is the argument for the remedy being
+STRUCTURAL rather than vigilant: the third copy existed for as long as
+the parameter had a default, and no amount of care at the call sites
+would have found it - the parameter is what allowed it, so the
+parameter is gone.
+
 **THE ANSWER TO THE WHOLE CLASS: REMOVE THE COPY AND ASK THE OWNER.**
 One fact with two implementations bit this epic six times. The fix is
 not "keep the copies in sync" - it is to delete the copy and ask
@@ -296,6 +314,25 @@ someone would apply to a seventh case nobody has found yet:
 | which workflow publishes an artifact | a second map inside the test | the monitor's `--print-workflow` |
 | which manifests mirror a version | pairs hardcoded in the guard | `ARTIFACTS.version_mirrors` |
 | which modules the release suite runs | a Makefile parser in the guard | `make` itself, via an echo target |
+
+**And one stronger than all three: remove the ABILITY to have a copy.**
+
+| the fact | the copy that existed | what replaced it |
+|---|---|---|
+| the GitHub tag prefix for a target | a `tag_prefix` PARAMETER defaulting to `"v"`, which a caller could omit | the parameter DELETED; `route_discovery` derives it from the canonical record |
+
+The first three make a second derivation AGREE with the owner. This
+one makes a second derivation IMPOSSIBLE: there is no parameter to
+omit, no default to be wrong, no call site that can disagree. The fact
+has exactly one path to the code that uses it.
+
+That difference is the one to reach for when the shape allows it -
+AGREEMENT has to hold at every call site forever, IMPOSSIBILITY holds
+once. It is also why the third copy survived the first fix: that fix
+established an owner and moved the consumers it knew about, and
+nothing was checking the rest. **A fix that establishes an owner is
+not finished until every consumer is moved, and an owner with an
+optional parameter beside it has not established anything.**
 
 The same shape appears in the environment work below: a stand-in
 assembled from known differences is a COPY of the container, and

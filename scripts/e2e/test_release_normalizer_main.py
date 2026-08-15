@@ -44,6 +44,57 @@ class Routing(unittest.TestCase):
                         )
                         self.assertEqual(occupied, {"1.0.0": None})
 
+    def test_the_github_tag_prefix_is_DERIVED_not_passed(self) -> None:
+        """The prefix cannot be omitted, because it is no longer an
+        argument.
+
+        It was a parameter defaulting to "v", and continue's world
+        assembly forgot it. skills' release member was then searched
+        for `v0.2.12` instead of `skills-v0.2.12`, read as EMPTY, and
+        the unit became conflicting-partial - refusing the release
+        TWICE with a stop naming skills rather than the caller. Prepare
+        passed the prefix and continue did not, so the two halves
+        disagreed about the same world: a third derivation of one fact
+        after release_tag_prefix was made its owner.
+
+        Measured live: prefix "v" returns 0 versions, the derived
+        prefix returns 13.
+        """
+
+        import inspect
+
+        signature = inspect.signature(main.route_discovery)
+        self.assertNotIn(
+            "tag_prefix", signature.parameters,
+            "a caller that can omit the prefix is a caller that will",
+        )
+        specs = cap.derive_capture_specs(rt.ARTIFACTS)
+        seen = []
+
+        def spy(repository, *, base, timeout, token, tag_prefix):
+            seen.append((repository, tag_prefix))
+            return {"0.2.12"}
+
+        with mock.patch.object(cap, "discover_github_release_versions", spy):
+            for spec in specs:
+                for target in spec.unit_targets:
+                    if target.startswith("github:"):
+                        main.route_discovery(
+                            target, timeout=1, ghcr_token="", gh_token="",
+                            bases=main.registry_bases(),
+                        )
+        self.assertTrue(seen, "no github target was routed")
+        for repository, prefix in seen:
+            with self.subTest(repository=repository):
+                entry = main._artifact_owning(
+                    next(t for s in specs for t in s.unit_targets
+                         if t.startswith("github:") and t.split(":")[1] == repository)
+                )
+                self.assertEqual(
+                    prefix, rt.release_tag_prefix(entry, repository),
+                    "the prefix used must be the one the record owns",
+                )
+
     def test_unknown_spelling_raises_not_skips(self) -> None:
         with self.assertRaises(ValueError):
             main.route_discovery(
