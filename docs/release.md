@@ -82,18 +82,31 @@ The version number is spent either way: it is public and immutable, and
 republishing different bytes under it is exactly what the exact-publish rule
 forbids.
 
-**Until the deploy-time content check lands, this table is the only guard.** After
-it lands, the table is documentation of something the tooling enforces, and you do
-not have to remember to consult it. Know which of those two situations you are in:
-the first asks you to be careful, the second does not.
+**This table is currently the only guard, and it is a guard that has to be
+consulted.** Two tooling checks are planned, at two different boundaries, and they
+do different jobs:
 
-That check reaches the person a document cannot. Someone about to deploy a burned
-image by mistake is reading a registry listing, in a hurry, probably mid-rollback -
-not this file, which is found only by someone who already suspects there is
-something to check. The content check needs no prior suspicion, and it covers this
-entry for free and permanently: `0.7.15`'s lock pins `aweb 1.27.1` immutably, so
-any future card naming `1.27.2` or later makes the check refuse that image without
-anyone maintaining a list.
+- **build-time**, in the train before the push that triggers an AC image build:
+  refuses to build an image whose lock does not resolve the versions the card
+  names. It prevents the *next* wrong image. It cannot help with one that already
+  exists, and it will never re-examine `0.7.15`, because `0.7.15` is already built.
+- **deploy-time**, in the render client: from the digest it is about to deploy, it
+  resolves the image's revision label to a commit, reads that commit's
+  `backend/uv.lock`, and refuses unless the lock resolves every floor-mapped
+  package at the version the card names. It is the one that reaches the operator
+  this table is written for, and **it does not exist yet.**
+
+  Note what it is not: a list of bad digests. A list is a copy of a fact that
+  someone has to maintain, and it fails exactly when someone forgets an entry.
+  Asking the content question instead refuses `0.7.15` for what it **is** -
+  permanently, with nothing maintained - and refuses every future image with the
+  same problem, including ones nobody has anticipated.
+
+Until the deploy-time refusal lands, nothing stops a burned image being deployed
+except someone reading this page first - and the person who most needs it is
+reading a registry listing in a hurry, probably mid-rollback, not this file. A
+document is found by someone who reads it; a refusal is met by someone who does
+not.
 
 ## The static DAG (all ten audited edges)
 
