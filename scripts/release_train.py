@@ -2091,6 +2091,96 @@ def _default_ac_predecessor_gate(card, bases, timeout) -> list:
     )
 
 
+def unauthorized_publications(card, *, discover=None, **discover_kwargs) -> list[str]:
+    """Versions that exist above what the card authorised.
+
+    The sweep's other half. Every existing check asks whether what the
+    card named is PRESENT, and registry versions are immutable, so no
+    presence assertion can ever notice a version the card did not name
+    sitting beside it: the walk printed PRESENT for aw-cli 1.34.7 in the
+    same minute a workflow minted 1.34.8, and read the world as ordinary
+    afterwards. Produced must equal expected in BOTH directions - an
+    extra publication has to fail as loudly as a missing one.
+
+    Stated for every artifact, moving and unmoved alike: a version above
+    a moving row's target is as unauthorised as one above an unmoved
+    row's. No separate snapshot is needed, because for an unmoved
+    artifact the card's version IS the world's version at card time.
+
+    Every member of the occupancy unit is read, not just the primary -
+    aw-cli's mint reached seven npm packages besides its GitHub release,
+    and an artifact whose primary happens to be clean is not clean.
+
+    A member that cannot be read is reported rather than skipped. This
+    check's clean result and its blind result would otherwise be the
+    same answer, which is the failure it exists to prevent.
+    """
+
+    import release_normalizer as rn
+    import release_normalizer_main as rmain
+
+    route = discover if discover is not None else rmain.route_discovery
+    findings: list[str] = []
+    for selection in card.artifacts:
+        authorized = rn.parse_version(selection.version)
+        for target in _artifact(selection.name).occupancy_unit or ():
+            try:
+                occupied = route(target, **discover_kwargs)
+            except ReleaseTrainError as error:
+                findings.append(
+                    f"{selection.name}: {target} could not be read, so an "
+                    f"unauthorised publication cannot be ruled out: {error}"
+                )
+                continue
+            for text in sorted(occupied):
+                found = rn.parse_version(text)
+                # A near-miss is the reconciler's named stop, not this
+                # check's business - and must never crash it.
+                if found is None or authorized is None or found <= authorized:
+                    continue
+                findings.append(
+                    f"{selection.name}: {target} serves {text}, above the "
+                    f"{selection.version} the card authorised - an "
+                    f"unauthorised publication"
+                )
+    return findings
+
+
+def refresh_source_refs(repo_roots: dict) -> None:
+    """Bring every checkout the sweep reads anchors from up to date.
+
+    Source-anchor rows are answered from the LOCAL checkout by design -
+    under the tag ruling identity comes from a repository fetched once,
+    not a round trip per artifact. The cost is that a tag pushed by a
+    publication workflow AFTER that fetch is invisible, and the sweep
+    calls a published anchor missing: the live release reported ABSENT
+    for awid-service-v0.5.17 while origin was already serving it.
+
+    So refresh immediately before reading. This changes what we READ,
+    never what we write - no ref of ours moves, no working tree is
+    touched - which is what makes it safe between a half-published
+    release and its recovery.
+
+    --force is deliberate: origin is the authority on a tag's identity.
+    Declining to update a tag that moved would leave us reading a stale
+    local value that may match the card while the world does not, which
+    turns a conflict the sweep should report into a false PRESENT.
+
+    Best-effort: the rows are the authority on the world, so a transient
+    fetch failure must not convert a complete world into a crash. What
+    was not refreshed simply reads as it did before, and an anchor that
+    is genuinely missing still blocks DONE by name.
+    """
+
+    for root in repo_roots.values():
+        if root is None:
+            continue
+        try:
+            _git(Path(root), "fetch", "--tags", "--force", "origin")
+        except ReleaseTrainError:
+            continue
+
+
 def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout) -> list:
     """DONE is the complete intended world (design section 8): fresh
     OBSERVED-PRESENT registry rows for EVERY card artifact - moving,
@@ -2107,21 +2197,26 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
     if "ac-image" in expected and expected["ac-image"] is None:
         expected["ac-image"] = ac_derived
     names = {item.name for item in card.artifacts}
+    repo_roots = {
+        "aweb": environment.aweb_root,
+        "ac": environment.ac_root,
+        # The aw checkout answers the external binding locally. The
+        # prepare phase refuses without it, so by the time continue
+        # runs it exists; passing it here is what lets the terminal
+        # sweep read the binding rather than report it unavailable.
+        "aw": rmain.aw_root(environment.aweb_root),
+    }
+    # Publication workflows push source tags asynchronously, so the
+    # checkouts fetched at the start of the walk can be behind origin by
+    # the time the sweep reads anchors from them.
+    refresh_source_refs(repo_roots)
     rows = gates.rows_for_artifacts(
         card,
         names,
         bases=bases,
         expected_sources=expected,
         tokens=_status_tokens(),
-        repo_roots={
-            "aweb": environment.aweb_root,
-            "ac": environment.ac_root,
-            # The aw checkout answers the external binding locally. The
-            # prepare phase refuses without it, so by the time continue
-            # runs it exists; passing it here is what lets the terminal
-            # sweep read the binding rather than report it unavailable.
-            "aw": rmain.aw_root(environment.aweb_root),
-        },
+        repo_roots=repo_roots,
         timeout=timeout,
     )
     # The omission control runs in PRODUCTION, not only in tests: the
@@ -2139,14 +2234,26 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
         f"unexpected registry fact: {key}"
         for key in sorted(produced - expected_keys)
     ]
+    # The other direction of the same equality: every check above asks
+    # whether what the card named is present, and none of them can see a
+    # version the card did not name (D2).
+    tokens = _status_tokens()
+    unauthorized = unauthorized_publications(
+        card,
+        timeout=timeout,
+        ghcr_token=tokens["ghcr"],
+        gh_token=tokens["github"],
+        bases=bases,
+    )
     rows = [*rows, *effect_rows]
+    blocking = [row.render() for row in rows if not row.present()]
+    if unauthorized:
+        return unauthorized + domain_lines + blocking
     if domain_lines:
-        return domain_lines + [
-            row.render() for row in rows if not row.present()
-        ]
+        return domain_lines + blocking
     if status.done(rows):
         return []
-    return [row.render() for row in rows if not row.present()]
+    return blocking
 
 
 def _require_monitor_record(stdout: str, expected_sha: str) -> None:

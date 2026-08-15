@@ -15,6 +15,7 @@ import json
 import re
 import subprocess
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
 
 from release_normalizer import parse_version
@@ -94,6 +95,72 @@ def _mask_version_field(text: str, name: str) -> str:
         _VERSION_FIELD_JSON if name.endswith("package.json") else _VERSION_FIELD_TOML
     )
     return pattern.sub("version-masked", text, count=1)
+
+
+@dataclass(frozen=True)
+class AnchorMovement:
+    """Whether an artifact's content moved since its newest anchor, and
+    which anchor answered."""
+
+    changed: bool
+    newest_tag: str | None
+    newest_version: tuple | None
+    # Every anchor tag under the prefix, peeled - the same read the
+    # movement decision was made from, so a caller that needs the anchor
+    # set does not take a second, later snapshot of it.
+    anchors: dict
+
+
+def anchor_movement(repo: Path, spec, refs: dict[str, str]) -> AnchorMovement:
+    """Has this artifact's content changed since its newest release?
+
+    The one owner of that question. Capture asks it to decide movement;
+    the aw publication workflow asks it to decide whether it has
+    anything to publish at all. Those must be the same computation
+    rather than two that agree today: aw-release derived its version
+    from the world (latest published plus one) while the record knew the
+    artifact had not moved, and the disagreement published a version
+    whose source was byte-identical to the one before it.
+
+    The scope, exclusions and mask all come from the spec, which derives
+    from the canonical entry - so an artifact's boundary is stated once,
+    in the record, and every consumer of it reads that statement.
+    """
+
+    if spec.anchor_kind != "tag_pattern":
+        raise ValueError(
+            f"{spec.name}: unsupported anchor kind {spec.anchor_kind!r} - "
+            "a release's identity is the tag in its own repository"
+        )
+    anchors = anchor_tags_from(refs, spec.anchor_value)
+    from release_normalizer import parse_version as _parse
+
+    conforming = [
+        (parsed, text) for text in anchors if (parsed := _parse(text)) is not None
+    ]
+    # Anchors that are ALL near-matches carry no usable commit to
+    # compare against; content is treated as changed and the malformed
+    # keys flow to the reconciler's named stop - never a ValueError from
+    # an empty max (the pkg-v0.3 world). The same conservatism covers a
+    # first release, which has no anchor at all: unable to prove the
+    # artifact stood still, we must not suppress its publication.
+    if not conforming:
+        return AnchorMovement(
+            changed=True, newest_tag=None, newest_version=None, anchors=anchors
+        )
+    newest_version, newest_tag = max(conforming)
+    return AnchorMovement(
+        changed=content_changed(
+            repo,
+            anchors[newest_tag],
+            scope=spec.scope,
+            excluded=spec.excluded,
+            masked=spec.masked,
+        ),
+        newest_tag=newest_tag,
+        newest_version=newest_version,
+        anchors=anchors,
+    )
 
 
 def content_changed(
@@ -393,43 +460,17 @@ def assemble_captured_world(
             UnitMember(name=target, occupied=dict(discover_target(target)))
             for target in spec.unit_targets
         ]
-        if spec.anchor_kind != "tag_pattern":
-            raise ValueError(
-                f"{spec.name}: unsupported anchor kind {spec.anchor_kind!r} - "
-                "a release's identity is the tag in its own repository"
-            )
         if spec.repo_key not in ref_snapshots:
             ref_snapshots[spec.repo_key] = remote_ref_snapshot(repo)
-        anchors = anchor_tags_from(ref_snapshots[spec.repo_key], spec.anchor_value)
-        from release_normalizer import parse_version as _parse
-
-        conforming = [
-            (parsed, text)
-            for text in anchors
-            if (parsed := _parse(text)) is not None
-        ]
-        # Anchors that are ALL near-matches carry no usable commit to
-        # compare against; content is treated as changed and the
-        # malformed keys flow to the reconciler's named stop - never a
-        # ValueError from an empty max (the pkg-v0.3 world).
-        if conforming:
-            newest = max(conforming)[1]
-            changed = content_changed(
-                repo,
-                anchors[newest],
-                scope=spec.scope,
-                excluded=spec.excluded,
-                masked=spec.masked,
-            )
-        else:
-            changed = True
+        movement = anchor_movement(repo, spec, ref_snapshots[spec.repo_key])
+        changed = movement.changed
         # A tag-history artifact's version source IS its tag history
         # (docs/release.md's artifact table). Its manifest is a
         # publish-time placeholder reading 0.0.0, and feeding that to
         # the movement table compares a version against a value that
         # was never one - which stopped the first real prepare.
-        if spec.derivation == "tag-history" and conforming:
-            captured_version = format_version(max(conforming)[0])
+        if spec.derivation == "tag-history" and movement.newest_version:
+            captured_version = format_version(movement.newest_version)
         else:
             captured_version = manifest_version(repo / spec.manifest_path)
         artifacts[spec.name] = CapturedArtifact(
@@ -437,7 +478,7 @@ def assemble_captured_world(
             content_changed=changed,
             derivation=spec.derivation,
             members=members,
-            anchor_versions=anchors,
+            anchor_versions=movement.anchors,
         )
     return CapturedWorld(
         artifacts=artifacts,

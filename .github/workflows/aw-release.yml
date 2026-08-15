@@ -38,14 +38,36 @@ jobs:
           if ! refs="$(git ls-remote --tags --refs origin 'refs/tags/aw-v*')"; then echo "REFUSE: aw tag history observation failed" >&2; exit 1; fi
           mapfile -t existing < <(awk -v sha="$SOURCE_SHA" '$1 == sha && $2 ~ /^refs\/tags\/aw-v[0-9]+\.[0-9]+\.[0-9]+$/ {sub("refs/tags/aw-v", "", $2); print $2}' <<<"$refs")
           [[ "${#existing[@]}" -le 1 ]] || { echo "REFUSE: multiple aw release tags already name $SOURCE_SHA" >&2; exit 1; }
-          if [[ "${#existing[@]}" -eq 1 ]]; then version="${existing[0]}"; else version="$(scripts/cli-release-version.sh next)"; fi
-          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          if [[ "${#existing[@]}" -eq 1 ]]; then
+            version="${existing[0]}"
+          else
+            # A branch move is not a reason to publish. This workflow
+            # derives its version from the WORLD - latest published plus
+            # one - so without this it mints a release on every release
+            # branch move, from a tree identical to the one before it,
+            # and the tag preflight below cannot notice because max+1
+            # can never already exist. The five other publication
+            # workflows read their version from the committed tree and
+            # so ask this question implicitly; aw has to ask it aloud.
+            if ! moved="$(python3 scripts/release_artifact_moved.py aw-cli)"; then
+              echo "REFUSE: aw-cli movement could not be determined" >&2; exit 1
+            fi
+            if [[ "$moved" == "unmoved" ]]; then
+              echo "aw-cli is unchanged since its newest release: nothing to publish"
+              printf 'publish=no\n' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            version="$(scripts/cli-release-version.sh next)"
+          fi
+          printf 'publish=yes\nversion=%s\n' "$version" >> "$GITHUB_OUTPUT"
           # AW_VERSION_SELECT_END
       - name: Verify source guards
+        if: steps.version.outputs.publish == 'yes'
         run: |
           ./scripts/check-aw-commit-repo-stamp.sh
           make check-cli-go-tidy
       - name: Verify external contract, sync exact tree, and verify public outputs
+        if: steps.version.outputs.publish == 'yes'
         env:
           VERSION: ${{ steps.version.outputs.version }}
           AW_REPO_TOKEN: ${{ secrets.AW_REPO_TOKEN }}
