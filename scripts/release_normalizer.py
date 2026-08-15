@@ -718,6 +718,19 @@ def _normalize_once(world: CapturedWorld) -> NormalizerResult:
         for name in group:
             recon = reconciliations[name]
             if name in decision.recovering:
+                # candidate_source_identity is the identity of the bytes
+                # OCCUPYING the version being published, and the
+                # comparator reads it that way - a foreign identity
+                # there means someone else published our version.
+                #
+                # It therefore only exists when this member's own
+                # reconciliation is ABOUT that version. A member
+                # complete at a LOWER version and moving up to M
+                # occupies nothing at M, so it has no candidate bytes
+                # to bind; carrying its old anchor here made continue
+                # compare an old identity against the card's new source
+                # and refuse its own card.
+                occupies_candidate = recon.candidate == decision.version
                 artifacts[name] = ArtifactResult(
                     disposition="moving-with-recovery",
                     version=decision.version,
@@ -725,7 +738,9 @@ def _normalize_once(world: CapturedWorld) -> NormalizerResult:
                         recon.p or "",
                         world.artifacts[name].anchor_versions.get(recon.p or ""),
                     ),
-                    candidate_source_identity=recon.source_identity,
+                    candidate_source_identity=(
+                        recon.source_identity if occupies_candidate else None
+                    ),
                 )
             elif recon.state == "reconciled" and recon.p == decision.version:
                 # A member already COMPLETE at the group's candidate is
