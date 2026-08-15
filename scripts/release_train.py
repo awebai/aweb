@@ -125,6 +125,14 @@ class Artifact:
     # is gitignored and built from src/, so following them literally
     # would make every source change invisible.
     content_exclusions: tuple[str, ...] = ()
+    # Committed files that MIRROR this artifact's version and must move
+    # with it. The version lives in version_source; a mirror repeats it,
+    # and a release that patches one and not the other ships a
+    # self-contradicting tree. Declared here so the patcher and the
+    # equality guard consume ONE fact - the guard used to hold this
+    # coupling alone, which is why a live prepare reached normal form
+    # and then refused its own patch.
+    version_mirrors: tuple[str, ...] = ()
     # The publisher's mutable-latest promise, declared beside the other
     # per-artifact facts so adding an image artifact FORCES the decision
     # (release-review's C2 note: a bare set in the status module was the
@@ -238,6 +246,7 @@ ARTIFACTS = (
         bundled_inputs=("channel-core",),
         content_scope=("channel/", "channel-core/"),
         content_exclusions=("channel/test/", "channel-core/test/"),
+        version_mirrors=("channel/.claude-plugin/plugin.json",),
         anchor=Anchor("tag_pattern", "channel-v"),
         occupancy_unit=("npm:@awebai/claude-channel",),
     ),
@@ -265,6 +274,7 @@ ARTIFACTS = (
         outputs=SKILL_ZIPS,
         bundled_inputs=SKILL_SOURCES,
         content_scope=("packages/claude-skills/", "skills/"),
+        version_mirrors=("packages/claude-skills/.claude-plugin/plugin.json",),
         anchor=Anchor("tag_pattern", "skills-v"),
         occupancy_unit=(
             "npm:@awebai/claude-skills",
@@ -1384,11 +1394,20 @@ def _artifact_entry(key: str):
     raise ValidationError(f"unknown canonical artifact {key!r}")
 
 
-def check_plugin_equality(prepared: PreparedEnvironment) -> None:
-    pairs = (
-        ("channel-plugin", "channel/.claude-plugin/plugin.json", "channel/package.json"),
-        ("skills", "packages/claude-skills/.claude-plugin/plugin.json", "packages/claude-skills/package.json"),
+def plugin_equality_pairs() -> tuple[tuple[str, str, str], ...]:
+    """(artifact, mirror path, version-source path) from the CANONICAL
+    record. The guard and the normalizer's patcher read this same
+    declaration, so a mirror cannot be enforced without being patched."""
+
+    return tuple(
+        (entry.key, mirror, entry.version_source or "")
+        for entry in ARTIFACTS
+        for mirror in entry.version_mirrors
     )
+
+
+def check_plugin_equality(prepared: PreparedEnvironment) -> None:
+    pairs = plugin_equality_pairs()
     for name, plugin_path, package_path in pairs:
         try:
             plugin_body = _git(

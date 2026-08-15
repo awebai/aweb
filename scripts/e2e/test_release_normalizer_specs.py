@@ -151,6 +151,62 @@ class SpecDerivation(unittest.TestCase):
                         f"{excluded} is not inside {entry.content_scope}",
                     )
 
+    def test_version_mirrors_are_canonical_and_cover_the_plugin_pairs(
+        self,
+    ) -> None:
+        """An artifact whose version appears in more than one committed
+        file must declare every one of them.
+
+        The live prepare reached NORMAL FORM and then refused:
+        "skills committed plugin.json version '0.2.12' must equal
+        package.json version '0.2.13'". The normalizer had patched the
+        artifact's declared manifest and left its .claude-plugin mirror
+        behind, because the coupling was known only to the guard that
+        enforces it - one fact with two implementations, the guard
+        reading it and the patcher ignoring it.
+
+        The record owns it now, and check_plugin_equality derives its
+        pairs from the record rather than restating them."""
+
+        mirrors = {
+            entry.key: entry.version_mirrors
+            for entry in rt.ARTIFACTS
+            if entry.version_mirrors
+        }
+        self.assertEqual(
+            mirrors,
+            {
+                "channel-plugin": ("channel/.claude-plugin/plugin.json",),
+                "skills": ("packages/claude-skills/.claude-plugin/plugin.json",),
+            },
+        )
+        # Every declared mirror exists, and carries a version field -
+        # a mirror path that is wrong fails here rather than at the
+        # next release.
+        import json
+
+        for key, paths in mirrors.items():
+            for relative in paths:
+                with self.subTest(artifact=key, mirror=relative):
+                    path = REPO_ROOT / relative
+                    self.assertTrue(path.is_file(), relative)
+                    self.assertIn("version", json.loads(path.read_text()))
+
+    def test_the_plugin_equality_guard_reads_the_canonical_mirrors(self) -> None:
+        # The guard's pairs must BE the record's mirrors, not a second
+        # list that happens to agree today.
+        pairs = rt.plugin_equality_pairs()
+        self.assertEqual(
+            {(name, mirror) for name, mirror, _package in pairs},
+            {
+                (entry.key, mirror)
+                for entry in rt.ARTIFACTS
+                for mirror in entry.version_mirrors
+            },
+        )
+        for name, _mirror, package in pairs:
+            self.assertEqual(package, rt._artifact(name).version_source)
+
     def test_cli_derivation_kind_follows_version_source(self) -> None:
         self.assertEqual(self.specs["aw-cli"].derivation, "tag-history")
         self.assertEqual(self.specs["aweb-server"].derivation, "manifest")

@@ -214,6 +214,7 @@ class FixedContractTests(unittest.TestCase):
                     bundled_inputs=("channel-core",),
                     content_scope=("channel/", "channel-core/"),
                     content_exclusions=("channel/test/", "channel-core/test/"),
+                    version_mirrors=("channel/.claude-plugin/plugin.json",),
                     anchor=rt.Anchor("tag_pattern", "channel-v"),
                     occupancy_unit=("npm:@awebai/claude-channel",),
                 ),
@@ -241,6 +242,9 @@ class FixedContractTests(unittest.TestCase):
                     outputs=rt.SKILL_ZIPS,
                     bundled_inputs=rt.SKILL_SOURCES,
                     content_scope=("packages/claude-skills/", "skills/"),
+                    version_mirrors=(
+                        "packages/claude-skills/.claude-plugin/plugin.json",
+                    ),
                     anchor=rt.Anchor("tag_pattern", "skills-v"),
                     occupancy_unit=(
                         "npm:@awebai/claude-skills",

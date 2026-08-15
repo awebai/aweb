@@ -199,6 +199,39 @@ class Orchestration(unittest.TestCase):
                         f"{label}: unattributed stop line {line!r}",
                     )
 
+    def test_the_patch_moves_every_declared_version_mirror(self) -> None:
+        """The defect the live prepare found AFTER reaching normal form.
+
+        skills carries its version in package.json AND in
+        .claude-plugin/plugin.json. The normalizer patched the first
+        and left the second at 0.2.12, and prepare refused: "committed
+        plugin.json version '0.2.12' must equal package.json version
+        '0.2.13'". Refusing was correct - it is a self-contradicting
+        tree - but the patch should not have produced one.
+
+        A patched manifest must carry its declared mirrors with it."""
+
+        import json
+
+        mirror = self.root / "pkg" / ".claude-plugin" / "plugin.json"
+        mirror.parent.mkdir(parents=True)
+        mirror.write_text(json.dumps({"version": "1.0.0"}, indent=2) + "\n")
+
+        outcome = run.run_normalizer(
+            capture=lambda: captured_world("1.0.0", changed=True),
+            manifest_paths={"pkg": self.manifest},
+            version_mirrors={"pkg": (mirror,)},
+            reobserve=lambda result, world=None: [],
+            normalize=rn.normalize,
+            recapture=self.live_recapture(changed=True),
+        )
+        self.assertEqual(outcome.exit_code, run.PATCH_NEEDED, outcome.report)
+        self.assertIn('version = "1.0.1"', self.manifest.read_text())
+        self.assertEqual(
+            json.loads(mirror.read_text())["version"], "1.0.1",
+            "the mirror was left behind - the tree contradicts itself",
+        )
+
     def test_fixed_point_failure_is_named(self) -> None:
         # A patched world that still wants a patch on the second pass is
         # non-convergent normalization. Simulate by a capture whose
