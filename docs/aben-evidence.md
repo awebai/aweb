@@ -307,7 +307,21 @@ identity unknown".
 
 **Absence of a setting is not absence of the behaviour. A
 reproduction is faithful only once you have measured the thing you
-assumed you removed.**
+assumed you removed.** The tell is specific and worth knowing: in a
+"bare environment" test, a PLAUSIBLE-LOOKING identity is evidence the
+host leaked in, not evidence of isolation - and it is worse than a
+blank, because it reads as a successful identity read rather than as
+nothing. `env -u HOME` suppresses a VARIABLE; git's fallback does not
+read that variable. The reviewer reproduced both environments
+independently and got their own name from the first one.
+
+**THE GATE FOUND WHAT THE DEVELOPER HOST STRUCTURALLY COULD NOT.**
+That is the argument for the gate being a real environment rather than
+a faster one: the developer host HAS a git identity and the container
+does not, so no amount of care on the host could have surfaced this.
+It sits beside the first-contact findings for the same reason - four
+of those came from the real registries rather than fixtures, and this
+one came from the real container rather than the real registries.
 
 The fix's second half is the durable one: identity is stamped into
 every repository the fixture helper INITIALISES, not only passed by
