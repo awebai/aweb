@@ -213,6 +213,7 @@ class FixedContractTests(unittest.TestCase):
                     "channel/package.json",
                     bundled_inputs=("channel-core",),
                     content_scope=("channel/", "channel-core/"),
+                    content_exclusions=("channel/test/", "channel-core/test/"),
                     anchor=rt.Anchor("tag_pattern", "channel-v"),
                     occupancy_unit=("npm:@awebai/claude-channel",),
                 ),
@@ -224,6 +225,7 @@ class FixedContractTests(unittest.TestCase):
                     "pi-extension/package.json",
                     bundled_inputs=("channel-core",) + rt.SKILL_SOURCES,
                     content_scope=("pi-extension/", "channel-core/", "skills/"),
+                    content_exclusions=("pi-extension/test/", "channel-core/test/"),
                     anchor=rt.Anchor("tag_pattern", "pi-v"),
                     occupancy_unit=("npm:@awebai/pi",),
                 ),
@@ -274,9 +276,9 @@ class FixedContractTests(unittest.TestCase):
                     "backend/pyproject.toml",
                     platforms=rt.OCI_PLATFORMS,
                     content_scope=("backend/", "frontend/", "Dockerfile.release"),
-                    anchor=rt.Anchor(
-                        "oci_revision_label", "org.opencontainers.image.revision"
-                    ),
+                    # Juan's tag ruling: a release's identity is the
+                    # tag in its own repository, ac-image included.
+                    anchor=rt.Anchor("tag_pattern", "v"),
                     occupancy_unit=("ghcr.io/awebai/ac",),
                     required_current_outputs=rt.OCI_PLATFORMS,
                     owned_locks=(rt.OwnedLock("backend/uv.lock", "uv-lock-offline"),),
@@ -906,6 +908,22 @@ class _PipelineFixture(unittest.TestCase):
         git("commit", "-m", "cli change", cwd=self.aweb)
         git("push", "origin", "main", cwd=self.aweb)
         git("fetch", "origin", cwd=self.aweb)
+        # The aw product checkout: the third member of the run trio.
+        # Its tree is a copy of aweb's cli/go plus the external repo's
+        # own .github, which is the shape MEASURED on the real
+        # awebai/aw - so the binding this fixture proves is the binding
+        # production performs, not a convenient one.
+        self.aw = root / "work/aw"
+        (self.aw / ".github").mkdir(parents=True)
+        (self.aw / ".github" / "ci.yml").write_text("on: push\n")
+        (self.aw / "main.go").write_text("package main\n")
+        git("init", "-b", "main", cwd=self.aw)
+        git("add", ".", cwd=self.aw)
+        git("commit", "-m", "sync", cwd=self.aw)
+        git("tag", "-a", "v1.34.4", "-m", "v1.34.4", cwd=self.aw)
+        os.environ["AWEB_NORMALIZER_AW_ROOT"] = str(self.aw)
+        self.addCleanup(os.environ.pop, "AWEB_NORMALIZER_AW_ROOT", None)
+
         gate = Path(self.tmp.name) / "gate.py"
         gate.write_text(
             "import json\n"
@@ -1708,6 +1726,176 @@ class ContinueTrainTests(_PipelineFixture):
             timeout=60,
         )
 
+    def test_continue_publishes_the_AC_SOURCE_TAG_at_the_derived_sha(self) -> None:
+        """The link a source regex was standing in for.
+
+        publish_source_tag is tested against a real remote, but every
+        one of those tests names the tag literally - so nothing
+        behavioural asserted that CONTINUE passes it the name derived
+        from the canonical record. That gap fails in both directions: a
+        refactor threading the root through a variable would break the
+        regex while the code stayed correct, and a real divergence
+        between the record and what continue pushes would not
+        necessarily break it.
+
+        This asserts the tag that actually lands on the AC remote,
+        against the name DERIVED from release_tag_prefix - so the
+        record and the publication are compared rather than each
+        checked against itself."""
+
+        card = self._prepare()
+        summary = self._continue()
+        self.assertEqual(summary["status"], "DONE")
+
+        version = next(
+            a.version for a in card.artifacts if a.name == "ac-image"
+        )
+        expected_tag = (
+            rt.release_tag_prefix(rt._artifact("ac-image"), "awebai/ac") + version
+        )
+        listing = git("ls-remote", "--tags", "origin", cwd=self.ac)
+        self.assertIn(
+            f"refs/tags/{expected_tag}", listing,
+            f"continue did not publish {expected_tag}; remote has:\n{listing}",
+        )
+        # ...at the EXACT final derived SHA - the same commit the image
+        # is built from and the release branch points at, not whatever
+        # HEAD happened to be afterwards.
+        peeled = [
+            line.split()[0]
+            for line in listing.splitlines()
+            if line.endswith(f"refs/tags/{expected_tag}^{{}}")
+        ]
+        self.assertEqual(len(peeled), 1, f"tag is not annotated:\n{listing}")
+        self.assertEqual(peeled[0], summary["final_ac_sha"])
+
+    def test_the_tag_names_the_derived_sha_even_when_HEAD_moves_after(
+        self,
+    ) -> None:
+        """The control that makes "at the EXACT derived SHA" mean
+        something.
+
+        In the ordinary fixture HEAD and the derived SHA are the same
+        commit, so tagging at HEAD passes - I mutated the code to tag
+        HEAD and the assertion stayed green, which is the vacuous shape
+        this epic keeps finding. Here the AC gate commits, so HEAD
+        moves AFTER the derived SHA is computed and the two values
+        differ. The tag must still name the commit the image is built
+        from and the release branch points at.
+        """
+
+        card = self._prepare()
+        # A gate that writes: any step committing after derive moves
+        # HEAD away from the release identity.
+        moving_gate = Path(self.tmp.name) / "moving_gate.py"
+        moving_gate.write_text(
+            "import subprocess, pathlib\n"
+            "p = pathlib.Path('gate-artifact.txt'); p.write_text('gate ran\\n')\n"
+            "subprocess.run(['git','add','-A'], check=True)\n"
+            "subprocess.run(['git','-c','user.email=t@t','-c','user.name=t',\n"
+            "                'commit','-m','gate artifact'], check=True)\n"
+        )
+        self.ac_gate_command = (sys.executable, str(moving_gate))
+        summary = self._continue()
+        self.assertEqual(summary["status"], "DONE")
+
+        derived = summary["final_ac_sha"]
+        head = git("rev-parse", "HEAD", cwd=self.ac)
+        self.assertNotEqual(
+            head, derived,
+            "the fixture failed to move HEAD - this control proves nothing",
+        )
+
+        version = next(a.version for a in card.artifacts if a.name == "ac-image")
+        tag = rt.release_tag_prefix(rt._artifact("ac-image"), "awebai/ac") + version
+        listing = git("ls-remote", "--tags", "origin", cwd=self.ac)
+        peeled = [
+            line.split()[0]
+            for line in listing.splitlines()
+            if line.endswith(f"refs/tags/{tag}^{{}}")
+        ]
+        self.assertEqual(len(peeled), 1, listing)
+        self.assertEqual(
+            peeled[0], derived,
+            "the tag names HEAD rather than the derived release commit",
+        )
+
+    def test_the_source_tag_is_published_BEFORE_the_terminal_sweep(self) -> None:
+        """Ordering, asserted where it is consumed rather than by
+        reading the sequence in the source.
+
+        The terminal sweep proves DONE by reading the source tag back.
+        If the tag were pushed after the sweep - or not at all - the
+        sweep would be proving a world that did not yet exist. So the
+        assertion is made FROM INSIDE the gate: at the moment the
+        sweep runs, the tag must already be on the AC remote, naming
+        the derived SHA.
+
+        Card and recovery are covered by their own tests; this is the
+        third of boundary 2's words that nothing else pins."""
+
+        card = self._prepare()
+        version = next(a.version for a in card.artifacts if a.name == "ac-image")
+        tag = rt.release_tag_prefix(rt._artifact("ac-image"), "awebai/ac") + version
+        seen = {}
+
+        def gate(environment, ac_derived, effect_rows, bases, timeout):
+            listing = git("ls-remote", "--tags", "origin", cwd=self.ac)
+            seen["listing"] = listing
+            seen["derived"] = ac_derived
+            return []
+
+        summary = self._continue(terminal_gate=gate)
+        self.assertEqual(summary["status"], "DONE")
+        self.assertIn("listing", seen, "the terminal gate never ran")
+        self.assertIn(
+            f"refs/tags/{tag}", seen["listing"],
+            "the terminal sweep ran BEFORE the source tag was published:\n"
+            + seen["listing"],
+        )
+        peeled = [
+            line.split()[0]
+            for line in seen["listing"].splitlines()
+            if line.endswith(f"refs/tags/{tag}^{{}}")
+        ]
+        self.assertEqual(peeled, [seen["derived"]])
+
+    def test_continue_is_retryable_over_the_tag_it_already_pushed(self) -> None:
+        """The retry path, with its premise corrected.
+
+        A SUCCESSFUL continue consumes the card, so re-running after
+        DONE is not the retry case - my first version of this test
+        asserted that and errored on a consumed card. The real case is
+        a continue that FAILS after the tag push: the card survives, and
+        the re-run meets a tag it pushed itself. That must be adopted,
+        not read as a conflicting tag from somewhere else."""
+
+        card = self._prepare()
+        version = next(a.version for a in card.artifacts if a.name == "ac-image")
+        tag = rt.release_tag_prefix(rt._artifact("ac-image"), "awebai/ac") + version
+
+        blocked = [True]
+
+        def gate(environment, ac_derived, effect_rows, bases, timeout):
+            if blocked[0]:
+                blocked[0] = False
+                # The gate returns BLOCKING STRINGS, not rows.
+                return ["fixture blocker: failing the first attempt on purpose"]
+            return []
+
+        with self.assertRaises(rt.ValidationError):
+            self._continue(terminal_gate=gate)
+
+        # The tag is already published, and the card survived.
+        after_failure = git("ls-remote", "--tags", "origin", cwd=self.ac)
+        self.assertIn(f"refs/tags/{tag}", after_failure)
+
+        summary = self._continue(terminal_gate=gate)
+        self.assertEqual(summary["status"], "DONE")
+        # Adopted, not duplicated or moved.
+        self.assertEqual(git("ls-remote", "--tags", "origin", cwd=self.ac),
+                         after_failure)
+
     def test_full_fixture_continue_reaches_done_in_order(self) -> None:
         card = self._prepare()
         summary = self._continue()
@@ -2222,6 +2410,13 @@ class ContinueTrainTests(_PipelineFixture):
             "github_commits": {
                 "awebai/aw": {"v1.34.4": {
                     "sha": "e" * 40,
+                    # INERT. Nothing reads this message: the binding
+                    # compares the published TREE against aweb's cli/go
+                    # from the local checkout, not a stamp the commit
+                    # makes about itself. Kept only so the stand-in
+                    # answers the commits endpoint at all - a reader who
+                    # infers from it that the stamp is verified would be
+                    # re-deriving a guarantee from a fixture field.
                     "message": f"Sync exact aweb {sha}",
                 }},
             },
@@ -2231,9 +2426,19 @@ class ContinueTrainTests(_PipelineFixture):
             "ghcr_index"
         ]["awebai/a2a-gateway"]["1.27.2"]
         if getattr(self, "_capstone_mutation", None) == "wrong-stamp":
-            world["github_commits"]["awebai/aw"]["v1.34.4"]["message"] = (
-                "Sync exact aweb " + "f" * 40
-            )
+            # PORTED, not dropped. The binding used to read the tag's
+            # COMMIT MESSAGE over the API, so falsifying the sync stamp
+            # falsified it. It now compares the published TREE against
+            # aweb's cli/go from the local checkout, so the equivalent
+            # falsification is a published tree that does not match -
+            # one extra file, which is precisely what a bad sync would
+            # leave behind. Falsifying the old stamp would no longer
+            # falsify anything, and this control would have passed
+            # while proving nothing.
+            (self.aw / "smuggled.go").write_text("package main // not ours\n")
+            git("add", ".", cwd=self.aw)
+            git("commit", "-m", "smuggle", cwd=self.aw)
+            git("tag", "-f", "-a", "v1.34.4", "-m", "v1.34.4", cwd=self.aw)
         with RegistryStandIn(world) as registry:
             summary = rt.continue_train(
                 self.aweb,

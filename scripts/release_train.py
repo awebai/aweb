@@ -1284,12 +1284,16 @@ def _resolve_anchor_identity(
     """The unmoved row's anchor: its published version's source identity,
     read from where the anchor actually lives (aben design section 7).
 
-    Tag anchors resolve on the artifact's repository origin with annotated
-    tags peeled - the same direct/peeled semantics as the shared shell
-    helper. The OCI revision label resolves from the registry through the
-    adoption reader's contract; unavailability raises rather than
-    guessing, because an unmoved row without a provable anchor is not an
-    unmoved row.
+    Tag anchors resolve from the artifact's own repository CHECKOUT,
+    which was fetched once - annotated tags peeled, the same
+    direct/peeled semantics as before. Read locally rather than by a
+    per-tag `ls-remote`: under the tag ruling every identity question
+    is answered from a local repository, and a per-tag remote query is
+    both a round trip per artifact and a second moment of observation
+    against a world that can move between them.
+
+    Absence still raises rather than guessing, because an unmoved row
+    without a provable anchor is not an unmoved row.
     """
 
     if artifact.anchor is None:
@@ -1299,21 +1303,17 @@ def _resolve_anchor_identity(
             prepared.aweb_root if artifact.repository == "aweb" else prepared.ac_root
         )
         tag = f"{artifact.anchor.value}{version}"
-        lines = _git(
-            repository, "ls-remote", "origin", f"refs/tags/{tag}", f"refs/tags/{tag}^{{}}"
-        ).stdout.splitlines()
-        direct = peeled = None
-        for line in lines:
-            sha, ref = line.split(None, 1)
-            if ref.endswith("^{}"):
-                peeled = sha
-            else:
-                direct = sha
-        identity = peeled or direct
+        try:
+            identity = _git(
+                repository, "rev-list", "-n", "1", f"refs/tags/{tag}"
+            ).stdout.strip() or None
+        except CommandFailed:
+            identity = None
         if identity is None:
             raise ObservationUnavailable(
-                f"{artifact.key}: anchor tag {tag} absent while the registry "
-                "serves the version - anchorless unmoved row"
+                f"{artifact.key}: anchor tag {tag} absent from the fetched "
+                "checkout while the registry serves the version - "
+                "anchorless unmoved row"
             )
         return PreviousCompleteAnchor(version, "tag", identity)
     raise ValidationError(
@@ -2063,6 +2063,7 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
     every requested effect row. The returned list is what blocks DONE;
     empty means done."""
 
+    import release_normalizer_main as rmain
     import release_status as status
     import release_status_gates as gates
 
@@ -2080,6 +2081,11 @@ def _default_terminal_gate(environment, ac_derived, effect_rows, bases, timeout)
         repo_roots={
             "aweb": environment.aweb_root,
             "ac": environment.ac_root,
+            # The aw checkout answers the external binding locally. The
+            # prepare phase refuses without it, so by the time continue
+            # runs it exists; passing it here is what lets the terminal
+            # sweep read the binding rather than report it unavailable.
+            "aw": rmain.aw_root(environment.aweb_root),
         },
         timeout=timeout,
     )

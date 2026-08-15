@@ -158,6 +158,7 @@ lesson:
 | first successful run | 695.5s | 1672 | 1601 |
 | identity resolved only where compared | 60.7s | 111 | 41 |
 | one bulk ref read per remote | 37.0s | 97 | 41 |
+| identity is the tag (no registry identity at all) | 30.7s | 75 | 17 |
 
 The first directive taken was to replace per-prefix ref queries with
 one bulk read, reasoned from a correct measurement (a round trip costs
@@ -225,7 +226,119 @@ tag, and no longer proves the first was built from the second. Stated
 that way deliberately, because the alternative is status language that
 implies a check nobody runs any more.
 
-**The re-run** - STAMP-AT-SEND: the classification the same launcher
+**FOUR TIMES THE REAL WORLD CORRECTED A FIXTURE, and the fixtures
+were not careless.** This is the epic's most durable finding and it
+belongs above the individual defects:
+
+| what was asserted | against | what the real pair said |
+|---|---|---|
+| version candidates are version-shaped | constructed tags | ~90 BARE commit tags on ghcr.io/awebai/ac |
+| aw-cli's version is in its manifest | a manifest that existed | a publish-time 0.0.0 placeholder that was never a version |
+| skills' github member reads back | a fixture using one prefix | discovery and read-back derived the prefix twice, disagreeing |
+| aw's published tree equals aweb's cli/go tree | repositories I built | differ by exactly `.github`; tree ids hash the whole entry list, so the check could NEVER have passed |
+
+Each was asserted against inputs the author constructed, and each was
+wrong in a way only first contact could show. The fourth is the
+sharpest, because the failure direction was invisible from inside: a
+comparison that can never succeed passes every test that only ever
+asks it to refuse, and the constructed fixtures agreed precisely
+because one author built both sides. The design had already recorded
+the correct form (section 2's "excluding `.github`... not a
+subtree-hash shorthand unless byte-equivalence is separately proven")
+and it was not read before implementing.
+
+Measured after amendment, against the real repositories at three real
+release tags: v1.34.7 and v1.34.6 at 506 paths, v1.34.5 at 505,
+identical mode and object id, observed-present - the same three that
+were conflict-unproven before.
+
+**A CHECK THAT HAS NEVER BEEN ABLE TO FAIL IS INDISTINGUISHABLE FROM
+A CHECK THAT PASSES**, and one of these lived inside the capstone this
+packet cites as its strongest evidence. Removing the OCI identity path
+surfaced three, all of the same family:
+
+- the registry stand-in derived manifest digests from the TAG NAME,
+  and omitted the digest header entirely on one path - so
+  `latest == VERSION` compared two EMPTY strings, found them equal,
+  and reported PRESENT. That row has been decorative for its whole
+  existence. Digests are content-addressed in the stand-in now, so two
+  tags naming one image share one and the comparison is real.
+- an index-digest row could read `observed-present` with NO digest,
+  because the old evidence string appended the source anchor and was
+  therefore never empty. A missing `Docker-Content-Digest` is
+  `unavailable` now, which is what it means.
+- the platform fact key differed between the present and absent
+  branches, so the family was not stable across outcomes - a
+  RE-OCCURRENCE of C2's stable-family rule rather than a new finding.
+
+**A CONTROL DOES NOT SURVIVE A CHANGE TO WHAT IT CONTROLS.** C2's
+falsified-binding control proved the aw binding row was COMPARED and
+not merely present, by falsifying the tag's commit message. The tag
+ruling stopped that message being read at all - so a mechanical port
+would have kept falsifying a field nothing consumes, gone green, and
+proved nothing, while sitting in the packet as the control that makes
+the capstone mean something. It was re-derived instead: the mutation
+now smuggles an extra file into the published tree, which is what a
+bad sync actually leaves behind, and DONE refuses naming the binding
+row. When the mechanism under test changes, every control over it must
+be re-derived rather than carried - and the packet should be read with
+that applied to its other controls too.
+
+**Two control failures of my own, same shape, same day.** A landing
+check printed IDENTICAL for a base SHA I had hand-expanded and that
+did not exist: both sides of the comparison errored to empty and
+compared equal. And a landing gate printed the out-of-scope file
+rather than refusing on it, so a held packet document landed
+unreviewed alongside reviewed code. Both are now gates that refuse,
+and both require their inputs to be non-empty before comparing. I
+record them because the packet's evidence should be read as
+calibrated, not as advocacy - and because they are the same defect the
+code findings above describe, committed by the person auditing for it.
+
+**THE RE-RUN, over the trio at main.** aweb `25577c1d`, AC
+`22ab8bbe`, aw `23391f30`, all clean and at origin/main. Exit 10,
+PATCH NEEDED, in THIRTY-FIVE SECONDS:
+
+    awid-image:   0.5.16 -> 0.5.17
+    awid-service: 0.5.16 -> 0.5.17
+    skills:       0.2.12 -> 0.2.13
+    aweb-server floor: awid-service>=0.5.16 -> >=0.5.17
+
+Nothing published, no pointer moved, working-tree edits only. Four
+things this run establishes that no fixture could:
+
+- the equality group resolves correctly against the real world -
+  aweb-server holds at 1.27.2 with only its floor moving, the opposite
+  of the phantom-release direction, which is the row pre-registered
+  before the run;
+- no channel-plugin row: a test file that cannot ship no longer moves
+  an artifact;
+- the aw external binding ran for real against a live checkout rather
+  than being skipped, which is what the precondition exists to
+  guarantee;
+- and the whole phase costs half a minute against 695 seconds at first
+  contact.
+
+**A PATCH RUN CANNOT PRODUCE A CARD, and that is the designed
+behaviour rather than a shortfall.** PATCH NEEDED is terminal for the
+prepare: the edits go to normal review, and only once they are
+committed and landed does the next prepare reach normal form, run the
+gate and mint a card. The remaining distance to the first release
+through the fixed process is therefore one reviewed version-bump
+change, not another repair.
+
+One row of that patch is a policy question rather than a mechanical
+one and is deliberately unresolved here: awid-service moves only
+because the equality group ties it to awid-image, its own scope has
+zero changed files, and committing it publishes a PyPI package
+byte-identical to its predecessor. Committing the patch IS that
+decision - there is no later point at which it returns - so it sits
+with the human rather than being reconciled by the engine or by me.
+
+**The card** - STAMP-AT-SEND, and its known gap named in advance: the
+AC source-tag rows (card, ordering, recovery) will be absent by
+DECLARATION, because the tag is created during continue and a prepare
+does not reach it. the classification the same launcher
 produces over the pair refreshed to `38a3b871` / AC `22ab8bbe`, with the
 equality-group resolution stated explicitly, and any remaining stop
 named. Instrument note, so a reader does not mistake it for a product

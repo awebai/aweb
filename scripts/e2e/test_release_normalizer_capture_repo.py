@@ -5,6 +5,7 @@ discovery - hermetic against a real local git remote.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,44 @@ def git(*args: str, cwd: Path) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def direct_anchor_tags(repo: Path, prefix: str) -> dict:
+    """The per-prefix remote read, kept HERE as a test oracle only.
+
+    Production answers every tag question from one bulk ref snapshot
+    per remote, so this per-prefix query has no place in it. It stays
+    as an independent instrument the snapshot can be checked against -
+    a control needs a second way of getting the answer, and that second
+    way does not have to be one production is allowed to use.
+    """
+
+    """All version-namespace anchor tags on origin, peeled to commits.
+
+    Near-matching non-conformers under the prefix are kept for the
+    reconciler's malformed-version-candidate stop; names outside the
+    version namespace are excluded.
+    """
+
+    lines = cap._git(repo, "ls-remote", "origin", f"refs/tags/{prefix}*").splitlines()
+    direct: dict[str, str] = {}
+    peeled: dict[str, str] = {}
+    for line in lines:
+        sha, ref = line.split(None, 1)
+        name = ref.removeprefix("refs/tags/")
+        if name.endswith("^{}"):
+            peeled[name[:-3]] = sha
+        else:
+            direct[name] = sha
+    tags: dict[str, str] = {}
+    for name, sha in direct.items():
+        version_text = name.removeprefix(prefix)
+        if cap.parse_version(version_text) is None and not cap._NEAR_VERSION.match(
+            version_text
+        ):
+            continue
+        tags[version_text] = peeled.get(name, sha)
+    return tags
 
 
 class RepoCapture(unittest.TestCase):
@@ -53,7 +92,7 @@ class RepoCapture(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_anchor_tags_discovered_with_peeled_identities(self) -> None:
-        tags = cap.discover_anchor_tags(self.work, "pkg-v")
+        tags = direct_anchor_tags(self.work, "pkg-v")
         self.assertEqual(tags, {"1.0.0": self.anchor_sha})
 
     def test_unchanged_scope_is_not_content_changed(self) -> None:
@@ -284,13 +323,13 @@ class RepoCapture(unittest.TestCase):
         sha2 = git("rev-parse", "HEAD", cwd=self.work)
         git("tag", "-a", "-m", "note", "pkg-v1.0.1", cwd=self.work)
         git("push", "-q", "origin", "refs/tags/pkg-v1.0.1", cwd=self.work)
-        tags = cap.discover_anchor_tags(self.work, "pkg-v")
+        tags = direct_anchor_tags(self.work, "pkg-v")
         self.assertEqual(tags["1.0.1"], sha2)
 
     def test_non_grammar_tag_is_excluded_not_fatal(self) -> None:
         git("tag", "pkg-vlatest", cwd=self.work)
         git("push", "-q", "origin", "refs/tags/pkg-vlatest", cwd=self.work)
-        tags = cap.discover_anchor_tags(self.work, "pkg-v")
+        tags = direct_anchor_tags(self.work, "pkg-v")
         self.assertEqual(set(tags), {"1.0.0"})
 
 
@@ -368,7 +407,7 @@ class RefSnapshotBound(unittest.TestCase):
         for prefix in self.prefixes:
             self.assertEqual(
                 cap.anchor_tags_from(snapshot, prefix),
-                cap.discover_anchor_tags(self.work, prefix),
+                direct_anchor_tags(self.work, prefix),
                 prefix,
             )
 
