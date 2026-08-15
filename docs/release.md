@@ -92,6 +92,19 @@ There is no resume subcommand and no editable operator state file. A terminated
 shell, expired credential, workflow failure, or temporary registry outage does
 not require a person to reconstruct context.
 
+## Static site
+
+The `awid.ai` Hugo site is independent of artifact release. Its source and
+mirrored documents are reviewed on `main`; deployment never creates or repairs
+a commit.
+
+After production authorization, `make deploy-site` verifies the mirrors and
+Hugo build, requires a clean checkout at the exact fetched `origin/main`, then
+fast-forwards that SHA to `deploy-awid-landing` and reads the remote ref back.
+Render must build `awid/site` from that branch. A successful branch push is a
+delivery request, not proof that Render completed: verify the provider deploy
+and the live `https://awid.ai` site afterward.
+
 ## Implementation map
 
 - `scripts/release.py`: desired-state selection and reconciliation.

@@ -7,7 +7,7 @@
 	check-awid-locked-suite \
 	test-release-cli-version \
 	test-channel-integration \
-	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
+	list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _release-gate-version-authority _release-gate-channel-version _release-node-deps \
 	_release-unit-channel _release-unit-channel-core _release-unit-pi _release-oats _release-marketplace-pointer \
@@ -38,6 +38,7 @@ AWID_SITE_DOC_NAMES := identity-guide.md trust-model.md
 AWID_SITE_DOC_SOURCE_DIR ?= docs
 AWID_SITE_DOC_MIRROR_DIR ?= awid/site/static
 AWID_SITE_DOC_MIRRORS := $(addprefix $(AWID_SITE_DOC_MIRROR_DIR)/,$(AWID_SITE_DOC_NAMES))
+SITE_DEPLOY_BRANCH ?= deploy-awid-landing
 
 help:
 	@echo "Targets:"
@@ -89,7 +90,8 @@ help:
 	@echo "    make release"
 	@echo "    docs/release.md is the authoritative specification."
 	@echo ""
-	@echo "  release-awid-site                     deploy awid landing page"
+	@echo "  verify-site  Verify the awid.ai Hugo site without deploying"
+	@echo "  deploy-site  Advance the verified origin/main commit to $(SITE_DEPLOY_BRANCH)"
 	@echo "  release                               test, reconcile, publish, and deploy the desired state"
 	@echo "  clean        Remove all build artifacts and caches"
 
@@ -234,6 +236,9 @@ check-awid-site-docs:
 	if ! python3 scripts/check-awid-site-doc-links.py $(AWID_SITE_DOC_MIRRORS); then status=1; fi; \
 	if [ "$$status" -eq 0 ]; then echo "AWID site document mirrors are up to date"; fi; \
 	exit "$$status"
+
+verify-site: check-awid-site-docs
+	cd awid/site && hugo --minify --cleanDestinationDir
 
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
@@ -440,21 +445,24 @@ check-awid-locked-suite:
 	cd awid && uv lock --check
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
 
-# ── Awid site deploy ────────────────────────────────────────────────
+# ── awid.ai static-site deployment ─────────────────────────────────
 
 release:
 	python3 scripts/release.py
 
-release-awid-site:
-	@echo "Syncing docs into awid site..."
-	$(MAKE) sync-awid-site-docs
-	git add $(AWID_SITE_DOC_MIRRORS)
-	@if ! git diff --cached --quiet -- $(AWID_SITE_DOC_MIRRORS); then \
-		git commit -m "Sync identity-guide and trust-model into awid site"; \
-	fi
-	@echo "Docs synced. Static-site deployment is deliberately independent of artifact release."
-	git checkout main
-	@echo "Awid site deployed via deploy-awid-landing."
+deploy-site: verify-site
+	@set -eu; \
+		test -z "$$(git status --porcelain)" || { echo "Refusing to deploy a dirty checkout" >&2; exit 1; }; \
+		git fetch origin main "$(SITE_DEPLOY_BRANCH)"; \
+		source_sha=$$(git rev-parse HEAD); \
+		main_sha=$$(git rev-parse origin/main); \
+		test "$$source_sha" = "$$main_sha" || { echo "Refusing to deploy $$source_sha: origin/main is $$main_sha" >&2; exit 1; }; \
+		deployed_sha=$$(git rev-parse "origin/$(SITE_DEPLOY_BRANCH)"); \
+		git merge-base --is-ancestor "$$deployed_sha" "$$source_sha" || { echo "Refusing non-fast-forward site deployment: $(SITE_DEPLOY_BRANCH) is $$deployed_sha" >&2; exit 1; }; \
+		git push origin "$$source_sha:refs/heads/$(SITE_DEPLOY_BRANCH)"; \
+		observed_sha=$$(git ls-remote --heads origin "refs/heads/$(SITE_DEPLOY_BRANCH)" | awk '{print $$1}'); \
+		test "$$observed_sha" = "$$source_sha" || { echo "Deployment ref read-back mismatch: expected $$source_sha, observed $${observed_sha:-missing}" >&2; exit 1; }; \
+		echo "Advanced $(SITE_DEPLOY_BRANCH) to $$source_sha; verify the Render deploy and https://awid.ai"
 
 test-pointer-adapter:
 	python3 scripts/e2e/test_pointer_adapter_marketplace.py

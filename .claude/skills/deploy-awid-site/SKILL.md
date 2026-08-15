@@ -1,23 +1,26 @@
 ---
 name: deploy-awid-site
-description: Deploy the awid.ai landing page through the two-command release train. Use after changing its mirrored docs or site files.
+description: Deploy the reviewed aweb main commit to the awid.ai static site through its dedicated landing branch.
 ---
 
-# Deploy the awid.ai landing page
+# Deploy awid.ai
 
-The deployed artifact is `awid/site/`, including the repository-owned mirrors
-of `docs/identity-guide.md` and `docs/trust-model.md`. The release graph owns
-both synchronization and the `deploy-awid-landing` delivery lane.
+The site source is `awid/site/`. Its committed mirrors of
+`docs/identity-guide.md` and `docs/trust-model.md` must already be current and
+reviewed before deployment. If they are stale, run `make sync-awid-site-docs`,
+commit the result, obtain review, and merge it normally.
 
-Use the two-command release train in the `release` skill. Do not invoke the
-underlying branch target as a separate hand-maintained procedure; continue
-pushes the exact main commit to `deploy-awid-landing` when the site's source
-set moved, and records the result in its DONE output.
+After the outward production action has been authorized, run:
 
-Deployment is an outward production action and still requires the applicable
-human authorization. After delivery, verify that awid.ai serves the intended
-site and both mirrored documents.
+```bash
+make deploy-site
+```
 
-The agent guide is served from aweb.ai rather than awid.ai. Resolve current
-ownership and review routing from the active team instructions and `aw
-workspace status`; never rely on a teammate name recorded in this skill.
+The command builds the site, refuses a dirty checkout or a commit other than
+the fetched `origin/main`, requires a fast-forward from the current
+`deploy-awid-landing` tip, pushes the exact main SHA, and reads the remote ref
+back. It does not create a commit or participate in artifact release.
+
+Render must be configured to build `awid/site` from `deploy-awid-landing`.
+After the branch advances, verify the Render deploy completed and that
+https://awid.ai plus both mirrored documents serve the intended content.
