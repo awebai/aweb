@@ -88,9 +88,42 @@ OTHER_DIGEST = "sha256:" + "b" * 64
 
 
 def git(*args: str, cwd: Path) -> str:
+    """Run git in a fixture repository.
+
+    Identity is set HERE and stamped into every repository this helper
+    initialises, rather than at call sites. Two reasons, both learned
+    from a gate failure: a call site can forget, and - more
+    importantly - PRODUCTION code under test runs git in these
+    repositories too (publish_source_tag's annotated tag, continue's
+    derive commit), so the identity has to live in the REPOSITORY, not
+    only in this helper. A developer host has a global git config and
+    the gate container has none, so a bare commit passes everywhere it
+    is written and fails where it counts.
+    """
+
     result = subprocess.run(
-        ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+        ["git", "-c", "user.email=fixture@aweb.ai", "-c", "user.name=aweb fixture",
+         *args],
+        cwd=cwd, check=True, capture_output=True, text=True,
     )
+    if args and args[0] == "init" and "--bare" not in args:
+        # Bare repositories are skipped above: nothing commits in one,
+        # so an identity there would be decoration.
+        # Resolve the new repository by what ACTUALLY became one -
+        # parsing the argv would have to know that -b takes a value,
+        # and getting that wrong points the config at a branch name.
+        candidates = [cwd] + [
+            Path(a) if Path(a).is_absolute() else cwd / a
+            for a in args[1:]
+            if not a.startswith("-")
+        ]
+        target = next(
+            (c for c in reversed(candidates) if (c / ".git").exists()), cwd
+        )
+        subprocess.run(["git", "config", "user.email", "fixture@aweb.ai"],
+                       cwd=target, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "aweb fixture"],
+                       cwd=target, check=True, capture_output=True)
     return result.stdout.strip()
 
 

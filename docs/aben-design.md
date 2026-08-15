@@ -85,7 +85,7 @@ resolution):
   normalizer, the status engine.
 - `remote_tag_sha` (direct/peeled tag resolution): consolidated to one
   script sourced by the workflows and the reconciler.
-- AC repo `scripts/derive_release_floors.py`: section 5.
+- AC repo `../ac/scripts/derive_release_floors.py`: section 5.
 - The launcher digest/verify strings are retired: the train passes
   `versions["ac-image"]` and its derived `ac_derived` SHA as argv to the
   existing repo scripts. The migrate launcher string is retired; the
