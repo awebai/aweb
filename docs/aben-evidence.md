@@ -110,6 +110,32 @@ ledger below them. AC quiescence stated for the audit pin.
 - The `promises_latest` metadata gap: the one two-way-domain input the
   equality could never check, closed by declaring the promise on the
   canonical record (reviewer-found, alice-carve-reviewed).
+- **D3 was cheap to fix and we failed to attribute it.** Three of us
+  built two observables for the pre-sweep fetch and BOTH were
+  confounded. The aweb tag (`awid-service-v0.5.17`) predates the walk,
+  so the race window D3 closes was never open on it - not weak
+  evidence, none. The AC source tag looked airtight by call ordering:
+  `publish_source_tag` creates it at `:2530` and the only AC *fetch*
+  after that is D3's own at `:2227`. The ordering claim was true and
+  irrelevant, because `publish_source_tag` does `git tag -a` in the
+  pair's AC checkout and only then pushes - the tag never needed
+  fetching, so a PRESENT was guaranteed whether D3 works, does nothing,
+  or is deleted. I verified where the tag would be READ from and not
+  where it would be WRITTEN from: one end of a two-ended fact, the same
+  shape as reading a ref's existence without dereferencing it.
+  release-review suspected the confound and alice and I each confirmed
+  it in the code. **Both of us had pre-registered the observable, which
+  would have laundered it** - a pre-registration fixes which outcome you
+  are allowed to accept, and does nothing about a measurement that
+  cannot discriminate. D3 therefore ships TESTED-BY-ITS-TEST, whose
+  control is the live failure itself (stale read ABSENT before the
+  refresh, PRESENT after), and NOT verified in production: this release
+  moves no artifact whose tag is published by a workflow, so no tag
+  arrives from outside the local checkout during the walk and D3 has
+  nothing to do. The first real instance is the next release that moves
+  a workflow-published artifact. One asymmetric reading survives: an
+  ABSENT on that row would still be informative, since the tag is local
+  by construction.
 
 ## 3. The design-conformance audit - STAMP-AT-SEND
 release-review's audit (criteria: docs/aben-design.md, which they did
