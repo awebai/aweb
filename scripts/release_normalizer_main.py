@@ -48,6 +48,15 @@ def registry_bases() -> dict[str, str]:
     }
 
 
+def _artifact_owning(target: str):
+    """The canonical entry whose occupancy unit contains this target."""
+
+    for entry in rt.ARTIFACTS:
+        if target in (entry.occupancy_unit or ()):
+            return entry
+    raise ValueError(f"no canonical artifact owns target {target!r}")
+
+
 def route_discovery(
     target: str,
     *,
@@ -55,10 +64,19 @@ def route_discovery(
     ghcr_token: str,
     gh_token: str,
     bases: dict[str, str],
-    tag_prefix: str = "v",
 ):
     """One listing call per unit target, by spelling. Unknown spellings
-    raise: a new target kind is a reviewed decision, never a skip."""
+    raise: a new target kind is a reviewed decision, never a skip.
+
+    The GitHub tag prefix is DERIVED here from the canonical record,
+    not passed in. It used to be a parameter defaulting to "v", and a
+    caller that forgot it got silence rather than an error: continue's
+    world assembly omitted it, so skills' release member was searched
+    for `v0.2.12` instead of `skills-v0.2.12`, read as EMPTY, and the
+    unit became conflicting-partial - refusing the release twice with
+    a stop that pointed at skills rather than at the caller. Third
+    derivation of one fact; the parameter is what allowed it.
+    """
 
     if target.startswith("pypi:"):
         return {
@@ -95,7 +113,9 @@ def route_discovery(
                 base=bases["github"],
                 timeout=timeout,
                 token=gh_token,
-                tag_prefix=tag_prefix,
+                tag_prefix=rt.release_tag_prefix(
+                    _artifact_owning(target), repository
+                ),
             )
         }
     raise ValueError(f"no discoverer routes target {target!r}")
@@ -387,12 +407,6 @@ def run_phase(
         if entry.version_mirrors
     }
 
-    prefixes = {
-        target: prefix
-        for spec in specs
-        for target, prefix in spec.tag_prefixes.items()
-    }
-
     def discover(target: str):
         return route_discovery(
             target,
@@ -400,7 +414,6 @@ def run_phase(
             ghcr_token=ghcr_token,
             gh_token=gh_token,
             bases=bases,
-            tag_prefix=prefixes.get(target, "v"),
         )
 
     def capture() -> rn.CapturedWorld:
