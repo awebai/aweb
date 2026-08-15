@@ -89,6 +89,32 @@ class FixtureGitOwnership(unittest.TestCase):
             f"{offenders}",
         )
 
+    def test_the_debt_can_only_shrink(self) -> None:
+        """"Nothing may be added" was a COMMENT, enforced by nothing.
+
+        The path of least resistance for someone whose new module fails
+        the detector is to add it to the legacy list, which converts the
+        debt into an escape hatch silently - a claim asserted in prose
+        beside a mechanism that does not check it, which is the family
+        this whole round is about (release-review's find).
+
+        The bound is lowered as modules migrate. Raising it is a visible
+        deliberate edit that a reviewer sees, and it needs no second
+        copy of the list.
+
+        A bound alone would permit a SWAP - drop a listed module, add
+        yours, length unchanged. That is closed by the other two tests
+        rather than here: the dropped module still initialises a
+        repository without importing the owner, so the detector names
+        it. Verified by running that mutation, not by arguing it.
+        """
+
+        self.assertLessEqual(
+            len(LEGACY_OWN_PINNING), 5,
+            "the fixture-git debt may only shrink: a module that fails "
+            "the ownership check does not belong on this list",
+        )
+
     def test_the_legacy_list_only_names_modules_that_still_exist(self) -> None:
         # A stale entry would silently grant an exemption to nothing, and
         # hide that the debt was already paid.
