@@ -6,6 +6,47 @@ verdict (A1-A9, all landed; ledger in section 7). Sections marked
 STAMP-AT-SEND are completed at send time from a fresh fetch, per the
 dated-stamp practice, and re-verified at any later landing.
 
+## The finding
+
+**Observation failure is never permission to write.**
+
+That sentence is not new advice. It is already in this repository, at
+`oci-exact-publish.sh:19` - written at the one boundary where being
+wrong is permanent, because an adopted OCI tag cannot be taken back
+and PyPI can never re-upload. It was never stated as a PRINCIPLE, and
+that is why the same class kept recurring everywhere else.
+
+Every instrument defect this epic surfaced has one shape - **could not
+observe, reported fine**:
+
+| what could not observe | what it reported |
+|---|---|
+| a grep whose pattern was broken | zero hits, read as "nothing there" |
+| a registry stand-in comparing two empty strings | equal, read as PRESENT |
+| a tree comparison that could never succeed | asserted against constructed inputs, read as proven |
+| the literal `ARTIFACTS` pin, outside the gate target | not run, read as passing |
+| an argparse `required=True` sweep | clean, blind to a runtime requirement |
+| `HOME`-suppressed git | a synthesised identity, read as isolation |
+| a landing check whose two diffs both errored | empty == empty, read as IDENTICAL |
+| a declared-intent design copied from the last invocation | matching, read as verified |
+
+The publishers say the opposite, and they say it where it costs most:
+an unavailable listing refuses, a served file that differs refuses
+permanently, a served file that is EXTRA refuses too - the direction
+that catches a foreign artifact rather than a missing one.
+
+**The mechanical test for the family**, which takes one reading and
+would have caught the worst instance above in a sentence: *can the two
+sides of this comparison be edited independently?* One editable site
+means the comparison is structural and dead. Two means it has content.
+
+The remedies, strongest last:
+
+| remedy | what it guarantees |
+|---|---|
+| make the copy AGREE with the owner | holds at every call site, forever, by vigilance |
+| remove the ABILITY to have a copy | holds once, by construction |
+
 ## 0. Closure matrix - the second verdict's findings
 
 | # | Finding | Fix (landed main SHA / STAMP) | Real-entry regression | Recorded red | Enforcing source |
