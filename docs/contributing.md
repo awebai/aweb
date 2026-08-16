@@ -191,8 +191,8 @@ The gate runs a fixed serial prerequisite barrier, four fixed concurrent lanes,
 and a post-join residue check. Each lane remains serial in table order. A row
 failure does not stop independent rows or lanes. The log directory contains one
 log per observed row, an atomically updated summary naming every row `PASSED`,
-`FAILED`, or `NOT RUN`, and `lane-timings.tsv`; any failure, unobserved row,
-crashed lane, or infrastructure refusal makes the gate red.
+`FAILED`, or `NOT RUN`, and per-step/lane timing tables; any failure, unobserved
+row, crashed lane, or infrastructure refusal makes the gate red.
 
 For constrained local diagnosis, run
 `RELEASE_GATE_SERIAL=1 scripts/release-gate.sh`; it executes the same fixed

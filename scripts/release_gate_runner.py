@@ -250,6 +250,19 @@ def write_summary(path: Path, steps: Sequence[Step], states: dict[str, str]) -> 
     os.replace(temporary, path)
 
 
+def write_step_timings(
+    path: Path, steps: Sequence[Step], timings: dict[str, float]
+) -> None:
+    body = "".join(
+        f"{step.name}\t{timings[step.name]:.3f}\n"
+        for step in steps
+        if step.name in timings
+    )
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(body, encoding="utf-8")
+    os.replace(temporary, path)
+
+
 def write_lane_timings(path: Path, timings: dict[str, float]) -> None:
     order = (
         "preflight",
@@ -282,8 +295,10 @@ def run(
     log_dir.mkdir(parents=True, exist_ok=True)
     states = {step.name: "NOT RUN" for step in steps}
     summary = log_dir / "summary.tsv"
-    timings_path = log_dir / "lane-timings.tsv"
+    lane_timings_path = log_dir / "lane-timings.tsv"
+    step_timings_path = log_dir / "step-timings.tsv"
     timings: dict[str, float] = {}
+    step_timings: dict[str, float] = {}
     state_lock = threading.Lock()
     output_lock = threading.Lock()
     stop = threading.Event()
@@ -319,6 +334,7 @@ def run(
         return True
 
     def execute_step(scope: str, step: Step) -> None:
+        started = time.monotonic()
         index = indexes[step.name]
         emit(
             f"\n=== release gate {scope}, map row {index}/{len(steps)}: "
@@ -340,6 +356,8 @@ def run(
                 reclaim_transient_builder_cache(log_dir / "a2a-image-cache-reclaim.log")
             except RuntimeError as error:
                 refuse(str(error))
+        with state_lock:
+            step_timings[step.name] = time.monotonic() - started
 
     def run_phase(
         name: str, phase_steps: Sequence[Step], first_probe: str = "between"
@@ -406,7 +424,8 @@ def run(
         with state_lock:
             timings["gate"] = time.monotonic() - gate_started
             write_summary(summary, steps, states)
-            write_lane_timings(timings_path, timings)
+            write_step_timings(step_timings_path, steps, step_timings)
+            write_lane_timings(lane_timings_path, timings)
         emit("\n=== release gate summary ===")
         for step in steps:
             emit(f"  {states[step.name]:7s} {step.name}")
