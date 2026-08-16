@@ -12,6 +12,11 @@ compatibility decision. Reviewed source declares the versions. When the clean
 gate passes, the command publishes every owed artifact and verifies the public
 result. It never changes a running service.
 
+Prerequisites the gate refuses without: a running Docker daemon, and clean git
+checkouts of the Library (`../library` beside this repository) and the team
+blueprints (`../blueprints/team`), overridable via `LIBRARY_E2E_LIBRARY_CONTEXT`
+and `LIBRARY_E2E_BLUEPRINT_SRC`.
+
 ## Authority
 
 - Package manifests declare package versions.
