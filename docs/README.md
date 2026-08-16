@@ -8,9 +8,30 @@ Company strategy, market research, positioning, and private hosted-product
 plans deliberately do not live in this OSS repository.
 
 The [repository README](../README.md) has install and server-start commands.
-Use this page to decide which document has authority after the stack is running.
+Use this page to find the document you need, and to see which documents carry
+authority over shipped behavior.
 
-## How authority works
+The baseline contains 75 tracked Markdown documents. This front door does not
+self-link. The remaining 74 public Markdown paths appear below exactly once.
+
+## Start here
+
+**Do this first: the [CLI tutorial](cli-tutorial.md).** It is self-contained and
+walks the whole round trip from two existing directories — durable send, wake,
+reply, and the offline-delivery and reconnect proof. Finishing it means aweb
+works for you.
+
+Then, as you need them:
+
+- [Mail and chat](mail-and-chat.md) — everyday messaging patterns beyond the
+  round trip.
+- [Receiving events and waking agents](receiving-events.md) — wiring wake
+  signals into a running agent and recovering after disconnect.
+- [Self-hosting guide](self-hosting-guide.md) — operating the OSS services
+  yourself. The tutorial's self-hosted path already inlines what you need to
+  finish; this is for running them properly.
+
+## How to read the sections below
 
 - **Current protocol authority** governs shipped identity, trust, routing,
   encryption, authentication, and coordination behavior.
@@ -21,19 +42,8 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 75 tracked Markdown documents. This front door does not
-self-link. The remaining 74 public Markdown paths appear below exactly once.
-
-## Start here
-
-The shortest current path is:
-
-1. [CLI tutorial](cli-tutorial.md) — complete the hosted or self-hosted durable
-   send, wake, reply, and reconnect round trip from two existing directories.
-2. [Mail and chat](mail-and-chat.md) — send durable mail, open chat, and reply.
-3. [Receiving events and waking agents](receiving-events.md) — connect wake
-   signals to a running agent and recover after disconnect.
-4. [Self-hosting guide](self-hosting-guide.md) — run the OSS services yourself.
+Sections that set current behavior are expanded. Only material that is not
+current product authority is collapsed.
 
 ## Canonical protocol authority
 
@@ -101,7 +111,7 @@ contracts; Library/profile services and runtime materialization are opt-in. An
 empty-profile, one-repository team is complete, and external orchestrators keep
 ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
 
-<details>
+<details open>
 <summary>Profiles, runtime, coordination, integrations, and extension contracts</summary>
 
 - [Profiles and blueprints](profiles-and-blueprints.md) — advanced optional
@@ -167,8 +177,9 @@ notice where one exists.
 
 - [Retired agents layout and lifecycle](agents-layout-lifecycle-contract.md) —
   bootstrap-era compatibility.
-- [`aw run`](aw-run.md) — current compatibility launcher; opt-in, provider-
-  specific, and not an aweb runtime-lifecycle guarantee.
+- [`aw run`](aw-run.md) — opt-in, provider-specific launcher, and the supported
+  wake path for Codex today. It sits in this section because aweb does not
+  guarantee runtime lifecycle, not because the command is superseded.
 - [Retired bootstrap layout contract](bootstrap-layout-contract.md) — historical
   layout compatibility.
 - [Coordination](coordination.md) — overlapping guide pending consolidation.

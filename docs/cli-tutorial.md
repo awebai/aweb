@@ -57,6 +57,11 @@ Choose either hosted or self-hosted setup. Do not mix the two paths.
 
 ### Hosted aweb.ai
 
+`--username` creates a hosted account on aweb.ai, along with its namespace,
+team, and API key. To avoid creating one, use `aw init --byod` with a domain you
+control, or take the self-hosted path below, which runs entirely against your
+own Compose stack.
+
 In Alice's existing directory:
 
 ```bash
@@ -65,8 +70,14 @@ aw check
 aw team invite
 ```
 
-`aw team invite` prints a token and a join command. Run it from Bob's existing
-directory; the equivalent form is:
+`aw team invite` prints a token and a command of the form:
+
+```text
+Command:     aw id team accept-invite <invite-token> --name <name>
+```
+
+Use `aw team join` instead, in Bob's existing directory. It accepts the same
+token and is the path this tutorial continues from:
 
 ```bash
 aw team join <invite-token> --name bob
@@ -108,6 +119,12 @@ In both existing agent shells, point `aw` at the local services:
 export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
 ```
+
+Keep these exports out of the shell you run `docker compose` from.
+`server/docker-compose.yml` reads `AWID_REGISTRY_URL` from the environment, so
+re-running `docker compose up` in a shell that has exported it points the `aweb`
+container at its own localhost instead of the `awid` container. The order above
+is safe; a later `docker compose up` in the same shell is not.
 
 In Alice's directory, plain local init creates a local self-custodial identity,
 the `default:local` team when needed, its membership certificate, and the aweb
@@ -175,6 +192,12 @@ ends, and the command itself does not retry or persist a cursor. Keep this first
 round trip shorter than that. Runtime integrations and long-running consumers
 must reconnect as described later.
 
+The steps below leave this stream running while you act in another shell, so
+they end with Ctrl-C. To script the journey instead, `aw events stream` takes
+`--timeout <seconds>` and exits on its own; see
+[Receiving events and waking agents](receiving-events.md). Give it long enough
+to cover the sends you make from the other directory.
+
 ## 4. Alice sends durable mail
 
 In Alice's directory, use a quoted heredoc so the shell cannot expand Markdown
@@ -229,11 +252,13 @@ Alice's stream emits its own `actionable_mail`. In Alice's directory:
 
 ```bash
 aw mail show --message-id <bob-reply-message-id>
-aw mail show --conversation-id <conversation-id> --limit 500
+aw mail show --conversation-id <conversation-id> --limit 500 --json
 ```
 
 The conversation command returns the oldest messages first and cannot return
-more than 500 in one call. Its result must include both returned message IDs:
+more than 500 in one call. `--json` is what makes the next check possible: the
+plain text output prints sender, subject and body, but no message IDs. The
+`message_id` fields must include both returned IDs:
 `<alice-message-id>` and `<bob-reply-message-id>`. The command
 `aw mail send --to bob` may reuse an existing active one-to-one mail
 conversation, so older messages are valid. Expect exactly the initial message

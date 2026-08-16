@@ -56,8 +56,20 @@ aw init --username <username> --name alice
 aw team invite
 ```
 
-Run the printed join command in Bob's existing directory. The equivalent form
-is:
+`--username` creates a hosted account on aweb.ai, along with its namespace,
+team, and API key. If you would rather not create one, use `aw init --byod` with
+a domain you control, or follow the self-hosted path in the
+[CLI tutorial](docs/cli-tutorial.md), which runs entirely against your own
+Compose stack.
+
+`aw team invite` prints a token and a command of the form:
+
+```text
+Command:     aw id team accept-invite <invite-token> --name <name>
+```
+
+Use `aw team join` instead, in Bob's existing directory. It accepts the same
+token and is the path this guide continues from:
 
 ```bash
 aw team join <invite-token> --name bob
