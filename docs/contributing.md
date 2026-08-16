@@ -187,12 +187,21 @@ packages/images, unit and contract suites, OATS and real-stack journeys, freshne
 process guards, and vulnerability audits. Hosted workflows retain focused pull
 request checks but no longer repeat this complete proof on `main`.
 
-The gate runs every table row independently and writes a full log plus a summary
-that names every row `PASSED`, `FAILED`, or `NOT RUN`; any failure or unobserved row
-makes the gate red. It starts from one exact clean aweb commit, records the exact
-clean Library and blueprint input commits, and rejects dirty or missing inputs.
-The gate is internal to release preparation and is deliberately not a third
-operator command.
+The gate runs a fixed serial prerequisite barrier, four fixed concurrent lanes,
+and a post-join residue check. Each lane remains serial in table order. A row
+failure does not stop independent rows or lanes. The log directory contains one
+log per observed row, an atomically updated summary naming every row `PASSED`,
+`FAILED`, or `NOT RUN`, and `lane-timings.tsv`; any failure, unobserved row,
+crashed lane, or infrastructure refusal makes the gate red.
+
+For constrained local diagnosis, run
+`RELEASE_GATE_SERIAL=1 scripts/release-gate.sh`; it executes the same fixed
+phases with the four lanes run one at a time. This is a fallback execution mode,
+not a smaller inventory or an alternate release command.
+
+The gate starts from one exact clean aweb commit, records the exact clean Library
+and blueprint input commits, and rejects dirty or missing inputs. It is internal
+to release preparation and is deliberately not a third operator command.
 
 Reproducible here means reproducible on a clean runner with no helpful ambient
 tools. The OATS seam builds `aw` from the exact aweb checkout and selects the real
