@@ -66,10 +66,12 @@ refuses unknown keys, and editing the column requires the matching
 contract-test update in `scripts/e2e/test_release.py`.
 
 Gate runs share lockfile-keyed caches: uv, Go module and build, and npm caches,
-and the persistent buildx builder's layer cache, which the runner bounds with a
-keep-storage reclaim after the largest image build. Determinism is carried by
-the committed lockfiles, whose hashes the gate records in its evidence; a warm
-cache hit yields the same bytes as a cold fetch.
+and the persistent buildx builder's layer cache, which every invocation bounds
+with a keep-storage reclaim on exit (and mid-run after the largest image build
+when that row is selected). Determinism is carried by the committed lockfiles,
+whose hashes the gate records in its evidence; a warm cache hit yields the same
+bytes as a cold fetch. Gate invocations share the builder and cache root and
+are expected not to overlap on one host.
 
 ## What the command does
 

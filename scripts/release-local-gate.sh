@@ -104,6 +104,14 @@ cleanup() {
     || cleanup_status=1
   [[ -z "$owned_network" ]] || docker network rm "$owned_network" >/dev/null 2>&1 \
     || cleanup_status=1
+  # Bound the persistent builder's layer cache on every invocation, whatever
+  # rows ran; the runner's in-run reclaim after a2a-image only fires when that
+  # row is selected. Best-effort: a failed prune is not this run's residue, and
+  # the runner's disk-space floor fails the next gate closed before space runs
+  # out.
+  BUILDX_CONFIG="$buildx_config" docker buildx prune --all --force \
+    --keep-storage=10GB --builder "$builder_name" >/dev/null 2>&1 \
+    || printf 'release gate: builder cache prune skipped\n' >&2
   docker image rm "$IMAGE" >/dev/null 2>&1 || true
   for ids in "${owned_containers[@]}"; do
     ! docker container inspect "$ids" >/dev/null 2>&1 || cleanup_status=1
@@ -218,12 +226,17 @@ done
 docker_bind_root="$checkout/.release-docker-bind"
 mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.release-home"
 # Reuse the persistent builder when it is healthy; recreate it when its
-# container or state has been removed since the last run.
+# container or state has been removed since the last run. Gate invocations are
+# expected not to overlap on one host (they share this builder and the cache
+# root); a lost creation race is tolerated below, and the final inspect is the
+# authority either way.
 if ! BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null 2>&1; then
   BUILDX_CONFIG="$buildx_config" docker buildx rm "$builder_name" >/dev/null 2>&1 || true
   BUILDX_CONFIG="$buildx_config" docker buildx create \
     --name "$builder_name" --driver docker-container \
-    "unix:///var/run/docker.sock" --bootstrap >/dev/null
+    "unix:///var/run/docker.sock" --bootstrap >/dev/null 2>&1 || true
+  BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null \
+    || refuse "could not provision the persistent release builder"
 fi
 socket_gid="$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
