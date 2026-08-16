@@ -21,8 +21,8 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 88 tracked Markdown documents. This front door does not
-self-link. The remaining 87 public Markdown paths appear below exactly once.
+The baseline contains 86 tracked Markdown documents. This front door does not
+self-link. The remaining 85 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -238,15 +238,11 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful
   incident facts to current operational/task history and remove from rendered
   docs.
-- [Duplicate 1:1 conversation cleanup](duplicate-1to1-conversation-cleanup.md) —
-  remove after consumer migration and reusable-authority extraction.
 - [Federated messaging architecture](federation-architecture.md) — durable rules
   are consolidated in current routing authority; relocate this historical
   snapshot during the reviewed archive/pruning lane.
 - [naapp move preflight](naapp-move-preflight.md) — completed preflight; remove
   after consumer checks.
-- [Pre-deploy conversation-close cleanup](pre-deploy-conversation-close-cleanup.md)
-  — completed one-time procedure; remove after reusable warnings are extracted.
 - [Restructuring SOT](restructuring-sot.md) — superseded destination architecture;
   extract still-current protocol facts, migrate links, then remove with no
   duplicate archive.
