@@ -1,8 +1,9 @@
 # Team Create & Membership Model (SOT)
 
 Status: v1 (2026-06-20), owned by the aw CLI lane (aw-coordinator). Grounded in
-the awid + aw CLI source on main. Pairs with the aw command-surface SOT
-(`aw-command-surface.md`) and the agent-home composition contract.
+the awid + aw CLI source on main. The shipped command surface is the generated
+[CLI reference](../cli-command-reference.md); this pairs with it and with the
+agent-home composition contract.
 
 This is the decided model for how teams are created and populated, and the
 contract `aw team create` / `aw team add` / `aw team invite` must satisfy. It

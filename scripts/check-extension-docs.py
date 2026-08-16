@@ -72,9 +72,18 @@ REMOVED_DOCS = {
     "market-entry-wedge-research.md",
     "orchestrator-evidence-review.md",
     "pre-deploy-conversation-close-cleanup.md",
+    "restructuring-sot.md",
+    "restructuring/agent-instantiation-runbook.md",
     "restructuring/app-event-subscriptions-contract.md",
     "restructuring/app-manifest-schema.md",
     "restructuring/app-registry-grants-read-api.md",
+    "restructuring/aw-command-surface.md",
+    "restructuring/cli-go-map.md",
+    "restructuring/core-surface-shrink-scorecard.md",
+    "restructuring/decisions.md",
+    "restructuring/layer-mapping.md",
+    "restructuring/messaging-as-app-seam.md",
+    "restructuring/oss-core-inventory.md",
     "team-blueprints-sot.md",
     "team-extend-implementation-plan.md",
     "website-dashboard-strategy.md",
@@ -84,6 +93,12 @@ REMOVED_REPO_PATHS = {
     "agents/souls/consultant/decisions/aweb-control-plane-and-apps.md",
     "agents/souls/consultant/docs/customer-centered-aweb-positioning.md",
     "agents/souls/consultant/memory/aweb-anapp-product-constraints.md",
+}
+
+# Non-document paths deleted alongside the superseded documentation they served.
+# Kept separate from the company-strategy set so each diagnostic stays accurate.
+REMOVED_SUPERSEDED_REPO_PATHS = {
+    "skills/aweb-agent-instantiation/SKILL.md",
 }
 
 PUBLIC_EXTENSION_DOCS = (
@@ -438,6 +453,10 @@ def check(
     for relative in sorted(REMOVED_REPO_PATHS):
         if (root / relative).exists():
             failures.append(f"removed company-strategy path returned: {relative}")
+
+    for relative in sorted(REMOVED_SUPERSEDED_REPO_PATHS):
+        if (root / relative).exists():
+            failures.append(f"removed superseded repository path returned: {relative}")
 
     for relative in sorted(tracked_files):
         path = root / relative
@@ -804,6 +823,17 @@ def self_test(root: Path) -> int:
             expected = f"removed company-strategy path returned: {relative}"
             if not any(expected in failure for failure in mutation_failures):
                 print(f"self-test failed: removed strategy path was not detected: {relative}")
+                return 1
+            path.unlink()
+
+        for relative in sorted(REMOVED_SUPERSEDED_REPO_PATHS):
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("superseded machinery\n", encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"removed superseded repository path returned: {relative}"
+            if not any(expected in failure for failure in mutation_failures):
+                print(f"self-test failed: removed superseded path was not detected: {relative}")
                 return 1
             path.unlink()
 

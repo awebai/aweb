@@ -21,8 +21,8 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 86 tracked Markdown documents. This front door does not
-self-link. The remaining 85 public Markdown paths appear below exactly once.
+The baseline contains 77 tracked Markdown documents. This front door does not
+self-link. The remaining 76 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -243,27 +243,8 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   snapshot during the reviewed archive/pruning lane.
 - [naapp move preflight](naapp-move-preflight.md) — completed preflight; remove
   after consumer checks.
-- [Restructuring SOT](restructuring-sot.md) — superseded destination architecture;
-  extract still-current protocol facts, migrate links, then remove with no
-  duplicate archive.
-- [Agent instantiation runbook](restructuring/agent-instantiation-runbook.md) —
-  remove after its skill consumer and valid runtime facts migrate.
 - [Archived channel stack map](restructuring/archive/channel-stack-map.md) — the
   one retained dated/SHA-bound historical archive; never current authority.
-- [aw command surface](restructuring/aw-command-surface.md) — remove after current
-  command facts are covered by live/generated reference.
-- [Go CLI restructuring map](restructuring/cli-go-map.md) — remove after its path
-  checker consumer and current facts migrate; no archive copy.
-- [Core-surface shrink scorecard](restructuring/core-surface-shrink-scorecard.md)
-  — remove after any reusable measurement becomes maintainer tooling.
-- [Restructuring decisions worksheet](restructuring/decisions.md) — remove;
-  durable decisions belong in current authority and task history.
-- [Layer mapping](restructuring/layer-mapping.md) — remove after current extension
-  contracts are extracted; no archive copy.
-- [Messaging-as-app seam](restructuring/messaging-as-app-seam.md) — remove after
-  current messaging invariants move to canonical contracts; no archive copy.
-- [OSS core inventory](restructuring/oss-core-inventory.md) — remove after reusable
-  inventory checks become current tooling; no archive copy.
 - [Scrapped team-certificate issuer seam](restructuring/team-cert-issuer-seam.md)
   — remove after its historical memory consumer points to Git/task history.
 

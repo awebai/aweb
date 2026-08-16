@@ -24,12 +24,18 @@ V1 ships five default skills:
 
 Do not ship separate top-level v1 skills for awid, directory, or channel internals. Those topics appear as references/sections unless a future operator/developer audience needs a dedicated non-default skill such as `awid-operator`.
 
-`aweb-agent-instantiation` is canonical internal operator material, not a
-customer-facing default skill. It is consumed by coordinator/resource profiles
-that staff local agents and is deliberately excluded from the Claude, Codex,
-and Pi customer packages. The packaging contract test requires every canonical
-skill directory to be either in the five-skill default set or in this explicit
-internal set, so adding a seventh directory cannot silently ship nowhere.
+`aweb-agent-instantiation` was internal operator material, never a
+customer-facing default skill. It was removed once its runbook was deleted: it
+taught Library-first, raw-tmux and process/session ownership mechanics that aweb
+does not own. Current authority for staffing local agents is the
+`spawn-instance` skill, `docs/running-agents.md`, `docs/runtime-support.md`, and
+`cli/go/cmd/aw/team_up.go` / `team_human.go` with their tests.
+
+The packaging contract survives it. Every canonical skill directory must be
+either in the five-skill default set or in the explicit internal set, so adding
+a sixth directory cannot silently ship nowhere. The release guards still name
+`aweb-agent-instantiation` as the sentinel for that check; those occurrences
+detect a forbidden publication, they do not reference this removed skill.
 
 ## Naming
 

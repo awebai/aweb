@@ -11,9 +11,9 @@
 # It deliberately checks only backtick-quoted paths that are UNAMBIGUOUSLY
 # repo-relative, meaning they start with one of the top-level directories below.
 # Three exclusions are intentional:
-#   - Documents that declare their own base directory (docs/restructuring/
-#     cli-go-map.md states its paths are relative to cli/go/) would otherwise
-#     produce false failures.
+#   - A document that declares its own base directory, so that its backticked
+#     paths are relative to something other than the repository root, would
+#     otherwise produce false failures.
 #   - awid/ and a2a/ are top-level directories AND names of cli/go/
 #     subdirectories, so a bare `awid/client.go` is ambiguous. They are omitted
 #     rather than guessed at. Consequence, stated rather than hidden: stale
