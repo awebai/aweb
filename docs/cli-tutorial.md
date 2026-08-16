@@ -192,11 +192,16 @@ ends, and the command itself does not retry or persist a cursor. Keep this first
 round trip shorter than that. Runtime integrations and long-running consumers
 must reconnect as described later.
 
-The steps below leave this stream running while you act in another shell, so
-they end with Ctrl-C. To script the journey instead, `aw events stream` takes
+Sections 3 and 5 leave this stream running while you act in another shell, so
+they end with Ctrl-C. To script those two, `aw events stream` takes
 `--timeout <seconds>` and exits on its own; see
 [Receiving events and waking agents](receiving-events.md). Give it long enough
-to cover the sends you make from the other directory.
+to cover the sends you make from the other directory, and note that the
+five-minute server cap still applies — a longer timeout does not extend the
+stream, it only adds a second way for it to end while you are mid-step.
+
+Do not use `--timeout` in section 6. There, stopping the consumer is the
+behavior being demonstrated, not friction around it.
 
 ## 4. Alice sends durable mail
 
