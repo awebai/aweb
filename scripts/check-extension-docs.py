@@ -66,6 +66,7 @@ REMOVED_DOCS = {
     "bootstrapping-operating-patterns-worklog.md",
     "cli-setup-surface-sot.md",
     "company-agent-platform-thesis.md",
+    "drafts/agent-guide-running-agents-update.md",
     "launch-readiness-sot.md",
     "market-entry-wedge-research.md",
     "orchestrator-evidence-review.md",
@@ -73,6 +74,7 @@ REMOVED_DOCS = {
     "restructuring/app-manifest-schema.md",
     "restructuring/app-registry-grants-read-api.md",
     "team-blueprints-sot.md",
+    "team-extend-implementation-plan.md",
     "website-dashboard-strategy.md",
 }
 

@@ -21,8 +21,8 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 90 tracked Markdown documents. This front door does not
-self-link. The remaining 89 public Markdown paths appear below exactly once.
+The baseline contains 88 tracked Markdown documents. This front door does not
+self-link. The remaining 87 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -238,8 +238,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful
   incident facts to current operational/task history and remove from rendered
   docs.
-- [Agent-guide running-agents draft](drafts/agent-guide-running-agents-update.md)
-  — remove after confirming incorporated text.
 - [Duplicate 1:1 conversation cleanup](duplicate-1to1-conversation-cleanup.md) —
   remove after consumer migration and reusable-authority extraction.
 - [Federated messaging architecture](federation-architecture.md) — durable rules
@@ -272,7 +270,5 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   inventory checks become current tooling; no archive copy.
 - [Scrapped team-certificate issuer seam](restructuring/team-cert-issuer-seam.md)
   — remove after its historical memory consumer points to Git/task history.
-- [`aw team extend` implementation plan](team-extend-implementation-plan.md) —
-  completed plan; remove because Git/task history is sufficient.
 
 </details>
