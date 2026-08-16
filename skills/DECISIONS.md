@@ -24,6 +24,13 @@ V1 ships five default skills:
 
 Do not ship separate top-level v1 skills for awid, directory, or channel internals. Those topics appear as references/sections unless a future operator/developer audience needs a dedicated non-default skill such as `awid-operator`.
 
+`aweb-agent-instantiation` is canonical internal operator material, not a
+customer-facing default skill. It is consumed by coordinator/resource profiles
+that staff local agents and is deliberately excluded from the Claude, Codex,
+and Pi customer packages. The packaging contract test requires every canonical
+skill directory to be either in the five-skill default set or in this explicit
+internal set, so adding a seventh directory cannot silently ship nowhere.
+
 ## Naming
 
 Use the `aweb-` prefix in both directory names and SKILL.md `name` frontmatter so the skills remain unambiguous when copied into `~/.agents/skills/` beside non-aweb skills.

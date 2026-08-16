@@ -1,20 +1,22 @@
 package awconfig
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
 func TestInviteTokenRoundTrip(t *testing.T) {
 	invite := &TeamInvite{
-		InviteID:  "inv-001",
-		Domain:    "acme.com",
-		TeamName:  "backend",
-		Ephemeral: false,
-		Secret:    "test-secret-abc",
-		CreatedAt: "2026-04-06T00:00:00Z",
+		InviteID:      "inv-001",
+		Domain:        "acme.com",
+		TeamName:      "backend",
+		IdentityScope: "global",
+		Secret:        "test-secret-abc",
+		CreatedAt:     "2026-04-06T00:00:00Z",
 	}
 
 	token, err := EncodeInviteToken(invite)
@@ -61,12 +63,12 @@ func TestSaveAndLoadTeamInvite(t *testing.T) {
 	t.Setenv("HOME", tmp)
 
 	invite := &TeamInvite{
-		InviteID:  "inv-002",
-		Domain:    "acme.com",
-		TeamName:  "backend",
-		Ephemeral: true,
-		Secret:    "secret-xyz",
-		CreatedAt: "2026-04-06T00:00:00Z",
+		InviteID:      "inv-002",
+		Domain:        "acme.com",
+		TeamName:      "backend",
+		IdentityScope: "local",
+		Secret:        "secret-xyz",
+		CreatedAt:     "2026-04-06T00:00:00Z",
 	}
 
 	if err := SaveTeamInvite(invite); err != nil {
@@ -83,8 +85,8 @@ func TestSaveAndLoadTeamInvite(t *testing.T) {
 	if loaded.TeamName != "backend" {
 		t.Fatalf("team_name=%q", loaded.TeamName)
 	}
-	if !loaded.Ephemeral {
-		t.Fatal("ephemeral should be true")
+	if loaded.IdentityScope != "local" {
+		t.Fatalf("identity_scope=%q want local", loaded.IdentityScope)
 	}
 
 	if err := DeleteTeamInvite("inv-002"); err != nil {
@@ -95,14 +97,67 @@ func TestSaveAndLoadTeamInvite(t *testing.T) {
 	}
 }
 
+func TestLoadTeamInviteNormalizesLegacyEphemeralScope(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ephemeral bool
+		wantScope string
+	}{
+		{name: "local", ephemeral: true, wantScope: "local"},
+		{name: "global", ephemeral: false, wantScope: "global"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			path, err := teamInvitePath("inv-legacy")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			legacy := []byte(`{"invite_id":"inv-legacy","domain":"acme.com","team_name":"backend","ephemeral":` + fmt.Sprint(tc.ephemeral) + `,"secret":"secret","created_at":"2026-04-06T00:00:00Z"}`)
+			if err := os.WriteFile(path, legacy, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := LoadTeamInvite("inv-legacy")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if loaded.IdentityScope != tc.wantScope {
+				t.Fatalf("identity_scope=%q want %q", loaded.IdentityScope, tc.wantScope)
+			}
+		})
+	}
+}
+
+func TestLoadTeamInviteRejectsConflictingLegacyEphemeralScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path, err := teamInvitePath("inv-conflict")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`{"invite_id":"inv-conflict","domain":"acme.com","team_name":"backend","identity_scope":"local","ephemeral":false,"secret":"secret","created_at":"2026-04-06T00:00:00Z"}`)
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadTeamInvite("inv-conflict"); err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("expected scope conflict, got %v", err)
+	}
+}
+
 func TestListTeamInvitesByOperation(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
 	for _, invite := range []*TeamInvite{
-		{InviteID: "inv-owned-a", Domain: "acme.com", TeamName: "backend", Ephemeral: true, Secret: "secret-a", OperationID: "oas-AAAAAAAAAAAAAAAAAAAAAA", CreatedAt: "2026-04-06T00:00:00Z"},
-		{InviteID: "inv-other", Domain: "acme.com", TeamName: "backend", Ephemeral: true, Secret: "secret-b", OperationID: "oas-BBBBBBBBBBBBBBBBBBBBBQ", CreatedAt: "2026-04-06T00:00:00Z"},
-		{InviteID: "inv-owned-b", Domain: "acme.com", TeamName: "backend", Ephemeral: true, Secret: "secret-c", OperationID: "oas-AAAAAAAAAAAAAAAAAAAAAA", CreatedAt: "2026-04-06T00:00:01Z"},
+		{InviteID: "inv-owned-a", Domain: "acme.com", TeamName: "backend", IdentityScope: "local", Secret: "secret-a", OperationID: "oas-AAAAAAAAAAAAAAAAAAAAAA", CreatedAt: "2026-04-06T00:00:00Z"},
+		{InviteID: "inv-other", Domain: "acme.com", TeamName: "backend", IdentityScope: "local", Secret: "secret-b", OperationID: "oas-BBBBBBBBBBBBBBBBBBBBBQ", CreatedAt: "2026-04-06T00:00:00Z"},
+		{InviteID: "inv-owned-b", Domain: "acme.com", TeamName: "backend", IdentityScope: "local", Secret: "secret-c", OperationID: "oas-AAAAAAAAAAAAAAAAAAAAAA", CreatedAt: "2026-04-06T00:00:01Z"},
 	} {
 		if err := SaveTeamInvite(invite); err != nil {
 			t.Fatal(err)
@@ -122,7 +177,7 @@ func TestListTeamInvitesByOperation(t *testing.T) {
 	if _, err := ListTeamInvitesByOperation(""); err == nil {
 		t.Fatal("empty operation id should be rejected")
 	}
-	invalid := &TeamInvite{InviteID: "inv-invalid", Domain: "acme.com", TeamName: "backend", Ephemeral: true, Secret: "secret", OperationID: "not.valid", CreatedAt: "2026-04-06T00:00:00Z"}
+	invalid := &TeamInvite{InviteID: "inv-invalid", Domain: "acme.com", TeamName: "backend", IdentityScope: "local", Secret: "secret", OperationID: "not.valid", CreatedAt: "2026-04-06T00:00:00Z"}
 	if err := SaveTeamInvite(invalid); err == nil {
 		t.Fatal("invalid operation id should not be persisted")
 	}
@@ -134,7 +189,7 @@ func TestListTeamInvitesByOperationRejectsSymlinkedGrant(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
-	invite := &TeamInvite{InviteID: "inv-owned", Domain: "acme.com", TeamName: "backend", Ephemeral: true, Secret: "secret", OperationID: "oas-AAAAAAAAAAAAAAAAAAAAAA", CreatedAt: "2026-04-06T00:00:00Z"}
+	invite := &TeamInvite{InviteID: "inv-owned", Domain: "acme.com", TeamName: "backend", IdentityScope: "local", Secret: "secret", OperationID: "oas-AAAAAAAAAAAAAAAAAAAAAA", CreatedAt: "2026-04-06T00:00:00Z"}
 	if err := SaveTeamInvite(invite); err != nil {
 		t.Fatal(err)
 	}

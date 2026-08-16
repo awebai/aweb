@@ -1,17 +1,17 @@
 # aweb documentation
 
-This is the source map for the public aweb repository. It separates target
-product direction, shipped protocol authority, current guides, optional and
-experimental features, compatibility material, and documents waiting for their
-reviewed transition.
+This is the source map for the public aweb repository. It separates shipped
+protocol authority, current guides, optional and experimental features,
+compatibility material, and documents waiting for their reviewed transition.
+
+Company strategy, market research, positioning, and private hosted-product
+plans deliberately do not live in this OSS repository.
 
 The [repository README](../README.md) has install and server-start commands.
 Use this page to decide which document has authority after the stack is running.
 
 ## How authority works
 
-- **Target direction** answers what product is being built and which journey
-  comes first. It does not claim an API or command already ships.
 - **Current protocol authority** governs shipped identity, trust, routing,
   encryption, authentication, and coordination behavior.
 - **Guides and references** explain those contracts; they do not override them.
@@ -21,8 +21,8 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 98 tracked Markdown documents. This front door does not
-self-link. The remaining 97 public Markdown paths appear below exactly once.
+The baseline contains 90 tracked Markdown documents. This front door does not
+self-link. The remaining 89 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -35,18 +35,15 @@ The shortest current path is:
    signals to a running agent and recover after disconnect.
 4. [Self-hosting guide](self-hosting-guide.md) — run the OSS services yourself.
 
-## Canonical product and protocol authority
+## Canonical protocol authority
 
-These documents govern direction or current interoperable behavior. The product
-SOT governs priorities; implementation/protocol SOTs govern what ships today.
-Accuracy notices on hand-maintained inventories do not weaken their normative
-security and protocol authority.
+These documents govern current interoperable behavior. Accuracy notices on
+hand-maintained inventories do not weaken their normative security and protocol
+authority.
 
 <details open>
 <summary>Product, identity, messaging, and trust contracts</summary>
 
-- [Aweb product SOT](aweb-product-sot.md) — canonical communication-first target
-  direction and ownership boundaries.
 - [Identity and team model](identity.md) — canonical vocabulary and identity/team
   invariants.
 - [aweb implementation SOT](aweb-sot.md) — normative aweb server/CLI contract;
@@ -59,6 +56,8 @@ security and protocol authority.
   authority shapes for managed and customer-controlled teams.
 - [Identity and messaging contract](identity-messaging-contract.md) —
   identity-scoped delivery and first-contact routing.
+- [Federation error reference](federation-error-reference.md) — generated stable
+  reason, HTTP status, retryability, and safe-support contract.
 - [Global/local identity routing SOT](global-local-identity-routing.md) — shipped
   global/local route behavior and compatibility cleanup.
 - [Identity-key verification](identity-key-verification.md) — verifying current
@@ -75,28 +74,6 @@ security and protocol authority.
   request contract.
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
-
-</details>
-
-## Non-normative strategy and research
-
-These retained working notes and evidence snapshots do not set product
-priority, protocol, or implementation authority. The canonical product SOT
-governs when they disagree. References to an external orchestrator describe one
-observed composition, not an aweb dependency.
-
-<details>
-<summary>Show non-normative strategy and research</summary>
-
-- [Website and dashboard strategy](website-dashboard-strategy.md) — working
-  website and hosted-delivery ideas, subordinate to current product direction.
-- [Orchestrator evidence review](orchestrator-evidence-review.md) — dated
-  research snapshot; OAS is an external reference composition, never a required
-  aweb runtime or lifecycle owner.
-- [Company-agent platform thesis](company-agent-platform-thesis.md) — retained
-  strategy exploration, not the communication-first product contract.
-- [Market-entry wedge research](market-entry-wedge-research.md) — subordinate
-  discovery hypothesis, not a shipped-feature or roadmap commitment.
 
 </details>
 
@@ -199,8 +176,6 @@ notice where one exists.
   map for current user, wake, routing, encryption, and conformance documents.
 - [Team create and membership model](restructuring/team-create-and-membership-model.md)
   — compatibility command facts pending consolidation.
-- [CLI setup surface release gates](setup-surface-release-gates.md) — compatibility
-  checks pending consolidation into maintainer guidance.
 - [Retired repo-local team bootstrap](team-bootstrap.md) — compatibility
   tombstone.
 - [`aw team extend` command SOT](team-extend-sot.md) — shipped compatibility
@@ -235,6 +210,8 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   extension workflow.
 - [Open-source repository boundary](oss-boundary.md) — canonical framework versus
   application ownership and `.aw/` state policy.
+- [Release process](release.md) — the two-repository release specification:
+  local Docker gates once, thin GitHub publication, one global go.
 - [A2A gateway release runbook](a2a-release-runbook.md) — public OSS gateway,
   AWID, self-hosted/BYOT release and rollback controls.
 - [E2E messaging rollout runbook](e2e-release-rollout-runbook.md) — generic OSS
@@ -261,10 +238,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful
   incident facts to current operational/task history and remove from rendered
   docs.
-- [Bootstrapping operating-patterns worklog](bootstrapping-operating-patterns-worklog.md)
-  — remove after reusable facts and consumers are migrated.
-- [aw setup surface taxonomy](cli-setup-surface-sot.md) — superseded product SOT;
-  consolidate current command taxonomy, then retire it.
 - [Agent-guide running-agents draft](drafts/agent-guide-running-agents-update.md)
   — remove after confirming incorporated text.
 - [Duplicate 1:1 conversation cleanup](duplicate-1to1-conversation-cleanup.md) —
@@ -272,8 +245,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - [Federated messaging architecture](federation-architecture.md) — durable rules
   are consolidated in current routing authority; relocate this historical
   snapshot during the reviewed archive/pruning lane.
-- [Launch readiness](launch-readiness-sot.md) — superseded product narrative;
-  extract current facts and remove after index/consumer migration.
 - [naapp move preflight](naapp-move-preflight.md) — completed preflight; remove
   after consumer checks.
 - [Pre-deploy conversation-close cleanup](pre-deploy-conversation-close-cleanup.md)
@@ -301,11 +272,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   inventory checks become current tooling; no archive copy.
 - [Scrapped team-certificate issuer seam](restructuring/team-cert-issuer-seam.md)
   — remove after its historical memory consumer points to Git/task history.
-- [Team blueprints and agent profiles](team-blueprints-sot.md) — superseded
-  product SOT; current optional profile, payload/pin, resource-pack, growth, and
-  runtime-helper facts are extracted in the advanced guides above. Keep this
-  narrative non-authoritative until its exact remaining consumers are migrated,
-  then remove it rather than restoring its product claims.
 - [`aw team extend` implementation plan](team-extend-implementation-plan.md) —
   completed plan; remove because Git/task history is sufficient.
 

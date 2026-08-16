@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -60,12 +60,43 @@ async def _seed_workspace_with_claim(aweb_db, *, identity_scope: str = "local"):
 
 
 class _FakeRedis:
-    def __init__(self):
+    def __init__(self, *, fail_zrem: bool = False):
+        self.fail_zrem = fail_zrem
         self.zrem_calls: list[tuple[str, str]] = []
 
     async def zrem(self, key: str, member: str):
         self.zrem_calls.append((key, member))
+        if self.fail_zrem:
+            raise ConnectionError("redis unavailable")
         return 1
+
+
+async def _seed_waiting_chat(aweb_db, *, team_id: str, agent_id):
+    session_id = uuid4()
+    did = "did:key:z6Mkalice"
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (
+            session_id, team_id, created_by, wait_seconds, wait_started_at,
+            wait_started_by
+        )
+        VALUES ($1, $2, $3, 60, NOW(), $4)
+        """,
+        session_id,
+        team_id,
+        did,
+        agent_id,
+    )
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+        VALUES ($1, $2, $3, 'alice')
+        """,
+        session_id,
+        did,
+        agent_id,
+    )
+    return session_id, did
 
 
 def _request(
@@ -124,6 +155,464 @@ async def test_lifecycle_plan_reports_claims_without_mutating(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_lifecycle_outer_transaction_defers_side_effects_until_commit(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    session_id, did = await _seed_waiting_chat(
+        db, team_id=team_id, agent_id=agent_id
+    )
+    published: list[tuple[str, str]] = []
+    presence_clears: list[tuple[str, ...]] = []
+    waiting_clears: list[tuple[str, str]] = []
+
+    async def _capture_workspace_event(_redis, event):
+        published.append(("workspace", event.task_ref))
+        return 1
+
+    async def _capture_team_event(_redis, event):
+        published.append(("team", event.task_ref))
+        return 1
+
+    async def _capture_presence(_redis, workspace_ids):
+        presence_clears.append(tuple(workspace_ids))
+        return len(workspace_ids)
+
+    async def _capture_waiting(_redis, captured_session_id, captured_did):
+        waiting_clears.append((captured_session_id, captured_did))
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
+
+    async with db.transaction() as outer:
+        result = await apply_lifecycle_cascade(
+            outer,
+            object(),
+            _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        )
+        assert result.post_commit_status == "pending"
+        assert result.outbox_operation_id is not None
+        assert published == []
+        assert presence_clears == []
+        assert waiting_clears == []
+
+    replay = await lifecycle.replay_lifecycle_side_effects(
+        db,
+        object(),
+        operation_id=result.outbox_operation_id,
+    )
+
+    assert replay.pending_count == 0
+    assert set(published) == {("workspace", "backend-777"), ("team", "backend-777")}
+    assert set(presence_clears[0]) == {str(workspace_id), str(agent_id)}
+    assert waiting_clears == [(str(session_id), did)]
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_outer_transaction_rollback_emits_no_side_effects(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
+    observed: list[str] = []
+
+    async def _capture_workspace_event(_redis, _event):
+        observed.append("workspace_event")
+        return 1
+
+    async def _capture_team_event(_redis, _event):
+        observed.append("team_event")
+        return 1
+
+    async def _capture_presence(_redis, _workspace_ids):
+        observed.append("presence")
+        return 1
+
+    async def _capture_waiting(_redis, _session_id, _did):
+        observed.append("waiting")
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
+
+    class _Rollback(Exception):
+        pass
+
+    with pytest.raises(_Rollback):
+        async with db.transaction() as outer:
+            result = await apply_lifecycle_cascade(
+                outer,
+                object(),
+                _request(
+                    team_id=team_id,
+                    agent_id=agent_id,
+                    workspace_id=workspace_id,
+                ),
+            )
+            assert result.post_commit_status == "pending"
+            assert result.outbox_operation_id is not None
+            assert observed == []
+            raise _Rollback
+
+    replay = await lifecycle.replay_lifecycle_side_effects(
+        db,
+        object(),
+        operation_id=result.outbox_operation_id,
+    )
+    assert replay.pending_count == 0
+    assert observed == []
+    assert await db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
+        workspace_id,
+    ) == 1
+    assert await db.fetch_value(
+        "SELECT deleted_at FROM {{tables.workspaces}} WHERE workspace_id = $1",
+        workspace_id,
+    ) is None
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_plain_handle_still_publishes_side_effects(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
+    observed: list[str] = []
+
+    async def _capture_workspace_event(_redis, _event):
+        observed.append("workspace_event")
+        return 1
+
+    async def _capture_team_event(_redis, _event):
+        observed.append("team_event")
+        return 1
+
+    async def _capture_presence(_redis, _workspace_ids):
+        observed.append("presence")
+        return 1
+
+    async def _capture_waiting(_redis, _session_id, _did):
+        observed.append("waiting")
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
+
+    result = await apply_lifecycle_cascade(
+        db,
+        object(),
+        _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+    )
+
+    assert result.post_commit_status == "completed"
+    assert result.outbox_operation_id is not None
+    assert observed.count("workspace_event") == 1
+    assert observed.count("team_event") == 1
+    assert observed.count("presence") == 1
+    assert observed.count("waiting") == 1
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_committed_outbox_replays_after_process_death(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
+    observed: list[str] = []
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_schedule_replay_after_outer_transaction",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def _capture_workspace_event(_redis, _event):
+        observed.append("workspace_event")
+        return 1
+
+    async def _capture_team_event(_redis, _event):
+        observed.append("team_event")
+        return 1
+
+    async def _capture_presence(_redis, _workspace_ids):
+        observed.append("presence")
+        return 1
+
+    async def _capture_waiting(_redis, _session_id, _did):
+        observed.append("waiting")
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+    monkeypatch.setattr(lifecycle, "unregister_waiting_strict", _capture_waiting)
+
+    async with db.transaction() as outer:
+        result = await apply_lifecycle_cascade(
+            outer,
+            object(),
+            _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        )
+        assert result.post_commit_status == "pending"
+
+    assert observed == []
+    assert await db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.task_claims}} WHERE workspace_id = $1",
+        workspace_id,
+    ) == 0
+    assert await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.lifecycle_side_effect_outbox}}
+        WHERE delivered_at IS NULL
+        """
+    ) == 4
+
+    assert result.outbox_operation_id is not None
+    replay = await lifecycle.replay_lifecycle_side_effects(
+        db,
+        object(),
+        operation_id=result.outbox_operation_id,
+    )
+
+    assert replay.delivered_count == 4
+    assert replay.pending_count == 0
+    assert set(observed) == {
+        "workspace_event",
+        "team_event",
+        "presence",
+        "waiting",
+    }
+
+
+@pytest.mark.asyncio
+async def test_operation_replay_drains_more_than_the_global_batch_default(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    await db.execute(
+        """
+        INSERT INTO {{tables.task_claims}} (
+            team_id, workspace_id, alias, human_name, task_ref, claimed_at
+        )
+        SELECT $1, $2, 'alice', 'Alice', 'backend-' || series, NOW()
+        FROM generate_series(1, 50) AS series
+        """,
+        team_id,
+        workspace_id,
+    )
+    published: list[str] = []
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_schedule_replay_after_outer_transaction",
+        lambda *_args, **_kwargs: None,
+    )
+
+    async def _capture_workspace_event(_redis, _event):
+        published.append("workspace")
+        return 1
+
+    async def _capture_team_event(_redis, _event):
+        published.append("team")
+        return 1
+
+    async def _capture_presence(_redis, _workspace_ids):
+        return 1
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+
+    async with db.transaction() as outer:
+        result = await apply_lifecycle_cascade(
+            outer,
+            object(),
+            _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+        )
+
+    replay = await lifecycle.replay_lifecycle_side_effects(
+        db,
+        object(),
+        operation_id=result.outbox_operation_id,
+    )
+
+    assert replay.delivered_count == 103
+    assert replay.pending_count == 0
+    assert published.count("workspace") == 51
+    assert published.count("team") == 51
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_duplicate_replay_does_not_redeliver_completed_rows(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    published: list[str] = []
+
+    async def _capture_workspace_event(_redis, _event):
+        published.append("workspace")
+        return 1
+
+    async def _capture_team_event(_redis, _event):
+        published.append("team")
+        return 1
+
+    async def _capture_presence(_redis, _workspace_ids):
+        return 1
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_workspace_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_team_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+
+    result = await apply_lifecycle_cascade(
+        db,
+        object(),
+        _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+    )
+    assert result.post_commit_status == "completed"
+    assert published == ["workspace", "team"]
+
+    duplicate = await lifecycle.replay_lifecycle_side_effects(db, object())
+
+    assert duplicate.attempted_count == 0
+    assert duplicate.delivered_count == 0
+    assert duplicate.pending_count == 0
+    assert published == ["workspace", "team"]
+
+
+@pytest.mark.asyncio
+async def test_chat_waiting_failure_stays_pending_then_replays(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    team_id, agent_id, workspace_id = await _seed_workspace_with_claim(db)
+    await _seed_waiting_chat(db, team_id=team_id, agent_id=agent_id)
+    redis = _FakeRedis(fail_zrem=True)
+
+    async def _capture_event(_redis, _event):
+        return 1
+
+    async def _capture_presence(_redis, workspace_ids):
+        return len(workspace_ids)
+
+    monkeypatch.setattr(lifecycle, "publish_event", _capture_event)
+    monkeypatch.setattr(lifecycle, "publish_team_event", _capture_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+
+    result = await apply_lifecycle_cascade(
+        db,
+        redis,
+        _request(team_id=team_id, agent_id=agent_id, workspace_id=workspace_id),
+    )
+
+    assert result.post_commit_status == "failed"
+    assert result.chat_waiting_cleanup_status == "failed"
+    assert await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.lifecycle_side_effect_outbox}}
+        WHERE operation_id = $1
+          AND effect_kind = 'chat_waiting_clear'
+          AND delivered_at IS NULL
+        """,
+        UUID(result.outbox_operation_id),
+    ) == 1
+
+    redis.fail_zrem = False
+    replay = await lifecycle.replay_lifecycle_side_effects(
+        db,
+        redis,
+        operation_id=result.outbox_operation_id,
+    )
+
+    assert replay.delivered_count == 1
+    assert replay.pending_count == 0
+    assert len(redis.zrem_calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_global_replay_advances_past_a_full_failed_batch(
+    aweb_cloud_db, monkeypatch
+):
+    db = aweb_cloud_db.aweb_db
+    await db.execute(
+        """
+        INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
+            operation_id, effect_order, team_id, effect_kind, payload_json,
+            created_at
+        )
+        SELECT
+            gen_random_uuid(),
+            0,
+            'backend:acme.com',
+            'workspace_task_unclaimed',
+            jsonb_build_object(
+                'workspace_id', gen_random_uuid()::text,
+                'team_id', 'backend:acme.com',
+                'task_ref', 'poison-' || series,
+                'alias', 'alice',
+                'timestamp', NOW()::text
+            ),
+            NOW() - INTERVAL '1 hour'
+        FROM generate_series(1, 100) AS series
+        """
+    )
+    await db.execute(
+        """
+        INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
+            operation_id, effect_order, team_id, effect_kind, payload_json,
+            created_at
+        )
+        VALUES (
+            gen_random_uuid(), 0, 'backend:acme.com', 'presence_clear',
+            '{"workspace_ids": ["healthy-workspace"]}'::jsonb, NOW()
+        )
+        """
+    )
+    presence_clears: list[tuple[str, ...]] = []
+
+    async def _fail_event(_redis, _event):
+        raise RuntimeError("poison event")
+
+    async def _capture_presence(_redis, workspace_ids):
+        presence_clears.append(tuple(workspace_ids))
+        return len(workspace_ids)
+
+    monkeypatch.setattr(lifecycle, "publish_event", _fail_event)
+    monkeypatch.setattr(lifecycle, "clear_workspace_presence", _capture_presence)
+
+    first = await lifecycle.replay_lifecycle_side_effects(db, object())
+    scheduled_failure_count = await db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.lifecycle_side_effect_outbox}}
+        WHERE effect_kind = 'workspace_task_unclaimed'
+          AND attempt_count = 1
+          AND next_attempt_at > created_at
+        """
+    )
+    second = await lifecycle.replay_lifecycle_side_effects(db, object())
+
+    assert first.attempted_count == 100
+    assert scheduled_failure_count == 100
+    assert first.delivered_count == 0
+    assert second.attempted_count == 1
+    assert second.delivered_count == 1
+    assert second.pending_count == 100
+    assert presence_clears == [("healthy-workspace",)]
+
+
+@pytest.mark.asyncio
 async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db, monkeypatch):
     team_id, agent_id, workspace_id = await _seed_workspace_with_claim(
         aweb_cloud_db.aweb_db
@@ -170,6 +659,36 @@ async def test_lifecycle_apply_reports_post_commit_event_failures(aweb_cloud_db,
     )
     assert claim_count == 0
     assert workspace_deleted_at is not None
+    assert await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        SELECT COUNT(*)
+        FROM {{tables.lifecycle_side_effect_outbox}}
+        WHERE delivered_at IS NULL
+        """
+    ) == 1
+
+    retried: list[str] = []
+
+    async def _retry_workspace_event(_redis, event):
+        retried.append(event.task_ref)
+        return 1
+
+    monkeypatch.setattr(lifecycle, "publish_event", _retry_workspace_event)
+    replay = await lifecycle.replay_lifecycle_side_effects(
+        aweb_cloud_db.aweb_db,
+        object(),
+        operation_id=result.outbox_operation_id,
+    )
+    duplicate = await lifecycle.replay_lifecycle_side_effects(
+        aweb_cloud_db.aweb_db,
+        object(),
+        operation_id=result.outbox_operation_id,
+    )
+
+    assert replay.workspace_event_count == 1
+    assert replay.pending_count == 0
+    assert retried == ["backend-777"]
+    assert duplicate.attempted_count == 0
 
 
 @pytest.mark.asyncio

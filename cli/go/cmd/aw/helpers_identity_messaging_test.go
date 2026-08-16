@@ -30,14 +30,14 @@ func TestResolveIdentityMessagingClientSelectionFallsBackToSigningKeyWithoutIden
 		t.Fatal(err)
 	}
 	writeTeamCertificateWorkspaceForTest(t, tmp, workspace, &testSelectionFixture{
-		AwebURL:     "https://app.aweb.test",
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-		DID:         awid.ComputeDIDKey(memberPub),
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  memberKey,
-		CreatedAt:   "2026-04-09T00:00:00Z",
+		AwebURL:       "https://app.aweb.test",
+		TeamID:        "backend:demo",
+		Alias:         "alice",
+		WorkspaceID:   "workspace-1",
+		DID:           awid.ComputeDIDKey(memberPub),
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    memberKey,
+		CreatedAt:     "2026-04-09T00:00:00Z",
 	})
 	writeWorkspaceBindingForTest(t, tmp, workspace)
 

@@ -1,0 +1,230 @@
+{
+  "schema": "aweb.federation-origin-ip.v1",
+  "contract": "aweb-aazd.2.1",
+  "origin_cases": [
+    {
+      "name": "https_origin_canonicalizes_host_and_default_port",
+      "input": "https://REGISTRY.EXAMPLE:443/",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": true, "canonical_origin": "https://registry.example", "reason": null}
+    },
+    {
+      "name": "https_nondefault_port_is_preserved",
+      "input": "https://registry.example:8443/",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": true, "canonical_origin": "https://registry.example:8443", "reason": null}
+    },
+    {
+      "name": "http_is_forbidden_in_production",
+      "input": "http://registry.example/",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "userinfo_is_forbidden",
+      "input": "https://user:secret@registry.example/",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "nonroot_path_is_forbidden",
+      "input": "https://registry.example/api",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "query_is_forbidden",
+      "input": "https://registry.example/?next=internal",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "fragment_is_forbidden",
+      "input": "https://registry.example/#internal",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "literal_ipv4_is_forbidden_in_production",
+      "input": "https://93.184.216.34/",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "literal_ipv6_is_forbidden_in_production",
+      "input": "https://[2606:4700:4700::1111]/",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "nonascii_hostname_is_forbidden",
+      "input": "https://régistry.example/",
+      "context": {"app_env": "production", "federation_test_enabled": false, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "test_domain_http_requires_development",
+      "input": "http://registry.test/",
+      "context": {"app_env": "production", "federation_test_enabled": true, "listener_origin": "http://receiver.test"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "test_domain_http_requires_flag",
+      "input": "http://registry.test/",
+      "context": {"app_env": "development", "federation_test_enabled": false, "listener_origin": "http://receiver.test"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "test_domain_http_requires_nonpublic_listener",
+      "input": "http://registry.test/",
+      "context": {"app_env": "development", "federation_test_enabled": true, "listener_origin": "https://receiver.example"},
+      "expected": {"ok": false, "canonical_origin": null, "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "test_domain_http_allowed_only_in_isolated_development",
+      "input": "http://registry.test/",
+      "context": {"app_env": "development", "federation_test_enabled": true, "listener_origin": "http://receiver.test"},
+      "expected": {"ok": true, "canonical_origin": "http://registry.test", "reason": null}
+    },
+    {
+      "name": "test_local_domain_http_allowed_only_in_isolated_development",
+      "input": "http://registry.test.local:8080/",
+      "context": {"app_env": "development", "federation_test_enabled": true, "listener_origin": "http://receiver.test.local:8081"},
+      "expected": {"ok": true, "canonical_origin": "http://registry.test.local:8080", "reason": null}
+    },
+    {
+      "name": "localhost_http_allowed_only_in_isolated_development",
+      "input": "http://registry.localhost:8080/",
+      "context": {"app_env": "development", "federation_test_enabled": true, "listener_origin": "http://receiver.localhost:8081"},
+      "expected": {"ok": true, "canonical_origin": "http://registry.localhost:8080", "reason": null}
+    },
+    {
+      "name": "single_label_container_http_allowed_only_in_isolated_development",
+      "input": "http://awid-a:8000/",
+      "context": {"app_env": "development", "federation_test_enabled": true, "listener_origin": "http://aweb-b:8000"},
+      "expected": {"ok": true, "canonical_origin": "http://awid-a:8000", "reason": null}
+    },
+    {
+      "name": "loopback_http_allowed_only_in_isolated_development",
+      "input": "http://127.0.0.1:8000/",
+      "context": {"app_env": "development", "federation_test_enabled": true, "listener_origin": "http://127.0.0.1:8001"},
+      "expected": {"ok": true, "canonical_origin": "http://127.0.0.1:8000", "reason": null}
+    }
+  ],
+  "ip_cases": [
+    {"name": "public_ipv4", "input": "93.184.216.34", "expected": {"allowed": true, "reason": null}},
+    {"name": "public_ipv6", "input": "2606:4700:4700::1111", "expected": {"allowed": true, "reason": null}},
+    {"name": "ipv4_unspecified", "input": "0.0.0.0", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_loopback", "input": "127.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_private_10", "input": "10.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_private_172", "input": "172.16.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_private_192", "input": "192.168.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_link_local", "input": "169.254.1.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_shared", "input": "100.64.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_multicast", "input": "224.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_reserved", "input": "240.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_documentation_192", "input": "192.0.2.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_documentation_198", "input": "198.51.100.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_documentation_203", "input": "203.0.113.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_benchmark", "input": "198.18.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_unspecified", "input": "::", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_loopback", "input": "::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_unique_local", "input": "fc00::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_link_local", "input": "fe80::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_multicast", "input": "ff02::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv6_documentation", "input": "2001:db8::1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}},
+    {"name": "ipv4_mapped_private", "input": "::ffff:127.0.0.1", "expected": {"allowed": false, "reason": "sender_registry_origin_forbidden"}}
+  ],
+  "answer_set_cases": [
+    {
+      "name": "all_public_answers_are_approved_as_one_generation",
+      "answers": ["93.184.216.34", "2606:4700:4700::1111"],
+      "expected": {"allowed": true, "approved_ips": ["93.184.216.34", "2606:4700:4700::1111"], "reason": null}
+    },
+    {
+      "name": "mixed_public_private_answers_fail_closed",
+      "answers": ["93.184.216.34", "10.0.0.1"],
+      "expected": {"allowed": false, "approved_ips": [], "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "all_private_answers_fail_closed",
+      "answers": ["10.0.0.1", "192.168.0.1"],
+      "expected": {"allowed": false, "approved_ips": [], "reason": "sender_registry_origin_forbidden"}
+    },
+    {
+      "name": "documentation_answer_fails_closed",
+      "answers": ["192.0.2.1"],
+      "expected": {"allowed": false, "approved_ips": [], "reason": "sender_registry_origin_forbidden"}
+    }
+  ],
+  "source_ip_cases": [
+    {
+      "name": "direct_peer_is_default_source",
+      "direct_peer": "93.184.216.34",
+      "forwarded_for": "198.51.100.8",
+      "trusted_proxy_cidrs": [],
+      "expected": {"source_ip": "93.184.216.34", "forwarded_header_used": false, "unknown_bucket": false}
+    },
+    {
+      "name": "untrusted_direct_peer_cannot_supply_forwarded_source",
+      "direct_peer": "93.184.216.34",
+      "forwarded_for": "1.1.1.1, 8.8.8.8",
+      "trusted_proxy_cidrs": ["192.0.2.0/24"],
+      "expected": {"source_ip": "93.184.216.34", "forwarded_header_used": false, "unknown_bucket": false}
+    },
+    {
+      "name": "trusted_proxy_selects_nearest_untrusted_hop_from_right",
+      "direct_peer": "192.0.2.10",
+      "forwarded_for": "1.1.1.1, 8.8.8.8, 192.0.2.11",
+      "trusted_proxy_cidrs": ["192.0.2.0/24"],
+      "expected": {"source_ip": "8.8.8.8", "forwarded_header_used": true, "unknown_bucket": false}
+    },
+    {
+      "name": "malformed_trusted_proxy_chain_uses_bounded_unknown_bucket",
+      "direct_peer": "192.0.2.10",
+      "forwarded_for": "not-an-ip, 192.0.2.11",
+      "trusted_proxy_cidrs": ["192.0.2.0/24"],
+      "expected": {"source_ip": null, "forwarded_header_used": false, "unknown_bucket": true}
+    }
+  ],
+  "transport_cases": [
+    {
+      "name": "pinned_ip_preserves_hostname_tls_and_disables_ambient_state",
+      "origin": "https://registry.example",
+      "resolved_answers": ["93.184.216.34"],
+      "subsequent_answers": ["10.0.0.1"],
+      "selected_ip": "93.184.216.34",
+      "expected": {
+        "connect_ip": "93.184.216.34",
+        "tls_server_name": "registry.example",
+        "host_header": "registry.example",
+        "accept_encoding": "identity",
+        "second_resolution": false,
+        "redirect_follow": false,
+        "ambient_proxy": false,
+        "cookies": false,
+        "auth": false,
+        "pool_key_fields": ["origin", "validated_ip_set", "authority_generation"]
+      }
+    },
+    {
+      "name": "pool_generation_expires_no_later_than_cohort",
+      "origin": "https://registry.example:8443",
+      "resolved_answers": ["2606:4700:4700::1111"],
+      "subsequent_answers": ["2606:4700:4700::1111"],
+      "selected_ip": "2606:4700:4700::1111",
+      "expected": {
+        "connect_ip": "2606:4700:4700::1111",
+        "tls_server_name": "registry.example",
+        "host_header": "registry.example:8443",
+        "accept_encoding": "identity",
+        "second_resolution": false,
+        "redirect_follow": false,
+        "ambient_proxy": false,
+        "cookies": false,
+        "auth": false,
+        "pool_key_fields": ["origin", "validated_ip_set", "authority_generation"]
+      }
+    }
+  ]
+}

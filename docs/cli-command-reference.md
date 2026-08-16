@@ -224,6 +224,7 @@ Subcommands:
 - `cert` Team certificate operations
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
+- `grant` Scoped, expiring session grants derived from this identity
 - `log` Show an identity log
 - `namespace` Protocol/admin namespace controller and address operations
 - `register` Register the current global identity at the configured registry
@@ -342,6 +343,61 @@ Flags:
 ### `id encryption-key show`
 
 Show local E2E encryption key state
+
+Flags:
+- `-h, --help help for show`
+
+## `id grant`
+
+### `id grant`
+
+Scoped, expiring session grants derived from this identity
+
+Subcommands:
+- `list` List this identity's session grants
+- `mint` Mint a session grant and write a self-contained grant home
+- `revoke` Revoke a session grant
+- `show` Show one session grant
+
+Flags:
+- `-h, --help help for grant`
+
+## `id grant list`
+
+### `id grant list`
+
+List this identity's session grants
+
+Flags:
+- `-h, --help help for list`
+
+## `id grant mint`
+
+### `id grant mint`
+
+Mint a session grant and write a self-contained grant home
+
+Flags:
+- `-h, --help help for mint`
+- `--label string Optional label for the grant`
+- `--out string Directory to write the grant home (created fresh; a non-empty directory is refused)`
+- `--scope stringArray Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send)`
+- `--ttl duration Grant duration before expiry (60s to 720h) (default 8h0m0s)`
+
+## `id grant revoke`
+
+### `id grant revoke`
+
+Revoke a session grant
+
+Flags:
+- `-h, --help help for revoke`
+
+## `id grant show`
+
+### `id grant show`
+
+Show one session grant
 
 Flags:
 - `-h, --help help for show`
@@ -1040,8 +1096,9 @@ Flags:
 Join a team from an invite token.
 
 Run this in a clean target directory. It refuses to overwrite an existing
-.aw identity/key. After joining, run `aw init` if the output says the
-workspace still needs to be connected to the service.
+.aw identity/key. Join installs identity and membership state but does not create
+`.aw/workspace.yaml` or report service-connection state. After joining, always
+run `aw workspace connect --service <service-url>` before checks or messaging.
 
 Flags:
 - `--address string Advanced: existing owned address to place in the global member certificate`
@@ -1617,11 +1674,14 @@ Flags:
 
 ### `mail inbox`
 
-List inbox messages (unread only by default)
+List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.
+
+The response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.
 
 Flags:
+- `--cursor string Continue from next_cursor in a previous inbox response`
 - `-h, --help help for inbox`
-- `--limit int Max messages (default 50)`
+- `--limit int Max messages per page (default 50)`
 - `--show-all Show all messages including already-read`
 
 ## `mail reply`

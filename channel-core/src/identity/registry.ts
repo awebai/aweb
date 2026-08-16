@@ -140,14 +140,7 @@ export class RegistryResolver {
     }
 
     if (resolvedAddress.response.did_aw !== stableID) {
-      try {
-        resolvedAddress = await this.resolveAddress(split.domain, split.name, true);
-      } catch (error) {
-        return { outcome: "STALE_CACHE", error: String(error) };
-      }
-      if (resolvedAddress.response.did_aw !== stableID) {
-        return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
-      }
+      return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
     }
 
     let resolution: DidKeyResolution;
@@ -158,15 +151,11 @@ export class RegistryResolver {
     }
     const expectedKey = expectedCurrentDidKey.trim();
     if (expectedKey && resolution.current_did_key !== expectedKey) {
-      try {
-        resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID, true);
-      } catch (error) {
-        return {
-          outcome: "STALE_CACHE",
-          currentDidKey: resolution.current_did_key,
-          error: String(error),
-        };
-      }
+      return {
+        outcome: "STALE_CACHE",
+        currentDidKey: resolution.current_did_key,
+        error: "registry key cache does not match the signed current key",
+      };
     }
     if (resolution.did_aw !== stableID) {
       return { outcome: "HARD_ERROR", error: "registry key did:aw mismatch" };
@@ -324,32 +313,30 @@ export class RegistryResolver {
     return resolvedAuthority;
   }
 
-  private async resolveAddress(domain: string, name: string, forceRefresh = false): Promise<{ registryURL: string; response: AddressResponse }> {
+  private async resolveAddress(domain: string, name: string): Promise<{ registryURL: string; response: AddressResponse }> {
     const key = `${domain}/${name}`;
     const cached = this.addressCache.get(key);
-    if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
+    if (cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const registryURL = await this.discoverRegistry(domain);
     const response = await this.getJSON<AddressResponse>(
       registryURL,
       `/v1/namespaces/${pathSafeSegment(domain)}/addresses/${pathSafeSegment(name)}`,
-      forceRefresh,
     );
     const value = { registryURL, response };
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
     return value;
   }
 
-  private async resolveDidKey(registryURL: string, stableID: string, forceRefresh = false): Promise<DidKeyResolution> {
+  private async resolveDidKey(registryURL: string, stableID: string): Promise<DidKeyResolution> {
     const cached = this.keyCache.get(stableID);
-    if (!forceRefresh && cached && this.now() <= cached.expiresAt) {
+    if (cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const response = await this.getJSON<DidKeyResolution>(
       registryURL,
       `/v1/did/${pathSafeSegment(stableID)}/key`,
-      forceRefresh,
     );
     this.keyCache.set(stableID, {
       value: response,

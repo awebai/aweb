@@ -4,15 +4,18 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
@@ -259,11 +262,11 @@ func TestE2EEAssertionIdentityUsesMatchingIdentityStableID(t *testing.T) {
 	did := awid.ComputeDIDKey(pub)
 	stableID := awid.ComputeStableID(pub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:      did,
-		StableID: stableID,
-		Address:  "example.test/eve",
-		Custody:  awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent,
+		DID:           did,
+		StableID:      stableID,
+		Address:       "example.test/eve",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -301,18 +304,18 @@ func TestE2EEAssertionIdentityUsesExternalIdentityHome(t *testing.T) {
 	principalDID := awid.ComputeDIDKey(principalPub)
 	principalStableID := awid.ComputeStableID(principalPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(principal, "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:      principalDID,
-		StableID: principalStableID,
-		Custody:  awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent,
+		DID:           principalDID,
+		StableID:      principalStableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(instance, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:      awid.ComputeDIDKey(shadowPub),
-		StableID: awid.ComputeStableID(shadowPub),
-		Custody:  awid.CustodySelf,
-		Lifetime: awid.LifetimePersistent,
+		DID:           awid.ComputeDIDKey(shadowPub),
+		StableID:      awid.ComputeStableID(shadowPub),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -324,6 +327,220 @@ func TestE2EEAssertionIdentityUsesExternalIdentityHome(t *testing.T) {
 	})
 	if identity.DID != principalDID || identity.StableID != principalStableID {
 		t.Fatalf("identity=(%q,%q), want external (%q,%q)", identity.DID, identity.StableID, principalDID, principalStableID)
+	}
+}
+
+func TestAwMailInboxAcknowledgesUnreadPageBeforeCursorContinuation(t *testing.T) {
+	t.Parallel()
+
+	messageIDs := []string{
+		"00000000-0000-4000-8000-000000000001",
+		"00000000-0000-4000-8000-000000000002",
+		"00000000-0000-4000-8000-000000000003",
+	}
+	acked := map[string]bool{}
+	pageFetches := 0
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/messages/inbox":
+			pageFetches++
+			cursor := r.URL.Query().Get("cursor")
+			if pageFetches == 1 {
+				if cursor != "" {
+					t.Fatalf("first page cursor=%q", cursor)
+				}
+				_ = json.NewEncoder(w).Encode(awid.InboxResponse{
+					Messages: []awid.InboxMessage{
+						{MessageID: messageIDs[0], FromAlias: "alice", Body: "first-page-a", CreatedAt: "2026-07-31T12:00:02Z"},
+						{MessageID: messageIDs[1], FromAlias: "alice", Body: "first-page-b", CreatedAt: "2026-07-31T12:00:01Z"},
+					},
+					HasMore:    true,
+					NextCursor: "cursor-token",
+				})
+				return
+			}
+			if cursor != "cursor-token" {
+				t.Fatalf("continuation cursor=%q", cursor)
+			}
+			if !acked[messageIDs[0]] || !acked[messageIDs[1]] {
+				t.Fatalf("continuation fetched before visible page was acknowledged: %+v", acked)
+			}
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{
+				Messages: []awid.InboxMessage{{
+					MessageID: messageIDs[2],
+					FromAlias: "alice",
+					Body:      "second-page",
+					CreatedAt: "2026-07-31T12:00:00Z",
+				}},
+			})
+		case strings.HasPrefix(r.URL.Path, "/v1/messages/") && strings.HasSuffix(r.URL.Path, "/ack"):
+			messageID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/messages/"), "/ack")
+			if !slices.Contains(messageIDs, messageID) {
+				t.Fatalf("unexpected ack message id %q", messageID)
+			}
+			acked[messageID] = true
+			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: messageID, AcknowledgedAt: "2026-07-31T12:01:00Z"})
+		case r.URL.Path == "/v1/agents/heartbeat":
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+	runInbox := func(args ...string) string {
+		run := exec.CommandContext(ctx, bin, append([]string{"mail", "inbox"}, args...)...)
+		run.Env = testCommandEnv(tmp)
+		run.Dir = tmp
+		out, err := run.CombinedOutput()
+		if err != nil {
+			t.Fatalf("mail inbox %v failed: %v\n%s", args, err, out)
+		}
+		return string(out)
+	}
+
+	firstOutput := runInbox("--limit", "2")
+	if !strings.Contains(firstOutput, "first-page-a") || !strings.Contains(firstOutput, "first-page-b") ||
+		strings.Contains(firstOutput, "second-page") || !strings.Contains(firstOutput, "--cursor cursor-token") {
+		t.Fatalf("first page output is incomplete or overlaps continuation:\n%s", firstOutput)
+	}
+	if !acked[messageIDs[0]] || !acked[messageIDs[1]] || acked[messageIDs[2]] {
+		t.Fatalf("first page read state=%+v", acked)
+	}
+
+	secondOutput := runInbox("--limit", "2", "--cursor", "cursor-token")
+	if strings.Contains(secondOutput, "first-page") || !strings.Contains(secondOutput, "second-page") {
+		t.Fatalf("second page overlapped or omitted content:\n%s", secondOutput)
+	}
+	if pageFetches != 2 || !acked[messageIDs[0]] || !acked[messageIDs[1]] || !acked[messageIDs[2]] {
+		t.Fatalf("final fetch/read state: fetches=%d acked=%+v", pageFetches, acked)
+	}
+}
+
+type mailPresentationErrorWriter struct{}
+
+func (mailPresentationErrorWriter) Write([]byte) (int, error) {
+	return 0, errors.New("closed presentation writer")
+}
+
+func TestPresentAndAcknowledgeMailInboxDoesNotAcknowledgeFailedOutput(t *testing.T) {
+	previousJSON := jsonFlag
+	t.Cleanup(func() { jsonFlag = previousJSON })
+
+	messageID := "00000000-0000-4000-8000-000000000004"
+	acked := false
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/"+messageID+"/ack" {
+			t.Fatalf("unexpected path=%s", r.URL.Path)
+		}
+		acked = true
+		_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: messageID})
+	}))
+	client, err := aweb.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := &awid.InboxResponse{Messages: []awid.InboxMessage{{
+		MessageID: messageID,
+		FromAlias: "alice",
+		Body:      "must remain unread",
+	}}}
+
+	for _, tc := range []struct {
+		name string
+		json bool
+	}{
+		{name: "text"},
+		{name: "json", json: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			jsonFlag = tc.json
+			acked = false
+			err := presentAndAcknowledgeMailInbox(
+				context.Background(),
+				mailPresentationErrorWriter{},
+				client,
+				resp,
+			)
+			if err == nil || !strings.Contains(err.Error(), "closed presentation writer") {
+				t.Fatalf("presentation error=%v", err)
+			}
+			if acked {
+				t.Fatal("mail was acknowledged after its presentation writer failed")
+			}
+		})
+	}
+}
+
+func TestAwMailInboxDoesNotAcknowledgeWhenPresentationFails(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "text"},
+		{name: "json", args: []string{"--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			messageID := "00000000-0000-4000-8000-000000000004"
+			acked := false
+			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.URL.Path == "/v1/messages/inbox":
+					_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{
+						MessageID: messageID,
+						FromAlias: "alice",
+						Body:      "must remain unread",
+						CreatedAt: "2026-07-31T12:00:00Z",
+					}}})
+				case r.URL.Path == "/v1/messages/"+messageID+"/ack":
+					acked = true
+					_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: messageID, AcknowledgedAt: "2026-07-31T12:01:00Z"})
+				case r.URL.Path == "/v1/agents/heartbeat":
+					w.WriteHeader(http.StatusOK)
+				default:
+					t.Fatalf("unexpected path=%s", r.URL.Path)
+				}
+			}))
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			tmp := t.TempDir()
+			bin := filepath.Join(tmp, "aw")
+			buildAwBinary(t, ctx, bin)
+			writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
+
+			readEnd, writeEnd, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := readEnd.Close(); err != nil {
+				t.Fatal(err)
+			}
+			runArgs := append([]string{"mail", "inbox"}, tc.args...)
+			run := exec.CommandContext(ctx, bin, runArgs...)
+			run.Env = testCommandEnv(tmp)
+			run.Dir = tmp
+			run.Stdout = writeEnd
+			var stderr strings.Builder
+			run.Stderr = &stderr
+			runErr := run.Run()
+			_ = writeEnd.Close()
+
+			if runErr == nil {
+				t.Fatalf("mail inbox reported success after its presentation write failed; stderr=%s", stderr.String())
+			}
+			if acked {
+				t.Fatal("mail was acknowledged before the failed presentation write")
+			}
+		})
 	}
 }
 
@@ -398,12 +615,12 @@ func TestAwMailSendBodyFilePreservesBackticksOnTheWire(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: server.URL,
-		CreatedAt:   "2026-04-26T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   server.URL,
+		CreatedAt:     "2026-04-26T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -489,11 +706,11 @@ func TestAwMailSendConversationIDSignsPayloadWithRediscoveredRecipient(t *testin
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		Address:   "test.local/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimeEphemeral,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		Address:       "test.local/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -625,11 +842,11 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimeEphemeral,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -740,13 +957,13 @@ func TestAwMailSendToAddressAutoThreadsSentConversationFromIndex(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         did,
-		StableID:    stableID,
-		Address:     "test.local/gsk",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: server.URL,
-		CreatedAt:   "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "test.local/gsk",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   server.URL,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -869,16 +1086,16 @@ func TestAwMailSendAliasAutoThreadsConcreteAgentConversation(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "devteam:test.local",
-		Alias:       "gsk",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		Address:     "test.local/gsk",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  priv,
-		CreatedAt:   "2026-05-02T00:00:00Z",
+		AwebURL:       server.URL,
+		TeamID:        "devteam:test.local",
+		Alias:         "gsk",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		Address:       "test.local/gsk",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
@@ -981,17 +1198,17 @@ func TestAwMailSendAliasToSelfSkipsConversationDiscovery(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "devteam:test.local",
-		Alias:       "gsk",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    stableID,
-		Address:     "test.local/gsk",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  priv,
-		CreatedAt:   "2026-05-02T00:00:00Z",
+		AwebURL:       server.URL,
+		TeamID:        "devteam:test.local",
+		Alias:         "gsk",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      stableID,
+		Address:       "test.local/gsk",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    priv,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
@@ -1121,11 +1338,11 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimeEphemeral,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1215,11 +1432,11 @@ func TestAwMailSendConversationIDSurfacesNonParticipantRejection(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1271,11 +1488,11 @@ func TestAwMailSendConversationIDSurfacesMissingConversation(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1353,11 +1570,11 @@ func TestAwMailShowFetchesConversation(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1437,29 +1654,22 @@ func TestAwMailShowLegacyConversationHintAndMessageIDFetch(t *testing.T) {
 	did := awid.ComputeDIDKey(pub)
 	stableID := stableIDFromDidForTest(t, did)
 	messageID := "88888888-8888-4888-8888-888888888888"
-	var sawMessageIDQuery bool
+	var sawExactMessageRead bool
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/messages/conversations/" + messageID:
 			http.Error(w, `{"detail":"This is a legacy mail without a conversation; use --message-id"}`, http.StatusNotFound)
-		case "/v1/messages/inbox":
-			if r.URL.Query().Get("message_id") != messageID {
-				t.Fatalf("message_id query=%q, want %q", r.URL.Query().Get("message_id"), messageID)
-			}
-			sawMessageIDQuery = true
-			_ = json.NewEncoder(w).Encode(awid.InboxResponse{
-				Messages: []awid.InboxMessage{
-					{
-						MessageID: messageID,
-						FromAlias: "athena",
-						ToAlias:   "grace",
-						Subject:   "legacy",
-						Body:      "old mail",
-						Priority:  awid.PriorityNormal,
-						CreatedAt: "2026-05-02T00:00:00Z",
-					},
-				},
+		case "/v1/messages/" + messageID:
+			sawExactMessageRead = true
+			_ = json.NewEncoder(w).Encode(awid.InboxMessage{
+				MessageID: messageID,
+				FromAlias: "athena",
+				ToAlias:   "grace",
+				Subject:   "legacy",
+				Body:      "old mail",
+				Priority:  awid.PriorityNormal,
+				CreatedAt: "2026-05-02T00:00:00Z",
 			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
@@ -1475,11 +1685,11 @@ func TestAwMailShowLegacyConversationHintAndMessageIDFetch(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       did,
-		StableID:  stableID,
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-05-02T00:00:00Z",
+		DID:           did,
+		StableID:      stableID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-05-02T00:00:00Z",
 	})
 	if err := awid.SaveSigningKey(filepath.Join(tmp, ".aw", "signing.key"), priv); err != nil {
 		t.Fatalf("write signing key: %v", err)
@@ -1503,8 +1713,8 @@ func TestAwMailShowLegacyConversationHintAndMessageIDFetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("message-id show failed: %v\n%s", err, string(out))
 	}
-	if !sawMessageIDQuery {
-		t.Fatal("mail show --message-id did not query inbox by message_id")
+	if !sawExactMessageRead {
+		t.Fatal("mail show --message-id did not use the participant-visible exact route")
 	}
 	if !strings.Contains(string(out), "old mail") {
 		t.Fatalf("message-id output missing mail body:\n%s", string(out))

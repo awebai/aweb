@@ -1,6 +1,6 @@
 [project]
 name = "awid-service"
-version = "0.5.13"
+version = "0.5.17"
 description = "awid.ai identity registry service and shared awid primitives package"
 readme = "README.md"
 license = "MIT"
@@ -12,8 +12,9 @@ dependencies = [
     "base58>=2.1.1",
     "dnspython>=2.8.0",
     "fastapi>=0.116.1",
+    "httpcore>=1.0.9",
     "httpx>=0.28.1",
-    "pgdbm>=0.4.1",
+    "pgdbm>=0.5.0",
     "publicsuffix2>=2.20191221",
     "pynacl>=1.6.2",
     "pydantic>=2.11.7",
@@ -49,6 +50,7 @@ exclude = [
 dev = [
     "pytest>=9.0.0",
     "pytest-asyncio>=1.2.0",
+    "trustme>=1.2.1",
 ]
 
 [tool.pytest.ini_options]

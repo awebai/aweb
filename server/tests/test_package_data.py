@@ -9,6 +9,7 @@ from importlib.resources import files
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
 import tomllib
 import zipfile
 
@@ -37,14 +38,14 @@ def test_defaults_migrations_and_reserved_app_ids_are_packaged():
     assert packaged_reserved.read_text() == source_reserved.read_text()
 
 
-def test_reserved_app_ids_artifact_ships_in_built_wheel(tmp_path):
+def test_server_distributions_ship_reserved_app_ids_without_vector_copies(tmp_path):
     uv = shutil.which("uv")
     if uv is None:
         pytest.skip("uv is required to build the wheel for package-data inspection")
 
     server_root = Path(__file__).resolve().parents[1]
     subprocess.run(
-        [uv, "build", "--wheel", "--out-dir", str(tmp_path)],
+        [uv, "build", "--out-dir", str(tmp_path)],
         cwd=server_root,
         check=True,
         stdout=subprocess.PIPE,
@@ -54,7 +55,16 @@ def test_reserved_app_ids_artifact_ships_in_built_wheel(tmp_path):
     wheels = list(tmp_path.glob("aweb-*.whl"))
     assert wheels
     with zipfile.ZipFile(wheels[0]) as wheel:
-        assert "aweb/data/reserved-app-ids-v1.json" in wheel.namelist()
+        names = wheel.namelist()
+        assert "aweb/data/reserved-app-ids-v1.json" in names
+        assert not any("/docs/vectors/" in name or name.startswith("docs/vectors/") for name in names)
+
+    sdists = list(tmp_path.glob("aweb-*.tar.gz"))
+    assert sdists
+    with tarfile.open(sdists[0]) as sdist:
+        names = sdist.getnames()
+        assert any(name.endswith("/src/aweb/data/reserved-app-ids-v1.json") for name in names)
+        assert not any("/docs/vectors/" in name for name in names)
 
 
 def test_awid_service_floor_covers_encryption_key_api():
@@ -100,6 +110,10 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "010a_chat_message_reads_orphan_guard.sql",
         "011_chat_message_reads.sql",
         "012_chat_message_reads_orphan_backfill.sql",
+        "013_lifecycle_side_effect_outbox.sql",
+        "014_federation_authority.sql",
+        "015_federation_delivery_policy.sql",
+        "016_identity_session_grants.sql",
     ]
 
 

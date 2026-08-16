@@ -27,11 +27,11 @@ func writeNetworkWorkspace(t *testing.T, workingDir, serverURL, handle, namespac
 	state := workspaceBinding(serverURL, "backend:"+namespace, handle, "workspace-1")
 	activeMembership := activeMembershipForTest(t, &state)
 	writeTeamCertificateWorkspaceForTest(t, workingDir, state, &testSelectionFixture{
-		TeamID:      activeMembership.TeamID,
-		Alias:       activeMembership.Alias,
-		WorkspaceID: activeMembership.WorkspaceID,
-		Lifetime:    awid.LifetimeEphemeral,
-		CreatedAt:   "2026-04-04T00:00:00Z",
+		TeamID:        activeMembership.TeamID,
+		Alias:         activeMembership.Alias,
+		WorkspaceID:   activeMembership.WorkspaceID,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-04-04T00:00:00Z",
 	})
 	return writeWorkspaceBindingForTest(t, workingDir, state)
 }
@@ -198,17 +198,17 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	}
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL + "/api",
-		TeamID:      "backend:demo",
-		Alias:       "eve",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    awid.ComputeStableID(pub),
-		Address:     "demo/eve",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		SigningKey:  priv,
+		AwebURL:       server.URL + "/api",
+		TeamID:        "backend:demo",
+		Alias:         "eve",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      awid.ComputeStableID(pub),
+		Address:       "demo/eve",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		SigningKey:    priv,
 	})
 	writeKnownAgentPinForTest(t, tmp, "acme/researcher", registryServer.URL)
 
@@ -292,17 +292,17 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 	}
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL + "/api",
-		TeamID:      "backend:demo",
-		Alias:       "eve",
-		WorkspaceID: "workspace-1",
-		DID:         did,
-		StableID:    awid.ComputeStableID(pub),
-		Address:     "demo/eve",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		SigningKey:  priv,
+		AwebURL:       server.URL + "/api",
+		TeamID:        "backend:demo",
+		Alias:         "eve",
+		WorkspaceID:   "workspace-1",
+		DID:           did,
+		StableID:      awid.ComputeStableID(pub),
+		Address:       "demo/eve",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		SigningKey:    priv,
 	})
 	writeKnownAgentPinForTest(t, tmp, "acme/researcher", registryServer.URL)
 

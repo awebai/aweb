@@ -51,6 +51,8 @@ Common environment variables:
 - `AWEB_DATABASE_URL` or `DATABASE_URL`
 - `AWEB_REDIS_URL` or `REDIS_URL`
 - `AWID_REGISTRY_URL`
+- `AWID_SERVICE_TOKEN` optional >=32-byte trusted caller secret shared with the
+  configured home AWID registry
 - `AWEB_HOST`
 - `AWEB_PORT`
 - `AWEB_DASHBOARD_JWT_SECRET`
@@ -97,16 +99,10 @@ See [../docs/aweb-sot.md](../docs/aweb-sot.md) for the lifecycle contract and
 
 ## Release to PyPI
 
-The `aweb` Python package is published by GitHub Actions when a matching
-`server-vX.Y.Z` tag is pushed.
-
-Local release commands:
-
-```bash
-make release-server-check
-make release-server-tag
-make release-server-push
-```
+Release the `aweb` Python package through the repository's `release` skill and
+driver. The driver owns planning, exact-byte staging, publication, tagging,
+registry verification, and the receipt; do not start a release by pushing a
+`server-vX.Y.Z` tag.
 
 ## Identity Boundary
 

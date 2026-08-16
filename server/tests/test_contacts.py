@@ -121,6 +121,9 @@ async def test_existing_contacts_backfill_identity_active_and_remain_queryable(a
         {
             "contact_id": contacts[0]["contact_id"],
             "contact_address": "example.com/existing",
+            "contact_did_aw": None,
+            "binding_controller_did": None,
+            "binding_accepted_at": None,
             "label": "Existing",
             "created_at": contacts[0]["created_at"],
             "reference_type": "identity",

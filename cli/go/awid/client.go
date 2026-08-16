@@ -181,7 +181,7 @@ var apiTransientRetryBaseDelay = 100 * time.Millisecond
 // agentMeta holds cached metadata about a resolved agent.
 type agentMeta struct {
 	DID             string
-	Lifetime        string // "persistent" or "ephemeral"
+	IdentityScope   string // "local" or "global"
 	Custody         string // "self" or "custodial"
 	Resolved        bool
 	ResolutionError string // "not_found" or "unavailable" after a forced refresh
@@ -200,6 +200,7 @@ type Client struct {
 	did                     string             // empty for legacy/custodial
 	teamCertHeader          string             // base64-encoded team certificate for X-AWID-Team-Certificate
 	teamID                  string             // team identifier from certificate, used in auth signature
+	grantID                 string             // identity-grant id; non-empty selects grant auth with the session signing key
 	certAlias               string             // certificate alias, used for signed payloads in cert-auth mode
 	address                 string             // namespace/alias, used in signed envelopes
 	e2eeSenderAddress       string             // explicit address for E2EE envelopes; empty for addressless local/team identities
@@ -285,6 +286,35 @@ func NewWithCertificate(baseURL string, signingKey ed25519.PrivateKey, cert *Tea
 	c.teamID = cert.Team
 	c.certAlias = strings.TrimSpace(cert.Alias)
 	return c, nil
+}
+
+// NewWithGrant creates a client authenticated as an identity-grant session.
+// The session key signs every request; the subject identity's root keys are
+// never involved.
+func NewWithGrant(baseURL string, sessionKey ed25519.PrivateKey, grantID string) (*Client, error) {
+	if sessionKey == nil {
+		return nil, fmt.Errorf("sessionKey must not be nil")
+	}
+	grantID = strings.TrimSpace(grantID)
+	if grantID == "" {
+		return nil, fmt.Errorf("grantID must not be empty")
+	}
+	c, err := New(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	c.signingKey = sessionKey
+	c.did = ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey))
+	c.grantID = grantID
+	return c, nil
+}
+
+// GrantID returns the identity-grant id, or empty for non-grant clients.
+func (c *Client) GrantID() string {
+	if c == nil {
+		return ""
+	}
+	return strings.TrimSpace(c.grantID)
 }
 
 func (c *Client) TeamID() string {
@@ -395,7 +425,7 @@ func (c *Client) StableID() string { return c.stableID }
 
 // SetRequireRecipientBindingForDirectAddresses controls whether signed direct
 // address sends must bind the recipient address to a current did:key before
-// posting. Persistent identity clients should enable this so private or hidden
+// posting. Global identity clients should enable this so private or hidden
 // registry addresses fail closed instead of falling through to local routing.
 func (c *Client) SetRequireRecipientBindingForDirectAddresses(required bool) {
 	c.requireRecipientBinding = required
@@ -514,7 +544,19 @@ func (c *Client) canonicalTrustAddress(address string) string {
 	return address
 }
 
-// resolveAgentMeta returns cached lifetime/custody metadata for a sender address.
+func (c *Client) isCurrentTeamRosterReference(address string) bool {
+	if _, _, ok := splitTeamMemberReference(address); ok {
+		return true
+	}
+	chain, ok := c.resolver.(*ChainResolver)
+	if !ok || chain.Team == nil {
+		return false
+	}
+	_, _, ok = chain.Team.reference(address)
+	return ok
+}
+
+// resolveAgentMeta returns cached identity-scope/custody metadata for a sender address.
 // On first contact, resolves via the client's IdentityResolver and caches the result.
 // Returns an unresolved marker if no resolver is set or resolution fails.
 func (c *Client) resolveAgentMeta(ctx context.Context, address string) *agentMeta {
@@ -533,9 +575,9 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 		}
 	}
 	fallback := &agentMeta{
-		Lifetime: LifetimePersistent,
-		Custody:  CustodySelf,
-		Resolved: true,
+		IdentityScope: IdentityModeGlobal,
+		Custody:       CustodySelf,
+		Resolved:      true,
 	}
 	if c.resolver != nil {
 		resolve := c.resolver.Resolve
@@ -548,13 +590,13 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 		}
 		if identity, err := resolve(ctx, trustAddress); err == nil {
 			meta := &agentMeta{
-				DID:      strings.TrimSpace(identity.DID),
-				Lifetime: LifetimePersistent,
-				Custody:  CustodySelf,
-				Resolved: true,
+				DID:           strings.TrimSpace(identity.DID),
+				IdentityScope: IdentityModeGlobal,
+				Custody:       CustodySelf,
+				Resolved:      true,
 			}
-			if identity.Lifetime != "" {
-				meta.Lifetime = identity.Lifetime
+			if identity.IdentityScope != "" {
+				meta.IdentityScope = NormalizeIdentityScope(identity.IdentityScope)
 			}
 			if identity.Custody != "" {
 				meta.Custody = identity.Custody
@@ -582,7 +624,7 @@ func (c *Client) resolveAgentMetaFresh(ctx context.Context, address string, forc
 }
 
 // NormalizeSenderTrust applies sender-specific trust normalization after
-// signature verification. It suppresses contact tags for ephemeral senders and
+// signature verification. It suppresses contact tags for local senders and
 // then applies continuity pinning using shared resolver metadata.
 func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationStatus, rawAddress, fromDID, fromStableID string, ra *RotationAnnouncement, repl *ReplacementAnnouncement, isContact *bool) (VerificationStatus, *bool) {
 	// Mail applies recipient binding before sender continuity normalization.
@@ -593,8 +635,33 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 		return status, isContact
 	}
 	trustAddress := c.canonicalTrustAddress(rawAddress)
-	meta := c.resolveAgentMeta(ctx, rawAddress)
-	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.Lifetime == LifetimeEphemeral) {
+	localTeamReference := c.isCurrentTeamRosterReference(trustAddress)
+	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial &&
+		localTeamReference && strings.TrimSpace(fromStableID) == "" {
+		return status, isContact
+	}
+	var meta *agentMeta
+	acceptedSignature := status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+	if acceptedSignature && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" {
+		fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
+		if fresh == nil || !fresh.Resolved {
+			if fresh != nil && fresh.ResolutionError == "not_found" {
+				return IdentityMismatch, nil
+			}
+			return VerificationStale, nil
+		}
+		if fresh.IdentityScope == IdentityModeLocal {
+			return c.verifyResolvedLocalSender(fresh, strings.TrimSpace(rawAddress), trustAddress, fromDID, status), nil
+		}
+		if strings.TrimSpace(fromStableID) == "" {
+			return IdentityMismatch, nil
+		}
+		meta = fresh
+	}
+	if meta == nil {
+		meta = c.resolveAgentMeta(ctx, rawAddress)
+	}
+	if strings.TrimSpace(fromStableID) == "" || (meta.Resolved && meta.IdentityScope == IdentityModeLocal) {
 		isContact = nil
 	}
 	var registryConfirmedCurrentKey bool
@@ -614,14 +681,13 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 			status = VerificationStale
 		}
 	}
-	_, _, localTeamReference := splitTeamMemberReference(trustAddress)
 	if status == IdentityMismatch && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" && !strings.HasPrefix(strings.TrimSpace(fromStableID), "did:aw:") {
-		status = c.reconcileLocalSenderMismatch(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
+		status = c.verifyLocalSenderAgainstCurrentRoster(ctx, strings.TrimSpace(rawAddress), trustAddress, fromDID)
 	}
 	return status, isContact
 }
 
-func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, trustAddress, fromDID string) VerificationStatus {
+func (c *Client) verifyLocalSenderAgainstCurrentRoster(ctx context.Context, rawAddress, trustAddress, fromDID string) VerificationStatus {
 	fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
 	if fresh == nil || !fresh.Resolved {
 		if fresh != nil && fresh.ResolutionError == "not_found" {
@@ -629,9 +695,13 @@ func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, t
 		}
 		return VerificationStale
 	}
-	if fresh.Lifetime != LifetimeEphemeral {
+	if fresh.IdentityScope != IdentityModeLocal {
 		return IdentityMismatch
 	}
+	return c.verifyResolvedLocalSender(fresh, rawAddress, trustAddress, fromDID, Verified)
+}
+
+func (c *Client) verifyResolvedLocalSender(fresh *agentMeta, rawAddress, trustAddress, fromDID string, acceptedStatus VerificationStatus) VerificationStatus {
 	if strings.TrimSpace(fresh.DID) == "" {
 		return VerificationStale
 	}
@@ -651,7 +721,7 @@ func (c *Client) reconcileLocalSenderMismatch(ctx context.Context, rawAddress, t
 			_ = c.savePinStore()
 		}
 	}
-	return VerificationStale
+	return acceptedStatus
 }
 
 // NormalizeRecipientBinding applies the local recipient-binding check after
@@ -707,7 +777,7 @@ func (c *Client) checkStableIdentityRegistry(ctx context.Context, status Verific
 // before returning IdentityMismatch.
 // Returns the status unchanged if no pin store is set, the message is not
 // verified, or from_did/from_address is empty.
-// Uses the resolver to determine the sender's lifetime (ephemeral agents
+// Uses the resolver to determine the sender's identity scope (local identities
 // skip pinning) and custody (custodial agents return VerifiedCustodial).
 //
 // When fromStableID is present, pins are keyed by stable_id instead of did:key.
@@ -735,7 +805,7 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 	if !meta.Resolved {
 		return status
 	}
-	if meta.Lifetime == LifetimeEphemeral {
+	if meta.IdentityScope == IdentityModeLocal {
 		c.pinStore.mu.Lock()
 		removed := c.pinStore.RemoveAddress(trustAddress)
 		rawAddress = strings.TrimSpace(rawAddress)
@@ -784,7 +854,7 @@ func (c *Client) checkTOFUPinWithMeta(ctx context.Context, status VerificationSt
 		}
 	}
 
-	pinResult := c.pinStore.CheckPin(trustAddress, pinKey, meta.Lifetime)
+	pinResult := c.pinStore.CheckPin(trustAddress, pinKey, meta.IdentityScope)
 	switch pinResult {
 	case PinNew:
 		c.pinStore.StorePin(pinKey, trustAddress, "", "")
@@ -987,7 +1057,7 @@ func (c *Client) commitRefresh(status VerificationStatus) VerificationStatus {
 // A matching stable binding is sufficient across local key rotation; otherwise
 // we fall back to the current did:key binding.
 func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, toStableID string) VerificationStatus {
-	if status != Verified {
+	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
 		return status
 	}
 	if stableID := strings.TrimSpace(c.stableID); stableID != "" && strings.TrimSpace(toStableID) != "" {
@@ -1165,7 +1235,19 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 				req.Header.Set(key, value)
 			}
 		}
-		if c.teamCertHeader != "" && c.signingKey != nil {
+		if c.grantID != "" && c.signingKey != nil {
+			// Grant auth: session did:key signature over the identity-grant
+			// envelope. aud, method, path, and body_sha256 bind the request to
+			// the grant, mirroring the v2 team envelope canonicalization.
+			timestamp := time.Now().UTC().Format(time.RFC3339)
+			credential, err := SignIdentityGrantCredential(c.signingKey, method, req.URL, c.grantID, bodyBytes, timestamp)
+			if err != nil {
+				return nil, err
+			}
+			for key := range credential.Headers {
+				req.Header.Set(key, credential.Headers.Get(key))
+			}
+		} else if c.teamCertHeader != "" && c.signingKey != nil {
 			// Certificate auth: DIDKey signature over {body_sha256, team_id, timestamp}.
 			// body_sha256 binds the request body to the signature without the
 			// server having to consume the body stream for signature verification.
@@ -1374,7 +1456,7 @@ func traceHeaders(prefix string, headers http.Header, redact bool) {
 
 func shouldRedactTraceHeader(key string) bool {
 	switch http.CanonicalHeaderKey(strings.TrimSpace(key)) {
-	case "Authorization", "Cookie", "Set-Cookie", "X-Aweb-Signed-Payload", "X-Awid-Team-Certificate", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate":
+	case "Authorization", "Cookie", "Set-Cookie", "X-Aweb-Signed-Payload", "X-Awid-Team-Certificate", "X-Aweb-Grant-Id", "X-AWEB-Signed-Payload", "X-AWID-Team-Certificate", "X-AWEB-Grant-ID":
 		return true
 	default:
 		return false

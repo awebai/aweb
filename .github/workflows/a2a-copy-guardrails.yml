@@ -1,19 +1,6 @@
 name: A2A Copy Guardrails
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/a2a-copy-guardrails.yml"
-      - "docs/**"
-      - "skills/**"
-      - ".claude/skills/**"
-      - "channel/skills/**"
-      - "packages/claude-skills/skills/**"
-      - "packages/codex-plugin/skills/**"
-      - "pi-extension/skills/**"
-      - "cli/go/cmd/aw/**"
-      - "scripts/check-a2a-copy-guardrails.sh"
   pull_request:
     paths:
       - ".github/workflows/a2a-copy-guardrails.yml"

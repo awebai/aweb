@@ -10,8 +10,8 @@ set -euo pipefail
 # Two comparisons, each honest for its context:
 #  - Release-tag floor (always): if server/ differs from the last
 #    reachable server-v* tag, the current version must exceed the tag's.
-#    Compares against the working tree so `make release-server-check`
-#    holds before the bump is committed.
+#    Compares against the working tree so the change-time guard holds
+#    before the bump is committed.
 #  - Change range (when a base ref is passed, as CI does): if server/
 #    differs between the base and the current tree, the current version
 #    must exceed the base's. The floor alone would let a later change

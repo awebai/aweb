@@ -1,0 +1,6 @@
+name: oats-mail-rev
+kind: persistent
+description: Independent reviewer for the attached-principal mail decryption fix (aweb-oats-aaaa.63)
+repo: .
+work: worktree
+runtime: pi

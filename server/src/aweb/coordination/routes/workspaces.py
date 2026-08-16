@@ -633,6 +633,7 @@ class WorkspaceInfo(BaseModel):
     """Workspace information from database with optional presence data."""
 
     workspace_id: str
+    agent_id: Optional[str] = None
     alias: str
     agent_identity_scope: Optional[str] = None
     human_name: Optional[str] = None
@@ -757,6 +758,7 @@ _TEAM_FOCUS_JOIN = _title_join(
 _TEAM_PARTICIPANT_WORKSPACE_SELECT = f"""
         SELECT
             w.workspace_id,
+            w.agent_id,
             w.alias,
             w.human_name,
             CASE
@@ -856,6 +858,7 @@ def _row_to_workspace_info(
 
     return WorkspaceInfo(
         workspace_id=workspace_id,
+        agent_id=str(row["agent_id"]),
         alias=row["alias"],
         agent_identity_scope=row.get("agent_identity_scope"),
         human_name=row["human_name"],
@@ -965,6 +968,7 @@ async def list_workspaces(
         """
         SELECT
             w.workspace_id,
+            w.agent_id,
             w.alias,
             w.human_name,
             w.team_id,

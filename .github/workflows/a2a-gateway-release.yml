@@ -1,79 +1,182 @@
-name: A2A Gateway Release (GHCR)
+name: A2A Gateway Image Release
 
-# Tag a2a-gw-vX.Y.Z to publish the hosted A2A gateway image to GHCR.
-
+# The complete release gate already passed before the release branch moved.
+# This workflow rebuilds that exact commit once, publishes/adopts its immutable
+# index plus latest, and verifies the public digest and publication tag.
 on:
   push:
-    tags:
-      - 'a2a-gw-v*'
+    branches: [release]
+    paths:
+      - "cli/go/**"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
+
+concurrency:
+  group: a2a-gateway-image-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: ${{ github.sha }}
 
 jobs:
   publish:
-    name: Build and publish A2A gateway image
+    name: Publish two-platform A2A gateway image
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
 
       - uses: docker/setup-qemu-action@v4
 
       - uses: docker/setup-buildx-action@v4
 
-      - name: Verify version matches tag
+      - name: Install registry client
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#a2a-gw-v}"
-          PKG_VERSION="$(python3 -c "
-          import re
-          text = open('server/pyproject.toml').read()
-          m = re.search(r'version\s*=\s*\"([^\"]+)\"', text)
-          print(m.group(1))
-          ")"
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "ERROR: Tag version ($TAG_VERSION) does not match server/pyproject.toml version ($PKG_VERSION)"
-            exit 1
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends skopeo
+
+      - name: Derive A2A gateway version
+        id: version
+        run: |
+          version="$(python3 scripts/release_artifact_version.py a2a-gateway-image)"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate derived A2A gateway identity
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/npm-exact-publish.sh validate-inputs --sha "$SOURCE_SHA" --version "$VERSION"
+
+      - name: Build once, publish or adopt, verify digest, and tag
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
+          # remote_tag_sha comes from the one shared implementation.
+          source scripts/release-tag-helpers.sh
+          require_release_sha() {
+            local release_tip
+            git fetch --no-tags origin \
+              +refs/heads/main:refs/remotes/origin/main \
+              +refs/heads/release:refs/remotes/origin/release
+            release_tip="$(git ls-remote origin refs/heads/release | awk '{print $1}')"
+            [[ "$release_tip" == "$SOURCE_SHA" ]] \
+              || fail "github.sha $SOURCE_SHA is not the exact remote release tip ${release_tip:-absent}"
+            [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] \
+              || fail "checkout is not github.sha $SOURCE_SHA"
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+              || fail "release SHA $SOURCE_SHA is not an ancestor of main"
+          }
+          require_tag_compatible() {
+            local tag="$1" observed
+            observed="$(remote_tag_sha "$tag")"
+            [[ -z "$observed" || "$observed" == "$SOURCE_SHA" ]] \
+              || fail "tag $tag exists at $observed, not $SOURCE_SHA"
+          }
+          publish_tag() {
+            local tag="$1" observed
+            observed="$(remote_tag_sha "$tag")"
+            if [[ "$observed" == "$SOURCE_SHA" ]]; then
+              echo "adopted existing tag $tag at $SOURCE_SHA"
+              return
+            fi
+            [[ -z "$observed" ]] || fail "tag $tag moved to $observed"
+            git tag -d "$tag" >/dev/null 2>&1 || true
+            git tag "$tag" "$SOURCE_SHA"
+            if git push origin "refs/tags/$tag"; then
+              echo "created tag $tag at $SOURCE_SHA"
+              return
+            fi
+            git tag -d "$tag" >/dev/null 2>&1 || true
+            observed="$(remote_tag_sha "$tag")"
+            [[ "$observed" == "$SOURCE_SHA" ]] \
+              || fail "tag $tag conflicted at ${observed:-absent}"
+            echo "adopted concurrent identical tag $tag"
+          }
+
+          tag="a2a-gw-v${VERSION}"
+          require_release_sha
+          require_tag_compatible "$tag"
+
+          staging="$RUNNER_TEMP/a2a-gateway-image"
+          rm -rf "$staging"
+          mkdir -p "$staging"
+          docker buildx build \
+            --file cli/go/Dockerfile.a2a-gw \
+            --platform linux/amd64,linux/arm64 \
+            --provenance=false \
+            --sbom=false \
+            --build-arg "VERSION=${VERSION}" \
+            --build-arg "RELEASE_TAG=a2a-gw-v${VERSION}" \
+            --build-arg "COMMIT=${SOURCE_SHA}" \
+            --build-arg "COMMIT_REPO=github.com/${{ github.repository }}" \
+            --build-arg "DATE=1970-01-01T00:00:00Z" \
+            --label "org.opencontainers.image.title=aweb A2A Gateway" \
+            --label "org.opencontainers.image.description=Hosted A2A gateway for aweb agents" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${SOURCE_SHA}" \
+            --output "type=oci,dest=$staging/a2a-gateway-oci.tar" \
+            cli/go
+          bash scripts/oci-exact-publish.sh inspect-staged \
+            --archive "$staging/a2a-gateway-oci.tar" --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --out "$staging/identities.json"
+          staged="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["index"])' "$staging/identities.json")"
+          printf 'STAGED INDEX DIGEST: %s\n' "$staged" | tee -a "$GITHUB_STEP_SUMMARY"
+
+          require_release_sha
+          # A2A_REGISTRY_BEGIN
+          echo "$GHCR_TOKEN" | timeout 30 skopeo login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          listing_status=ok
+          if ! tags_json="$(timeout 30 skopeo list-tags docker://ghcr.io/awebai/a2a-gateway)"; then
+            listing_status=failed
+            tags_json='{}'
           fi
-          echo "A2A_GW_VERSION=$PKG_VERSION" >> "$GITHUB_ENV"
-          echo "A2A_GW_RELEASE_TAG=$GITHUB_REF_NAME" >> "$GITHUB_ENV"
-          echo "A2A_GW_COMMIT=$GITHUB_SHA" >> "$GITHUB_ENV"
-          echo "A2A_GW_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          [[ "$listing_status" == ok ]] \
+            || fail "GHCR tag listing unavailable; observation failure is never absence"
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          for image_tag in "$VERSION" latest; do
+            present="$(printf '%s' "$tags_json" \
+              | bash scripts/oci-exact-publish.sh classify-listing --tag "$image_tag")"
+            remote_digest=unavailable
+            if [[ "$present" == yes ]]; then
+              if ! remote_digest="$(timeout 30 skopeo inspect --raw \
+                "docker://ghcr.io/awebai/a2a-gateway:${image_tag}" \
+                | bash scripts/oci-exact-publish.sh observe-digest)"; then
+                fail "GHCR digest unavailable for present tag $image_tag"
+              fi
+            fi
+            kind=version
+            [[ "$image_tag" == latest ]] && kind=latest
+            action="$(bash scripts/oci-exact-publish.sh decide-tag \
+              --tag-kind "$kind" --staged "$staged" \
+              --listing-status "$listing_status" --present "$present" \
+              --remote-digest "$remote_digest")"
+            case "$action" in
+              ADOPT) echo "adopted ghcr.io/awebai/a2a-gateway:${image_tag} at $staged" ;;
+              COPY)
+                skopeo copy --all "oci-archive:$staging/a2a-gateway-oci.tar" \
+                  "docker://ghcr.io/awebai/a2a-gateway:${image_tag}" \
+                  || fail "GHCR copy failed for $image_tag" ;;
+              *) fail "unexpected registry decision $action" ;;
+            esac
+          done
 
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/a2a-gateway
-          tags: |
-            type=raw,value=${{ env.A2A_GW_VERSION }}
-            type=raw,value=latest
-          labels: |
-            org.opencontainers.image.title=aweb A2A Gateway
-            org.opencontainers.image.description=Hosted A2A gateway for aweb agents
-            org.opencontainers.image.version=${{ env.A2A_GW_VERSION }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v7
-        with:
-          context: cli/go
-          file: cli/go/Dockerfile.a2a-gw
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          sbom: false
-          build-args: |
-            VERSION=${{ env.A2A_GW_VERSION }}
-            RELEASE_TAG=${{ env.A2A_GW_RELEASE_TAG }}
-            COMMIT=${{ env.A2A_GW_COMMIT }}
-            COMMIT_REPO=github.com/${{ github.repository }}
-            DATE=${{ env.A2A_GW_DATE }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          bash scripts/oci-exact-publish.sh verify-published \
+            --archive "$staging/a2a-gateway-oci.tar" --version "$VERSION" \
+            --source-sha "$SOURCE_SHA" --repository ghcr.io/awebai/a2a-gateway
+          require_release_sha
+          publish_tag "$tag"
+          printf 'IMMUTABLE INDEX: ghcr.io/awebai/a2a-gateway:%s@%s\n' \
+            "$VERSION" "$staged" | tee -a "$GITHUB_STEP_SUMMARY"
+          # A2A_REGISTRY_END

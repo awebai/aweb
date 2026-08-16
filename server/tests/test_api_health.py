@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from aweb.api import _cached_body_receive, create_app
+from aweb.lifecycle import LifecycleOutboxReplayResult
 
 
 class _FailingRedis:
@@ -21,8 +23,11 @@ class _FailingDB:
 class _DbInfra:
     is_initialized = True
 
+    def __init__(self):
+        self.db = _FailingDB()
+
     def get_manager(self, name: str = "aweb"):
-        return _FailingDB()
+        return self.db
 
 
 @pytest.mark.asyncio
@@ -53,6 +58,36 @@ async def test_health_hides_internal_exception_details(monkeypatch, caplog):
     assert "postgres://secret@db.internal/aweb refused" not in response.text
     assert "Health check failed for Redis" in caplog.text
     assert "Health check failed for database" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_mounted_request_triggers_bounded_lifecycle_outbox_replay(monkeypatch):
+    replayed = asyncio.Event()
+    redis = _FailingRedis()
+    db_infra = _DbInfra()
+    replay_count = 0
+
+    async def _capture_replay(db, captured_redis, *, limit):
+        nonlocal replay_count
+        assert db is db_infra.get_manager("aweb")
+        assert captured_redis is redis
+        assert limit == 100
+        replay_count += 1
+        if replay_count == 1:
+            return LifecycleOutboxReplayResult(attempted_count=100)
+        replayed.set()
+        return LifecycleOutboxReplayResult(attempted_count=1)
+
+    monkeypatch.setattr("aweb.api.replay_lifecycle_side_effects", _capture_replay)
+    app = create_app(db_infra=db_infra, redis=redis)
+    app.state.db = db_infra
+    app.state.redis = redis
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.get("/health")
+
+    await asyncio.wait_for(replayed.wait(), timeout=1)
+    assert replay_count == 2
 
 
 @pytest.mark.asyncio

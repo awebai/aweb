@@ -21,7 +21,7 @@ type ResolvedIdentity struct {
 	RegistryURL    string
 	DeliveryOrigin string
 	Custody        string // "self" or "custodial"
-	Lifetime       string // "persistent" or "ephemeral"
+	IdentityScope  string // "local" or "global"
 	ResolvedAt     time.Time
 	ResolvedVia    string // "did:key", "registry", "pin"
 }
@@ -127,9 +127,13 @@ type ChainResolver struct {
 	DIDKey   *DIDKeyResolver
 	Registry *RegistryResolver
 	Pin      *PinResolver
+	Team     *TeamRosterResolver
 }
 
 func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	if _, _, ok := splitTeamMemberReference(identifier); ok && r.Team != nil {
+		return r.Team.Resolve(ctx, identifier)
+	}
 	if strings.HasPrefix(identifier, didKeyPrefix) {
 		identity, err := r.DIDKey.Resolve(ctx, identifier)
 		if err != nil {
@@ -180,6 +184,25 @@ func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*Resolv
 		identity.PublicKey = pub
 	}
 	return identity, nil
+}
+
+func (r *ChainResolver) ResolveFresh(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
+	if r.Team != nil {
+		if _, _, ok := r.Team.reference(identifier); ok {
+			identity, err := r.Team.ResolveFresh(ctx, identifier)
+			if err == nil {
+				return identity, nil
+			}
+			_, _, qualifiedTeamMember := splitTeamMemberReference(identifier)
+			_, _, projectedAddress := splitRegistryAddress(identifier)
+			statusCode, hasStatus := HTTPStatusCode(err)
+			if !qualifiedTeamMember && projectedAddress && hasStatus && statusCode == http.StatusNotFound && r.Registry != nil {
+				return r.Registry.ResolveFresh(ctx, identifier)
+			}
+			return nil, err
+		}
+	}
+	return r.Resolve(ctx, identifier)
 }
 
 func registryMissAllowsPinFallback(err error) bool {

@@ -9,12 +9,15 @@ outside the aweb.agents row, API keys, and audit records belong to callers.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from pgdbm import TransactionManager
 from redis.asyncio import Redis
 
 from .events import (
@@ -24,7 +27,7 @@ from .events import (
     publish_team_event,
 )
 from .identity_scope import normalize_identity_scope
-from .messaging.waiting import unregister_waiting
+from .messaging.waiting import unregister_waiting_strict
 from .presence import clear_workspace_presence
 
 logger = logging.getLogger(__name__)
@@ -40,11 +43,18 @@ ActorType = Literal["agent", "human", "support", "system"]
 PresenceCleanupStatus = Literal[
     "not_run",
     "planned",
+    "pending",
     "cleared",
     "skipped_no_redis",
     "failed",
 ]
-PostCommitStatus = Literal["not_run", "completed", "failed", "skipped_no_redis"]
+PostCommitStatus = Literal[
+    "not_run",
+    "pending",
+    "completed",
+    "failed",
+    "skipped_no_redis",
+]
 
 
 @dataclass(frozen=True)
@@ -103,6 +113,22 @@ class LifecycleEventIntent:
     team_id: str
     task_ref: str
     alias: str
+    timestamp: str
+
+
+@dataclass(frozen=True)
+class LifecycleOutboxReplayResult:
+    attempted_count: int = 0
+    delivered_count: int = 0
+    pending_count: int = 0
+    workspace_event_count: int = 0
+    team_event_count: int = 0
+    chat_waiting_cleared_count: int = 0
+    presence_cleared_count: int = 0
+    failed_event_intents: tuple[LifecycleEventIntent, ...] = ()
+    failed_effect_kinds: tuple[str, ...] = ()
+    pending_effect_kinds: tuple[str, ...] = ()
+    skipped_no_redis: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,6 +152,7 @@ class LifecycleCascadeResult:
     presence_cleanup_status: PresenceCleanupStatus = "not_run"
     presence_cleared_count: int | None = None
     post_commit_status: PostCommitStatus = "not_run"
+    outbox_operation_id: str | None = None
     identity_deleted: bool = False
     identity_archived: bool = False
     errors: tuple[LifecycleError, ...] = ()
@@ -647,7 +674,7 @@ async def _clear_chat_waiting(
     cleared_count = 0
     try:
         for session_id, did in participants:
-            await unregister_waiting(redis, session_id, did)
+            await unregister_waiting_strict(redis, session_id, did)
             cleared_count += 1
         return "cleared", cleared_count
     except Exception:
@@ -791,58 +818,352 @@ async def plan_lifecycle_cascade(
     )
 
 
-async def _publish_event_intents(
-    redis: Redis | None, event_intents: tuple[LifecycleEventIntent, ...]
-) -> tuple[int, int, tuple[LifecycleEventIntent, ...], PostCommitStatus]:
-    if not event_intents:
-        return 0, 0, (), "completed"
-    if redis is None:
-        return 0, 0, event_intents, "skipped_no_redis"
+def _decode_outbox_payload(value) -> dict:
+    if isinstance(value, str):
+        return json.loads(value)
+    return dict(value)
 
-    workspace_event_count = 0
-    team_event_count = 0
-    failed: list[LifecycleEventIntent] = []
+
+def _event_intent_from_payload(effect_kind: str, payload: dict) -> LifecycleEventIntent:
+    return LifecycleEventIntent(
+        event_kind=effect_kind,
+        workspace_id=str(payload["workspace_id"]),
+        team_id=str(payload["team_id"]),
+        task_ref=str(payload["task_ref"]),
+        alias=str(payload.get("alias") or ""),
+        timestamp=str(payload["timestamp"]),
+    )
+
+
+def _lifecycle_side_effects(
+    event_intents: tuple[LifecycleEventIntent, ...],
+    chat_participants: tuple[tuple[str, str], ...],
+    presence_ids: list[str],
+    *,
+    team_id: str,
+) -> list[tuple[str, dict]]:
+    effects: list[tuple[str, dict]] = []
     for intent in event_intents:
-        try:
-            if intent.event_kind == "workspace_task_unclaimed":
-                await publish_event(
-                    redis,
-                    TaskUnclaimedEvent(
-                        workspace_id=intent.workspace_id,
-                        task_ref=intent.task_ref,
-                        alias=intent.alias,
-                    ),
-                )
-                workspace_event_count += 1
-            else:
-                await publish_team_event(
-                    redis,
-                    TeamTaskUnclaimedEvent(
-                        team_id=intent.team_id,
-                        task_ref=intent.task_ref,
-                        alias=intent.alias,
-                        title="",
-                    ),
-                )
-                team_event_count += 1
-        except Exception:
-            logger.warning(
-                "Failed to publish lifecycle event intent",
-                extra={
-                    "event_kind": intent.event_kind,
+        effects.append(
+            (
+                intent.event_kind,
+                {
                     "workspace_id": intent.workspace_id,
                     "team_id": intent.team_id,
                     "task_ref": intent.task_ref,
+                    "alias": intent.alias,
+                    "timestamp": intent.timestamp,
                 },
+            )
+        )
+    if chat_participants:
+        effects.append(
+            (
+                "chat_waiting_clear",
+                {
+                    "team_id": team_id,
+                    "participants": [list(participant) for participant in chat_participants],
+                },
+            )
+        )
+    if presence_ids:
+        effects.append(
+            (
+                "presence_clear",
+                {"team_id": team_id, "workspace_ids": presence_ids},
+            )
+        )
+    return effects
+
+
+async def _enqueue_lifecycle_side_effects(
+    tx,
+    *,
+    operation_id: UUID,
+    team_id: str,
+    effects: list[tuple[str, dict]],
+) -> None:
+    for effect_order, (effect_kind, payload) in enumerate(effects):
+        await tx.execute(
+            """
+            INSERT INTO {{tables.lifecycle_side_effect_outbox}} (
+                operation_id, effect_order, team_id, effect_kind, payload_json
+            )
+            VALUES ($1, $2, $3, $4, $5::jsonb)
+            ON CONFLICT (operation_id, effect_order) DO NOTHING
+            """,
+            operation_id,
+            effect_order,
+            team_id,
+            effect_kind,
+            json.dumps(payload, separators=(",", ":"), sort_keys=True),
+        )
+
+
+async def _deliver_lifecycle_side_effect(
+    redis: Redis,
+    *,
+    effect_kind: str,
+    payload: dict,
+) -> tuple[int, int, int, int]:
+    if effect_kind == "workspace_task_unclaimed":
+        intent = _event_intent_from_payload(effect_kind, payload)
+        await publish_event(
+            redis,
+            TaskUnclaimedEvent(
+                workspace_id=intent.workspace_id,
+                task_ref=intent.task_ref,
+                alias=intent.alias,
+                timestamp=intent.timestamp,
+            ),
+        )
+        return 1, 0, 0, 0
+    if effect_kind == "team_task_unclaimed":
+        intent = _event_intent_from_payload(effect_kind, payload)
+        await publish_team_event(
+            redis,
+            TeamTaskUnclaimedEvent(
+                team_id=intent.team_id,
+                task_ref=intent.task_ref,
+                alias=intent.alias,
+                title="",
+                timestamp=intent.timestamp,
+            ),
+        )
+        return 0, 1, 0, 0
+    if effect_kind == "chat_waiting_clear":
+        participants = tuple(
+            (str(participant[0]), str(participant[1]))
+            for participant in payload.get("participants", [])
+        )
+        status, cleared_count = await _clear_chat_waiting(redis, participants)
+        if status != "cleared":
+            raise RuntimeError(f"chat waiting cleanup returned {status}")
+        return 0, 0, int(cleared_count or 0), 0
+    if effect_kind == "presence_clear":
+        workspace_ids = [str(value) for value in payload.get("workspace_ids", [])]
+        status, cleared_count = await _clear_presence(redis, workspace_ids)
+        if status != "cleared":
+            raise RuntimeError(f"presence cleanup returned {status}")
+        return 0, 0, 0, int(cleared_count or 0)
+    raise ValueError(f"unknown lifecycle outbox effect kind: {effect_kind}")
+
+
+async def replay_lifecycle_side_effects(
+    db,
+    redis: Redis | None,
+    *,
+    operation_id: UUID | str | None = None,
+    limit: int | None = None,
+) -> LifecycleOutboxReplayResult:
+    """Deliver committed lifecycle side effects at least once.
+
+    Rows are locked while publishing so concurrent replay workers cannot deliver
+    the same committed row. Operation-specific replay waits for competing
+    workers and drains the complete operation by default; global replay uses a
+    bounded 100-row batch. A crash after Redis accepts a publication but before
+    PostgreSQL records ``delivered_at`` may replay that event; consumers must
+    continue treating lifecycle events as state-change hints and read SQL truth.
+    """
+    operation_uuid = UUID(str(operation_id)) if operation_id is not None else None
+    row_limit = max(1, limit) if limit is not None else (
+        2_147_483_647 if operation_uuid is not None else 100
+    )
+    if redis is None:
+        pending_count = int(
+            await db.fetch_value(
+                """
+                SELECT COUNT(*)
+                FROM {{tables.lifecycle_side_effect_outbox}}
+                WHERE delivered_at IS NULL
+                  AND ($1::uuid IS NULL OR operation_id = $1)
+                """,
+                operation_uuid,
+            )
+            or 0
+        )
+        pending_rows = await db.fetch_all(
+            """
+            SELECT DISTINCT effect_kind
+            FROM {{tables.lifecycle_side_effect_outbox}}
+            WHERE delivered_at IS NULL
+              AND ($1::uuid IS NULL OR operation_id = $1)
+            ORDER BY effect_kind
+            """,
+            operation_uuid,
+        )
+        return LifecycleOutboxReplayResult(
+            pending_count=pending_count,
+            pending_effect_kinds=tuple(str(row["effect_kind"]) for row in pending_rows),
+            skipped_no_redis=True,
+        )
+
+    attempted_count = 0
+    delivered_count = 0
+    workspace_event_count = 0
+    team_event_count = 0
+    chat_waiting_cleared_count = 0
+    presence_cleared_count = 0
+    failed_event_intents: list[LifecycleEventIntent] = []
+    failed_effect_kinds: list[str] = []
+
+    lock_clause = "FOR UPDATE" if operation_uuid is not None else "FOR UPDATE SKIP LOCKED"
+    async with db.transaction() as tx:
+        rows = await tx.fetch_all(
+            f"""
+            SELECT outbox_id, effect_kind, payload_json
+            FROM {{{{tables.lifecycle_side_effect_outbox}}}}
+            WHERE delivered_at IS NULL
+              AND ($1::uuid IS NOT NULL OR next_attempt_at <= NOW())
+              AND ($1::uuid IS NULL OR operation_id = $1)
+            ORDER BY next_attempt_at, created_at, operation_id, effect_order
+            {lock_clause}
+            LIMIT $2
+            """,
+            operation_uuid,
+            row_limit,
+        )
+        for row in rows:
+            attempted_count += 1
+            effect_kind = str(row["effect_kind"])
+            payload = _decode_outbox_payload(row["payload_json"])
+            try:
+                workspace_count, team_count, waiting_count, presence_count = (
+                    await _deliver_lifecycle_side_effect(
+                        redis,
+                        effect_kind=effect_kind,
+                        payload=payload,
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to replay lifecycle outbox effect",
+                    extra={
+                        "outbox_id": str(row["outbox_id"]),
+                        "effect_kind": effect_kind,
+                    },
+                    exc_info=True,
+                )
+                await tx.execute(
+                    """
+                    UPDATE {{tables.lifecycle_side_effect_outbox}}
+                    SET attempt_count = attempt_count + 1,
+                        next_attempt_at = NOW() + (
+                            LEAST(
+                                300,
+                                5 * POWER(2, LEAST(attempt_count, 6))::INTEGER
+                            ) * INTERVAL '1 second'
+                        ),
+                        last_error = $2
+                    WHERE outbox_id = $1
+                      AND delivered_at IS NULL
+                    """,
+                    row["outbox_id"],
+                    type(exc).__name__,
+                )
+                failed_effect_kinds.append(effect_kind)
+                if effect_kind in {
+                    "workspace_task_unclaimed",
+                    "team_task_unclaimed",
+                }:
+                    failed_event_intents.append(
+                        _event_intent_from_payload(effect_kind, payload)
+                    )
+                continue
+
+            await tx.execute(
+                """
+                UPDATE {{tables.lifecycle_side_effect_outbox}}
+                SET delivered_at = NOW(),
+                    attempt_count = attempt_count + 1,
+                    last_error = NULL
+                WHERE outbox_id = $1
+                  AND delivered_at IS NULL
+                """,
+                row["outbox_id"],
+            )
+            delivered_count += 1
+            workspace_event_count += workspace_count
+            team_event_count += team_count
+            chat_waiting_cleared_count += waiting_count
+            presence_cleared_count += presence_count
+
+    pending_count = int(
+        await db.fetch_value(
+            """
+            SELECT COUNT(*)
+            FROM {{tables.lifecycle_side_effect_outbox}}
+            WHERE delivered_at IS NULL
+              AND ($1::uuid IS NULL OR operation_id = $1)
+            """,
+            operation_uuid,
+        )
+        or 0
+    )
+    pending_rows = await db.fetch_all(
+        """
+        SELECT DISTINCT effect_kind
+        FROM {{tables.lifecycle_side_effect_outbox}}
+        WHERE delivered_at IS NULL
+          AND ($1::uuid IS NULL OR operation_id = $1)
+        ORDER BY effect_kind
+        """,
+        operation_uuid,
+    )
+    return LifecycleOutboxReplayResult(
+        attempted_count=attempted_count,
+        delivered_count=delivered_count,
+        pending_count=pending_count,
+        workspace_event_count=workspace_event_count,
+        team_event_count=team_event_count,
+        chat_waiting_cleared_count=chat_waiting_cleared_count,
+        presence_cleared_count=presence_cleared_count,
+        failed_event_intents=tuple(failed_event_intents),
+        failed_effect_kinds=tuple(failed_effect_kinds),
+        pending_effect_kinds=tuple(str(row["effect_kind"]) for row in pending_rows),
+    )
+
+
+_outbox_replay_tasks: set[asyncio.Task] = set()
+
+
+def _schedule_replay_after_outer_transaction(
+    tx: TransactionManager,
+    redis: Redis | None,
+    *,
+    operation_id: UUID,
+    effect_count: int,
+) -> None:
+    async def _replay_after_transaction_finishes() -> None:
+        try:
+            while True:
+                try:
+                    in_transaction = tx.connection.is_in_transaction()
+                except Exception:
+                    # The outer context may release its pooled connection before
+                    # this task observes the final transaction state. The durable
+                    # outbox visibility check below still distinguishes commit
+                    # (rows visible) from rollback (no rows).
+                    break
+                if not in_transaction:
+                    break
+                await asyncio.sleep(0.01)
+            await replay_lifecycle_side_effects(
+                tx._db,
+                redis,
+                operation_id=operation_id,
+                limit=max(1, effect_count),
+            )
+        except Exception:
+            logger.warning(
+                "Deferred lifecycle outbox replay failed",
+                extra={"operation_id": str(operation_id)},
                 exc_info=True,
             )
-            failed.append(intent)
-    return (
-        workspace_event_count,
-        team_event_count,
-        tuple(failed),
-        "failed" if failed else "completed",
-    )
+
+    task = asyncio.create_task(_replay_after_transaction_finishes())
+    _outbox_replay_tasks.add(task)
+    task.add_done_callback(_outbox_replay_tasks.discard)
 
 
 async def _clear_presence(
@@ -868,10 +1189,10 @@ async def apply_lifecycle_cascade(
 ) -> LifecycleCascadeResult:
     """Apply the coordination lifecycle cascade and report post-commit status.
 
-    Event intents are captured from SQL ``DELETE ... RETURNING`` before commit
-    and published after commit. If the process dies after commit and before
-    publish, those task refs are not durably recoverable without a future
-    outbox; callers receive failed intents only for immediate retry/reporting.
+    Redis event and cleanup intents are captured from SQL mutation results and
+    inserted into the lifecycle outbox in the same transaction. Plain-handle
+    calls attempt replay after commit. Transaction-handle calls return pending
+    and schedule replay only after the caller's outer transaction finishes.
 
     An empty target workspace set is an intentional idempotent no-op.
     """
@@ -883,6 +1204,7 @@ async def apply_lifecycle_cascade(
         return _error_result(request, errors)
 
     deleted_at = request.deleted_at or datetime.now(timezone.utc)
+    operation_id = uuid4()
     event_intents: list[LifecycleEventIntent] = []
     task_unclaim_count = 0
     reservation_release_count = 0
@@ -941,6 +1263,7 @@ async def apply_lifecycle_cascade(
             task_unclaim_count += len(claimed_rows)
             for row in claimed_rows:
                 task_ref = str(row["task_ref"])
+                event_timestamp = datetime.now(timezone.utc).isoformat()
                 event_intents.append(
                     LifecycleEventIntent(
                         event_kind="workspace_task_unclaimed",
@@ -948,6 +1271,7 @@ async def apply_lifecycle_cascade(
                         team_id=team_id,
                         task_ref=task_ref,
                         alias=alias,
+                        timestamp=event_timestamp,
                     )
                 )
                 event_intents.append(
@@ -957,6 +1281,7 @@ async def apply_lifecycle_cascade(
                         team_id=team_id,
                         task_ref=task_ref,
                         alias=alias,
+                        timestamp=event_timestamp,
                     )
                 )
             if (
@@ -996,35 +1321,121 @@ async def apply_lifecycle_cascade(
                 > 0
             )
 
-    workspace_changes = _workspace_changes(workspaces, status="completed")
-    workspace_ids = [change.workspace_id for change in workspace_changes]
-    workspace_event_count, team_event_count, failed_event_intents, event_status = (
-        await _publish_event_intents(redis, tuple(event_intents))
-    )
-    chat_waiting_status, chat_waiting_cleared_count = await _clear_chat_waiting(
-        redis, chat_participants
-    )
-    presence_ids = list(workspace_ids)
-    if identity_deleted or request.operation == "agent_deleted_cascade":
-        presence_ids.extend(str(agent_id) for agent_id in agent_ids)
-        presence_ids = list(dict.fromkeys(presence_ids))
-    presence_status, presence_cleared_count = await _clear_presence(redis, presence_ids)
+        workspace_changes = _workspace_changes(workspaces, status="completed")
+        workspace_ids = [change.workspace_id for change in workspace_changes]
+        presence_ids = list(workspace_ids)
+        if identity_deleted or request.operation == "agent_deleted_cascade":
+            presence_ids.extend(str(agent_id) for agent_id in agent_ids)
+            presence_ids = list(dict.fromkeys(presence_ids))
+        outbox_team_id = str(
+            request.team_id
+            or (workspace_changes[0].team_id if workspace_changes else "")
+        )
+        effects = _lifecycle_side_effects(
+            tuple(event_intents),
+            chat_participants,
+            presence_ids,
+            team_id=outbox_team_id,
+        )
+        await _enqueue_lifecycle_side_effects(
+            tx,
+            operation_id=operation_id,
+            team_id=outbox_team_id,
+            effects=effects,
+        )
 
-    post_commit_status: PostCommitStatus
-    if (
-        event_status == "failed"
-        or chat_waiting_status == "failed"
-        or presence_status == "failed"
-    ):
-        post_commit_status = "failed"
-    elif (
-        event_status == "skipped_no_redis"
-        or chat_waiting_status == "skipped_no_redis"
-        or presence_status == "skipped_no_redis"
-    ):
-        post_commit_status = "skipped_no_redis"
+    if isinstance(db, TransactionManager):
+        _schedule_replay_after_outer_transaction(
+            db,
+            redis,
+            operation_id=operation_id,
+            effect_count=len(effects),
+        )
+        workspace_event_count = 0
+        team_event_count = 0
+        failed_event_intents: tuple[LifecycleEventIntent, ...] = ()
+        event_status: PostCommitStatus = "pending" if event_intents else "completed"
+        chat_waiting_status: PresenceCleanupStatus = (
+            "pending" if chat_participants else "not_run"
+        )
+        chat_waiting_cleared_count = 0 if not chat_participants else None
+        presence_status: PresenceCleanupStatus = (
+            "pending" if presence_ids else "not_run"
+        )
+        presence_cleared_count = 0 if not presence_ids else None
+        post_commit_status: PostCommitStatus = "pending" if effects else "completed"
     else:
-        post_commit_status = "completed"
+        replay_result = await replay_lifecycle_side_effects(
+            db,
+            redis,
+            operation_id=operation_id,
+            limit=max(1, len(effects)),
+        )
+        workspace_event_count = replay_result.workspace_event_count
+        team_event_count = replay_result.team_event_count
+        failed_event_intents = replay_result.failed_event_intents
+
+        failed_kinds = set(replay_result.failed_effect_kinds)
+        pending_kinds = set(replay_result.pending_effect_kinds)
+        if replay_result.skipped_no_redis and event_intents:
+            event_status = "skipped_no_redis"
+        elif failed_kinds & {
+            "workspace_task_unclaimed",
+            "team_task_unclaimed",
+        }:
+            event_status = "failed"
+        elif pending_kinds & {
+            "workspace_task_unclaimed",
+            "team_task_unclaimed",
+        }:
+            event_status = "pending"
+        else:
+            event_status = "completed"
+
+        if not chat_participants:
+            chat_waiting_status = "not_run"
+            chat_waiting_cleared_count = 0
+        elif replay_result.skipped_no_redis:
+            chat_waiting_status = "skipped_no_redis"
+            chat_waiting_cleared_count = None
+        elif "chat_waiting_clear" in failed_kinds:
+            chat_waiting_status = "failed"
+            chat_waiting_cleared_count = None
+        elif "chat_waiting_clear" in pending_kinds:
+            chat_waiting_status = "pending"
+            chat_waiting_cleared_count = None
+        else:
+            chat_waiting_status = "cleared"
+            chat_waiting_cleared_count = replay_result.chat_waiting_cleared_count
+
+        if not presence_ids:
+            presence_status = "not_run"
+            presence_cleared_count = 0
+        elif replay_result.skipped_no_redis:
+            presence_status = "skipped_no_redis"
+            presence_cleared_count = None
+        elif "presence_clear" in failed_kinds:
+            presence_status = "failed"
+            presence_cleared_count = None
+        elif "presence_clear" in pending_kinds:
+            presence_status = "pending"
+            presence_cleared_count = None
+        else:
+            presence_status = "cleared"
+            presence_cleared_count = replay_result.presence_cleared_count
+
+        if "failed" in {event_status, chat_waiting_status, presence_status}:
+            post_commit_status = "failed"
+        elif "skipped_no_redis" in {
+            event_status,
+            chat_waiting_status,
+            presence_status,
+        }:
+            post_commit_status = "skipped_no_redis"
+        elif "pending" in {event_status, chat_waiting_status, presence_status}:
+            post_commit_status = "pending"
+        else:
+            post_commit_status = "completed"
 
     completed_mutations = ["workspace.soft_delete", "task_claims.release"]
     if reservation_release_count:
@@ -1062,6 +1473,7 @@ async def apply_lifecycle_cascade(
         presence_cleanup_status=presence_status,
         presence_cleared_count=presence_cleared_count,
         post_commit_status=post_commit_status,
+        outbox_operation_id=str(operation_id) if effects else None,
         identity_deleted=identity_deleted,
         identity_archived=identity_archived,
     )

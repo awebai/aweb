@@ -136,10 +136,10 @@ def test_ci_gate_policy_contract_rejects_semantic_weakening(semantic_group: str)
         _assert_gate_policy_contract(readme.replace(semantic_group, "", 1))
 
 
-def test_ci_runs_every_make_gate_on_push_and_pull_request() -> None:
+def test_ci_runs_every_make_gate_on_pull_request_and_manual_retry() -> None:
     workflow = _workflow()
 
-    assert {"push", "pull_request"}.issubset(workflow["on"])
+    assert set(workflow["on"]) == {"pull_request", "workflow_dispatch"}
     steps = [step for job in workflow["jobs"].values() for step in job["steps"]]
     commands = "\n".join(step.get("run", "") for step in steps)
     for target in ("lint", "aatk-spec-check", "test", "e2e"):
@@ -165,8 +165,9 @@ def test_ci_builds_the_e2e_stack_from_the_commit_under_test() -> None:
     Now aweb is the repository being tested, and a pinned copy would mean a
     pull request that changes awid/ gets a green Library e2e built against
     some other awid. Measured cost of exactly that mistake elsewhere in this
-    repo: ship.yml pins awebai/library at a rev missing 13 files and differing
-    in 22 more, so its 'comprehensive' e2e builds a Library with no AATK in it.
+    repo: the deleted hosted comprehensive gate pinned awebai/library at a rev
+    missing 13 files and differing in 22 more, so its e2e built a Library with
+    no AATK in it.
     """
     workflow = _workflow()
     steps = [step for job in workflow["jobs"].values() for step in job["steps"]]

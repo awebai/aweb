@@ -23,6 +23,13 @@ export class APIClient {
     private auth: APIClientAuth,
   ) {}
 
+  hasTeamCertificateAuth(teamID: string): boolean {
+    return this.auth.teamID === teamID
+      && this.auth.teamCertificateHeader.trim() !== ""
+      && this.auth.did.trim() !== ""
+      && this.auth.signingKey.length > 0;
+  }
+
   async get<T>(path: string): Promise<T> {
     return this.request("GET", path);
   }

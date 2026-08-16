@@ -8,6 +8,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
+from awid.federation_errors import FederationAuthorityError
+from awid.pagination import encode_cursor, validate_pagination_params
 from aweb.awid_error_handling import awid_registry_not_configured_exception
 from aweb.deps import get_db
 from aweb.config import get_settings
@@ -46,7 +48,10 @@ from aweb.messaging.conversations import (
     get_conversation,
     touch_conversation_activity,
 )
-from aweb.messaging.contacts import upsert_successful_identity_contact
+from aweb.messaging.contacts import (
+    resolve_local_namespace_controller_did,
+    upsert_successful_identity_contact,
+)
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.mail_routing import (
     MailContinuationContext,
@@ -236,6 +241,8 @@ class InboxMessage(BaseModel):
 
 class InboxResponse(BaseModel):
     messages: list[InboxMessage]
+    has_more: bool = False
+    next_cursor: Optional[str] = None
 
 
 class AckResponse(BaseModel):
@@ -243,7 +250,13 @@ class AckResponse(BaseModel):
     acknowledged_at: str
 
 
-async def _inbox_response_from_rows(db, rows) -> InboxResponse:
+async def _inbox_response_from_rows(
+    db,
+    rows,
+    *,
+    has_more: bool = False,
+    next_cursor: str | None = None,
+) -> InboxResponse:
     identity_map = await lookup_identity_metadata_by_did(
         db,
         [
@@ -289,7 +302,7 @@ async def _inbox_response_from_rows(db, rows) -> InboxResponse:
             )
         )
 
-    return InboxResponse(messages=messages)
+    return InboxResponse(messages=messages, has_more=has_more, next_cursor=next_cursor)
 
 
 @router.get("/conversations/{conversation_id}", response_model=InboxResponse)
@@ -502,6 +515,11 @@ def _validate_signed_mail_payload(
 def _external_recipient_from_address(address: str, resolution) -> dict:
     _, name = address.split("/", 1)
     delivery = getattr(resolution, "delivery", None)
+    delivery_origin = (
+        getattr(resolution, "delivery_origin", None)
+        or getattr(delivery, "origin", "")
+        or ""
+    )
     return {
         "agent_id": None,
         "team_id": None,
@@ -509,7 +527,10 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
         "address": address,
         "did_aw": resolution.did_aw.strip(),
         "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
-        "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
+        "delivery_origin": str(delivery_origin).strip(),
+        "authority_controller_did": str(
+            getattr(resolution, "controller_did", "") or ""
+        ).strip(),
         "external": True,
     }
 
@@ -698,6 +719,7 @@ async def record_successful_contact_side_effect(
     owner_did: str,
     sender_team_id: str | None,
     recipient: dict | None,
+    registry_client=None,
 ) -> bool:
     recipient_address = _concrete_contact_address(recipient)
     if not recipient_address:
@@ -706,10 +728,29 @@ async def record_successful_contact_side_effect(
     sender_team = str(sender_team_id or "").strip()
     if sender_team and recipient_team_id and sender_team == recipient_team_id:
         return False
+    controller_did = str(
+        (recipient or {}).get("authority_controller_did") or ""
+    ).strip()
+    if not controller_did and (recipient or {}).get(
+        "requires_local_address_authority"
+    ):
+        controller_did = (
+            await resolve_local_namespace_controller_did(
+                registry_client,
+                contact_address=recipient_address,
+                contact_did_aw=str((recipient or {}).get("did_aw") or ""),
+                contact_current_did_key=str(
+                    (recipient or {}).get("did_key") or ""
+                ),
+            )
+            or ""
+        )
     return await upsert_successful_identity_contact(
         db,
         owner_did=owner_did,
         contact_address=recipient_address,
+        contact_did_aw=str((recipient or {}).get("did_aw") or "").strip() or None,
+        binding_controller_did=controller_did or None,
         label=str((recipient or {}).get("alias") or recipient_address),
     )
 
@@ -867,7 +908,8 @@ async def _deliver_remote_mail_and_project_locally(
                     "agent_id": auth.agent_id,
                     "alias": auth.alias or sender_address or sender_did,
                     "address": sender_address,
-                    "transport_hint": "sender",
+                    "current_did_key": sender_current_did,
+                    "transport_hint": "local",
                 },
                 recipients=[
                     {
@@ -877,7 +919,7 @@ async def _deliver_remote_mail_and_project_locally(
                         "address": target_address,
                         "delivery_origin": delivery_origin,
                         "current_did_key": target_current_did,
-                        "transport_hint": _recipient_transport_hint(payload),
+                        "transport_hint": "federation:" + delivery_origin,
                     }
                 ],
                 team_id=auth.team_id,
@@ -915,6 +957,7 @@ async def _deliver_remote_mail_and_project_locally(
         owner_did=sender_routing_did,
         sender_team_id=auth.team_id,
         recipient=recipient,
+        registry_client=registry_client,
     )
 
     await fire_mutation_hook(
@@ -1434,7 +1477,53 @@ async def send_message(
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_address must be domain/name")
         domain, name = address.split("/", 1)
-        if registry_client is not None:
+        local_candidate = await _local_recipient_from_address(db, domain=domain, name=name)
+        if local_candidate is not None:
+            signed_binding = _signed_payload_matches_address_binding(
+                verified_signed_payload_json(
+                    signed_payload=payload.signed_payload,
+                    signature=payload.signature,
+                    did_key=auth.did_key,
+                ),
+                address=address,
+                recipient=local_candidate,
+            )
+            if local_recipient_visible_to_auth(local_candidate, auth) or signed_binding:
+                recipient_did = str(
+                    local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
+                ).strip()
+                canonical_recipient = (
+                    await resolve_agent_by_did(db, recipient_did)
+                    if recipient_did
+                    else None
+                )
+                recipient = _with_requested_address(
+                    canonical_recipient or local_candidate,
+                    address,
+                )
+                recipient["requires_local_address_authority"] = True
+
+        strict_authority = getattr(request.app.state, "federation_authority", None)
+        if recipient is None and strict_authority is not None:
+            try:
+                resolved = await strict_authority.resolve_contact(
+                    address,
+                    source_ip=str(request.client.host if request.client else "unknown"),
+                )
+            except FederationAuthorityError as exc:
+                if exc.reason != "sender_identity_not_found":
+                    raise
+                resolved = None
+            if resolved is not None and resolved.did_aw:
+                recipient_did = resolved.did_aw
+                recipient = await resolve_agent_by_did(db, recipient_did)
+                if recipient is None:
+                    recipient = _external_recipient_from_address(address, resolved)
+                else:
+                    recipient["authority_controller_did"] = str(
+                        getattr(resolved, "controller_did", "") or ""
+                    ).strip()
+        elif recipient is None and registry_client is not None:
             resolved = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
             if resolved is not None and resolved.did_aw:
                 recipient_did = resolved.did_aw
@@ -1594,7 +1683,8 @@ async def send_message(
                 "agent_id": auth.agent_id,
                 "alias": auth.alias or sender_address or sender_did,
                 "address": sender_address,
-                "transport_hint": "sender",
+                "current_did_key": (auth.did_key or "").strip() or None,
+                "transport_hint": "local",
             },
             recipients=[
                 {
@@ -1603,7 +1693,7 @@ async def send_message(
                     "alias": to_alias or (recipient or {}).get("alias") or recipient_did or "",
                     "address": _recipient_conversation_address(recipient, payload),
                     "current_did_key": (recipient or {}).get("did_key"),
-                    "transport_hint": _recipient_transport_hint(payload),
+                    "transport_hint": "local",
                 }
             ],
             team_id=auth.team_id,
@@ -1641,6 +1731,7 @@ async def send_message(
         owner_did=(auth.did_aw or sender_did).strip(),
         sender_team_id=auth.team_id,
         recipient=recipient,
+        registry_client=registry_client,
     )
 
     await fire_mutation_hook(
@@ -1675,27 +1766,54 @@ async def get_inbox(
     request: Request,
     db=Depends(get_db),
     limit: int = Query(default=50, ge=1, le=200),
+    cursor: str | None = Query(default=None),
     unread_only: bool = Query(default=False),
     message_id: str | None = Query(default=None),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> InboxResponse:
+    del request
     aweb_db = db.get_manager("aweb")
     inbox_dids = auth_dids(auth)
     if not inbox_dids:
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
 
-    where_clause = "WHERE m.to_did = ANY($1::text[])"
-    params: list = [inbox_dids]
-
+    exact_message_id: UUID | None = None
     if message_id is not None and message_id.strip():
+        if cursor:
+            raise HTTPException(status_code=422, detail="cursor cannot be combined with message_id")
         try:
-            params.append(UUID(message_id.strip()))
+            exact_message_id = UUID(message_id.strip())
         except Exception:
             raise HTTPException(status_code=422, detail="Invalid message_id format")
-        where_clause += f" AND m.message_id = ${len(params)}"
-    elif unread_only:
-        where_clause += " AND m.read_at IS NULL"
 
+    try:
+        page_limit, cursor_data = validate_pagination_params(limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    where_clause = "WHERE m.to_did = ANY($1::text[])"
+    params: list = [inbox_dids]
+    if exact_message_id is not None:
+        params.append(exact_message_id)
+        where_clause += f" AND m.message_id = ${len(params)}"
+    else:
+        if unread_only:
+            where_clause += " AND m.read_at IS NULL"
+        if cursor_data is not None:
+            try:
+                cursor_created_at = datetime.fromisoformat(str(cursor_data["created_at"]))
+                cursor_message_id = UUID(str(cursor_data["message_id"]))
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Invalid inbox cursor") from exc
+            if cursor_created_at.tzinfo is None:
+                cursor_created_at = cursor_created_at.replace(tzinfo=timezone.utc)
+            params.extend([cursor_created_at, cursor_message_id])
+            where_clause += (
+                f" AND (m.created_at, m.message_id) < "
+                f"(${len(params) - 1}, ${len(params)})"
+            )
+
+    query_limit = 1 if exact_message_id is not None else page_limit + 1
     rows = await aweb_db.fetch_all(
         f"""
         SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
@@ -1704,14 +1822,63 @@ async def get_inbox(
                m.content_mode, m.message_version, m.encrypted_envelope
         FROM {{{{tables.messages}}}} m
         {where_clause}
-        ORDER BY m.created_at DESC
+        ORDER BY m.created_at DESC, m.message_id DESC
         LIMIT ${len(params) + 1}
         """,
         *params,
-        limit,
+        query_limit,
     )
 
-    return await _inbox_response_from_rows(db, rows)
+    has_more = exact_message_id is None and len(rows) > page_limit
+    rows = rows[:page_limit]
+    next_cursor = None
+    if has_more and rows:
+        last = rows[-1]
+        next_cursor = encode_cursor(
+            {
+                "created_at": last["created_at"].isoformat(),
+                "message_id": str(last["message_id"]),
+            }
+        )
+    return await _inbox_response_from_rows(
+        db,
+        rows,
+        has_more=has_more,
+        next_cursor=next_cursor,
+    )
+
+
+@router.get("/{message_id}", response_model=InboxMessage)
+async def get_message(
+    message_id: str,
+    db=Depends(get_db),
+    auth: MessagingAuth = Depends(get_messaging_auth),
+) -> InboxMessage:
+    try:
+        msg_uuid = UUID(message_id.strip())
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid message_id format")
+
+    actor_dids = auth_dids(auth)
+    if not actor_dids:
+        raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
+    row = await db.get_manager("aweb").fetch_one(
+        """
+        SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+               m.subject, m.body, m.priority, m.read_at, m.created_at,
+               m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
+               m.content_mode, m.message_version, m.encrypted_envelope
+        FROM {{tables.messages}} m
+        WHERE m.message_id = $1
+          AND (m.from_did = ANY($2::text[]) OR m.to_did = ANY($2::text[]))
+        """,
+        msg_uuid,
+        actor_dids,
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Message not found")
+    response = await _inbox_response_from_rows(db, [row])
+    return response.messages[0]
 
 
 @router.post("/{message_id}/ack", response_model=AckResponse)

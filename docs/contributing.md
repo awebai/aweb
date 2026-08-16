@@ -142,7 +142,7 @@ regenerated output:
 make freshness
 ```
 
-`make release-all-check` runs the same check and fails on drift.
+The internal clean-Docker release gate runs the same check and fails on drift.
 
 Run the Node installs first if you are invoking it directly on a fresh checkout:
 
@@ -152,79 +152,68 @@ Run the Node installs first if you are invoking it directly on a fresh checkout:
 
 Without them the bundle sections fail on a missing `esbuild` binary, and they
 report it as `bundle stale or missing the security surface` — which reads as
-artifact drift rather than as an absent install. `make release-all-check` does not
-hit this because `release-channel-check` runs `npm ci` before it reaches
-freshness; running `make freshness` on its own skips that step.
+artifact drift rather than as an absent install. The internal release gate
+installs all three Node workspaces once before it reaches freshness; running
+`make freshness` on its own skips that step.
 
-## Reproducible OAS seam input
+## Reproducible OATS seam input
 
-The OAS seam tests do not read a sibling working checkout by default. `make
-prepare-oas-test-root` materializes the immutable repository and commit recorded
-in `oas/upstream-test-pin.json` into the ignored `.cache/oas-pinned` directory;
-`make test-oas`, `make test-oas-proof-helpers`, and `make release-all-check` all
-consume that clean checkout. The same default runs in the release-gate workflow,
-so an aweb result is attributable to committed inputs rather than another
-repository's uncommitted state.
+The OATS seam tests do not read a sibling working checkout by default. `make
+prepare-oats-test-root` materializes the immutable repository and commit recorded
+in `oats/upstream-test-pin.json` into the ignored `.cache/oats-pinned` directory;
+`make test-oats`, `make test-oats-proof-helpers`, and the internal clean-Docker
+gate all consume that clean checkout, so an aweb result is attributable to
+committed inputs rather than another repository's uncommitted state.
 
-This pin has a cost: it does not automatically exercise newer or uncommitted OAS
+This pin has a cost: it does not automatically exercise newer or uncommitted OATS
 integration primitives. To test that leading edge deliberately, opt in without
 changing or cleaning the local checkout:
 
 ```bash
-make test-oas OAS_TEST_ROOT=/path/to/local/oas
-make test-oas-proof-helpers OAS_TEST_ROOT=/path/to/local/oas
+make test-oats OATS_TEST_ROOT=/path/to/local/oats
+make test-oats-proof-helpers OATS_TEST_ROOT=/path/to/local/oats
 ```
 
 Treat that override as additional early-integration evidence, not as a substitute
 for the pinned release result. Update the committed pin deliberately when the
-reviewed OAS seam advances; a clean first run requires network access to fetch the
+reviewed OATS seam advances; a clean first run requires network access to fetch the
 pinned commit, while later runs reuse and reset the repository-owned cache.
 
-## Mandatory comprehensive CI
+## Comprehensive release proof
 
-`make ship`, not `make test` or `make release-all-check`, is the canonical release
-proof. It includes the release and AWID packaging checks, the cross-server
-federation journey, the OSS user journey and its mutation guard, and the
-real-binary profile/team/Library journey. The `Comprehensive ship gate` workflow
-runs that exact target for every pull request and every push to `main`; no person
-chooses whether the journeys run.
+The release command runs one gate in a clean local Docker environment before
+publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
+packages/images, unit and contract suites, OATS and real-stack journeys, freshness,
+process guards, and vulnerability audits. Each row names the artifact keys it
+guards; a release runs the rows guarding what it publishes plus every `all` row,
+and records the rest as `SKIPPED`. Hosted workflows retain focused pull
+request checks but no longer repeat this complete proof on `main`.
 
-Those suites run independently of each other. `make` stops a recipe at the first
-failing line, so while they were recipe lines a failure in one silently removed the
-coverage of every suite behind it — the federation journey failing meant the OSS
-user journey did not run, and nothing said so. `ship` now hands `SHIP_SUITES` to
-`scripts/run-ship-suites.sh`, which runs each suite whatever the previous one did
-and exits nonzero if any failed. Read its summary rather than the last failure: it
-reports every suite as `PASSED`, `FAILED` or `NOT RUN`, so a run that was cancelled
-or timed out names the suites it never reached instead of leaving them out. A suite
-missing from the output would otherwise read the same as one that passed.
-
-The workflow checks out Library and blueprints at the exact public commits in
-`.github/workflows/ship.yml`. Advance either pin deliberately after
-proving the combined stack. Local `make ship` still accepts the sibling checkouts
-and `LIBRARY_E2E_LIBRARY_CONTEXT` / `LIBRARY_E2E_BLUEPRINT_SRC` overrides as
-additional leading-edge integration evidence, but mutable siblings are not the
-hosted release subject.
+The gate runs each selected row independently and writes a full log plus a summary
+that names every row `PASSED`, `FAILED`, `SKIPPED`, or `NOT RUN`; any failure or
+unobserved selected row makes the gate red. Gate runs share lockfile-keyed
+package and layer caches; determinism is carried by the committed lockfiles,
+whose hashes the gate records in its evidence. It starts from one exact clean aweb commit, records the exact
+clean Library and blueprint input commits, and rejects dirty or missing inputs.
+The gate is internal to release preparation and is deliberately not a third
+operator command.
 
 Reproducible here means reproducible on a clean runner with no helpful ambient
-tools. The OAS seam builds `aw` from the exact aweb checkout and selects the real
+tools. The OATS seam builds `aw` from the exact aweb checkout and selects the real
 Pi binary installed from `pi-extension/package-lock.json`; it prepends both exact
 paths before spawning. It never substitutes a globally installed or previously
 published CLI/runtime. A developer laptop is weak evidence for this property
 precisely because its accumulated tools can hide missing setup.
 
-A workflow that merely reports failure is capability, not enforcement. Repository
-protection must make `Comprehensive ship gate` a required status check, require a
-strict up-to-date branch, and apply to administrators. Observe the exact hosted
-check name and a successful run before enabling that rule: requiring a misspelled
-or never-reported context blocks every merge. Renaming the job therefore requires
-a coordinated protection update, never an isolated workflow edit.
+Treat the workflow as a diagnostic signal, not an availability dependency. Fix
+persistent failures rather than ignoring them, but keep the explicit human risk
+acceptance usable when runners are unavailable or urgency warrants proceeding.
 
 ## Vulnerability audits
 
 `make check-node-audit` and `make check-go-vulnerability-audit` audit the
-dependencies a release ships. Both run from `make release-all-check`, and
-neither runs from `make test`: the Go audit pins itself to the toolchain in
+dependencies a release ships. Both run from the internal clean-Docker release
+gate, and neither runs from `make test`: the Go audit pins itself to the toolchain in
 `cli/go/go.mod` and refuses to run under any other, and both consult an
 advisory database that moves without any repo change, which would make `make
 test` non-deterministic.
@@ -238,7 +227,7 @@ only checked when an audit runs. This is an accepted limitation, tracked in
 The Go audit refuses to run under the wrong toolchain and prints the two
 commands that install the pinned one. `make check-node-audit` needs the
 workspace dependencies installed (`npm ci` in `channel-core`, `channel` and
-`pi-extension`); `make release-all-check` installs them before auditing.
+`pi-extension`); the internal release gate installs them before auditing.
 
 Routine `make test` uses `uv run --frozen`, so tests never silently repair a
 stale lock — regenerate it explicitly with `cd server && uv lock` (or `cd awid

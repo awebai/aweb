@@ -64,22 +64,37 @@ automatically:
 
 What gets written under `.aw/`:
 
-- a global identity in the local test namespace with address `local/alice`
-- a team certificate for `default:local`
-- workspace binding pointing at your local `aweb`
+- a local self-custodial identity for `default:local`, represented by its
+  `did:key` and with no public address or `did:aw`;
+- a team certificate for `default:local`; and
+- a workspace binding pointing at your local `aweb`.
 
-The default team membership is local. That is fine for local try-it-out use.
+### Connect More Existing Agents
 
-### Add More Local Agents
-
-Create a sibling worktree for another agent:
+From Alice's directory, create an invite:
 
 ```bash
-aw workspace add-worktree developer --name bob
+aw team invite
 ```
 
-That creates another local workspace in a sibling git worktree and joins it to
-the same team.
+Run the join command from a second existing agent directory. Its equivalent
+form is:
+
+```bash
+aw team join <invite-token> --name bob
+```
+
+Joining installs Bob's local identity and team membership; it does not create
+the aweb workspace projection. Connect that existing membership explicitly,
+then verify it:
+
+```bash
+aw workspace connect --service http://localhost:8000
+aw check
+```
+
+This connects an agent directory you already operate. Aweb does not create its
+definition, home, worktree, runtime, or process.
 
 Useful checks:
 
@@ -222,14 +237,10 @@ the workspace to `aweb`.
 ### Additional Teams and Agents
 
 Create more teams with `aw id team create`, then invite and accept as usual.
-For more local agents on one machine, use:
-
-```bash
-aw workspace add-worktree developer --name bob
-```
-
-For more repos or machines, repeat invite, accept, and init in each target
-directory.
+For every additional agent, start with an existing target directory and repeat
+the invite, accept, and service-connect steps there. The operator or
+orchestrator remains responsible for creating and running that agent's home,
+worktree, runtime, and process.
 
 ### Key Rotation
 
@@ -237,7 +248,7 @@ Global identities can rotate keys without changing their stable `did:aw`:
 
 ```bash
 aw id rotate-key
-aw id verify
+aw id verify <did:aw>
 ```
 
 ## Operational Notes
@@ -266,6 +277,67 @@ For `awid`:
 - `AWID_DATABASE_URL`
 - `AWID_REDIS_URL`
 - optional `AWID_SKIP_DNS_VERIFY=1` for internal non-DNS deployments
+
+### Cross-Registry Authority and Migration
+
+`AWID_REGISTRY_URL` selects this aweb service's home registry. It does not route
+or authorize a global sender whose client-signed address belongs to another
+registry. Cross-registry ingress independently discovers `_awid.<sender-domain>`,
+uses the DNS-selected HTTPS registry, and verifies the exact namespace
+controller, address, stable DID, current key, identity log, and route origin.
+Do not place a sender-supplied registry URL in a message or configure the home
+client as a fallback for external addresses.
+
+PostgreSQL is required security state for cross-registry checkpoints, complete
+address-authority cohorts, fences, leases, limits, receiver-wide message
+receipts, contact identity bindings, and atomic delivery effects. Redis remains
+cache/wake infrastructure and cannot authorize during a PostgreSQL outage. A
+coordination timeout or outage therefore returns a retryable closed failure and
+stores no delivery effects.
+
+A receiver may reuse one complete authority cohort for at most 60 seconds.
+`AWEB_FEDERATION_AUTHORITY_REUSE_SECONDS` defaults to 60 and accepts only 1..60.
+At expiry the receiver rereads DNS, namespace, address, key-or-log, and origin.
+This does **not** promise revocation, rotation, registry migration, or
+reassignment detection within 60 seconds: a DNS or registry source can suppress
+an unseen transition indefinitely by continuing to serve old valid evidence. A
+stronger detection guarantee requires a separate non-suppressible
+witness/transparency mechanism.
+
+Authority reads admit at most 32 globally, 2 per domain, and 4 per registry
+origin. Source/domain/origin token buckets each burst to 5 and refill at 30 per
+minute. PostgreSQL leases last 10 seconds, followers wait at most 5 seconds, and
+a failed shared read publishes the same stable failure for 5 seconds.
+
+The additive aweb migration is `015_federation_delivery_policy.sql`; do not edit
+migration 014 or earlier. It adds the complete-or-null contact binding
+columns/constraint/index, receiver-wide
+`message_ingress_receipts` plus insertion triggers, historical unreplayable
+backfill, and `federation_mutation_outbox`. Before enabling it on an existing
+database:
+
+- resolve any UUID that exists in both historical mail and chat stores; the
+  migration fails rather than choosing one;
+- expect local-path and historical receipts to be `legacy_unreplayable`: they
+  cannot authorize federation replay and block UUID reuse after message deletion,
+  while existing local pre-insert idempotency remains unchanged;
+- explicitly bind address-only legacy contacts to a freshly resolved `did:aw`
+  before relying on them for `team_and_contacts`; and
+- treat address reassignment as a new trust decision. In-place replacement
+  requires namespace-controller proof and explicit authenticated recipient
+  acceptance; it never transfers automatically.
+
+The mutation outbox uses `FOR UPDATE SKIP LOCKED` so concurrent workers do not
+publish one committed row concurrently. Publication remains at-least-once if a
+worker crashes after Redis accepts an event but before PostgreSQL records
+`delivered_at`.
+
+Same-registry global delivery and existing local `did:key` learned-route
+continuation remain supported. Unknown local first contact and route injection
+still fail closed. For incident triage, preserve `correlation_id` and use the
+[generated federation error reference](federation-error-reference.md); only rate
+limiting emits `Retry-After: 1`. Do not collect keys, DID logs, DNS answers, peer
+bodies, or internal URLs from users.
 
 ### Health and Smoke Tests
 

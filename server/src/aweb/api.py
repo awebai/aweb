@@ -1,19 +1,27 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from redis.asyncio import Redis
 from redis.asyncio import from_url as async_redis_from_url
 from starlette.routing import Mount
 
 from awid.registry import CachedRegistryClient, RegistryClient
+from awid.federation_errors import FederationAuthorityError
 from .config import get_settings
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from awid.log_config import configure_logging
+from .lifecycle import replay_lifecycle_side_effects
+from .federation.activation import build_federation_authority_activation
+from .federation.errors import authority_error_body
+from .federation.delivery import replay_federation_mutation_outbox
 from .mutation_hooks import create_mutation_handler
 from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
@@ -29,6 +37,7 @@ from .routes.contacts import router as contacts_router
 from .routes.conversations import router as conversations_router
 from .routes.events import router as events_router
 from .routes.federation import router as federation_router
+from .routes.identity_grants import router as identity_grants_router
 from .routes.messages import router as messages_router
 from .routes.reservations import router as reservations_router
 from .routes.session_leases import router as session_leases_router
@@ -41,6 +50,9 @@ from .coordination.routes.tasks import router as tasks_router
 from .coordination.routes.workspaces import router as workspaces_router
 
 logger = logging.getLogger(__name__)
+
+_LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE = 100
+_LIFECYCLE_OUTBOX_MAX_BATCHES_PER_TRIGGER = 10
 
 
 def _cached_body_receive(body: bytes):
@@ -68,6 +80,7 @@ async def _mount_mcp_app(
     db_infra: DatabaseInfra,
     redis: Redis,
     registry_client: RegistryClient,
+    federation_authority=None,
 ) -> None:
     if any(isinstance(r, Mount) and r.path == "/mcp" for r in app.router.routes):
         return
@@ -78,6 +91,7 @@ async def _mount_mcp_app(
         db_infra=db_infra,
         redis=redis,
         registry_client=registry_client,
+        federation_authority=federation_authority,
         streamable_http_path="/",
     )
     await mcp_app.startup()
@@ -95,6 +109,93 @@ async def _shutdown_mcp_app(app: FastAPI) -> None:
     app.state.mcp_app = None
 
 
+def _schedule_lifecycle_outbox_replay(app: FastAPI) -> None:
+    """Schedule a bounded replay without delaying the current request.
+
+    Mounted FastAPI sub-applications do not receive lifespan events, so this
+    request-path trigger is also the restart recovery hook for embedded hosts.
+    """
+    db_infra = getattr(app.state, "db", None)
+    redis = getattr(app.state, "redis", None)
+    if db_infra is None or redis is None:
+        return
+
+    loop = asyncio.get_running_loop()
+    next_at = float(getattr(app.state, "lifecycle_outbox_replay_next_at", 0.0))
+    task = getattr(app.state, "lifecycle_outbox_replay_task", None)
+    if (task is not None and not task.done()) or loop.time() < next_at:
+        return
+    app.state.lifecycle_outbox_replay_next_at = loop.time() + 1.0
+
+    async def _replay() -> None:
+        try:
+            for _ in range(_LIFECYCLE_OUTBOX_MAX_BATCHES_PER_TRIGGER):
+                result = await replay_lifecycle_side_effects(
+                    db_infra.get_manager("aweb"),
+                    redis,
+                    limit=_LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE,
+                )
+                if result.attempted_count < _LIFECYCLE_OUTBOX_REPLAY_BATCH_SIZE:
+                    break
+                await asyncio.sleep(0)
+        except Exception:
+            logger.warning("Lifecycle outbox replay failed", exc_info=True)
+
+    app.state.lifecycle_outbox_replay_task = asyncio.create_task(_replay())
+
+
+def _schedule_federation_outbox_replay(app: FastAPI) -> None:
+    db_infra = getattr(app.state, "db", None)
+    callback = getattr(app.state, "on_mutation", None)
+    if db_infra is None or callback is None:
+        return
+    task = getattr(app.state, "federation_outbox_replay_task", None)
+    if task is not None and not task.done():
+        return
+
+    async def _replay() -> None:
+        try:
+            await replay_federation_mutation_outbox(
+                app,
+                db_infra.get_manager("aweb"),
+                limit=100,
+            )
+        except Exception:
+            logger.warning("Federation outbox replay failed", exc_info=True)
+
+    app.state.federation_outbox_replay_task = asyncio.create_task(_replay())
+
+
+async def _shutdown_federation_outbox_replay(app: FastAPI) -> None:
+    task = getattr(app.state, "federation_outbox_replay_task", None)
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+async def _shutdown_lifecycle_outbox_replay(app: FastAPI) -> None:
+    task = getattr(app.state, "lifecycle_outbox_replay_task", None)
+    if task is None or task.done():
+        return
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+async def _shutdown_federation_authority(app: FastAPI) -> None:
+    authority = getattr(app.state, "federation_authority", None)
+    if authority is None:
+        return
+    await authority.aclose()
+    app.state.federation_authority = None
+
+
 async def _shutdown_awid_registry_client(app: FastAPI) -> None:
     registry_client = getattr(app.state, "awid_registry_client", None)
     if registry_client is None:
@@ -106,8 +207,15 @@ async def _shutdown_awid_registry_client(app: FastAPI) -> None:
 def _build_awid_registry_client(app: FastAPI, redis: Redis | None) -> RegistryClient:
     settings = get_settings()
     registry_url = settings.awid_registry_url
+    service_token = settings.awid_service_token
+    if service_token is None:
+        logger.warning(
+            "event=awid_service_credential_missing "
+            "metric=awid_service_credential_missing value=1; "
+            "requests will use public IP rate limits"
+        )
     client_class = CachedRegistryClient if redis is not None else RegistryClient
-    client_kwargs = {"registry_url": registry_url}
+    client_kwargs = {"registry_url": registry_url, "service_token": service_token}
     if redis is not None:
         return client_class(redis_client=redis, **client_kwargs)
     return client_class(**client_kwargs)
@@ -153,8 +261,20 @@ def _make_standalone_lifespan():
             app.state.rate_limiter = build_rate_limiter(redis=redis)
             app.state.on_mutation = create_mutation_handler(redis, default_db_infra)
             app.state.awid_registry_client = _build_awid_registry_client(app, redis)
+            app.state.federation_authority = build_federation_authority_activation(
+                default_db_infra,
+                public_origin=settings.public_origin,
+            )
             await _validate_awid_registry_client(app.state.awid_registry_client)
-            await _mount_mcp_app(app, default_db_infra, redis, app.state.awid_registry_client)
+            await _mount_mcp_app(
+                app,
+                default_db_infra,
+                redis,
+                app.state.awid_registry_client,
+                app.state.federation_authority,
+            )
+            _schedule_lifecycle_outbox_replay(app)
+            _schedule_federation_outbox_replay(app)
 
         except Exception:
             # Log which phase failed
@@ -175,6 +295,9 @@ def _make_standalone_lifespan():
         finally:
             logger.info("Shutting down aweb coordination server")
             await _shutdown_mcp_app(app)
+            await _shutdown_lifecycle_outbox_replay(app)
+            await _shutdown_federation_outbox_replay(app)
+            await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
             await redis.aclose()
             await default_db_infra.close()
@@ -198,14 +321,29 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         app.state.rate_limiter = build_rate_limiter(redis=redis)
         app.state.on_mutation = create_mutation_handler(redis, db_infra)
         app.state.awid_registry_client = _build_awid_registry_client(app, redis)
+        app.state.federation_authority = build_federation_authority_activation(
+            db_infra,
+            public_origin=get_settings().public_origin,
+        )
         await _validate_awid_registry_client(app.state.awid_registry_client)
-        await _mount_mcp_app(app, db_infra, redis, app.state.awid_registry_client)
+        await _mount_mcp_app(
+            app,
+            db_infra,
+            redis,
+            app.state.awid_registry_client,
+            app.state.federation_authority,
+        )
+        _schedule_lifecycle_outbox_replay(app)
+        _schedule_federation_outbox_replay(app)
 
         try:
             yield
         finally:
             # Don't close connections in library mode - caller manages them
             await _shutdown_mcp_app(app)
+            await _shutdown_lifecycle_outbox_replay(app)
+            await _shutdown_federation_outbox_replay(app)
+            await _shutdown_federation_authority(app)
             await _shutdown_awid_registry_client(app)
             logger.info("Aweb coordination server stopping (library mode)")
 
@@ -276,6 +414,12 @@ def create_app(
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
     @app.middleware("http")
+    async def lifecycle_outbox_replay_middleware(request: Request, call_next):
+        _schedule_lifecycle_outbox_replay(request.app)
+        _schedule_federation_outbox_replay(request.app)
+        return await call_next(request)
+
+    @app.middleware("http")
     async def cache_body_middleware(request: Request, call_next):
         """Cache request body and compute SHA256 for signature verification.
 
@@ -294,6 +438,45 @@ def create_app(
         request.state.body_sha256 = _hashlib.sha256(body).hexdigest() if body else _hashlib.sha256(b"").hexdigest()
         request._receive = _cached_body_receive(body)
         return await call_next(request)
+
+    @app.exception_handler(RequestValidationError)
+    async def _request_validation_error_handler(
+        request: Request, exc: RequestValidationError
+    ):
+        matched_route_path = getattr(request.scope.get("route"), "path", "")
+        if isinstance(matched_route_path, str) and matched_route_path.startswith(
+            "/v1/federation/"
+        ):
+            from uuid import uuid4
+
+            reason = (
+                "federation_timestamp_invalid"
+                if any("timestamp" in error.get("loc", ()) for error in exc.errors())
+                else "federation_envelope_invalid"
+            )
+            error = FederationAuthorityError(reason)
+            return JSONResponse(
+                status_code=error.http_status,
+                content=authority_error_body(
+                    error,
+                    correlation_id=request.headers.get("X-Correlation-ID") or str(uuid4()),
+                ),
+            )
+        return await request_validation_exception_handler(request, exc)
+
+    @app.exception_handler(FederationAuthorityError)
+    async def _federation_authority_error_handler(
+        request: Request, exc: FederationAuthorityError
+    ):
+        from uuid import uuid4
+
+        correlation_id = request.headers.get("X-Correlation-ID") or str(uuid4())
+        headers = {"Retry-After": "1"} if exc.retry_after_required else None
+        return JSONResponse(
+            status_code=exc.http_status,
+            content=authority_error_body(exc, correlation_id=correlation_id),
+            headers=headers,
+        )
 
     @app.exception_handler(ServiceError)
     async def _service_error_handler(request: Request, exc: ServiceError):
@@ -343,6 +526,7 @@ def create_app(
     app.include_router(conversations_router)
     app.include_router(events_router)
     app.include_router(federation_router)
+    app.include_router(identity_grants_router)
     app.include_router(messages_router)
     app.include_router(reservations_router)
     app.include_router(session_leases_router)

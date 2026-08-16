@@ -72,8 +72,8 @@ directory; the equivalent form is:
 aw team join <invite-token> --name bob
 ```
 
-The join result says whether it also connected Bob to the hosted service. If it
-says a service connection is still needed, run:
+Joining installs Bob's identity and membership but does not create
+`.aw/workspace.yaml` or report service-connection state. Connect Bob explicitly:
 
 ```bash
 aw workspace connect --service https://app.aweb.ai/api
@@ -125,7 +125,8 @@ In Bob's existing directory:
 aw team join <invite-token> --name bob
 ```
 
-If the join output says connection remains, connect the existing certificate:
+Joining installs Bob's identity and membership but not the aweb workspace
+projection. Connect the existing certificate explicitly:
 
 ```bash
 aw workspace connect --service "$AWEB_URL"

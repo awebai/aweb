@@ -62,16 +62,24 @@ PRIVATE_TRANSITION_NON_DOC_SURFACES = {
 }
 
 REMOVED_DOCS = {
+    "aweb-product-sot.md",
+    "bootstrapping-operating-patterns-worklog.md",
+    "cli-setup-surface-sot.md",
+    "company-agent-platform-thesis.md",
+    "launch-readiness-sot.md",
+    "market-entry-wedge-research.md",
+    "orchestrator-evidence-review.md",
     "restructuring/app-event-subscriptions-contract.md",
     "restructuring/app-manifest-schema.md",
     "restructuring/app-registry-grants-read-api.md",
+    "team-blueprints-sot.md",
+    "website-dashboard-strategy.md",
 }
 
-NON_NORMATIVE_STRATEGY_DOCS = {
-    "company-agent-platform-thesis.md",
-    "market-entry-wedge-research.md",
-    "orchestrator-evidence-review.md",
-    "website-dashboard-strategy.md",
+REMOVED_REPO_PATHS = {
+    "agents/souls/consultant/decisions/aweb-control-plane-and-apps.md",
+    "agents/souls/consultant/docs/customer-centered-aweb-positioning.md",
+    "agents/souls/consultant/memory/aweb-anapp-product-constraints.md",
 }
 
 PUBLIC_EXTENSION_DOCS = (
@@ -89,6 +97,69 @@ PUBLIC_EXTENSION_DOCS = (
 )
 
 HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
+
+FEDERATION_DOC_REQUIREMENTS = {
+    "aweb-sot.md": (
+        "strict cross-registry sender authority",
+        "receiver-wide replay identity",
+        "message_ingress_receipts",
+        "federation_mutation_outbox",
+        "contact_did_aw",
+        "/v1/contacts/{contact_id}/bind",
+        "legacy_unreplayable",
+    ),
+    "awid-sot.md": (
+        "cross-registry consumption",
+        "receiver cache policy",
+        "suppress an unseen transition",
+    ),
+    "identity-messaging-contract.md": (
+        "strict cross-registry sender authority",
+        "post /v1/federation/messages",
+        "aweb_federation_authority_reuse_seconds",
+        "receiver-wide replay and contact compatibility",
+        "postgresql is the shared authorization",
+        "federation-error-reference.md",
+    ),
+    "global-local-identity-routing.md": (
+        "configured home registry",
+        "legacy_unreplayable",
+        "explicit recipient acceptance",
+    ),
+    "trust-model.md": (
+        "strict external-address",
+        "explicit acceptance",
+        "never transfers",
+    ),
+    "identity-key-verification.md": (
+        "strict federation use",
+        "does not prove source freshness",
+        "strict federation ingress does not accept",
+    ),
+    "e2e-messaging-contract.md": (
+        "cross-registry authority ordering",
+        "recipient_encryption_assertion_missing",
+        "receiver-wide receipt",
+    ),
+    "mail-and-chat.md": (
+        "identity-bound contact",
+        "one receiver-wide",
+        "federation error reference",
+    ),
+    "messaging-contract-matrix.md": (
+        "source suppression",
+        "legacy_unreplayable",
+        "strict sender ed25519",
+    ),
+    "self-hosting-guide.md": (
+        "cross-registry authority and migration",
+        "015_federation_delivery_policy.sql",
+        "aweb_federation_authority_reuse_seconds",
+        "cannot authorize during a postgresql outage",
+        "at-least-once",
+        "generated federation error reference",
+    ),
+}
 
 MANAGED_GATEWAY_PRIVATE_TOKENS = (
     "a" + "c_config",
@@ -287,6 +358,49 @@ def _is_managed_gateway_surface(relative: str) -> bool:
     )
 
 
+def _check_federation_docs(root: Path, failures: list[str]) -> None:
+    docs = root / "docs"
+    vector_path = docs / "vectors/federation-authority-state-v1.json"
+    reference_path = docs / "federation-error-reference.md"
+    try:
+        vector = json.loads(vector_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        failures.append(f"cannot read canonical federation authority vector: {exc}")
+        return
+
+    policies = vector.get("selected_policies", {})
+    if (
+        policies.get("receiver_reuse_default_seconds") != 60
+        or policies.get("receiver_reuse_max_seconds") != 60
+        or policies.get("receiver_reuse_configurable_only_downward") is not True
+        or policies.get("receiver_reuse_is_freshness_sla") is not False
+        or policies.get("contact_authority") != "identity_bound_address_and_did_aw"
+        or policies.get("contact_replacement")
+        != "controller_proof_and_authenticated_recipient_acceptance"
+        or policies.get("contact_transfer") != "never_automatic"
+    ):
+        failures.append("canonical federation selected-policy vector changed without docs reconciliation")
+
+    if not reference_path.is_file():
+        failures.append("missing generated federation error reference")
+    else:
+        reference = reference_path.read_text(encoding="utf-8")
+        for error in vector.get("stable_errors", []):
+            reason = error.get("reason") if isinstance(error, dict) else None
+            if not isinstance(reason, str) or reference.count(f"| `{reason}` |") != 1:
+                failures.append(f"generated federation error reference does not contain {reason!r} exactly once")
+
+    for relative, required_text in FEDERATION_DOC_REQUIREMENTS.items():
+        path = docs / relative
+        if not path.is_file():
+            failures.append(f"missing federation SOT/support surface: docs/{relative}")
+            continue
+        text = path.read_text(encoding="utf-8").casefold()
+        for requirement in required_text:
+            if requirement.casefold() not in text:
+                failures.append(f"docs/{relative} omits federation contract text {requirement!r}")
+
+
 def check(
     root: Path,
     tracked_markdown: set[str] | None = None,
@@ -317,12 +431,18 @@ def check(
         if (root / relative).exists():
             failures.append(f"removed private transition path returned: {relative}")
 
-    neutrality_relatives = [relative for relative in sorted(tracked_files) if _is_managed_gateway_surface(relative)]
-    for relative in neutrality_relatives:
+    for relative in sorted(REMOVED_REPO_PATHS):
+        if (root / relative).exists():
+            failures.append(f"removed company-strategy path returned: {relative}")
+
+    for relative in sorted(tracked_files):
         path = root / relative
         if not path.is_file():
             continue
-        normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
+        raw = path.read_bytes()
+        if b"\0" in raw:
+            continue
+        normalized_text = raw.decode("utf-8", errors="replace").casefold()
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
             if token.casefold() in normalized_text:
                 failures.append(f"{relative} retains private managed-gateway token {token!r}")
@@ -391,12 +511,14 @@ def check(
 
     runbook = public_text.get("a2a-release-runbook.md", "")
     makefile = (root / "Makefile").read_text(encoding="utf-8") if (root / "Makefile").is_file() else ""
+    e2e_script_path = root / "scripts" / "e2e-a2a-gateway-docker.sh"
+    e2e_script = e2e_script_path.read_text(encoding="utf-8") if e2e_script_path.is_file() else ""
     generator = "go run ./tools/a2a-gateway-check-workspace -output"
-    if generator not in runbook or generator not in makefile:
+    if generator not in runbook:
         failures.append("A2A release image check does not generate a synthetic gateway workspace")
-    if '$(CURDIR):/workspace:ro' in makefile:
+    if '$(CURDIR):/workspace:ro' in makefile or '"$ROOT:/workspace' in e2e_script:
         failures.append("A2A release image check mounts the real repository workspace")
-    if '-v "$$workspace:/workspace:ro"' not in makefile:
+    if '-v "$GATEWAY_DIR:/workspace:ro"' not in e2e_script:
         failures.append("A2A release image check does not mount its throwaway workspace")
 
     vectors = sorted(path.name for path in (docs / "vectors").glob("*.json"))
@@ -415,6 +537,8 @@ def check(
         header = "\n".join(public_text.get(relative, "").splitlines()[:12])
         if "experimental" not in header:
             failures.append(f"docs/{relative} does not state its experimental lifecycle in the header")
+
+    _check_federation_docs(root, failures)
 
     identity_contract = docs / "identity-messaging-contract.md"
     if not identity_contract.is_file():
@@ -437,28 +561,8 @@ def check(
     ]
     counts = Counter(links)
     section_links = _readme_h2_links(readme)
-    classified_strategy = set(
-        section_links.get("Non-normative strategy and research", [])
-    )
-    missing_strategy = sorted(NON_NORMATIVE_STRATEGY_DOCS - classified_strategy)
-    unexpected_strategy = sorted(classified_strategy - NON_NORMATIVE_STRATEGY_DOCS)
-    if missing_strategy:
-        failures.append(
-            "missing non-normative strategy/research classification: "
-            + ", ".join(missing_strategy)
-        )
-    if unexpected_strategy:
-        failures.append(
-            "non-normative strategy/research family has unexpected Markdown paths: "
-            + ", ".join(unexpected_strategy)
-        )
-    normalized_readme = " ".join(readme.split())
-    if (
-        "OAS is an external reference composition, never a required aweb runtime or lifecycle owner."
-        not in normalized_readme
-    ):
-        failures.append("non-normative strategy family does not preserve the external OAS boundary")
-
+    if section_links.get("Non-normative strategy and research"):
+        failures.append("public docs index still publishes a strategy/research section")
     missing = sorted(expected_public - set(counts))
     duplicate = sorted(target for target, count in counts.items() if count != 1)
     extra = sorted(set(counts) - expected_public)
@@ -642,6 +746,7 @@ def self_test(root: Path) -> int:
             consumer_file.unlink()
 
         neutrality_mutations = (
+            ("README.md", "a" + "c_config", False),
             ("cli/go/cmd/aweb-a2a-gw/audit.go", "a" + "c_config", False),
             ("cli/go/a2a/client.go", "a" + "c_config", False),
             ("awid/src/awid/a2a_publication.py", "a" + "c_config", False),
@@ -687,6 +792,48 @@ def self_test(root: Path) -> int:
                 return 1
             path.unlink()
 
+        for relative in sorted(REMOVED_REPO_PATHS):
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("retired company strategy\n", encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"removed company-strategy path returned: {relative}"
+            if not any(expected in failure for failure in mutation_failures):
+                print(f"self-test failed: removed strategy path was not detected: {relative}")
+                return 1
+            path.unlink()
+
+        for relative, required_text in FEDERATION_DOC_REQUIREMENTS.items():
+            path = tmp / "docs" / relative
+            original = path.read_text(encoding="utf-8")
+            requirement = required_text[0]
+            mutated = re.sub(re.escape(requirement), "removed-federation-contract-text", original, flags=re.I)
+            if mutated == original:
+                print(f"self-test setup failed: docs/{relative} lacks {requirement!r}")
+                return 1
+            path.write_text(mutated, encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files)
+            expected = f"docs/{relative} omits federation contract text"
+            if not any(expected in failure for failure in mutation_failures):
+                print(f"self-test failed: federation contract mutation was not detected in docs/{relative}")
+                return 1
+            path.write_text(original, encoding="utf-8")
+
+        reference = tmp / "docs/federation-error-reference.md"
+        reference_original = reference.read_text(encoding="utf-8")
+        first_reason = json.loads(
+            (tmp / "docs/vectors/federation-authority-state-v1.json").read_text(encoding="utf-8")
+        )["stable_errors"][0]["reason"]
+        reference.write_text(
+            reference_original.replace(f"| `{first_reason}` |", "| `removed_error` |", 1),
+            encoding="utf-8",
+        )
+        mutation_failures = check(tmp, tracked_markdown, tracked_files)
+        if not any("generated federation error reference" in failure for failure in mutation_failures):
+            print("self-test failed: removed federation error row was not detected")
+            return 1
+        reference.write_text(reference_original, encoding="utf-8")
+
         hook = tmp / "docs/aw-hooks-sot.md"
         hook.write_text(hook.read_text(encoding="utf-8").replace("`task.created`", "`task-created`"), encoding="utf-8")
 
@@ -702,21 +849,19 @@ def self_test(root: Path) -> int:
             encoding="utf-8",
         )
 
-        makefile = tmp / "Makefile"
-        makefile.write_text(
-            makefile.read_text(encoding="utf-8").replace(
-                '-v "$$workspace:/workspace:ro"', '-v "$(CURDIR):/workspace:ro"', 1
+        gateway_e2e = tmp / "scripts/e2e-a2a-gateway-docker.sh"
+        gateway_e2e.write_text(
+            gateway_e2e.read_text(encoding="utf-8").replace(
+                '-v "$GATEWAY_DIR:/workspace:ro"', '-v "$ROOT:/workspace:ro"', 1
             ),
             encoding="utf-8",
         )
 
         readme = tmp / "docs/README.md"
         readme.write_text(
-            readme.read_text(encoding="utf-8").replace(
-                "## Non-normative strategy and research",
-                "## Strategy and research",
-                1,
-            ),
+            readme.read_text(encoding="utf-8")
+            + "\n## Non-normative strategy and research\n\n"
+            + "- [Company strategy](identity.md)\n",
             encoding="utf-8",
         )
         failures = check(tmp, tracked_markdown, tracked_files)
@@ -726,7 +871,7 @@ def self_test(root: Path) -> int:
             "removed repeated-event call site": "inventory retains absent call site",
             "dynamic event expression": "unsupported non-literal",
             "real workspace release mount": "mounts the real repository workspace",
-            "strategy lifecycle classification": "missing non-normative strategy/research classification",
+            "public strategy section": "public docs index still publishes a strategy/research section",
         }
         for label, expected in required_failures.items():
             if not any(expected in failure for failure in failures):
@@ -734,9 +879,10 @@ def self_test(root: Path) -> int:
                 return 1
 
     print(
-        "self-test passed: tracked corpus, strategy lifecycle, private-transition removal, "
-        "managed-gateway neutrality, event/call-site multiplicity, dynamic-expression, and "
-        "real-workspace release-mount controls reject their mutations"
+        "self-test passed: tracked corpus, public-strategy exclusion, removed-strategy paths, "
+        "private-transition removal, managed-gateway neutrality, "
+        "federation SOT/error-reference coverage, event/call-site multiplicity, "
+        "dynamic-expression, and real-workspace release-mount controls reject their mutations"
     )
     return 0
 

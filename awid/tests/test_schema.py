@@ -26,11 +26,12 @@ async def test_dns_namespaces_scope_id_has_no_foreign_key(awid_db_infra):
         JOIN pg_attribute a
           ON a.attrelid = t.oid
          AND a.attnum = ANY(c.conkey)
-        WHERE n.nspname = current_schema()
+        WHERE n.nspname = $1
           AND t.relname = 'dns_namespaces'
           AND a.attname = 'scope_id'
           AND c.contype = 'f'
-        """
+        """,
+        db.schema or "public",
     )
 
     assert row is not None
@@ -69,11 +70,12 @@ async def test_did_aw_mappings_has_no_address_fields(awid_db_infra):
         """
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_schema = current_schema()
+        WHERE table_schema = $2
           AND table_name = 'did_aw_mappings'
           AND column_name = ANY($1::text[])
         """,
         ["server_url", "address", "handle"],
+        db.schema or "public",
     )
 
     assert [row["column_name"] for row in rows] == []
@@ -86,12 +88,13 @@ async def test_public_addresses_resolve_key_by_fk_only(awid_db_infra):
         """
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_schema = current_schema()
+        WHERE table_schema = $2
           AND table_name = 'public_addresses'
           AND column_name = ANY($1::text[])
         ORDER BY column_name
         """,
         ["current_did_key", "reachability", "visible_to_team_id"],
+        db.schema or "public",
     )
     assert [row["column_name"] for row in rows] == []
 
@@ -126,14 +129,16 @@ async def test_public_addresses_resolve_key_by_fk_only(awid_db_infra):
 def _drop_address_reachability_migration_sql(table_name: str) -> str:
     return (_MIGRATIONS_DIR / "003_drop_address_reachability.sql").read_text().replace(
         "{{tables.public_addresses}}",
-        table_name,
+        "{{tables." + table_name + "}}",
     )
 
 
 async def _create_pre_003_public_addresses_table(db, table_name: str) -> None:
+    # The probe rides the manager's {{tables.}} templating so it lands in the
+    # manager's schema: under the pinned search_path an unqualified CREATE
+    # resolves into pg_catalog and is denied.
     await db.execute(
-        f"""
-        CREATE TABLE {table_name} (
+        "CREATE TABLE {{tables." + table_name + """}} (
             address_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             reachability TEXT NOT NULL DEFAULT 'nobody',
             visible_to_team_id TEXT,
@@ -148,13 +153,14 @@ async def _legacy_columns(db, table_name: str) -> list[str]:
         """
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_schema = current_schema()
+        WHERE table_schema = $3
           AND table_name = $1
           AND column_name = ANY($2::text[])
         ORDER BY column_name
         """,
         table_name,
         ["reachability", "visible_to_team_id"],
+        db.schema or "public",
     )
     return [row["column_name"] for row in rows]
 
@@ -177,8 +183,7 @@ async def test_drop_address_reachability_migration_blocks_active_non_neutral_row
     try:
         await _create_pre_003_public_addresses_table(db, table_name)
         await db.execute(
-            f"""
-            INSERT INTO {table_name} (reachability, visible_to_team_id, deleted_at)
+            "INSERT INTO {{tables." + table_name + """}} (reachability, visible_to_team_id, deleted_at)
             VALUES ($1, $2, NULL)
             """,
             reachability,
@@ -191,7 +196,7 @@ async def test_drop_address_reachability_migration_blocks_active_non_neutral_row
         assert "Refusing to drop legacy address reachability columns" in str(excinfo.value)
         assert await _legacy_columns(db, table_name) == ["reachability", "visible_to_team_id"]
     finally:
-        await db.execute(f"DROP TABLE IF EXISTS {table_name}")
+        await db.execute("DROP TABLE IF EXISTS {{tables." + table_name + "}}")
 
 
 @pytest.mark.asyncio
@@ -201,8 +206,7 @@ async def test_drop_address_reachability_migration_allows_deleted_non_neutral_ro
     try:
         await _create_pre_003_public_addresses_table(db, table_name)
         await db.execute(
-            f"""
-            INSERT INTO {table_name} (reachability, visible_to_team_id, deleted_at)
+            "INSERT INTO {{tables." + table_name + """}} (reachability, visible_to_team_id, deleted_at)
             VALUES ('team_members_only', 'backend:example.com', NOW())
             """
         )
@@ -211,7 +215,7 @@ async def test_drop_address_reachability_migration_allows_deleted_non_neutral_ro
 
         assert await _legacy_columns(db, table_name) == []
     finally:
-        await db.execute(f"DROP TABLE IF EXISTS {table_name}")
+        await db.execute("DROP TABLE IF EXISTS {{tables." + table_name + "}}")
 
 
 @pytest.mark.asyncio
@@ -221,8 +225,7 @@ async def test_drop_address_reachability_migration_allows_active_neutral_rows(aw
     try:
         await _create_pre_003_public_addresses_table(db, table_name)
         await db.execute(
-            f"""
-            INSERT INTO {table_name} (reachability, visible_to_team_id, deleted_at)
+            "INSERT INTO {{tables." + table_name + """}} (reachability, visible_to_team_id, deleted_at)
             VALUES ('public', NULL, NULL)
             """
         )
@@ -231,4 +234,4 @@ async def test_drop_address_reachability_migration_allows_active_neutral_rows(aw
 
         assert await _legacy_columns(db, table_name) == []
     finally:
-        await db.execute(f"DROP TABLE IF EXISTS {table_name}")
+        await db.execute("DROP TABLE IF EXISTS {{tables." + table_name + "}}")

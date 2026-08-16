@@ -106,8 +106,19 @@ operation's exact envelope shape.
 
 Public read endpoints (`GET /v1/namespaces/{domain}`,
 `GET /v1/did/{did_aw}/key`, team metadata, revocations, etc.) are rate-limited
-and do not carry signatures. Identity-private reads and certificate-blob fetch
+and do not require signatures. Identity-private reads and certificate-blob fetch
 have their separately documented authentication requirements.
+
+An operator may configure the same high-entropy `AWID_SERVICE_TOKEN` on its
+AWID service and aweb server. The aweb RegistryClient then sends that bearer
+secret in `X-AWID-Service-Token` only to its exact configured home registry;
+it never forwards the credential to a DNS-discovered external registry. AWID
+uses constant-time comparison and exempts a matching credential only from the
+`did_key` and `did_addresses` public-read rate-limit buckets. The credential
+does not authorize writes, disclose additional data, or bypass any other
+bucket. Missing credentials use the normal public IP limits. A wrong presented
+credential also uses those limits and emits the stable
+`awid_service_credential_rejected` telemetry event without logging the secret.
 
 ---
 
@@ -186,6 +197,25 @@ path does not inspect them or grant elevated visibility. Team certificates do
 not grant special address-discovery authority. Abuse controls belong at rate
 limiting, recipient-side delivery policy, and spam/blocklist layers after
 identity/route resolution.
+
+**Cross-registry consumption.** A receiving aweb service does not ask its home
+registry to resolve an external sender held elsewhere. Its strict
+external-address authority path selects a registry from the client-signed
+sender address and `_awid.<domain>` DNS statement, then requires that registry's
+exact namespace controller, address row, stable `did:aw`, current `did:key`,
+identity log, and delivery origin to agree. No AWID request field or federation
+wrapper may supply a registry URL. Absence of an AWID DNS record selects the
+canonical public registry; malformed, multiple, timed-out, or failed discovery
+does not fall back.
+
+The receiving service may reuse one complete verified authority cohort for no
+more than 60 seconds and then rereads DNS, namespace, address, key-or-log, and
+origin. That is receiver cache policy, not an AWID revocation or freshness SLA.
+A DNS controller or selected registry that continues serving an old but
+cryptographically valid state can suppress an unseen transition indefinitely.
+AWID supplies public evidence; the receiver's PostgreSQL checkpoints and
+cohorts supply receiver-observed rollback/fork protection and shared
+coordination.
 
 ## Identity operations
 
@@ -770,6 +800,10 @@ DATABASE_URL=postgresql://awid:password@localhost:5432/awid
 # Server
 AWID_PORT=8001
 AWID_LOG_JSON=true
+
+# Optional trusted caller lane; set the same >=32-byte secret on AWID and aweb.
+# Generate, for example, with: openssl rand -hex 32
+AWID_SERVICE_TOKEN=
 ```
 
 awid has no encryption keys, no custody keys, no signing keys.
@@ -791,6 +825,10 @@ the CLI (BYOD) or the hosted deployment (managed namespaces).
 
 **Does not:**
 - Hold private keys (no escrow, no custody keys)
+- Store aweb receiver-wide message receipts, contact identity bindings, or
+  receiver authority cohorts; those are recipient-service PostgreSQL state
+- Promise that a receiver will observe an address/key/registry transition within
+  60 seconds when an authoritative source suppresses it
 - Sign certificates (signing is external)
 - Sign on behalf of agents (custody is a hosted deployment concern)
 - Use `team_certificates` row existence as the authorization oracle — auth

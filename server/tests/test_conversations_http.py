@@ -768,3 +768,148 @@ async def test_conversations_lists_identity_scoped_chat_by_participant_did(aweb_
     assert conversations[0]["conversation_type"] == "chat"
     assert conversations[0]["conversation_id"] == "22222222-2222-2222-2222-222222222222"
     assert conversations[0]["last_message_from"] == "alice"
+
+
+class _RowCountingManager:
+    """Database manager wrapper recording how many rows each query returned.
+
+    The listing response has always been page-sized, because the page was cut
+    in Python. Only the row counts coming back from the database distinguish a
+    query bounded by the caller's limit from one that reads the whole history.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.row_counts: list[int] = []
+
+    async def fetch_all(self, *args, **kwargs):
+        rows = await self._inner.fetch_all(*args, **kwargs)
+        self.row_counts.append(len(rows))
+        return rows
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+async def test_conversations_listing_reads_page_sized_rows_not_whole_history(aweb_cloud_db):
+    """A listing must not materialize history it will never return.
+
+    Forty conversations of three messages each stand in for an accumulated
+    mailbox. Asking for five conversations must read rows in proportion to
+    that page, not to the 120 messages on file.
+    """
+    conversation_count = 40
+    messages_per_conversation = 3
+    limit = 5
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES
+            ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'ops:acme.com', 'did:key:alice-current', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'ops:acme.com', 'did:key:bob-current', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, created_by_did, created_at, updated_at
+        )
+        SELECT
+            ('66666666-6666-4666-8666-' || LPAD(g::text, 12, '0'))::uuid,
+            'mail',
+            'did:aw:alice',
+            NOW() - (g * INTERVAL '1 minute'),
+            NOW() - (g * INTERVAL '1 minute')
+        FROM generate_series(1, $1::int) AS g
+        """,
+        conversation_count,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        SELECT
+            ('66666666-6666-4666-8666-' || LPAD(g::text, 12, '0'))::uuid,
+            'did:aw:alice',
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'::uuid,
+            'alice',
+            'acme.com/alice',
+            'sender',
+            'initiator'
+        FROM generate_series(1, $1::int) AS g
+        UNION ALL
+        SELECT
+            ('66666666-6666-4666-8666-' || LPAD(g::text, 12, '0'))::uuid,
+            'did:aw:bob',
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'::uuid,
+            'bob',
+            'acme.com/bob',
+            'to_alias',
+            'participant'
+        FROM generate_series(1, $1::int) AS g
+        """,
+        conversation_count,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_did, to_did, from_alias, to_alias,
+            subject, body, priority, created_at
+        )
+        SELECT
+            ('77777777-7777-4777-8777-' || LPAD((g * 10 + k)::text, 12, '0'))::uuid,
+            ('66666666-6666-4666-8666-' || LPAD(g::text, 12, '0'))::uuid,
+            'did:aw:alice',
+            'did:aw:bob',
+            'alice',
+            'bob',
+            'subject ' || g::text,
+            REPEAT('x', 400),
+            'normal',
+            NOW() - (g * INTERVAL '1 minute') + (k * INTERVAL '1 second')
+        FROM generate_series(1, $1::int) AS g, generate_series(1, $2::int) AS k
+        """,
+        conversation_count,
+        messages_per_conversation,
+    )
+
+    counting_db = _RowCountingManager(aweb_cloud_db.aweb_db)
+    app = _build_test_app(counting_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:alice-current",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:acme.com",
+            alias="alice",
+            agent_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/v1/conversations?limit={limit}")
+
+    assert resp.status_code == 200, resp.text
+    conversations = resp.json()["conversations"]
+    assert len(conversations) == limit
+    assert resp.json()["next_cursor"] is not None
+
+    # A page of five needs at most six conversation rows (the lookahead that
+    # decides next_cursor) and those conversations' participant rows. The
+    # ceiling is a multiple of the page, and critically not a function of the
+    # 120 messages stored: before the listing was bounded in SQL, the mail
+    # query alone returned every one of them.
+    total_messages = conversation_count * messages_per_conversation
+    assert max(counting_db.row_counts) <= 3 * (limit + 1)
+    assert max(counting_db.row_counts) < total_messages

@@ -2,8 +2,9 @@
 
 Tracks which agents have active SSE streams on a chat session. Uses
 ZADD with timestamp scores for registration, ZSCORE for presence checks,
-and ZREM for cleanup. All functions gracefully degrade when redis is None
-or on Redis errors.
+and ZREM for cleanup. User-facing helpers gracefully degrade when Redis is
+unavailable; durable lifecycle delivery uses a strict unregister variant that
+propagates Redis errors for retry.
 """
 
 from __future__ import annotations
@@ -52,17 +53,25 @@ async def register_waiting(
         logger.warning("Failed to register waiting for %s in %s", agent_id, session_id)
 
 
+async def unregister_waiting_strict(
+    redis,
+    session_id: str,
+    agent_id: str,
+) -> None:
+    """Unregister waiting state, propagating failure to durable callers."""
+    if redis is None:
+        return
+    await redis.zrem(_chat_waiting_key(session_id), agent_id)
+
+
 async def unregister_waiting(
     redis,
     session_id: str,
     agent_id: str,
 ) -> None:
     """Unregister an agent from a session (SSE disconnected)."""
-    if redis is None:
-        return
-
     try:
-        await redis.zrem(_chat_waiting_key(session_id), agent_id)
+        await unregister_waiting_strict(redis, session_id, agent_id)
     except Exception:
         logger.warning("Failed to unregister waiting for %s in %s", agent_id, session_id)
 

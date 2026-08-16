@@ -18,6 +18,7 @@ from redis.asyncio.client import PubSub
 from redis.exceptions import ConnectionError as RedisConnectionError
 from redis.exceptions import RedisError
 
+from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
@@ -70,7 +71,12 @@ from aweb.messaging.chat import (
     send_in_session,
 )
 from aweb.messaging.conversations import close_conversation
-from aweb.messaging.contacts import get_contact_addresses, is_address_in_contacts, upsert_successful_identity_contact
+from aweb.messaging.contacts import (
+    get_contact_addresses,
+    is_address_in_contacts,
+    resolve_local_namespace_controller_did,
+    upsert_successful_identity_contact,
+)
 from aweb.messaging.handle_addresses import normalize_hosted_handle_reference
 from aweb.messaging.messages import authorize_message_delivery, utc_iso as _utc_iso
 from aweb.messaging.signatures import (
@@ -255,6 +261,7 @@ async def _record_successful_chat_contacts(
     owner_did: str,
     sender_team_id: str | None,
     recipients: list[dict[str, Any]],
+    registry_client=None,
 ) -> None:
     owner = str(owner_did or "").strip()
     sender_team = str(sender_team_id or "").strip()
@@ -267,10 +274,29 @@ async def _record_successful_chat_contacts(
         recipient_team = str(recipient.get("team_id") or "").strip()
         if sender_team and recipient_team and sender_team == recipient_team:
             continue
+        controller_did = str(
+            recipient.get("authority_controller_did") or ""
+        ).strip()
+        if not controller_did and recipient.get(
+            "requires_local_address_authority"
+        ):
+            controller_did = (
+                await resolve_local_namespace_controller_did(
+                    registry_client,
+                    contact_address=address,
+                    contact_did_aw=str(recipient.get("did_aw") or ""),
+                    contact_current_did_key=str(
+                        recipient.get("did_key") or ""
+                    ),
+                )
+                or ""
+            )
         await upsert_successful_identity_contact(
             db,
             owner_did=owner,
             contact_address=address,
+            contact_did_aw=str(recipient.get("did_aw") or "").strip() or None,
+            binding_controller_did=controller_did or None,
             label=str(recipient.get("alias") or address),
         )
 
@@ -432,17 +458,36 @@ def _federation_transport(request: Request):
 async def _resolve_remote_chat_route(
     db,
     *,
+    request: Request,
     registry_client,
     recipient: dict[str, Any],
     requester_did_key: str | None = None,
 ) -> dict[str, Any]:
     address = str(recipient.get("address") or "").strip()
+    if recipient.get("_strict_authority_route_current"):
+        route = {
+            "address": address,
+            "did_aw": str(recipient.get("did_aw") or "").strip(),
+            "current_did_key": str(
+                recipient.get("current_did_key") or recipient.get("did_key") or ""
+            ).strip(),
+            "delivery_origin": _target_delivery_origin(recipient),
+        }
+        if all(route.values()):
+            return route
+        raise HTTPException(status_code=424, detail="Remote chat recipient has an incomplete authority route")
     if registry_client is None:
         raise awid_registry_not_configured_exception(operation="AWID remote chat route resolution")
     try:
         if "/" in address:
             domain, name = address.split("/", 1)
-            if requester_did_key:
+            strict_authority = getattr(request.app.state, "federation_authority", None)
+            if strict_authority is not None:
+                resolution = await strict_authority.resolve_contact(
+                    address,
+                    source_ip=str(request.client.host if request.client else "unknown"),
+                )
+            elif requester_did_key:
                 resolution = await registry_client.resolve_address(
                     domain,
                     name,
@@ -455,7 +500,7 @@ async def _resolve_remote_chat_route(
                 status_code=424,
                 detail="Remote chat recipient has no address route for refresh",
             )
-    except HTTPException:
+    except (HTTPException, FederationAuthorityError):
         raise
     except AWID_DEPENDENCY_ERRORS as exc:
         logger.warning("AWID registry dependency failed for remote chat route resolution: %s", address, exc_info=True)
@@ -472,16 +517,25 @@ async def _resolve_remote_chat_route(
     if target_stable_id not in {recipient_stable_id, recipient_did}:
         raise HTTPException(status_code=422, detail="Remote chat recipient identity changed")
     delivery = getattr(resolution, "delivery", None)
-    resolved_origin = str(getattr(delivery, "origin", "") or "").strip()
+    resolved_origin = str(
+        getattr(resolution, "delivery_origin", None)
+        or getattr(delivery, "origin", "")
+        or ""
+    ).strip()
     delivery_origin = resolved_origin or _target_delivery_origin(recipient)
     if not delivery_origin:
         raise HTTPException(status_code=424, detail="Recipient address has no federated delivery origin")
-    if resolved_origin and resolved_origin != _target_delivery_origin(recipient):
-        await _update_chat_participant_delivery_origin(
+    if resolved_origin and (
+        resolved_origin != _target_delivery_origin(recipient)
+        or target_current_did
+        != str(recipient.get("current_did_key") or recipient.get("did_key") or "").strip()
+    ):
+        await _update_chat_participant_route(
             db,
             conversation_id=str(recipient.get("session_id") or recipient.get("conversation_id") or ""),
             did=recipient_did or target_stable_id,
             delivery_origin=delivery_origin,
+            current_did_key=target_current_did,
         )
     return {
         "address": address,
@@ -535,40 +589,75 @@ async def _resolve_stored_remote_chat_route(
     }
 
 
-async def _update_chat_participant_delivery_origin(
+async def _update_chat_participant_route(
     db,
     *,
     conversation_id: str,
     did: str,
     delivery_origin: str,
+    current_did_key: str,
 ) -> None:
-    if not conversation_id or not did or not delivery_origin:
+    if not conversation_id or not did or not delivery_origin or not current_did_key:
         return
     aweb_db = db.get_manager("aweb")
     try:
         conversation_uuid = UUID(conversation_id)
     except Exception:
         return
-    await aweb_db.execute(
-        """
-        UPDATE {{tables.chat_participants}}
-        SET delivery_origin = $3
-        WHERE session_id = $1 AND did = $2
-        """,
-        conversation_uuid,
-        did,
-        delivery_origin,
+    async with aweb_db.transaction() as tx:
+        await tx.execute(
+            """
+            UPDATE {{tables.chat_participants}}
+            SET delivery_origin = $3,
+                current_did_key = $4
+            WHERE session_id = $1 AND did = $2
+            """,
+            conversation_uuid,
+            did,
+            delivery_origin,
+            current_did_key,
+        )
+        await tx.execute(
+            """
+            UPDATE {{tables.conversation_participants}}
+            SET delivery_origin = $3,
+                current_did_key = $4,
+                transport_hint = 'federation:' || $3
+            WHERE conversation_id = $1 AND did = $2
+            """,
+            conversation_uuid,
+            did,
+            delivery_origin,
+            current_did_key,
+        )
+
+
+def _apply_remote_chat_route(
+    participant_rows: list[dict[str, Any]],
+    recipient: dict[str, Any],
+    route: dict[str, Any],
+) -> None:
+    recipient.update(
+        {
+            "did_aw": route["did_aw"],
+            "did_key": route["current_did_key"],
+            "current_did_key": route["current_did_key"],
+            "delivery_origin": route["delivery_origin"],
+        }
     )
-    await aweb_db.execute(
-        """
-        UPDATE {{tables.conversation_participants}}
-        SET delivery_origin = $3
-        WHERE conversation_id = $1 AND did = $2
-        """,
-        conversation_uuid,
-        did,
-        delivery_origin,
-    )
+    target_refs = _target_did_refs(recipient)
+    for participant in participant_rows:
+        if str(participant.get("did") or "").strip() not in target_refs:
+            continue
+        participant.update(
+            {
+                "did_key": route["current_did_key"],
+                "current_did_key": route["current_did_key"],
+                "delivery_origin": route["delivery_origin"],
+                "transport_hint": "federation:" + route["delivery_origin"],
+            }
+        )
+        return
 
 
 def _chat_payload_body(payload: CreateSessionRequest | SendMessageRequest) -> str:
@@ -892,13 +981,54 @@ async def _resolve_chat_targets(
         if "/" not in address:
             raise HTTPException(status_code=422, detail="to_addresses entries must be domain/name")
         domain, name = address.split("/", 1)
+        local_candidate = await _local_agent_by_address(db, domain=domain, name=name)
+        if local_candidate is not None:
+            binding = _signed_payload_address_binding(
+                verified_signed_payload_json(
+                    signed_payload=signed_payload,
+                    signature=signature,
+                    did_key=auth.did_key,
+                ),
+                address=address,
+            )
+            if local_recipient_visible_to_auth(
+                local_candidate, auth
+            ) or _row_matches_signed_address_binding(local_candidate, binding):
+                target_did = str(
+                    local_candidate.get("did_aw") or local_candidate.get("did_key") or ""
+                ).strip()
+                if target_did:
+                    canonical_recipient = await resolve_agent_by_did(db, target_did)
+                    local_recipient = _with_requested_address(
+                        canonical_recipient or local_candidate,
+                        address,
+                    )
+                    local_recipient["requires_local_address_authority"] = True
+                    resolved[target_did] = local_recipient
+                    continue
+
         resolution = None
-        if registry_client is not None:
+        strict_authority = getattr(request.app.state, "federation_authority", None)
+        if strict_authority is not None:
+            try:
+                resolution = await strict_authority.resolve_contact(
+                    address,
+                    source_ip=str(request.client.host if request.client else "unknown"),
+                )
+            except FederationAuthorityError as exc:
+                if exc.reason != "sender_identity_not_found":
+                    raise
+        elif registry_client is not None:
             resolution = await registry_client.resolve_address(domain, name, did_key=auth.did_key)
         if resolution is not None and resolution.did_aw:
             row = await resolve_agent_by_did(db, resolution.did_aw)
             if row is None:
                 delivery = getattr(resolution, "delivery", None)
+                delivery_origin = (
+                    getattr(resolution, "delivery_origin", None)
+                    or getattr(delivery, "origin", "")
+                    or ""
+                )
                 row = {
                     "agent_id": None,
                     "team_id": None,
@@ -906,9 +1036,17 @@ async def _resolve_chat_targets(
                     "address": address,
                     "did_aw": resolution.did_aw.strip(),
                     "did_key": (getattr(resolution, "current_did_key", "") or "").strip(),
-                    "delivery_origin": (getattr(delivery, "origin", "") or "").strip(),
+                    "delivery_origin": str(delivery_origin).strip(),
+                    "authority_controller_did": str(
+                        getattr(resolution, "controller_did", "") or ""
+                    ).strip(),
                     "external": True,
+                    "_strict_authority_route_current": strict_authority is not None,
                 }
+            else:
+                row["authority_controller_did"] = str(
+                    getattr(resolution, "controller_did", "") or ""
+                ).strip()
             resolved[resolution.did_aw] = row
             continue
 
@@ -1287,10 +1425,12 @@ async def create_or_send(
         pre_message_id = uuid_mod.UUID(str(payload.message_id))
         route = await _resolve_remote_chat_route(
             db,
+            request=request,
             registry_client=registry_client,
             recipient=external_targets[0],
             requester_did_key=auth.did_key,
         )
+        _apply_remote_chat_route(participant_rows, external_targets[0], route)
 
         remote = await _deliver_federated_chat(
             request,
@@ -1338,6 +1478,9 @@ async def create_or_send(
             owner_did=(auth.did_aw or actor_did).strip(),
             sender_team_id=auth.team_id,
             recipients=[{**external_targets[0], **route}],
+            registry_client=getattr(
+                request.app.state, "awid_registry_client", None
+            ),
         )
         await fire_mutation_hook(
             request,
@@ -1483,6 +1626,7 @@ async def create_or_send(
         owner_did=(auth.did_aw or actor_did).strip(),
         sender_team_id=auth.team_id,
         recipients=target_rows,
+        registry_client=getattr(request.app.state, "awid_registry_client", None),
     )
 
     if payload.wait_seconds is not None:
@@ -2407,6 +2551,7 @@ async def send_message(
                 raise
             refreshed_route = await _resolve_remote_chat_route(
                 db,
+                request=request,
                 registry_client=getattr(request.app.state, "awid_registry_client", None),
                 recipient=route,
                 requester_did_key=auth.did_key,
@@ -2465,6 +2610,9 @@ async def send_message(
             owner_did=(auth.did_aw or actor_did).strip(),
             sender_team_id=auth.team_id,
             recipients=remote_recipients,
+            registry_client=getattr(
+                request.app.state, "awid_registry_client", None
+            ),
         )
         await fire_mutation_hook(
             request,
@@ -2557,11 +2705,16 @@ class SessionListItem(BaseModel):
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionListItem]
+    # True when the limit left sessions out, so a short page is never mistaken
+    # for the whole list. There is no cursor yet: this reports the omission, it
+    # does not let a caller retrieve what was omitted.
+    has_more: bool = False
 
 
 @router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
     request: Request,
+    limit: int = Query(200, ge=1, le=500),
     db=Depends(get_db),
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
@@ -2590,14 +2743,21 @@ async def list_sessions(
             LEFT JOIN {{tables.chat_messages}} m
               ON m.session_id = s.session_id
             GROUP BY s.session_id, s.team_id, s.created_at
-            ORDER BY last_activity DESC, s.created_at DESC
+            ORDER BY last_activity DESC, s.created_at DESC, s.session_id DESC
+            LIMIT $2::int
             """,
             participant_did,
+            limit + 1,
         )
         for row in rows:
             rows_by_session.setdefault(str(row["session_id"]), row)
     rows = list(rows_by_session.values())
     rows.sort(key=lambda row: (row["last_activity"], row["created_at"]), reverse=True)
+    # Count after the merge across the identity's dids: the same session reached
+    # through two dids is one session, and counting per query would report an
+    # omission that deduplication has already undone.
+    has_more = len(rows) > limit
+    rows = rows[:limit]
 
     session_ids = [row["session_id"] for row in rows]
     participant_rows: list[dict[str, Any]] = []
@@ -2660,4 +2820,4 @@ async def list_sessions(
             )
         )
 
-    return SessionListResponse(sessions=sessions)
+    return SessionListResponse(sessions=sessions, has_more=has_more)

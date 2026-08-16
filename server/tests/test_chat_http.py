@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -14,7 +15,8 @@ from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
-from awid.registry import Address, AddressDelivery, KeyResolution
+from awid.federation_errors import FederationAuthorityError
+from awid.registry import Address, AddressDelivery, KeyResolution, Namespace
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import E2EE_SUITE, _envelope_map, _hash_canonical, _key_wrap_map
 from aweb.federation.envelope import verify_federation_envelope
@@ -23,6 +25,7 @@ from aweb.identity_metadata import routable_chat_address
 from aweb.routes import chat as chat_routes
 from aweb.routes.chat import router as chat_router
 from aweb.routes.federation import router as federation_router
+from federation_activation_support import TestFederationAuthority
 
 
 def _make_keypair():
@@ -243,6 +246,7 @@ def _build_test_app(aweb_db, registry):
     app.state.redis = None
     app.state.rate_limiter = None
     app.state.awid_registry_client = registry
+    app.state.federation_authority = TestFederationAuthority(aweb_db, registry)
     return app
 
 
@@ -284,6 +288,7 @@ def test_routable_chat_address_policy():
 @pytest.mark.asyncio
 async def test_chat_to_external_address_posts_federated_chat_and_projects_locally(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
@@ -299,14 +304,16 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
         alice_did_key,
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+    )
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-remote-chat",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key=bob_did_key,
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://remote.example"),
@@ -357,7 +364,7 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
             "message_id": message_id,
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": bob_did_key,
             "to_stable_id": "did:aw:bob",
             "type": "chat",
             "wait_seconds": 30,
@@ -381,7 +388,7 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
         )
 
     assert resp.status_code == 200, resp.text
-    registry.resolve_address.assert_awaited_with("otherco.com", "bob", did_key=alice_did_key)
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob")
     assert resp.json()["session_id"] == session_id
     assert resp.json()["message_id"] == message_id
     assert len(remote_requests) == 1
@@ -398,25 +405,34 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
     ):
         assert deprecated_field not in remote_body["envelope"]
     assert remote_body["envelope"]["wait_seconds"] == 30
-    participant = await aweb_cloud_db.aweb_db.fetch_one(
+    chat_participants = await aweb_cloud_db.aweb_db.fetch_all(
         """
-        SELECT delivery_origin, current_did_key
+        SELECT did, delivery_origin, current_did_key
         FROM {{tables.chat_participants}}
-        WHERE session_id = $1 AND did = 'did:aw:bob'
+        WHERE session_id = $1
         """,
         UUID(session_id),
     )
-    assert participant["delivery_origin"] == "https://remote.example"
-    assert participant["current_did_key"] == "did:key:bob"
-    conversation_participant = await aweb_cloud_db.aweb_db.fetch_one(
+    chat_by_did = {row["did"]: dict(row) for row in chat_participants}
+    assert chat_by_did["did:aw:alice"]["delivery_origin"] is None
+    assert chat_by_did["did:aw:alice"]["current_did_key"] == alice_did_key
+    assert chat_by_did["did:aw:bob"]["delivery_origin"] == "https://remote.example"
+    assert chat_by_did["did:aw:bob"]["current_did_key"] == bob_did_key
+    conversation_participants = await aweb_cloud_db.aweb_db.fetch_all(
         """
-        SELECT current_did_key
+        SELECT did, delivery_origin, current_did_key, transport_hint
         FROM {{tables.conversation_participants}}
-        WHERE conversation_id = $1 AND did = 'did:aw:bob'
+        WHERE conversation_id = $1
         """,
         UUID(session_id),
     )
-    assert conversation_participant["current_did_key"] == "did:key:bob"
+    conversation_by_did = {row["did"]: dict(row) for row in conversation_participants}
+    assert conversation_by_did["did:aw:alice"]["delivery_origin"] is None
+    assert conversation_by_did["did:aw:alice"]["current_did_key"] == alice_did_key
+    assert conversation_by_did["did:aw:alice"]["transport_hint"] == "local"
+    assert conversation_by_did["did:aw:bob"]["delivery_origin"] == "https://remote.example"
+    assert conversation_by_did["did:aw:bob"]["current_did_key"] == bob_did_key
+    assert conversation_by_did["did:aw:bob"]["transport_hint"] == "federation:https://remote.example"
     contact = await aweb_cloud_db.aweb_db.fetch_one(
         """
         SELECT contact_address, label, reference_type, status
@@ -431,6 +447,25 @@ async def test_chat_to_external_address_posts_federated_chat_and_projects_locall
         "reference_type": "identity",
         "status": "active",
     }
+
+    reply_payload = _federated_chat_payload(
+        sender_sk=bob_sk,
+        sender_did_key=bob_did_key,
+        sender_did_aw="did:aw:bob",
+        sender_address="otherco.com/bob",
+        sender_delivery_origin="https://remote.example",
+        target_address="acme.com/alice",
+        target_did_aw="did:aw:alice",
+        target_did_key=alice_did_key,
+        target_delivery_origin="https://local.example",
+        body="reply through the projected chat route",
+        conversation_id=session_id,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post("/v1/federation/messages", json=reply_payload)
+
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["conversation_id"] == session_id
 
 
 @pytest.mark.asyncio
@@ -1028,8 +1063,40 @@ async def test_chat_continuation_to_remote_participant_requires_signed_payload(a
 
 
 @pytest.mark.asyncio
+async def test_remote_chat_route_refresh_preserves_stable_authority_error():
+    authority = SimpleNamespace(
+        resolve_contact=AsyncMock(
+            side_effect=FederationAuthorityError("federation_rate_limited")
+        )
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(federation_authority=authority)),
+        client=SimpleNamespace(host="127.0.0.1"),
+    )
+
+    with pytest.raises(FederationAuthorityError) as error:
+        await chat_routes._resolve_remote_chat_route(
+            SimpleNamespace(),
+            request=request,
+            registry_client=SimpleNamespace(),
+            recipient={
+                "address": "otherco.com/bob",
+                "did": "did:aw:bob",
+                "did_aw": "did:aw:bob",
+                "delivery_origin": "https://old.example",
+            },
+        )
+
+    assert error.value.reason == "federation_rate_limited"
+    assert error.value.http_status == 429
+    assert error.value.retryable is True
+    assert error.value.retry_after_required is True
+
+
+@pytest.mark.asyncio
 async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
+    bob_sk, _, bob_did_key = _make_keypair()
     session_id = uuid4()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -1057,11 +1124,12 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
         INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin, current_did_key)
         VALUES
             ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', 'did:key:bob')
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', $4)
         """,
         session_id,
         alice_agent_id,
         alice_did_key,
+        bob_did_key,
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -1075,22 +1143,25 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
         INSERT INTO {{tables.conversation_participants}}
             (conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role)
         VALUES
-            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3, 'chat', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', 'did:key:bob', 'chat', 'participant')
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', NULL, $3, 'local', 'initiator'),
+            ($1, 'did:aw:bob', NULL, 'bob', 'otherco.com/bob', 'https://old.example', $4, 'federation:https://old.example', 'participant')
         """,
         session_id,
         alice_agent_id,
         alice_did_key,
+        bob_did_key,
     )
     registry = AsyncMock()
-    registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key="did:key:bob"))
+    registry.resolve_key = AsyncMock(
+        return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key)
+    )
     registry.resolve_address = AsyncMock(
         return_value=Address(
             address_id="addr-remote-chat",
             domain="otherco.com",
             name="bob",
             did_aw="did:aw:bob",
-            current_did_key="did:key:bob",
+            current_did_key=bob_did_key,
             reachability="public",
             created_at=datetime.now(timezone.utc).isoformat(),
             delivery=AddressDelivery(origin="https://new.example"),
@@ -1141,7 +1212,7 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
             "message_id": message_id,
             "timestamp": timestamp,
             "to": "otherco.com/bob",
-            "to_did": "did:key:bob",
+            "to_did": bob_did_key,
             "to_stable_id": "did:aw:bob",
             "type": "chat",
         }
@@ -1165,17 +1236,51 @@ async def test_chat_continuation_refreshes_stale_delivery_origin_once(aweb_cloud
         "https://old.example/v1/federation/messages",
         "https://new.example/v1/federation/messages",
     ]
-    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob")
     chat_participant = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT delivery_origin FROM {{tables.chat_participants}} WHERE session_id = $1 AND did = 'did:aw:bob'",
+        """
+        SELECT delivery_origin, current_did_key
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1 AND did = 'did:aw:bob'
+        """,
         session_id,
     )
     conversation_participant = await aweb_cloud_db.aweb_db.fetch_one(
-        "SELECT delivery_origin FROM {{tables.conversation_participants}} WHERE conversation_id = $1 AND did = 'did:aw:bob'",
+        """
+        SELECT delivery_origin, current_did_key, transport_hint
+        FROM {{tables.conversation_participants}}
+        WHERE conversation_id = $1 AND did = 'did:aw:bob'
+        """,
         session_id,
     )
-    assert chat_participant["delivery_origin"] == "https://new.example"
-    assert conversation_participant["delivery_origin"] == "https://new.example"
+    assert dict(chat_participant) == {
+        "delivery_origin": "https://new.example",
+        "current_did_key": bob_did_key,
+    }
+    assert dict(conversation_participant) == {
+        "delivery_origin": "https://new.example",
+        "current_did_key": bob_did_key,
+        "transport_hint": "federation:https://new.example",
+    }
+
+    reply_payload = _federated_chat_payload(
+        sender_sk=bob_sk,
+        sender_did_key=bob_did_key,
+        sender_did_aw="did:aw:bob",
+        sender_address="otherco.com/bob",
+        sender_delivery_origin="https://new.example",
+        target_address="acme.com/alice",
+        target_did_aw="did:aw:alice",
+        target_did_key=alice_did_key,
+        target_delivery_origin="https://local.example",
+        body="reply after origin rotation",
+        conversation_id=str(session_id),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        reply = await client.post("/v1/federation/messages", json=reply_payload)
+
+    assert reply.status_code == 200, reply.text
+    assert reply.json()["conversation_id"] == str(session_id)
 
 
 @pytest.mark.asyncio
@@ -1301,7 +1406,7 @@ async def test_chat_continuation_does_not_retry_when_refresh_keeps_same_origin(a
 
     assert resp.status_code == 421, resp.text
     assert len(remote_requests) == 1
-    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob")
     chat_participant = await aweb_cloud_db.aweb_db.fetch_one(
         "SELECT delivery_origin FROM {{tables.chat_participants}} WHERE session_id = $1 AND did = 'did:aw:bob'",
         session_id,
@@ -1529,6 +1634,209 @@ async def test_receive_old_v1_federated_chat_ignores_deprecated_fields_and_deliv
 
 
 @pytest.mark.asyncio
+async def test_receive_federated_chat_local_sender_omission_preserves_both_stored_routes(
+    aweb_cloud_db,
+):
+    local_sk, _, local_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    session_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:beta.example', 'beta.example', 'backend', 'did:key:team-1')
+        """
+    )
+    bob_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, alias, did_key, did_aw, address, identity_scope, role, inbound_mode
+        ) VALUES (
+            'backend:beta.example', 'bob', $1, 'did:aw:bob',
+            'beta.example/bob', 'global', 'developer', 'open'
+        ) RETURNING agent_id
+        """,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did
+        ) VALUES ($1, 'chat', 'backend:beta.example', $2)
+        """,
+        session_id,
+        local_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, delivery_origin,
+            current_did_key, transport_hint, role
+        ) VALUES
+            ($1, $2, NULL, 'local', 'alpha.example/local',
+             'https://sender.example', $2, 'federation:https://sender.example', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4,
+             'local', 'participant')
+        """,
+        session_id,
+        local_did_key,
+        bob_agent_id,
+        bob_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        "INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by) VALUES ($1, 'backend:beta.example', $2)",
+        session_id,
+        local_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (
+            session_id, did, agent_id, alias, address, delivery_origin, current_did_key
+        ) VALUES
+            ($1, $2, NULL, 'local', 'alpha.example/local', 'https://sender.example', $2),
+            ($1, 'did:aw:bob', $3, 'bob', 'beta.example/bob', NULL, $4)
+        """,
+        session_id,
+        local_did_key,
+        bob_agent_id,
+        bob_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_address = AsyncMock(
+        side_effect=AssertionError("stored continuation must not resolve an address")
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+    app.state.public_origin = "https://recipient.example"
+    payload = _federated_chat_payload(
+        sender_sk=local_sk,
+        sender_did_key=local_did_key,
+        sender_did_aw=local_did_key,
+        sender_address="alpha.example/local",
+        target_address="did:aw:bob",
+        target_did_key=bob_did_key,
+        conversation_id=str(session_id),
+        signed_to_did="did:aw:bob",
+    )
+    signed = json.loads(payload["envelope"]["signed_payload"])
+    signed["from"] = local_did_key
+    signed["from_stable_id"] = local_did_key
+    payload["envelope"]["signed_payload"] = canonical_json_bytes(signed).decode()
+    payload["signature"] = sign_message(
+        local_sk, payload["envelope"]["signed_payload"].encode()
+    )
+    del payload["envelope"]["sender_address"]
+    del payload["envelope"]["sender_delivery_origin"]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/federation/messages", json=payload)
+
+    assert response.status_code == 200, response.text
+    conversation_route = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT address, delivery_origin, transport_hint
+        FROM {{tables.conversation_participants}}
+        WHERE conversation_id = $1 AND did = $2
+        """,
+        session_id,
+        local_did_key,
+    )
+    chat_route = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT address, delivery_origin
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1 AND did = $2
+        """,
+        session_id,
+        local_did_key,
+    )
+    assert dict(conversation_route) == {
+        "address": "alpha.example/local",
+        "delivery_origin": "https://sender.example",
+        "transport_hint": "federation:https://sender.example",
+    }
+    assert dict(chat_route) == {
+        "address": "alpha.example/local",
+        "delivery_origin": "https://sender.example",
+    }
+    target_routes = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT 'conversation' AS store, address, delivery_origin
+        FROM {{tables.conversation_participants}}
+        WHERE conversation_id = $1 AND did = 'did:aw:bob'
+        UNION ALL
+        SELECT 'chat' AS store, address, delivery_origin
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1 AND did = 'did:aw:bob'
+        ORDER BY store
+        """,
+        session_id,
+    )
+    assert [dict(row) for row in target_routes] == [
+        {"store": "chat", "address": "beta.example/bob", "delivery_origin": None},
+        {
+            "store": "conversation",
+            "address": "beta.example/bob",
+            "delivery_origin": None,
+        },
+    ]
+
+    injected = json.loads(json.dumps(payload))
+    injected["envelope"]["message_id"] = str(uuid4())
+    injected["envelope"]["target_address"] = "evil.example/injected"
+    injected_signed = json.loads(injected["envelope"]["signed_payload"])
+    injected_signed["message_id"] = injected["envelope"]["message_id"]
+    injected["envelope"]["signed_payload"] = canonical_json_bytes(
+        injected_signed
+    ).decode()
+    injected["signature"] = sign_message(
+        local_sk, injected["envelope"]["signed_payload"].encode()
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        rejected = await client.post("/v1/federation/messages", json=injected)
+
+    assert rejected.status_code == 422, rejected.text
+    assert rejected.json()["reason"] == "recipient_route_mismatch"
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.conversation_participants}}
+        SET address = 'changed.example/route',
+            delivery_origin = 'https://changed.example',
+            transport_hint = 'changed-route'
+        WHERE conversation_id = $1
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.chat_participants}}
+        SET address = 'changed.example/route',
+            delivery_origin = 'https://changed.example'
+        WHERE session_id = $1
+        """,
+        session_id,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        changed_route_replay = await client.post(
+            "/v1/federation/messages", json=payload
+        )
+    assert changed_route_replay.status_code == 200, changed_route_replay.text
+
+    await aweb_cloud_db.aweb_db.execute(
+        "DELETE FROM {{tables.chat_participants}} WHERE session_id = $1",
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        "DELETE FROM {{tables.conversation_participants}} WHERE conversation_id = $1",
+        session_id,
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        replay = await client.post("/v1/federation/messages", json=payload)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["message_id"] == payload["envelope"]["message_id"]
+    registry.resolve_address.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_receive_federated_chat_existing_local_didkey_first_contact_fails_closed(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     _, _, local_did_key = _make_keypair()
@@ -1563,7 +1871,7 @@ async def test_receive_federated_chat_existing_local_didkey_first_contact_fails_
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
-    assert "Federation first-contact target_address must be domain/name" in resp.text
+    assert resp.json()["reason"] == "federation_envelope_invalid"
     assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == 0
 
 
@@ -1597,14 +1905,18 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(aweb_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversation_participants}}
-            (conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role)
+            (conversation_id, did, agent_id, alias, address, delivery_origin,
+             current_did_key, transport_hint, role)
         VALUES
-            ($1, $2, $3, 'local', $2, NULL, 'local', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob', 'https://remote.example', 'federation:https://remote.example', 'participant')
+            ($1, $2, $3, 'local', $2, NULL, $2, 'local', 'initiator'),
+            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob',
+             'https://remote.example', $4, 'federation:https://remote.example',
+             'participant')
         """,
         session_id,
         local_did_key,
         local_agent_id,
+        bob_did_key,
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -1616,12 +1928,18 @@ async def test_receive_federated_chat_existing_local_didkey_reply_succeeds(aweb_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin)
-        VALUES ($1, $2, $3, 'local', $2, NULL), ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob', 'https://remote.example')
+        INSERT INTO {{tables.chat_participants}} (
+            session_id, did, agent_id, alias, address, delivery_origin,
+            current_did_key
+        ) VALUES
+            ($1, $2, $3, 'local', $2, NULL, $2),
+            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob',
+             'https://remote.example', $4)
         """,
         session_id,
         local_did_key,
         local_agent_id,
+        bob_did_key,
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
@@ -1819,8 +2137,8 @@ async def test_receive_federated_chat_stored_route_rejects_wrong_target_current_
         resp = await client.post("/v1/federation/messages", json=payload)
 
     assert resp.status_code == 422, resp.text
-    assert "Federation target current key mismatch" in resp.text
-    registry.resolve_key.assert_awaited_once_with("did:aw:alice")
+    assert resp.json()["reason"] == "recipient_current_key_mismatch"
+    registry.resolve_key.assert_not_called()
     registry.resolve_address.assert_not_called()
     assert await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.chat_messages}} WHERE session_id = $1",
@@ -1858,14 +2176,18 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
     await aweb_cloud_db.aweb_db.execute(
         """
         INSERT INTO {{tables.conversation_participants}}
-            (conversation_id, did, agent_id, alias, address, delivery_origin, transport_hint, role)
+            (conversation_id, did, agent_id, alias, address, delivery_origin,
+             current_did_key, transport_hint, role)
         VALUES
-            ($1, $2, $3, 'local', $2, NULL, 'local', 'initiator'),
-            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob', 'https://remote.example', 'federation:https://remote.example', 'participant')
+            ($1, $2, $3, 'local', $2, NULL, $2, 'local', 'initiator'),
+            ($1, 'did:aw:bob', NULL, 'bob', 'remote.example/bob',
+             'https://remote.example', $4, 'federation:https://remote.example',
+             'participant')
         """,
         session_id,
         local_did_key,
         local_agent_id,
+        bob_did_key,
     )
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -1877,10 +2199,12 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
     )
     await aweb_cloud_db.aweb_db.execute(
         """
-        INSERT INTO {{tables.chat_participants}} (session_id, did, alias, address)
-        VALUES ($1, 'did:aw:bob', 'bob', 'remote.example/bob')
+        INSERT INTO {{tables.chat_participants}} (
+            session_id, did, alias, address, current_did_key
+        ) VALUES ($1, 'did:aw:bob', 'bob', 'remote.example/bob', $2)
         """,
         session_id,
+        bob_did_key,
     )
     registry = AsyncMock()
     registry.resolve_key = AsyncMock(return_value=KeyResolution(did_aw="did:aw:bob", current_did_key=bob_did_key))
@@ -1903,8 +2227,8 @@ async def test_receive_federated_chat_local_didkey_missing_session_target_fails_
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/federation/messages", json=payload)
 
-    assert resp.status_code == 403, resp.text
-    assert "Federation chat session participants mismatch" in resp.text
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["reason"] == "federation_conversation_invalid"
     assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.chat_messages}}") == 0
 
 
@@ -1958,16 +2282,16 @@ async def test_receive_federated_chat_duplicate_message_id_is_idempotent(aweb_cl
         "SELECT COUNT(*) FROM {{tables.chat_messages}} WHERE message_id = $1",
         UUID(payload["envelope"]["message_id"]),
     )
-    delivery_count = await aweb_cloud_db.aweb_db.fetch_value(
+    receipt_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
         SELECT COUNT(*)
-        FROM {{tables.federated_message_deliveries}}
-        WHERE message_type = 'chat' AND message_id = $1
+        FROM {{tables.message_ingress_receipts}}
+        WHERE storage_kind = 'chat' AND message_id = $1
         """,
         UUID(payload["envelope"]["message_id"]),
     )
     assert message_count == 1
-    assert delivery_count == 1
+    assert receipt_count == 1
 
 
 @pytest.mark.asyncio
@@ -2021,8 +2345,8 @@ async def test_receive_federated_chat_rejects_closed_or_mismatched_conversation(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         closed = await client.post("/v1/federation/messages", json=payload)
 
-    assert closed.status_code == 403, closed.text
-    assert "not active" in closed.json()["detail"]
+    assert closed.status_code == 409, closed.text
+    assert closed.json()["reason"] == "federation_conversation_invalid"
     delivery_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
         SELECT COUNT(*)
@@ -2061,8 +2385,8 @@ async def test_receive_federated_chat_rejects_closed_or_mismatched_conversation(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         mismatched = await client.post("/v1/federation/messages", json=mismatched_payload)
 
-    assert mismatched.status_code == 403, mismatched.text
-    assert "participants mismatch" in mismatched.json()["detail"]
+    assert mismatched.status_code == 409, mismatched.text
+    assert mismatched.json()["reason"] == "federation_conversation_invalid"
     mismatch_delivery_count = await aweb_cloud_db.aweb_db.fetch_value(
         """
         SELECT COUNT(*)
@@ -2521,7 +2845,134 @@ async def test_create_chat_session_accepts_cross_team_to_address(aweb_cloud_db):
     assert body["session_id"]
     assert {participant["did"] for participant in body["participants"]} == {"did:aw:alice", "did:aw:bob"}
     assert {participant["address"] for participant in body["participants"]} == {"acme.com/alice", "otherco.com/bob"}
-    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob")
+
+
+@pytest.mark.asyncio
+async def test_cross_team_same_registry_chat_creates_bound_contact_without_lookup(
+    aweb_cloud_db,
+):
+    alice_sk, _, alice_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES
+            ('backend:acme.com', 'acme.com', 'backend', 'did:key:z6MkAliceTeam'),
+            ('ops:otherco.com', 'otherco.com', 'ops', 'did:key:z6MkBobTeam')
+        """
+    )
+    alice_agent_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, identity_scope, inbound_mode
+        ) VALUES (
+            'backend:acme.com', $1, 'did:aw:alice', 'acme.com/alice',
+            'alice', 'global', 'open'
+        ) RETURNING agent_id
+        """,
+        alice_did_key,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (
+            team_id, did_key, did_aw, address, alias, identity_scope, inbound_mode
+        ) VALUES (
+            'ops:otherco.com', $1, 'did:aw:bob', 'otherco.com/bob',
+            'bob', 'global', 'open'
+        )
+        """,
+        bob_did_key,
+    )
+    registry = AsyncMock()
+    registry.resolve_address_fresh = AsyncMock(
+        return_value=Address(
+            address_id="local-bob",
+            domain="otherco.com",
+            name="bob",
+            did_aw="did:aw:bob",
+            current_did_key=bob_did_key,
+            reachability="public",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    registry.get_namespace_fresh = AsyncMock(
+        return_value=Namespace(
+            namespace_id="namespace-otherco",
+            domain="otherco.com",
+            controller_did="did:key:z6MkNamespaceController",
+            verification_status="verified",
+            last_verified_at=None,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, registry)
+
+    async def auth_override():
+        return MessagingAuth(
+            did_key=alice_did_key,
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="backend:acme.com",
+            alias="alice",
+            agent_id=str(alice_agent_id),
+        )
+
+    app.dependency_overrides[get_messaging_auth] = auth_override
+    session_id = str(uuid4())
+    message_id = str(uuid4())
+    timestamp = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+    signed_payload = canonical_json_bytes(
+        {
+            "body": "same registry chat",
+            "conversation_id": session_id,
+            "from": "acme.com/alice",
+            "from_did": alice_did_key,
+            "from_stable_id": "did:aw:alice",
+            "message_id": message_id,
+            "timestamp": timestamp,
+            "to": "otherco.com/bob",
+            "to_did": bob_did_key,
+            "to_stable_id": "did:aw:bob",
+            "type": "chat",
+            "wait_seconds": 30,
+        }
+    ).decode()
+    payload = {
+        "session_id": session_id,
+        "to_addresses": ["otherco.com/bob"],
+        "message": "same registry chat",
+        "wait_seconds": 30,
+        "from_did": alice_did_key,
+        "message_id": message_id,
+        "timestamp": timestamp,
+        "signature": sign_message(alice_sk, signed_payload.encode()),
+        "signed_payload": signed_payload,
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/v1/chat/sessions", json=payload)
+
+    assert response.status_code == 200, response.text
+    contact = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT owner_did, contact_address, contact_did_aw,
+               binding_controller_did, status
+        FROM {{tables.contacts}}
+        WHERE owner_did = 'did:aw:alice' AND contact_address = 'otherco.com/bob'
+        """
+    )
+    assert dict(contact) == {
+        "owner_did": "did:aw:alice",
+        "contact_address": "otherco.com/bob",
+        "contact_did_aw": "did:aw:bob",
+        "binding_controller_did": "did:key:z6MkNamespaceController",
+        "status": "active",
+    }
+    registry.resolve_address_fresh.assert_awaited_once_with("otherco.com", "bob")
+    registry.get_namespace_fresh.assert_awaited_once_with("otherco.com")
 
 
 @pytest.mark.asyncio
@@ -2640,7 +3091,7 @@ async def test_create_chat_session_hosted_handle_without_delivery_origin_fails_c
 
     assert resp.status_code == 424, resp.text
     assert "no federated delivery origin" in resp.json()["detail"]
-    registry.resolve_address.assert_awaited_once_with("jane.aweb.ai", "c3po", did_key=alice_did_key)
+    registry.resolve_address.assert_awaited_once_with("jane.aweb.ai", "c3po")
 
 
 @pytest.mark.asyncio
@@ -3008,7 +3459,7 @@ async def test_create_chat_session_mutation_context_includes_from_did_aw(aweb_cl
 
 
 @pytest.mark.asyncio
-async def test_create_chat_session_global_recipient_allows_explicit_inbound_mode_open(aweb_cloud_db):
+async def test_create_chat_session_to_did_does_not_create_unresolved_identity_contact(aweb_cloud_db):
     alice_sk, _, alice_did_key = _make_keypair()
     await aweb_cloud_db.aweb_db.execute(
         """
@@ -3048,7 +3499,7 @@ async def test_create_chat_session_global_recipient_allows_explicit_inbound_mode
           AND status = 'active'
         """
     )
-    assert contact_count == 1
+    assert contact_count == 0
 
 
 @pytest.mark.asyncio
@@ -3316,7 +3767,7 @@ async def test_create_chat_session_to_address_does_not_fall_back_to_local_persis
 
     assert resp.status_code == 404, resp.text
     assert "Recipient address not found" in resp.text
-    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob")
 
 
 @pytest.mark.parametrize("recipient_identity_scope", ["global", "local"])
@@ -3363,7 +3814,7 @@ async def test_create_chat_session_to_address_uses_same_team_local_recipient_whe
         resp = await client.post("/v1/chat/sessions", json=payload)
 
     assert resp.status_code == 200, resp.text
-    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    registry.resolve_address.assert_not_awaited()
     rows = await aweb_cloud_db.aweb_db.fetch_all(
         "SELECT did, alias FROM {{tables.chat_participants}} WHERE alias = 'bob'"
     )
@@ -3410,7 +3861,7 @@ async def test_create_chat_session_to_address_rejects_cross_team_local_persisten
 
     assert resp.status_code == 404, resp.text
     assert "Recipient address not found" in resp.text
-    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob")
 
 
 @pytest.mark.asyncio
@@ -3518,7 +3969,7 @@ async def test_create_chat_session_to_private_address_uses_client_recipient_bind
         resp = await client.post("/v1/chat/sessions", content=body, headers=headers)
 
     assert resp.status_code == 200, resp.text
-    registry.resolve_address.assert_awaited_once_with("otherco.com", "bob", did_key=alice_did_key)
+    registry.resolve_address.assert_not_awaited()
     body_json = resp.json()
     assert {participant["did"] for participant in body_json["participants"]} == {"did:aw:alice", "did:aw:bob"}
     assert {participant["address"] for participant in body_json["participants"]} == {"otherco.com/bob", None}
@@ -6062,3 +6513,142 @@ async def test_chat_session_list_accepts_alternate_session_participant_did(aweb_
             "sender_waiting": False,
         }
     ]
+
+
+class _SessionRowCountingManager:
+    """Database manager wrapper recording how many rows each query returned.
+
+    The session listing reads every session an identity has ever joined, so
+    only the row counts coming back from the database show whether a page is
+    cut in SQL or after the whole history is already in memory.
+    """
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.row_counts: list[int] = []
+
+    async def fetch_all(self, *args, **kwargs):
+        rows = await self._inner.fetch_all(*args, **kwargs)
+        self.row_counts.append(len(rows))
+        return rows
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_reads_page_sized_rows_not_every_session(aweb_cloud_db):
+    """Listing sessions must read in proportion to the page, not to history."""
+    session_count = 12
+    limit = 3
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    for index in range(session_count):
+        session_id = uuid4()
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+            VALUES ($1, 'alice', $2)
+            """,
+            session_id,
+            datetime.now(timezone.utc) - timedelta(minutes=index + 1),
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+            VALUES
+                ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+                ($1, 'did:aw:bob', 'bob')
+            """,
+            session_id,
+        )
+
+    counting_db = _SessionRowCountingManager(aweb_cloud_db.aweb_db)
+    app = _build_test_app(counting_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.get(f"/v1/chat/sessions?limit={limit}")
+
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["sessions"]) == limit
+
+    # The page and its participant rows scale with the limit, not with the
+    # twelve sessions on file.
+    assert max(counting_db.row_counts) <= 3 * limit
+    assert max(counting_db.row_counts) < session_count * 2
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_reports_whether_the_limit_left_sessions_out(aweb_cloud_db):
+    """A short page must say it is short; a complete one must not claim it is."""
+    session_count = 6
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('backend:acme.com', 'acme.com', 'backend', 'did:key:team')
+        """
+    )
+    for index in range(session_count):
+        session_id = uuid4()
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_sessions}} (session_id, created_by, created_at)
+            VALUES ($1, 'alice', $2)
+            """,
+            session_id,
+            datetime.now(timezone.utc) - timedelta(minutes=index + 1),
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+            VALUES
+                ($1, 'did:key:z6MkAliceCurrent', 'alice'),
+                ($1, 'did:aw:bob', 'bob')
+            """,
+            session_id,
+        )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _auth_override():
+        return MessagingAuth(
+            did_key="did:key:z6MkAliceCurrent",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        truncated = await client.get("/v1/chat/sessions?limit=2")
+        exact = await client.get(f"/v1/chat/sessions?limit={session_count}")
+        roomy = await client.get("/v1/chat/sessions?limit=50")
+
+    assert truncated.status_code == 200, truncated.text
+    assert len(truncated.json()["sessions"]) == 2
+    assert truncated.json()["has_more"] is True
+
+    # A page that exactly consumes the limit is still complete, and must not
+    # claim otherwise just because the lookahead row was fetched.
+    assert exact.status_code == 200, exact.text
+    assert len(exact.json()["sessions"]) == session_count
+    assert exact.json()["has_more"] is False
+
+    assert roomy.status_code == 200, roomy.text
+    assert len(roomy.json()["sessions"]) == session_count
+    assert roomy.json()["has_more"] is False

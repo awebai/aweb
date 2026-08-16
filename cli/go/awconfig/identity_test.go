@@ -31,7 +31,6 @@ func TestSaveWorktreeIdentityToRoundTrip(t *testing.T) {
 		t.Fatalf("LoadWorktreeIdentityFrom: %v", err)
 	}
 	want.SchemaVersion = WorktreeIdentitySchemaVersion
-	want.Lifetime = "persistent"
 	if *got != *want {
 		t.Fatalf("identity mismatch: got %+v want %+v", *got, *want)
 	}
@@ -65,12 +64,9 @@ func TestLoadWorktreeIdentityReadsDeprecatedLifetimeCompat(t *testing.T) {
 	if got.IdentityScope != "global" {
 		t.Fatalf("identity_scope=%q", got.IdentityScope)
 	}
-	if got.Lifetime != "persistent" {
-		t.Fatalf("deprecated-read-compat lifetime=%q", got.Lifetime)
-	}
 }
 
-func TestLoadWorktreeIdentityReadsIdentityScopeWithLifetimeMirror(t *testing.T) {
+func TestLoadWorktreeIdentityReadsCanonicalIdentityScope(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), ".aw", "identity.yaml")
@@ -87,9 +83,6 @@ func TestLoadWorktreeIdentityReadsIdentityScopeWithLifetimeMirror(t *testing.T) 
 	}
 	if got.IdentityScope != "local" {
 		t.Fatalf("identity_scope=%q", got.IdentityScope)
-	}
-	if got.Lifetime != "ephemeral" {
-		t.Fatalf("deprecated-read-compat lifetime=%q", got.Lifetime)
 	}
 }
 
@@ -173,9 +166,6 @@ func TestResolveIdentityReadsStandaloneIdentityWithoutWorkspace(t *testing.T) {
 	}
 	if resolved.IdentityScope != "global" {
 		t.Fatalf("IdentityScope=%q", resolved.IdentityScope)
-	}
-	if resolved.Lifetime != "persistent" {
-		t.Fatalf("deprecated-read-compat Lifetime=%q", resolved.Lifetime)
 	}
 	if resolved.RegistryURL != "https://registry.example.com" {
 		t.Fatalf("RegistryURL=%q", resolved.RegistryURL)

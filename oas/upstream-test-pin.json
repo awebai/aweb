@@ -1,7 +1,0 @@
-{
-  "schema_version": 1,
-  "repository": "https://github.com/OAS-Framework/oas.git",
-  "commit": "f7c1703422a37fc58f0aa506e9bcd8235e78fd24",
-  "purpose": "Reproducible OAS launch-environment seam input for aweb release tests",
-  "tradeoff": "The default no longer exercises uncommitted or newer local OAS integration work; pass OAS_TEST_ROOT explicitly for that opt-in coverage."
-}

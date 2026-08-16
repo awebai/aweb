@@ -27,6 +27,8 @@ Optional environment:
 - `AWID_PORT` default `8010`
 - `AWID_DB_SCHEMA` default `awid`
 - `AWID_RATE_LIMIT_BACKEND` default `redis`
+- `AWID_SERVICE_TOKEN` optional >=32-byte trusted caller secret; configure the
+  same value on aweb to exempt only DID key/address auth reads from public IP limits
 
 ## Docker
 
@@ -38,14 +40,7 @@ curl http://localhost:8010/health
 
 ## Release
 
-`awid` is released as a GHCR container image.
-
-Local release commands:
-
-```bash
-make release-awid-check
-make release-awid-tag
-make release-awid-push
-```
-
-The version lives in `pyproject.toml`. The release tag must be `awid-vX.Y.Z`, and it must match that version or the GitHub workflow will fail.
+`awid` is released as a GHCR container image through the repository's `release`
+skill and driver. The driver owns planning, exact-byte staging, publication,
+tagging, registry verification, and the receipt; do not start a release by
+pushing an `awid-vX.Y.Z` tag. The version remains in `pyproject.toml`.

@@ -1,0 +1,88 @@
+name: Test suite
+
+# `make test` on every pull request. This is the PR-time signal that the
+# deleted comprehensive hosted gate used to provide as a side effect of running
+# on pull requests too - at the cost of a ~120-minute job with a 54%
+# cancellation rate, most of whose expensive half the focused workflows already
+# cover (cli-e2e, federation-e2e and library-ci each run their Docker journey
+# on pull requests). The comprehensive proof now runs locally as the release
+# gate (scripts/release-gate.sh), invoked by `make release` before publication.
+#
+# No Docker journeys: `make test` contains none, which is what makes this cheap.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: postgres
+      REDIS_URL: redis://localhost:6379/0
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The CLI release-version derivation and the commit stamp check read
+          # the full tag history.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
+
+      - name: Install tmux for the guarded launcher tests
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: Run the test suite
+        run: make test

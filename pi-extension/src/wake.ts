@@ -116,9 +116,10 @@ export function createWakeDispatcher(
   let closed: Error | undefined;
   let inFlight: PendingWake | undefined;
 
-  const nextDeliverableIndex = (): number => queue.findIndex(({ awakening }) => (
-    !turnActive || awakening.deliveryIntent !== "wake"
-  ));
+  // Pi owns active-turn queueing through deliveryOptionsForAwakening. Submit
+  // immediately here so channel-core can observe acceptance and unblock its
+  // delivery lane; a second hold would last for the agent's entire turn.
+  const nextDeliverableIndex = (): number => queue.length > 0 ? 0 : -1;
 
   const drain = () => {
     if (draining || nextDeliverableIndex() < 0) return;

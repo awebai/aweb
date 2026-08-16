@@ -19,7 +19,7 @@ canonicalize_dir() {
 make_temp_dir() {
   local prefix="$1"
   local dir
-  dir="$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX")"
+  dir="$(mktemp -d "$DOCKER_BIND_ROOT/${prefix}.XXXXXX")"
   canonicalize_dir "$dir"
 }
 
@@ -36,6 +36,15 @@ PY
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 CLI_DIR="$REPO_ROOT/cli/go"
 COMPOSE_FILE="$REPO_ROOT/server/docker-compose.yml"
+DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
+[[ "$DOCKER_BIND_ROOT" == /* && -d "$DOCKER_BIND_ROOT" ]] \
+  || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
+DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
+case "$DOCKER_PUBLISHED_HOST" in
+  127.0.0.1|localhost) DOCKER_PUBLISH_BIND=127.0.0.1 ;;
+  aweb-docker.test) DOCKER_PUBLISH_BIND=0.0.0.0 ;;
+  *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
+esac
 
 PROJECT="a2agw-e2e-$$"
 TMP_ROOT="$(make_temp_dir a2a-gw-e2e)"
@@ -56,11 +65,11 @@ REDIS_PORT="${AWEB_A2A_E2E_REDIS:-$(free_port)}"
 PG_PORT="${AWEB_A2A_E2E_PG:-$(free_port)}"
 GATEWAY_PORT="${A2A_GW_E2E_PORT:-$(free_port)}"
 
-AWEB_URL="http://localhost:$AWEB_PORT"
-AWID_URL="http://localhost:$AWID_PORT"
+AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
+AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
 AWEB_DOCKER_URL="http://host.docker.internal:$AWEB_PORT"
 AWID_DOCKER_URL="http://host.docker.internal:$AWID_PORT"
-GATEWAY_URL="http://localhost:$GATEWAY_PORT"
+GATEWAY_URL="http://$DOCKER_PUBLISHED_HOST:$GATEWAY_PORT"
 
 pass=0
 fail=0
@@ -78,7 +87,8 @@ cleanup() {
     docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" logs --no-color aweb awid 2>/dev/null || true
   fi
   docker rm -f "$GATEWAY_CONTAINER" >/dev/null 2>&1 || true
-  docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down -v >/dev/null 2>&1 || true
+  docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down -v --rmi local >/dev/null 2>&1 || true
+  docker image rm "$GATEWAY_IMAGE" >/dev/null 2>&1 || true
   rm -rf "$TMP_ROOT"
   if [[ $fail -gt 0 ]]; then
     echo "FAILED: $fail failures, $pass passed"
@@ -224,7 +234,7 @@ FROM scratch
 COPY aw /aw
 COPY aweb-a2a-gw /aweb-a2a-gw
 EOF
-docker build -f "$TMP_ROOT/Dockerfile.a2a-gw.e2e" -t "$GATEWAY_IMAGE" "$TMP_ROOT"
+docker build --load -f "$TMP_ROOT/Dockerfile.a2a-gw.e2e" -t "$GATEWAY_IMAGE" "$TMP_ROOT"
 assert_eq "gateway image built" "0" "0"
 echo ""
 
@@ -382,11 +392,19 @@ routes:
           tags: ["test"]
 EOF
 
+capture_success gateway_check "gateway config/workspace check" docker run --rm \
+  --user "$(id -u):$(id -g)" \
+  --add-host=host.docker.internal:host-gateway \
+  -v "$GATEWAY_DIR:/workspace:ro" \
+  -v "$CONFIG_PATH:/config/gateway.yaml:ro" \
+  -v "$TMP_ROOT/audit:/audit" \
+  "$GATEWAY_IMAGE" /aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check
+
 docker run -d --rm \
   --name "$GATEWAY_CONTAINER" \
   --user "$(id -u):$(id -g)" \
   --add-host=host.docker.internal:host-gateway \
-  -p "127.0.0.1:$GATEWAY_PORT:8080" \
+  -p "$DOCKER_PUBLISH_BIND:$GATEWAY_PORT:8080" \
   -v "$GATEWAY_DIR:/workspace:ro" \
   -v "$CONFIG_PATH:/config/gateway.yaml:ro" \
   -v "$TMP_ROOT/audit:/audit" \

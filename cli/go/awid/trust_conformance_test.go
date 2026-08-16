@@ -254,9 +254,9 @@ func TestTOFUConformanceVectors(t *testing.T) {
 			rotation := buildRotationAnnouncement(t, vector.RotationAnnouncement)
 			replacement := buildReplacementAnnouncement(t, vector.ReplacementAnnouncement)
 			meta := &agentMeta{
-				Lifetime: vector.AgentMeta.Lifetime,
-				Custody:  vector.AgentMeta.Custody,
-				Resolved: true,
+				IdentityScope: IdentityScopeFromLegacyLifetime(vector.AgentMeta.Lifetime),
+				Custody:       vector.AgentMeta.Custody,
+				Resolved:      true,
 			}
 
 			got := client.checkTOFUPinWithMeta(

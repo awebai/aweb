@@ -6,20 +6,10 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from fastapi import HTTPException
 
+from awid.federation_errors import FederationAuthorityError
 from aweb.federation.envelope import FederationEnvelope
-from aweb.routes.federation import _resolve_target_identity, _verify_sender_current_key
-
-
-class SenderKeyRegistryUnavailable:
-    async def resolve_key(self, _did_aw: str):
-        raise httpx.ConnectError("registry down")
-
-
-class SenderKeyRegistryBug:
-    async def resolve_key(self, _did_aw: str):
-        raise RuntimeError("key resolver invariant broke")
+from aweb.routes.federation import _resolve_target_identity
 
 
 class TargetIdentityRegistryUnavailable:
@@ -51,44 +41,19 @@ def _envelope() -> FederationEnvelope:
 
 
 @pytest.mark.asyncio
-async def test_federation_sender_key_awid_dependency_logs_exc_info(caplog):
-    caplog.set_level(logging.WARNING, logger="aweb.routes.federation")
-
-    with pytest.raises(HTTPException) as raised:
-        await _verify_sender_current_key(SenderKeyRegistryUnavailable(), _envelope())
-
-    assert raised.value.status_code == 503
-    assert "AWID federation sender key verification" in raised.value.detail
-    records = [record for record in caplog.records if "federation sender key verification" in record.getMessage()]
-    assert records
-    assert records[0].levelno == logging.WARNING
-    assert records[0].exc_info is not None
-
-
-@pytest.mark.asyncio
-async def test_federation_sender_key_unexpected_awid_error_logs_exception(caplog):
-    caplog.set_level(logging.ERROR, logger="aweb.routes.federation")
-
-    with pytest.raises(HTTPException) as raised:
-        await _verify_sender_current_key(SenderKeyRegistryBug(), _envelope())
-
-    assert raised.value.status_code == 500
-    assert "Unexpected AWID federation sender key verification dependency error" in raised.value.detail
-    records = [record for record in caplog.records if "federation sender key verification" in record.getMessage()]
-    assert records
-    assert records[0].levelno == logging.ERROR
-    assert records[0].exc_info is not None
-
-
-@pytest.mark.asyncio
 async def test_federation_target_identity_awid_dependency_logs_exc_info(caplog):
     caplog.set_level(logging.WARNING, logger="aweb.routes.federation")
 
-    with pytest.raises(HTTPException) as raised:
-        await _resolve_target_identity(TargetIdentityRegistryUnavailable(), _envelope())
+    with pytest.raises(FederationAuthorityError) as raised:
+        await _resolve_target_identity(
+            TargetIdentityRegistryUnavailable(),
+            _envelope(),
+            stored_route_continuation=False,
+        )
 
-    assert raised.value.status_code == 503
-    assert "AWID federation target identity resolution" in raised.value.detail
+    assert raised.value.reason == "federation_authority_coordination_unavailable"
+    assert raised.value.http_status == 503
+    assert raised.value.retryable is True
     records = [record for record in caplog.records if "federation target identity resolution" in record.getMessage()]
     assert records
     assert records[0].levelno == logging.WARNING
@@ -99,11 +64,16 @@ async def test_federation_target_identity_awid_dependency_logs_exc_info(caplog):
 async def test_federation_target_identity_unexpected_awid_error_logs_exception(caplog):
     caplog.set_level(logging.ERROR, logger="aweb.routes.federation")
 
-    with pytest.raises(HTTPException) as raised:
-        await _resolve_target_identity(TargetIdentityRegistryBug(), _envelope())
+    with pytest.raises(FederationAuthorityError) as raised:
+        await _resolve_target_identity(
+            TargetIdentityRegistryBug(),
+            _envelope(),
+            stored_route_continuation=False,
+        )
 
-    assert raised.value.status_code == 500
-    assert "Unexpected AWID federation target identity resolution dependency error" in raised.value.detail
+    assert raised.value.reason == "federation_authority_coordination_unavailable"
+    assert raised.value.http_status == 503
+    assert raised.value.retryable is True
     records = [record for record in caplog.records if "federation target identity resolution" in record.getMessage()]
     assert records
     assert records[0].levelno == logging.ERROR

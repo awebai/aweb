@@ -1,0 +1,302 @@
+name: PyPI Release
+
+# The complete release gate already passed before the release branch moved.
+# This workflow rebuilds that exact commit and performs only package integrity,
+# exact registry adoption/publication, public installability, and tag output.
+on:
+  push:
+    branches: [release]
+    paths:
+      - "awid/**"
+      - "server/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pypi-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: ${{ github.sha }}
+
+jobs:
+  awid_service:
+    name: Publish awid-service
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # uv is pinned here deliberately: publish must not break mid-release,
+      # while CI workflows float on latest so upstream drift is caught there
+      # first. Bump this pin on purpose, not as a side effect.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.32"
+
+      - name: Derive awid-service version
+        id: version
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("awid/pyproject.toml", "rb"))["project"]["version"])')"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate derived awid-service identity
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/npm-exact-publish.sh validate-inputs --sha "$SOURCE_SHA" --version "$VERSION"
+
+      - name: Build, publish or adopt, verify, and tag awid-service
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE: awid-service
+          PACKAGE_DIR: awid
+          TAG_PREFIX: awid-service-v
+          IMPORT_STATEMENT: import awid
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          set -euo pipefail
+          fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
+          # remote_tag_sha comes from the one shared implementation.
+          source scripts/release-tag-helpers.sh
+          require_release_sha() {
+            local release_tip
+            git fetch --no-tags origin \
+              +refs/heads/main:refs/remotes/origin/main \
+              +refs/heads/release:refs/remotes/origin/release
+            release_tip="$(git ls-remote origin refs/heads/release | awk '{print $1}')"
+            [[ "$release_tip" == "$SOURCE_SHA" ]] \
+              || fail "github.sha $SOURCE_SHA is not the exact remote release tip ${release_tip:-absent}"
+            [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] \
+              || fail "checkout is not github.sha $SOURCE_SHA"
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+              || fail "release SHA $SOURCE_SHA is not an ancestor of main"
+          }
+          require_tag_compatible() {
+            local tag="$1" observed
+            observed="$(remote_tag_sha "$tag")"
+            [[ -z "$observed" || "$observed" == "$SOURCE_SHA" ]] \
+              || echo "version tag $tag remains at its earlier byte-identical source $observed"
+          }
+          publish_tag() {
+            local tag="$1" observed
+            observed="$(remote_tag_sha "$tag")"
+            if [[ "$observed" == "$SOURCE_SHA" ]]; then
+              echo "adopted existing tag $tag at $SOURCE_SHA"
+              return
+            fi
+            if [[ -n "$observed" ]]; then
+              echo "retained existing tag $tag at byte-identical source $observed"
+              return
+            fi
+            git tag -d "$tag" >/dev/null 2>&1 || true
+            git tag "$tag" "$SOURCE_SHA"
+            if git push origin "refs/tags/$tag"; then
+              echo "created tag $tag at $SOURCE_SHA"
+              return
+            fi
+            git tag -d "$tag" >/dev/null 2>&1 || true
+            observed="$(remote_tag_sha "$tag")"
+            [[ "$observed" == "$SOURCE_SHA" ]] \
+              || fail "tag $tag conflicted at ${observed:-absent}"
+            echo "adopted concurrent identical tag $tag"
+          }
+
+          tag="${TAG_PREFIX}${VERSION}"
+          require_release_sha
+          require_tag_compatible "$tag"
+
+          dist="$RUNNER_TEMP/${PACKAGE}-dist"
+          rm -rf "$dist"
+          mkdir -p "$dist"
+          uv build --sdist --wheel --out-dir "$dist" "$PACKAGE_DIR"
+          # uv build stamps a .gitignore into the out-dir it creates;
+          # inspect-staged rightly refuses any extra file, so drop the stamp.
+          rm -f "$dist/.gitignore"
+          bash scripts/pypi-exact-publish.sh inspect-staged \
+            --dist "$dist" --package "$PACKAGE" --version "$VERSION"
+
+          require_release_sha
+          status=000
+          if ! status="$(curl -sS --connect-timeout 15 --max-time 30 \
+            -o "$RUNNER_TEMP/observed.json" -w '%{http_code}' \
+            "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json")"; then
+            fail "PyPI observation failed; unavailability is never absence"
+          fi
+          plan="$(bash scripts/pypi-exact-publish.sh plan-publish \
+            --dist "$dist" --package "$PACKAGE" --version "$VERSION" \
+            --observed-status "$status" --observed-json "$RUNNER_TEMP/observed.json")"
+          if [[ -z "$plan" ]]; then
+            echo "adopted exact ${PACKAGE} ${VERSION}"
+          else
+            files=()
+            while IFS= read -r name; do
+              [[ -n "$name" ]] && files+=("$dist/$name")
+            done <<<"$plan"
+            uv publish "${files[@]}"
+          fi
+
+          bash scripts/pypi-exact-publish.sh verify-published \
+            --dist "$dist" --package "$PACKAGE" --version "$VERSION"
+          smoke="$(mktemp -d)"
+          trap 'rm -rf "$smoke"' EXIT
+          uv venv --python 3.12 "$smoke"
+          uv pip install --python "$smoke/bin/python" --no-cache \
+            --only-binary=:all: --index-url https://pypi.org/simple \
+            "${PACKAGE}==${VERSION}"
+          "$smoke/bin/python" -c "$IMPORT_STATEMENT"
+          require_release_sha
+          publish_tag "$tag"
+
+  aweb:
+    name: Publish aweb
+    needs: awid_service
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # uv is pinned here deliberately: publish must not break mid-release,
+      # while CI workflows float on latest so upstream drift is caught there
+      # first. Bump this pin on purpose, not as a side effect.
+      - uses: astral-sh/setup-uv@v7
+        with:
+          version: "0.11.32"
+
+      - name: Derive aweb version
+        id: version
+        run: |
+          version="$(python3 -c 'import tomllib; print(tomllib.load(open("server/pyproject.toml", "rb"))["project"]["version"])')"
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate derived aweb identity
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash scripts/npm-exact-publish.sh validate-inputs --sha "$SOURCE_SHA" --version "$VERSION"
+
+      - name: Public AWID floor is served before aweb
+        env:
+          AWID_VERSION: ${{ needs.awid_service.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Source equality and public availability are separate checks.
+          bash scripts/check-release-floor.sh --pyproject server/pyproject.toml --package awid-service --expected "$AWID_VERSION"
+          python3 scripts/observe_public_target.py "pypi:awid-service" "$AWID_VERSION"
+
+      - name: Build, publish or adopt, verify, and tag aweb
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          PACKAGE: aweb
+          PACKAGE_DIR: server
+          TAG_PREFIX: server-v
+          IMPORT_STATEMENT: import aweb
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          set -euo pipefail
+          fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
+          # remote_tag_sha comes from the one shared implementation.
+          source scripts/release-tag-helpers.sh
+          require_release_sha() {
+            local release_tip
+            git fetch --no-tags origin \
+              +refs/heads/main:refs/remotes/origin/main \
+              +refs/heads/release:refs/remotes/origin/release
+            release_tip="$(git ls-remote origin refs/heads/release | awk '{print $1}')"
+            [[ "$release_tip" == "$SOURCE_SHA" ]] \
+              || fail "github.sha $SOURCE_SHA is not the exact remote release tip ${release_tip:-absent}"
+            [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] \
+              || fail "checkout is not github.sha $SOURCE_SHA"
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+              || fail "release SHA $SOURCE_SHA is not an ancestor of main"
+          }
+          require_tag_compatible() {
+            local tag="$1" observed
+            observed="$(remote_tag_sha "$tag")"
+            [[ -z "$observed" || "$observed" == "$SOURCE_SHA" ]] \
+              || echo "version tag $tag remains at its earlier byte-identical source $observed"
+          }
+          publish_tag() {
+            local tag="$1" observed
+            observed="$(remote_tag_sha "$tag")"
+            if [[ "$observed" == "$SOURCE_SHA" ]]; then
+              echo "adopted existing tag $tag at $SOURCE_SHA"
+              return
+            fi
+            if [[ -n "$observed" ]]; then
+              echo "retained existing tag $tag at byte-identical source $observed"
+              return
+            fi
+            git tag -d "$tag" >/dev/null 2>&1 || true
+            git tag "$tag" "$SOURCE_SHA"
+            if git push origin "refs/tags/$tag"; then
+              echo "created tag $tag at $SOURCE_SHA"
+              return
+            fi
+            git tag -d "$tag" >/dev/null 2>&1 || true
+            observed="$(remote_tag_sha "$tag")"
+            [[ "$observed" == "$SOURCE_SHA" ]] \
+              || fail "tag $tag conflicted at ${observed:-absent}"
+            echo "adopted concurrent identical tag $tag"
+          }
+
+          tag="${TAG_PREFIX}${VERSION}"
+          require_release_sha
+          require_tag_compatible "$tag"
+
+          dist="$RUNNER_TEMP/${PACKAGE}-dist"
+          rm -rf "$dist"
+          mkdir -p "$dist"
+          uv build --sdist --wheel --out-dir "$dist" "$PACKAGE_DIR"
+          # uv build stamps a .gitignore into the out-dir it creates;
+          # inspect-staged rightly refuses any extra file, so drop the stamp.
+          rm -f "$dist/.gitignore"
+          bash scripts/pypi-exact-publish.sh inspect-staged \
+            --dist "$dist" --package "$PACKAGE" --version "$VERSION"
+
+          require_release_sha
+          status=000
+          if ! status="$(curl -sS --connect-timeout 15 --max-time 30 \
+            -o "$RUNNER_TEMP/observed.json" -w '%{http_code}' \
+            "https://pypi.org/pypi/${PACKAGE}/${VERSION}/json")"; then
+            fail "PyPI observation failed; unavailability is never absence"
+          fi
+          plan="$(bash scripts/pypi-exact-publish.sh plan-publish \
+            --dist "$dist" --package "$PACKAGE" --version "$VERSION" \
+            --observed-status "$status" --observed-json "$RUNNER_TEMP/observed.json")"
+          if [[ -z "$plan" ]]; then
+            echo "adopted exact ${PACKAGE} ${VERSION}"
+          else
+            files=()
+            while IFS= read -r name; do
+              [[ -n "$name" ]] && files+=("$dist/$name")
+            done <<<"$plan"
+            uv publish "${files[@]}"
+          fi
+
+          bash scripts/pypi-exact-publish.sh verify-published \
+            --dist "$dist" --package "$PACKAGE" --version "$VERSION"
+          smoke="$(mktemp -d)"
+          trap 'rm -rf "$smoke"' EXIT
+          uv venv --python 3.12 "$smoke"
+          uv pip install --python "$smoke/bin/python" --no-cache \
+            --only-binary=:all: --index-url https://pypi.org/simple \
+            "${PACKAGE}==${VERSION}"
+          "$smoke/bin/python" -c "$IMPORT_STATEMENT"
+          require_release_sha
+          publish_tag "$tag"

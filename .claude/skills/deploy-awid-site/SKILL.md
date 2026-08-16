@@ -1,43 +1,26 @@
 ---
 name: deploy-awid-site
-description: Deploy the awid.ai landing page. Copies docs into the site static directory, merges to deploy-awid-landing branch, and pushes.
+description: Deploy the reviewed aweb main commit to the awid.ai static site through its dedicated landing branch.
 ---
 
-# Deploy awid.ai landing page
+# Deploy awid.ai
 
-The awid.ai site is deployed via the `deploy-awid-landing` branch.
-Pushing to that branch triggers the hosting platform deployment.
+The site source is `awid/site/`. Its committed mirrors of
+`docs/identity-guide.md` and `docs/trust-model.md` must already be current and
+reviewed before deployment. If they are stale, run `make sync-awid-site-docs`,
+commit the result, obtain review, and merge it normally.
 
-## Flow
+After the outward production action has been authorized, run:
 
-1. Run the Makefile target.
-   ```bash
-   make release-awid-site
-   ```
+```bash
+make deploy-site
+```
 
-   This does:
-   - Copies `docs/identity-guide.md` into `awid/site/static/`
-   - Copies `docs/trust-model.md` into `awid/site/static/`
-   - Commits if anything changed
-   - Checks out `deploy-awid-landing`
-   - Merges main
-   - Pushes `deploy-awid-landing`
-   - Checks out main
+The command builds the site, refuses a dirty checkout or a commit other than
+the fetched `origin/main`, requires a fast-forward from the current
+`deploy-awid-landing` tip, pushes the exact main SHA, and reads the remote ref
+back. It does not create a commit or participate in artifact release.
 
-2. Verify.
-   The deployment should be live within a few minutes at awid.ai.
-
-## When to deploy
-
-Deploy after changing any of:
-- `docs/identity-guide.md`
-- `docs/trust-model.md`
-- `awid/site/` templates or static files
-
-## Notes
-
-- The site serves identity-guide.md and trust-model.md as static files
-  at `https://awid.ai/identity-guide.md` and `https://awid.ai/trust-model.md`.
-- The agent-guide.md is served from aweb.ai, not awid.ai. Alice
-  handles the aweb.ai site deployment.
-- Always push main before deploying so the site gets the latest docs.
+Render must be configured to build `awid/site` from `deploy-awid-landing`.
+After the branch advances, verify the Render deploy completed and that
+https://awid.ai plus both mirrored documents serve the intended content.

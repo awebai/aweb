@@ -225,7 +225,7 @@ async def _ensure_chat_conversation(
             INSERT INTO {{tables.conversation_participants}} (
                 conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 'chat', $8)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (conversation_id, did) DO UPDATE
             SET agent_id = EXCLUDED.agent_id,
                 alias = EXCLUDED.alias,
@@ -241,6 +241,7 @@ async def _ensure_chat_conversation(
             participant["address"],
             participant.get("delivery_origin"),
             participant.get("current_did_key"),
+            participant["transport_hint"],
             "initiator" if participant["did"] == created_by_did else "participant",
         )
 
@@ -261,6 +262,8 @@ async def ensure_session(
         if not did or did in seen_dids:
             continue
         seen_dids.add(did)
+        delivery_origin = (row.get("delivery_origin") or "").strip() or None
+        transport_hint = (row.get("transport_hint") or "").strip()
         normalized_participants.append(
             {
                 "did": did,
@@ -268,8 +271,11 @@ async def ensure_session(
                 "agent_id": _uuid_or_none(row.get("agent_id")),
                 "alias": (row.get("alias") or did).strip(),
                 "address": (row.get("address") or "").strip() or None,
-                "delivery_origin": (row.get("delivery_origin") or "").strip() or None,
+                "delivery_origin": delivery_origin,
                 "current_did_key": (row.get("current_did_key") or row.get("did_key") or "").strip() or None,
+                "transport_hint": transport_hint or (
+                    "federation:" + delivery_origin if delivery_origin else "local"
+                ),
             }
         )
     if len(normalized_participants) < 2:

@@ -20,6 +20,12 @@ os.environ.setdefault("AWEB_INTERNAL_AUTH_SECRET", "test-internal-auth-secret")
 @pytest_asyncio.fixture
 async def shared_test_pool(test_db_factory):
     db_manager = await test_db_factory.create_db(suffix="aweb_server")
+    # Pre-provision pgcrypto in public at the point the fresh database is
+    # materialized (pgdbm creates test databases from template0, so no
+    # template can carry it): migration 001's unqualified CREATE EXTENSION
+    # then no-ops instead of resolving into the pinned pg_catalog and
+    # colliding with the built-in gen_random_uuid.
+    await db_manager.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public")
     config = build_database_config(
         connection_string=db_manager.config.get_dsn(),
         min_connections=2,

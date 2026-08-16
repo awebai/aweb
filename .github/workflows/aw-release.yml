@@ -1,89 +1,250 @@
 name: aw Sync and Release
 
-# When we tag aw-vX.Y.Z on aweb, this workflow:
-# 1. Pushes cli/go/ contents to awebai/aw (preserving aw's .github/)
-# 2. Tags the commit as vX.Y.Z
-# The tag push triggers aw's own release workflow (goreleaser + npm).
-#
-# Requires AW_REPO_TOKEN secret: fine-grained PAT with contents:write,
-# actions:write, and metadata:read on awebai/aw.
-
 on:
   push:
-    tags:
-      - 'aw-v*'
+    branches: [release]
+    paths:
+      - "cli/go/**"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: aw-sync-release
+  cancel-in-progress: false
+
+env:
+  SOURCE_SHA: ${{ github.sha }}
 
 jobs:
   sync-to-aw:
-    name: Sync cli/go to awebai/aw
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout aweb
-        uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#aw-v}" >> "$GITHUB_OUTPUT"
-
-      # Before the push, not after: a stamp that names the wrong repository would ship a
-      # binary whose commit resolves nowhere a reader looks, and the build would succeed.
-      - name: Check the version stamp names the repository this pushes to
-        run: ./scripts/check-aw-commit-repo-stamp.sh
-
-      # aweb-aaun.13: goreleaser runs `go mod tidy` as a before hook in the derived repo, and
-      # its hooks run AFTER its git-state validation - so an untidy manifest passes validation,
-      # the hook rewrites go.mod and go.sum, and every binary is stamped vcs.modified=true on a
-      # tree goreleaser has already called clean. That shipped across v1.32.10, v1.33.0, v1.34.0
-      # and v1.34.1 before anyone opened a tarball.
-      #
-      # `make test` carries the same check, but nothing enforces a merge on it and a cancelled
-      # run skips it silently - so on main it detects, and only here can it REFUSE. This is the
-      # second check in this job to have teeth at the tag boundary; the stamp check above is the
-      # first.
-      #
-      # ACCEPTED COST: this is the first Go dependency in this workflow, so setup-go flakiness
-      # can now block a release. That failure is loud, attributable and re-runnable, which is
-      # strictly better than a release that silently ships untraceable binaries.
-      - name: Set up Go
-        uses: actions/setup-go@v6
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@v6
         with:
           go-version-file: cli/go/go.mod
           cache-dependency-path: cli/go/go.sum
-
-      - name: Check the module manifest needs no rewriting at build time
-        run: make check-cli-go-tidy
-
-      - name: Push cli/go to awebai/aw
-        env:
-          AW_REPO_TOKEN: ${{ secrets.AW_REPO_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Select or derive aw version
+        id: version
         run: |
-          git clone "https://x-access-token:${AW_REPO_TOKEN}@github.com/awebai/aw.git" /tmp/aw-release
-          cd /tmp/aw-release
-
-          # Remove everything EXCEPT .git and .github (preserve aw's own workflows)
-          find . -maxdepth 1 \
-            -not -name '.' \
-            -not -name '.git' \
-            -not -name '.github' \
-            -exec rm -rf {} +
-
-          # Copy cli/go contents (this is the aw source)
-          cp -a "$GITHUB_WORKSPACE/cli/go/." .
-
-          # Commit
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "No code changes to sync"
+          # AW_VERSION_SELECT_BEGIN
+          set -euo pipefail
+          if ! refs="$(git ls-remote --tags --refs origin 'refs/tags/aw-v*')"; then echo "REFUSE: aw tag history observation failed" >&2; exit 1; fi
+          mapfile -t existing < <(awk -v sha="$SOURCE_SHA" '$1 == sha && $2 ~ /^refs\/tags\/aw-v[0-9]+\.[0-9]+\.[0-9]+$/ {sub("refs/tags/aw-v", "", $2); print $2}' <<<"$refs")
+          [[ "${#existing[@]}" -le 1 ]] || { echo "REFUSE: multiple aw release tags already name $SOURCE_SHA" >&2; exit 1; }
+          if [[ "${#existing[@]}" -eq 1 ]]; then
+            version="${existing[0]}"
           else
-            git commit -m "Sync from awebai/aweb aw-v${VERSION}"
-            git push origin main
+            # A branch move is not a reason to publish. This workflow
+            # derives its version from the WORLD - latest published plus
+            # one - so without this it mints a release on every release
+            # branch move, from a tree identical to the one before it,
+            # and the tag preflight below cannot notice because max+1
+            # can never already exist. The five other publication
+            # workflows read their version from the committed tree and
+            # so ask this question implicitly; aw has to ask it aloud.
+            if ! moved="$(python3 scripts/release_artifact_moved.py aw-cli)"; then
+              echo "REFUSE: aw-cli movement could not be determined" >&2; exit 1
+            fi
+            if [[ "$moved" == "unmoved" ]]; then
+              echo "aw-cli is unchanged since its newest release: nothing to publish"
+              printf 'publish=no\n' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            version="$(scripts/cli-release-version.sh next)"
           fi
+          printf 'publish=yes\nversion=%s\n' "$version" >> "$GITHUB_OUTPUT"
+          # AW_VERSION_SELECT_END
+      - name: Verify source guards
+        if: steps.version.outputs.publish == 'yes'
+        run: |
+          ./scripts/check-aw-commit-repo-stamp.sh
+          make check-cli-go-tidy
+      - name: Verify external contract, sync exact tree, and verify public outputs
+        if: steps.version.outputs.publish == 'yes'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          AW_REPO_TOKEN: ${{ secrets.AW_REPO_TOKEN }}
+          GH_TOKEN: ${{ secrets.AW_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          fail() { printf 'REFUSE: %s\n' "$1" >&2; exit 1; }
+          require_release_sha() {
+            git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main +refs/heads/release:refs/remotes/origin/release
+            release_tip="$(git ls-remote origin refs/heads/release | awk '{print $1}')"
+            [[ "$release_tip" == "$SOURCE_SHA" ]] || fail "github.sha $SOURCE_SHA is not the exact remote release tip ${release_tip:-absent}"
+            [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]] || fail "checkout is not github.sha $SOURCE_SHA"
+            git merge-base --is-ancestor "$SOURCE_SHA" origin/main || fail "release SHA $SOURCE_SHA is not an ancestor of main"
+          }
+          # remote_tag_sha comes from the one shared implementation.
+          source scripts/release-tag-helpers.sh
+          publish_tag() {
+            tag="$1"; observed="$(remote_tag_sha "$tag")"
+            if [[ "$observed" == "$SOURCE_SHA" ]]; then echo "adopted existing tag $tag"; return; fi
+            [[ -z "$observed" ]] || fail "tag $tag exists at $observed, not $SOURCE_SHA"
+            git tag "$tag" "$SOURCE_SHA"
+            if ! git push origin "refs/tags/$tag"; then
+              git tag -d "$tag" >/dev/null 2>&1 || true
+              observed="$(remote_tag_sha "$tag")"
+              [[ "$observed" == "$SOURCE_SHA" ]] || fail "tag $tag conflicted at ${observed:-absent}"
+            fi
+          }
 
-          # Tag — the push triggers aw's release workflow
-          git tag "v${VERSION}"
-          git push origin "v${VERSION}"
+          require_release_sha
+          [[ "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || fail "derived aw version is malformed"
+          [[ -n "$AW_REPO_TOKEN" ]] || fail "external aw authentication is absent"
+
+          # AW_PUBLIC_PREFLIGHT_BEGIN
+          packages=("@awebai/aw" "@awebai/aw-darwin-arm64" "@awebai/aw-darwin-x64" "@awebai/aw-linux-arm64" "@awebai/aw-linux-x64" "@awebai/aw-windows-arm64" "@awebai/aw-windows-x64")
+          assets=("aw_${VERSION}_linux_amd64.tar.gz" "aw_${VERSION}_linux_arm64.tar.gz" "aw_${VERSION}_darwin_amd64.tar.gz" "aw_${VERSION}_darwin_arm64.tar.gz" "aw_${VERSION}_windows_amd64.zip" "aw_${VERSION}_windows_arm64.zip" "checksums.txt")
+          present=0
+          if release_json="$(timeout 30 gh api "repos/awebai/aw/releases/tags/v${VERSION}" 2>/tmp/aw-release-preflight.err)"; then
+            release_exact="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if d["tag_name"]==sys.argv[1] and sorted(x["name"] for x in d["assets"])==sorted(sys.argv[2:]) else "no")' "v${VERSION}" "${assets[@]}" <<<"$release_json")" || fail "malformed preflight Release evidence"
+            [[ "$release_exact" == yes ]] || fail "preflight Release output conflicts with the exact expected set"
+            present=$((present + 1))
+          elif ! grep -q 'HTTP 404' /tmp/aw-release-preflight.err; then
+            fail "preflight Release observation failed (auth or outage)"
+          fi
+          for package in "${packages[@]}"; do
+            if observed="$(timeout 30 npm view "${package}@${VERSION}" version --json 2>/tmp/aw-npm-preflight.err)"; then
+              [[ "$observed" == "\"${VERSION}\"" ]] || fail "preflight package $package conflicts with version $VERSION"
+              present=$((present + 1))
+            elif ! grep -q E404 /tmp/aw-npm-preflight.err; then
+              fail "preflight package $package observation failed (auth or outage)"
+            fi
+          done
+          case "$present" in 0) PUBLIC_STATE=absent;; 8) PUBLIC_STATE=complete;; *) PUBLIC_STATE=partial;; esac
+          # AW_PUBLIC_PREFLIGHT_END
+
+          # AW_EXTERNAL_SYNC_BEGIN
+          external="$RUNNER_TEMP/aw-release"
+          tag_repo="$external"
+          rm -rf "$external"
+          timeout 30 git clone --branch main "https://x-access-token:${AW_REPO_TOKEN}@github.com/awebai/aw.git" "$external" || fail "external aw read failed (auth, outage, or missing repository)"
+          [[ "$(git -C "$external" remote get-url origin)" == *github.com/awebai/aw.git ]] || fail "wrong external repository"
+          workflow="$external/.github/workflows/release.yml"
+          [[ -f "$workflow" ]] || fail "external aw release workflow is absent"
+          external_github_tree="$(git -C "$external" rev-parse HEAD:.github)"
+          python3 - "$workflow" "$GITHUB_WORKSPACE/cli/go/.goreleaser.yaml" "$GITHUB_WORKSPACE/cli/go/npm/publish.sh" <<'PY'
+          import re, sys
+          try:
+              workflow, goreleaser, publisher=(open(path, encoding="utf-8").read() for path in sys.argv[1:])
+          except Exception as exc:
+              raise SystemExit(f"external aw workflow evidence is malformed or incomplete: {exc}")
+          required=("tags:", "v*", "goreleaser", "npm/publish.sh")
+          missing=[value for value in required if value not in workflow]
+          if missing: raise SystemExit("external aw workflow contract missing: "+", ".join(missing))
+          trigger_match=re.search(r"(?ms)^on:\s*(.*?)(?=^[A-Za-z_][A-Za-z0-9_-]*:|\Z)", workflow)
+          if not trigger_match: raise SystemExit("external aw workflow has no top-level on block")
+          trigger=trigger_match.group(0)
+          forbidden=[value for value in ("branches:", "main", "workflow_dispatch", "pull_request", "schedule", "workflow_call") if value in trigger]
+          if forbidden or "tags:" not in trigger or trigger.count("v*") != 1:
+              raise SystemExit(f"external aw workflow publishing trigger is not tag-only v*: {forbidden!r}")
+          release_steps=re.findall(r"(?m)^\s*-\s*uses:\s*goreleaser/goreleaser-action@", workflow)
+          npm_steps=re.findall(r"(?m)^\s*run:\s*\.?/?npm/publish\.sh\s*$", workflow)
+          if len(release_steps) != 1 or len(npm_steps) != 1:
+              raise SystemExit("external aw workflow has missing or extra Release/npm publication steps")
+          builds_block=re.search(r"(?ms)^builds:\n(.*?)(?=^[A-Za-z_][A-Za-z0-9_-]*:|\Z)", goreleaser)
+          if not builds_block: raise SystemExit("incoming goreleaser config has no builds section")
+          build_ids=re.findall(r"(?m)^  - id: (\S+)$", builds_block.group(1))
+          if build_ids != ["aw", "aweb-a2a-gw"]: raise SystemExit(f"incoming aw workflow binary set is {build_ids!r}")
+          platforms=["aw-linux-x64", "aw-linux-arm64", "aw-darwin-x64", "aw-darwin-arm64", "aw-windows-x64", "aw-windows-arm64"]
+          package_loops=[value.split() for value in re.findall(r"for pkg_dir in ([^;]+); do", publisher)]
+          if package_loops != [["aw", *platforms], platforms]: raise SystemExit(f"incoming aw package set is {package_loops!r}")
+          if "aw_binary gw_binary" not in publisher: raise SystemExit("external aw workflow does not put both binaries in platform packages")
+          publish_site="npm publish --access public"
+          if publisher.count(publish_site) != 2: raise SystemExit("incoming aw publisher must have exactly two publication sites")
+          first=publisher.index(publish_site); second=publisher.index(publish_site, first + 1)
+          if publisher.index("for pkg_dir in aw-linux-x64") > first or publisher.index('cd "$SCRIPT_DIR/aw"') > second:
+              raise SystemExit("incoming aw publisher order is not six platforms then main wrapper")
+          PY
+          expected_tree="$(git -C "$GITHUB_WORKSPACE" ls-files -s -- cli/go | awk '{$4=substr($4,8); printf "%s %s %s %s\\n",$1,$2,$3,$4}')"
+          if [[ "$PUBLIC_STATE" == absent ]]; then
+          find "$external" -mindepth 1 -maxdepth 1 ! -name .git ! -name .github -exec rm -rf {} +
+          cp -a "$GITHUB_WORKSPACE/cli/go/." "$external/"
+          git -C "$external" diff --quiet HEAD -- .github \
+            && [[ -z "$(git -C "$external" status --porcelain --untracked-files=all -- .github)" ]] \
+            || fail "did not preserve external .github byte-for-byte"
+          diff -qr --exclude=.git --exclude=.github "$GITHUB_WORKSPACE/cli/go" "$external" >/dev/null || fail "exact synced non-.github tree differs from cli/go"
+          git -C "$external" config user.name 'github-actions[bot]'
+          git -C "$external" config user.email 'github-actions[bot]@users.noreply.github.com'
+          git -C "$external" add -A
+          actual_tree="$(git -C "$external" ls-files -s | awk '$4 !~ /^\.github\// {printf "%s %s %s %s\\n",$1,$2,$3,$4}')"
+          [[ "$actual_tree" == "$expected_tree" ]] || fail "exact synced non-.github tree modes, paths, or blobs differ from cli/go"
+          if ! git -C "$external" diff --cached --quiet; then git -C "$external" commit -m "Sync exact aweb ${SOURCE_SHA}"; fi
+          external_sha="$(git -C "$external" rev-parse HEAD)"
+          if ! existing="$(git -C "$external" ls-remote origin "refs/tags/v${VERSION}" | awk '{print $1}')"; then
+            fail "external tag observation failed (auth or outage)"
+          fi
+          [[ -z "$existing" || "$existing" == "$external_sha" ]] || fail "external tag v${VERSION} conflicts at $existing"
+          if ! git -C "$external" push origin HEAD:main; then
+            fresh="$RUNNER_TEMP/aw-release-fresh"; rm -rf "$fresh"
+            timeout 30 git clone --branch main "https://x-access-token:${AW_REPO_TOKEN}@github.com/awebai/aw.git" "$fresh" || fail "fresh external aw race read failed"
+            fresh_github_tree="$(git -C "$fresh" rev-parse HEAD:.github)"
+            [[ "$fresh_github_tree" == "$external_github_tree" ]] || fail "external aw main raced to a conflicting .github tree"
+            fresh_actual_tree="$(git -C "$fresh" ls-files -s | awk '$4 !~ /^\.github\// {printf "%s %s %s %s\\n",$1,$2,$3,$4}')"
+            [[ "$fresh_actual_tree" == "$expected_tree" ]] || fail "external aw main raced to a conflicting non-.github tree"
+            external_sha="$(git -C "$fresh" rev-parse HEAD)"
+            tag_repo="$fresh"
+          fi
+          if ! existing="$(git -C "$tag_repo" ls-remote origin "refs/tags/v${VERSION}" | awk '{print $1}')"; then
+            fail "fresh external tag observation failed (auth or outage)"
+          fi
+          if [[ -z "$existing" ]]; then
+            git -C "$tag_repo" tag "v${VERSION}" "$external_sha"
+            if ! git -C "$tag_repo" push origin "refs/tags/v${VERSION}"; then
+              git -C "$tag_repo" tag -d "v${VERSION}" >/dev/null 2>&1 || true
+              if ! existing="$(git -C "$tag_repo" ls-remote origin "refs/tags/v${VERSION}" | awk '{print $1}')"; then
+                fail "external tag race observation failed (auth or outage)"
+              fi
+              [[ "$existing" == "$external_sha" ]] || fail "external tag create conflicted at ${existing:-absent}"
+            fi
+          else
+            [[ "$existing" == "$external_sha" ]] || fail "external tag v${VERSION} moved to $existing"
+          fi
+          else
+            actual_tree="$(git -C "$external" ls-files -s | awk '$4 !~ /^\.github\// {printf "%s %s %s %s\\n",$1,$2,$3,$4}')"
+            [[ "$actual_tree" == "$expected_tree" ]] || fail "public $PUBLIC_STATE state has a conflicting external source tree"
+            external_sha="$(git -C "$external" rev-parse HEAD)"
+            if ! existing="$(git -C "$external" ls-remote origin "refs/tags/v${VERSION}" | awk '{print $1}')"; then
+              fail "external tag adoption observation failed (auth or outage)"
+            fi
+            [[ "$existing" == "$external_sha" ]] || fail "public $PUBLIC_STATE state lacks the exact external tag"
+          fi
+          # AW_EXTERNAL_SYNC_END
+
+          # AW_PUBLIC_VERIFY_BEGIN
+          deadline=$((SECONDS + ${AW_PUBLIC_TIMEOUT_SECONDS:-300}))
+          while :; do
+            if release_json="$(timeout 30 gh api "repos/awebai/aw/releases/tags/v${VERSION}" 2>/tmp/aw-release-view.err)"; then
+              release_ok="$(python3 -c 'import json,sys; d=json.load(sys.stdin); actual=sorted(x["name"] for x in d["assets"]); expected=sorted(sys.argv[2:]); print("yes" if d["tag_name"]==sys.argv[1] and actual==expected else "no")' "v${VERSION}" "${assets[@]}" <<<"$release_json")" || fail "malformed external Release evidence"
+            elif grep -q 'HTTP 404' /tmp/aw-release-view.err; then
+              release_ok=no
+            else
+              fail "external Release observation failed (auth or outage)"
+            fi
+            npm_ok=yes
+            for package in "${packages[@]}"; do
+              if observed="$(timeout 30 npm view "${package}@${VERSION}" version --json 2>/tmp/aw-npm-view.err)"; then
+                [[ "$observed" == "\"${VERSION}\"" ]] || fail "public package $package version evidence mismatched"
+              elif grep -q 'E404' /tmp/aw-npm-view.err; then
+                npm_ok=no
+              else
+                fail "public package $package observation failed (auth or outage)"
+              fi
+            done
+            [[ "$release_ok" == yes && "$npm_ok" == yes ]] && break
+            (( SECONDS < deadline )) || fail "external aw Release or seven npm packages did not propagate exactly"
+            sleep 5
+          done
+          require_release_sha
+          publish_tag "aw-v${VERSION}"
+          # AW_PUBLIC_VERIFY_END

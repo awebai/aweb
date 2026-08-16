@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "repository": "https://github.com/awebai/oats.git",
+  "commit": "e2f577ac0216a52e4e8b270f35f2655c9a9e9f7e",
+  "purpose": "Reproducible OATS seam input for aweb release tests: OATS 0.21.0 upstream main (the OAS → OATS rename release), carrying the three aweb seams previously proposed upstream as PRs 37, 48 and 69 (Pi task ordering, launch environment contract, retirement cleanup evidence). This is the same commit published as @awebai/oats 0.21.0, so the tree under test and the kernel that spawns agents are one artifact.",
+  "tradeoff": "The default no longer exercises uncommitted or newer local OATS integration work; pass OATS_TEST_ROOT explicitly for that opt-in coverage.",
+  "retention": "Pinned through an aweb-controlled repository rather than a third party. The previous pin's ancestor lived on an upstream branch that was deleted, which invalidated the pin and forced a full rebuild. Third-party branch retention is not ours to promise, so the pin resolves from a repository we control.",
+  "verification": "A pinned tree must be able to start an agent. Prove that by executing a real spawn, not by inspecting the constructed command line: the defect this pin previously carried was invisible to the whole suite because nothing ever ran the command."
+}

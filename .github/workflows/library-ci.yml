@@ -29,15 +29,11 @@ name: Library CI
 #
 # NO PATH FILTER, deliberately. Every path-filtered workflow in this repo
 # omitted naapp from its path list, which is how library's coverage went
-# missing in the first place; ship.yml is unfiltered for the same reason. The
-# cost is that a docker e2e runs on every pull request. That is the same cost
-# profile ship.yml already carries, and it is preferred over a gate that can be
-# silently skipped.
+# missing in the first place. The cost is that a docker e2e runs on every pull
+# request, preferred over a gate that can be silently skipped.
 
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

@@ -28,6 +28,6 @@ reference.
 
 See also:
 
-- [`cli-setup-surface-sot.md`](cli-setup-surface-sot.md)
-- [`team-blueprints-sot.md`](team-blueprints-sot.md)
+- [`cli-command-reference.md`](cli-command-reference.md)
+- [`profiles-and-blueprints.md`](profiles-and-blueprints.md)
 - [`resource-pack-template-contract.md`](resource-pack-template-contract.md)

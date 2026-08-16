@@ -80,6 +80,64 @@ address (`domain/name`) or an existing conversation/session with stored route
 state. Direct local `did:key` sends require stored route state; a bare
 self-asserted `did:key -> origin` claim is not enough.
 
+## Strict Cross-Registry Sender Authority
+
+A receiving service keeps its configured home AWID client for its own
+identities, teams, and ordinary same-registry reads. It does not widen that
+client, use its fallback registry, or key a cache by bare `did:aw` when a global
+sender's address belongs to another registry. `POST /v1/federation/messages` is
+the single inbound route for plaintext-v1 and encrypted-v2. Cross-registry
+ingress uses a separate strict external-address authority path:
+
+1. Verify the preserved plaintext or encrypted-v2 message signature under the
+   presented sender key before external DNS or HTTP work.
+2. Extract authority from `signed_payload.from` for plaintext or
+   `encrypted_envelope.from.address` for encrypted-v2. A wrapper address, when
+   present, must canonicalize to exactly the protected address. A missing
+   wrapper is filled only when the protected value is `domain/name`. Historical
+   stored-route payloads with a protected DID retain no sender address and use
+   only their exact stored participant locator. A sender-supplied registry URL
+   is never authority and is not contacted.
+3. Discover the external registry from the signed address's `_awid` DNS
+   authority, fetch the exact namespace and address there, and require the DNS
+   controller, namespace, address, stable `did:aw`, current `did:key`, and
+   delivery origin to agree. Missing sender origin is derived from this verified
+   evidence; a present origin must equal it.
+4. Verify a genesis-anchored DID log, or an adjacent head extending the exact
+   durable checkpoint. Degraded, unavailable, truncated, forked, or rollback
+   evidence never authorizes delivery.
+5. Commit the checkpoint and the complete address-authority cohort through
+   fenced compare-and-swap in PostgreSQL before recipient policy or message
+   effects are accepted.
+
+A successful cohort may be reused for at most 60 seconds.
+`AWEB_FEDERATION_AUTHORITY_REUSE_SECONDS` defaults to 60 and accepts only 1..60.
+Expiry forces a complete DNS/namespace/address/key-or-log/origin read,
+even while general caches remain live. This is a receiver reuse ceiling, not a
+revocation, reassignment, rotation-detection, or global freshness SLA. A DNS or
+registry authority that continues serving an old but cryptographically valid
+state can suppress an unseen transition indefinitely; detecting that requires a
+non-suppressible witness, transparency, or gossip mechanism outside this
+protocol.
+
+PostgreSQL is the shared authorization and coordination store for checkpoints,
+cohorts, leases, fences, limits, and publication. Redis and process-local caches
+cannot authorize or serve as an outage fallback. PostgreSQL coordination
+failure therefore fails cross-registry ingress closed. A new address uses one
+DNS discovery and one pinned authoritative HTTP chain. Shared failed reads
+publish the same stable failure for five seconds; a wrong claimant cannot poison
+valid evidence for a concurrent correct claim.
+
+Same-registry outbound resolution first checks locally visible recipients before
+registry resolution and keeps the signed address/DID/key/origin contract. First
+contact checks target address, DID, current key, and origin. Stored continuation
+requires exact active conversation/session participants and target current-key
+compatibility. Local `did:key` continuation remains separate: it requires that
+exact learned participant route, and supplied address/origin fields may only
+equal it. Unknown local first contact and route injection fail closed. Target
+registry or PostgreSQL/lease publication dependency failure uses
+`federation_authority_coordination_unavailable` (503, retryable).
+
 ## Continuations
 
 Conversation IDs are UX/thread/idempotency metadata. They are not routing or
@@ -95,6 +153,56 @@ Mail/chat continuations must use stored participant/session route state:
 Missing, stale, malformed, mismatched, or revoked route state fails closed.
 Stored route state is not a policy bypass: continuations still apply the
 recipient's current `inbound_mode` at delivery time.
+
+## Receiver-Wide Replay And Contact Compatibility
+
+Every accepted mail or chat message—local or federated, plaintext or encrypted—
+claims one `message_ingress_receipts` row whose sole identity is `message_id`.
+An exact federated retry with the same canonical signed/protected envelope and
+metadata returns the stored established result without duplicating message,
+conversation/session, participant, contact, route, or event effects. Local-path
+receipts are `legacy_unreplayable`: they never authorize federation/cross-kind
+replay and permanently block a later insert claim after message deletion, while
+existing local API idempotency may still return its row before an insert.
+Reusing the UUID with a different kind, sender, target, conversation/session,
+signature, signed payload, or
+protected encrypted bytes returns `federation_message_replay_conflict`.
+Receipts survive ordinary message garbage collection.
+
+Migration backfill marks historical rows whose exact original envelope cannot
+be reconstructed as `legacy_unreplayable`; any attempt that reaches a new
+receipt claim conflicts rather than being guessed idempotent. A historical
+mail/chat UUID collision must stop migration for explicit operator repair. Security checkpoint/cohort
+state may advance after valid authority even when policy rejects. Phase B
+rechecks the committed checkpoint/cohort token under lock and current recipient
+policy; its receipt, message/ciphertext metadata, conversation/session, both
+participant stores, contact/route fields, chat read receipt, and event effects
+commit atomically or not at all. Policy, storage, or hook failure rolls all of
+those effects back and permits retry. The transaction also commits one durable
+`federation_mutation_outbox` row; concurrent replay locks pending rows with
+`FOR UPDATE SKIP LOCKED`. Publication
+is at-least-once across a crash after Redis accepts but before PostgreSQL records
+`delivered_at`.
+
+For `team_and_contacts`, a non-team sender is authorized only by an exact active
+contact bound to the recipient identity, canonical sender address, and sender
+`did:aw`. Address-only legacy contacts are migration-required and inert for
+cross-registry authorization until their owner explicitly binds them by exact
+owner/contact/address compare-and-swap after fresh authority resolution through
+`POST /v1/contacts/{contact_id}/bind`. Contact bindings are either all-null
+legacy state or a complete `contact_did_aw`, `binding_controller_did`, and
+`binding_accepted_at` tuple. Creating a new contact
+is that explicit acceptance. Accepted global-to-global ingress atomically
+creates an identity-bound sender contact only if no row occupies the exact
+owner/address and never rewrites an existing legacy or differently bound row.
+An in-place old-DID to new-DID replacement additionally requires exact old DID,
+current strict new DID/controller evidence, a fresh controller-signed
+old/new/address/timestamp announcement, `accept_reassignment=true`, an exact-old
+compare-and-swap, and the authenticated recipient owner's explicit acceptance.
+Address reassignment and remove/recreate never silently transfer the old contact
+or conversation. Normal signing-key rotation that preserves the same `did:aw`
+requires no contact reapproval; conversation continuity remains bound to its
+participant DID.
 
 ## Federation Compatibility
 
@@ -114,6 +222,11 @@ the response-size bound is a memory-exhaustion primitive on the trust path. A
 peer or intermediary that compresses despite the identity request is therefore
 incompatible with the federation v1 transport contract.
 
+Failure responses use the complete stable reason/status/retryability vocabulary
+in the generated [federation error reference](federation-error-reference.md).
+The JSON body always carries matching `detail` and `reason`, plus `retryable`
+and `correlation_id`; only rate limiting emits `Retry-After: 1`.
+
 ## Forbidden Shortcuts
 
 - Do not route global direct-address mail or chat solely because a matching local
@@ -128,6 +241,13 @@ incompatible with the federation v1 transport contract.
 - Do not use stale cache entries as evidence for a recipient binding.
 - Do not infer a canonical sender address by listing all addresses for a
   `did:aw`; use the selected identity address for that context.
+- Do not select external sender authority from the receiver's home registry,
+  general cache, TOFU pin, wrapper registry hint, or bare `did:aw`.
+- Do not treat the 60-second receiver reuse ceiling as a source freshness or
+  revocation guarantee.
+- Do not authorize a legacy address-only contact, transfer a contact on address
+  reassignment, key replay by composite fields, or downgrade encrypted-v2
+  delivery to plaintext after an encryption assertion failure.
 
 ## Test And Release Gates
 
@@ -138,4 +258,15 @@ certificates, local aliases, or registry caching must prove:
 - local identity continuations use stored route state and fail closed without it,
 - bare external `did:aw` first-contact fails closed without stored route state,
 - stale local rows and conversation IDs do not bypass AWID or stored routes,
-- federation verifies target identity and delivery-origin binding.
+- federation verifies target identity and delivery-origin binding,
+- an external sender is resolved through signed-address-selected strict
+  authority independently of the receiver's home registry,
+- receiver cohort expiry performs a full reread while source suppression remains
+  an explicit non-SLA residual,
+- receiver-wide message-id receipts return exact federated replay results,
+  reject cross-kind/changed-envelope claims, and keep local/historical receipts
+  `legacy_unreplayable` without removing existing local per-path idempotency,
+- legacy address-only contacts remain inert until explicit identity binding and
+  controller-proved replacement requires recipient acceptance, and
+- every stable federation error and encrypted-v2 no-downgrade branch matches the
+  generated error reference.

@@ -1,8 +1,9 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import yaml from "js-yaml";
 import {
+  APIClient,
   computeDIDKey,
   PinStore,
   SenderTrustManager,
@@ -27,6 +28,8 @@ vi.mock("@noble/ed25519", async (importOriginal) => {
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
+afterEach(() => vi.unstubAllGlobals());
+
 function seed(byte: number): Uint8Array {
   return new Uint8Array(32).fill(byte);
 }
@@ -41,20 +44,40 @@ function b64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64").replace(/=+$/, "");
 }
 
-describe("SenderTrustManager", () => {
-  test("marks recipient binding mismatches as identity_mismatch", async () => {
-    const { did } = await didFromSeed(1);
-    const store = new PinStore();
-    const trust = new SenderTrustManager(
-      { get: async () => ({ did, identity_scope: "global", custody: "self" }) } as never,
-      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
-      "backend:acme.com",
-      "did:key:zrecipient",
-    );
+function localRoster(agent: Record<string, unknown>, alias: string = "alice") {
+  return {
+    team_id: "backend:acme.com",
+    agents: [{ alias, ...agent }],
+  };
+}
 
-    const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, "did:key:zwrong");
-    expect(result.status).toBe("identity_mismatch");
-  });
+function authenticatedTeamClient(methods: Record<string, unknown>) {
+  return {
+    hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
+    ...methods,
+  } as never;
+}
+
+describe("SenderTrustManager", () => {
+  test.each(["verified", "verified_legacy", "verified_custodial"] as const)(
+    "marks %s recipient binding mismatches as identity_mismatch without roster recovery",
+    async (status) => {
+      const { did } = await didFromSeed(1);
+      const get = vi.fn();
+      const getFresh = vi.fn();
+      const trust = new SenderTrustManager(
+        authenticatedTeamClient({ get, getFresh }),
+        { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+        "backend:acme.com",
+        "did:key:zrecipient",
+      );
+
+      const result = await trust.normalizeTrust(new PinStore(), status, "alice", did, undefined, "did:key:zwrong");
+      expect(result.status).toBe("identity_mismatch");
+      expect(get).not.toHaveBeenCalled();
+      expect(getFresh).not.toHaveBeenCalled();
+    },
+  );
 
   test("returns verified_custodial for custodial senders", async () => {
     const { did } = await didFromSeed(2);
@@ -81,13 +104,51 @@ describe("SenderTrustManager", () => {
     expect(store.addresses.get("acme.com/alice")).toBe(did);
   });
 
+  test("does not consult the roster after signature verification fails", async () => {
+    const { did } = await didFromSeed(48);
+    const get = vi.fn();
+    const getFresh = vi.fn();
+    const trust = new SenderTrustManager(
+      { get, getFresh } as never,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+    const result = await trust.normalizeTrust(new PinStore(), "failed", "alice", did, undefined, undefined);
+    expect(result.status).toBe("failed");
+    expect(get).not.toHaveBeenCalled();
+    expect(getFresh).not.toHaveBeenCalled();
+  });
+
+  test("does not use an unauthenticated roster client as local proof", async () => {
+    const self = await didFromSeed(49);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new APIClient("https://aweb.example", {
+      did: self.did,
+      stableID: "",
+      signingKey: self.seed,
+      teamID: "backend:acme.com",
+      teamCertificateHeader: "",
+    });
+    const trust = new SenderTrustManager(
+      client,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+    const result = await trust.normalizeTrust(new PinStore(), "verified", "alice", self.did, undefined, undefined);
+    expect(result.status).toBe("verification_stale");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   test("removes pins for local-scope senders", async () => {
     const { did } = await didFromSeed(3);
     const store = new PinStore();
     store.storePin(did, "backend:acme.com/alice", "", "");
 
     const trust = new SenderTrustManager(
-      { get: async () => ({ did, identity_scope: "local", custody: "self" }) } as never,
+      authenticatedTeamClient({ get: async () => localRoster({ did_key: did, identity_scope: "local", custody: "self" }) }),
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
@@ -99,80 +160,724 @@ describe("SenderTrustManager", () => {
     expect(store.pins.size).toBe(0);
   });
 
-  test("relabels stale local metadata after authoritative no-cache row refresh", async () => {
-    const oldIdentity = await didFromSeed(32);
-    const currentIdentity = await didFromSeed(33);
+  test("verifies a reissued alias whose pin still names the previous holder", async () => {
+    const previousHolder = await didFromSeed(11);
+    const currentHolder = await didFromSeed(12);
     const store = new PinStore();
-    const getFresh = vi.fn(async () => ({ did_key: currentIdentity.did, identity_scope: "local", custody: "self" }));
+    // The fixture must reuse a name already pinned to a DIFFERENT key. An unused
+    // alias has no previous holder to be confused with, so it cannot fail for the
+    // reason this test exists (aweb-aava).
+    store.storePin(previousHolder.did, "backend:acme.com/alice", "", "");
+
     const trust = new SenderTrustManager(
-      {
-        get: async () => ({ did_key: oldIdentity.did, identity_scope: "global", custody: "self" }),
-        getFresh,
-      } as never,
+      authenticatedTeamClient({
+        get: async () => localRoster({ did_key: currentHolder.did, identity_scope: "local", custody: "self" }),
+      }),
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
     );
 
-    expect((await trust.normalizeTrust(store, "verified", "alice", oldIdentity.did, undefined, undefined)).status).toBe("verified");
-    expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verification_stale");
-    expect(getFresh).toHaveBeenCalledTimes(1);
+    const result = await trust.normalizeTrust(store, "verified", "alice", currentHolder.did, undefined, undefined);
+
+    expect(result.status).toBe("verified");
+    expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
+    expect(store.pins.has(previousHolder.did)).toBe(false);
+  });
+
+  // Every accepted message from an already-pinned global sender used to refresh
+  // last_seen and so report stored=true, forcing a pin-store commit per message.
+  // With several resident processes sharing one known_agents.yaml that made CAS
+  // conflicts the steady state and each conflict deferred a wake (aweb-abdk).
+  // The sender must be GLOBAL: a local-scope sender is not pinned at all, so the
+  // same test built from one would pass without exercising this path.
+  test("an already-pinned global sender stops forcing a commit on every message", async () => {
+    const globalIdentity = await didFromSeed(71);
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({
+        get: async () => localRoster(
+          { did_key: globalIdentity.did, did_aw: "did:aw:grace", identity_scope: "global" },
+          "grace",
+        ),
+      }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const first = await trust.normalizeTrust(store, "verified", "grace", globalIdentity.did, "did:aw:grace", undefined);
+    expect(first.status).toBe("verified");
+    expect(first.stored).toBe(true);
+
+    const second = await trust.normalizeTrust(store, "verified", "grace", globalIdentity.did, "did:aw:grace", undefined);
+    expect(second.status).toBe("verified");
+    expect(second.stored).toBe(false);
+  });
+
+  test("caches certificate-authenticated local metadata on the message path", async () => {
+    const currentIdentity = await didFromSeed(33);
+    const store = new PinStore();
+    const get = vi.fn(async () => localRoster({ did_key: currentIdentity.did, identity_scope: "local", custody: "self" }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(1);
     expect(store.pins.size).toBe(0);
     expect((await trust.normalizeTrust(store, "verified", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("shares one roster request across concurrent distinct aliases", async () => {
+    const alice = await didFromSeed(55);
+    const bob = await didFromSeed(56);
+    let releaseRoster!: (roster: ReturnType<typeof localRoster>) => void;
+    const rosterPending = new Promise<ReturnType<typeof localRoster>>((resolve) => {
+      releaseRoster = resolve;
+    });
+    const get = vi.fn(() => rosterPending);
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const aliceTrust = trust.normalizeTrust(new PinStore(), "verified", "alice", alice.did, undefined, undefined);
+    const bobTrust = trust.normalizeTrust(new PinStore(), "verified", "bob", bob.did, undefined, undefined);
+    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+
+    releaseRoster({
+      team_id: "backend:acme.com",
+      agents: [
+        { alias: "alice", did_key: alice.did, identity_scope: "local" },
+        { alias: "bob", did_key: bob.did, identity_scope: "local" },
+      ],
+    });
+    await expect(Promise.all([aliceTrust, bobTrust])).resolves.toEqual([
+      { status: "verified", stored: false },
+      { status: "verified", stored: false },
+    ]);
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps a successful authenticated roster for sixty seconds", async () => {
+    let now = 0;
+    const get = vi.fn(async () => localRoster({ did_key: "did:key:zAlice", identity_scope: "local" }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    ) as SenderTrustManager & {
+      resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
+    };
+
+    await trust.resolveAuthenticatedTeamRoster();
+    now = 59_999;
+    await trust.resolveAuthenticatedTeamRoster();
+    expect(get).toHaveBeenCalledTimes(1);
+
+    now = 60_001;
+    await trust.resolveAuthenticatedTeamRoster();
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  test("shares a roster failure and starts jittered backoff when the request finishes", async () => {
+    let now = 0;
+    const failure = new Error("roster timed out");
+    let rejectRoster!: (error: Error) => void;
+    const rosterPending = new Promise<ReturnType<typeof localRoster>>((_resolve, reject) => {
+      rejectRoster = reject;
+    });
+    const get = vi.fn()
+      .mockImplementationOnce(() => rosterPending)
+      .mockResolvedValueOnce(localRoster({ did_key: "did:key:zretry", identity_scope: "local" }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+      () => 0.5,
+    ) as SenderTrustManager & {
+      resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
+    };
+
+    const requests = [
+      trust.resolveAuthenticatedTeamRoster(),
+      trust.resolveAuthenticatedTeamRoster(),
+      trust.resolveAuthenticatedTeamRoster(),
+    ];
+    await vi.waitFor(() => expect(get).toHaveBeenCalledTimes(1));
+    now = 30_000;
+    rejectRoster(failure);
+    const settled = await Promise.allSettled(requests);
+    expect(settled).toHaveLength(3);
+    for (const result of settled) {
+      expect(result.status).toBe("rejected");
+      if (result.status === "rejected") expect(result.reason).toBe(failure);
+    }
+
+    now = 49_999;
+    await expect(trust.resolveAuthenticatedTeamRoster()).rejects.toBe(failure);
+    expect(get).toHaveBeenCalledTimes(1);
+
+    now = 50_001;
+    await expect(trust.resolveAuthenticatedTeamRoster()).resolves.toMatchObject({
+      team_id: "backend:acme.com",
+    });
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  test("jitters roster failure backoff between ten and thirty seconds", async () => {
+    let shortNow = 0;
+    let longNow = 0;
+    const shortFailure = new Error("short backoff");
+    const longFailure = new Error("long backoff");
+    const shortGet = vi.fn()
+      .mockRejectedValueOnce(shortFailure)
+      .mockResolvedValueOnce(localRoster({ did_key: "did:key:zShort", identity_scope: "local" }));
+    const longGet = vi.fn()
+      .mockRejectedValueOnce(longFailure)
+      .mockResolvedValueOnce(localRoster({ did_key: "did:key:zLong", identity_scope: "local" }));
+    const short = new SenderTrustManager(
+      authenticatedTeamClient({ get: shortGet }),
+      {} as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => shortNow,
+      () => 0,
+    ) as SenderTrustManager & {
+      resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
+    };
+    const long = new SenderTrustManager(
+      authenticatedTeamClient({ get: longGet }),
+      {} as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => longNow,
+      () => 0.999999,
+    ) as SenderTrustManager & {
+      resolveAuthenticatedTeamRoster(): Promise<ReturnType<typeof localRoster>>;
+    };
+
+    await expect(short.resolveAuthenticatedTeamRoster()).rejects.toBe(shortFailure);
+    await expect(long.resolveAuthenticatedTeamRoster()).rejects.toBe(longFailure);
+    shortNow = 10_001;
+    longNow = 10_001;
+    await expect(short.resolveAuthenticatedTeamRoster()).resolves.toMatchObject({ team_id: "backend:acme.com" });
+    await expect(long.resolveAuthenticatedTeamRoster()).rejects.toBe(longFailure);
+    expect(shortGet).toHaveBeenCalledTimes(2);
+    expect(longGet).toHaveBeenCalledTimes(1);
+
+    longNow = 30_001;
+    await expect(long.resolveAuthenticatedTeamRoster()).resolves.toMatchObject({ team_id: "backend:acme.com" });
+    expect(longGet).toHaveBeenCalledTimes(2);
+  });
+
+  test("caches unavailable identity metadata for a jittered failure interval", async () => {
+    let now = 0;
+    const resolveIdentity = vi.fn(async () => { throw new Error("registry timed out"); });
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        resolveIdentity,
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+      } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+      () => 0.5,
+    );
+
+    await trust.resolveTrustMetadata("verified", "acme.com/alice", undefined, undefined, undefined);
+    now = 44_999;
+    await trust.resolveTrustMetadata("verified", "acme.com/alice", undefined, undefined, undefined);
+    expect(resolveIdentity).toHaveBeenCalledTimes(1);
+
+    now = 45_001;
+    await trust.resolveTrustMetadata("verified", "acme.com/alice", undefined, undefined, undefined);
+    expect(resolveIdentity).toHaveBeenCalledTimes(2);
+  });
+
+  test("uses prepared roster metadata without retrying inside the trust decision", async () => {
+    let now = 0;
+    const currentIdentity = await didFromSeed(57);
+    const get = vi.fn()
+      .mockRejectedValueOnce(new Error("roster timed out"))
+      .mockResolvedValueOnce(localRoster({
+        did_key: currentIdentity.did,
+        identity_scope: "local",
+      }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    );
+
+    const resolved = await trust.resolveTrustMetadata("verified", "alice", undefined, undefined, undefined);
+    now = 2_000;
+    const result = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "alice",
+      currentIdentity.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolved,
+    );
+
+    expect(result).toEqual({ status: "verification_stale", stored: false });
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("ignores forged prepared metadata", async () => {
+    const rosterIdentity = await didFromSeed(59);
+    const attacker = await didFromSeed(60);
+    const get = vi.fn(async () => localRoster({
+      did_key: rosterIdentity.did,
+      identity_scope: "local",
+    }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const result = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "alice",
+      attacker.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        trustAddress: "backend:acme.com/alice",
+        meta: {
+          did: attacker.did,
+          identityScope: "local",
+          custody: "self",
+          resolved: true,
+        },
+      },
+    );
+
+    expect(result.status).toBe("identity_mismatch");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("accepts prepared metadata only for its address and first decision", async () => {
+    let now = 0;
+    const previousAlice = await didFromSeed(61);
+    const currentAlice = await didFromSeed(62);
+    const bob = await didFromSeed(63);
+    const get = vi.fn()
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: previousAlice.did, identity_scope: "local" }],
+      })
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "bob", did_key: bob.did, identity_scope: "local" }],
+      })
+      .mockResolvedValueOnce({
+        team_id: "backend:acme.com",
+        agents: [{ alias: "alice", did_key: currentAlice.did, identity_scope: "local" }],
+      });
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    );
+
+    const resolvedAlice = await trust.resolveTrustMetadata(
+      "verified",
+      "alice",
+      undefined,
+      undefined,
+      undefined,
+    );
+    now = 60_001;
+    const bobResult = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "bob",
+      bob.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolvedAlice,
+    );
+    expect(bobResult.status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(2);
+
+    now = (60 * 60 * 1000) + 1;
+    const aliceResult = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "alice",
+      currentAlice.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolvedAlice,
+    );
+    expect(aliceResult.status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(3);
+  });
+
+  test("prepares public identity resolution before the trust decision", async () => {
+    const currentIdentity = await didFromSeed(58);
+    const resolveIdentity = vi.fn(async () => ({
+      did: currentIdentity.did,
+      address: "acme.com/alice",
+      custody: "self",
+      identityScope: "global",
+    }));
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        resolveIdentity,
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+      } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    const resolved = await trust.resolveTrustMetadata(
+      "verified",
+      "acme.com/alice",
+      undefined,
+      undefined,
+      undefined,
+    );
+    expect(resolveIdentity).toHaveBeenCalledTimes(1);
+
+    const result = await trust.normalizeTrust(
+      new PinStore(),
+      "verified",
+      "acme.com/alice",
+      currentIdentity.did,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      resolved,
+    );
+    expect(result.status).toBe("verified");
+    expect(resolveIdentity).toHaveBeenCalledTimes(1);
+  });
+
+  test("reconciles local metadata through a normal cached read after one hour", async () => {
+    const previousIdentity = await didFromSeed(53);
+    const currentIdentity = await didFromSeed(54);
+    let now = 0;
+    let rosterDID = previousIdentity.did;
+    const get = vi.fn(async () => localRoster({
+      did_key: rosterDID,
+      identity_scope: "local",
+      custody: "self",
+    }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+      "",
+      () => now,
+    );
+
+    expect((await trust.normalizeTrust(
+      new PinStore(), "verified", "alice", previousIdentity.did, undefined, undefined,
+    )).status).toBe("verified");
+    rosterDID = currentIdentity.did;
+    now = (60 * 60 * 1000) - 1;
+    expect((await trust.normalizeTrust(
+      new PinStore(), "verified", "alice", currentIdentity.did, undefined, undefined,
+    )).status).toBe("identity_mismatch");
+    expect(get).toHaveBeenCalledTimes(1);
+
+    now += 2;
+    expect((await trust.normalizeTrust(
+      new PinStore(), "verified", "alice", currentIdentity.did, undefined, undefined,
+    )).status).toBe("verified");
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  test("repeated local mismatches use the cached roster and remain fail closed", async () => {
+    const currentIdentity = await didFromSeed(51);
+    const messageIdentity = await didFromSeed(52);
+    const get = vi.fn(async () => localRoster({
+      did_key: currentIdentity.did,
+      identity_scope: "local",
+      custody: "self",
+    }));
+    const getFresh = vi.fn(async () => localRoster({
+      did_key: currentIdentity.did,
+      identity_scope: "local",
+      custody: "self",
+    }));
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({ get, getFresh }),
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    for (let index = 0; index < 3; index += 1) {
+      const result = await trust.normalizeTrust(
+        new PinStore(),
+        "verified",
+        "alice",
+        messageIdentity.did,
+        undefined,
+        undefined,
+      );
+      expect(result.status).toBe("identity_mismatch");
+    }
+
+    expect(getFresh).not.toHaveBeenCalled();
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  test("uses prepared metadata for the identity-mismatch fallback without resolving under the pin lock", async () => {
+    const pinned = await didFromSeed(65);
+    const sender = await didFromSeed(66);
+    const store = new PinStore();
+    store.storePin(pinned.did, "backend:acme.com/alice", "", "");
+    const trust = new SenderTrustManager(
+      authenticatedTeamClient({
+        get: vi.fn(async () => localRoster({
+          did_key: sender.did,
+          did_aw: "not-a-stable-did",
+          identity_scope: "global",
+        })),
+      }),
+      { verifyStableIdentity: vi.fn() } as never,
+      "backend:acme.com",
+      "",
+    ) as SenderTrustManager & {
+      resolveAgentMeta(address: string): Promise<unknown>;
+      normalizeResolvedTrust(
+        target: PinStore,
+        verificationStatus: "verified",
+        rawAddress: string,
+        fromDID: string,
+        fromStableID: string,
+        toDID: undefined,
+        toStableID: undefined,
+        rotationAnnouncement: undefined,
+        replacementAnnouncement: undefined,
+        verificationAddress: string,
+        resolvedMetadata: unknown,
+      ): Promise<{ status: string | undefined; stored: boolean }>;
+    };
+    let lockHeld = false;
+    const originalResolveAgentMeta = trust.resolveAgentMeta.bind(trust);
+    const resolutionLockStates: boolean[] = [];
+    vi.spyOn(trust, "resolveAgentMeta").mockImplementation(async (address) => {
+      resolutionLockStates.push(lockHeld);
+      return originalResolveAgentMeta(address);
+    });
+    const prepared = await trust.resolveTrustMetadata(
+      "verified",
+      "alice",
+      "not-a-stable-did",
+      undefined,
+      undefined,
+      { pinStore: store, fromDID: sender.did, verificationAddress: "alice" },
+    );
+
+    const result = await store.runExclusive(async () => {
+      lockHeld = true;
+      try {
+        return await trust.normalizeResolvedTrust(
+          store, "verified", "alice", sender.did, "not-a-stable-did", undefined, undefined,
+          undefined, undefined, "alice", prepared,
+        );
+      } finally {
+        lockHeld = false;
+      }
+    });
+
+    expect(result).toEqual({ status: "identity_mismatch", stored: false });
+    expect(resolutionLockStates).toEqual([false]);
+  });
+
+  test("uses a cache-respecting certificate-authenticated roster read before verifying a local sender", async () => {
+    const self = await didFromSeed(41);
+    const currentIdentity = await didFromSeed(43);
+    const globalIdentity = await didFromSeed(50);
+    const requests: Array<{ authorization: string; certificate: string; cacheControl: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      requests.push({
+        authorization: headers.get("Authorization") || "",
+        certificate: headers.get("X-AWID-Team-Certificate") || "",
+        cacheControl: headers.get("Cache-Control") || "",
+      });
+      return new Response(JSON.stringify({
+        team_id: "backend:acme.com",
+        agents: [
+          { alias: "alice", did_key: currentIdentity.did, identity_scope: "local" },
+          { alias: "grace", did_key: globalIdentity.did, did_aw: "did:aw:grace", identity_scope: "global" },
+        ],
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+
+    const client = new APIClient("https://aweb.example", {
+      did: self.did,
+      stableID: "",
+      signingKey: self.seed,
+      teamID: "backend:acme.com",
+      teamCertificateHeader: "certificate-header",
+    });
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      client,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+
+    expect((await trust.normalizeTrust(store, "verified", "acme.com/alice", currentIdentity.did, undefined, undefined)).status).toBe("verified");
+    expect((await trust.normalizeTrust(store, "verified_legacy", "alice", currentIdentity.did, undefined, undefined)).status).toBe("verified_legacy");
+    expect((await trust.normalizeTrust(store, "verified", "acme.com/grace", globalIdentity.did, "did:aw:grace", undefined)).status).toBe("verified");
+    expect(requests).toHaveLength(1);
+    expect(requests[0].authorization).toMatch(/^DIDKey /);
+    expect(requests[0].certificate).toBe("certificate-header");
+    expect(requests[0].cacheControl).toBe("");
+    expect(store.pins.size).toBe(1);
+  });
+
+  test.each([
+    ["absent", "identity_mismatch"],
+    ["empty", "verification_stale"],
+    ["malformed", "verification_stale"],
+    ["non-local", "identity_mismatch"],
+    ["different-key-with-forged-stable-id", "identity_mismatch"],
+    ["verified-legacy-bare-alias", "identity_mismatch"],
+    ["unavailable", "verification_stale"],
+  ] as const)("rejects %s authenticated roster refreshes", async (variant, expected) => {
+    const self = await didFromSeed(44);
+    const currentIdentity = await didFromSeed(46);
+    const differentIdentity = await didFromSeed(47);
+    let requests = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+      requests += 1;
+      const headers = new Headers(init?.headers);
+      expect(headers.get("Authorization")).toMatch(/^DIDKey /);
+      expect(headers.get("X-AWID-Team-Certificate")).toBe("certificate-header");
+      expect(headers.get("Cache-Control")).toBeNull();
+      if (variant === "unavailable") {
+        return new Response("unavailable", { status: 503 });
+      }
+      const agents = variant === "absent" ? [] : [{
+        alias: "alice",
+        did_key: variant === "empty" ? "" : variant === "malformed" ? "did:key:not-valid" : variant === "different-key-with-forged-stable-id" || variant === "verified-legacy-bare-alias" ? differentIdentity.did : currentIdentity.did,
+        identity_scope: variant === "non-local" ? "global" : "local",
+      }];
+      return new Response(JSON.stringify({ team_id: "backend:acme.com", agents }), { status: 200 });
+    }));
+    const client = new APIClient("https://aweb.example", {
+      did: self.did,
+      stableID: "",
+      signingKey: self.seed,
+      teamID: "backend:acme.com",
+      teamCertificateHeader: "certificate-header",
+    });
+    const store = new PinStore();
+    const trust = new SenderTrustManager(
+      client,
+      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      "backend:acme.com",
+      "",
+    );
+    const projected = variant === "different-key-with-forged-stable-id";
+    const stableID = projected ? "did:aw:forged" : undefined;
+    const sender = projected ? "acme.com/alice" : "alice";
+    const status = variant === "verified-legacy-bare-alias" ? "verified_legacy" : "verified";
+    expect((await trust.normalizeTrust(store, status, sender, currentIdentity.did, stableID, undefined)).status).toBe(expected);
   });
 
   test("preserves local mismatch when the authoritative roster row has a different key", async () => {
-    const oldIdentity = await didFromSeed(34);
     const rosterIdentity = await didFromSeed(35);
     const attacker = await didFromSeed(36);
     const store = new PinStore();
     const trust = new SenderTrustManager(
-      {
-        get: async () => ({ did_key: oldIdentity.did, identity_scope: "global", custody: "self" }),
-        getFresh: async () => ({ did_key: rosterIdentity.did, identity_scope: "local", custody: "self" }),
-      } as never,
+      authenticatedTeamClient({
+        get: async () => localRoster({ did_key: rosterIdentity.did, identity_scope: "local", custody: "self" }),
+      }),
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
     );
 
-    expect((await trust.normalizeTrust(store, "verified", "alice", oldIdentity.did, undefined, undefined)).status).toBe("verified");
     expect((await trust.normalizeTrust(store, "verified", "alice", attacker.did, undefined, undefined)).status).toBe("identity_mismatch");
   });
 
   test("preserves local mismatch when the sender is absent from the roster", async () => {
-    const oldIdentity = await didFromSeed(37);
     const attacker = await didFromSeed(38);
     const store = new PinStore();
     const trust = new SenderTrustManager(
-      {
-        get: async () => ({ did_key: oldIdentity.did, identity_scope: "global", custody: "self" }),
-        getFresh: async () => { throw Object.assign(new Error("not found"), { statusCode: 404 }); },
-      } as never,
+      authenticatedTeamClient({
+        get: async () => { throw Object.assign(new Error("not found"), { statusCode: 404 }); },
+      }),
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
     );
 
-    expect((await trust.normalizeTrust(store, "verified", "alice", oldIdentity.did, undefined, undefined)).status).toBe("verified");
     expect((await trust.normalizeTrust(store, "verified", "alice", attacker.did, undefined, undefined)).status).toBe("identity_mismatch");
   });
 
-  test("reports local verification stale when authoritative refresh is unavailable", async () => {
-    const oldIdentity = await didFromSeed(39);
+  test("reports local verification stale when the cached roster read is unavailable", async () => {
     const changedIdentity = await didFromSeed(40);
     const store = new PinStore();
     const trust = new SenderTrustManager(
-      {
-        get: async () => ({ did_key: oldIdentity.did, identity_scope: "global", custody: "self" }),
-        getFresh: async () => { throw new TypeError("fetch failed"); },
-      } as never,
+      authenticatedTeamClient({
+        get: async () => { throw new TypeError("fetch failed"); },
+      }),
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
     );
 
-    expect((await trust.normalizeTrust(store, "verified", "alice", oldIdentity.did, undefined, undefined)).status).toBe("verified");
     expect((await trust.normalizeTrust(store, "verified", "alice", changedIdentity.did, undefined, undefined)).status).toBe("verification_stale");
   });
 
@@ -182,7 +887,7 @@ describe("SenderTrustManager", () => {
     store.storePin(did, "backend:acme.com/alice", "", "");
 
     const trust = new SenderTrustManager(
-      { get: async () => ({ did, lifetime: "ephemeral", custody: "self" }) } as never,
+      authenticatedTeamClient({ get: async () => localRoster({ did_key: did, lifetime: "ephemeral", custody: "self" }) }),
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
@@ -194,19 +899,19 @@ describe("SenderTrustManager", () => {
     expect(store.pins.size).toBe(0);
   });
 
-  test("normalizes legacy persistent lifetime metadata as global scope", async () => {
+  test("does not verify legacy persistent lifetime metadata as local", async () => {
     const { did } = await didFromSeed(31);
     const store = new PinStore();
     const trust = new SenderTrustManager(
-      { get: async () => ({ did, lifetime: "persistent", custody: "self" }) } as never,
+      authenticatedTeamClient({ get: async () => localRoster({ did_key: did, lifetime: "persistent", custody: "self" }) }),
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
     );
 
     const result = await trust.normalizeTrust(store, "verified", "alice", did, undefined, undefined);
-    expect(result.status).toBe("verified");
-    expect(store.addresses.get("backend:acme.com/alice")).toBe(did);
+    expect(result.status).toBe("identity_mismatch");
+    expect(store.addresses.has("backend:acme.com/alice")).toBe(false);
   });
 
   test("rejects malformed announcement signatures before invoking the verifier", async () => {
@@ -267,10 +972,18 @@ describe("SenderTrustManager", () => {
     };
 
     const store = new PinStore();
-    store.storePin(oldIdentity.did, "backend:acme.com/alice", "", "");
+    store.storePin(oldIdentity.did, "acme.com/alice", "", "");
     const trust = new SenderTrustManager(
-      { get: async () => ({ did: newIdentity.did, identity_scope: "global", custody: "self" }) } as never,
-      { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
+      {} as never,
+      {
+        verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }),
+        resolveIdentity: async () => ({
+          did: newIdentity.did,
+          address: "acme.com/alice",
+          custody: "self",
+          identityScope: "global",
+        }),
+      } as never,
       "backend:acme.com",
       "",
     );
@@ -278,7 +991,7 @@ describe("SenderTrustManager", () => {
     const result = await trust.normalizeTrust(
       store,
       "verified",
-      "alice",
+      "acme.com/alice",
       newIdentity.did,
       undefined,
       undefined,
@@ -286,7 +999,7 @@ describe("SenderTrustManager", () => {
       announcement,
     );
     expect(result.status).toBe("verified");
-    expect(store.addresses.get("backend:acme.com/alice")).toBe(newIdentity.did);
+    expect(store.addresses.get("acme.com/alice")).toBe(newIdentity.did);
   });
 
   test("accepts valid replacement announcements for public addresses", async () => {
@@ -417,14 +1130,15 @@ describe("SenderTrustManager", () => {
     const stableID = "did:aw:test";
     const store = new PinStore();
     const client = {
+      hasTeamCertificateAuth: (teamID: string) => teamID === "backend:acme.com",
       get: vi.fn(async (path: string) => {
-        expect(path).toBe("/v1/teams/backend%3Aacme.com/agents/alice");
-        return {
+        expect(path).toBe("/v1/agents");
+        return localRoster({
           did_key: did,
           did_aw: stableID,
           address: "acme.com/alice",
           identity_scope: "global",
-        };
+        });
       }),
     };
     const registry = {
@@ -712,6 +1426,100 @@ describe("SenderTrustManager", () => {
     expect(store.pins.get(stableID)?.log_seq).toBeUndefined();
   });
 
+  test("rejects prepared registry evidence when its pin checkpoint changed in flight", async () => {
+    const identity = await didFromSeed(64);
+    const stableID = "did:aw:checkpointRace";
+    const address = "acme.com/alice";
+    const store = new PinStore();
+    store.storePin(stableID, address, "", "");
+    const pin = store.pins.get(stableID)!;
+    pin.stable_id = stableID;
+    pin.did_key = identity.did;
+    pin.log_seq = 1;
+    pin.log_entry_hash = "a".repeat(64);
+    const verifyStableIdentity = vi.fn()
+      .mockResolvedValueOnce({
+        outcome: "OK_VERIFIED",
+        currentDidKey: identity.did,
+        verifiedHead: {
+          seq: 2,
+          entryHash: "b".repeat(64),
+          stateHash: "c".repeat(64),
+          currentDidKey: identity.did,
+          fetchedAt: 1,
+        },
+      })
+      .mockResolvedValueOnce({
+        outcome: "OK_VERIFIED",
+        currentDidKey: identity.did,
+        verifiedHead: {
+          seq: 3,
+          entryHash: "d".repeat(64),
+          stateHash: "e".repeat(64),
+          currentDidKey: identity.did,
+          fetchedAt: 2,
+        },
+      });
+    const seedVerifiedHead = vi.fn();
+    const trust = new SenderTrustManager(
+      { get: vi.fn() } as never,
+      {
+        resolveIdentity: vi.fn(async () => ({
+          did: identity.did,
+          stableID,
+          address,
+          controllerDid: "did:key:zcontroller",
+          custody: "self",
+          identityScope: "global",
+        })),
+        seedVerifiedHead,
+        verifyStableIdentity,
+      } as never,
+      "backend:acme.com",
+      "",
+    ) as SenderTrustManager & {
+      normalizeResolvedTrust(
+        target: PinStore,
+        verificationStatus: "verified",
+        rawAddress: string,
+        fromDID: string,
+        fromStableID: string,
+        toDID: undefined,
+        toStableID: undefined,
+        rotationAnnouncement: undefined,
+        replacementAnnouncement: undefined,
+        verificationAddress: string,
+        resolvedMetadata: unknown,
+      ): Promise<{ status: string | undefined; stored: boolean }>;
+    };
+    const context = { pinStore: store, fromDID: identity.did, verificationAddress: address };
+
+    const firstPrepared = await trust.resolveTrustMetadata(
+      "verified", address, stableID, undefined, undefined, context,
+    );
+    const secondPrepared = await trust.resolveTrustMetadata(
+      "verified", address, stableID, undefined, undefined, context,
+    );
+    expect(seedVerifiedHead).toHaveBeenCalledTimes(2);
+    expect(store.pins.get(stableID)?.log_seq).toBe(1);
+
+    const first = await trust.normalizeResolvedTrust(
+      store, "verified", address, identity.did, stableID, undefined, undefined,
+      undefined, undefined, address, firstPrepared,
+    );
+    expect(first).toEqual({ status: "verified", stored: true });
+    expect(store.pins.get(stableID)?.log_seq).toBe(2);
+    expect(store.pins.get(stableID)?.log_entry_hash).toBe("b".repeat(64));
+
+    const stale = await trust.normalizeResolvedTrust(
+      store, "verified", address, identity.did, stableID, undefined, undefined,
+      undefined, undefined, address, secondPrepared,
+    );
+    expect(stale).toEqual({ status: "verification_stale", stored: false });
+    expect(store.pins.get(stableID)?.log_seq).toBe(2);
+    expect(store.pins.get(stableID)?.log_entry_hash).toBe("b".repeat(64));
+  });
+
   test("surfaces stale verifier cache honestly instead of claiming identity mismatch", async () => {
     const { did } = await didFromSeed(17);
     const stableID = "did:aw:freshAlice";
@@ -745,7 +1553,7 @@ describe("SenderTrustManager", () => {
     expect(result.stored).toBe(false);
   });
 
-  test("does not create a TOFU pin when public-address resolution fails", async () => {
+  test("degrades without creating a TOFU pin when public-address resolution fails", async () => {
     const { did } = await didFromSeed(10);
     const stableID = "did:aw:test";
     const store = new PinStore();
@@ -774,7 +1582,7 @@ describe("SenderTrustManager", () => {
       "acme.com/alice",
     );
 
-    expect(result.status).toBe("verified");
+    expect(result.status).toBe("verification_stale");
     expect(result.stored).toBe(false);
     expect(store.pins.size).toBe(0);
     expect(store.addresses.size).toBe(0);

@@ -20,6 +20,19 @@ user, event, identity-routing, or E2E authorities listed in
   routing or participant authority by itself.
 - Self-custodial clients own private keys and local plaintext presentation.
   Hosted custodial tools are server-readable hosted messaging.
+- A verified or legacy-verified local-alias sender requires a valid message
+  signature and recipient binding plus a no-cache, team-certificate-authenticated
+  current-roster row whose exact alias has a non-empty local DID equal to the
+  signed `from_did`.
+  Cache, public/dashboard lookup, registry continuity, and TOFU are not proof.
+- Cross-registry sender authority is selected from the client-signed sender
+  address independently of the receiver's home registry. Only the complete
+  DNS/controller/namespace/address/DID/key/log/origin tuple and PostgreSQL
+  checkpoint/cohort state authorize; Redis, general caches, and degraded trust
+  do not.
+- The 60-second maximum cohort reuse interval is receiver policy, not a source
+  freshness SLA. Tests distinguish a fresh source exposing change from an
+  authoritative source suppressing unseen change.
 
 ## Identity, routing, and continuation cases
 
@@ -60,24 +73,49 @@ Cover these cases for mail and chat wherever the operation exists:
     compatibility input; they cannot shape routing or policy.
 23. Federated responses are uncompressed and remain inside the response-size
     bound.
+24. Signed sender address selects a different external registry without widening
+    or changing the receiver's home client.
+25. Wrapper/signed address mismatch fails before DNS; a sender registry URL is
+    ignored or rejected and never contacted.
+26. Same-registry global delivery remains compatible; local `did:key`
+    continuation requires the exact learned route and unknown local first
+    contact fails.
+27. A cohort is reused no longer than 60 seconds, expiry rereads the full chain,
+    and source suppression may renew an old valid state without a freshness
+    claim.
+28. PostgreSQL coordination outage/timeout fails closed without Redis or
+    process-local fallback and without delivery effects.
+29. An address-only legacy contact is inert; explicit DID binding authorizes,
+    and reassignment neither transfers contact nor conversation.
+30. In-place contact replacement requires current controller proof, strict new
+    DID authority, exact-old compare-and-swap, and authenticated recipient
+    acceptance.
+31. Every branch matches the generated stable reason/status/retryability tuple;
+    only rate limiting emits `Retry-After: 1`.
 
 ## Durable mail and read-state cases
 
 1. Send acceptance returns `message_id` and `conversation_id` but does not claim
    wake, presentation, read state, or a recipient trust verdict.
-2. Exact mail reads do not change read state: both `show --message-id` and
-   conversation `show` are read-only.
+2. Exact mail reads are participant-visible and do not change read state:
+   authenticated senders and recipients may use `show --message-id`, while an
+   unrelated or absent id returns the same 404. A rotated global sender's exact
+   read uses the server-authorized stored sender routing DID plus the valid
+   historical signature for authorship; a claimed stable field alone is not
+   authority. Conversation `show` is also read-only.
 3. Conversation history is oldest-first, defaults to 200, has a 500-message
    ceiling, and has no paging flag. A full-size window cannot prove completeness.
 4. Inbox is newest-first. The CLI defaults to 50 while the server accepts at most
-   200; returned unread rows are presented and acknowledged, and a bounded result
-   is not mailbox completeness evidence.
+   200 per page; returned unread rows are presented and acknowledged. A response
+   with `has_more` includes an opaque `next_cursor`, allowing the remaining
+   mailbox to be fetched without overlap.
 5. Mail reply resolves the source `conversation_id`; reply sends before its
    best-effort source acknowledgement. Failure of that acknowledgement does not
    unsend the reply.
 6. `aw mail ack` is the authenticated recipient-side read transition. It
    idempotently sets `read_at` for unread recipient mail and emits the mutation
-   event only on a state change.
+   event only on a state change. A sender may read its exact sent message but
+   cannot acknowledge it; sender acknowledgement returns 404.
 7. Read mail leaves unread inbox/actionable reconnect delivery but remains
    durable and exactly fetchable.
 8. Hosted MCP `check_mail` marks returned unread rows read before the tool
@@ -85,6 +123,21 @@ Cover these cases for mail and chat wherever the operation exists:
    local self-custodial runtime presented or decrypted content.
 9. Encrypted mail events expose routing/wake metadata without plaintext subject
    or body.
+10. One receiver-wide receipt keyed solely by `message_id` covers local and
+    federated mail/chat, plaintext and encrypted content.
+11. An exact federated retry returns the stored established result with no
+    duplicate message, participant, route, contact, or event effect; local
+    receipts are `legacy_unreplayable`, not federation/cross-kind replay
+    authority, while existing local per-path idempotency remains compatible.
+12. Changed sender, target, kind, conversation/session, signature, signed
+    payload, protected bytes, or mail/chat cross-kind reuse conflicts.
+13. Phase-B rollback removes receipt and every delivery effect so a later retry
+    may claim normally; ordinary message GC does not remove receipts.
+14. Migration collision preflight stops on an existing mail/chat UUID collision;
+    a `legacy_unreplayable` local/historical receipt blocks new insert claims and
+    UUID reuse after message deletion.
+15. The durable mutation outbox commits atomically, uses skip-locked concurrent
+    replay, and retains its documented at-least-once crash residual.
 
 ## Chat wait, selection, and read cases
 
@@ -141,6 +194,12 @@ Cover these cases for mail and chat wherever the operation exists:
    reapplying the ingestion freshness window.
 6. Legacy plaintext remains labeled server-readable and is never relabeled as
    retroactive E2E.
+7. Strict sender Ed25519 address/DID/key/origin authority completes before the
+   recipient X25519 assertion decision.
+8. Missing and invalid-or-stale recipient assertions retain distinct stable
+   errors and neither falls back to plaintext.
+9. Protected signed sender address, not a wrapper or home registry, selects
+   external authority.
 
 ## Release evidence and document anchors
 
@@ -149,6 +208,10 @@ Cover these cases for mail and chat wherever the operation exists:
 - Identity/routing protocol: [`identity-messaging-contract.md`](identity-messaging-contract.md).
 - Encryption/content modes: [`e2e-messaging-contract.md`](e2e-messaging-contract.md)
   and [`e2e-legacy-plaintext-policy.md`](e2e-legacy-plaintext-policy.md).
+- Stable federation failures: generated
+  [`federation-error-reference.md`](federation-error-reference.md), sourced from
+  canonical `awid/src/awid/federation_errors.py` and response-shape-checked
+  against the authority-state vector.
 - Command/tool inventory: generated [`cli-command-reference.md`](cli-command-reference.md)
   and [`mcp-tools-reference.md`](mcp-tools-reference.md).
 - Executable cross-surface proof: [`../scripts/e2e-oss-user-journey.sh`](../scripts/e2e-oss-user-journey.sh).

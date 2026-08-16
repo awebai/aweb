@@ -87,13 +87,13 @@ func TestClientCASPersisterAdvancesThenRefusesAStaleSnapshot(t *testing.T) {
 	if status != VerificationStale {
 		t.Fatalf("stale continuity decision status=%q, want %q", status, VerificationStale)
 	}
-	if current.CheckPin("bob@example.com", "did:key:zBob", LifetimePersistent) != PinOK {
+	if current.CheckPin("bob@example.com", "did:key:zBob", IdentityModeGlobal) != PinOK {
 		t.Fatal("stale writer erased the other process's pin")
 	}
-	if current.CheckPin("carol@example.com", "did:key:zCarol", LifetimePersistent) != PinOK {
+	if current.CheckPin("carol@example.com", "did:key:zCarol", IdentityModeGlobal) != PinOK {
 		t.Fatal("second successful mutation was not committed")
 	}
-	if current.CheckPin("dave@example.com", "did:key:zDave", LifetimePersistent) != PinNew {
+	if current.CheckPin("dave@example.com", "did:key:zDave", IdentityModeGlobal) != PinNew {
 		t.Fatal("stale writer's desired mutation reached the durable store")
 	}
 }
@@ -115,7 +115,7 @@ func TestFirstContactPinThatPersistsIsVerified(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.CheckPin(addr, did, LifetimePersistent) != PinOK {
+	if reloaded.CheckPin(addr, did, IdentityModeGlobal) != PinOK {
 		t.Error("pin was reported verified but is not on disk")
 	}
 }

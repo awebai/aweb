@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 
 from awid.did import did_from_public_key, generate_keypair
-from awid.registry import Address, AddressDelivery, KeyResolution
+from awid.registry import Address, AddressDelivery, KeyResolution, Namespace
 from awid.signing import sign_message
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.identity_auth_deps import IdentityAuth
@@ -1298,7 +1298,10 @@ async def test_mcp_send_mail_uses_same_team_local_persistent_when_awid_misses(aw
 
 
 @pytest.mark.asyncio
-async def test_mcp_send_mail_rejects_cross_team_local_persistent_when_awid_misses(aweb_cloud_db, monkeypatch):
+@pytest.mark.parametrize("address_registered", [False, True])
+async def test_mcp_send_mail_requires_current_local_address_authority(
+    aweb_cloud_db, monkeypatch, address_registered
+):
     alice_agent_id = uuid4()
     alice_sk, alice_pub = generate_keypair()
     del alice_sk
@@ -1341,14 +1344,37 @@ async def test_mcp_send_mail_rejects_cross_team_local_persistent_when_awid_misse
     )
 
     class _Registry:
-        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
-            assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
-            return None
+        async def resolve_address_fresh(
+            self, domain: str, name: str, *, did_key: str | None = None
+        ):
+            assert (domain, name) == ("otherco.com", "bob")
+            if not address_registered:
+                return None
+            return Address(
+                address_id="local-bob",
+                domain=domain,
+                name=name,
+                did_aw="did:aw:bob",
+                current_did_key="did:key:z6MkBob",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
 
+        async def get_namespace_fresh(self, domain: str):
+            assert domain == "otherco.com"
+            return Namespace(
+                namespace_id="namespace-otherco",
+                domain=domain,
+                controller_did="did:key:z6MkNamespaceController",
+                verification_status="verified",
+                last_verified_at=None,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+    registry = _Registry()
     result = json.loads(
         await mail_tools.send_mail(
             DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=_Registry(),
+            registry_client=registry,
             hosted_signer=None,
             to="otherco.com/bob",
             subject="cross team local",
@@ -1356,7 +1382,10 @@ async def test_mcp_send_mail_rejects_cross_team_local_persistent_when_awid_misse
         )
     )
 
-    assert result["error"] == "Address 'otherco.com/bob' not found"
+    if address_registered:
+        assert result["status"] == "delivered"
+    else:
+        assert result["error"] == "Address 'otherco.com/bob' not found"
 
 
 @pytest.mark.asyncio
@@ -1980,7 +2009,10 @@ async def test_mcp_chat_send_uses_same_team_local_persistent_when_awid_misses(aw
 
 
 @pytest.mark.asyncio
-async def test_mcp_chat_send_rejects_cross_team_local_persistent_when_awid_misses(aweb_cloud_db, monkeypatch):
+@pytest.mark.parametrize("address_registered", [False, True])
+async def test_mcp_chat_send_requires_current_local_address_authority(
+    aweb_cloud_db, monkeypatch, address_registered
+):
     alice_agent_id = uuid4()
     alice_sk, alice_pub = generate_keypair()
     del alice_sk
@@ -2023,22 +2055,48 @@ async def test_mcp_chat_send_rejects_cross_team_local_persistent_when_awid_misse
     )
 
     class _Registry:
-        async def resolve_address(self, domain: str, name: str, *, did_key: str | None = None):
-            assert (domain, name, did_key) == ("otherco.com", "bob", alice_did)
-            return None
+        async def resolve_address_fresh(
+            self, domain: str, name: str, *, did_key: str | None = None
+        ):
+            assert (domain, name) == ("otherco.com", "bob")
+            if not address_registered:
+                return None
+            return Address(
+                address_id="local-bob",
+                domain=domain,
+                name=name,
+                did_aw="did:aw:bob",
+                current_did_key="did:key:z6MkBob",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
 
+        async def get_namespace_fresh(self, domain: str):
+            assert domain == "otherco.com"
+            return Namespace(
+                namespace_id="namespace-otherco",
+                domain=domain,
+                controller_did="did:key:z6MkNamespaceController",
+                verification_status="verified",
+                last_verified_at=None,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+    registry = _Registry()
     result = json.loads(
         await chat_tools.chat_send(
             DBInfra(aweb_cloud_db.aweb_db),
             None,
-            registry_client=_Registry(),
+            registry_client=registry,
             hosted_signer=None,
             to_address="otherco.com/bob",
             message="hello bob",
         )
     )
 
-    assert result["error"] == "Recipient address 'otherco.com/bob' not found"
+    if address_registered:
+        assert result["session_id"]
+    else:
+        assert result["error"] == "Recipient address 'otherco.com/bob' not found"
 
 
 @pytest.mark.asyncio
@@ -2831,8 +2889,13 @@ async def test_mcp_send_mail_continuation_reevaluates_recipient_inbound_policy(
     if alice_is_contact:
         await aweb_cloud_db.aweb_db.execute(
             """
-            INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
-            VALUES ($1, 'acme.com/alice', 'Alice')
+            INSERT INTO {{tables.contacts}} (
+                owner_did, contact_address, contact_did_aw,
+                binding_controller_did, binding_accepted_at, label
+            ) VALUES (
+                $1, 'acme.com/alice', 'did:aw:alice',
+                'did:key:z6Mktestcontroller', clock_timestamp(), 'Alice'
+            )
             """,
             bob_participant_did,
         )

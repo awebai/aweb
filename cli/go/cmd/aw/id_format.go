@@ -76,8 +76,8 @@ func formatIDShow(v any) string {
 	if strings.TrimSpace(out.Custody) != "" {
 		sb.WriteString(fmt.Sprintf("Custody:     %s\n", out.Custody))
 	}
-	if strings.TrimSpace(out.Lifetime) != "" {
-		sb.WriteString(fmt.Sprintf("Identity:    %s\n", awid.DescribeIdentityClass(out.Lifetime)))
+	if strings.TrimSpace(out.IdentityScope) != "" {
+		sb.WriteString(fmt.Sprintf("Scope:       %s\n", awid.DescribeIdentityScope(out.IdentityScope)))
 	}
 	sb.WriteString(fmt.Sprintf("Registry:    %s\n", out.RegistryStatus))
 	if strings.TrimSpace(out.RegistryURL) != "" {

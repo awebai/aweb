@@ -26,6 +26,7 @@ from awid.log import (
     identity_state_hash,
     log_entry_payload,
 )
+from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, normalize_service_token
 from awid.signing import canonical_json_bytes, sign_message
 
 
@@ -231,9 +232,11 @@ class RegistryClient:
     transport: httpx.AsyncBaseTransport | None = None
     base_url: str | None = None
     domain_registry_resolver: DomainRegistryResolver | None = None
+    service_token: str | None = field(default=None, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
         object.__setattr__(
             self,
             "_http_client",
@@ -296,6 +299,12 @@ class RegistryClient:
             if key.strip().lower() != "accept-encoding"
         }
         request_headers["Accept-Encoding"] = "identity"
+        if self.service_token and (
+            registry_url is None
+            or canonical_server_origin(registry_url)
+            == canonical_server_origin(self.registry_url)
+        ):
+            request_headers[AWID_SERVICE_TOKEN_HEADER] = self.service_token
         async with asyncio.timeout(self.timeout_seconds):
             async with self._http_client.stream(
                 method,
@@ -553,6 +562,10 @@ class RegistryClient:
         )
         return None if data is None else _namespace_from_json(data)
 
+    async def get_namespace_fresh(self, domain: str) -> Namespace | None:
+        """Read current namespace authority without a stale cache result."""
+        return await self.get_namespace(domain)
+
     async def update_namespace_delivery_origin(
         self,
         domain: str,
@@ -686,6 +699,22 @@ class RegistryClient:
             registry_url=await self._registry_url_for_domain(domain),
         )
         return None if data is None else _address_from_json(data)
+
+    async def resolve_address_fresh(
+        self,
+        domain: str,
+        name: str,
+        *,
+        signing_key: bytes | None = None,
+        did_key: str | None = None,
+    ) -> Address | None:
+        """Read current address authority without a stale cache result."""
+        return await self.resolve_address(
+            domain,
+            name,
+            signing_key=signing_key,
+            did_key=did_key,
+        )
 
     async def list_addresses(
         self,
@@ -1042,6 +1071,7 @@ class CachedRegistryClient(RegistryClient):
         transport: httpx.AsyncBaseTransport | None = None,
         base_url: str | None = None,
         domain_registry_resolver: DomainRegistryResolver | None = None,
+        service_token: str | None = None,
     ) -> None:
         super().__init__(
             registry_url=registry_url,
@@ -1049,6 +1079,7 @@ class CachedRegistryClient(RegistryClient):
             transport=transport,
             base_url=base_url,
             domain_registry_resolver=domain_registry_resolver,
+            service_token=service_token,
         )
         object.__setattr__(self, "redis_client", redis_client)
         object.__setattr__(self, "_refresh_tasks", {})
@@ -1083,6 +1114,21 @@ class CachedRegistryClient(RegistryClient):
             encode=lambda value: None if value is None else _namespace_to_json(value),
             decode=lambda payload: None if payload is None else _namespace_from_json(payload),
         )
+
+    async def get_namespace_fresh(self, domain: str) -> Namespace | None:
+        registry_url = await self._registry_url_for_domain(domain)
+        cache_key = self._namespace_cache_key(domain, registry_url=registry_url)
+        await self._invalidate_keys(cache_key)
+        value = await super().get_namespace(domain)
+        await self._write_cache_entry(
+            cache_key,
+            value=value,
+            ttl_seconds=_NAMESPACE_CACHE_TTL_SECONDS,
+            encode=lambda payload: (
+                None if payload is None else _namespace_to_json(payload)
+            ),
+        )
+        return value
 
     async def list_addresses(
         self,
@@ -1127,6 +1173,38 @@ class CachedRegistryClient(RegistryClient):
             encode=lambda value: None if value is None else _address_to_json(value),
             decode=lambda payload: None if payload is None else _address_from_json(payload),
         )
+
+    async def resolve_address_fresh(
+        self,
+        domain: str,
+        name: str,
+        *,
+        signing_key: bytes | None = None,
+        did_key: str | None = None,
+    ) -> Address | None:
+        registry_url = await self._registry_url_for_domain(domain)
+        cache_key = self._address_cache_key(
+            domain,
+            name,
+            registry_url=registry_url,
+            caller_did_key=None,
+        )
+        await self._invalidate_keys(cache_key)
+        value = await super().resolve_address(
+            domain,
+            name,
+            signing_key=signing_key,
+            did_key=None,
+        )
+        await self._write_cache_entry(
+            cache_key,
+            value=value,
+            ttl_seconds=_ADDRESS_CACHE_TTL_SECONDS,
+            encode=lambda payload: (
+                None if payload is None else _address_to_json(payload)
+            ),
+        )
+        return value
 
     async def list_did_addresses(self, did_aw: str) -> list[Address]:
         return await self._cached_read(

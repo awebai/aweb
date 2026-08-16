@@ -35,11 +35,9 @@ This harness depends on two checkouts sitting beside the aweb repo:
   checkout that the seed publishes into Library. Override with
   `LIBRARY_E2E_BLUEPRINT_SRC`.
 
-The hosted `Comprehensive ship gate` does not consume mutable repository heads:
-it checks out Library and blueprints at the exact reviewed commits recorded in
-`.github/workflows/ship.yml` and points these overrides at them.
-Sibling working checkouts remain the local default for deliberate leading-edge
-integration only.
+The clean local-Docker release gate records the exact commit and requires a
+clean working tree for each sibling input before it starts. Pull-request CI
+checks out the current public default branches without stale fixed pins.
 
 The expected layout is the standard sibling checkout:
 
@@ -97,8 +95,11 @@ curl -s http://127.0.0.1:18765/v1/blueprints | python3 -m json.tool   # after se
 
 Postgres data lives on tmpfs and the stack defines no named volumes, so
 `down -v` (what `e2e-library-stack-down` and the `all` trap run) removes every
-container and all state. The next `up` is a clean slate, which is why the
-`library` database is (re)created by `scripts/e2e/initdb/` on every boot.
+container and all state. Teardown also queries Docker for container, network,
+and volume labels belonging to the exact Compose project and fails if residue
+remains; a successful test cannot hide a cleanup failure. The next `up` is a
+clean slate, which is why the `library` database is (re)created by
+`scripts/e2e/initdb/` on every boot.
 
 ## How the seed authenticates
 
@@ -113,8 +114,9 @@ origin the seed posts to; if you change the library port, both move together.
 ## CLI real-stack e2e suite (`AW_E2E`)
 
 On top of the stack above, the CLI ships a Go e2e suite that drives the
-**actually-built `aw` binary** against the live services over `os/exec` — no
-`httptest` servers, no injected mocks. It lives in `cli/go/e2e/` and is the
+selected exact `aw` binary against the live services over `os/exec` — no
+`httptest` servers, no injected mocks. The ordinary target builds that binary
+from the checkout. It lives in `cli/go/e2e/` and is the
 regression net for the real signed-request and team-certificate paths.
 
 One command brings up the stack, builds `aw`, runs the suite, and tears down:
@@ -162,18 +164,6 @@ only* by writing the served manifest with its origin rewritten to the stack URL.
 When that bug is fixed (Library serves its own public origin), the fixture is
 deleted and the suite installs the manifest the real way.
 
-To iterate against an already-running stack without the up/down cycle:
-
-```bash
-make -C cli e2e-up                       # up + seed, leave running
-cd cli/go && AW_E2E=1 AW_BIN=$PWD/aw \
-  AWEB_URL=http://127.0.0.1:18000 \
-  AWID_REGISTRY_URL=http://127.0.0.1:18010 \
-  LIBRARY_E2E_LIBRARY_URL=http://127.0.0.1:18765 \
-  go test -tags e2e ./e2e -count=1 -v
-make -C cli e2e-down                      # remove all state
-```
-
 ## Environment overrides
 
 | Variable | Default | Purpose |
@@ -185,8 +175,9 @@ make -C cli e2e-down                      # remove all state
 | `LIBRARY_E2E_LIBRARY_CONTEXT` | `../library` | Library build context |
 | `LIBRARY_E2E_BLUEPRINT_SRC` | `../blueprints/team` | catalog blueprint source |
 | `LIBRARY_E2E_LIBRARY_URL` | `http://127.0.0.1:18765` | Library base URL the Go e2e suite drives |
-| `AW_BIN` | `aw` | aw binary used to drive the seed / Go suite |
+| `AW_BIN` | `aw` | exact aw binary used to drive the seed / Go suite; `cli/scripts/e2e.sh` builds only when it is unset |
 | `AW_E2E` | (unset) | set to `1` to run the `cli/go/e2e` suite (else it skips) |
+| `AW_E2E_TEST_RUN` | (unset) | optional exact Go `-run` selector |
 | `LIBRARY_E2E_PROJECT` | `aweb-e2e-stack-<hash>` | compose project name; defaults to a per-checkout value so concurrent runs don't collide |
 | `KEEP_UP` | (unset) | leave the stack up on success (`all` / `cli e2e`) |
 

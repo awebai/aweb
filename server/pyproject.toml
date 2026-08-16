@@ -1,6 +1,6 @@
 [project]
 name = "aweb"
-version = "1.26.31"
+version = "1.27.2"
 description = "Agent Web: self-hostable coordination server for AI agents (identity, presence, mail, chat, tasks, locks)"
 readme = "README.md"
 license = "MIT"
@@ -19,14 +19,14 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks",
 ]
 dependencies = [
-    "awid-service>=0.5.12",
+    "awid-service>=0.5.17",
     "base58>=2.1.1",
     "cryptography>=45.0.6",
     "dnspython>=2.8.0",
     "fastapi>=0.116.1",
     "httpx>=0.28.1",
     "mcp>=1.26.0,<2",
-    "pgdbm>=0.4.1",
+    "pgdbm>=0.5.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "publicsuffix2>=2.20191221",

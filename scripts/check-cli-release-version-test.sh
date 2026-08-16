@@ -32,15 +32,22 @@ make_repo() {
   git -C "$work" push -q origin HEAD:main "refs/tags/aw-v$cli_version"
 }
 
+# Every scenario make runs insulated: an outer make's CLI_VERSION override
+# arrives through MAKEFLAGS/MAKEOVERRIDES and the environment, and any of the
+# three would replace the fixtures' own derivation.
+scenario_make() {
+  env -u CLI_VERSION MAKEFLAGS= MAKEOVERRIDES= \
+    make -s --no-print-directory "$@"
+}
+
 make_cli_version() {
   local work="$1"
-  make -s --no-print-directory -C "$work" -f TestMakefile print-cli-version
+  scenario_make -C "$work" -f TestMakefile print-cli-version
 }
 
 run_guard() {
   local work="$1" proposal="$2"
-  make -s --no-print-directory -C "$work" -f TestMakefile \
-    release-cli-version-check CLI_VERSION="$proposal"
+  (cd "$work" && CLI_RELEASE_REMOTE=origin "$VERSION_TOOL" check "$proposal")
 }
 
 work="$TMP/work"
@@ -56,20 +63,14 @@ else
   fail "server 1.26.30 with latest CLI 1.34.0 proposed '$actual', want '1.34.1'"
 fi
 
-a2a_dry_run="$(
-  make -s -n --no-print-directory -C "$work" -f TestMakefile release-a2a-gateway-check
-  make -s -n --no-print-directory -C "$work" -f TestMakefile release-a2a-gateway-tag
-  make -s -n --no-print-directory -C "$work" -f TestMakefile release-a2a-gateway-push
-)"
-if grep -Fq -- '--build-arg VERSION=1.26.30' <<<"$a2a_dry_run" \
-  && grep -Fq -- '--build-arg RELEASE_TAG=a2a-gw-v1.26.30' <<<"$a2a_dry_run" \
-  && grep -Fq 'git tag "a2a-gw-v1.26.30"' <<<"$a2a_dry_run" \
-  && grep -Fq 'git push origin a2a-gw-v1.26.30' <<<"$a2a_dry_run" \
-  && ! grep -Fq 'a2a-gw-v1.34.1' <<<"$a2a_dry_run"; then
-  echo "ok: divergent CLI version does not change server-owned A2A gateway release paths"
+# An outer make invoked with a CLI_VERSION override hands it to every sub-make
+# through MAKEFLAGS, replacing the fixtures' own derivation. The scenario
+# invocations must be insulated from both that channel and the environment.
+leaked="$(MAKEFLAGS="-- CLI_VERSION=9.9.9" CLI_VERSION=9.9.9 make_cli_version "$work")"
+if [ "$leaked" = "1.34.1" ]; then
+  echo "ok: outer CLI_VERSION does not reach scenario fixtures"
 else
-  fail "A2A gateway check/tag/push did not retain server version 1.26.30 when CLI proposed 1.34.1"
-  printf '%s\n' "$a2a_dry_run"
+  fail "outer CLI_VERSION leaked into scenario fixtures: derived '$leaked', want '1.34.1'"
 fi
 
 out="$TMP/nonmonotonic.out"

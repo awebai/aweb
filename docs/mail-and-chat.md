@@ -115,9 +115,22 @@ Read unread mail:
 aw mail inbox
 ```
 
-The command presents and acknowledges the unread messages it returns. Its
-default limit is 50. Use `--show-all` to include read messages, but do not treat
-a bounded result as proof that a larger mailbox has no additional history.
+The command presents and then acknowledges the unread messages it returns. If
+writing the text or JSON presentation fails, it exits nonzero before
+acknowledgment so those messages remain unread and replayable. Its default page
+size is 50. When another page exists, text output prints a
+continuation command and JSON output includes `has_more` plus `next_cursor`.
+Continue without overlap by passing that cursor:
+
+```bash
+aw mail inbox --cursor <next-cursor>
+```
+
+Keep `--show-all`, any non-default `--limit`, and explicit `--team`,
+`--identity-home`, or `--server-name` selection on continuation commands when
+you used them on the first page. Text output preserves those flags in its
+printed continuation. A page is bounded, but the cursor makes the remaining
+mailbox retrievable instead of silently truncating it.
 
 Exact reads are different:
 
@@ -173,7 +186,38 @@ contact.
 AWID resolves global identity/address and membership facts. Aweb applies the
 recipient's delivery policy and stores the conversation. Same-team membership
 is normal delivery authority for `team_and_contacts`; cross-team delivery may
-require an open inbound mode or an exact active contact.
+require an open inbound mode or an exact active identity-bound contact.
+
+For cross-registry delivery, the receiving service verifies the sender through
+the registry selected by the client-signed sender address, independently of its
+home registry. It may reuse a complete PostgreSQL authority cohort for at most
+60 seconds and then rereads the full source chain. That receiver bound does not
+promise detection within 60 seconds when DNS or a registry suppresses a change.
+A PostgreSQL coordination outage fails cross-registry delivery closed; Redis or
+process-local caches do not authorize a fallback.
+
+An address-only legacy contact does not authorize cross-registry delivery. If a
+send fails with `contact_identity_binding_required`, the contact owner must
+explicitly accept a freshly resolved address/DID binding through
+`POST /v1/contacts/{contact_id}/bind`; address reassignment never transfers the
+old contact or conversation automatically. An in-place replacement also
+requires current controller proof, exact old DID, fresh new DID/controller
+evidence, `accept_reassignment=true`, and authenticated owner acceptance.
+
+One receiver-wide `message_id` covers mail/chat and plaintext/encrypted
+delivery. An exact federated retry returns the original established result
+without duplicate effects. Reusing an id with changed content, sender, target,
+kind, or conversation/session fails with
+`federation_message_replay_conflict`. Local and historical
+`legacy_unreplayable` receipts never authorize federation/cross-kind replay and
+block later UUID reuse after message deletion; existing local API idempotency
+may still return its row before attempting an insert.
+
+Cross-registry failures return `reason`, `retryable`, and `correlation_id` in
+addition to matching `detail`. Retry unchanged input only when `retryable` is
+true; only rate limiting emits `Retry-After: 1`. See the generated
+[federation error reference](federation-error-reference.md) for the complete
+stable reason/status table and safe support interpretation.
 
 ## Encryption boundary
 

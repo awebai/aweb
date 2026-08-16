@@ -1,0 +1,17 @@
+{
+  "name": "@awebai/pi",
+  "version": "0.3.5",
+  "dist": {
+    "integrity": "sha512-7It4EojRI7zO7SBwdTY1z61cPGf5KEAVeFwA8Vx84YLt7ZcacMex/bn5P/RDjjVTQyaI54poWOzuuxOyjWLAlQ==",
+    "shasum": "290504bf3a917024af59e92c31e88849fd1c40e5",
+    "tarball": "https://registry.npmjs.org/@awebai/pi/-/pi-0.3.5.tgz",
+    "fileCount": 13,
+    "unpackedSize": 599685,
+    "signatures": [
+      {
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "sig": "MEQCIAo7R1YunMzvQEmvEGbKwTFCddZZQYiHPUAYWcQh8T/KAiAeEw4CTAwxFEW68qXtg+yw7hmHNx5Oywf+ZoUVH2IaIw=="
+      }
+    ]
+  }
+}

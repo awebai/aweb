@@ -1,13 +1,12 @@
 ---
 name: cross-repo-change
-description: Coordinate changes that touch both the aweb OSS repo and the aweb-cloud repo. OSS lands first, releases to PyPI, cloud pins and deploys.
+description: Coordinate changes that touch both the aweb OSS repo and the hosted ac repo. OSS lands first; the hosted repository owns dependency derivation and deployment.
 ---
 
 # Cross-repo change coordination
 
-Changes that affect both aweb (OSS) and aweb-cloud must be
-coordinated carefully because the cloud embeds aweb as a PyPI
-package.
+Changes that affect both aweb (OSS) and ac (hosted SaaS) must be
+coordinated carefully because ac embeds aweb as a PyPI package.
 
 ## Read this first: shippability
 
@@ -15,9 +14,9 @@ package.
 sends X is in the field, the server must accept X until you can prove
 nothing sends it.
 
-Everything below about atomic deploys applies to **aweb ↔ aweb-cloud
-only**. Every other consumer — the channel plugin, pi, the `aw` CLI,
-self-hosted servers — updates on its own schedule. A running agent
+Everything below about atomic deploys applies to **aweb ↔ ac only**. Every
+other consumer — the channel plugin, pi, the `aw` CLI, self-hosted servers —
+updates on its own schedule. A running agent
 keeps its loaded module until the process **restarts**, which for a
 long-lived agent may be never.
 
@@ -32,7 +31,7 @@ long-lived agent may be never.
 consumer and show each deploys **atomically** with this change — same
 image, same deploy, same instant. "We will release the client right
 after" is not atomic. Put the justification in the commit message.
-Today exactly one boundary qualifies: aweb ↔ aweb-cloud.
+Today exactly one boundary qualifies: aweb ↔ ac.
 
 **Removal is a separate, later change.** Remove support for an old shape
 only after MEASURING that nothing sends it. If you cannot measure it,
@@ -51,7 +50,7 @@ world. It was faithful to the anti-pattern below, which is correct for the
 cloud boundary and catastrophic for clients. The process was not ignored —
 it was followed.
 
-## Principle (aweb ↔ aweb-cloud only)
+## Principle (aweb ↔ ac only)
 
 The cloud imports aweb. Both deploy in the same Docker image.
 There is no transition period — when the cloud pins a new aweb
@@ -64,19 +63,23 @@ This is the ONLY boundary with that property. Do not generalise it.
 1. **Design** — agree on the contract change between OSS and cloud.
    Identify which side goes first.
 
-2. **OSS first** — land the OSS change on aweb main. Run all tests.
+2. **OSS first** — land the OSS change on aweb main after the relevant focused
+   tests pass.
 
-3. **Release** — bump version, tag, push. Wait for PyPI to publish.
-   Verify with:
-   ```bash
-   curl -s https://pypi.org/pypi/aweb/<VERSION>/json | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])"
-   ```
+3. **Release** — for an OSS-only release, run `make release` from aweb (`release`
+   skill; `docs/release.md` is authoritative). For a SaaS release, follow
+   `ac/docs/release.md` from the AC repository; its single command invokes the OSS
+   release first, then owns dependency derivation, gating, and deployment. Do not
+   maintain a parallel tag/push/verification sequence here.
 
-4. **Cloud pins** — update `backend/pyproject.toml` to `aweb>=<VERSION>`,
-   run `uv lock`, run tests.
+4. **Cloud pins** — the reconciler derives `backend/pyproject.toml` floors and
+   `backend/uv.lock` mechanically at the recorded AC base and gates the
+   derived commit in clean Docker; do not hand-edit the pin as part of the
+   release. The complete desired dependency set is always checked.
 
-5. **Cloud change** — land the cloud-side change in the same commit
-   or immediately after the pin bump.
+5. **Cloud change** — land the cloud-side source change on AC main before
+   the release selects its base, or after the release completes; the derived commit
+   itself stays dependency-only.
 
 6. **Verify** — cloud tests pass against the real aweb package (not
    editable/sibling source).
@@ -89,7 +92,7 @@ This is the ONLY boundary with that property. Do not generalise it.
   workaround. They mask version pinning issues.
 - Do NOT accept both old and new formats "during transition" when
   both sides deploy atomically. Pick one format. **This applies to
-  aweb ↔ aweb-cloud and nowhere else.** Before invoking it, confirm
+  aweb ↔ ac and nowhere else.** Before invoking it, confirm
   every consumer of the contract deploys in that same image. If any
   consumer is a published client — channel, pi, `aw` — or a
   self-hosted server, the rule INVERTS: accept both, prefer the new
@@ -100,9 +103,9 @@ This is the ONLY boundary with that property. Do not generalise it.
   is two calls, one of which has no body — so there is no excuse for
   skipping it.
 
-## Aweb-cloud schema mirrors
+## Hosted schema mirrors
 
-`aweb-cloud` maintains its own copy of the OSS schemas. The cloud's
+The `ac` repository maintains its own copy of the OSS schemas. The cloud's
 `migration_paths.py` points at `backend/src/aweb_cloud/migrations/aweb/`
 and `migrations/server/` — NOT at the OSS package's migrations in the
 installed `.venv`. So when an OSS release adds or alters a schema the
@@ -131,14 +134,13 @@ is explicit.
 1. OSS: changed X-Team-ID validation from UUID to colon-form,
    deleted _resolve_proxy_team_id (cde8889, 0fbe3d9, 78794ff)
 2. Released: aweb 1.10.1
-3. Cloud: bob pinned 1.10.1, changed bridge to send colon-form
+3. Hosted repo: pinned 1.10.1 and changed the bridge to send colon-form
    (2761d0a5, 1f6e4797)
 4. Both deploy together in the cloud Docker image
 
 ## Notes
 
-- The aweb-cloud repo is at `../aweb-cloud` relative to the aweb
+- The hosted `ac` repo is cloned at `../ac` relative to the aweb
   workspace.
-- Alice and bob own the cloud repo. Dave reviews OSS changes,
-  they review cloud changes.
-- Henry reviews OSS changes before release.
+- Ownership and review routing live in the active team instructions
+  and `aw workspace status`; do not rely on names written here.

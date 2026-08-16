@@ -1,0 +1,24 @@
+name: Release tooling
+
+# Focused tests for the automatic, crash-resumable release reconciler.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-tooling-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tooling-suites:
+    name: automatic release tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test release reconciler
+        run: make test-release

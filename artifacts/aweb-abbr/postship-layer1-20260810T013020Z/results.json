@@ -1,0 +1,45 @@
+{
+  "schema": "aweb.abbr.postship-layer1.v1",
+  "generated_at": "2026-08-10T01:30:20.880Z",
+  "harness_path": "/private/tmp/aweb-abbr-layer1-harness.mjs",
+  "results": [
+    {
+      "label": "channel-1.7.5",
+      "package_name": "@awebai/claude-channel",
+      "version": "1.7.5",
+      "registry_tarball": "https://registry.npmjs.org/@awebai/claude-channel/-/claude-channel-1.7.5.tgz",
+      "registry_integrity": "sha512-rcHXBT96atkZeC3CUwsFT9bX1jDnx9Q+GcggcHE8jXAzeAXKfpKRWgFV4twcv6PdYkWqz0vURuxVrgyS4gsBbg==",
+      "tarball_sha256": "fc1229baf0bf84a25e28d772a80f534971c2a0293fab37ebccd86bf6d76e68c5",
+      "bundle_sha256": "2abbd3a943f808b413816de5fd18da0b619bb15811b3dc31559ad573a885399d",
+      "loaded_bundle_url": "file:///private/tmp/aweb-abbr-layer1-20260810T012849Z/channel-1.7.5-shipped-observable.mjs",
+      "aliases": 4,
+      "roster_request_path": "/v1/agents",
+      "roster_request_count": 1,
+      "trust_statuses": [
+        "verified",
+        "verified",
+        "verified",
+        "verified"
+      ]
+    },
+    {
+      "label": "pi-0.3.5",
+      "package_name": "@awebai/pi",
+      "version": "0.3.5",
+      "registry_tarball": "https://registry.npmjs.org/@awebai/pi/-/pi-0.3.5.tgz",
+      "registry_integrity": "sha512-7It4EojRI7zO7SBwdTY1z61cPGf5KEAVeFwA8Vx84YLt7ZcacMex/bn5P/RDjjVTQyaI54poWOzuuxOyjWLAlQ==",
+      "tarball_sha256": "99e05902bd3b66fe75bd0984a922ad9bf8e87900cd073415a5ce024812af8a13",
+      "bundle_sha256": "23c76ba4ed63254392cbbfda23de656f14709cbe8c9ee7bcf8a40dd33bcc0830",
+      "loaded_bundle_url": "file:///private/tmp/aweb-abbr-layer1-20260810T012849Z/pi-0.3.5-shipped-observable.mjs",
+      "aliases": 4,
+      "roster_request_path": "/v1/agents",
+      "roster_request_count": 1,
+      "trust_statuses": [
+        "verified",
+        "verified",
+        "verified",
+        "verified"
+      ]
+    }
+  ]
+}

@@ -36,8 +36,9 @@ when an authenticated earlier message established a valid learned return route.
   participant route state for continuations.
 - **Team certificates** prove team membership. They do not create addresses,
   resolver visibility, or delivery routes.
-- **Contacts** can authorize delivery under `team_and_contacts`; they do not
-  create routes or registry facts.
+- **Contacts** can authorize delivery under `team_and_contacts` only when the
+  recipient-owned row binds the canonical address to the verified sender
+  `did:aw`; they do not create routes or registry facts.
 - **Conversation/session ids** group UX and retries. They are not routing or
   authorization capabilities.
 
@@ -59,6 +60,21 @@ when an authenticated earlier message established a valid learned return route.
 `inbound_mode=open` accepts valid routed senders.
 `inbound_mode=team_and_contacts` accepts verified same-team senders plus exact
 active identity contacts. Neither setting changes AWID resolution.
+
+When sender and receiver use different AWID registries, the receiving service
+selects external sender authority from the client-signed sender address, not
+from its configured home registry, a wrapper hint, or bare `did:aw`. It verifies
+the `_awid` DNS controller, exact namespace/address row, stable DID, current key,
+route origin, and genesis-anchored identity log through the separate strict
+external-address path. The receiver's home client remains unchanged for its own
+identities and ordinary same-registry reads.
+
+A complete verified address-authority cohort may be reused from PostgreSQL for
+at most 60 seconds, configurable only downward. Expiry forces the whole
+DNS/namespace/address/key-or-log/origin chain to be read again. That receiver
+reuse bound is not a global freshness or revocation SLA: an authoritative DNS or
+registry source can indefinitely suppress an unseen change by continuing to
+serve an old cryptographically valid state.
 
 ### Global continuation uses stored participant route state
 
@@ -188,6 +204,24 @@ Legacy clients may still decode old address visibility fields or older
 `lifetime` identity vocabulary. Normalization at a read boundary does not make
 those fields current authority.
 
+Address-only legacy contacts are also compatibility data, not cross-registry
+authority. They remain inert for `team_and_contacts` until the authenticated
+recipient explicitly binds the contact to the freshly resolved `did:aw`. A new
+address holder does not inherit a contact or conversation. In-place replacement
+requires current namespace-controller proof, strict authority for the new DID,
+exact-old compare-and-swap, and explicit recipient acceptance.
+
+One receiver-wide `message_id` receipt covers local/federated mail/chat and
+plaintext/encrypted content. Exact federated retries return the stored
+established result; any changed envelope or cross-kind reuse conflicts. Local
+and backfilled historical receipts are `legacy_unreplayable`, never authorize
+federation replay, and block later UUID reuse after message deletion. Existing
+local per-path idempotency may still return its row before an insert.
+
+The generated [federation error reference](federation-error-reference.md) is the
+support vocabulary for strict external authority, route, replay, contact,
+coordination, and encrypted assertion failures.
+
 ## Required evidence
 
 Changes to address resolution, identity lookup, participant routes, local member
@@ -200,4 +234,13 @@ selectors, contacts, mail, chat, federation, or registry caching must prove:
 - failed bare external `did:aw` first contact without stored route state;
 - no route/policy bypass through stale local rows, trust pins, contacts, team
   certificates, or conversation ids; and
-- recipient identity and delivery-origin binding at federation boundaries.
+- recipient identity and delivery-origin binding at federation boundaries;
+- signed-address external registry selection independent of the home registry;
+- full reread after the 60-second maximum reuse interval without a source
+  suppression freshness claim;
+- PostgreSQL-only shared authority with no Redis/process fallback;
+- receiver-wide federated exact-retry and local/changed-envelope/cross-kind
+  replay outcomes;
+- identity-bound contact migration, explicit replacement acceptance, and no
+  address-based transfer; and
+- local `did:key`, same-registry, and encrypted no-downgrade compatibility.

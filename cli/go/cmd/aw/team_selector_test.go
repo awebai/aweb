@@ -46,13 +46,13 @@ func TestMailInboxTeamFlagSelectsRequestedMembership(t *testing.T) {
 	memberDID := awid.ComputeDIDKey(memberPub)
 	stableID := awid.ComputeStableID(memberPub)
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
-		DID:         memberDID,
-		StableID:    stableID,
-		Address:     "acme.com/alice",
-		RegistryURL: server.URL,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		CreatedAt:   "2026-04-09T00:00:00Z",
+		DID:           memberDID,
+		StableID:      stableID,
+		Address:       "acme.com/alice",
+		RegistryURL:   server.URL,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-09T00:00:00Z",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestMailInboxTeamFlagSelectsRequestedMembership(t *testing.T) {
 		MemberDIDAW:   stableID,
 		MemberAddress: "acme.com/alice",
 		Alias:         "alice",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestMailInboxTeamFlagSelectsRequestedMembership(t *testing.T) {
 		MemberDIDAW:   stableID,
 		MemberAddress: "acme.com/alice",
 		Alias:         "ops-alice",
-		Lifetime:      awid.LifetimePersistent,
+		IdentityScope: awid.IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -193,17 +193,17 @@ func TestMailInboxDefaultsToActiveTeamWhenTeamFlagIsUnset(t *testing.T) {
 	}
 	stableID := awid.ComputeStableID(memberPub)
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-		DID:         awid.ComputeDIDKey(memberPub),
-		StableID:    stableID,
-		Address:     "demo/alice",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		SigningKey:  memberKey,
-		CreatedAt:   "2026-04-09T00:00:00Z",
+		AwebURL:       server.URL,
+		TeamID:        "backend:demo",
+		Alias:         "alice",
+		WorkspaceID:   "workspace-1",
+		DID:           awid.ComputeDIDKey(memberPub),
+		StableID:      stableID,
+		Address:       "demo/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    memberKey,
+		CreatedAt:     "2026-04-09T00:00:00Z",
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "inbox", "--json")
@@ -265,14 +265,14 @@ func TestMailInboxUsesTeamCertificateWhenIdentityFileIsAbsent(t *testing.T) {
 
 	workspace := workspaceBinding(server.URL, "backend:demo", "alice", "workspace-1")
 	writeTeamCertificateWorkspaceForTest(t, tmp, workspace, &testSelectionFixture{
-		AwebURL:     server.URL,
-		TeamID:      "backend:demo",
-		Alias:       "alice",
-		WorkspaceID: "workspace-1",
-		DID:         awid.ComputeDIDKey(memberPub),
-		Lifetime:    awid.LifetimeEphemeral,
-		SigningKey:  memberKey,
-		CreatedAt:   "2026-04-09T00:00:00Z",
+		AwebURL:       server.URL,
+		TeamID:        "backend:demo",
+		Alias:         "alice",
+		WorkspaceID:   "workspace-1",
+		DID:           awid.ComputeDIDKey(memberPub),
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    memberKey,
+		CreatedAt:     "2026-04-09T00:00:00Z",
 	})
 	writeWorkspaceBindingForTest(t, tmp, workspace)
 
@@ -374,13 +374,13 @@ func TestMailSendToAddressTeamFlagUsesSelectedCertificateContext(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:         memberDID,
-		StableID:    stableID,
-		Address:     "other.example/amy",
-		RegistryURL: registryServer.URL,
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		CreatedAt:   "2026-04-27T00:00:00Z",
+		DID:           memberDID,
+		StableID:      stableID,
+		Address:       "other.example/amy",
+		RegistryURL:   registryServer.URL,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-27T00:00:00Z",
 	})
 	writeTeamCertFixturesForTest(t, tmp, apiServer.URL, memberDID, stableID, []teamCertFixture{
 		{TeamID: "backend:acme.com", Alias: "alice", WorkspaceID: "ws-backend", Address: "acme.com/alice"},
@@ -465,12 +465,12 @@ func TestChatSendBareAliasFallsBackToUniqueLocalTeamMembership(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       memberDID,
-		StableID:  stableID,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-27T00:00:00Z",
+		DID:           memberDID,
+		StableID:      stableID,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-27T00:00:00Z",
 	})
 	writeTeamCertFixturesForTest(t, tmp, apiServer.URL, memberDID, stableID, []teamCertFixture{
 		{TeamID: "backend:acme.com", Alias: "alice", WorkspaceID: "ws-backend", Address: "acme.com/alice"},
@@ -548,12 +548,12 @@ func TestChatSendBareAliasRequiresTeamWhenFallbackIsAmbiguous(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
-		DID:       memberDID,
-		StableID:  stableID,
-		Address:   "acme.com/alice",
-		Custody:   awid.CustodySelf,
-		Lifetime:  awid.LifetimePersistent,
-		CreatedAt: "2026-04-27T00:00:00Z",
+		DID:           memberDID,
+		StableID:      stableID,
+		Address:       "acme.com/alice",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		CreatedAt:     "2026-04-27T00:00:00Z",
 	})
 	writeTeamCertFixturesForTest(t, tmp, apiServer.URL, memberDID, stableID, []teamCertFixture{
 		{TeamID: "backend:acme.com", Alias: "alice", WorkspaceID: "ws-backend", Address: "acme.com/alice"},
@@ -597,7 +597,7 @@ func writeTeamCertFixturesForTest(t *testing.T, workingDir, serverURL, memberDID
 			MemberDIDAW:   stableID,
 			MemberAddress: fixture.Address,
 			Alias:         fixture.Alias,
-			Lifetime:      awid.LifetimePersistent,
+			IdentityScope: awid.IdentityModeGlobal,
 		})
 		if err != nil {
 			t.Fatalf("sign team cert for %s: %v", fixture.TeamID, err)

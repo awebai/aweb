@@ -1,0 +1,17 @@
+{
+  "name": "@awebai/claude-channel",
+  "version": "1.7.5",
+  "dist": {
+    "integrity": "sha512-rcHXBT96atkZeC3CUwsFT9bX1jDnx9Q+GcggcHE8jXAzeAXKfpKRWgFV4twcv6PdYkWqz0vURuxVrgyS4gsBbg==",
+    "shasum": "a1e08dd3bcacd1467fc4d615e5d2fe8de45d15fc",
+    "tarball": "https://registry.npmjs.org/@awebai/claude-channel/-/claude-channel-1.7.5.tgz",
+    "fileCount": 8,
+    "unpackedSize": 1212234,
+    "signatures": [
+      {
+        "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+        "sig": "MEQCIBrIQhoTNNNab05XEoziWJK/GBvivbu/u92/t6xQoWkoAiBJu8FLTU0I9FdmKKCiAeEl9N3Q+miQ3qjh+WS9U8+CSQ=="
+      }
+    ]
+  }
+}

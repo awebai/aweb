@@ -157,17 +157,17 @@ func TestMailSendBareAliasFallsBackToLiveTeamRoster(t *testing.T) {
 		})
 	}))
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
-		AwebURL:     apiServer.URL,
-		TeamID:      "backend:demo",
-		Alias:       "ada",
-		WorkspaceID: "ws-ada",
-		DID:         selfDID,
-		StableID:    awid.ComputeStableID(pub),
-		Address:     "demo/ada",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		SigningKey:  priv,
+		AwebURL:       apiServer.URL,
+		TeamID:        "backend:demo",
+		Alias:         "ada",
+		WorkspaceID:   "ws-ada",
+		DID:           selfDID,
+		StableID:      awid.ComputeStableID(pub),
+		Address:       "demo/ada",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		SigningKey:    priv,
 	})
 	mailSendTo = "grace"
 	mailSendSubject = "review"
@@ -229,17 +229,17 @@ func TestChatSendBareAliasFallsBackToLiveTeamRoster(t *testing.T) {
 		})
 	}))
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
-		AwebURL:     apiServer.URL,
-		TeamID:      "backend:demo",
-		Alias:       "ada",
-		WorkspaceID: "ws-ada",
-		DID:         selfDID,
-		StableID:    awid.ComputeStableID(pub),
-		Address:     "demo/ada",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		SigningKey:  priv,
+		AwebURL:       apiServer.URL,
+		TeamID:        "backend:demo",
+		Alias:         "ada",
+		WorkspaceID:   "ws-ada",
+		DID:           selfDID,
+		StableID:      awid.ComputeStableID(pub),
+		Address:       "demo/ada",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		SigningKey:    priv,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -277,17 +277,17 @@ func TestLiveTeamRosterFallbackUsesDIDWhenMemberHasNoAddress(t *testing.T) {
 		})
 	}))
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
-		AwebURL:     "https://aweb.invalid",
-		TeamID:      "backend:demo",
-		Alias:       "ada",
-		WorkspaceID: "ws-ada",
-		DID:         selfDID,
-		StableID:    awid.ComputeStableID(pub),
-		Address:     "demo/ada",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: registryServer.URL,
-		SigningKey:  priv,
+		AwebURL:       "https://aweb.invalid",
+		TeamID:        "backend:demo",
+		Alias:         "ada",
+		WorkspaceID:   "ws-ada",
+		DID:           selfDID,
+		StableID:      awid.ComputeStableID(pub),
+		Address:       "demo/ada",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   registryServer.URL,
+		SigningKey:    priv,
 	})
 	sel, err := resolveSelectionForDir(root)
 	if err != nil {
@@ -330,17 +330,17 @@ func TestLiveTeamRosterFallbackPrefersMembershipRegistryOverIdentityRegistry(t *
 		})
 	}))
 	writeSelectionFixtureForTest(t, root, testSelectionFixture{
-		AwebURL:     "https://aweb.invalid",
-		TeamID:      "backend:demo",
-		Alias:       "ada",
-		WorkspaceID: "ws-ada",
-		DID:         selfDID,
-		StableID:    awid.ComputeStableID(pub),
-		Address:     "demo/ada",
-		Custody:     awid.CustodySelf,
-		Lifetime:    awid.LifetimePersistent,
-		RegistryURL: "http://127.0.0.1:1",
-		SigningKey:  priv,
+		AwebURL:       "https://aweb.invalid",
+		TeamID:        "backend:demo",
+		Alias:         "ada",
+		WorkspaceID:   "ws-ada",
+		DID:           selfDID,
+		StableID:      awid.ComputeStableID(pub),
+		Address:       "demo/ada",
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		RegistryURL:   "http://127.0.0.1:1",
+		SigningKey:    priv,
 	})
 	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{
 		ActiveTeam: "backend:demo",

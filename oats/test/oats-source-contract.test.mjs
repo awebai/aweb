@@ -1,0 +1,142 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { afterEach, test } from "node:test";
+
+const REPO_ROOT = resolve(new URL("../..", import.meta.url).pathname);
+const temporaryDirectories = [];
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+});
+
+function contractlessOatsRoot() {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "aweb-contractless-oats-")));
+  temporaryDirectories.push(root);
+  const core = join(root, "lib", "core.mjs");
+  const schema = join(root, "docs", "capability-manifest.schema.json");
+  mkdirSync(dirname(core), { recursive: true });
+  mkdirSync(dirname(schema), { recursive: true });
+  writeFileSync(core, "export function spawnInstance() {}\n");
+  writeFileSync(schema, JSON.stringify({ type: "object", properties: {} }) + "\n");
+  return root;
+}
+
+test(
+  "OATS suite fails fast with a readable diagnostic when OATS_TEST_ROOT lacks the launch-environment contract",
+  { skip: process.env.AWEB_OATS_CONTRACT_NEGATIVE_NESTED === "1" },
+  () => {
+    const root = contractlessOatsRoot();
+    const result = spawnSync(
+      "make",
+      ["--no-print-directory", "test-oats", `OATS_TEST_ROOT=${root}`],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: { ...process.env, AWEB_OATS_CONTRACT_NEGATIVE_NESTED: "1" },
+      },
+    );
+
+    assert.notEqual(result.status, 0);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /OATS_TEST_ROOT .* lacks the required launch-environment contract/);
+    assert.match(result.stderr, /upstream PR 48/);
+    assert.doesNotMatch(result.stderr, /AssertionError|ERR_MODULE_NOT_FOUND/);
+  },
+);
+
+test("a present non-file contract marker still produces the readable diagnostic", () => {
+  const root = contractlessOatsRoot();
+  const core = join(root, "lib", "core.mjs");
+  rmSync(core);
+  mkdirSync(core);
+  const result = spawnSync(
+    "make",
+    ["--no-print-directory", "check-oats-launch-environment-contract", `OATS_TEST_ROOT=${root}`],
+    { cwd: REPO_ROOT, encoding: "utf8" },
+  );
+
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stdout, "");
+  assert.match(result.stderr, /OATS_TEST_ROOT .* lacks the required launch-environment contract/);
+  assert.match(result.stderr, /upstream PR 48/);
+  assert.doesNotMatch(result.stderr, /EISDIR|node:fs|check-oats-launch-environment-contract\.mjs:\d+/);
+});
+
+test("test-oats checks both pinned OATS contracts before runtime setup or assertions", () => {
+  const makefile = readFileSync(join(REPO_ROOT, "Makefile"), "utf8");
+  assert.match(
+    makefile,
+    /^test-oats:\s+check-oats-launch-environment-contract\s+check-oats-pi-launch-order\s+build\s+test-node-deps$/m,
+  );
+});
+
+test("the pinned Pi launch-order gate runs construction and loudly bounds skipped execution", () => {
+  const env = { ...process.env };
+  delete env.OATS_RUN_REAL_PI_LAUNCH_ORDER;
+  const result = spawnSync(
+    "make",
+    ["--no-print-directory", "check-oats-pi-launch-order", `OATS_TEST_ROOT=${process.env.OATS_TEST_ROOT}`],
+    { cwd: REPO_ROOT, encoding: "utf8", env },
+  );
+
+  assert.equal(result.status, 0, [result.stdout, result.stderr].filter(Boolean).join("\n"));
+  assert.match(result.stdout, /Pi launch-order construction: PASS/);
+  assert.match(result.stderr, /Pi launch-order execution: SKIPPED/);
+  assert.match(result.stderr, /real Pi runtime was not executed/);
+  assert.match(result.stderr, /construction only/);
+});
+
+test("opting into real Pi execution fails loudly instead of degrading when runtime setup is unavailable", () => {
+  const env = {
+    ...process.env,
+    OATS_RUN_REAL_PI_LAUNCH_ORDER: "1",
+    OATS_PI_LAUNCH_ORDER_AUTH: join(tmpdir(), "aweb-deliberately-missing-pi-auth.json"),
+  };
+  const result = spawnSync(
+    "make",
+    ["--no-print-directory", "check-oats-pi-launch-order", `OATS_TEST_ROOT=${process.env.OATS_TEST_ROOT}`],
+    { cwd: REPO_ROOT, encoding: "utf8", env },
+  );
+
+  assert.notEqual(result.status, 0, "requested execution must not silently fall back to construction");
+  assert.match(result.stdout, /Pi launch-order construction: PASS/);
+  assert.match(result.stderr, /Pi launch-order execution: RUNNING/);
+  assert.match(result.stderr, /real Pi authentication not found/);
+  assert.doesNotMatch(result.stderr, /execution: SKIPPED/);
+});
+
+// OATS_TEST_ROOT UNSET is a different state from OATS_TEST_ROOT set-but-contractless,
+// and only the second had a readable diagnostic. Unset fell through to an ambient
+// `oats` binary on PATH - the thing the Makefile explicitly refuses to let decide a
+// result - and produced four assertion failures out of eighty-six, which reads as a
+// small real defect rather than a missing environment. It fooled a deliberate
+// baseline run against a detached worktree.
+//
+// Spawned as a DIRECT `node --test`, not through make, because the make target
+// already guards this and the direct path is the one that produced the false report.
+test("a direct run with OATS_TEST_ROOT unset says so instead of failing opaquely", () => {
+  const env = { ...process.env };
+  delete env.OATS_TEST_ROOT;
+  // node --test sets NODE_TEST_CONTEXT, and a child that inherits it reports to a
+  // parent runner instead of standing alone - it then exits 0 while printing the
+  // failure. Removing it is what makes this assertion about the suite rather than
+  // about the nesting.
+  delete env.NODE_TEST_CONTEXT;
+  const result = spawnSync(
+    process.execPath,
+    ["--test", "oats/test/tasks-binding.test.mjs"],
+    { cwd: REPO_ROOT, encoding: "utf8", env },
+  );
+
+  assert.notEqual(result.status, 0, "an unset OATS_TEST_ROOT must not pass");
+  const output = `${result.stdout}${result.stderr}`;
+  assert.match(output, /OATS_TEST_ROOT/, "the failure must name the variable that is missing");
+  assert.match(
+    output,
+    /make test-oats|prepare-oats-test-root/,
+    "the failure must name how to get a usable root",
+  );
+});

@@ -194,22 +194,38 @@ describe("trust conformance vectors", () => {
         "",
         "",
       ) as SenderTrustManager & {
-        // Access private method directly for isolated Pass C testing; production instance is real.
-        checkStableIdentityRegistry(
+        // Access the split private methods directly for isolated Pass C testing;
+        // production prepares registry evidence outside the pin lock and applies it inside.
+        prepareStableIdentityRegistry(
           store: PinStore,
           status: VerificationStatus | undefined,
           trustAddress: string,
           fromDID: string | undefined,
           fromStableID: string | undefined,
-        ): Promise<{ status: VerificationStatus | undefined; confirmedCurrentKey: boolean }>;
+        ): Promise<unknown>;
+        applyPreparedStableIdentityRegistry(
+          store: PinStore,
+          status: VerificationStatus | undefined,
+          fromDID: string | undefined,
+          fromStableID: string | undefined,
+          prepared: unknown,
+        ): { status: VerificationStatus | undefined; confirmedCurrentKey: boolean };
       };
 
-      const result = await trust.checkStableIdentityRegistry(
-        new PinStore(),
+      const store = new PinStore();
+      const prepared = await trust.prepareStableIdentityRegistry(
+        store,
         vector.initial_status,
         vector.trust_address,
         vector.from_did,
         vector.from_stable_id,
+      );
+      const result = trust.applyPreparedStableIdentityRegistry(
+        store,
+        vector.initial_status,
+        vector.from_did,
+        vector.from_stable_id,
+        prepared,
       );
 
       expect(result.status, vector.name).toBe(vector.expected_status);

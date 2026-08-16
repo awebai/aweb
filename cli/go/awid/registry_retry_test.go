@@ -328,10 +328,10 @@ func TestRegistryClientDoesNotGenericallyRetryRegisterCertificate(t *testing.T) 
 		t.Fatal(err)
 	}
 	certificate, err := SignTeamCertificate(teamKey, TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: ComputeDIDKey(memberPublicKey),
-		Alias:        "alice",
-		Lifetime:     LifetimePersistent,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  ComputeDIDKey(memberPublicKey),
+		Alias:         "alice",
+		IdentityScope: IdentityModeGlobal,
 	})
 	if err != nil {
 		t.Fatal(err)

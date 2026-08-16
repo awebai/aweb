@@ -1,20 +1,18 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-core test-channel-core-process-guard test-pi-extension test-ship-ci-contract test-release-gate-contract test-sot-source-inventories test-cli-reference regenerate-cli-reference test-mcp-tools-reference regenerate-mcp-tools-reference prepare-oas-test-root check-oas-launch-environment-contract test-oas test-oas-proof-helpers test-oas-attached-principal-e2e test-oas-pi-resident-e2e test-tmux-guard test-a2a test-e2e test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release check-release-gate-residue release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
 	awid-prod-verify awid-prod-dump awid-prod-restore awid-prod-migrate \
-	check-aw-commit-repo-stamp check-cli-go-tidy check-server-locked-suite release-server-gate \
-	check-awid-locked-suite release-awid-pypi-gate release-awid-image-gate \
-	release-server-check release-server-tag release-server-push \
-	release-awid-check release-awid-tag release-awid-push \
-	release-awid-pypi-tag release-awid-pypi-push \
-	release-a2a-gateway-check release-a2a-gateway-tag release-a2a-gateway-push \
-	release-channel-check release-channel-tag release-channel-push \
-	test-release-cli-version release-cli-version-check release-cli-tag release-cli-push \
-	list-awid-site-docs sync-awid-site-docs check-awid-site-docs release-awid-site \
-	release-all-check release-all-tag release-all-push \
-	publish-skills \
-	cli-e2e ship-suites ship
+	check-aw-commit-repo-stamp check-cli-go-tidy check-cli-release-vcs-stamps check-server-locked-suite \
+	check-awid-locked-suite \
+	test-release-cli-version \
+	test-channel-integration \
+	list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
+	test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	cli-e2e _release-gate-version-authority _release-gate-channel-version _release-node-deps \
+	_release-unit-channel _release-unit-channel-core _release-unit-pi _release-oats _release-marketplace-pointer \
+	_release-artifact-server _release-artifact-awid-package _release-artifact-awid-image \
+	_release-artifact-channel _release-artifact-pi _release-artifact-skills _release-artifact-a2a-image
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
@@ -23,15 +21,15 @@ CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plu
 # aw CLI releases have independent semver. Derive the next patch from the
 # published aw-v* history; the release guard below rejects stale overrides.
 CLI_VERSION = $(shell ./scripts/cli-release-version.sh next)
-# The A2A gateway workflow requires its tag to match server/pyproject.toml.
-A2A_GATEWAY_VERSION := $(SERVER_VERSION)
-# OAS seam tests default to an immutable reviewed upstream commit materialized
+# The gateway is a Go artifact with independent patch history.
+A2A_GATEWAY_VERSION = $(shell python3 scripts/release_artifact_version.py a2a-gateway-image)
+# OATS seam tests default to an immutable reviewed upstream commit materialized
 # under this repository's ignored cache. That makes local and CI runs consume the
 # same clean input instead of a colleague's mutable sibling checkout. Deliberate
-# early integration remains opt-in: OAS_TEST_ROOT=/path/to/local/oas make test-oas.
-OAS_PIN_FILE := $(CURDIR)/oas/upstream-test-pin.json
-OAS_PINNED_ROOT := $(CURDIR)/.cache/oas-pinned
-OAS_TEST_ROOT ?= $(OAS_PINNED_ROOT)
+# early integration remains opt-in: OATS_TEST_ROOT=/path/to/local/oats make test-oats.
+OATS_PIN_FILE := $(CURDIR)/oats/upstream-test-pin.json
+OATS_PINNED_ROOT := $(CURDIR)/.cache/oats-pinned
+OATS_TEST_ROOT ?= $(OATS_PINNED_ROOT)
 
 # Canonical docs mirrored onto the public AWID site. Sync, freshness checks, and
 # their negative controls all consume this one list so adding a mirror cannot
@@ -40,6 +38,7 @@ AWID_SITE_DOC_NAMES := identity-guide.md trust-model.md
 AWID_SITE_DOC_SOURCE_DIR ?= docs
 AWID_SITE_DOC_MIRROR_DIR ?= awid/site/static
 AWID_SITE_DOC_MIRRORS := $(addprefix $(AWID_SITE_DOC_MIRROR_DIR)/,$(AWID_SITE_DOC_NAMES))
+SITE_DEPLOY_BRANCH ?= deploy-awid-landing
 
 help:
 	@echo "Targets:"
@@ -52,25 +51,28 @@ help:
 	@echo "  test-channel-core Run channel-core tests"
 	@echo "  test-channel-core-process-guard Run the multi-process DeliveryStore guard (release path)"
 	@echo "  test-pi-extension Run pi-extension tests"
-	@echo "  test-ship-ci-contract Verify the canonical mandatory ship workflow"
 	@echo "  test-sot-source-inventories Verify canonical SOT tables and REST routers against source"
+	@echo "  test-vector-provenance Enforce root-only public conformance vectors and consumer paths"
+	@echo "  test-federation-error-reference Verify generated stable error/status/retryability reference"
+	@echo "  regenerate-federation-error-reference Regenerate the stable federation error reference"
 	@echo "  test-cli-reference Verify generated CLI help and root-command completeness"
 	@echo "  regenerate-cli-reference Regenerate the CLI reference from live Cobra help"
 	@echo "  test-mcp-tools-reference Verify the generated MCP inventory against live registration"
 	@echo "  regenerate-mcp-tools-reference Regenerate the MCP inventory from live registration"
-	@echo "  prepare-oas-test-root Materialize the clean committed OAS test pin"
-	@echo "  check-oas-launch-environment-contract Verify the pinned OAS seam dependency"
-	@echo "    opt-in local OAS: make test-oas OAS_TEST_ROOT=/path/to/local/oas"
+	@echo "  prepare-oats-test-root Materialize the clean committed OATS test pin"
+	@echo "  check-oats-launch-environment-contract Verify the pinned OATS seam dependency"
+	@echo "  check-oats-pi-launch-order Prove pinned Pi command construction; real execution is opt-in"
+	@echo "    real execution: OATS_RUN_REAL_PI_LAUNCH_ORDER=1 make test-oats"
+	@echo "    opt-in local OATS: make test-oats OATS_TEST_ROOT=/path/to/local/oats"
 	@echo "  freshness    Regenerate committed artifacts and fail on drift"
 	@echo "  check-node-audit Audit Node dependencies for known vulnerabilities"
 	@echo "  check-go-vulnerability-audit Audit Go dependencies (pinned toolchain)"
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
-	@echo "  test-oas-proof-helpers Run attached-principal proof filesystem guard tests"
-	@echo "  test-oas-attached-principal-e2e Run the real local-stack attach/retire proof"
-	@echo "  test-oas-pi-resident-e2e Run the guarded real-Pi wake/reply/retire proof"
+	@echo "  test-oats-proof-helpers Run attached-principal proof filesystem guard tests"
 	@echo "  test-tmux-guard Run the guarded tmux migration and PATH-alias regressions"
 	@echo "  test-e2e     Run the end-to-end user journey and its mutation guard (requires Docker)"
-	@echo "  test-federation-e2e Run the OSS federation journey (requires Docker)"
+	@echo "  test-federation-harness Validate the 51-row direct-core historical inventory and mutations"
+	@echo "  test-federation-e2e Run the direct/non-ingress historical topology and OSS federation journeys (requires Docker)"
 	@echo "  test-a2a-gateway-e2e Run the A2A gateway Docker journey against real aweb+awid"
 	@echo "  check-a2a-copy-guardrails Block premature A2A trust/E2EE copy"
 	@echo "  check-extension-docs Verify extension docs, source events, vectors, and authority map"
@@ -84,17 +86,13 @@ help:
 	@echo "  awid-prod-restore   Restore a dump into awid prod (DUMP=path)"
 	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
 	@echo ""
-	@echo "  release-all-check   Validate ALL products before release"
-	@echo "  release-all-tag     Commit version bumps and create all tags"
-	@echo "  release-all-push    Push main and all tags to trigger CI"
+	@echo "  RELEASING - one rerunnable OSS command, no prompt or release-time judgment:"
+	@echo "    make release"
+	@echo "    docs/release.md is the authoritative specification."
 	@echo ""
-	@echo "  release-server-check / -tag / -push   aweb server (PyPI)"
-	@echo "  release-channel-check / -tag / -push  channel plugin (npm)"
-	@echo "  release-awid-check / -tag / -push     awid service (GHCR Docker)"
-	@echo "  release-awid-pypi-tag / -push         awid service (PyPI)"
-	@echo "  release-a2a-gateway-check / -tag / -push  A2A gateway (GHCR Docker)"
-	@echo "  release-cli-version-check / -tag / -push  aw CLI (goreleaser)"
-	@echo "  release-awid-site                     deploy awid landing page"
+	@echo "  verify-site  Verify the awid.ai Hugo site without deploying"
+	@echo "  deploy-site  Advance the verified origin/main commit to $(SITE_DEPLOY_BRANCH)"
+	@echo "  release                               test, reconcile, and publish the desired OSS artifacts"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
@@ -102,20 +100,15 @@ build:
 
 # ORDER IS LOAD-BEARING FOR THE FIRST FOUR - do not sort this list.
 #
-# make runs these left to right and ship.yml reaches `make test` on 93% of runs (43/46 over
-# the full retained history) but is CANCELLED partway through it: cancel-in-progress plus a
-# ~120-minute job gives a 54% cancellation rate, and a cancelled run kills the prerequisites
-# it has not reached yet without reporting that it did. The three checks below cost about
-# two seconds together and read committed files only, so anything behind the long suites
-# executes on the runs that survive an hour of tests rather than on the runs that start.
-# Measured while they sat at positions 7-10: the stamp check executed on 1 of the 5 runs whose
-# Makefile contained it and the tidy check on 0 of 2, and every miss was a cancellation that
-# had already reached `make test`. aweb-aaxk.
-#
-# check-cli-go-tidy is here rather than behind test-cli by a deliberate reversal: it was placed
-# after it to inherit a warm module cache, and moving it forward reattributes that fetch rather
-# than adding one - about a second for 85MB when cold.
-test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contract check-cli-go-tidy test-sot-source-inventories test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-core test-pi-extension test-oas test-oas-proof-helpers test-tmux-guard test-release-cli-version test-go-vulnerability-audit
+# These cheap committed-source controls run first on every ordinary test run.
+# The expensive complete release proof is owned by the clean local-Docker gate.
+test: check-aw-commit-repo-stamp test-release check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+
+# Editable AWID metadata is repeated in both committed Python locks. Check both
+# without repair, then prove a missing dependent-lock dependency is rejected.
+test-python-locks:
+	bash scripts/check-python-locks.sh
+	bash scripts/check-python-locks.sh --self-test
 
 # Canonical implementation SOT inventories are derived from ordered migrations
 # and FastAPI mounts. The unit suite includes source-addition and stale-doc
@@ -124,6 +117,34 @@ test: check-aw-commit-repo-stamp test-ship-ci-contract test-release-gate-contrac
 test-sot-source-inventories:
 	python3 scripts/check_sot_source_inventories.py
 	python3 -m unittest discover -s scripts -p "test_check_sot_source_inventories.py" -v
+
+# Public protocol vectors have one repository-root authority. The checker also
+# inventories explicitly local fixture directories and proves each failure mode.
+test-vector-provenance:
+	python3 scripts/check_vector_provenance.py
+	python3 scripts/check_vector_provenance.py --self-test
+
+# The public support/error table is generated from the canonical code source and
+# cross-checked against the selected-policy vector. The focused suite proves
+# additions, duplicate reasons, Retry-After drift, and stale output fail closed.
+test-federation-error-reference:
+	python3 scripts/generate_federation_error_reference.py --check
+	python3 -m unittest discover -s scripts -p "test_generate_federation_error_reference.py" -v
+
+regenerate-federation-error-reference:
+	python3 scripts/generate_federation_error_reference.py
+
+# The strict authority vector readers must kill the two concrete security
+# weakenings found during the independent core review.
+test-federation-authority-mutations:
+	python3 scripts/test_federation_authority_mutations.py
+
+# The direct-core historical harness inventories all 51 contract rows without
+# claiming ingress coverage and kills topology/provenance weakening mutations.
+test-federation-harness:
+	python3 scripts/check_federation_harness.py
+	python3 scripts/check_federation_harness.py --self-test
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q tests/test_federation_preactivation_harness.py
 
 # The public CLI inventory comes from live Cobra help. Root completion is an
 # independent exact-set control so grouped and Additional Commands cannot vanish
@@ -146,7 +167,7 @@ regenerate-mcp-tools-reference:
 
 # Regenerate every committed generated artifact (uv locks, cli reference,
 # reserved-app-ids, resource packs, and the claude-channel + pi bundles) and
-# fail on drift. Runs as part of release-all-check.
+# fail on drift. The clean local release gate runs it before publication.
 freshness:
 	bash scripts/check-freshness.sh
 
@@ -216,6 +237,9 @@ check-awid-site-docs:
 	if [ "$$status" -eq 0 ]; then echo "AWID site document mirrors are up to date"; fi; \
 	exit "$$status"
 
+verify-site: check-awid-site-docs
+	cd awid/site && hugo --minify --cleanDestinationDir
+
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
 
@@ -238,6 +262,25 @@ test-channel test-channel-core test-pi-extension: test-node-deps
 test-channel:
 	cd channel && npm test
 
+test-channel-name-live-contract:
+	python3 scripts/e2e/test_channel_name_live_contract.py
+
+# channel/package.json excludes test/integration.test.ts from `npm test`, so
+# `make test` never ran the one test that drives Channel against a REAL aweb
+# server. It was green by absence: the first time it ran it failed on a stale
+# assertion that contradicted shipped acknowledgement behaviour. It needs Docker
+# and Postgres, so it belongs with the other real-stack journeys rather than in
+# `make test` - but it belongs somewhere, and this is somewhere.
+# Deliberately NO AWEB_SKEW_DIRECTION. With a direction set the journey emits a
+# skew observation, which requires the five exact-server inputs (wheel, wheel
+# sha, version, constraints, constraints sha); ship supplies none of them, so a
+# clean run would die on "skew observation lacks server runtime inventory"
+# rather than exercise the journey. Ship builds the server from source and this
+# target exercises Channel against THAT. Measuring against a PUBLISHED server is
+# the skew harness's job, with the exact artifacts it resolves itself.
+test-channel-integration:
+	cd channel && npm run test:integration
+
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.
 test-channel-core:
@@ -254,38 +297,38 @@ test-channel-core-process-guard:
 test-pi-extension:
 	cd pi-extension && npm test
 
-test-ship-ci-contract:
-	python3 scripts/e2e/test_ship_ci_contract.py
+test-release:
+	python3 scripts/e2e/test_release.py
 
-test-release-gate-contract:
-	python3 scripts/e2e/test_release_gate_contract.py
+check-release-gate-residue:
+	python3 scripts/check_release_gate_residue.py
 
-prepare-oas-test-root:
-	@if [ "$(abspath $(OAS_TEST_ROOT))" = "$(abspath $(OAS_PINNED_ROOT))" ]; then \
-		node scripts/prepare-pinned-oas.mjs --pin-file "$(OAS_PIN_FILE)" --target "$(OAS_PINNED_ROOT)"; \
+prepare-oats-test-root:
+	@if [ "$(abspath $(OATS_TEST_ROOT))" = "$(abspath $(OATS_PINNED_ROOT))" ]; then \
+		node scripts/prepare-pinned-oats.mjs --pin-file "$(OATS_PIN_FILE)" --target "$(OATS_PINNED_ROOT)"; \
 	else \
-		echo "Using explicit OAS_TEST_ROOT override without modifying it: $(OAS_TEST_ROOT)" >&2; \
+		echo "Using explicit OATS_TEST_ROOT override without modifying it: $(OATS_TEST_ROOT)" >&2; \
 	fi
 
-check-oas-launch-environment-contract: prepare-oas-test-root
-	@OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node scripts/check-oas-launch-environment-contract.mjs
+check-oats-launch-environment-contract: prepare-oats-test-root
+	@OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node scripts/check-oats-launch-environment-contract.mjs
+
+# Construction always runs. Real Pi execution is explicitly opt-in because it
+# consumes network/model tokens; the script reports the omitted layer on stderr.
+# Its runtime branch uses a named session on an isolated socket, with the tmux
+# guard first on PATH for the entire child process tree.
+check-oats-pi-launch-order: prepare-oats-test-root
+	@PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node scripts/check-oats-pi-launch-order.mjs
 
 # The real spawn seam validates both the aweb capability command and its selected
 # Pi runtime even with --no-launch. Use only tools built/locked by this checkout;
 # ambient developer installs must not decide whether the release test passes.
-test-oas: check-oas-launch-environment-contract build test-node-deps
-	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OAS_TEST_ROOT="$(OAS_TEST_ROOT)" node --test oas/test/*.test.mjs
+test-oats: check-oats-launch-environment-contract check-oats-pi-launch-order build test-node-deps
+	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
 
-test-oas-proof-helpers: prepare-oas-test-root
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_pinned_checkout.py
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_principal_proof.py
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" python3 scripts/e2e/test_oas_tmux_safety.py
-
-test-oas-attached-principal-e2e: test-oas-proof-helpers
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" ./scripts/e2e-oas-attached-principal-retire.sh
-
-test-oas-pi-resident-e2e: test-oas-proof-helpers
-	OAS_TEST_ROOT="$(OAS_TEST_ROOT)" PATH="$(CURDIR)/scripts/guard-bin:$$PATH" OAS_PROOF_MODE=resident-pi ./scripts/e2e-oas-attached-principal-retire.sh
+test-oats-proof-helpers: prepare-oats-test-root
+	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
+	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
 test-tmux-guard:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/test-migrate-agent-tmux.sh
@@ -301,6 +344,7 @@ test-e2e:
 	./scripts/test-e2e-controller-key-absence-guard.sh
 
 test-federation-e2e:
+	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/e2e-federation-authority.sh
 	./scripts/e2e-oss-federation.sh
 
 test-a2a-gateway-e2e:
@@ -365,25 +409,10 @@ awid-prod-restore:
 awid-prod-migrate:
 	cd awid && uv run python scripts/prod_db_reset.py migrate --env-file $(AWID_PROD_ENV_FILE)
 
-# ── Publish gates ───────────────────────────────────────────────────
-# PyPI refuses a re-upload and a pulled image tag cannot be recalled, so these
-# three publishes each run their artifact's own suite first, from the tag
-# workflow, against the commit being published.
-#
-# They are separate from the release-*-check targets below on purpose. A check
-# prepares a release and may repair what it finds - release-awid-check runs
-# `uv lock` because a stale lock broke the awid 0.2.5 image build. A gate runs
-# after the human committed that repair, where repairing is the wrong answer:
-# the lock committed at this commit is the lock the suite must run against and
-# the lock the published artifact is built from, so `uv lock --check` fails on
-# a stale one instead of quietly resolving a different set of dependencies
-# under the artifact.
-#
-# Every step in a gate has to answer two questions - can it fail, and is the
-# thing it exercises the thing being published. That is why the version-bump
-# guard is absent: on the commit a server-v* tag points at it compares that tag
-# against itself and always passes. It stays in server-ci.yml, where the
-# change-time question it asks is the one being asked.
+# ── Release-shaped local-gate checks ────────────────────────────────
+# PyPI and image publication are thin release-branch workflows. Their expensive
+# suites and release-shaped builds are part of scripts/release-local-gate.sh;
+# these lock checks remain named inputs to that complete local proof.
 
 # Deterministic, no network, no toolchain: it reads two checked-in files and compares
 # them. Safe to run anywhere, which is why it is a target rather than only a release step.
@@ -402,314 +431,144 @@ check-aw-commit-repo-stamp:
 check-cli-go-tidy:
 	cd cli/go && go mod tidy -diff
 
+# Reproduce GoReleaser's derived repository and pre-build dist/metadata.json,
+# then inspect the complete two-product, six-platform artifact matrix. This also
+# proves an unrelated unignored file still produces vcs.modified=true.
+check-cli-release-vcs-stamps:
+	./scripts/check-cli-release-vcs-stamps.sh
+
 check-server-locked-suite:
 	cd server && uv lock --check
 	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
-
-release-server-gate: check-server-locked-suite
-	rm -rf server/dist/
-	cd server && uv build
-	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
-	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
 
 check-awid-locked-suite:
 	cd awid && uv lock --check
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
 
-release-awid-pypi-gate: check-awid-locked-suite
-	rm -rf awid/dist/
-	cd awid && uv build
-	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
-	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
+# ── awid.ai static-site deployment ─────────────────────────────────
 
-# No image build here. The publishing build already gates - it cannot push an
-# image that fails - and it is the only one covering both published platforms,
-# so a second local one would verify amd64 while arm64 ships unverified.
-release-awid-image-gate: check-awid-locked-suite
-	@echo "awid image gate: committed lock verified, awid suite green at this commit."
+release:
+	python3 scripts/release.py
 
-release-server-check:
-	./scripts/check-server-version-bump.sh
-	rm -rf /tmp/uv-cache /tmp/pycache
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
-	rm -rf server/dist/
-	cd server && uv build
-	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
-	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
-	@ls -lh server/dist/aweb-$(SERVER_VERSION).tar.gz server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
+deploy-site: verify-site
+	@set -eu; \
+		test -z "$$(git status --porcelain)" || { echo "Refusing to deploy a dirty checkout" >&2; exit 1; }; \
+		git fetch origin main "$(SITE_DEPLOY_BRANCH)"; \
+		source_sha=$$(git rev-parse HEAD); \
+		main_sha=$$(git rev-parse origin/main); \
+		test "$$source_sha" = "$$main_sha" || { echo "Refusing to deploy $$source_sha: origin/main is $$main_sha" >&2; exit 1; }; \
+		deployed_sha=$$(git rev-parse "origin/$(SITE_DEPLOY_BRANCH)"); \
+		git merge-base --is-ancestor "$$deployed_sha" "$$source_sha" || { echo "Refusing non-fast-forward site deployment: $(SITE_DEPLOY_BRANCH) is $$deployed_sha" >&2; exit 1; }; \
+		git push origin "$$source_sha:refs/heads/$(SITE_DEPLOY_BRANCH)"; \
+		observed_sha=$$(git ls-remote --heads origin "refs/heads/$(SITE_DEPLOY_BRANCH)" | awk '{print $$1}'); \
+		test "$$observed_sha" = "$$source_sha" || { echo "Deployment ref read-back mismatch: expected $$source_sha, observed $${observed_sha:-missing}" >&2; exit 1; }; \
+		echo "Advanced $(SITE_DEPLOY_BRANCH) to $$source_sha; verify the Render deploy and https://awid.ai"
 
-release-server-tag:
-	@git rev-parse --verify "server-v$(SERVER_VERSION)" >/dev/null 2>&1 && (echo "Tag server-v$(SERVER_VERSION) already exists."; exit 1) || true
-	git add server/pyproject.toml server/uv.lock Makefile .claude/skills/release-pypi/SKILL.md server/README.md
-	git diff --cached --quiet || git commit -m "release: aweb server $(SERVER_VERSION)"
-	git tag "server-v$(SERVER_VERSION)"
-	@echo "Created tag server-v$(SERVER_VERSION)."
+test-pointer-adapter:
+	python3 scripts/e2e/test_pointer_adapter_marketplace.py
 
-release-server-push:
-	git push origin main
-	git push origin server-v$(SERVER_VERSION)
+test-npm-exact-publish:
+	bash scripts/e2e/test_npm_exact_publish.sh
 
-release-awid-check:
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv lock
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run pytest -q
-	cd awid && uv build
-	POSTGRES_PASSWORD=testpass docker compose -f awid/docker-compose.yml config >/dev/null
-	docker build -f awid/Dockerfile.release -t awid:release-test .
+test-pypi-exact-publish:
+	bash scripts/e2e/test_pypi_exact_publish.sh
 
-release-awid-tag:
-	@git rev-parse --verify "awid-v$(AWID_VERSION)" >/dev/null 2>&1 && (echo "Tag awid-v$(AWID_VERSION) already exists."; exit 1) || true
-	git add awid/pyproject.toml awid/uv.lock awid/README.md awid/Dockerfile.release .github/workflows/awid-release.yml Makefile README.md
-	git commit -m "release: awid $(AWID_VERSION)"
-	git tag "awid-v$(AWID_VERSION)"
-	@echo "Created tag awid-v$(AWID_VERSION)."
-
-release-awid-push:
-	git push origin main
-	git push origin awid-v$(AWID_VERSION)
-
-# ── Awid PyPI release ───────────────────────────────────────────────
-
-release-awid-pypi-tag:
-	@git rev-parse --verify "awid-service-v$(AWID_VERSION)" >/dev/null 2>&1 && (echo "Tag awid-service-v$(AWID_VERSION) already exists."; exit 1) || true
-	git tag "awid-service-v$(AWID_VERSION)"
-	@echo "Created tag awid-service-v$(AWID_VERSION)."
-
-release-awid-pypi-push:
-	git push origin awid-service-v$(AWID_VERSION)
-
-# ── A2A gateway release ─────────────────────────────────────────────
-
-release-a2a-gateway-check:
-	./scripts/check-a2a-copy-guardrails.sh
-	cd cli/go && GOCACHE=/tmp/go-build go test ./a2a ./a2agw ./awid ./cmd/aweb-a2a-gw ./tools/a2a-gateway-check-workspace -count=1
-	docker build -f cli/go/Dockerfile.a2a-gw \
-		--build-arg VERSION=$(A2A_GATEWAY_VERSION) \
-		--build-arg RELEASE_TAG=a2a-gw-v$(A2A_GATEWAY_VERSION) \
-		--build-arg COMMIT=$$(git rev-parse HEAD) \
-		--build-arg DATE=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
-		-t a2a-gateway:release-test cli/go
-	@set -eu; workspace="$$(mktemp -d)"; trap 'rm -rf "$$workspace"' EXIT; \
-		(cd cli/go && go run ./tools/a2a-gateway-check-workspace -output "$$workspace"); \
-		docker run --rm \
-			--user "$$(id -u):$$(id -g)" \
-			-v "$(CURDIR)/docs/examples/a2a-gateway.yaml:/config/gateway.yaml:ro" \
-			-v "$$workspace:/workspace:ro" \
-			a2a-gateway:release-test \
-			aweb-a2a-gw -config /config/gateway.yaml -workspace-dir /workspace -check
-	./scripts/e2e-a2a-gateway-docker.sh
-
-release-a2a-gateway-tag:
-	@git rev-parse --verify "a2a-gw-v$(A2A_GATEWAY_VERSION)" >/dev/null 2>&1 && (echo "Tag a2a-gw-v$(A2A_GATEWAY_VERSION) already exists."; exit 1) || true
-	git tag "a2a-gw-v$(A2A_GATEWAY_VERSION)"
-	@echo "Created tag a2a-gw-v$(A2A_GATEWAY_VERSION)."
-
-release-a2a-gateway-push:
-	git push origin a2a-gw-v$(A2A_GATEWAY_VERSION)
-
-# ── Awid site deploy ────────────────────────────────────────────────
-
-release-awid-site:
-	@echo "Syncing docs into awid site..."
-	$(MAKE) sync-awid-site-docs
-	git add $(AWID_SITE_DOC_MIRRORS)
-	@if ! git diff --cached --quiet -- $(AWID_SITE_DOC_MIRRORS); then \
-		git commit -m "Sync identity-guide and trust-model into awid site"; \
-	fi
-	git checkout deploy-awid-landing
-	git merge main -m "Deploy awid site from main"
-	git push origin deploy-awid-landing
-	git checkout main
-	@echo "Awid site deployed via deploy-awid-landing."
-
-# ── Channel release ──────────────────────────────────────────────────
-
-release-channel-check:
-	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
-		(echo "ERROR: channel package.json ($(CHANNEL_VERSION)) != plugin.json ($(CHANNEL_PLUGIN_VERSION))"; exit 1)
-	cd channel-core && npm ci && npm run build
-	cd channel && npm ci
-	cd channel && npm test
-	cd channel && npm run build
-	cd channel && npm pack --dry-run
-	@echo "Channel $(CHANNEL_VERSION) ready."
-
-release-channel-tag:
-	@git rev-parse --verify "channel-v$(CHANNEL_VERSION)" >/dev/null 2>&1 && (echo "Tag channel-v$(CHANNEL_VERSION) already exists."; exit 1) || true
-	git add channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json
-	git commit -m "release: @awebai/claude-channel $(CHANNEL_VERSION)"
-	git tag "channel-v$(CHANNEL_VERSION)"
-	@echo "Created tag channel-v$(CHANNEL_VERSION)."
-
-release-channel-push:
-	git push origin main
-	git push origin channel-v$(CHANNEL_VERSION)
-
-# ── CLI release ──────────────────────────────────────────────────────
+test-oci-exact-publish:
+	bash scripts/e2e/test_oci_exact_publish.sh
 
 test-release-cli-version:
 	bash scripts/check-cli-release-version-test.sh
 
-release-cli-version-check:
-	@./scripts/cli-release-version.sh check "$(CLI_VERSION)"
-
-release-cli-tag: release-cli-version-check
-	@git rev-parse --verify "aw-v$(CLI_VERSION)" >/dev/null 2>&1 && (echo "Tag aw-v$(CLI_VERSION) already exists."; exit 1) || true
-	git tag "aw-v$(CLI_VERSION)"
-	@echo "Created tag aw-v$(CLI_VERSION)."
-
-release-cli-push: release-cli-version-check
-	git push origin aw-v$(CLI_VERSION)
-
-# ── Claude skills release (bump + tag + push; GH Actions publishes) ─
-
-# Usage: make publish-skills [BUMP=patch|minor|major]
-# Bumps packages/claude-skills/package.json, syncs the plugin.json
-# version, commits, tags skills-vX.Y.Z, pushes main and tag.
-# The skills-release.yml workflow runs on the pushed tag and runs
-# `npm publish --access public` against @awebai/claude-skills.
-#
-# Pre-flight: working tree clean, on main, in sync with origin/main.
-# Contract smoke: `npm pack --dry-run` succeeds (catches the
-# sync-skills "missing canonical source" foot-gun before the tag fires).
-# Hestia owns this lane (release-channel-skill conventions).
-publish-skills: BUMP ?= patch
-publish-skills:
-	@git diff --quiet || (echo "ERROR: working tree has unstaged changes"; exit 1)
-	@git diff --cached --quiet || (echo "ERROR: staged changes pending"; exit 1)
-	@test "$$(git branch --show-current)" = "main" || (echo "ERROR: not on main"; exit 1)
-	git fetch origin
-	@test "$$(git rev-parse HEAD)" = "$$(git rev-parse origin/main)" || \
-		(echo "ERROR: local main is not in sync with origin/main"; exit 1)
-	cd packages/claude-skills && npm pack --dry-run
-	cd packages/claude-skills && npm version $(BUMP) --no-git-tag-version
-	cd packages/claude-skills && npm run sync-plugin-version
-	@NEW_VERSION=$$(node -p "require('./packages/claude-skills/package.json').version") && \
-		git add packages/claude-skills/package.json packages/claude-skills/.claude-plugin/plugin.json && \
-		git commit -m "release: @awebai/claude-skills $$NEW_VERSION" && \
-		git tag "skills-v$$NEW_VERSION" && \
-		echo "Created tag skills-v$$NEW_VERSION."
-	git push origin main
-	@NEW_VERSION=$$(node -p "require('./packages/claude-skills/package.json').version") && \
-		git push origin "skills-v$$NEW_VERSION" && \
-		echo "" && \
-		echo "  Pushed skills-v$$NEW_VERSION. GH Actions will:" && \
-		echo "    - publish @awebai/claude-skills@$$NEW_VERSION to npm" && \
-		echo "    - attach 5 ZIPs to the GH Release for Claude.ai users" && \
-		echo "" && \
-		echo "  After GH Actions completes:" && \
-		echo "    1) Bump awebai/claude-plugins/.claude-plugin/marketplace.json" && \
-		echo "       version field to $$NEW_VERSION so /plugin update finds the" && \
-		echo "       new content." && \
-		echo "    2) Claude.ai users: ZIPs at" && \
-		echo "       https://github.com/awebai/aweb/releases/download/skills-v$$NEW_VERSION/{aweb-coordination,aweb-messaging,aweb-team-membership,aweb-bootstrap,aweb-identity}.zip"
-
 # ── Unified release ──────────────────────────────────────────────────
 
-release-all-check:
-	@echo "=== Validating versions ==="
-	@echo "  server:  $(SERVER_VERSION)"
-	@echo "  awid:    $(AWID_VERSION)"
-	@echo "  channel: $(CHANNEL_VERSION) (plugin: $(CHANNEL_PLUGIN_VERSION))"
-	@echo "  cli:     $(CLI_VERSION)"
-	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
-		(echo "ERROR: channel package.json != plugin.json"; exit 1)
-	$(MAKE) release-cli-version-check
-	@echo ""
-	@echo "=== Running all tests ==="
-	$(MAKE) test
-	@echo ""
-	@echo "=== Building artifacts ==="
-	$(MAKE) release-server-check
-	$(MAKE) release-channel-check
-	@echo ""
-	@echo "=== Checking generated-artifact freshness ==="
-	$(MAKE) freshness
-	@echo ""
-# ORDER MATTERS: the audits run AFTER release-channel-check because that target
-# is what runs `npm ci` in channel-core and channel. Moved earlier,
-# check-node-audit fails on a fresh checkout - its build-provenance step cannot
-# resolve the channel-core module before it is installed.
-	@echo "=== Running the multi-process DeliveryStore guard ==="
-	$(MAKE) test-channel-core-process-guard
-	@echo ""
-	@echo "=== Running vulnerability audits ==="
-	$(MAKE) check-node-audit
-	$(MAKE) check-go-vulnerability-audit
-	@echo ""
-	@echo "=== All checks passed ==="
+# Internal steps consumed only by scripts/release-local-gate.sh's fixed map.
+# They are intentionally absent from help; the release reconciler invokes the gate.
+_release-gate-docker-boundaries:
+	@test -n "$(RELEASE_GATE_IMAGE)" || (echo "RELEASE_GATE_IMAGE is required"; exit 2)
+	python3 scripts/e2e/test_release_gate_docker_boundaries.py --image "$(RELEASE_GATE_IMAGE)"
 
-# `make ship` is the canonical pre-tag-push gate. ALWAYS use this before
-# pushing any release tag (server-v*, aw-v*, awid-v*, awid-service-v*,
-# channel-v*). Do NOT substitute `make test` alone — it is a strict
-# subset and will not catch packaging/build failures or e2e regressions.
-#
-# This target adds awid build-check + the e2e user journeys on top of
-# release-all-check. All are load-bearing for releases:
-#  - awid build-check (uv build + Docker image) catches awid packaging
-#    issues before the GHCR/PyPI workflows do.
-#  - test-e2e catches integration regressions across CLI + server +
-#    awid that unit/integration tests miss in isolation.
-#  - test-federation-e2e catches cross-server mail/chat federation
-#    regressions that single-server user journeys cannot see.
-#  - cli e2e (make -C cli e2e) runs the real-stack profile/team/Library net:
-#    awid + aweb + Library from source, seeded, driven by the real aw binary.
-#    It catches the materialize/team/Library regressions hermetic tests miss
-#    (the class of P0s that shipped on green-plus-ACK). Requires Docker and the
-#    sibling ../library + ../blueprints checkouts (see docs/e2e-library-stack.md).
-#
-# Banked discipline: releases 1.18.3 / 1.18.4 / 1.18.5 / 1.18.6 each
-# ran `make test` instead of the canonical comprehensive gate. Even
-# though GHA caught build failures downstream, the local gate should
-# be the source of truth before tag-push.
+_release-gate-version-authority:
+	@test -n "$(RELEASE_BASE_SHA)" || (echo "RELEASE_BASE_SHA is required"; exit 2)
+	./scripts/check-server-version-bump-test.sh
+	./scripts/check-server-version-bump.sh "$(RELEASE_BASE_SHA)"
+	./scripts/cli-release-version.sh check "$(CLI_VERSION)"
+
+_release-gate-channel-version:
+	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
+		(echo "channel package.json != plugin.json"; exit 1)
+
+_release-node-deps:
+	cd channel-core && npm ci --no-audit --no-fund
+	cd channel && npm ci --no-audit --no-fund
+	cd pi-extension && npm ci --no-audit --no-fund
+
+_release-unit-channel:
+	cd channel && npm test
+
+_release-unit-channel-core:
+	cd channel-core && npm test
+
+_release-unit-pi:
+	cd pi-extension && npm test
+
+_release-oats: check-oats-launch-environment-contract check-oats-pi-launch-order
+	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
+
+_release-oats-proof-helpers:
+	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
+	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
+
+_release-marketplace-pointer:
+	python3 scripts/e2e/test_pointer_adapter_marketplace.py
+
+_release-artifact-server:
+	rm -rf server/dist
+	cd server && uv build
+	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
+	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
+
+_release-artifact-awid-package:
+	rm -rf awid/dist
+	cd awid && uv build
+	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
+	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
+
+_release-artifact-awid-image:
+	@mkdir -p /tmp/aweb-release-gate
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-f awid/Dockerfile.release --output type=oci,dest=/tmp/aweb-release-gate/awid.oci.tar .
+	test -s /tmp/aweb-release-gate/awid.oci.tar
+
+_release-artifact-channel:
+	@mkdir -p /tmp/aweb-release-gate
+	cd channel && npm run build
+	cd channel && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+
+_release-artifact-pi:
+	@mkdir -p /tmp/aweb-release-gate
+	cd pi-extension && npm run build
+	cd pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+
+_release-artifact-skills:
+	@mkdir -p /tmp/aweb-release-gate
+	cd packages/claude-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+	cd packages/claude-ai-skills && ./build-zips.sh
+	@test "$$(find packages/claude-ai-skills/dist -name 'aweb-*.zip' -type f | wc -l | tr -d ' ')" = 5
+
+_release-artifact-a2a-image:
+	@mkdir -p /tmp/aweb-release-gate
+	docker buildx build --platform linux/amd64,linux/arm64 \
+		-f cli/go/Dockerfile.a2a-gw \
+		--build-arg VERSION=$(A2A_GATEWAY_VERSION) \
+		--build-arg RELEASE_TAG=a2a-gw-v$(A2A_GATEWAY_VERSION) \
+		--build-arg COMMIT=$$(git rev-parse HEAD) \
+		--build-arg DATE=1970-01-01T00:00:00Z \
+		--output type=oci,dest=/tmp/aweb-release-gate/a2a-gateway.oci.tar cli/go
+	test -s /tmp/aweb-release-gate/a2a-gateway.oci.tar
+
+# Real-stack CLI/Library journey retained in the fixed local release gate.
 cli-e2e:
 	COMPOSE_BAKE="$${LIBRARY_E2E_COMPOSE_BAKE:-}" $(MAKE) -C cli e2e
-
-# The suites ship runs after the build. None of them consumes another's output -
-# awid:release-test is built by release-awid-check and read by nothing else - so a
-# failure in one must not remove the evidence the others would have produced.
-# make stops a recipe at the first failing line, which is why these are handed to
-# a runner instead of being recipe lines.
-#
-# Assigned with := so the environment cannot change what the gate runs. A
-# deliberate demonstration overrides it on the command line, which make allows
-# and the environment does not.
-SHIP_SUITES := release-awid-check test-federation-e2e test-e2e cli-e2e
-
-ship-suites:
-	@MAKE="$(MAKE)" ./scripts/run-ship-suites.sh $(SHIP_SUITES)
-
-ship: release-all-check
-	@echo ""
-	$(MAKE) ship-suites
-	@echo ""
-	@echo "=== ship: ALL pre-release checks passed ==="
-	@echo "    server:  $(SERVER_VERSION)"
-	@echo "    awid:    $(AWID_VERSION)"
-	@echo "    channel: $(CHANNEL_VERSION)"
-	@echo "    cli:     $(CLI_VERSION)"
-	@echo ""
-	@echo "    Ready for tag-push."
-
-release-all-tag: release-cli-version-check
-	@echo "=== Tagging all products ==="
-	git add server/pyproject.toml server/uv.lock channel/package.json channel/package-lock.json channel/.claude-plugin/plugin.json awid/pyproject.toml awid/uv.lock
-	git commit -m "release: aweb $(SERVER_VERSION), channel $(CHANNEL_VERSION), awid $(AWID_VERSION)"
-	git tag "server-v$(SERVER_VERSION)"
-	git tag "aw-v$(CLI_VERSION)"
-	git tag "channel-v$(CHANNEL_VERSION)"
-	git tag "awid-v$(AWID_VERSION)"
-	git tag "awid-service-v$(AWID_VERSION)"
-	@echo "Created tags: server-v$(SERVER_VERSION) aw-v$(CLI_VERSION) channel-v$(CHANNEL_VERSION) awid-v$(AWID_VERSION) awid-service-v$(AWID_VERSION)"
-
-release-all-push: release-cli-version-check
-	git push origin main
-	git push origin server-v$(SERVER_VERSION)
-	git push origin aw-v$(CLI_VERSION)
-	git push origin channel-v$(CHANNEL_VERSION)
-	git push origin awid-v$(AWID_VERSION)
-	git push origin awid-service-v$(AWID_VERSION)
-	$(MAKE) release-awid-site
-	@echo "All tags pushed and awid site deployed. CI will publish."
 
 clean:
 	@echo "Cleaning build artifacts..."

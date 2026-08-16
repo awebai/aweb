@@ -24,6 +24,7 @@ from awid.did import (
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 import awid.registry as registry_module
 from awid.log import identity_state_hash, log_entry_payload
+from aweb.messaging.contacts import resolve_local_namespace_controller_did
 
 
 def _authorization_parts(header: str) -> tuple[str, str]:
@@ -36,6 +37,7 @@ class _FakeRedis:
     def __init__(self, *, fail: bool = False) -> None:
         self.fail = fail
         self.values: dict[str, str] = {}
+        self.expirations: dict[str, int | None] = {}
 
     async def get(self, key: str):
         if self.fail:
@@ -46,6 +48,7 @@ class _FakeRedis:
         if self.fail:
             raise RedisError("redis unavailable")
         self.values[key] = value
+        self.expirations[key] = ex
         return True
 
     async def delete(self, *keys: str):
@@ -55,6 +58,7 @@ class _FakeRedis:
         for key in keys:
             deleted += int(key in self.values)
             self.values.pop(key, None)
+            self.expirations.pop(key, None)
         return deleted
 
     async def scan_iter(self, *, match: str):
@@ -1101,6 +1105,157 @@ async def test_cached_registry_client_reuses_cached_resolve_key():
 
 
 @pytest.mark.asyncio
+async def test_service_token_is_sent_only_to_the_configured_registry():
+    token = "trusted-service-token-with-at-least-32-bytes"
+    seen: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("X-AWID-Service-Token")))
+        if request.url.path == "/v1/did/did:aw:home/key":
+            return httpx.Response(
+                200,
+                json={
+                    "did_aw": "did:aw:home",
+                    "current_did_key": "did:key:home",
+                    "log_head": None,
+                },
+            )
+        if request.url.path == "/v1/namespaces/external.example/addresses/alice":
+            return httpx.Response(404, json={"detail": "not found"})
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    async def registry_for_domain(_domain: str) -> str:
+        return "https://external-registry.example"
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        service_token=token,
+        transport=httpx.MockTransport(handler),
+        domain_registry_resolver=registry_for_domain,
+    )
+
+    assert token not in repr(client)
+    await client.resolve_key("did:aw:home")
+    assert await client.resolve_address("external.example", "alice") is None
+
+    assert seen == [
+        ("api.awid.ai", token),
+        ("external-registry.example", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_service_token_never_follows_a_cross_origin_redirect():
+    token = "trusted-service-token-with-at-least-32-bytes"
+    seen: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.host, request.headers.get("X-AWID-Service-Token")))
+        if request.url.host == "api.awid.ai":
+            return httpx.Response(
+                302,
+                headers={"Location": "https://untrusted.example/v1/did/did:aw:home/key"},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "did_aw": "did:aw:home",
+                "current_did_key": "did:key:home",
+                "log_head": None,
+            },
+        )
+
+    client = RegistryClient(
+        registry_url="https://api.awid.ai",
+        service_token=token,
+        transport=httpx.MockTransport(handler),
+    )
+
+    try:
+        with pytest.raises(RegistryError) as raised:
+            await client.resolve_key("did:aw:home")
+    finally:
+        await client.aclose()
+
+    assert raised.value.status_code == 302
+    assert seen == [("api.awid.ai", token)]
+
+
+@pytest.mark.asyncio
+async def test_key_and_address_cache_429_stale_is_bounded(monkeypatch):
+    did_aw = "did:aw:alice"
+    did_key = "did:key:alice"
+    now = {"value": 0}
+    upstream_available = {"value": True}
+    request_counts = {"key": 0, "addresses": 0}
+
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now["value"])
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/v1/did/{did_aw}/key":
+            request_counts["key"] += 1
+            if not upstream_available["value"]:
+                return httpx.Response(429, json={"detail": "rate limit exceeded"})
+            return httpx.Response(
+                200,
+                json={"did_aw": did_aw, "current_did_key": did_key, "log_head": None},
+            )
+        if request.url.path == f"/v1/did/{did_aw}/addresses":
+            request_counts["addresses"] += 1
+            if not upstream_available["value"]:
+                return httpx.Response(429, json={"detail": "rate limit exceeded"})
+            return httpx.Response(
+                200,
+                json={
+                    "addresses": [{
+                        "address_id": "addr-1",
+                        "domain": "acme.com",
+                        "name": "alice",
+                        "did_aw": did_aw,
+                        "current_did_key": did_key,
+                        "created_at": "2026-08-10T00:00:00Z",
+                    }],
+                },
+            )
+        raise AssertionError(f"unexpected request: {request.url}")
+
+    redis = _FakeRedis()
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=redis,
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert (await client.resolve_key(did_aw)).current_did_key == did_key
+    assert len(await client.list_did_addresses(did_aw)) == 1
+    warmed_counts = dict(request_counts)
+
+    assert (await client.resolve_key(did_aw)).current_did_key == did_key
+    assert len(await client.list_did_addresses(did_aw)) == 1
+    assert request_counts == warmed_counts
+    assert set(redis.expirations.values()) == {600}
+
+    upstream_available["value"] = False
+    now["value"] = 301
+    assert (await client.resolve_key(did_aw)).current_did_key == did_key
+    assert len(await client.list_did_addresses(did_aw)) == 1
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    # Redis expires these entries at 600 seconds. Once that bounded stale
+    # window is gone, a 429 is not converted into acceptance.
+    redis.values.clear()
+    redis.expirations.clear()
+    now["value"] = 601
+    with pytest.raises(RegistryError) as key_error:
+        await client.resolve_key(did_aw)
+    with pytest.raises(RegistryError) as address_error:
+        await client.list_did_addresses(did_aw)
+    assert key_error.value.status_code == 429
+    assert address_error.value.status_code == 429
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_resolve_key_fresh_bypasses_stale_cache():
     did_aw = "did:aw:rotated"
     request_count = {"value": 0}
@@ -1133,6 +1288,142 @@ async def test_cached_registry_client_resolve_key_fresh_bypasses_stale_cache():
     assert fresh.current_did_key == "did:key:new"
     assert cached_fresh.current_did_key == "did:key:new"
     assert request_count["value"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_fresh_address_and_namespace_bypass_stale_cache():
+    state = {
+        "did_aw": "did:aw:old",
+        "did_key": "did:key:old",
+        "controller": "did:key:z6MkOldController",
+    }
+    request_counts = {"address": 0, "namespace": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/namespaces/acme.com/addresses/bob":
+            request_counts["address"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": "bob",
+                    "did_aw": state["did_aw"],
+                    "current_did_key": state["did_key"],
+                    "reachability": "public",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.url.path == "/v1/namespaces/acme.com":
+            request_counts["namespace"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "namespace_id": "ns-1",
+                    "domain": "acme.com",
+                    "controller_did": state["controller"],
+                    "verification_status": "verified",
+                    "last_verified_at": "2026-04-03T00:00:00Z",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+    cached_address = await client.resolve_address("acme.com", "bob")
+    cached_namespace = await client.get_namespace("acme.com")
+    assert cached_address is not None
+    assert cached_namespace is not None
+
+    state.update(
+        did_aw="did:aw:replacement",
+        did_key="did:key:replacement",
+        controller="did:key:z6MkNewController",
+    )
+    stale_address = await client.resolve_address("acme.com", "bob")
+    stale_namespace = await client.get_namespace("acme.com")
+    fresh_address = await client.resolve_address_fresh("acme.com", "bob")
+    fresh_namespace = await client.get_namespace_fresh("acme.com")
+
+    assert stale_address is not None
+    assert stale_address.did_aw == "did:aw:old"
+    assert stale_namespace is not None
+    assert stale_namespace.controller_did == "did:key:z6MkOldController"
+    assert fresh_address is not None
+    assert fresh_address.did_aw == "did:aw:replacement"
+    assert fresh_namespace is not None
+    assert fresh_namespace.controller_did == "did:key:z6MkNewController"
+    assert request_counts == {"address": 2, "namespace": 2}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["address_reassigned", "controller_rotated"])
+async def test_local_address_authority_ignores_cached_old_binding(mutation: str):
+    state = {
+        "did_aw": "did:aw:old",
+        "did_key": "did:key:old",
+        "controller": "did:key:z6MkOldController",
+    }
+    request_counts = {"address": 0, "namespace": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/namespaces/acme.com/addresses/bob":
+            request_counts["address"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "address_id": "addr-1",
+                    "domain": "acme.com",
+                    "name": "bob",
+                    "did_aw": state["did_aw"],
+                    "current_did_key": state["did_key"],
+                    "reachability": "public",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        if request.url.path == "/v1/namespaces/acme.com":
+            request_counts["namespace"] += 1
+            return httpx.Response(
+                200,
+                json={
+                    "namespace_id": "ns-1",
+                    "domain": "acme.com",
+                    "controller_did": state["controller"],
+                    "verification_status": "verified",
+                    "last_verified_at": "2026-04-03T00:00:00Z",
+                    "created_at": "2026-04-03T00:00:00Z",
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.url.path}")
+
+    client = CachedRegistryClient(
+        registry_url="https://api.awid.ai",
+        redis_client=_FakeRedis(),
+        transport=httpx.MockTransport(handler),
+    )
+    await client.resolve_address("acme.com", "bob")
+    await client.get_namespace("acme.com")
+    if mutation == "address_reassigned":
+        state.update(did_aw="did:aw:replacement", did_key="did:key:replacement")
+        expected_controller = None
+    else:
+        state["controller"] = "did:key:z6MkNewController"
+        expected_controller = "did:key:z6MkNewController"
+
+    controller = await resolve_local_namespace_controller_did(
+        client,
+        contact_address="acme.com/bob",
+        contact_did_aw="did:aw:old",
+        contact_current_did_key="did:key:old",
+    )
+
+    assert controller == expected_controller
+    assert controller != "did:key:z6MkOldController"
+    assert request_counts == {"address": 2, "namespace": 2}
 
 
 @pytest.mark.asyncio

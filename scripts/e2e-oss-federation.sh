@@ -19,6 +19,13 @@
 #   AWEB_BETA_E2E_PORT    beta aweb host port (default: 8330)
 #   AWEB_FED_E2E_BUILD    set to 0 to skip docker compose build
 #   AWEB_FED_E2E_KEEP     set to 1 to leave containers/temp dir for debugging
+#   AWEB_FED_E2E_SERVER_MODE source (default) or wheel; wheel requires exact
+#                            alpha/beta wheel path, version, and sha256 inputs
+#   AWEB_FED_E2E_DIRECTION a-to-b (default) or b-to-a for the cell proof
+#   AWEB_FED_E2E_CELL_ID   exact full-cell identity rendered in evidence
+#   AWEB_FED_E2E_PROJECT   collision-resistant exact Compose project identity
+#   AWEB_FED_E2E_MCP_VERSION exact server/uv.lock MCP version in wheel mode
+#   AWEB_FED_E2E_ROUTE_PROBE_ONLY set to 1 for the pre-setup capability control
 
 set -euo pipefail
 
@@ -41,23 +48,40 @@ CLI_DIR="$REPO_ROOT/cli/go"
 AWID_PORT="${AWID_FED_E2E_PORT:-8310}"
 ALPHA_PORT="${AWEB_ALPHA_E2E_PORT:-8320}"
 BETA_PORT="${AWEB_BETA_E2E_PORT:-8330}"
-AWID_URL="http://localhost:$AWID_PORT"
-ALPHA_URL="http://localhost:$ALPHA_PORT"
-BETA_URL="http://localhost:$BETA_PORT"
+DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
+[[ "$DOCKER_BIND_ROOT" = /* && -d "$DOCKER_BIND_ROOT" ]] \
+  || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
+DOCKER_PUBLISHED_HOST="${AWEB_DOCKER_PUBLISHED_HOST:-127.0.0.1}"
+case "$DOCKER_PUBLISHED_HOST" in
+  127.0.0.1|aweb-docker.test) ;;
+  *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
+esac
+AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
+ALPHA_URL="http://$DOCKER_PUBLISHED_HOST:$ALPHA_PORT"
+BETA_URL="http://$DOCKER_PUBLISHED_HOST:$BETA_PORT"
 ALPHA_ORIGIN="http://aweb-alpha:8000"
 BETA_ORIGIN="http://aweb-beta:8000"
-PROJECT="aweb-fed-e2e-$RANDOM"
+PROJECT="${AWEB_FED_E2E_PROJECT:-aweb-fed-e2e-$RANDOM}"
+SERVER_MODE="${AWEB_FED_E2E_SERVER_MODE:-source}"
+CELL_DIRECTION="${AWEB_FED_E2E_DIRECTION:-a-to-b}"
+CELL_ID="${AWEB_FED_E2E_CELL_ID:-source-journey}"
+ROUTE_PROBE_ONLY="${AWEB_FED_E2E_ROUTE_PROBE_ONLY:-0}"
 
 E2E_ROOT="$(make_temp_dir aw-fed-e2e)"
+DOCKER_RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aw-fed-docker.XXXXXX")"
+DOCKER_RUNTIME="$(canonicalize_dir "$DOCKER_RUNTIME")"
 E2E_HOME="$E2E_ROOT/home"
-COMPOSE_FILE="$E2E_ROOT/docker-compose.yml"
+COMPOSE_FILE="$DOCKER_RUNTIME/docker-compose.yml"
+DNS_DIR="$DOCKER_RUNTIME/dns"
+DNS_COREFILE="$DNS_DIR/Corefile"
+DNS_ZONE="$DNS_DIR/test.local.zone"
 ALICE_DIR="$E2E_ROOT/alice"
 ANN_DIR="$E2E_ROOT/ann"
 NED_DIR="$E2E_ROOT/ned"
 BOB_DIR="$E2E_ROOT/bob"
 CHARLIE_DIR="$E2E_ROOT/charlie"
 DAVE_DIR="$E2E_ROOT/dave"
-mkdir -p "$E2E_HOME" "$ALICE_DIR" "$ANN_DIR" "$NED_DIR" "$BOB_DIR" "$CHARLIE_DIR" "$DAVE_DIR"
+mkdir -p "$E2E_HOME" "$DNS_DIR" "$ALICE_DIR" "$ANN_DIR" "$NED_DIR" "$BOB_DIR" "$CHARLIE_DIR" "$DAVE_DIR"
 
 pass=0
 fail=0
@@ -70,9 +94,37 @@ cleanup() {
     echo "Keeping federation e2e artifacts for debugging:"
     echo "  project: $PROJECT"
     echo "  root:    $E2E_ROOT"
+    echo "  docker:  $DOCKER_RUNTIME"
   elif [[ -f "$COMPOSE_FILE" ]]; then
-    docker compose -p "$PROJECT" -f "$COMPOSE_FILE" down -v 2>/dev/null || true
-    rm -rf "$E2E_ROOT"
+    if [[ $status -ne 0 || $fail -gt 0 ]]; then
+      echo "  --- failed federation service logs ---"
+      compose logs --tail 200 --no-color awid federation-dns aweb-alpha aweb-beta 2>&1 || true
+      echo "  --- end failed federation service logs ---"
+    fi
+    if ! compose down -v --rmi local --remove-orphans >/dev/null 2>&1; then
+      echo "Targeted compose teardown failed for $PROJECT" >&2
+      status=1
+    fi
+    if docker ps -aq --filter label=com.docker.compose.project="$PROJECT" | grep -q .; then
+      echo "Targeted teardown left containers for $PROJECT" >&2
+      status=1
+    fi
+    if docker volume ls -q --filter label=com.docker.compose.project="$PROJECT" | grep -q .; then
+      echo "Targeted teardown left volumes for $PROJECT" >&2
+      status=1
+    fi
+    if docker network ls -q --filter label=com.docker.compose.project="$PROJECT" | grep -q .; then
+      echo "Targeted teardown left networks for $PROJECT" >&2
+      status=1
+    fi
+    if docker images -q --filter label=com.docker.compose.project="$PROJECT" | grep -q .; then
+      echo "Targeted teardown left images for $PROJECT" >&2
+      status=1
+    fi
+    rm -rf "$E2E_ROOT" "$DOCKER_RUNTIME"
+  else
+    # Pre-compose validation failures still own only these mktemp directories.
+    rm -rf "$E2E_ROOT" "$DOCKER_RUNTIME"
   fi
   echo ""
   if [[ $fail -gt 0 ]]; then
@@ -213,6 +265,30 @@ container_package_version() {
     "$package_name"
 }
 
+container_wheel_sha256() {
+  local service="$1"
+  compose exec -T "$service" sh -c \
+    'set -- /opt/aweb-wheel/*.whl; [ "$#" -eq 1 ] && sha256sum "$1" | cut -d" " -f1'
+}
+
+container_inventory_json() {
+  local service="$1"
+  compose exec -T "$service" python -c '
+import importlib.metadata, json, re
+inventory = {}
+for distribution in importlib.metadata.distributions():
+    name = re.sub(r"[-_.]+", "-", distribution.metadata["Name"]).lower()
+    if name in inventory:
+        raise SystemExit(f"duplicate normalized distribution {name}")
+    inventory[name] = distribution.version
+print(json.dumps(inventory, sort_keys=True, separators=(",", ":")))
+'
+}
+
+canonical_json_sha256() {
+  python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+
 run_aw_in() {
   local workdir="$1"
   shift
@@ -258,6 +334,58 @@ run_success() {
     echo "  $label output: ${output:0:240}"
   fi
   return 0
+}
+
+publish_strict_dns_authority() {
+  local alpha_controller="$1" beta_controller="$2" serial zone_tmp
+  serial="$(date -u +%Y%m%d%H)"
+  zone_tmp="$DNS_DIR/test.local.zone.tmp"
+  cat > "$zone_tmp" <<EOF
+\$ORIGIN test.local.
+\$TTL 1
+@ IN SOA ns.test.local. hostmaster.test.local. ($serial 1 1 1 1)
+@ IN NS ns.test.local.
+ns IN A 127.0.0.1
+_awid.alpha IN TXT "awid=v1; controller=$alpha_controller; registry=http://awid:8010;"
+_awid.beta IN TXT "awid=v1; controller=$beta_controller; registry=http://awid:8010;"
+EOF
+  mv "$zone_tmp" "$DNS_ZONE"
+  sleep 2
+}
+
+assert_strict_dns_authority() {
+  local service="$1" domain="$2" controller="$3" output status
+  if output="$(compose exec -T "$service" python - "$domain" "$controller" <<'PY'
+import asyncio
+import sys
+from awid.external_authority import OriginContext, SystemTXTOutcomeResolver, discover_registry_authority
+
+domain, controller = sys.argv[1:]
+authority = asyncio.run(
+    discover_registry_authority(
+        domain,
+        SystemTXTOutcomeResolver(),
+        origin_context=OriginContext(
+            app_env="development",
+            federation_test_enabled=True,
+            listener_origin="http://receiver:8000",
+        ),
+    )
+)
+assert authority.selection == "dns", authority
+assert authority.authority_name == "_awid." + domain, authority
+assert authority.controller_did == controller, authority
+assert authority.registry_origin == "http://awid:8010", authority
+PY
+  )"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$service strict DNS authority for $domain" "0" "$status"
+  if [[ "$status" != "0" && -n "$output" ]]; then
+    echo "  strict DNS authority output: ${output:0:240}"
+  fi
 }
 
 set_namespace_delivery_origin() {
@@ -336,6 +464,98 @@ create_identity_and_join_team() {
   assert_contains "$name init connected" "$init_out" "connected"
 }
 
+case "$CELL_DIRECTION" in
+  a-to-b|b-to-a) ;;
+  *) echo "AWEB_FED_E2E_DIRECTION must be a-to-b or b-to-a, got $CELL_DIRECTION" >&2; exit 1 ;;
+esac
+[[ "$PROJECT" =~ ^aweb-fed-e2e-[a-z0-9]+$ ]] \
+  || { echo "AWEB_FED_E2E_PROJECT is invalid: $PROJECT" >&2; exit 1; }
+for port in "$AWID_PORT" "$ALPHA_PORT" "$BETA_PORT"; do
+  [[ "$port" =~ ^[0-9]+$ ]] && (( port >= 1024 && port <= 65535 )) \
+    || { echo "federation host port is invalid: $port" >&2; exit 1; }
+done
+[[ "$AWID_PORT" != "$ALPHA_PORT" && "$AWID_PORT" != "$BETA_PORT" && "$ALPHA_PORT" != "$BETA_PORT" ]] \
+  || { echo "federation host ports must be distinct" >&2; exit 1; }
+echo "Federation invocation: project=$PROJECT ports=awid:$AWID_PORT,alpha:$ALPHA_PORT,beta:$BETA_PORT"
+
+case "$SERVER_MODE" in
+  source)
+    ALPHA_SERVER_BUILD="    build:
+      context: $REPO_ROOT
+      dockerfile: server/Dockerfile"
+    BETA_SERVER_BUILD="$ALPHA_SERVER_BUILD"
+    ;;
+  wheel)
+    [[ "${AWEB_FED_E2E_KEEP:-0}" == "0" ]] \
+      || { echo "AWEB_FED_E2E_KEEP must be 0 in wheel mode" >&2; exit 1; }
+    for variable in \
+      AWEB_ALPHA_WHEEL AWEB_ALPHA_WHEEL_SHA256 AWEB_ALPHA_VERSION \
+      AWEB_BETA_WHEEL AWEB_BETA_WHEEL_SHA256 AWEB_BETA_VERSION \
+      AWEB_FED_E2E_MCP_VERSION; do
+      [[ -n "${!variable:-}" ]] || { echo "$variable is required in wheel mode" >&2; exit 1; }
+    done
+    for digest in "$AWEB_ALPHA_WHEEL_SHA256" "$AWEB_BETA_WHEEL_SHA256"; do
+      [[ "$digest" =~ ^[0-9a-f]{64}$ ]] \
+        || { echo "wheel sha256 must be 64 lowercase hex, got $digest" >&2; exit 1; }
+    done
+    for version in "$AWEB_ALPHA_VERSION" "$AWEB_BETA_VERSION"; do
+      [[ "$version" =~ ^[0-9]+(\.[0-9]+)+$ ]] \
+        || { echo "wheel version must be dotted numeric, got $version" >&2; exit 1; }
+    done
+    ALPHA_WHEEL_NAME="$(basename "$AWEB_ALPHA_WHEEL")"
+    BETA_WHEEL_NAME="$(basename "$AWEB_BETA_WHEEL")"
+    for name in "$ALPHA_WHEEL_NAME" "$BETA_WHEEL_NAME"; do
+      [[ "$name" =~ ^[A-Za-z0-9_.+-]+\.whl$ ]] \
+        || { echo "wheel filename is unsafe or invalid: $name" >&2; exit 1; }
+    done
+    [[ "$(shasum -a 256 "$AWEB_ALPHA_WHEEL" | awk '{print $1}')" == "$AWEB_ALPHA_WHEEL_SHA256" ]] \
+      || { echo "alpha selected wheel sha256 disagrees before build" >&2; exit 1; }
+    [[ "$(shasum -a 256 "$AWEB_BETA_WHEEL" | awk '{print $1}')" == "$AWEB_BETA_WHEEL_SHA256" ]] \
+      || { echo "beta selected wheel sha256 disagrees before build" >&2; exit 1; }
+    ALPHA_SERVER_CONTEXT="$E2E_ROOT/alpha-server-context"
+    BETA_SERVER_CONTEXT="$E2E_ROOT/beta-server-context"
+    mkdir "$ALPHA_SERVER_CONTEXT" "$BETA_SERVER_CONTEXT"
+    cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$ALPHA_SERVER_CONTEXT/Dockerfile"
+    cp "$REPO_ROOT/scripts/federation-wheel-server.Dockerfile" "$BETA_SERVER_CONTEXT/Dockerfile"
+    cp "$AWEB_ALPHA_WHEEL" "$ALPHA_SERVER_CONTEXT/$ALPHA_WHEEL_NAME"
+    cp "$AWEB_BETA_WHEEL" "$BETA_SERVER_CONTEXT/$BETA_WHEEL_NAME"
+    ALPHA_SERVER_BUILD="    build:
+      context: $ALPHA_SERVER_CONTEXT
+      dockerfile: Dockerfile
+      args:
+        AWEB_WHEEL: $ALPHA_WHEEL_NAME
+        AWEB_WHEEL_SHA256: $AWEB_ALPHA_WHEEL_SHA256
+        AWEB_VERSION: $AWEB_ALPHA_VERSION
+        MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION"
+    BETA_SERVER_BUILD="    build:
+      context: $BETA_SERVER_CONTEXT
+      dockerfile: Dockerfile
+      args:
+        AWEB_WHEEL: $BETA_WHEEL_NAME
+        AWEB_WHEEL_SHA256: $AWEB_BETA_WHEEL_SHA256
+        AWEB_VERSION: $AWEB_BETA_VERSION
+        MCP_VERSION: $AWEB_FED_E2E_MCP_VERSION"
+    ;;
+  *) echo "AWEB_FED_E2E_SERVER_MODE must be source or wheel, got $SERVER_MODE" >&2; exit 1 ;;
+esac
+
+cat > "$DNS_COREFILE" <<'EOF'
+.:53 {
+  errors
+  file /zones/test.local.zone test.local {
+    reload 1s
+  }
+  forward . 127.0.0.11
+}
+EOF
+cat > "$DNS_ZONE" <<'EOF'
+$ORIGIN test.local.
+$TTL 1
+@ IN SOA ns.test.local. hostmaster.test.local. (1 1 1 1 1)
+@ IN NS ns.test.local.
+ns IN A 127.0.0.1
+EOF
+
 echo "=== Phase 0: Build aw CLI ==="
 cd "$CLI_DIR"
 make build >/dev/null
@@ -345,6 +565,13 @@ echo ""
 echo "=== Phase 1: Write and start federation compose ==="
 cat > "$COMPOSE_FILE" <<EOF
 services:
+  federation-dns:
+    image: coredns/coredns:1.11.3
+    command: ["-conf", "/Corefile"]
+    volumes:
+      - "$DNS_COREFILE:/Corefile:ro"
+      - "$DNS_DIR:/zones:ro"
+
   redis-awid:
     image: redis:7-alpine
     healthcheck:
@@ -404,9 +631,7 @@ services:
       timeout: 2s
       retries: 30
   aweb-alpha:
-    build:
-      context: $REPO_ROOT
-      dockerfile: server/Dockerfile
+$ALPHA_SERVER_BUILD
     ports:
       - "$ALPHA_PORT:8000"
     environment:
@@ -417,12 +642,17 @@ services:
       AWEB_DISCOVERY_ORIGIN: $ALPHA_URL
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
+      APP_ENV: development
+      AWEB_FEDERATION_TEST: "1"
+    # FEDERATION_DNS_IP_ALPHA
     depends_on:
       redis-alpha:
         condition: service_healthy
       postgres-alpha:
         condition: service_healthy
       awid:
+        condition: service_started
+      federation-dns:
         condition: service_started
 
   redis-beta:
@@ -444,9 +674,7 @@ services:
       timeout: 2s
       retries: 30
   aweb-beta:
-    build:
-      context: $REPO_ROOT
-      dockerfile: server/Dockerfile
+$BETA_SERVER_BUILD
     ports:
       - "$BETA_PORT:8000"
     environment:
@@ -457,6 +685,9 @@ services:
       AWEB_DISCOVERY_ORIGIN: $BETA_URL
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
+      APP_ENV: development
+      AWEB_FEDERATION_TEST: "1"
+    # FEDERATION_DNS_IP_BETA
     depends_on:
       redis-beta:
         condition: service_healthy
@@ -464,30 +695,147 @@ services:
         condition: service_healthy
       awid:
         condition: service_started
+      federation-dns:
+        condition: service_started
 EOF
 
-compose down -v >/dev/null 2>&1 || true
+compose down -v --remove-orphans >/dev/null 2>&1 || true
 if [[ "${AWEB_FED_E2E_BUILD:-1}" != "0" ]]; then
   compose build
 fi
-compose up -d
+compose up -d federation-dns redis-awid postgres-awid awid redis-alpha postgres-alpha redis-beta postgres-beta
 wait_health "awid" "$AWID_URL" "awid"
+FEDERATION_DNS_IP="$(
+  docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
+    "$(compose ps -q federation-dns)"
+)"
+if [[ -z "$FEDERATION_DNS_IP" ]]; then
+  echo "Could not determine isolated federation DNS address" >&2
+  exit 1
+fi
+python3 - "$COMPOSE_FILE" "$FEDERATION_DNS_IP" <<'PY'
+from pathlib import Path
+import ipaddress
+import sys
+
+path = Path(sys.argv[1])
+ip = str(ipaddress.ip_address(sys.argv[2]))
+text = path.read_text()
+for marker in ("ALPHA", "BETA"):
+    source = f"    # FEDERATION_DNS_IP_{marker}"
+    replacement = f'    dns:\n      - "{ip}"'
+    if text.count(source) != 1:
+        raise SystemExit(f"missing unique {source}")
+    text = text.replace(source, replacement)
+path.write_text(text)
+PY
+compose up -d aweb-alpha aweb-beta
 wait_health "alpha" "$ALPHA_URL" "aweb-alpha"
 wait_health "beta" "$BETA_URL" "aweb-beta"
-locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
-installed_server_mcp="$(container_package_version aweb-alpha mcp)"
-assert_eq "aweb image installs locked mcp" "$locked_server_mcp" "$installed_server_mcp"
+if [[ "$SERVER_MODE" == "wheel" ]]; then
+  alpha_installed_version="$(container_package_version aweb-alpha aweb)"
+  beta_installed_version="$(container_package_version aweb-beta aweb)"
+  alpha_retained_wheel_sha256="$(container_wheel_sha256 aweb-alpha)"
+  beta_retained_wheel_sha256="$(container_wheel_sha256 aweb-beta)"
+  alpha_installed_mcp="$(container_package_version aweb-alpha mcp)"
+  beta_installed_mcp="$(container_package_version aweb-beta mcp)"
+  alpha_installed_distributions="$(container_inventory_json aweb-alpha)"
+  beta_installed_distributions="$(container_inventory_json aweb-beta)"
+  alpha_inventory_sha256="$(printf '%s' "$alpha_installed_distributions" | canonical_json_sha256)"
+  beta_inventory_sha256="$(printf '%s' "$beta_installed_distributions" | canonical_json_sha256)"
+  assert_eq "alpha installs selected aweb version" "$AWEB_ALPHA_VERSION" "$alpha_installed_version"
+  assert_eq "beta installs selected aweb version" "$AWEB_BETA_VERSION" "$beta_installed_version"
+  assert_eq "alpha retains selected wheel sha256" "$AWEB_ALPHA_WHEEL_SHA256" "$alpha_retained_wheel_sha256"
+  assert_eq "beta retains selected wheel sha256" "$AWEB_BETA_WHEEL_SHA256" "$beta_retained_wheel_sha256"
+  assert_eq "alpha installs exact locked mcp" "$AWEB_FED_E2E_MCP_VERSION" "$alpha_installed_mcp"
+  assert_eq "beta installs exact locked mcp" "$AWEB_FED_E2E_MCP_VERSION" "$beta_installed_mcp"
+  [[ "$alpha_inventory_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "alpha canonical dependency inventory digest is invalid" >&2; exit 1; }
+  [[ "$beta_inventory_sha256" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "beta canonical dependency inventory digest is invalid" >&2; exit 1; }
+else
+  locked_server_mcp="$(lock_package_version "$SERVER_DIR/uv.lock" mcp)"
+  installed_server_mcp="$(container_package_version aweb-alpha mcp)"
+  assert_eq "aweb image installs locked mcp" "$locked_server_mcp" "$installed_server_mcp"
+fi
 locked_awid_fastapi="$(lock_package_version "$REPO_ROOT/awid/uv.lock" fastapi)"
 installed_awid_fastapi="$(container_package_version awid fastapi)"
 assert_eq "awid image installs locked fastapi" "$locked_awid_fastapi" "$installed_awid_fastapi"
+
+probe_federation_route() {
+  local label="$1" url="$2" status
+  status="$(curl -sS -o "$E2E_ROOT/$label-route-probe.json" -w '%{http_code}' \
+    -H 'Content-Type: application/json' -X POST --data '{}' \
+    "$url/v1/federation/messages")"
+  if [[ "$status" != "422" ]]; then
+    echo "$label federation route probe returned $status" >&2
+    exit 1
+  fi
+  assert_eq "$label federation route probe validates an empty envelope" "422" "$status"
+}
+
+if [[ "$SERVER_MODE" == "wheel" && "$ROUTE_PROBE_ONLY" == "1" ]]; then
+  python3 - \
+    "$CELL_ID" "$PROJECT" "$AWID_PORT" "$ALPHA_PORT" "$BETA_PORT" \
+    "$alpha_installed_version" "$alpha_retained_wheel_sha256" \
+    "$alpha_installed_mcp" "$alpha_installed_distributions" "$alpha_inventory_sha256" \
+    "$beta_installed_version" "$beta_retained_wheel_sha256" \
+    "$beta_installed_mcp" "$beta_installed_distributions" "$beta_inventory_sha256" <<'PY'
+import json
+import sys
+
+(
+    cell_id, project, awid_port, alpha_port, beta_port,
+    alpha_version, alpha_wheel, alpha_mcp, alpha_inventory, alpha_inventory_digest,
+    beta_version, beta_wheel, beta_mcp, beta_inventory, beta_inventory_digest,
+) = sys.argv[1:]
+record = {
+    "alpha": {
+        "installed_distributions": json.loads(alpha_inventory),
+        "installed_distributions_sha256": alpha_inventory_digest,
+        "mcp_version": alpha_mcp,
+        "version": alpha_version,
+        "wheel_sha256": alpha_wheel,
+    },
+    "beta": {
+        "installed_distributions": json.loads(beta_inventory),
+        "installed_distributions_sha256": beta_inventory_digest,
+        "mcp_version": beta_mcp,
+        "version": beta_version,
+        "wheel_sha256": beta_wheel,
+    },
+    "cell_id": cell_id,
+    "ports": {
+        "alpha": int(alpha_port),
+        "awid": int(awid_port),
+        "beta": int(beta_port),
+    },
+    "project": project,
+    "schema": "aweb.release.federation-skew-control-runtime.v1",
+}
+print(
+    "AWEB_FEDERATION_SKEW_CONTROL_RUNTIME="
+    + json.dumps(record, sort_keys=True, separators=(",", ":"))
+)
+PY
+fi
+
+probe_federation_route alpha "$ALPHA_URL"
+probe_federation_route beta "$BETA_URL"
+if [[ "$ROUTE_PROBE_ONLY" == "1" ]]; then
+  echo "Route probe controls complete before broader federation setup."
+  exit 0
+fi
 echo ""
 
 echo "=== Phase 2: Create alpha and beta identities/teams ==="
 capture_success alice_create "alice_create" run_aw_in "$ALICE_DIR" id create --name alice --domain alpha.test.local --registry "$AWID_URL" --skip-dns-verify --json
 ALICE_DID_AW="$(echo "$alice_create" | jq_field did_aw)"
 ALICE_DID_KEY="$(echo "$alice_create" | jq_field did_key)"
+ALICE_CONTROLLER_DID="$(echo "$alice_create" | jq_field controller_did)"
 assert_not_empty "alice did_aw" "$ALICE_DID_AW"
 assert_not_empty "alice did_key" "$ALICE_DID_KEY"
+assert_not_empty "alice namespace controller did" "$ALICE_CONTROLLER_DID"
 capture_success alpha_team "alpha_team" run_aw_in "$ALICE_DIR" id team create --name alpha --namespace alpha.test.local --registry "$AWID_URL" --json
 assert_eq "alpha team id" "alpha:alpha.test.local" "$(echo "$alpha_team" | jq_field team_id)"
 capture_success alice_invite "alice_invite" run_aw_in "$ALICE_DIR" id team invite --team alpha --namespace alpha.test.local --global --json
@@ -514,8 +862,10 @@ run_success "ned init" run_aw_in "$NED_DIR" init --url "$ALPHA_URL" --alias ned 
 capture_success bob_create "bob_create" run_aw_in "$BOB_DIR" id create --name bob --domain beta.test.local --registry "$AWID_URL" --skip-dns-verify --json
 BOB_DID_AW="$(echo "$bob_create" | jq_field did_aw)"
 BOB_DID_KEY="$(echo "$bob_create" | jq_field did_key)"
+BOB_CONTROLLER_DID="$(echo "$bob_create" | jq_field controller_did)"
 assert_not_empty "bob did_aw" "$BOB_DID_AW"
 assert_not_empty "bob did_key" "$BOB_DID_KEY"
+assert_not_empty "bob namespace controller did" "$BOB_CONTROLLER_DID"
 capture_success beta_team "beta_team" run_aw_in "$BOB_DIR" id team create --name beta --namespace beta.test.local --registry "$AWID_URL" --json
 assert_eq "beta team id" "beta:beta.test.local" "$(echo "$beta_team" | jq_field team_id)"
 capture_success bob_invite "bob_invite" run_aw_in "$BOB_DIR" id team invite --team beta --namespace beta.test.local --global --json
@@ -534,6 +884,12 @@ assert_not_empty "dave local did_key" "$DAVE_DID_KEY"
 capture_success charlie_create "charlie_create" run_aw_in "$CHARLIE_DIR" id create --name charlie --domain gamma.test.local --registry "$AWID_URL" --skip-dns-verify --json
 assert_not_empty "charlie did_aw" "$(echo "$charlie_create" | jq_field did_aw)"
 
+publish_strict_dns_authority "$ALICE_CONTROLLER_DID" "$BOB_CONTROLLER_DID"
+for receiver in aweb-alpha aweb-beta; do
+  assert_strict_dns_authority "$receiver" "alpha.test.local" "$ALICE_CONTROLLER_DID"
+  assert_strict_dns_authority "$receiver" "beta.test.local" "$BOB_CONTROLLER_DID"
+done
+
 set_namespace_delivery_origin "$ALICE_DIR" "alpha" "alpha.test.local" "$ALPHA_ORIGIN"
 set_namespace_delivery_origin "$BOB_DIR" "beta" "beta.test.local" "$BETA_ORIGIN"
 capture_success alice_e2ee_setup "alice_e2ee_setup" run_aw_in "$ALICE_DIR" id encryption-key setup --json
@@ -542,6 +898,13 @@ capture_success bob_e2ee_setup "bob_e2ee_setup" run_aw_in "$BOB_DIR" id encrypti
 assert_not_empty "bob federation e2ee key id" "$(echo "$bob_e2ee_setup" | jq_field key_id)"
 capture_success dave_e2ee_setup "dave_e2ee_setup" run_aw_in "$DAVE_DIR" id encryption-key setup --json
 assert_not_empty "dave local-only federation e2ee key id" "$(echo "$dave_e2ee_setup" | jq_field key_id)"
+echo ""
+
+echo "=== Skew cell direction: $CELL_ID $CELL_DIRECTION ==="
+# Alpha is always the initiator in this source-level journey. The child adapter
+# maps side A to alpha for a-to-b and side B to alpha for b-to-a, so the existing
+# alpha-first federation assertions below execute and report the exact cell.
+echo "  skew cell direction $CELL_DIRECTION: alpha initiates, beta receives"
 echo ""
 
 echo "=== Phase 3: Same-server local alias remains local ==="
@@ -629,7 +992,7 @@ assert_eq "federated e2ee plaintext absent from alpha DB" "0" "$fed_e2ee_alpha_p
 assert_eq "federated e2ee plaintext absent from beta DB" "0" "$fed_e2ee_beta_plaintext_count"
 echo ""
 
-echo "=== Phase 4b.1: E2E cross-server local-only sender replies via learned assertion ==="
+echo "=== Phase 4b.1: Unknown local-only mail first contact fails closed ==="
 fed_local_subject="FED_E2EE_LOCAL_ONLY_SUBJECT_SENTINEL_260526"
 fed_local_body="FED_E2EE_LOCAL_ONLY_BODY_SENTINEL_260526"
 if fed_local_out="$(run_aw_in "$DAVE_DIR" mail send \
@@ -642,36 +1005,12 @@ if fed_local_out="$(run_aw_in "$DAVE_DIR" mail send \
 else
   fed_local_exit=$?
 fi
-assert_eq "local-only federated e2ee mail send exit" "0" "$fed_local_exit"
-if [[ "$fed_local_exit" != "0" ]]; then
-  echo "$fed_local_out"
-fi
-fed_local_conversation_id="$(echo "$fed_local_out" | jq_field conversation_id)"
-assert_not_empty "local-only federated e2ee conversation id" "$fed_local_conversation_id"
-capture_success alice_local_inbox "alice_local_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
-alice_local_body="$(echo "$alice_local_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; body=sys.argv[2]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')==cid and m.get('body')==body), ''))" "$fed_local_conversation_id" "$fed_local_body" 2>/dev/null || echo "")"
-assert_eq "alice decrypts local-only federated e2ee mail" "$fed_local_body" "$alice_local_body"
-fed_local_reply_body="FED_E2EE_LOCAL_ONLY_REPLY_SENTINEL_260526"
-if fed_local_reply_out="$(run_aw_in "$ALICE_DIR" mail send \
-  --conversation-id "$fed_local_conversation_id" \
-  --subject "FED_E2EE_LOCAL_ONLY_REPLY_SUBJECT_SENTINEL_260526" \
-  --body "$fed_local_reply_body" \
-  --e2ee 2>&1)"; then
-  fed_local_reply_exit=0
-else
-  fed_local_reply_exit=$?
-fi
-assert_eq "local-only federated e2ee learned-key reply send exit" "0" "$fed_local_reply_exit"
-if [[ "$fed_local_reply_exit" != "0" ]]; then
-  echo "$fed_local_reply_out"
-fi
-capture_success dave_local_reply_inbox "dave_local_reply_inbox" run_aw_in "$DAVE_DIR" mail inbox --json --show-all
-dave_local_reply_body="$(echo "$dave_local_reply_inbox" | python3 -c "import sys,json; cid=sys.argv[1]; body=sys.argv[2]; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')==cid and m.get('body')==body), ''))" "$fed_local_conversation_id" "$fed_local_reply_body" 2>/dev/null || echo "")"
-assert_eq "dave decrypts learned-key e2ee mail reply" "$fed_local_reply_body" "$dave_local_reply_body"
+assert_eq "unknown local-only federated e2ee mail first contact rejected" "1" "$fed_local_exit"
+assert_contains "unknown local-only federated e2ee mail fails closed" "$fed_local_out" "Federation encrypted sender address does not match"
 fed_local_plaintext_count="$(psql_scalar "postgres-alpha" "SELECT COUNT(*) FROM aweb.messages WHERE COALESCE(subject, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(body, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_%';")"
-assert_eq "local-only e2ee mail plaintext absent from alpha DB" "0" "$fed_local_plaintext_count"
+assert_eq "unknown local-only e2ee mail absent from alpha DB" "0" "$fed_local_plaintext_count"
 fed_local_beta_plaintext_count="$(psql_scalar "postgres-beta" "SELECT COUNT(*) FROM aweb.messages WHERE COALESCE(subject, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(body, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_LOCAL_ONLY_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_%';")"
-assert_eq "local-only e2ee mail plaintext absent from beta DB" "0" "$fed_local_beta_plaintext_count"
+assert_eq "unknown local-only e2ee mail absent from beta DB" "0" "$fed_local_beta_plaintext_count"
 echo ""
 
 echo "=== Phase 4c: E2E cross-server chat routes ciphertext and clients decrypt ==="
@@ -731,7 +1070,7 @@ assert_eq "federated e2ee chat plaintext absent from alpha DB" "0" "$fed_e2ee_ch
 assert_eq "federated e2ee chat plaintext absent from beta DB" "0" "$fed_e2ee_chat_beta_plaintext_count"
 echo ""
 
-echo "=== Phase 4c.1: E2E cross-server local-only chat reply via learned assertion ==="
+echo "=== Phase 4c.1: Unknown local-only chat first contact fails closed ==="
 fed_local_chat_body="FED_E2EE_LOCAL_ONLY_CHAT_SENTINEL_260526"
 if fed_local_chat_out="$(run_aw_in "$DAVE_DIR" chat send-and-leave alpha.test.local/alice \
   "$fed_local_chat_body" \
@@ -742,34 +1081,12 @@ if fed_local_chat_out="$(run_aw_in "$DAVE_DIR" chat send-and-leave alpha.test.lo
 else
   fed_local_chat_exit=$?
 fi
-assert_eq "local-only federated e2ee chat send exit" "0" "$fed_local_chat_exit"
-if [[ "$fed_local_chat_exit" != "0" ]]; then
-  echo "$fed_local_chat_out"
-fi
-fed_local_chat_session_id="$(echo "$fed_local_chat_out" | jq_field session_id)"
-assert_not_empty "local-only federated e2ee chat session id" "$fed_local_chat_session_id"
-capture_success alice_local_chat "alice_local_chat" run_aw_in "$ALICE_DIR" chat history --session-id "$fed_local_chat_session_id" --json
-alice_local_chat_count="$(echo "$alice_local_chat" | json_count_matching body "$fed_local_chat_body")"
-assert_eq "alice decrypts local-only federated e2ee chat" "1" "$alice_local_chat_count"
-fed_local_chat_reply_body="FED_E2EE_LOCAL_ONLY_CHAT_REPLY_SENTINEL_260526"
-if fed_local_chat_reply_out="$(run_aw_in "$ALICE_DIR" chat send-and-leave "$DAVE_DID_KEY" \
-  "$fed_local_chat_reply_body" \
-  --e2ee 2>&1)"; then
-  fed_local_chat_reply_exit=0
-else
-  fed_local_chat_reply_exit=$?
-fi
-assert_eq "local-only federated e2ee chat learned-key reply send exit" "0" "$fed_local_chat_reply_exit"
-if [[ "$fed_local_chat_reply_exit" != "0" ]]; then
-  echo "$fed_local_chat_reply_out"
-fi
-capture_success dave_local_chat_reply "dave_local_chat_reply" run_aw_in "$DAVE_DIR" chat history --session-id "$fed_local_chat_session_id" --json
-dave_local_chat_reply_count="$(echo "$dave_local_chat_reply" | json_count_matching body "$fed_local_chat_reply_body")"
-assert_eq "dave decrypts learned-key e2ee chat reply" "1" "$dave_local_chat_reply_count"
+assert_eq "unknown local-only federated e2ee chat first contact rejected" "1" "$fed_local_chat_exit"
+assert_contains "unknown local-only federated e2ee chat fails closed" "$fed_local_chat_out" "Federation encrypted sender address does not match"
 fed_local_chat_plaintext_count="$(psql_scalar "postgres-alpha" "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%';")"
-assert_eq "local-only e2ee chat plaintext absent from alpha DB" "0" "$fed_local_chat_plaintext_count"
+assert_eq "unknown local-only e2ee chat absent from alpha DB" "0" "$fed_local_chat_plaintext_count"
 fed_local_chat_beta_plaintext_count="$(psql_scalar "postgres-beta" "SELECT COUNT(*) FROM aweb.chat_messages WHERE COALESCE(body, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(signature, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(signed_payload, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_envelope::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_ciphertext, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%' OR COALESCE(encrypted_key_wraps::text, '') LIKE '%FED_E2EE_LOCAL_ONLY_CHAT_%';")"
-assert_eq "local-only e2ee chat plaintext absent from beta DB" "0" "$fed_local_chat_beta_plaintext_count"
+assert_eq "unknown local-only e2ee chat absent from beta DB" "0" "$fed_local_chat_beta_plaintext_count"
 echo ""
 
 echo "=== Phase 4: Public cross-server first contact and replies ==="
@@ -796,6 +1113,9 @@ capture_success alice_chat "alice_chat" run_aw_in "$ALICE_DIR" chat history --se
 chat_reply_count="$(echo "$alice_chat" | json_count_matching body "public federated chat reply")"
 assert_eq "public federated chat reply delivered to alpha" "1" "$chat_reply_count"
 echo ""
+
+echo "Pacing strict authority at 30 resolutions/minute before Phase 5"
+sleep 6
 
 echo "=== Phase 5: Global federation fail-closed cases ==="
 run_success "global federated mail send" run_aw_in "$NED_DIR" mail send --to-address beta.test.local/bob --subject "Global federated mail" --body "global sender reaches beta bob"
@@ -916,3 +1236,62 @@ capture_success bob_replay_inbox "bob_replay_inbox" run_aw_in "$BOB_DIR" mail in
 replay_count="$(echo "$bob_replay_inbox" | json_count_matching subject "Replay federated mail")"
 assert_eq "direct federation replay stores one message" "1" "$replay_count"
 echo ""
+
+if [[ "$SERVER_MODE" == "wheel" && "$fail" == "0" ]]; then
+  initiated_side="a"
+  [[ "$CELL_DIRECTION" == "b-to-a" ]] && initiated_side="b"
+  python3 - \
+    "$CELL_ID" "$initiated_side" "$PROJECT" \
+    "$AWID_PORT" "$ALPHA_PORT" "$BETA_PORT" \
+    "$alpha_installed_version" "$alpha_retained_wheel_sha256" \
+    "$alpha_installed_mcp" "$alpha_installed_distributions" "$alpha_inventory_sha256" \
+    "$beta_installed_version" "$beta_retained_wheel_sha256" \
+    "$beta_installed_mcp" "$beta_installed_distributions" "$beta_inventory_sha256" <<'PY'
+import json
+import sys
+
+(
+    cell_id, initiated_side, project,
+    awid_port, alpha_port, beta_port,
+    alpha_version, alpha_wheel, alpha_mcp, alpha_inventory, alpha_inventory_digest,
+    beta_version, beta_wheel, beta_mcp, beta_inventory, beta_inventory_digest,
+) = sys.argv[1:]
+observation = {
+    "alpha": {
+        "installed_distributions": json.loads(alpha_inventory),
+        "installed_distributions_sha256": alpha_inventory_digest,
+        "mcp_version": alpha_mcp,
+        "version": alpha_version,
+        "wheel_sha256": alpha_wheel,
+    },
+    "beta": {
+        "installed_distributions": json.loads(beta_inventory),
+        "installed_distributions_sha256": beta_inventory_digest,
+        "mcp_version": beta_mcp,
+        "version": beta_version,
+        "wheel_sha256": beta_wheel,
+    },
+    "cell_id": cell_id,
+    "initiated_side": initiated_side,
+    "outcomes": {
+        "encrypted_chat": True,
+        "encrypted_mail": True,
+        "fail_closed": True,
+        "plaintext_mail": True,
+        "replay_idempotent": True,
+        "route_validation": True,
+    },
+    "ports": {
+        "alpha": int(alpha_port),
+        "awid": int(awid_port),
+        "beta": int(beta_port),
+    },
+    "project": project,
+    "schema": "aweb.release.federation-skew-observation.v1",
+}
+print(
+    "AWEB_FEDERATION_SKEW_OBSERVATION="
+    + json.dumps(observation, sort_keys=True, separators=(",", ":"))
+)
+PY
+fi

@@ -112,6 +112,13 @@ func resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (
 	if err != nil {
 		return nil, err
 	}
+	// Selections resolved here feed root-authority flows (team certificates,
+	// the identity's own signing key). A grant home carries only the session
+	// credential, so those flows must stop with a clear pointer instead of
+	// failing on missing root state.
+	if awconfig.IsGrantHome(identityHome.Root) {
+		return nil, errGrantHomeRootAuthority
+	}
 	return resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 }
 
@@ -151,10 +158,10 @@ func resolveIdentityForDir(workingDir string) (*awconfig.ResolvedIdentity, error
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	return resolveEphemeralIdentityWithoutState(workingDir)
+	return resolveLocalIdentityWithoutState(workingDir)
 }
 
-func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
+func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
 	workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if err != nil {
 		if workspace == nil && errors.Is(err, os.ErrNotExist) {
@@ -181,7 +188,7 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 	if err != nil {
 		return nil, fmt.Errorf("load active team certificate for %s: %w", activeTeamID, err)
 	}
-	if awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime)) != awid.IdentityModeLocal {
+	if awid.NormalizeIdentityScope(cert.IdentityScope) != awid.IdentityModeLocal {
 		return nil, usageError("current global identity is missing .aw/identity.yaml; restore it or run `aw init` again")
 	}
 
@@ -213,7 +220,6 @@ func resolveEphemeralIdentityWithoutState(workingDir string) (*awconfig.Resolved
 		Domain:         "",
 		Custody:        awid.CustodySelf,
 		IdentityScope:  awid.IdentityModeLocal,
-		Lifetime:       awid.LifetimeEphemeral,
 		RegistryURL:    "",
 		RegistryStatus: "",
 		CreatedAt:      "",
@@ -267,7 +273,14 @@ func resolveClientSelectionForDir(workingDir string) (*aweb.Client, *awconfig.Se
 }
 
 func resolveClientSelectionForDirWithTeamOverride(workingDir, teamIDOverride string) (*aweb.Client, *awconfig.Selection, error) {
-	sel, err := resolveSelectionForDirWithTeamOverride(workingDir, teamIDOverride)
+	identityHome, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	if awconfig.IsGrantHome(identityHome.Root) {
+		return resolveGrantClientSelection(workingDir, identityHome)
+	}
+	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -668,6 +681,7 @@ func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL st
 		DIDKey:   &awid.DIDKeyResolver{},
 		Registry: registry,
 		Pin:      &awid.PinResolver{Store: ps},
+		Team:     &awid.TeamRosterResolver{Client: c.Client, TeamID: sel.TeamID},
 	})
 
 	configureBaseURLFallback(c, sel, baseURL)
@@ -1324,38 +1338,37 @@ func ensureWorktreeContextAtIdentityHome(identityHome string) error {
 	return awconfig.SaveWorktreeContextTo(ctxPath, &awconfig.WorktreeContext{})
 }
 
-func printJSON(v any) {
+func formatJSONOutput(v any) string {
 	data, _ := json.Marshal(v)
 	var compat any
 	if err := json.Unmarshal(data, &compat); err == nil {
-		compat = addJSONNameScopeCompat(compat)
+		compat = addJSONNameCompat(compat)
 		data, _ = json.MarshalIndent(compat, "", "  ")
 	} else {
 		data, _ = json.MarshalIndent(v, "", "  ")
 	}
-	fmt.Println(string(data))
+	return string(data)
 }
 
-func addJSONNameScopeCompat(v any) any {
+func printJSON(v any) {
+	fmt.Println(formatJSONOutput(v))
+}
+
+func addJSONNameCompat(v any) any {
 	switch typed := v.(type) {
 	case map[string]any:
 		for key, value := range typed {
-			typed[key] = addJSONNameScopeCompat(value)
+			typed[key] = addJSONNameCompat(value)
 		}
 		if _, hasName := typed["name"]; !hasName {
 			if alias, ok := typed["alias"].(string); ok && strings.TrimSpace(alias) != "" {
 				typed["name"] = alias
 			}
 		}
-		if _, hasScope := typed["identity_scope"]; !hasScope {
-			if lifetime, ok := typed["lifetime"].(string); ok && strings.TrimSpace(lifetime) != "" {
-				typed["identity_scope"] = awid.NormalizeIdentityScope(lifetime)
-			}
-		}
 		return typed
 	case []any:
 		for i, value := range typed {
-			typed[i] = addJSONNameScopeCompat(value)
+			typed[i] = addJSONNameCompat(value)
 		}
 		return typed
 	default:
@@ -1363,12 +1376,17 @@ func addJSONNameScopeCompat(v any) any {
 	}
 }
 
-func printOutput(v any, formatter func(v any) string) {
+func writeOutput(w io.Writer, v any, formatter func(v any) string) error {
 	if jsonFlag {
-		printJSON(v)
-		return
+		_, err := fmt.Fprintln(w, formatJSONOutput(v))
+		return err
 	}
-	fmt.Print(formatter(v))
+	_, err := fmt.Fprint(w, formatter(v))
+	return err
+}
+
+func printOutput(v any, formatter func(v any) string) {
+	_ = writeOutput(os.Stdout, v, formatter)
 }
 
 func parseTimeBestEffort(value string) (time.Time, bool) {

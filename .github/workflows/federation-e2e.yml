@@ -3,17 +3,10 @@ name: OSS federation e2e
 # Blocking real-stack federation gate. Every PR instantiates the stable final
 # check so it can be required without leaving unrelated PRs pending. The
 # expensive stack runs only when an identity/CLI/federation contract surface
-# changed. Relevant pushes to main also exercise the complete gate.
+# changed. Main-push duplication is removed; the clean local release gate owns
+# the full pre-publication run.
 on:
   pull_request:
-  push:
-    branches: [main]
-    paths:
-      - "cli/go/**"
-      - "server/**"
-      - "awid/**"
-      - "scripts/e2e-oss-federation.sh"
-      - ".github/workflows/federation-e2e.yml"
 
 permissions:
   contents: read
@@ -48,6 +41,10 @@ jobs:
               'server/**' \
               'awid/**' \
               'scripts/e2e-oss-federation.sh' \
+              'scripts/e2e-federation-authority.sh' \
+              'scripts/federation-authority-worker.py' \
+              'scripts/check_federation_harness.py' \
+              'test-vectors/federation/**' \
               '.github/workflows/federation-e2e.yml'; then
               relevant=false
             fi
@@ -83,6 +80,9 @@ jobs:
           sudo mkdir -p /etc/docker
           echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
           sudo systemctl restart docker
+
+      - name: Run inactive strict-authority topology
+        run: PATH="$PWD/scripts/guard-bin:$PATH" ./scripts/e2e-federation-authority.sh
 
       - name: Run OSS federation e2e
         run: ./scripts/e2e-oss-federation.sh

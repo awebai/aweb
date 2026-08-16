@@ -29,7 +29,7 @@ From a clean reviewed candidate in the aweb repository:
 
 ```bash
 make test-a2a
-make release-a2a-gateway-check
+make release
 ```
 
 `make test-a2a` runs:
@@ -39,9 +39,9 @@ make release-a2a-gateway-check
 - AWID publication route tests; and
 - the public-copy wording guard.
 
-`make release-a2a-gateway-check` additionally builds the release Docker image,
-validates the maintained public YAML inside the container, and runs the real
-Docker gateway journey against aweb and AWID.
+`make release` runs the complete clean-Docker gate before publication. That
+gate builds the release image, validates the maintained public YAML inside the
+container, and runs the real Docker gateway journey against aweb and AWID.
 
 Also run:
 
@@ -63,7 +63,7 @@ Record:
 
 - exact candidate commit from `git rev-parse HEAD`;
 - exact non-merge commit count reviewed;
-- `make test-a2a` and `make release-a2a-gateway-check` results;
+- `make test-a2a` results and the release gate evidence;
 - the gateway image tag and source repository/commit stamped into the image;
 - AWID service version and confirmation that migration
   `007_a2a_publications.sql` is applied on the target registry;
@@ -189,16 +189,11 @@ state. Rollback communication must say this explicitly. Durable aweb mail may
 still exist, but callers cannot resume a lost in-memory A2A task id after the
 restart.
 
-## Tagging and publishing
+## Publishing
 
-Only after exact-head review and all required gates:
-
-```bash
-make release-a2a-gateway-tag
-make release-a2a-gateway-push
-```
-
-These targets create external artifacts. Confirm the tag removal/rollback path
-and holder before running them. Never tag or publish from an unreviewed or dirty
-worktree, and never treat a successful image push as evidence that the live
-publication gate passed.
+This runbook does not own a separate tag-and-push sequence. Follow the current
+repository release instructions and active human authorization for publication;
+never infer permission to create external artifacts from completion of the
+checks above. Do not tag or publish from an unreviewed or dirty worktree, and do
+not treat a successful image push as evidence that the live publication check
+passed.

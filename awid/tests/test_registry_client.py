@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import inspect
 import json
 
 import httpx
@@ -8,6 +10,7 @@ import pytest
 from httpx import MockTransport, Response
 
 import awid.registry as registry_module
+from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER
 from awid.did import generate_keypair
 from awid.registry import (
     MAX_REGISTRY_ERROR_BYTES,
@@ -17,6 +20,10 @@ from awid.registry import (
     RegistryError,
 )
 
+
+
+async def _unused_domain_registry_resolver(domain: str) -> str:
+    raise AssertionError("field-forwarding fixtures are never called")
 
 def test_registry_http_bound_values_are_pinned():
     assert MAX_REGISTRY_RESPONSE_BYTES == 10 * 1024 * 1024
@@ -494,3 +501,83 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
     assert all_key not in redis.values
     assert revocations_key not in redis.values
     assert redis.values["unrelated"] == "keep"
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_carries_the_service_token():
+    """CachedRegistryClient declares its own __init__, so every RegistryClient
+    field has to be named there explicitly; a field the override forgets is not
+    a missing value but a TypeError at construction."""
+    seen: dict[str, object] = {}
+
+    async def handler(request):
+        seen["token"] = request.headers.get(AWID_SERVICE_TOKEN_HEADER)
+        return Response(200, json={"status": "ok"})
+
+    token = "trusted-service-token-with-at-least-32-bytes"
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=FakeRedis(),  # type: ignore[arg-type]
+        transport=MockTransport(handler),
+        service_token=token,
+    )
+    try:
+        assert registry.service_token == token
+        assert await registry.health() == {"status": "ok"}
+    finally:
+        await registry.aclose()
+
+    assert seen["token"] == token
+
+
+def test_cached_registry_client_names_every_registry_client_field():
+    """The override's signature and the parent's field list have to be kept in
+    step by hand. Compare them so the next added field fails here rather than
+    at server startup."""
+    parent_fields = {
+        field.name for field in dataclasses.fields(RegistryClient) if field.init
+    }
+    override_parameters = set(
+        inspect.signature(CachedRegistryClient.__init__).parameters
+    ) - {"self", "redis_client"}
+
+    assert parent_fields - override_parameters == set()
+
+
+# One distinguishable value per RegistryClient field, so a value that arrives on
+# the wrong field, or does not arrive at all, is visible. Keyed by field name and
+# checked for completeness by the test below rather than by whoever edits it.
+DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS = {
+    "registry_url": "http://named-registry.test",
+    "timeout_seconds": 12.5,
+    "transport": MockTransport(lambda _request: Response(500)),
+    "base_url": "http://named-base.test",
+    "domain_registry_resolver": _unused_domain_registry_resolver,
+    "service_token": "distinguishable-service-token-of-sufficient-length",
+}
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_forwards_every_field_it_names():
+    """Naming a field in the override is half the work; forwarding it to super()
+    is the other half, and the parity test above cannot see that half. Worse, it
+    steers against it: when a newly added field makes parity fail, adding the
+    NAME is the minimum edit that turns it green, and the forwarding is a second
+    edit nothing then checks."""
+    fields = {
+        field.name for field in dataclasses.fields(RegistryClient) if field.init
+    }
+    assert fields == set(DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS), (
+        "give every RegistryClient field a distinguishable value here, or this "
+        "test silently stops covering the ones it does not name"
+    )
+
+    registry = CachedRegistryClient(
+        redis_client=FakeRedis(),  # type: ignore[arg-type]
+        **DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS,
+    )
+    try:
+        for name, value in DISTINGUISHABLE_REGISTRY_CLIENT_FIELDS.items():
+            assert getattr(registry, name) == value, name
+    finally:
+        await registry.aclose()

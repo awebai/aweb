@@ -199,9 +199,10 @@ Rules:
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
 <token>`. During compatibility, CLI JSON output may dual-emit `alias` and
-`name`, and may emit `identity_scope` beside a decoded legacy `lifetime` field.
-The deprecated `--alias` flag remains a hidden, warning compatibility alias for
-`--name`. New requests, registry storage, and product language use `name` as the
+`name`. Legacy certificate/config `lifetime` input is normalized at decode and
+normal output emits only `identity_scope`. The deprecated `--alias` flag remains
+a hidden, warning compatibility alias for `--name`. New requests, registry
+storage, and product language use `name` as the
 concept and `identity_scope=local|global` for scope.
 
 ## Command-to-verb mapping
@@ -318,6 +319,34 @@ machine then uses its local identity key to run `aw id team fetch-cert
 --namespace DOMAIN --team TEAM --cert-id ID`, which downloads, verifies, and
 installs the certificate locally. The team controller private key never leaves
 the controller machine.
+
+## Session grants
+
+A session grant lets a worker process act as an identity for a bounded window
+without holding the identity's root keys. The identity mints the grant from
+its own `.aw` home:
+
+```
+aw id grant mint --scope mail.read,mail.send,chat.read,chat.send \
+    --ttl 8h --out /path/to/grant-home
+```
+
+Minting generates a fresh session Ed25519 keypair, registers its `did:key`
+with the server together with the scopes and expiry, and writes a
+self-contained grant home (`grant.yaml` plus the session key — never the
+identity's `signing.key`). A process pointed at that directory (via
+`AWEB_IDENTITY_HOME` or `--identity-home`) runs `aw mail` and `aw chat`
+normally; requests are signed per-request with the session key and the server
+attributes the results to the identity.
+
+Scopes are `mail.read`, `mail.send`, `chat.read`, and `chat.send`; grant
+requests outside them, and every non-messaging surface (team lifecycle,
+leases, reservations, minting further grants), are refused server-side. A
+grant expires at its TTL and can be revoked early and idempotently with
+`aw id grant revoke <grant-id>`; `aw id grant list` shows each grant as
+active, revoked, or expired. Root-authority commands refuse to run from a
+grant home, and `aw whoami` there reports the subject identity plus the
+grant's status, scopes, and expiry.
 
 ## Message verification and trust
 

@@ -1,0 +1,259 @@
+{
+  "schema": "aweb.federation-authority-state.v1",
+  "contract": "aweb-aazd.2.1",
+  "selected_policies": {
+    "contact_authority": "identity_bound_address_and_did_aw",
+    "contact_replacement": "controller_proof_and_authenticated_recipient_acceptance",
+    "contact_transfer": "never_automatic",
+    "receiver_reuse_default_seconds": 60,
+    "receiver_reuse_max_seconds": 60,
+    "receiver_reuse_configurable_only_downward": true,
+    "receiver_reuse_is_freshness_sla": false
+  },
+  "bounds": {
+    "resolver_chain_deadline_seconds": 5,
+    "max_response_bytes": 10485760,
+    "max_log_entries": 4096,
+    "max_signature_verifications": 4096,
+    "max_safe_sequence": 9007199254740991,
+    "max_no_cache_bypass_per_message": 1,
+    "max_active_discovery_per_domain": 2,
+    "max_active_reads_per_origin": 4,
+    "max_active_external_reads": 32,
+    "token_bucket_burst": 5,
+    "token_bucket_refill_per_minute": 30,
+    "success_reuse_max_seconds": 60,
+    "authoritative_not_found_reuse_max_seconds": 15,
+    "dns_transport_failure_reuse_max_seconds": 5,
+    "coordination_store": "postgresql",
+    "mismatch_memoization": "none"
+  },
+  "identity_log_references": [
+    {
+      "path": "docs/vectors/identity-log-v1.json",
+      "sha256": "bf49643f2986753ec91297b928f23ddeaa84a9138b65fa21fd9708b9d7df552e",
+      "bytes": 4169,
+      "embedded": false,
+      "purpose": ["genesis", "checkpoint_extension", "current_positive_chain"]
+    },
+    {
+      "path": "docs/vectors/identity-log-negative-v1.json",
+      "sha256": "db80c25f30b295b9a069f8da019887ffd0fce0920751ede0dfd6d318e08d0dba",
+      "bytes": 16914,
+      "embedded": false,
+      "purpose": ["degraded_never_authorizes", "fork", "rollback", "invalid_chain"]
+    },
+    {
+      "path": "docs/vectors/identity-log-raw-wire-v1.json",
+      "sha256": "1b41206e46935d3f817bdb5286806181cdc7636f15a4d21dbc6420170f47348d",
+      "bytes": 3657,
+      "embedded": false,
+      "purpose": ["safe_integer_sequence", "raw_wire_rejection"]
+    }
+  ],
+  "checkpoint_cases": [
+    {
+      "name": "first_observation_inserts_genesis_checkpoint",
+      "snapshot": null,
+      "candidate": {"identity_log_entry_name": "register_did", "seq": 1, "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45", "state_hash": "a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "contains_snapshot": true},
+      "expected": {"action": "insert", "reason": null, "revision": 1}
+    },
+    {
+      "name": "exact_same_sequence_and_fields_is_idempotent",
+      "snapshot": {"seq": 1, "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45", "state_hash": "a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "revision": 1},
+      "candidate": {"identity_log_entry_name": "register_did", "seq": 1, "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45", "state_hash": "a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "contains_snapshot": true},
+      "expected": {"action": "idempotent", "reason": null, "revision": 1}
+    },
+    {
+      "name": "same_sequence_different_hash_is_split_view",
+      "snapshot": {"seq": 1, "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45", "state_hash": "a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "revision": 1},
+      "candidate": {"seq": 1, "entry_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "state_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "contains_snapshot": false},
+      "expected": {"action": "reject", "reason": "sender_did_log_split_view", "revision": 1}
+    },
+    {
+      "name": "lower_sequence_is_rollback",
+      "snapshot": {"seq": 2, "entry_hash": "2461cc5185dfb0d3836241574aca5927db2925069bd4a10216613a87b54351c0", "state_hash": "f757dacbf0e5c5a90f1f555067aad6d7bf9760c2daefcffd90452bf28c289f8b", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "revision": 2},
+      "candidate": {"identity_log_entry_name": "register_did", "seq": 1, "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45", "state_hash": "a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "contains_snapshot": true},
+      "expected": {"action": "reject", "reason": "sender_did_log_rollback", "revision": 2}
+    },
+    {
+      "name": "higher_sequence_extending_checkpoint_advances",
+      "snapshot": {"seq": 1, "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45", "state_hash": "a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "revision": 1},
+      "candidate": {"identity_log_entry_name": "rotate_key", "seq": 2, "entry_hash": "2461cc5185dfb0d3836241574aca5927db2925069bd4a10216613a87b54351c0", "state_hash": "f757dacbf0e5c5a90f1f555067aad6d7bf9760c2daefcffd90452bf28c289f8b", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "contains_snapshot": true},
+      "expected": {"action": "advance", "reason": null, "revision": 2, "invalidate_all_older_did_cohorts": true}
+    },
+    {
+      "name": "higher_sequence_omitting_checkpoint_is_split_view",
+      "snapshot": {"seq": 1, "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45", "state_hash": "a2454771bd0be7cc02175b27a8ae74ebbd9defe13864f9e0c82a90b74c1778ac", "current_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "revision": 1},
+      "candidate": {"seq": 2, "entry_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "state_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "current_did_key": "did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG", "contains_snapshot": false},
+      "expected": {"action": "reject", "reason": "sender_did_log_split_view", "revision": 1}
+    },
+    {
+      "name": "two_n_plus_one_forks_allow_one_winner",
+      "snapshot": {"seq": 1, "entry_hash": "85aef12d9351bb914c9dafcce9628500efa6ef8fc7c53b557dae53e7b0c65e45", "revision": 1},
+      "candidates": [
+        {"id": "fork-a", "seq": 2, "entry_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "contains_snapshot": true},
+        {"id": "fork-b", "seq": 2, "entry_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "contains_snapshot": true}
+      ],
+      "expected": {"action": "retry_once", "reason_for_loser": "sender_did_log_split_view", "max_winners": 1, "final_revision": 2}
+    },
+    {
+      "name": "delayed_n_plus_one_cannot_replace_n_plus_two",
+      "snapshot": {"seq": 3, "entry_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "revision": 3},
+      "candidate": {"seq": 2, "entry_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "contains_snapshot": false},
+      "expected": {"action": "reject", "reason": "sender_did_log_rollback", "revision": 3}
+    },
+    {
+      "name": "n_plus_two_extending_winning_n_plus_one_advances",
+      "snapshot": {"seq": 2, "entry_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "revision": 2},
+      "candidate": {"seq": 3, "entry_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "contains_snapshot": true},
+      "expected": {"action": "advance", "reason": null, "revision": 3}
+    },
+    {
+      "name": "n_plus_two_on_losing_fork_rejects",
+      "snapshot": {"seq": 2, "entry_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "revision": 2},
+      "candidate": {"seq": 3, "entry_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "contains_snapshot": false, "extends_losing_entry_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+      "expected": {"action": "reject", "reason": "sender_did_log_split_view", "revision": 2}
+    }
+  ],
+  "cohort_required_fields": [
+    "canonical_address",
+    "authority_selection",
+    "authority_name",
+    "controller_did",
+    "authority_statement_version",
+    "authority_statement_digest",
+    "inherited",
+    "registry_explicit",
+    "registry_origin",
+    "address_id",
+    "bound_did_aw",
+    "bound_current_did_key",
+    "checkpoint_seq",
+    "checkpoint_entry_hash",
+    "checkpoint_revision",
+    "authoritative_delivery_origin",
+    "authoritative_read_completed_at",
+    "expires_at",
+    "generation",
+    "revision",
+    "publishing_fence"
+  ],
+  "cohort_cases": [
+    {"name": "cohort_key_is_canonical_address_not_did", "input": {"address": "alpha.example.com/Alice", "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2"}, "expected": {"key": "alpha.example.com/Alice", "key_includes_did": false}},
+    {"name": "same_did_two_addresses_have_separate_cohorts", "input": {"addresses": ["alpha.example.com/Alice", "beta.example.com/Alice"], "did_aw": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2"}, "expected": {"cohort_count": 2, "cross_hit": false}},
+    {"name": "checkpoint_advance_invalidates_every_older_did_cohort", "input": {"old_checkpoint_revision": 1, "new_checkpoint_revision": 2, "cohort_generations": [4, 9]}, "expected": {"expired_count": 2, "generation_invalidated_count": 2, "same_transaction": true}},
+    {"name": "new_authority_tuple_replaces_whole_generation", "input": {"old_generation": 4, "new_generation": 5, "changed_fields": ["controller_did", "registry_origin", "address_id", "authoritative_delivery_origin"]}, "expected": {"merge_fields": false, "generation": 5}},
+    {"name": "fast_path_requires_postgresql_row_and_exact_tuple", "input": {"unexpired": true, "process_local_copy": true, "shared_row_read": false}, "expected": {"authorized": false, "reason": "federation_authority_coordination_unavailable"}},
+    {"name": "expiry_starts_at_complete_authoritative_read_using_database_time", "input": {"request_started_at": "2026-08-01T12:00:00Z", "authoritative_read_completed_at": "2026-08-01T12:00:04Z", "process_clock": "2026-08-01T13:00:00Z"}, "expected": {"expiry_base": "postgresql_clock_timestamp_at_complete_read", "expires_at": "2026-08-01T12:01:04Z"}},
+    {"name": "expiry_requires_full_authoritative_reread", "input": {"cohort_age_seconds": 60, "general_cache_live": true}, "expected": {"reuse": false, "reread": ["dns", "namespace", "address", "key_or_log", "origin"]}},
+    {"name": "fresh_source_change_invalidates_peer_cohorts", "input": {"expired": true, "source_changed": true}, "expected": {"old_claim_authorized": false, "peer_generations_invalidated": true}},
+    {"name": "source_suppression_can_renew_old_valid_state_without_sla_claim", "input": {"expired": true, "source_changed_but_suppressed": true, "served_state_cryptographically_valid": true}, "expected": {"reread_performed": true, "old_state_may_renew": true, "freshness_sla": false}}
+  ],
+  "work_fence_cases": [
+    {"name": "lease_uses_database_time", "input": {"process_clock_skew_seconds": 3600}, "expected": {"expiry_clock": "postgresql_clock_timestamp", "process_clock_authoritative": false}},
+    {"name": "external_work_holds_no_pool_connection", "input": {"stage": "dns_http_crypto"}, "expected": {"open_transaction": false, "checked_out_connection": false}},
+    {"name": "takeover_increments_persistent_fence", "input": {"expired_owner": "owner-1", "old_fence": 7, "new_owner": "owner-2"}, "expected": {"new_fence": 8, "counter_deleted": false}},
+    {"name": "expired_owner_cannot_publish_after_takeover", "input": {"publisher_owner": "owner-1", "publisher_fence": 7, "live_owner": "owner-2", "live_fence": 8}, "expected": {"publish": false, "reason": "federation_authority_cas_conflict"}},
+    {"name": "phase_a_locks_every_consumed_fence", "input": {"consumed_scopes": ["discovery:example.com", "origin:https://registry.example", "did:did:aw:fixture"]}, "expected": {"sorted_scope_locking": true, "exact_owner_fence_unexpired_required": true}},
+    {"name": "permit_count_ignores_expired_leases", "input": {"active": 3, "expired": 2, "limit": 4}, "expected": {"counted": 3, "permit_granted": true}},
+    {"name": "bigint_fence_overflow_fails_closed", "input": {"fence": 9223372036854775807}, "expected": {"publish": false, "reason": "federation_authority_coordination_unavailable"}},
+    {"name": "coordination_outage_has_no_local_or_redis_fallback", "input": {"postgresql_available": false, "redis_available": true, "process_cache_available": true}, "expected": {"authorized": false, "reason": "federation_authority_coordination_unavailable"}}
+  ],
+  "evidence_reuse_cases": [
+    {"name": "wrong_claim_then_correct_claim_uses_same_evidence_independent_comparison", "input": {"authority_generation": 4, "claims": ["wrong-did", "correct-did"]}, "expected": {"external_fetches": 1, "results": ["sender_address_did_mismatch", "accepted"], "mismatch_cached": false}},
+    {"name": "concurrent_wrong_and_correct_claim_cannot_poison", "input": {"authority_generation": 4, "concurrent_claims": ["wrong-key", "correct-key"]}, "expected": {"shared_evidence": true, "wrong_result": "sender_current_key_mismatch", "correct_result": "accepted"}},
+    {"name": "mismatch_is_never_keyed_by_address_domain_or_did", "input": {"candidate_keys": ["address", "domain", "did_aw"]}, "expected": {"allowed_keys": [], "default_memoization": "none"}},
+    {"name": "authoritative_not_found_scope_is_complete", "input": {"reuse_seconds": 15}, "expected": {"key_fields": ["authority_statement_digest", "authority_generation", "registry_origin", "canonical_address", "did_aw_where_applicable"]}},
+    {"name": "malformed_evidence_scope_includes_response_digest", "input": {"reuse": true}, "expected": {"key_fields": ["complete_source_scope", "response_digest"]}},
+    {"name": "dns_transport_failure_is_retryable_and_short_lived", "input": {"reuse_seconds": 5}, "expected": {"retryable": true, "max_seconds": 5}},
+    {"name": "controlled_bypass_is_one_per_message_and_shared", "input": {"attempted_bypasses": 2}, "expected": {"performed_bypasses": 1, "through_singleflight": true}},
+    {"name": "source_generation_replacement_discards_old_comparisons", "input": {"old_generation": 4, "new_generation": 5}, "expected": {"old_mismatch_reused": false, "new_tuple_replaces_whole": true}}
+  ],
+  "error_response_contract": {
+    "required_body_fields": ["detail", "reason", "retryable", "correlation_id"],
+    "diagnostic_fields_allowed": ["did_aw", "observed_sequence"],
+    "diagnostic_fields_forbidden": ["log_contents", "keys", "dns_answers", "peer_body", "internal_url"],
+    "retry_after_required_only_for": ["federation_rate_limited"]
+  },
+  "stable_errors": [
+    {"reason": "federation_envelope_invalid", "detail": "federation_envelope_invalid", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "federation_signature_invalid", "detail": "federation_signature_invalid", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "federation_timestamp_invalid", "detail": "federation_timestamp_invalid", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_address_required", "detail": "sender_address_required", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_registry_unresolvable", "detail": "sender_registry_unresolvable", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_address_wrapper_mismatch", "detail": "sender_address_wrapper_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_registry_discovery_failed", "detail": "sender_registry_discovery_failed", "http_status": 503, "retryable": true, "retry_after_required": false},
+    {"reason": "sender_registry_origin_forbidden", "detail": "sender_registry_origin_forbidden", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_registry_unavailable", "detail": "sender_registry_unavailable", "http_status": 503, "retryable": true, "retry_after_required": false},
+    {"reason": "sender_registry_tls_invalid", "detail": "sender_registry_tls_invalid", "http_status": 502, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_registry_protocol_invalid", "detail": "sender_registry_protocol_invalid", "http_status": 502, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_identity_not_found", "detail": "sender_identity_not_found", "http_status": 404, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_address_did_mismatch", "detail": "sender_address_did_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_current_key_mismatch", "detail": "sender_current_key_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_identity_unverifiable", "detail": "sender_identity_unverifiable", "http_status": 503, "retryable": true, "retry_after_required": false},
+    {"reason": "sender_did_log_invalid", "detail": "sender_did_log_invalid", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_did_log_rollback", "detail": "sender_did_log_rollback", "http_status": 409, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_did_log_split_view", "detail": "sender_did_log_split_view", "http_status": 409, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_identity_evidence_too_large", "detail": "sender_identity_evidence_too_large", "http_status": 502, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_route_missing", "detail": "sender_route_missing", "http_status": 424, "retryable": false, "retry_after_required": false},
+    {"reason": "sender_route_mismatch", "detail": "sender_route_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "local_sender_route_mismatch", "detail": "local_sender_route_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "target_route_mismatch", "detail": "target_route_mismatch", "http_status": 421, "retryable": false, "retry_after_required": false},
+    {"reason": "recipient_identity_not_found", "detail": "recipient_identity_not_found", "http_status": 404, "retryable": false, "retry_after_required": false},
+    {"reason": "recipient_address_did_mismatch", "detail": "recipient_address_did_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "recipient_current_key_mismatch", "detail": "recipient_current_key_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "recipient_route_missing", "detail": "recipient_route_missing", "http_status": 424, "retryable": false, "retry_after_required": false},
+    {"reason": "recipient_route_mismatch", "detail": "recipient_route_mismatch", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "local_recipient_route_missing", "detail": "local_recipient_route_missing", "http_status": 404, "retryable": false, "retry_after_required": false},
+    {"reason": "federation_conversation_invalid", "detail": "federation_conversation_invalid", "http_status": 409, "retryable": false, "retry_after_required": false},
+    {"reason": "recipient_policy_rejected", "detail": "recipient_policy_rejected", "http_status": 403, "retryable": false, "retry_after_required": false},
+    {"reason": "contact_identity_binding_required", "detail": "contact_identity_binding_required", "http_status": 409, "retryable": false, "retry_after_required": false},
+    {"reason": "federation_message_replay_conflict", "detail": "federation_message_replay_conflict", "http_status": 409, "retryable": false, "retry_after_required": false},
+    {"reason": "federation_authority_cas_conflict", "detail": "federation_authority_cas_conflict", "http_status": 503, "retryable": true, "retry_after_required": false},
+    {"reason": "federation_authority_coordination_unavailable", "detail": "federation_authority_coordination_unavailable", "http_status": 503, "retryable": true, "retry_after_required": false},
+    {"reason": "federation_resolver_busy", "detail": "federation_resolver_busy", "http_status": 503, "retryable": true, "retry_after_required": false},
+    {"reason": "federation_rate_limited", "detail": "federation_rate_limited", "http_status": 429, "retryable": true, "retry_after_required": true},
+    {"reason": "recipient_encryption_assertion_missing", "detail": "recipient_encryption_assertion_missing", "http_status": 424, "retryable": false, "retry_after_required": false},
+    {"reason": "recipient_encryption_assertion_invalid_or_stale", "detail": "recipient_encryption_assertion_invalid_or_stale", "http_status": 422, "retryable": false, "retry_after_required": false},
+    {"reason": "federation_route_unavailable", "detail": "federation_route_unavailable", "http_status": 503, "retryable": true, "retry_after_required": false},
+    {"reason": "federation_route_timeout", "detail": "federation_route_timeout", "http_status": 504, "retryable": true, "retry_after_required": false},
+    {"reason": "federation_route_rejected", "detail": "federation_route_rejected", "http_status": 502, "retryable": false, "retry_after_required": false}
+  ],
+  "mandatory_mutations": [
+    {"id": "accept_degraded_evidence", "must_fail": true, "proof": "schema"},
+    {"id": "checkpoint_keyed_by_registry", "must_fail": true, "proof": "schema"},
+    {"id": "checkpoint_upsert_without_cas", "must_fail": true, "proof": "future_behavior"},
+    {"id": "stale_checkpoint_overwrite_allowed", "must_fail": true, "proof": "schema"},
+    {"id": "same_sequence_fork_allowed", "must_fail": true, "proof": "schema"},
+    {"id": "state_accepted_before_checkpoint_winner", "must_fail": true, "proof": "future_behavior"},
+    {"id": "checkpoint_containment_omitted", "must_fail": true, "proof": "schema"},
+    {"id": "cohort_keyed_by_did", "must_fail": true, "proof": "schema"},
+    {"id": "cohort_tuple_field_omitted", "must_fail": true, "proof": "schema"},
+    {"id": "cross_worker_invalidation_removed", "must_fail": true, "proof": "future_behavior"},
+    {"id": "signed_address_replaced_by_wrapper", "must_fail": true, "proof": "future_behavior"},
+    {"id": "local_route_injection_allowed", "must_fail": true, "proof": "future_behavior"},
+    {"id": "receiver_reuse_over_60_seconds", "must_fail": true, "proof": "schema"},
+    {"id": "process_local_work_limits", "must_fail": true, "proof": "schema"},
+    {"id": "live_fence_predicate_removed", "must_fail": true, "proof": "future_behavior"},
+    {"id": "fence_counter_deleted_or_reset", "must_fail": true, "proof": "schema"},
+    {"id": "production_coordination_fallback", "must_fail": true, "proof": "schema"},
+    {"id": "leftmost_xff_trusted", "must_fail": true, "proof": "future_behavior"},
+    {"id": "ssrf_all_answer_validation_removed", "must_fail": true, "proof": "schema"},
+    {"id": "resolved_ip_pinning_removed", "must_fail": true, "proof": "schema"},
+    {"id": "redirect_proxy_or_credentials_allowed", "must_fail": true, "proof": "schema"},
+    {"id": "cache_mismatch_by_address", "must_fail": true, "proof": "schema"},
+    {"id": "mismatch_poisoning_correct_claim", "must_fail": true, "proof": "schema"},
+    {"id": "replay_keyed_by_composite", "must_fail": true, "proof": "future_behavior"},
+    {"id": "global_receipt_omitted_from_local_mail", "must_fail": true, "proof": "future_behavior"},
+    {"id": "global_receipt_omitted_from_local_chat", "must_fail": true, "proof": "future_behavior"},
+    {"id": "legacy_unreplayable_retry_accepted", "must_fail": true, "proof": "future_behavior"},
+    {"id": "established_result_equality_removed", "must_fail": true, "proof": "future_behavior"},
+    {"id": "phase_b_commits_split", "must_fail": true, "proof": "future_behavior"},
+    {"id": "emit_event_before_commit", "must_fail": true, "proof": "future_behavior"},
+    {"id": "error_vector_branch_omitted", "must_fail": true, "proof": "schema"},
+    {"id": "contact_transferred_by_address", "must_fail": true, "proof": "schema"},
+    {"id": "pre_activation_sot_slice_omitted", "must_fail": true, "proof": "pre_activation_sot"},
+    {"id": "e2e_downgraded_to_plaintext", "must_fail": true, "proof": "future_behavior"}
+  ]
+}

@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from uuid import UUID
 
+from awid.federation_errors import FederationAuthorityError
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
 from aweb.mcp.signing import HostedMessageEncryptor, HostedMessageSigner
 from aweb.mcp.tools.chat import chat_send
+from aweb.mcp.tools.federation import registry_delivery_origin
 from aweb.mcp.tools.mail import mcp_mail_message_from_row, send_mail
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
@@ -103,6 +105,7 @@ async def send_message_to_contact(
     redis=None,
     *,
     registry_client,
+    federation_authority=None,
     hosted_signer: HostedMessageSigner | None = None,
     hosted_encryptor: HostedMessageEncryptor | None = None,
     contact_id: str,
@@ -119,7 +122,12 @@ async def send_message_to_contact(
     try:
         normalized_channel = _normalize_channel(channel)
         contact = await _get_owned_contact(db_infra, contact_id=contact_id)
-        target = await _target_from_contact_reference(db_infra, contact=contact)
+        target = await _resolve_contact_target(
+            db_infra,
+            registry_client=registry_client,
+            federation_authority=federation_authority,
+            contact=contact,
+        )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
 
@@ -130,16 +138,12 @@ async def send_message_to_contact(
         conversation_type=normalized_channel,
         target=target,
     )
-    if existing is None:
-        try:
-            target = await _resolve_contact_target(db_infra, registry_client=registry_client, contact=contact)
-        except ServiceError as exc:
-            return json.dumps({"error": exc.detail})
     if normalized_channel == "mail":
         if existing is not None:
             return await send_mail(
                 db_infra,
                 registry_client=registry_client,
+                federation_authority=federation_authority,
                 hosted_signer=hosted_signer,
                 hosted_encryptor=hosted_encryptor,
                 conversation_id=existing["conversation_id"],
@@ -150,6 +154,7 @@ async def send_message_to_contact(
         return await send_mail(
             db_infra,
             registry_client=registry_client,
+            federation_authority=federation_authority,
             hosted_signer=hosted_signer,
             hosted_encryptor=hosted_encryptor,
             to=target["address"],
@@ -163,6 +168,7 @@ async def send_message_to_contact(
             db_infra,
             redis,
             registry_client=registry_client,
+            federation_authority=federation_authority,
             hosted_signer=hosted_signer,
             hosted_encryptor=hosted_encryptor,
             session_id=existing["conversation_id"],
@@ -174,6 +180,7 @@ async def send_message_to_contact(
         db_infra,
         redis,
         registry_client=registry_client,
+        federation_authority=federation_authority,
         hosted_signer=hosted_signer,
         hosted_encryptor=hosted_encryptor,
         to_address=target["address"],
@@ -271,7 +278,8 @@ async def _get_owned_contact(db_infra, *, contact_id: str) -> dict:
     row = await aweb_db.fetch_one(
         """
         SELECT contact_id, owner_did, contact_address, label, created_at,
-               reference_type, status, handle_namespace, target_agent_name
+               reference_type, status, handle_namespace, target_agent_name,
+               contact_did_aw, binding_controller_did, binding_accepted_at
         FROM {{tables.contacts}}
         WHERE contact_id = $1
           AND owner_did = ANY($2::text[])
@@ -304,13 +312,19 @@ async def _target_from_contact_reference(db_infra, *, contact: dict) -> dict:
         "team_id": None,
         "alias": name,
         "address": address,
-        "did_aw": "",
+        "did_aw": str(contact.get("contact_did_aw") or "").strip(),
         "did_key": "",
         "external": True,
     }
 
 
-async def _resolve_contact_target(db_infra, *, registry_client, contact: dict) -> dict:
+async def _resolve_contact_target(
+    db_infra,
+    *,
+    registry_client,
+    federation_authority,
+    contact: dict,
+) -> dict:
     if contact["reference_type"] == "handle":
         target = await resolve_handle_contact_agent(
             db_infra,
@@ -324,10 +338,33 @@ async def _resolve_contact_target(db_infra, *, registry_client, contact: dict) -
     address = (contact.get("contact_address") or "").strip()
     if "/" not in address:
         raise ValidationError("Contact address must be domain/name")
+    bound_did_aw = str(contact.get("contact_did_aw") or "").strip()
+    if not bound_did_aw.startswith("did:aw:"):
+        raise ValidationError("contact_identity_binding_required")
     domain, name = address.split("/", 1)
-    target: dict | None = None
-    if registry_client is not None:
-        resolved = await registry_client.resolve_address(domain, name, did_key=(get_auth().did_key or None))
+    try:
+        target = await get_agent_by_namespace_alias(
+            db_infra, namespace=domain, alias=name
+        )
+    except AmbiguousLocalAddressError as exc:
+        raise ServiceError(str(exc)) from exc
+    if target is None:
+        resolved = None
+        if federation_authority is not None:
+            try:
+                auth = get_auth()
+                resolved = await federation_authority.resolve_contact(
+                    address,
+                    source_ip="mcp:"
+                    + str(auth.did_key or auth.did_aw or "unknown"),
+                )
+            except FederationAuthorityError as exc:
+                if exc.reason != "sender_identity_not_found":
+                    raise ServiceError(exc.reason) from exc
+        elif registry_client is not None:
+            resolved = await registry_client.resolve_address(
+                domain, name, did_key=(get_auth().did_key or None)
+            )
         if resolved is not None and resolved.did_aw:
             target = {
                 "agent_id": None,
@@ -335,31 +372,30 @@ async def _resolve_contact_target(db_infra, *, registry_client, contact: dict) -
                 "alias": name,
                 "address": address,
                 "did_aw": resolved.did_aw.strip(),
-                "did_key": (getattr(resolved, "current_did_key", "") or "").strip(),
-                        "external": True,
-            }
-    if target is None:
-        try:
-            target = await get_agent_by_namespace_alias(db_infra, namespace=domain, alias=name)
-        except AmbiguousLocalAddressError as exc:
-            raise ServiceError(str(exc)) from exc
-    if target is None:
-        return {
-            "agent_id": None,
-            "team_id": None,
-            "alias": name,
-            "address": address,
-            "did_aw": "",
-            "did_key": "",
+                "did_key": (
+                    getattr(resolved, "current_did_key", "") or ""
+                ).strip(),
+                "delivery_origin": registry_delivery_origin(resolved),
+                "authority_controller_did": str(
+                    getattr(resolved, "controller_did", "") or ""
+                ).strip(),
                 "external": True,
-        }
+            }
+    if target is None or str(target.get("did_aw") or "").strip() != bound_did_aw:
+        raise ValidationError("contact_identity_binding_required")
     copied = dict(target)
     copied["address"] = (copied.get("address") or "").strip() or address
     return copied
 
 
-async def _find_existing_conversation(db_infra, *, conversation_type: str, target: dict) -> dict | None:
+async def _find_existing_conversation(
+    db_infra, *, conversation_type: str, target: dict
+) -> dict | None:
     auth = get_auth()
+    target_did = (target.get("did_aw") or target.get("did_key") or "").strip()
+    target_address = (
+        None if target_did else (target.get("address") or "").strip() or None
+    )
     if conversation_type == "chat":
         session_id = await find_session_between(
             db_infra,
@@ -367,10 +403,10 @@ async def _find_existing_conversation(db_infra, *, conversation_type: str, targe
             did_key_a=auth.did_key,
             agent_id_a=auth.agent_id,
             address_a=(auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias),
-            did_b=(target.get("did_aw") or target.get("did_key") or "").strip(),
+            did_b=target_did,
             did_key_b=(target.get("did_key") or "").strip() or None,
             agent_id_b=target.get("agent_id"),
-            address_b=(target.get("address") or "").strip() or None,
+            address_b=target_address,
         )
         if session_id is not None:
             return {"conversation_id": str(session_id)}
@@ -381,10 +417,10 @@ async def _find_existing_conversation(db_infra, *, conversation_type: str, targe
         did_key_a=auth.did_key,
         agent_id_a=auth.agent_id,
         address_a=(auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias),
-        did_b=(target.get("did_aw") or target.get("did_key") or "").strip(),
+        did_b=target_did,
         did_key_b=(target.get("did_key") or "").strip() or None,
         agent_id_b=target.get("agent_id"),
-        address_b=(target.get("address") or "").strip() or None,
+        address_b=target_address,
     )
 
 
@@ -397,7 +433,11 @@ def _target_refs(target: dict) -> tuple[list[str], list[str]]:
         )
         if value
     ]
-    addresses = [value for value in [(target.get("address") or "").strip()] if value]
+    addresses = (
+        []
+        if dids
+        else [value for value in [(target.get("address") or "").strip()] if value]
+    )
     return dids, addresses
 
 

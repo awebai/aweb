@@ -1,7 +1,7 @@
 """Session-scoped admission leases.
 
 These leases prevent accidental concurrent admission when callers use them.
-They are not fencing credentials and are not automatically acquired by OAS.
+They are not fencing credentials and are not automatically acquired by OATS.
 """
 
 from __future__ import annotations

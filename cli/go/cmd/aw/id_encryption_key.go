@@ -395,7 +395,6 @@ func resolveIdentityForEncryptionKeyForDir(workingDir string, identityHome encry
 		DID:            didKey,
 		Custody:        awid.CustodySelf,
 		IdentityScope:  awid.IdentityModeLocal,
-		Lifetime:       awid.LifetimeEphemeral,
 	}, nil
 }
 
@@ -424,9 +423,9 @@ func resolveActiveCertificateIdentityAtHomeForEncryptionKey(workingDir, identity
 	if certDID := strings.TrimSpace(cert.MemberDIDKey); certDID == "" || certDID != didKey {
 		return nil, fmt.Errorf("external signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
 	}
-	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
+	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)
 	if identityScope != awid.IdentityModeGlobal && identityScope != awid.IdentityModeLocal {
-		identityScope = awid.IdentityModeLocal
+		return nil, fmt.Errorf("active team certificate has unsupported identity_scope %q", cert.IdentityScope)
 	}
 	canonicalWorkingDir := filepath.Clean(strings.TrimSpace(workingDir))
 	canonicalIdentityHome := filepath.Clean(strings.TrimSpace(identityHome))
@@ -441,7 +440,6 @@ func resolveActiveCertificateIdentityAtHomeForEncryptionKey(workingDir, identity
 		Address:              strings.TrimSpace(cert.MemberAddress),
 		Custody:              awid.CustodySelf,
 		IdentityScope:        identityScope,
-		Lifetime:             awid.LegacyLifetimeForIdentityScope(identityScope),
 		RegistryURL:          strings.TrimSpace(membership.RegistryURL),
 	}
 	if domain, handle, ok := awconfig.CutIdentityAddress(resolved.Address); ok {
@@ -496,11 +494,10 @@ func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awcon
 	if certDID != didKey {
 		return nil, fmt.Errorf("current signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
 	}
-	identityScope := awid.NormalizeIdentityScope(firstNonEmpty(cert.IdentityScope, cert.Lifetime))
+	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)
 	if identityScope != awid.IdentityModeGlobal && identityScope != awid.IdentityModeLocal {
-		identityScope = awid.IdentityModeLocal
+		return nil, fmt.Errorf("active team certificate has unsupported identity_scope %q", cert.IdentityScope)
 	}
-	lifetime := awid.LegacyLifetimeForIdentityScope(identityScope)
 	if registryURL == "" {
 		if identity, _, err := awconfig.LoadWorktreeIdentityFromDir(workingDir); err == nil && identity != nil {
 			registryURL = strings.TrimSpace(identity.RegistryURL)
@@ -518,7 +515,6 @@ func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awcon
 		Address:        strings.TrimSpace(cert.MemberAddress),
 		Custody:        awid.CustodySelf,
 		IdentityScope:  identityScope,
-		Lifetime:       lifetime,
 		RegistryURL:    registryURL,
 	}
 	if domain, handle, ok := awconfig.CutIdentityAddress(resolved.Address); ok {

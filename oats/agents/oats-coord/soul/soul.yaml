@@ -1,0 +1,7 @@
+name: oats-coord
+kind: persistent
+description: Coordinator for the OATS-aweb seam — owns the Principal/Instance/Session model, the durable-identity boundary, and delivery of the epic
+repo: .
+work: workspace
+runtime: pi
+type: coordinators

@@ -40,7 +40,6 @@ type SpawnAcceptInviteRequest struct {
 	StableID           string                           `json:"stable_id,omitempty"`
 	PublicKey          string                           `json:"public_key,omitempty"`
 	Custody            string                           `json:"custody,omitempty"`
-	Lifetime           string                           `json:"lifetime,omitempty"`
 	IdentityScope      string                           `json:"identity_scope,omitempty"`
 	AtomicAddressClaim *AtomicAddressClaimIdentityProof `json:"atomic_address_claim,omitempty"`
 }
@@ -61,7 +60,7 @@ type SpawnAcceptInviteResponse struct {
 	DID                 string `json:"did,omitempty"`
 	StableID            string `json:"stable_id,omitempty"`
 	Custody             string `json:"custody,omitempty"`
-	Lifetime            string `json:"lifetime,omitempty"`
+	IdentityScope       string `json:"identity_scope,omitempty"`
 	AccessMode          string `json:"access_mode"`
 	Created             bool   `json:"created"`
 	AddressReachability string `json:"address_reachability,omitempty"`

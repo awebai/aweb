@@ -35,7 +35,7 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 
 	initURL = "https://app.aweb.ai"
 	initRole = "reviewer"
-	initPersistent = false
+	initGlobal = false
 	initInjectDocs = false
 	initSetupHooks = false
 	initWriteContext = true
@@ -100,7 +100,7 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 	oldName := initName
 	oldDomain := initDomain
 	oldBYOD := initBYOD
-	oldPersistent := initPersistent
+	oldPersistent := initGlobal
 	oldURL := initURL
 	t.Cleanup(func() {
 		guidedOnboardingWizard = oldWizard
@@ -111,7 +111,7 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 		initName = oldName
 		initDomain = oldDomain
 		initBYOD = oldBYOD
-		initPersistent = oldPersistent
+		initGlobal = oldPersistent
 		initURL = oldURL
 	})
 
@@ -129,7 +129,7 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 	initName = "alice"
 	initDomain = ""
 	initBYOD = false
-	initPersistent = false
+	initGlobal = false
 
 	var captured guidedOnboardingRequest
 	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -281,10 +281,10 @@ func TestResolveExplicitInitAwebURLDefaultsForPublicAWIDTeam(t *testing.T) {
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: "did:key:z6MkpPublicTeamMember111111111111111111111111111",
-		Alias:        "alice",
-		Lifetime:     awid.LifetimeEphemeral,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  "did:key:z6MkpPublicTeamMember111111111111111111111111111",
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatalf("sign team certificate: %v", err)
@@ -336,10 +336,10 @@ func TestResolveExplicitInitAwebURLOverrideWinsOverDiscoveryFallback(t *testing.
 		t.Fatal(err)
 	}
 	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
-		Team:         "backend:acme.com",
-		MemberDIDKey: "did:key:z6MkpPublicTeamMember111111111111111111111111111",
-		Alias:        "alice",
-		Lifetime:     awid.LifetimeEphemeral,
+		Team:          "backend:acme.com",
+		MemberDIDKey:  "did:key:z6MkpPublicTeamMember111111111111111111111111111",
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeLocal,
 	})
 	if err != nil {
 		t.Fatalf("sign team certificate: %v", err)
@@ -513,7 +513,7 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	oldAlias := initAlias
 	oldName := initName
 	oldRole := initRole
-	oldPersistent := initPersistent
+	oldPersistent := initGlobal
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldLocalFlow
 		guidedOnboardingWizard = oldWizard
@@ -527,7 +527,7 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 		initAlias = oldAlias
 		initName = oldName
 		initRole = oldRole
-		initPersistent = oldPersistent
+		initGlobal = oldPersistent
 	})
 
 	tmp := t.TempDir()
@@ -547,7 +547,7 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	initAlias = "laptop"
 	initName = ""
 	initRole = "developer"
-	initPersistent = true
+	initGlobal = true
 
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		t.Fatalf("local flow should not run for explicit hosted args: %+v", req)
@@ -575,7 +575,7 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	if got.RegistryURL != "http://127.0.0.1:8010" {
 		t.Fatalf("registry_url=%q", got.RegistryURL)
 	}
-	if got.Username != "alice" || got.Alias != "laptop" || !got.Persistent {
+	if got.Username != "alice" || got.Alias != "laptop" || !got.Global {
 		t.Fatalf("guided request lost hosted args: %+v", got)
 	}
 	if !got.NonInteractive {
@@ -596,7 +596,7 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 	oldAlias := initAlias
 	oldName := initName
 	oldRole := initRole
-	oldPersistent := initPersistent
+	oldPersistent := initGlobal
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldLocalFlow
 		guidedOnboardingWizard = oldWizard
@@ -610,7 +610,7 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 		initAlias = oldAlias
 		initName = oldName
 		initRole = oldRole
-		initPersistent = oldPersistent
+		initGlobal = oldPersistent
 	})
 
 	tmp := t.TempDir()
@@ -630,7 +630,7 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 	initAlias = "alice"
 	initName = ""
 	initRole = "developer"
-	initPersistent = false
+	initGlobal = false
 
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		t.Fatalf("local flow should not run for explicit BYOD args: %+v", req)
@@ -865,7 +865,7 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 		t.Fatalf("team name=%v", gotTeamPayload["name"])
 	}
 	if gotCertPayload["identity_scope"] != awid.IdentityModeLocal {
-		t.Fatalf("cert lifetime=%v", gotCertPayload["identity_scope"])
+		t.Fatalf("cert identity_scope=%v", gotCertPayload["identity_scope"])
 	}
 	if _, ok := gotCertPayload["member_did_aw"]; ok {
 		t.Fatalf("local cert should not include member_did_aw: %v", gotCertPayload["member_did_aw"])
@@ -910,8 +910,8 @@ func TestImplicitLocalInitProvisioningAgainstLocalServers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadTeamCertificate: %v", err)
 	}
-	if cert.Lifetime != awid.LifetimeEphemeral {
-		t.Fatalf("loaded cert lifetime=%q", cert.Lifetime)
+	if cert.IdentityScope != awid.IdentityModeLocal {
+		t.Fatalf("loaded cert identity_scope=%q", cert.IdentityScope)
 	}
 	if cert.MemberDIDAW != "" {
 		t.Fatalf("loaded cert member_did_aw=%q", cert.MemberDIDAW)

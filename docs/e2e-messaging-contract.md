@@ -599,16 +599,53 @@ protected field, or old servers that do not canonicalize a protected field that
 is present, must fail clearly. They must not strip the field, retry as
 plaintext, or silently downgrade the envelope version.
 
+### Cross-registry authority ordering
+
+Encrypted-v2 federation uses the same strict Ed25519 sender authority as
+plaintext before evaluating recipient X25519 assertions. The external registry
+is selected from protected, signed `from.address`; a wrapper address, when
+present, must match it. The receiver's home registry, general cache, bare
+`did:aw`, and wrapper registry hints are not external sender authority.
+
+After strict address/DID/current-key/origin and genesis-anchored log authority
+commits its PostgreSQL checkpoint/cohort, encrypted verification continues with
+the existing protected-envelope hash/AAD/inner-header checks and recipient
+assertion authority. Missing recipient assertion returns
+`recipient_encryption_assertion_missing`; invalid or stale assertion returns
+`recipient_encryption_assertion_invalid_or_stale`. Neither branch retries or
+stores plaintext. Same-registry encrypted delivery keeps the same bindings, and
+a local `did:key` continuation still requires its valid embedded
+identity-signed sender assertion plus the existing learned route.
+
+The external authority cohort has a 60-second maximum receiver reuse interval,
+configurable only shorter. It is not an end-to-end freshness SLA: a DNS or
+registry source can suppress an unseen transition while serving old valid
+evidence. PostgreSQL coordination failure fails closed with no Redis or
+process-local authorization fallback. Stable response details are in the
+[federation error reference](federation-error-reference.md).
+
 ## Replay And Idempotency
 
 `created_at` must be RFC3339 or RFC3339Nano UTC. Current ingestion accepts a
 five-minute skew window for server/federation ingestion. `expires_at` must be
 inside that ingestion window.
 
-The server stores `message_id` and the signed envelope hash. A repeated delivery
-of the exact same signed envelope may be treated as idempotent. A repeated
-`message_id` with any different signed payload is rejected as replay or
-mutation.
+The server stores one receiver-wide receipt keyed solely by `message_id` for
+every local or federated mail/chat message, across plaintext and encrypted
+content. An exact federated retry must match the complete canonical
+signed/protected envelope and canonical metadata, including kind, sender,
+target, and conversation/session. It returns the stored established result
+without another message, route, contact, or event effect. Any changed protected
+bytes, signed payload, signature, sender, target, kind, conversation/session, or
+cross-type reuse returns `federation_message_replay_conflict`.
+
+Local-path and backfilled historical receipts are `legacy_unreplayable`: they
+never authorize federation/cross-kind replay and block a later insert after the
+message row is deleted. Existing local API idempotency may still return its row
+before attempting an insert. Receipts are security history and survive ordinary
+message garbage collection. Receipt, encrypted message, participant,
+route/contact, and durable event-outbox effects commit in one transaction;
+rollback leaves none and permits a later attempt to claim the UUID normally.
 
 Clients must not reject already-accepted stored mail solely because its
 `created_at` is old. Async mail may be first read hours or days after server
@@ -737,6 +774,10 @@ of this contract it touches. Minimum conformance and release controls include:
 - sender self-copy decrypts to byte-for-byte identical plaintext,
 - non-recipient decrypt attempt fails cleanly,
 - stale timestamp or replay after skew window fails closed,
+- one receiver-wide `message_id` receipt returns the exact stored result only
+  for an identical federated envelope and rejects changed/cross-kind reuse,
+- `legacy_unreplayable` local/historical receipts never become federation replay
+  authority or permit UUID reuse after message deletion,
 - recipient key substitution fails closed,
 - algorithm-suite downgrade fails closed,
 - malformed ciphertext and malformed key wraps return structured errors rather
@@ -746,4 +787,9 @@ of this contract it touches. Minimum conformance and release controls include:
   breaks signature/AAD verification,
 - a valid embedded sender assertion enables local-only stored-route replies,
   while a missing or invalid assertion on such a reply target fails closed,
+- strict sender Ed25519 authority precedes recipient X25519 assertion checks,
+  and missing/invalid assertion errors remain distinct,
+- external registry selection comes from the protected signed address rather
+  than home-registry or wrapper hints,
+- source suppression is not mislabeled as a 60-second freshness guarantee, and
 - after E2E intent is selected, legacy plaintext is never chosen as fallback.

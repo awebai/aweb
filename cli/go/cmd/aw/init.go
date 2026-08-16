@@ -50,7 +50,7 @@ var (
 	initWriteContext       bool
 	initPrintExports       bool
 	initRole               string
-	initPersistent         bool
+	initGlobal             bool
 	initInboundMode        string
 )
 
@@ -93,8 +93,8 @@ func init() {
 	initCmd.Flags().BoolVar(&initWriteContext, "write-context", true, "Ensure .aw/context exists in the current directory")
 	initCmd.Flags().BoolVar(&initPrintExports, "print-exports", false, "Print shell export lines after JSON output")
 	addWorkspaceRoleFlags(initCmd, &initRole, "Workspace role name (must match a role in the active team roles bundle)")
-	initCmd.Flags().BoolVar(&initPersistent, "global", false, "Create an addressed self-custodial global identity instead of the default local workspace")
-	initCmd.Flags().BoolVar(&initPersistent, "persistent", false, "Deprecated alias for --global")
+	initCmd.Flags().BoolVar(&initGlobal, "global", false, "Create an addressed self-custodial global identity instead of the default local workspace")
+	initCmd.Flags().BoolVar(&initGlobal, "persistent", false, "Deprecated alias for --global")
 	markDeprecatedHiddenFlag(initCmd, "persistent", "global")
 	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.")
 
@@ -156,12 +156,12 @@ func runInit(cmd *cobra.Command, args []string) error {
 			AwebURL:      awebURL,
 			RegistryURL:  registryURL,
 			APIKey:       apiKey,
-			Name:         resolveInitGlobalName(initPersistent),
+			Name:         resolveInitGlobalName(initGlobal),
 			Alias:        resolveAliasValue(resolveInitLocalName()),
 			Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
 			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
-			Persistent:   initPersistent,
+			Global:       initGlobal,
 			InboundMode:  canonicalInitInboundModeForWire(initInboundMode),
 		})
 		if err != nil {
@@ -265,16 +265,16 @@ func runInit(cmd *cobra.Command, args []string) error {
 			Username:    strings.TrimSpace(initUsername),
 			Domain:      strings.TrimSpace(initDomain),
 			Alias: func() string {
-				if initPersistent {
+				if initGlobal {
 					return strings.TrimSpace(initAlias)
 				}
 				return resolveAliasValue(resolveInitLocalName())
 			}(),
-			Name:               resolveInitGlobalName(initPersistent),
+			Name:               resolveInitGlobalName(initGlobal),
 			HumanName:          resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:          resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
 			Role:               resolveRequestedRole(strings.TrimSpace(initRole)),
-			Persistent:         initPersistent,
+			Global:             initGlobal,
 			InboundMode:        canonicalInitInboundModeForWire(initInboundMode),
 			InjectAgentDocs:    !initDoNotTouchAgentsMD && !jsonFlag,
 			DoNotTouchAgentsMD: initDoNotTouchAgentsMD,
@@ -304,7 +304,7 @@ func initHasExplicitOnboardingArgs() bool {
 			return true
 		}
 	}
-	return initBYOD || initPersistent
+	return initBYOD || initGlobal
 }
 
 func resolveInitAwebURL() (string, error) {
@@ -444,14 +444,14 @@ func initShouldUseImplicitLocalFlow(registryURL string) bool {
 	return !initBYOD &&
 		strings.TrimSpace(initUsername) == "" &&
 		strings.TrimSpace(initDomain) == "" &&
-		!initPersistent
+		!initGlobal
 }
 
 // initNeedsFullInitForAddonOnly returns true when an add-on request must
 // escalate to full init because it changes identity/team state or has no
 // existing workspace to operate on.
 func initNeedsFullInitForAddonOnly() bool {
-	if initBYOD || initUsername != "" || initDomain != "" || initAlias != "" || initName != "" || initRole != "" || initPersistent {
+	if initBYOD || initUsername != "" || initDomain != "" || initAlias != "" || initName != "" || initRole != "" || initGlobal {
 		return true
 	}
 	wd, _ := os.Getwd()
@@ -577,7 +577,7 @@ func validateInitInboundMode() error {
 	if value == "" {
 		return nil
 	}
-	if !initPersistent {
+	if !initGlobal {
 		return fmt.Errorf("--inbound-mode is only valid with --global; local workspaces do not have an inbound delivery mode")
 	}
 	if initBYOD {

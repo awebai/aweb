@@ -539,9 +539,13 @@ async def test_consumer_mcp_send_message_to_identity_contact_reuses_existing_mai
     _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
     contact = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
-        VALUES ('did:aw:alice', 'acme.com/bob', 'Bob')
-        RETURNING contact_id
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, label
+        ) VALUES (
+            'did:aw:alice', 'acme.com/bob', 'did:aw:bob',
+            'did:key:z6MkNamespaceController', clock_timestamp(), 'Bob'
+        ) RETURNING contact_id
         """
     )
     existing_conversation_id = str(uuid4())
@@ -675,11 +679,156 @@ async def test_consumer_mcp_send_message_to_identity_pending_contact_is_sendable
         )
     )
 
-    assert result["status"] == "delivered"
-    row = await aweb_cloud_db.aweb_db.fetch_one("SELECT to_agent_id, to_did, body FROM {{tables.messages}}")
-    assert str(row["to_agent_id"]) == bob_agent_id
-    assert row["to_did"] == "did:aw:bob"
-    assert row["body"] == "hello pending identity"
+    assert result == {"error": "contact_identity_binding_required"}
+    assert await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT COUNT(*) FROM {{tables.messages}}"
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_consumer_mcp_identity_contact_rejects_local_address_reassignment(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    alice_agent_id, _ = await _seed_team(aweb_cloud_db.aweb_db)
+    _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
+    contact = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, label
+        ) VALUES (
+            'did:aw:alice', 'acme.com/bob', 'did:aw:previous-bob',
+            'did:key:z6MkNamespaceController', clock_timestamp(), 'Previous Bob'
+        ) RETURNING contact_id
+        """
+    )
+
+    result = json.loads(
+        await contacts_tools.send_message_to_contact(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            contact_id=str(contact["contact_id"]),
+            message="must not transfer",
+            channel="mail",
+        )
+    )
+
+    assert result == {"error": "contact_identity_binding_required"}
+    assert await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT COUNT(*) FROM {{tables.messages}}"
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_mail_conversation(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    alice_agent_id, bob_agent_id = await _seed_team(aweb_cloud_db.aweb_db)
+    _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
+    contact = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, label
+        ) VALUES (
+            'did:aw:alice', 'acme.com/bob', 'did:aw:previous-bob',
+            'did:key:z6MkNamespaceController', clock_timestamp(), 'Previous Bob'
+        ) RETURNING contact_id
+        """
+    )
+    conversation_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did
+        ) VALUES ($1, 'mail', 'ops:acme.com', 'did:aw:alice')
+        """,
+        conversation_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, role
+        ) VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice', 'initiator'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob', 'participant')
+        """,
+        conversation_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+
+    result = json.loads(
+        await contacts_tools.send_message_to_contact(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            contact_id=str(contact["contact_id"]),
+            message="must not transfer through mail conversation",
+            channel="mail",
+        )
+    )
+
+    assert result == {"error": "contact_identity_binding_required"}
+    assert await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT COUNT(*) FROM {{tables.messages}}"
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_consumer_mcp_identity_contact_rejects_reassigned_existing_chat_session(
+    aweb_cloud_db,
+    monkeypatch,
+):
+    alice_agent_id, bob_agent_id = await _seed_team(aweb_cloud_db.aweb_db)
+    _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
+    contact = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, label
+        ) VALUES (
+            'did:aw:alice', 'acme.com/bob', 'did:aw:previous-bob',
+            'did:key:z6MkNamespaceController', clock_timestamp(), 'Previous Bob'
+        ) RETURNING contact_id
+        """
+    )
+    session_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+        VALUES ($1, 'ops:acme.com', 'alice')
+        """,
+        session_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (
+            session_id, did, agent_id, alias, address
+        ) VALUES
+            ($1, 'did:aw:alice', $2, 'alice', 'acme.com/alice'),
+            ($1, 'did:aw:bob', $3, 'bob', 'acme.com/bob')
+        """,
+        session_id,
+        alice_agent_id,
+        bob_agent_id,
+    )
+
+    result = json.loads(
+        await contacts_tools.send_message_to_contact(
+            DBInfra(aweb_cloud_db.aweb_db),
+            registry_client=None,
+            contact_id=str(contact["contact_id"]),
+            message="must not transfer through chat session",
+            channel="chat",
+        )
+    )
+
+    assert result == {"error": "contact_identity_binding_required"}
+    assert await aweb_cloud_db.aweb_db.fetch_val(
+        "SELECT COUNT(*) FROM {{tables.chat_messages}}"
+    ) == 0
 
 
 @pytest.mark.asyncio
@@ -691,9 +840,13 @@ async def test_consumer_mcp_send_message_to_contact_reuses_existing_chat_session
     _patch_auth(monkeypatch, _auth(agent_id=alice_agent_id))
     contact = await aweb_cloud_db.aweb_db.fetch_one(
         """
-        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
-        VALUES ('did:aw:alice', 'acme.com/bob', 'Bob')
-        RETURNING contact_id
+        INSERT INTO {{tables.contacts}} (
+            owner_did, contact_address, contact_did_aw,
+            binding_controller_did, binding_accepted_at, label
+        ) VALUES (
+            'did:aw:alice', 'acme.com/bob', 'did:aw:bob',
+            'did:key:z6MkNamespaceController', clock_timestamp(), 'Bob'
+        ) RETURNING contact_id
         """
     )
     session_id = str(uuid4())

@@ -74,7 +74,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
-	team, err := bootstrapLocalTeamMemberWithLifetime(
+	team, err := bootstrapLocalTeamMemberWithScope(
 		ctx,
 		registry,
 		prepared.Plan.RegistryURL,
@@ -86,7 +86,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		"",
 		"",
 		alias,
-		awid.LifetimeEphemeral,
+		awid.IdentityModeLocal,
 	)
 	if err != nil {
 		return connectOutput{}, err
