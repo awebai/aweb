@@ -190,8 +190,9 @@ request checks but no longer repeat this complete proof on `main`.
 The gate runs four serial prerequisites, four fixed concurrent lanes, and a
 post-join residue check. The contract/artifact lane begins with the fixed Node
 output writers; the serial journey lane starts only when those outputs pass.
-Each fixed subset preserves table order, and a row failure does not stop work
-that is independent of it. The log directory contains one
+Each fixed subset preserves table order except the explicit Node-output prefix
+and the deadline-bearing CLI unit row, which starts its lane first. A row failure
+does not stop work that is independent of it. The log directory contains one
 log per observed row, an atomically updated summary naming every row `PASSED`,
 `FAILED`, or `NOT RUN`, and per-step/lane timing tables; any failure, unobserved
 row, crashed lane, or infrastructure refusal makes the gate red.

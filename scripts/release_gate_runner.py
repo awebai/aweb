@@ -217,7 +217,11 @@ def fixed_schedule(steps: Sequence[Step]) -> Schedule:
     node_outputs = selected(NODE_OUTPUT_NAMES)
     heavy = selected(HEAVY_NAMES)
     journey = selected(JOURNEY_NAMES)
-    unit = selected(UNIT_NAMES)
+    unit_in_map_order = selected(UNIT_NAMES)
+    cli_unit = next(step for step in unit_in_map_order if step.name == "cli-unit")
+    # This deadline-bearing process suite must start before the journey lane.
+    # The remaining unit rows retain their canonical relative order.
+    unit = (cli_unit, *(step for step in unit_in_map_order if step != cli_unit))
     contract_artifact = selected(CONTRACT_ARTIFACT_NAMES)
     post_join = next(step for step in steps if step.name == POST_JOIN_NAME)
     if any(step.category != "journey" for step in journey):
