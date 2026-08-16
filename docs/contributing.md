@@ -187,24 +187,12 @@ packages/images, unit and contract suites, OATS and real-stack journeys, freshne
 process guards, and vulnerability audits. Hosted workflows retain focused pull
 request checks but no longer repeat this complete proof on `main`.
 
-The gate runs four serial prerequisites, four fixed concurrent lanes, and a
-post-join residue check. The contract/artifact lane begins with the fixed Node
-output writers; the serial journey lane starts only when those outputs pass.
-Each fixed subset preserves table order except the explicit Node-output prefix
-and the deadline-bearing CLI unit row, which starts its lane first. A row failure
-does not stop work that is independent of it. The log directory contains one
-log per observed row, an atomically updated summary naming every row `PASSED`,
-`FAILED`, or `NOT RUN`, and per-step/lane timing tables; any failure, unobserved
-row, crashed lane, or infrastructure refusal makes the gate red.
-
-For constrained local diagnosis, run
-`RELEASE_GATE_SERIAL=1 scripts/release-gate.sh`; it executes the same fixed
-phases with the four lanes run one at a time. This is a fallback execution mode,
-not a smaller inventory or an alternate release command.
-
-The gate starts from one exact clean aweb commit, records the exact clean Library
-and blueprint input commits, and rejects dirty or missing inputs. It is internal
-to release preparation and is deliberately not a third operator command.
+The gate runs every table row independently and writes a full log plus a summary
+that names every row `PASSED`, `FAILED`, or `NOT RUN`; any failure or unobserved row
+makes the gate red. It starts from one exact clean aweb commit, records the exact
+clean Library and blueprint input commits, and rejects dirty or missing inputs.
+The gate is internal to release preparation and is deliberately not a third
+operator command.
 
 Reproducible here means reproducible on a clean runner with no helpful ambient
 tools. The OATS seam builds `aw` from the exact aweb checkout and selects the real

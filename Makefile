@@ -540,17 +540,14 @@ _release-artifact-awid-image:
 	test -s /tmp/aweb-release-gate/awid.oci.tar
 
 _release-artifact-channel:
-	@mkdir -p /tmp/aweb-release-gate
 	cd channel && npm run build
 	cd channel && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
 
 _release-artifact-pi:
-	@mkdir -p /tmp/aweb-release-gate
 	cd pi-extension && npm run build
 	cd pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
 
 _release-artifact-skills:
-	@mkdir -p /tmp/aweb-release-gate
 	cd packages/claude-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
 	cd packages/claude-ai-skills && ./build-zips.sh
 	@test "$$(find packages/claude-ai-skills/dist -name 'aweb-*.zip' -type f | wc -l | tr -d ' ')" = 5
