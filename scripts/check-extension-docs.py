@@ -50,6 +50,17 @@ PRIVATE_TRANSITION_CONTENT_RULES = (
     ),
 )
 
+# One non-document surface per content rule, so every category is proven outside
+# docs/. Keyed by rule label: adding a rule without a fixture fails the self-test.
+PRIVATE_TRANSITION_NON_DOC_SURFACES = {
+    "private database inventory": "skills/transition-evidence/SKILL.md",
+    "private production runbook": "scripts/self-test-transition-evidence.sh",
+    "AC-only path/name": "channel/self-test-package.json",
+    "credentialed operator procedure": "deploy/self-test-operator.yaml",
+    "private version/image baseline": "server/tests/fixtures/self-test-baseline.txt",
+    "private personnel approval flow": "cli/go/npm/self-test-approval.js",
+}
+
 REMOVED_DOCS = {
     "restructuring/app-event-subscriptions-contract.md",
     "restructuring/app-manifest-schema.md",
@@ -218,6 +229,36 @@ def _tracked_docs_markdown(root: Path, failures: list[str]) -> set[str]:
     }
 
 
+def _decodable_text(path: Path) -> str | None:
+    """Return casefolded file text, or None when the content is binary or not UTF-8.
+
+    Content rules run over every tracked file, so binary blobs are excluded
+    explicitly rather than coerced into text with replacement characters.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in raw:
+        return None
+    try:
+        return raw.decode("utf-8").casefold()
+    except UnicodeDecodeError:
+        return None
+
+
+def _tracked_text_corpus(root: Path, tracked_files: set[str]) -> dict[str, str]:
+    corpus: dict[str, str] = {}
+    for relative in tracked_files:
+        path = root / relative
+        if not path.is_file():
+            continue
+        text = _decodable_text(path)
+        if text is not None:
+            corpus[relative] = text
+    return corpus
+
+
 def _is_managed_gateway_surface(relative: str) -> bool:
     return (
         any("a2a" in part.lower() for part in Path(relative).parts)
@@ -264,20 +305,10 @@ def check(
             if name.casefold() in normalized_relative:
                 failures.append(f"tracked path {relative} retains private transition document name")
 
-        path = root / relative
-        if path.is_file():
-            normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
-            for name in PRIVATE_TRANSITION_PATH_NAMES:
-                if name.casefold() in normalized_text:
-                    failures.append(f"tracked file {relative} references private transition document name")
-
-    for relative in sorted(tracked_files):
-        if not relative.startswith("docs/") or not relative.endswith(".md"):
-            continue
-        path = root / relative
-        if not path.is_file():
-            continue
-        normalized_text = path.read_text(encoding="utf-8", errors="replace").casefold()
+    for relative, normalized_text in sorted(_tracked_text_corpus(root, tracked_files).items()):
+        for name in PRIVATE_TRANSITION_PATH_NAMES:
+            if name.casefold() in normalized_text:
+                failures.append(f"tracked file {relative} references private transition document name")
         for label, terms in PRIVATE_TRANSITION_CONTENT_RULES:
             if all(term.casefold() in normalized_text for term in terms):
                 failures.append(f"{relative} retains {label}")
@@ -522,6 +553,14 @@ def self_test(root: Path) -> int:
                 "Credentialed " + "human operator\nReviewer reviews this plan before execution\n",
             ),
         )
+        rule_labels = {label for label, _ in PRIVATE_TRANSITION_CONTENT_RULES}
+        if {label for label, _ in private_transition_mutations} != rule_labels:
+            print("self-test failed: every content rule needs a document fixture")
+            return 1
+        if set(PRIVATE_TRANSITION_NON_DOC_SURFACES) != rule_labels:
+            print("self-test failed: every content rule needs a non-document surface fixture")
+            return 1
+
         for index, (label, content) in enumerate(private_transition_mutations):
             relative = f"docs/private-transition-negative-{index}.md"
             path = tmp / relative
@@ -534,6 +573,34 @@ def self_test(root: Path) -> int:
             expected = f"{relative} retains {label}"
             if expected not in mutation_failures:
                 print(f"self-test failed: {label} fixture was not detected")
+                return 1
+            path.unlink()
+
+        for label, content in private_transition_mutations:
+            relative = PRIVATE_TRANSITION_NON_DOC_SURFACES[label]
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"{relative} retains {label}"
+            if expected not in mutation_failures:
+                print(f"self-test failed: {label} was not detected on non-document surface {relative}")
+                return 1
+            path.unlink()
+
+        for index, (label, content) in enumerate(private_transition_mutations):
+            relative = f"server/tests/fixtures/private-transition-binary-{index}.bin"
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\0\x1f\x8b" + content.encode("utf-8") + b"\0")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            if any(failure.startswith(f"{relative} retains") for failure in mutation_failures):
+                print(f"self-test failed: binary content was scanned as text for {label}")
+                return 1
+            path.write_bytes("Príväte".encode("latin-1") + content.encode("utf-8"))
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            if any(failure.startswith(f"{relative} retains") for failure in mutation_failures):
+                print(f"self-test failed: undecodable content was scanned as text for {label}")
                 return 1
             path.unlink()
 
