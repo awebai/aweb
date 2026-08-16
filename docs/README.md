@@ -21,8 +21,8 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 76 tracked Markdown documents. This front door does not
-self-link. The remaining 75 public Markdown paths appear below exactly once.
+The baseline contains 75 tracked Markdown documents. This front door does not
+self-link. The remaining 74 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -235,9 +235,6 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 
 - [aapm.6 equivalence evidence](aapm6-equivalence-evidence.md) — relocate as
   dated, unrendered migration history.
-- [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful
-  incident facts to current operational/task history and remove from rendered
-  docs.
 - [Federated messaging architecture](federation-architecture.md) — durable rules
   are consolidated in current routing authority; relocate this historical
   snapshot during the reviewed archive/pruning lane.

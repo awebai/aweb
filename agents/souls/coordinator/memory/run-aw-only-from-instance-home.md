@@ -28,4 +28,4 @@ agent / claims work under the wrong identity).
   `aw`; only `cd` to the repo root inside a git-only call.
 - Before trusting an `agent not found` / failure as a registry issue, check the
   cwd and `aw whoami` first. Genuine registry-unavailable is a `503` from the
-  *correct* home base. See [[log-awid-registry-unavailable]].
+  *correct* home base; an `agent not found` from the wrong cwd is neither.

@@ -63,6 +63,7 @@ PRIVATE_TRANSITION_NON_DOC_SURFACES = {
 
 REMOVED_DOCS = {
     "aweb-product-sot.md",
+    "awid-registry-unavailable-log.md",
     "bootstrapping-operating-patterns-worklog.md",
     "cli-setup-surface-sot.md",
     "company-agent-platform-thesis.md",
@@ -99,6 +100,7 @@ REMOVED_REPO_PATHS = {
 # Non-document paths deleted alongside the superseded documentation they served.
 # Kept separate from the company-strategy set so each diagnostic stays accurate.
 REMOVED_SUPERSEDED_REPO_PATHS = {
+    "agents/souls/coordinator/memory/log-awid-registry-unavailable.md",
     "skills/aweb-agent-instantiation/SKILL.md",
 }
 
