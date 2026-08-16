@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import argparse
 import csv
-from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
 import subprocess
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
@@ -79,7 +81,81 @@ class Step:
     target: str
 
 
+@dataclass(frozen=True)
+class Lane:
+    name: str
+    steps: tuple[Step, ...]
+
+
+@dataclass(frozen=True)
+class Schedule:
+    prerequisites: tuple[Step, ...]
+    node_outputs: tuple[Step, ...]
+    lanes: tuple[Lane, ...]
+    post_join: Step
+
+
 CATEGORIES = {"contract", "unit", "artifact", "journey", "audit", "acceptance"}
+
+# This is deliberately a fixed schedule, not a dependency graph or a scheduler.
+# Each name still gets its category and make target from the canonical map.
+PREREQUISITE_NAMES = {
+    "docker-boundaries",
+    "version-authority",
+    "node-dependencies",
+    "aw-binary",
+}
+NODE_OUTPUT_NAMES = {
+    "channel-unit",
+    "channel-core-unit",
+    "pi-unit",
+    "channel-package",
+    "pi-package",
+    "freshness",
+    "channel-process-guard",
+}
+HEAVY_NAMES = {"server-unit", "awid-image", "a2a-image"}
+JOURNEY_NAMES = {
+    "oats",
+    "oats-proof-helpers",
+    "tmux-guard",
+    "a2a-gateway-e2e",
+    "channel-integration",
+    "oss-user",
+    "oss-federation",
+    "cli-library",
+}
+UNIT_NAMES = {
+    "automatic-release",
+    "awid-unit",
+    "cli-unit",
+    "channel-live-name",
+    "go-audit-unit",
+}
+CONTRACT_ARTIFACT_NAMES = {
+    "aw-repository-stamp",
+    "cli-tidy",
+    "cli-vcs-release-matrix",
+    "python-locks",
+    "sot-inventories",
+    "vector-provenance",
+    "federation-error-reference",
+    "federation-authority-mutations",
+    "federation-harness",
+    "cli-reference",
+    "mcp-reference",
+    "channel-version-equality",
+    "a2a-copy-contract",
+    "cli-version-contract",
+    "server-package",
+    "awid-package",
+    "skills-package-zips",
+    "marketplace-pointer",
+    "npm-exact-publish",
+    "pypi-exact-publish",
+    "oci-exact-publish",
+}
+POST_JOIN_NAME = "release-residue"
 
 
 def load_map(path: Path) -> tuple[Step, ...]:
@@ -110,8 +186,106 @@ def load_map(path: Path) -> tuple[Step, ...]:
     return tuple(rows)
 
 
+def fixed_schedule(steps: Sequence[Step]) -> Schedule:
+    groups = (
+        PREREQUISITE_NAMES,
+        NODE_OUTPUT_NAMES,
+        HEAVY_NAMES,
+        JOURNEY_NAMES,
+        UNIT_NAMES,
+        CONTRACT_ARTIFACT_NAMES,
+        {POST_JOIN_NAME},
+    )
+    expected: set[str] = set()
+    for group in groups:
+        overlap = expected & group
+        if overlap:
+            raise MapError(f"fixed schedule repeats rows: {', '.join(sorted(overlap))}")
+        expected.update(group)
+    actual = {step.name for step in steps}
+    if actual != expected:
+        missing = ", ".join(sorted(expected - actual)) or "none"
+        extra = ", ".join(sorted(actual - expected)) or "none"
+        raise MapError(
+            f"fixed schedule does not match suite map: missing={missing}; extra={extra}"
+        )
+
+    def selected(names: set[str]) -> tuple[Step, ...]:
+        return tuple(step for step in steps if step.name in names)
+
+    prerequisites = selected(PREREQUISITE_NAMES)
+    node_outputs = selected(NODE_OUTPUT_NAMES)
+    heavy = selected(HEAVY_NAMES)
+    journey = selected(JOURNEY_NAMES)
+    unit_in_map_order = selected(UNIT_NAMES)
+    cli_unit = next(step for step in unit_in_map_order if step.name == "cli-unit")
+    # This deadline-bearing process suite must start before the journey lane.
+    # The remaining unit rows retain their canonical relative order.
+    unit = (cli_unit, *(step for step in unit_in_map_order if step != cli_unit))
+    contract_artifact = selected(CONTRACT_ARTIFACT_NAMES)
+    post_join = next(step for step in steps if step.name == POST_JOIN_NAME)
+    if any(step.category != "journey" for step in journey):
+        raise MapError("fixed journey lane contains a non-journey map row")
+    if any(step.category != "unit" for step in unit):
+        raise MapError("fixed unit lane contains a non-unit map row")
+    if any(
+        step.category != ("unit" if step.name == "server-unit" else "artifact")
+        for step in heavy
+    ):
+        raise MapError("fixed heavy lane contains an unexpected map category")
+    if any(
+        step.category not in {"contract", "artifact"} for step in contract_artifact
+    ):
+        raise MapError("fixed contract/artifact lane contains another category")
+    if post_join.category != "contract":
+        raise MapError("release-residue post-join row must remain a contract")
+    return Schedule(
+        prerequisites=prerequisites,
+        node_outputs=node_outputs,
+        lanes=(
+            Lane("heavy", heavy),
+            Lane("unit", unit),
+            Lane("contract-artifact", contract_artifact),
+            Lane("journey", journey),
+        ),
+        post_join=post_join,
+    )
+
+
 def write_summary(path: Path, steps: Sequence[Step], states: dict[str, str]) -> None:
-    body = "".join(f"{step.name}\t{states[step.name]}\t{step.category}\t{step.target}\n" for step in steps)
+    body = "".join(
+        f"{step.name}\t{states[step.name]}\t{step.category}\t{step.target}\n"
+        for step in steps
+    )
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(body, encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def write_step_timings(
+    path: Path, steps: Sequence[Step], timings: dict[str, float]
+) -> None:
+    body = "".join(
+        f"{step.name}\t{timings[step.name]:.3f}\n"
+        for step in steps
+        if step.name in timings
+    )
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(body, encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def write_lane_timings(path: Path, timings: dict[str, float]) -> None:
+    order = (
+        "preflight",
+        "heavy",
+        "unit",
+        "contract-artifact",
+        "journey",
+        "postflight",
+        "gate",
+    )
+    body = "".join(f"{name}\t{timings[name]:.3f}\n" for name in order if name in timings)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(body, encoding="utf-8")
     os.replace(temporary, path)
@@ -122,56 +296,208 @@ def run(
     log_dir: Path,
     command_prefix: Sequence[str],
     probe: Callable[[str], str | None] = infrastructure_refusal,
+    *,
+    serial: bool = False,
 ) -> int:
     if not command_prefix or any(not item for item in command_prefix):
         raise MapError("make command prefix is empty")
     steps = load_map(map_path)
+    schedule = fixed_schedule(steps)
+    indexes = {step.name: index for index, step in enumerate(steps, 1)}
     log_dir.mkdir(parents=True, exist_ok=True)
     states = {step.name: "NOT RUN" for step in steps}
     summary = log_dir / "summary.tsv"
+    lane_timings_path = log_dir / "lane-timings.tsv"
+    step_timings_path = log_dir / "step-timings.tsv"
+    timings: dict[str, float] = {}
+    step_timings: dict[str, float] = {}
+    state_lock = threading.Lock()
+    output_lock = threading.Lock()
+    stop = threading.Event()
+    node_output_condition = threading.Condition()
+    node_output_state = {"complete": False, "ready": False}
+    flags = {"infrastructure_refusal": False, "crash": False}
     write_summary(summary, steps, states)
-    failed = False
-    try:
-        refusal = probe("start")
-        if refusal:
-            print(f"release gate infrastructure refusal: {refusal}", flush=True)
-            return 1
-        for index, step in enumerate(steps, 1):
-            if index > 1:
-                refusal = probe("between")
-                if refusal:
-                    print(f"release gate infrastructure refusal: {refusal}", flush=True)
-                    failed = True
-                    break
-            print(f"\n=== release gate {index}/{len(steps)}: {step.name} ({step.target}) ===", flush=True)
-            log_path = log_dir / f"{index:02d}-{step.name}.log"
-            with log_path.open("wb") as log:
-                completed = subprocess.run(
-                    [*command_prefix, step.target],
-                    stdout=log,
-                    stderr=subprocess.STDOUT,
-                    check=False,
-                )
-            states[step.name] = "PASSED" if completed.returncode == 0 else "FAILED"
-            failed = failed or completed.returncode != 0
+
+    def emit(message: str) -> None:
+        with output_lock:
+            print(message, flush=True)
+
+    def record_state(step: Step, state: str) -> None:
+        with state_lock:
+            states[step.name] = state
             write_summary(summary, steps, states)
-            print(f"=== {step.name}: {states[step.name]} (log {log_path}) ===", flush=True)
-            if step.name == "a2a-image":
-                try:
-                    reclaim_transient_builder_cache(log_dir / "a2a-image-cache-reclaim.log")
-                except RuntimeError as error:
-                    print(f"release gate infrastructure refusal: {error}", flush=True)
-                    failed = True
-                    break
+
+    def refuse(message: str) -> None:
+        with state_lock:
+            flags["infrastructure_refusal"] = True
+        stop.set()
+        with node_output_condition:
+            node_output_condition.notify_all()
+        emit(f"release gate infrastructure refusal: {message}")
+
+    def mark_crash(scope: str, error: BaseException) -> None:
+        with state_lock:
+            flags["crash"] = True
+        stop.set()
+        with node_output_condition:
+            node_output_condition.notify_all()
+        emit(f"release gate {scope} crashed: {error}")
+
+    def check_infrastructure(phase: str) -> bool:
+        refusal = probe(phase)
+        if refusal:
+            refuse(refusal)
+            return False
+        return True
+
+    def execute_step(scope: str, step: Step) -> None:
+        started = time.monotonic()
+        index = indexes[step.name]
+        emit(
+            f"\n=== release gate {scope}, map row {index}/{len(steps)}: "
+            f"{step.name} ({step.target}) ==="
+        )
+        log_path = log_dir / f"{index:02d}-{step.name}.log"
+        with log_path.open("wb") as log:
+            completed = subprocess.run(
+                [*command_prefix, step.target],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                check=False,
+            )
+        state = "PASSED" if completed.returncode == 0 else "FAILED"
+        record_state(step, state)
+        emit(f"=== {step.name}: {state} (log {log_path}) ===")
+        if step.name == "a2a-image":
+            try:
+                reclaim_transient_builder_cache(log_dir / "a2a-image-cache-reclaim.log")
+            except RuntimeError as error:
+                refuse(str(error))
+        with state_lock:
+            step_timings[step.name] = time.monotonic() - started
+
+    def run_steps(name: str, phase_steps: Sequence[Step]) -> None:
+        for step in phase_steps:
+            if stop.is_set() or not check_infrastructure("between"):
+                break
+            execute_step(name, step)
+
+    def record_lane_timing(name: str, started: float) -> None:
+        with state_lock:
+            timings[name] = time.monotonic() - started
+
+    def run_phase(name: str, phase_steps: Sequence[Step]) -> None:
+        started = time.monotonic()
+        try:
+            run_steps(name, phase_steps)
+        finally:
+            record_lane_timing(name, started)
+
+    def run_contract_lane(lane: Lane) -> None:
+        started = time.monotonic()
+        ready = False
+        try:
+            try:
+                run_steps(lane.name, schedule.node_outputs)
+                with state_lock:
+                    ready = not stop.is_set() and all(
+                        states[step.name] == "PASSED"
+                        for step in schedule.node_outputs
+                    )
+            finally:
+                with node_output_condition:
+                    node_output_state["complete"] = True
+                    node_output_state["ready"] = ready
+                    node_output_condition.notify_all()
+            if not stop.is_set():
+                run_steps(lane.name, lane.steps)
+        finally:
+            record_lane_timing(lane.name, started)
+
+    def run_journey_lane(lane: Lane) -> None:
+        started = time.monotonic()
+        try:
+            with node_output_condition:
+                node_output_condition.wait_for(
+                    lambda: node_output_state["complete"] or stop.is_set()
+                )
+                ready = node_output_state["ready"]
+            if ready and not stop.is_set():
+                run_steps(lane.name, lane.steps)
+        finally:
+            record_lane_timing(lane.name, started)
+
+    def run_lane(lane: Lane) -> None:
+        if lane.name == "contract-artifact":
+            run_contract_lane(lane)
+        elif lane.name == "journey":
+            run_journey_lane(lane)
+        else:
+            run_phase(lane.name, lane.steps)
+
+    gate_started = time.monotonic()
+    try:
+        preflight_started = time.monotonic()
+        if check_infrastructure("start"):
+            try:
+                for offset, step in enumerate(schedule.prerequisites):
+                    if offset and (
+                        stop.is_set() or not check_infrastructure("between")
+                    ):
+                        break
+                    execute_step("preflight", step)
+            except Exception as error:
+                mark_crash("preflight", error)
+        with state_lock:
+            timings["preflight"] = time.monotonic() - preflight_started
+
+        if not stop.is_set():
+            if serial:
+                for lane in schedule.lanes:
+                    if stop.is_set():
+                        break
+                    try:
+                        run_lane(lane)
+                    except Exception as error:
+                        mark_crash(f"{lane.name} lane", error)
+            else:
+                with ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="release-gate"
+                ) as executor:
+                    futures = {
+                        executor.submit(run_lane, lane): lane.name
+                        for lane in schedule.lanes
+                    }
+                    for future in as_completed(futures):
+                        try:
+                            future.result()
+                        except Exception as error:
+                            mark_crash(f"{futures[future]} lane", error)
+
+        if not stop.is_set() and check_infrastructure("between"):
+            postflight_started = time.monotonic()
+            try:
+                execute_step("postflight", schedule.post_join)
+            except Exception as error:
+                mark_crash("postflight", error)
+            finally:
+                with state_lock:
+                    timings["postflight"] = time.monotonic() - postflight_started
     finally:
-        write_summary(summary, steps, states)
-        print("\n=== release gate summary ===")
+        with state_lock:
+            timings["gate"] = time.monotonic() - gate_started
+            write_summary(summary, steps, states)
+            write_step_timings(step_timings_path, steps, step_timings)
+            write_lane_timings(lane_timings_path, timings)
+        emit("\n=== release gate summary ===")
         for step in steps:
-            print(f"  {states[step.name]:7s} {step.name}")
+            emit(f"  {states[step.name]:7s} {step.name}")
         not_run = sum(state == "NOT RUN" for state in states.values())
         failures = sum(state == "FAILED" for state in states.values())
-        print(f"  ----\n  {failures} failed, {not_run} not run, {len(steps) - failures - not_run} passed")
-    return 1 if failed or any(state == "NOT RUN" for state in states.values()) else 0
+        passed = len(steps) - failures - not_run
+        emit(f"  ----\n  {failures} failed, {not_run} not run, {passed} passed")
+    return 1 if any(flags.values()) or failures or not_run else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -179,9 +505,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--map", type=Path, required=True)
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--make", default="make")
+    parser.add_argument(
+        "--serial",
+        action="store_true",
+        help="run the fixed lanes one at a time instead of concurrently",
+    )
     args = parser.parse_args(argv)
     try:
-        return run(args.map, args.log_dir, [args.make])
+        return run(args.map, args.log_dir, [args.make], serial=args.serial)
     except (MapError, OSError) as error:
         print(f"release gate refused: {error}", file=sys.stderr)
         return 2

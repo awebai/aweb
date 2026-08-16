@@ -25,6 +25,12 @@ LIBRARY_E2E_LIBRARY_CONTEXT="$(canonical_git_input library "$LIBRARY_E2E_LIBRARY
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
 LOG_DIR="/tmp/aweb-release-gate-$SOURCE_SHA"
 IMAGE="aweb-release-gate:${SOURCE_SHA:0:12}"
+runner_mode_args=()
+case "${RELEASE_GATE_SERIAL:-0}" in
+  0) ;;
+  1) runner_mode_args+=(--serial) ;;
+  *) refuse "RELEASE_GATE_SERIAL must be 0 or 1" ;;
+esac
 
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_SOURCE_SHA must be a full lowercase SHA"
 [[ "$RELEASE_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_BASE_SHA must be a full lowercase SHA"
@@ -275,7 +281,7 @@ docker run --rm --init \
   -w "$checkout" \
   "$IMAGE" \
   python3 scripts/release_gate_runner.py \
-    --map release-gate/suite-map.tsv --log-dir "$LOG_DIR" \
+    --map release-gate/suite-map.tsv --log-dir "$LOG_DIR" "${runner_mode_args[@]}" \
   2>&1 | tee "$LOG_DIR/gate.log"
 status="${PIPESTATUS[0]}"
 set -e
