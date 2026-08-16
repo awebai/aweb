@@ -460,7 +460,10 @@ default = {
     "aweb-messaging",
     "aweb-team-membership",
 }
-internal = {"aweb-agent-instantiation"}
+# No internal-only skills remain; every canonical directory ships in the default
+# set. The gate still requires each one to be classified explicitly, so a new
+# directory cannot silently ship nowhere.
+internal = set()
 canonical = {
     name
     for name in os.listdir(os.path.join(root, "skills"))
