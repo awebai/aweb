@@ -53,6 +53,24 @@ Any edit to this table in code requires a matching contract-test and
 documentation update. This makes a new bundled dependency a visible reviewed
 decision instead of an inferred side effect.
 
+## Gate scope and caches
+
+The gate is one fixed table, `release-gate/suite-map.tsv`, but a release runs
+only the rows that guard what it publishes: rows naming any artifact key in the
+release's publication scope, plus every `all` row (shared prerequisites and
+repository-wide contracts). The scope is the moving set joined with every
+artifact the triggered workflows can republish. Rows outside the scope are
+recorded as `SKIPPED` in the summary, so the evidence names what was not run
+and why. The artifact column is part of the reviewed release graph: the runner
+refuses unknown keys, and editing the column requires the matching
+contract-test update in `scripts/e2e/test_release.py`.
+
+Gate runs share lockfile-keyed caches: uv, Go module and build, and npm caches,
+and the persistent buildx builder's layer cache, which the runner bounds with a
+keep-storage reclaim after the largest image build. Determinism is carried by
+the committed lockfiles, whose hashes the gate records in its evidence; a warm
+cache hit yields the same bytes as a cold fetch.
+
 ## What the command does
 
 1. Fetch tags and branches, reject a dirty checkout, and require the exact
@@ -62,7 +80,9 @@ decision instead of an inferred side effect.
 3. Observe the complete desired public artifact set. An absent artifact whose
    source did not move is not silently rebuilt under an occupied version; the
    command requires a version bump.
-4. Run the fixed clean-Docker gate once, before creating publication state.
+4. Run the fixed clean-Docker gate once, before creating publication state,
+   scoped to the rows guarding the artifacts being published plus every row
+   that guards all releases.
 5. Write `release-intent-<source>`, whose canonical JSON binds the source SHA,
    all desired versions, and every publication still owed.
 6. Fast-forward the path-scoped `release` branch. Workflows build the exact
@@ -109,7 +129,8 @@ and the live `https://awid.ai` site afterward.
 
 - `scripts/release.py`: desired-state selection and reconciliation.
 - `scripts/release-gate.sh`: fixed clean gate.
-- `release-gate/suite-map.tsv`: named gate inventory.
+- `release-gate/suite-map.tsv`: named gate inventory; each row names the
+  artifact keys it guards (`all` = every release).
 - `scripts/*-exact-publish.sh`: exact npm, PyPI, and OCI decisions.
 - `scripts/release-tag-helpers.sh`: immutable tag observation.
 - `.github/workflows/*release.yml`: thin, path-scoped publishers.

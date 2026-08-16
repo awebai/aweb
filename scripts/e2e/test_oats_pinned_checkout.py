@@ -185,8 +185,11 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
     def test_clean_release_gate_runs_the_pinned_oats_contract(self) -> None:
         """The local release gate must execute the OATS seam from its fixed map."""
         suite_map = RELEASE_GATE_MAP.read_text(encoding="utf-8")
-        self.assertIn("oats\tjourney\t_release-oats\n", suite_map)
-        self.assertIn("oats-proof-helpers\tjourney\t_release-oats-proof-helpers\n", suite_map)
+        self.assertIn("oats\tjourney\t_release-oats\taw-cli,pi-extension\n", suite_map)
+        self.assertIn(
+            "oats-proof-helpers\tjourney\t_release-oats-proof-helpers\taw-cli,pi-extension\n",
+            suite_map,
+        )
 
 
 if __name__ == "__main__":

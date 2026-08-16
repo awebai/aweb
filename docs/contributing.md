@@ -181,15 +181,19 @@ pinned commit, while later runs reuse and reset the repository-owned cache.
 
 ## Comprehensive release proof
 
-The release command runs one complete gate in a clean local Docker environment
-before publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
+The release command runs one gate in a clean local Docker environment before
+publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
 packages/images, unit and contract suites, OATS and real-stack journeys, freshness,
-process guards, and vulnerability audits. Hosted workflows retain focused pull
+process guards, and vulnerability audits. Each row names the artifact keys it
+guards; a release runs the rows guarding what it publishes plus every `all` row,
+and records the rest as `SKIPPED`. Hosted workflows retain focused pull
 request checks but no longer repeat this complete proof on `main`.
 
-The gate runs every table row independently and writes a full log plus a summary
-that names every row `PASSED`, `FAILED`, or `NOT RUN`; any failure or unobserved row
-makes the gate red. It starts from one exact clean aweb commit, records the exact
+The gate runs each selected row independently and writes a full log plus a summary
+that names every row `PASSED`, `FAILED`, `SKIPPED`, or `NOT RUN`; any failure or
+unobserved selected row makes the gate red. Gate runs share lockfile-keyed
+package and layer caches; determinism is carried by the committed lockfiles,
+whose hashes the gate records in its evidence. It starts from one exact clean aweb commit, records the exact
 clean Library and blueprint input commits, and rejects dirty or missing inputs.
 The gate is internal to release preparation and is deliberately not a third
 operator command.

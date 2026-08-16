@@ -92,16 +92,16 @@ class DockerBoundaryTests(unittest.TestCase):
             remains = run("docker", "volume", "inspect", volume, check=False)
             self.assertNotEqual(remains.returncode, 0, "probe volume survived cleanup")
 
-    def test_transient_builder_cache_reclaim_is_scoped_and_builder_remains_usable(self) -> None:
+    def test_builder_cache_reclaim_is_scoped_bounded_and_builder_remains_usable(self) -> None:
         with patch.dict(os.environ, {"BUILDX_BUILDER": "", "BUILDX_CONFIG": "/tmp"}):
             with self.assertRaisesRegex(RuntimeError, "BUILDX_BUILDER is empty"):
-                runner.reclaim_transient_builder_cache(Path("/tmp/unused-cache-log"))
+                runner.bound_builder_cache(Path("/tmp/unused-cache-log"))
         with patch.dict(os.environ, {"BUILDX_BUILDER": "unused", "BUILDX_CONFIG": ""}):
             with self.assertRaisesRegex(RuntimeError, "BUILDX_CONFIG is empty"):
-                runner.reclaim_transient_builder_cache(Path("/tmp/unused-cache-log"))
+                runner.bound_builder_cache(Path("/tmp/unused-cache-log"))
         source = Path(runner.__file__).read_text()
         self.assertIn('if step.name == "a2a-image":', source)
-        self.assertIn('reclaim_transient_builder_cache(log_dir / "a2a-image-cache-reclaim.log")', source)
+        self.assertIn('bound_builder_cache(log_dir / "a2a-image-cache-reclaim.log")', source)
 
         builder = f"aweb-gate-proof-{uuid.uuid4().hex[:12]}"
         unrelated = f"aweb-unrelated-proof-{uuid.uuid4().hex[:12]}"
@@ -168,7 +168,17 @@ class DockerBoundaryTests(unittest.TestCase):
                     os.environ,
                     {"BUILDX_BUILDER": builder, "BUILDX_CONFIG": str(config)},
                 ):
-                    runner.reclaim_transient_builder_cache(root / "cache-reclaim.log")
+                    # Under the production bound a small cache is kept intact...
+                    runner.bound_builder_cache(root / "cache-reclaim-bounded.log")
+                    owned_bounded = run(
+                        "docker", "buildx", "du", "--builder", builder,
+                        "--format", du_format, env=buildx_env,
+                    ).stdout
+                    self.assertEqual(
+                        len(owned_bounded.splitlines()), len(owned_before.splitlines())
+                    )
+                    # ...while a zero bound reclaims it completely.
+                    runner.bound_builder_cache(root / "cache-reclaim.log", keep="0")
                 self.assertGreater((root / "cache-reclaim.log").stat().st_size, 0)
                 owned_after = run(
                     "docker", "buildx", "du", "--builder", builder,

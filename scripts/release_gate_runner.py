@@ -13,17 +13,27 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Sequence
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from release import ARTIFACTS  # noqa: E402  (single authority for artifact keys)
+
 
 class MapError(RuntimeError):
     pass
 
 
+ARTIFACT_KEYS = frozenset(artifact.key for artifact in ARTIFACTS)
+
 # Conservative policy floors, not measurements of historical gate consumption.
 START_REQUIRED_KIB = 6 * 1024 * 1024
 BETWEEN_REQUIRED_KIB = 2 * 1024 * 1024
 
+# The persistent builder keeps its layer cache between gate runs; this bound
+# reclaims least-recently-used cache after the largest build instead of
+# discarding everything, so disk stays bounded while later runs stay warm.
+BUILDER_CACHE_KEEP = "10GB"
 
-def reclaim_transient_builder_cache(log_path: Path) -> None:
+
+def bound_builder_cache(log_path: Path, keep: str = BUILDER_CACHE_KEEP) -> None:
     builder = os.environ.get("BUILDX_BUILDER", "").strip()
     config = os.environ.get("BUILDX_CONFIG", "").strip()
     if not builder:
@@ -32,7 +42,16 @@ def reclaim_transient_builder_cache(log_path: Path) -> None:
         raise RuntimeError("cache reclaim refused: BUILDX_CONFIG is empty")
     with log_path.open("wb") as log:
         completed = subprocess.run(
-            ["docker", "buildx", "prune", "--all", "--force", "--builder", builder],
+            [
+                "docker",
+                "buildx",
+                "prune",
+                "--all",
+                "--force",
+                f"--keep-storage={keep}",
+                "--builder",
+                builder,
+            ],
             stdout=log,
             stderr=subprocess.STDOUT,
             env={**os.environ, "BUILDX_CONFIG": config},
@@ -77,9 +96,22 @@ class Step:
     name: str
     category: str
     target: str
+    artifacts: frozenset[str] | None  # None = guards every release ("all")
 
 
 CATEGORIES = {"contract", "unit", "artifact", "journey", "audit", "acceptance"}
+
+
+def parse_artifacts(field: str, context: str) -> frozenset[str] | None:
+    if field == "all":
+        return None
+    keys = field.split(",")
+    if len(set(keys)) != len(keys):
+        raise MapError(f"{context} repeats an artifact key")
+    unknown = sorted(set(keys) - ARTIFACT_KEYS)
+    if unknown:
+        raise MapError(f"{context} names unknown artifact keys: {', '.join(unknown)}")
+    return frozenset(keys)
 
 
 def load_map(path: Path) -> tuple[Step, ...]:
@@ -93,11 +125,17 @@ def load_map(path: Path) -> tuple[Step, ...]:
         ):
             if not row:
                 continue
-            if len(row) != 3 or any(not value or value != value.strip() for value in row):
-                raise MapError(f"suite-map row {number} must have three trimmed fields")
-            step = Step(*row)
-            if step.category not in CATEGORIES:
-                raise MapError(f"suite-map row {number} has unknown category {step.category}")
+            if len(row) != 4 or any(not value or value != value.strip() for value in row):
+                raise MapError(f"suite-map row {number} must have four trimmed fields")
+            name, category, target, artifacts_field = row
+            if category not in CATEGORIES:
+                raise MapError(f"suite-map row {number} has unknown category {category}")
+            step = Step(
+                name,
+                category,
+                target,
+                parse_artifacts(artifacts_field, f"suite-map row {number}"),
+            )
             rows.append(step)
     if not rows:
         raise MapError("suite map is empty")
@@ -108,6 +146,25 @@ def load_map(path: Path) -> tuple[Step, ...]:
     if len(set(targets)) != len(targets):
         raise MapError("suite map has duplicate make targets")
     return tuple(rows)
+
+
+def selected_steps(
+    steps: Sequence[Step], scope: frozenset[str] | None
+) -> tuple[Step, ...]:
+    """The rows a release with this scope must run, in map order.
+
+    ``scope`` is the set of artifact keys being published this release; ``None``
+    means unscoped (run everything). A row runs when it guards every release
+    (``all``) or guards any artifact in the scope.
+    """
+    if scope is None:
+        return tuple(steps)
+    unknown = sorted(scope - ARTIFACT_KEYS)
+    if unknown:
+        raise MapError(f"release scope names unknown artifact keys: {', '.join(unknown)}")
+    return tuple(
+        step for step in steps if step.artifacts is None or step.artifacts & scope
+    )
 
 
 def write_summary(path: Path, steps: Sequence[Step], states: dict[str, str]) -> None:
@@ -122,12 +179,22 @@ def run(
     log_dir: Path,
     command_prefix: Sequence[str],
     probe: Callable[[str], str | None] = infrastructure_refusal,
+    scope: frozenset[str] | None = None,
 ) -> int:
     if not command_prefix or any(not item for item in command_prefix):
         raise MapError("make command prefix is empty")
     steps = load_map(map_path)
+    selected = selected_steps(steps, scope)
+    selected_names = {step.name for step in selected}
+    map_row = {step.name: number for number, step in enumerate(steps, 1)}
     log_dir.mkdir(parents=True, exist_ok=True)
-    states = {step.name: "NOT RUN" for step in steps}
+    (log_dir / "release-scope").write_text(
+        ("all" if scope is None else ",".join(sorted(scope))) + "\n", encoding="utf-8"
+    )
+    states = {
+        step.name: ("NOT RUN" if step.name in selected_names else "SKIPPED")
+        for step in steps
+    }
     summary = log_dir / "summary.tsv"
     write_summary(summary, steps, states)
     failed = False
@@ -136,15 +203,15 @@ def run(
         if refusal:
             print(f"release gate infrastructure refusal: {refusal}", flush=True)
             return 1
-        for index, step in enumerate(steps, 1):
+        for index, step in enumerate(selected, 1):
             if index > 1:
                 refusal = probe("between")
                 if refusal:
                     print(f"release gate infrastructure refusal: {refusal}", flush=True)
                     failed = True
                     break
-            print(f"\n=== release gate {index}/{len(steps)}: {step.name} ({step.target}) ===", flush=True)
-            log_path = log_dir / f"{index:02d}-{step.name}.log"
+            print(f"\n=== release gate {index}/{len(selected)}: {step.name} ({step.target}) ===", flush=True)
+            log_path = log_dir / f"{map_row[step.name]:02d}-{step.name}.log"
             with log_path.open("wb") as log:
                 completed = subprocess.run(
                     [*command_prefix, step.target],
@@ -158,7 +225,7 @@ def run(
             print(f"=== {step.name}: {states[step.name]} (log {log_path}) ===", flush=True)
             if step.name == "a2a-image":
                 try:
-                    reclaim_transient_builder_cache(log_dir / "a2a-image-cache-reclaim.log")
+                    bound_builder_cache(log_dir / "a2a-image-cache-reclaim.log")
                 except RuntimeError as error:
                     print(f"release gate infrastructure refusal: {error}", flush=True)
                     failed = True
@@ -168,10 +235,24 @@ def run(
         print("\n=== release gate summary ===")
         for step in steps:
             print(f"  {states[step.name]:7s} {step.name}")
-        not_run = sum(state == "NOT RUN" for state in states.values())
-        failures = sum(state == "FAILED" for state in states.values())
-        print(f"  ----\n  {failures} failed, {not_run} not run, {len(steps) - failures - not_run} passed")
-    return 1 if failed or any(state == "NOT RUN" for state in states.values()) else 0
+        counts = Counter(states.values())
+        not_run = counts["NOT RUN"]
+        failures = counts["FAILED"]
+        skipped = counts["SKIPPED"]
+        print(
+            f"  ----\n  {failures} failed, {not_run} not run, "
+            f"{skipped} skipped (outside release scope), {counts['PASSED']} passed"
+        )
+    return 1 if failed or not_run else 0
+
+
+def parse_scope(raw: str | None) -> frozenset[str] | None:
+    if raw is None:
+        return None
+    keys = [item for item in raw.split(",") if item]
+    if not keys:
+        raise MapError("release scope is empty; omit --artifacts to run everything")
+    return frozenset(keys)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -179,9 +260,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--map", type=Path, required=True)
     parser.add_argument("--log-dir", type=Path, required=True)
     parser.add_argument("--make", default="make")
+    parser.add_argument(
+        "--artifacts",
+        default=None,
+        help="comma-separated artifact keys being published; omit to run every row",
+    )
     args = parser.parse_args(argv)
     try:
-        return run(args.map, args.log_dir, [args.make])
+        return run(
+            args.map,
+            args.log_dir,
+            [args.make],
+            scope=parse_scope(args.artifacts),
+        )
     except (MapError, OSError) as error:
         print(f"release gate refused: {error}", file=sys.stderr)
         return 2

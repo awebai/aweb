@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import re
 import subprocess
 import sys
@@ -192,10 +193,15 @@ class Intent:
 
 
 def run(
-    argv: Sequence[str], *, cwd: Path, timeout: float = 1800, capture: bool = True
+    argv: Sequence[str],
+    *,
+    cwd: Path,
+    timeout: float = 1800,
+    capture: bool = True,
+    env: dict[str, str] | None = None,
 ) -> str:
     result = subprocess.run(
-        list(argv), cwd=cwd, text=True, capture_output=capture, timeout=timeout
+        list(argv), cwd=cwd, text=True, capture_output=capture, timeout=timeout, env=env
     )
     if result.returncode:
         detail = (result.stderr or result.stdout or "").strip()
@@ -726,6 +732,25 @@ def expected_aweb_workflows(moving: set[str]) -> set[str]:
     return workflows
 
 
+# Inverse of expected_aweb_workflows: the artifact keys each publisher can
+# publish. A workflow repairing an absent output may republish unchanged
+# siblings it owns, so the gate scope covers every key its workflows touch.
+WORKFLOW_ARTIFACTS = {
+    "pypi-release.yml": ("aweb-server", "awid-service"),
+    "awid-image-release.yml": ("awid-image",),
+    "aw-release.yml": ("aw-cli",),
+    "npm-release.yml": ("channel-plugin", "pi-extension", "skills"),
+    "a2a-gateway-release.yml": ("a2a-gateway-image",),
+}
+
+
+def workflow_artifact_keys(workflows: set[str]) -> set[str]:
+    unknown = workflows - set(WORKFLOW_ARTIFACTS)
+    if unknown:
+        raise Refusal(f"no artifact mapping for workflows {sorted(unknown)}")
+    return {key for workflow in workflows for key in WORKFLOW_ARTIFACTS[workflow]}
+
+
 def reconcile_aweb(aweb: Path, intent: Intent, moving: set[str]) -> None:
     workflows = expected_aweb_workflows(moving)
     if workflows:
@@ -800,7 +825,14 @@ def release(aweb: Path) -> Intent | None:
             if not moving and not missing:
                 print("nothing to release")
                 return completed
-            run(("scripts/release-gate.sh",), cwd=aweb, timeout=7200, capture=False)
+            gate_scope = sorted(moving | workflow_artifact_keys(missing))
+            run(
+                ("scripts/release-gate.sh",),
+                cwd=aweb,
+                timeout=7200,
+                capture=False,
+                env={**os.environ, "RELEASE_GATE_ARTIFACTS": ",".join(gate_scope)},
+            )
         else:
             moving = set(intent.publish)
         if git(aweb, "rev-parse", "HEAD") == intent.aweb_sha:
