@@ -90,6 +90,7 @@ class Lane:
 @dataclass(frozen=True)
 class Schedule:
     prerequisites: tuple[Step, ...]
+    node_outputs: tuple[Step, ...]
     lanes: tuple[Lane, ...]
     post_join: Step
 
@@ -102,15 +103,18 @@ PREREQUISITE_NAMES = {
     "docker-boundaries",
     "version-authority",
     "node-dependencies",
+    "aw-binary",
+}
+NODE_OUTPUT_NAMES = {
     "channel-unit",
     "channel-core-unit",
     "pi-unit",
-    "aw-binary",
     "channel-package",
     "pi-package",
     "freshness",
     "channel-process-guard",
 }
+HEAVY_NAMES = {"server-unit", "awid-image", "a2a-image"}
 JOURNEY_NAMES = {
     "oats",
     "oats-proof-helpers",
@@ -123,13 +127,11 @@ JOURNEY_NAMES = {
 }
 UNIT_NAMES = {
     "automatic-release",
-    "server-unit",
     "awid-unit",
     "cli-unit",
     "channel-live-name",
     "go-audit-unit",
 }
-IMAGE_NAMES = {"awid-image", "a2a-image"}
 CONTRACT_ARTIFACT_NAMES = {
     "aw-repository-stamp",
     "cli-tidy",
@@ -187,9 +189,10 @@ def load_map(path: Path) -> tuple[Step, ...]:
 def fixed_schedule(steps: Sequence[Step]) -> Schedule:
     groups = (
         PREREQUISITE_NAMES,
+        NODE_OUTPUT_NAMES,
+        HEAVY_NAMES,
         JOURNEY_NAMES,
         UNIT_NAMES,
-        IMAGE_NAMES,
         CONTRACT_ARTIFACT_NAMES,
         {POST_JOIN_NAME},
     )
@@ -211,17 +214,21 @@ def fixed_schedule(steps: Sequence[Step]) -> Schedule:
         return tuple(step for step in steps if step.name in names)
 
     prerequisites = selected(PREREQUISITE_NAMES)
+    node_outputs = selected(NODE_OUTPUT_NAMES)
+    heavy = selected(HEAVY_NAMES)
     journey = selected(JOURNEY_NAMES)
     unit = selected(UNIT_NAMES)
-    image = selected(IMAGE_NAMES)
     contract_artifact = selected(CONTRACT_ARTIFACT_NAMES)
     post_join = next(step for step in steps if step.name == POST_JOIN_NAME)
     if any(step.category != "journey" for step in journey):
         raise MapError("fixed journey lane contains a non-journey map row")
     if any(step.category != "unit" for step in unit):
         raise MapError("fixed unit lane contains a non-unit map row")
-    if any(step.category != "artifact" for step in image):
-        raise MapError("fixed image lane contains a non-artifact map row")
+    if any(
+        step.category != ("unit" if step.name == "server-unit" else "artifact")
+        for step in heavy
+    ):
+        raise MapError("fixed heavy lane contains an unexpected map category")
     if any(
         step.category not in {"contract", "artifact"} for step in contract_artifact
     ):
@@ -230,11 +237,12 @@ def fixed_schedule(steps: Sequence[Step]) -> Schedule:
         raise MapError("release-residue post-join row must remain a contract")
     return Schedule(
         prerequisites=prerequisites,
+        node_outputs=node_outputs,
         lanes=(
-            Lane("journey", journey),
+            Lane("heavy", heavy),
             Lane("unit", unit),
-            Lane("image", image),
             Lane("contract-artifact", contract_artifact),
+            Lane("journey", journey),
         ),
         post_join=post_join,
     )
@@ -266,10 +274,10 @@ def write_step_timings(
 def write_lane_timings(path: Path, timings: dict[str, float]) -> None:
     order = (
         "preflight",
-        "journey",
+        "heavy",
         "unit",
-        "image",
         "contract-artifact",
+        "journey",
         "postflight",
         "gate",
     )
@@ -302,6 +310,8 @@ def run(
     state_lock = threading.Lock()
     output_lock = threading.Lock()
     stop = threading.Event()
+    node_output_condition = threading.Condition()
+    node_output_state = {"complete": False, "ready": False}
     flags = {"infrastructure_refusal": False, "crash": False}
     write_summary(summary, steps, states)
 
@@ -318,12 +328,16 @@ def run(
         with state_lock:
             flags["infrastructure_refusal"] = True
         stop.set()
+        with node_output_condition:
+            node_output_condition.notify_all()
         emit(f"release gate infrastructure refusal: {message}")
 
     def mark_crash(scope: str, error: BaseException) -> None:
         with state_lock:
             flags["crash"] = True
         stop.set()
+        with node_output_condition:
+            node_output_condition.notify_all()
         emit(f"release gate {scope} crashed: {error}")
 
     def check_infrastructure(phase: str) -> bool:
@@ -359,18 +373,64 @@ def run(
         with state_lock:
             step_timings[step.name] = time.monotonic() - started
 
-    def run_phase(
-        name: str, phase_steps: Sequence[Step], first_probe: str = "between"
-    ) -> None:
+    def run_steps(name: str, phase_steps: Sequence[Step]) -> None:
+        for step in phase_steps:
+            if stop.is_set() or not check_infrastructure("between"):
+                break
+            execute_step(name, step)
+
+    def record_lane_timing(name: str, started: float) -> None:
+        with state_lock:
+            timings[name] = time.monotonic() - started
+
+    def run_phase(name: str, phase_steps: Sequence[Step]) -> None:
         started = time.monotonic()
         try:
-            for step in phase_steps:
-                if stop.is_set() or not check_infrastructure(first_probe):
-                    break
-                execute_step(name, step)
+            run_steps(name, phase_steps)
         finally:
-            with state_lock:
-                timings[name] = time.monotonic() - started
+            record_lane_timing(name, started)
+
+    def run_contract_lane(lane: Lane) -> None:
+        started = time.monotonic()
+        ready = False
+        try:
+            try:
+                run_steps(lane.name, schedule.node_outputs)
+                with state_lock:
+                    ready = not stop.is_set() and all(
+                        states[step.name] == "PASSED"
+                        for step in schedule.node_outputs
+                    )
+            finally:
+                with node_output_condition:
+                    node_output_state["complete"] = True
+                    node_output_state["ready"] = ready
+                    node_output_condition.notify_all()
+            if not stop.is_set():
+                run_steps(lane.name, lane.steps)
+        finally:
+            record_lane_timing(lane.name, started)
+
+    def run_journey_lane(lane: Lane) -> None:
+        started = time.monotonic()
+        try:
+            with node_output_condition:
+                node_output_condition.wait_for(
+                    lambda: node_output_state["complete"] or stop.is_set()
+                )
+                ready = node_output_state["ready"]
+            if ready and not stop.is_set():
+                run_steps(lane.name, lane.steps)
+        finally:
+            record_lane_timing(lane.name, started)
+
+    def run_lane(lane: Lane) -> None:
+        if lane.name == "contract-artifact":
+            run_contract_lane(lane)
+        elif lane.name == "journey":
+            run_journey_lane(lane)
+        else:
+            run_phase(lane.name, lane.steps)
 
     gate_started = time.monotonic()
     try:
@@ -394,7 +454,7 @@ def run(
                     if stop.is_set():
                         break
                     try:
-                        run_phase(lane.name, lane.steps)
+                        run_lane(lane)
                     except Exception as error:
                         mark_crash(f"{lane.name} lane", error)
             else:
@@ -402,7 +462,7 @@ def run(
                     max_workers=4, thread_name_prefix="release-gate"
                 ) as executor:
                     futures = {
-                        executor.submit(run_phase, lane.name, lane.steps): lane.name
+                        executor.submit(run_lane, lane): lane.name
                         for lane in schedule.lanes
                     }
                     for future in as_completed(futures):

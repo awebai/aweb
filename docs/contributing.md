@@ -187,9 +187,11 @@ packages/images, unit and contract suites, OATS and real-stack journeys, freshne
 process guards, and vulnerability audits. Hosted workflows retain focused pull
 request checks but no longer repeat this complete proof on `main`.
 
-The gate runs a fixed serial prerequisite barrier, four fixed concurrent lanes,
-and a post-join residue check. Each lane remains serial in table order. A row
-failure does not stop independent rows or lanes. The log directory contains one
+The gate runs four serial prerequisites, four fixed concurrent lanes, and a
+post-join residue check. The contract/artifact lane begins with the fixed Node
+output writers; the serial journey lane starts only when those outputs pass.
+Each fixed subset preserves table order, and a row failure does not stop work
+that is independent of it. The log directory contains one
 log per observed row, an atomically updated summary naming every row `PASSED`,
 `FAILED`, or `NOT RUN`, and per-step/lane timing tables; any failure, unobserved
 row, crashed lane, or infrastructure refusal makes the gate red.
