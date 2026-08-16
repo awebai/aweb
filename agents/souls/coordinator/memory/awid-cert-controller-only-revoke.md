@@ -9,8 +9,10 @@ On 2026-06-21 the team investigated adding to awid: (1) an `issuer_did_key`
 column on `team_certificates` (migration 008, additive/nullable), and (2)
 broadening `revoke_certificate` auth from controller-only to
 controller-OR-issuer-if-still-member-OR-holder. Tracked as epic `default-aabq`
-(.7 aw team-add, .8 awid schema+revoke, .9/.10 AC orphan bugs). Full design note
-existed at `docs/restructuring/team-cert-issuer-seam.md`.
+(.7 aw team-add, .8 awid schema+revoke, .9/.10 AC orphan bugs). The full design
+note was deleted with the superseded restructuring set; it is in Git history and
+under that epic. Current authority is `docs/awid-sot.md` and the live
+certificate routes.
 
 **Juan scrapped the awid change entirely.** Reasoning (YAGNI, and correct): the
 distinct "revoke by issuer" capability only differs from "revoke by controller"

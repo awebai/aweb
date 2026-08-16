@@ -21,8 +21,8 @@ Use this page to decide which document has authority after the stack is running.
   It remains visible until its reviewed consumer migration, consolidation, or
   removal is complete.
 
-The baseline contains 77 tracked Markdown documents. This front door does not
-self-link. The remaining 76 public Markdown paths appear below exactly once.
+The baseline contains 76 tracked Markdown documents. This front door does not
+self-link. The remaining 75 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -245,7 +245,5 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   after consumer checks.
 - [Archived channel stack map](restructuring/archive/channel-stack-map.md) — the
   one retained dated/SHA-bound historical archive; never current authority.
-- [Scrapped team-certificate issuer seam](restructuring/team-cert-issuer-seam.md)
-  — remove after its historical memory consumer points to Git/task history.
 
 </details>

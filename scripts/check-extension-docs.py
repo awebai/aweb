@@ -84,6 +84,7 @@ REMOVED_DOCS = {
     "restructuring/layer-mapping.md",
     "restructuring/messaging-as-app-seam.md",
     "restructuring/oss-core-inventory.md",
+    "restructuring/team-cert-issuer-seam.md",
     "team-blueprints-sot.md",
     "team-extend-implementation-plan.md",
     "website-dashboard-strategy.md",
