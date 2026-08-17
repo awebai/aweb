@@ -11,6 +11,11 @@
   repeats the backfill with an explicit participant guard, and restores the
   same final constraint set for fresh and already-011-applied databases.
 
+- New additive migration `017_agents_certificate_id.sql` records the team
+  certificate that admitted each agent projection (nullable column; rows
+  created before it heal at their next certificate-authenticated connect or
+  request). Required by the revocation enforcement below.
+
 ### Server compatibility
 
 - The chat mark-read HTTP endpoint and both canonical/legacy MCP tools now
@@ -25,6 +30,32 @@
   the read set from the watermark; this is their prior behavior, not a new
   regression.
 
+- Certificate revocation is now enforced on every messaging auth form. The
+  agents projection records its admitting certificate, and identity-only,
+  grant, and MCP identity-auth requests check it against the AWID registry's
+  revocations: a revoked member keeps its DID-scoped mailbox but loses team
+  context (team attribution, alias sends, team-gated behavior), and a grant
+  whose issuing certificate is revoked is refused. Previously a revoked local
+  member whose projection survived could keep acting under its team alias by
+  omitting the certificate header. Consequences to plan for: identity-auth
+  requests that carry team context now share the certificate path's fail-closed
+  posture toward the registry (503 when it is unreachable past the cache's
+  stale window), and deployments should configure `AWID_SERVICE_TOKEN` so
+  revocation refreshes bypass the registry's public per-IP rate limits.
+  Limitation: hosted-custody members whose certificates never reach the AWID
+  registry are not covered by this check.
+- The AWID team revocation list is completely enumerable: the route paginates
+  with a `(revoked_at, id)` cursor and reports `has_more`/`next_cursor`, and
+  the Python registry client follows it to the end (with a best-effort `since`
+  fallback against pre-pagination servers). Previously the oldest 1000 rows
+  were returned with no truncation signal and consumed as the complete set. A
+  legacy client that sends no pagination parameters still gets its historical
+  1000-row page, never a shorter one. Revocation lists are now cached for 60
+  seconds (hard worst case 120 through stale-while-revalidate) instead of 10
+  minutes, so a revocation takes effect on enforcement within about a minute;
+  raising that constant is a trust-model change (see trust-model.md,
+  "Threat-model rulings").
+
 ### CLI compatibility
 
 - The aw CLI now sends exact chat read IDs first and retries one rejected,
@@ -35,6 +66,29 @@
   retires when the server accepts exact IDs.
 - Session-lease commands now turn a 404 from their lease routes into an explicit
   requirement for aweb server 1.26.28 or later.
+
+- `aw check` on a healthy install now reports `Doctor: ok`. The verdict is
+  computed over checks that actually ran: deliberately skipped checks (the
+  offline default, or a check with no safe probe) keep per-check status
+  `unknown` with `detail.skipped: true`, are counted in a new top-level
+  `skipped_checks` field, and no longer force the verdict to `unknown`; `info`
+  folds into `ok`. Human output marks them `[skipped]` and names
+  `aw check --online`. Consumers of the doctor.v1 JSON `status` field should
+  note the tightened semantics (documented in support-tools.md).
+- `aw mail show` uses the same certificate-first client selection as
+  send/reply, and identity-auth reads verify current-team senders through a
+  certificate-authenticated roster resolver when the workspace holds a
+  certificate. Previously `aw mail show` alone rendered every verified
+  current-team sender as `[verification stale]` on self-hosted pairs. Without
+  any certificate the fail-closed stale verdict still applies.
+- Team accept/enroll/provision paths now publish the E2E encryption-key
+  assertion (to AWID for global identities, to the aweb service where a
+  workspace binding exists) and record `published_at`; a publish failure warns
+  loudly with the remedy instead of failing the recorded membership. A new
+  offline doctor check, `identity.e2ee.assertion_published`, warns when a
+  publishable identity has never recorded a publish; `aw id encryption-key
+  setup` republishes. Previously provisioning created the key locally and
+  never published, leaving counterparties nothing to encrypt to.
 
 ### Channel compatibility
 
