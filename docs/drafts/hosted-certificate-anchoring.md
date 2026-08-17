@@ -361,52 +361,44 @@ implementation:
   pre-v2 grants, imported state, and mint-path defects. Effective grant
   validity is the intersection of grant and parent-certificate validity.
   The earlier fallback (nominal longer TTL, use-time invalidation only) is
-  dropped as knowingly misleading. Practical note (round-10 review): under
-  option R1 below, renewal at the 30-days-remaining margin is what actually
-  ends a surviving grant's life — the cutover, not the cap — so the cap is
-  a rarely-binding truthfulness ceiling, not the operative bound; under R2
-  the cap against the OLD parent's expiry is exactly the operative bound. **Renewal semantics
-  are an open decision with two priced options** — the substrate fact is
-  settled (coordinator code evidence, 2026-08-17: the registry's unique
-  active-alias index permits one unrevoked certificate per (team, alias),
-  so on today's schema same-alias renewal is necessarily
-  revoke-then-register), but what v2 should COMMIT to is contested and goes
-  through the adversarial round rather than being picked silently:
+  dropped as knowingly misleading. Practical note (round-10 review, restated
+  under the committed supersession semantics): the cap against the issuing
+  (possibly superseded) parent's own expiry is exactly the operative bound —
+  renewal never shortens a live grant's life, and only revocation ends it
+  early. **Renewal semantics: committed to
+  supersession validity (decision owner ruling, Juan, 2026-08-17)** — "a
+  renewal should not force us to redo grants, but a revocation should revoke
+  grants." This is the resident-identities design's own core rule applied to
+  certificates: a lifecycle credential must never require cleanup or
+  re-provisioning from a routine event above it, and grant minting authority
+  lives in the owner's custody outside every worker — so a renewal that
+  killed grants would not be "workers remint cheaply" but a recurring
+  operational event requiring custody/spawn machinery to re-provision every
+  live worker of every resident, roughly quarterly. Rejected accordingly.
 
-  **Option R1 — atomic cutover with a supersession marker.** Renewal
-  revokes the old certificate and registers the replacement in one atomic
-  registry operation (a new combined route, not a composition of today's
-  two signed routes), recording a revocation *reason* (`superseded` vs
-  `revoked`) so the revocation list keeps meaning loss-of-authority apart
-  from paperwork. Grants issued under the old certificate are invalidated
-  at cutover; workers remint — which the resident-identities design prices
-  as cheap ("nothing a spawn creates ever needs cleanup"), and with
-  grant TTLs of hours against renewal cycles of months the interruption is
-  rare. Minimal schema change; exactly one live authority per alias at all
-  times; removal revokes one certificate.
+  Committed semantics: routine same-subject, same-key renewal marks the old
+  certificate `superseded_at`; it remains **valid until its own expiry**
+  while the fresh certificate is *current* for new presentations and mints.
+  Grants continue to min(grant, old-parent expiry) with no worker
+  interruption. Revocation remains the loss-of-authority act — compromise,
+  replacement, retirement — and kills every dependent grant immediately;
+  the revocation list stays a pure loss-of-authority signal, and routine
+  renewal adds no revocation rows (which also improves the churn bound
+  above).
 
-  **Option R2 — supersession validity (coordinator's corrected
-  recommendation).** Renewal marks the old certificate `superseded_at` but
-  it remains VALID until its own expiry; the fresh certificate is *current*
-  for new presentations and mints. Grants continue to
-  min(grant, old-parent expiry) with no worker interruption; routine
-  renewal adds no revocation rows at all. Costs, stated fully: a new
-  current-vs-still-valid state model in the trust core; roster reads must
-  resolve *current*; verification must accept superseded-unexpired;
-  principal removal and the aauy commit must enumerate and revoke EVERY
-  still-valid certificate for the member (not one); concurrent renewal
-  needs fencing; and the reconciliation sweep and abfn checks must handle
-  multiple valid certificates per member. This keeps renewal semantically
-  distinct from revocation — the revocation list stays a pure
-  loss-of-authority signal.
-
-  id-bugs recommends **R1 for v2** — the interruption it costs is rare and
-  priced as cheap by the design this serves, while R2 expands the
-  trust-core state model for a benefit today's grant lifetimes barely use —
-  with R2 recorded as the upgrade path if grant lifetimes grow or worker
-  interruption proves costly in practice. The coordinator recommends R2 as
-  the honest ordinary-renewal semantic. Either way the choice is a contract
-  commitment, made once, before implementation.
+  The priced scope this commits to, stated fully (unchanged from the
+  option analysis): an explicit current-vs-still-valid certificate state in
+  the registry (`superseded_at` or equivalent — today's unique active-alias
+  index encodes "active = unrevoked" and must evolve to "current = unrevoked
+  and unsuperseded"); roster reads resolve *current*; verification accepts
+  superseded-unexpired; principal removal and the `aweb-aauy` commit
+  enumerate and revoke EVERY still-valid certificate for the member, not
+  one; concurrent renewal is fenced; and the reconciliation sweep and abfn
+  checks handle multiple valid certificates per member. The rejected
+  alternative (atomic cutover, revoke-on-renewal) is retained in history as
+  the minimal adaptation of today's schema; it was rejected because it
+  conflates paperwork with loss of authority and couples worker lifecycle
+  to certificate maintenance.
 
 ## Explicitly out of scope, mapped to the eight-point required shape
 
