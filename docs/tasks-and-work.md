@@ -64,17 +64,26 @@ aw task create \
   --type bug
 ```
 
-A useful task states the outcome and constraints, not just an activity. Add
-dependencies when work cannot begin safely until another task is complete:
+A useful task states the outcome and constraints, not just an activity.
+
+The inline form above is fine for plain prose. For anything richer — Markdown,
+command examples, backticks, `$(...)` — write the text to a file and use the
+`-file` variant instead: `--description-file` here, `--body-file` for comments,
+`--reason-file` when closing. A double-quoted shell argument is expanded by the
+shell before `aw` ever sees it, so a pasted command example arrives already
+mangled, and both the send and the diff look successful.
+
+Add dependencies when work cannot begin safely until another task is complete:
 
 ```bash
 aw task dep add <blocked-ref> <dependency-ref>
 ```
 
-Use comments for findings that should remain attached to the work:
+Use comments for findings that should remain attached to the work. Findings are
+usually the richest thing you will write, so write them to a file:
 
 ```bash
-aw task comment add <ref> "Reproduced on macOS; Linux path is unaffected."
+aw task comment add <ref> --body-file finding.md
 ```
 
 Use mail when a particular teammate needs the update or handoff.
