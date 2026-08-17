@@ -14,7 +14,11 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from aweb.internal_auth import parse_internal_auth_context
-from aweb.identity_auth_deps import lookup_identity_agent_context, resolve_identity_auth
+from aweb.identity_auth_deps import (
+    _enforce_current_membership,
+    lookup_identity_agent_context,
+    resolve_identity_auth,
+)
 from aweb.team_auth_deps import _aweb_db, verify_request_certificate
 
 logger = logging.getLogger(__name__)
@@ -121,6 +125,10 @@ class MCPAuthMiddleware:
                 did_key=identity.did_key,
                 did_aw=identity.did_aw,
             )
+            # Same enforcement as the HTTP identity-only path (aweb-abfn): a
+            # projection whose admitting certificate is revoked must not grant
+            # team context here either.
+            row = await _enforce_current_membership(request, row)
             return AuthContext(
                 team_id=(row or {}).get("team_id") or None,
                 agent_id=(str((row or {}).get("agent_id")) if (row or {}).get("agent_id") else None),
