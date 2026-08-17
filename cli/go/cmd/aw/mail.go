@@ -1051,14 +1051,13 @@ var mailShowCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		var c *aweb.Client
-		var sel *awconfig.Selection
-		var err error
-		if strings.TrimSpace(teamFlag) != "" {
-			c, sel, err = resolveClientSelection()
-		} else {
-			c, sel, err = resolveIdentityMessagingClientSelection()
-		}
+		// Same client selection as mail send/reply: certificate-authenticated
+		// when the workspace has one, identity-auth fallback otherwise. Reads
+		// are DID-scoped server-side under either credential, but the
+		// certificate client can also verify senders against the team roster;
+		// mail show choosing identity-auth unconditionally is what rendered
+		// every current-team sender as [verification stale] (aweb-abfc).
+		c, sel, err := resolveMailMessagingClientSelection()
 		if err != nil {
 			return err
 		}
