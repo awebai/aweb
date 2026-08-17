@@ -1,8 +1,12 @@
 # Hosted certificate anchoring and read-back
 
-Status: **design draft — not normative, no implementation authorized
-(Juan's hold stands; the hosted roster-visibility default awaits his
-ruling; the registry-outage grace is adopted).** Twelve adversarial review rounds
+Status: **CONTRACT — implementation authorized (Juan, 2026-08-17: "yes go
+ahead, also do the implementation"). The hosted roster-visibility default is
+ruled: private by default, every existing team keeps its current value,
+public is an explicit controller/admin opt-in, and the backfill never
+resets visibility — with read-side enforcement built so private is a fact,
+not a label. The registry-outage grace is adopted. Implementation is
+tracked as an epic with per-repo tasks.** Sixteen adversarial review rounds
 plus the AC inventory are incorporated. Certificate expiry, and everything
 that existed only to serve it, was **removed from this design by owner
 decision (Juan, 2026-08-17)**; it is not deferred, pending, or triggered —
@@ -157,12 +161,13 @@ the abfp rate-limit round already flagged, and one more reason the token
 setup belongs in the deployment checklist. BYOT CLI reads
 (`aw team agent-status`, `aw id team members`) would need to sign their
 requests for private teams — an OSS-side deliverable added to the repo
-split. The **default for hosted teams remains Juan's ruling**, now with the
-honest statement of what each choice means: "private" is a commitment to
-build and enforce the gate; "public" accepts the enumeration described
-above. The coordinator's recommendation (private by default, preserve
-existing values, opt-in to public, backfill never resets visibility) is
-recorded and endorsed. The resident-identities model keeps this coherent at
+split. The default is **ruled (Juan, 2026-08-17): private by
+default**, every existing team keeps its current value, public is an
+explicit controller/admin opt-in, and the backfill never resets
+visibility — adopting the coordinator's recommendation, with the honest
+statement of what the ruling commits us to: "private" is a commitment to
+build and enforce the read-side gate above, and that gate is now an epic
+task, not an open question. The resident-identities model keeps this coherent at
 any visibility: readers of a roster see one resident member per role, never
 its session-grant workers, whose provenance is private by design. (Supersedes open question 1 below and the earlier
 claim that the visibility control already gates reads.)
@@ -363,10 +368,12 @@ From the adversarial review of the verification-authority draft (task
 
 ## Open questions for review and for Juan
 
-1. **Registry visibility of hosted rosters.** Anchoring makes hosted team
-   membership readable wherever BYOT membership already is. Is the existing
-   team-visibility control sufficient policy, and what should the default be
-   for hosted teams?
+1. **Registry visibility of hosted rosters** — ruled by Juan on
+   2026-08-17: private by default, existing values preserved, public by
+   explicit opt-in, backfill never resets; the existing control is *not*
+   sufficient until read-side enforcement is built (see the visibility
+   section), and that build is an epic task. Retained here as the record
+   that the question is closed, not open.
 2. **Backfill authority**: run by the hosted operator offline, or exposed as
    a support-audited admin operation?
 3. **Failure isolation at mint time** — resolved by review recommendation,
