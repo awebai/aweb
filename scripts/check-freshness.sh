@@ -174,6 +174,19 @@ else
   status=1
 fi
 
+# 13. Hand-maintained copies. The Codex plugin ships its own copy of the
+#    canonical skill bodies and nothing regenerates it, so the two sides drift by
+#    editing one of them. Both files stay valid on their own and every other gate
+#    here passes, which is why this needs its own check rather than review
+#    attention.
+section "copied resources"
+if scripts/check-copied-resources.py --self-test && scripts/check-copied-resources.py; then
+  echo "copied resources match their sources"
+else
+  echo "FAIL: a copied resource has drifted from its source (or the checker's self-test failed)"
+  status=1
+fi
+
 if [ "$status" -eq 0 ]; then
   printf '\nAll freshness checks passed.\n'
 else

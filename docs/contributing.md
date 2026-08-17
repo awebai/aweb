@@ -271,6 +271,11 @@ Two further gates run in the same command and answer different questions:
   gate fails and that is a decision to argue in review, not a line to add.
   Re-measure with `scripts/check-private-boundary.py --derive`, which prints a
   freshly derived baseline and never writes.
+- **`scripts/check-copied-resources.py`** compares hand-maintained copies against
+  their sources. The Codex plugin ships its own copy of each canonical skill body
+  and nothing regenerates it, so editing one side leaves two valid files that
+  disagree. If you change a skill, change both — the gate names the copy, because
+  the copy is the side that gets forgotten.
 
 It **cannot** verify that documentation prose is true. A path can resolve while
 the sentence around it is wrong, a `:LINE` anchor can point at unrelated code
