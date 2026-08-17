@@ -358,6 +358,11 @@ most 60 seconds (hard worst case 120 seconds through the stale-while-revalidate
 window), matching the federation authority reuse ceiling. Against an honest
 registry, a revocation therefore takes effect on enforcement within about a
 minute. Raising that constant is a trust-model change, not a tuning decision.
+An adopted-but-not-yet-implemented extension (owner decision, 2026-08-17):
+during registry FAILURE, verifiers serve the last-known revocation set for a
+bounded grace of 15 minutes, loudly logged, then fail closed — messaging
+survives registry outages at the cost of a revocation issued mid-outage
+remaining effective up to the grace window.
 
 The committed exit ladder, in order:
 

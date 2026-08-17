@@ -1,8 +1,8 @@
 # Hosted certificate anchoring and read-back
 
 Status: **design draft — not normative, no implementation authorized
-(Juan's hold stands; the hosted roster-visibility default and the
-registry-outage grace await his ruling).** Twelve adversarial review rounds
+(Juan's hold stands; the hosted roster-visibility default awaits his
+ruling; the registry-outage grace is adopted).** Twelve adversarial review rounds
 plus the AC inventory are incorporated. Certificate expiry, and everything
 that existed only to serve it, was **removed from this design by owner
 decision (Juan, 2026-08-17)**; it is not deferred, pending, or triggered —
@@ -254,11 +254,18 @@ is touched.
 
 The residual: a sustained registry outage longer than 120 seconds turns into
 503s for team-context messaging — the posture the certificate path has
-always had, now covering more requests. **Decision for Juan, alongside the
-visibility ruling**: keep strict fail-closed at 120 seconds, or adopt a
+always had, now covering more requests. **ADOPTED (Juan, 2026-08-17)**: the
 bounded outage grace — on refresh failure, serve the last-known revocation
-set up to a stated window (proposed: 15 minutes), loudly logged, then fail
-closed. **The grace is new engineering, not a tunable parameter** (round-8
+set up to a stated window (15 minutes), loudly logged, then fail closed.
+During a registry outage messaging stays up; the worst case is a
+certificate revoked mid-outage remaining effective up to the grace window.
+For clarity of mechanics (confirmed at adoption): the revocation check is a
+local set-membership test on the aweb server against a Redis-cached copy
+fetched server-to-server once per team per minute; the list carries only
+certificate UUIDs and timestamps, and clients never receive it — the
+pull-and-cache CRL shape is deliberate, chosen over per-check registry
+queries which would be chattier, harder-coupled, and leak usage patterns to
+the registry. **The grace is new engineering, not a tunable parameter** (round-8
 review finding): the cached entry is deleted from Redis at 120 seconds by
 the shared stale-multiplier, so a 15-minute grace requires a
 revocation-specific retention tier (a third fresh/stale/grace state in the
@@ -267,7 +274,9 @@ failure handler from its current silent debug level. Bounded scope, but
 scope. The grace trades a bounded revocation delay during outages for
 messaging availability; it sits inside the already-ruled bounded-staleness
 doctrine, and the operational history above is the argument for it.
-id-bugs recommends the bounded grace, priced as above.
+The engineering it requires (the revocation-specific retention tier and
+loud failure logging, priced above) is an OSS deliverable in the repo
+split.
 
 ## Conditions the AC inventory adds to "every mint registers"
 
@@ -335,7 +344,9 @@ From the adversarial review of the verification-authority draft (task
 
 ## Repo split and sequencing
 
-- **OSS (id-bugs)**: the fresh-certificate re-issuance operation (blob-lost
+- **OSS (id-bugs)**: the outage-grace retention tier and loud
+  refresh-failure logging in the cached registry client; the
+  fresh-certificate re-issuance operation (blob-lost
   remediation); read-side
   visibility enforcement on the registry's team/certificate/member/
   revocation reads for private teams; doctor checks; SOT/docs updates; test
