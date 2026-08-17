@@ -58,9 +58,11 @@ aw chat send-and-wait <teammate> "<question>" --start-conversation
 Both commands also take the message inline — `--body` for mail, a positional
 argument for chat — which is fine for a short plain sentence, and a chat
 question usually is one. Use `--body-file` for anything with Markdown, backticks
-or `$(...)`; both commands accept it. The shell expands a quoted argument before
-`aw` receives it, so the message is already altered by the time it is sent, and
-nothing reports a failure.
+or `$(...)`; both commands accept it. The shell expands an unquoted or
+double-quoted argument before `aw` receives it, so the message is already
+altered by the time it is sent, and nothing reports a failure. Single quotes do
+not expand, but they cannot contain a single quote, which is why a file is the
+reliable answer rather than a quoting trick.
 
 ## 3. Select one task
 
