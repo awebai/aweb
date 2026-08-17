@@ -1,9 +1,62 @@
 # Local-sender verification authority
 
-Status: **draft under adversarial review — not normative**. Nothing below
-changes behavior until it is reviewed, ruled on, and landed into
-[trust-model.md](../trust-model.md). Filed from the aweb-abfc root-cause work
-(2026-08-17) at Juan's direction.
+Status: **recommendation rejected by adversarial review (aweb, 2026-08-17) —
+kept as the record of the analysis and its correction. Not normative.** Filed
+from the aweb-abfc root-cause work at Juan's direction; full review findings
+on task `aweb-abfm`.
+
+## Adversarial review outcome (2026-08-17)
+
+The review broke the recommendation, and the author verified its decisive
+factual claims against the code. What broke:
+
+1. **The write-side membership premise is false.** Identity-only messaging
+   auth (`server/src/aweb/identity_auth_deps.py:185-201`) derives team/alias
+   from the live `agents` projection by key possession alone — no certificate,
+   no revocation check. A revoked local member whose projection survives (the
+   aweb-aaum.9 split-state family) can keep sending under its team alias by
+   omitting the certificate header. Identity grants share the gap. Filed as
+   its own bug.
+2. **"No independent security" conflated full and partial compromise.** The
+   fresh roster read is a real cross-check against a compromised message
+   store or ingest component when the roster component is honest. Option 2
+   removes that without replacing it. The claim holds only if the server is
+   modeled as a single indivisible adversary — which is a threat-model choice
+   that belongs to Juan, not an implementation fact.
+3. **Option 3 cannot prove membership-at-send with today's artifacts.**
+   Certificates carry `issued_at` but no expiry, message timestamps are
+   sender-controlled, so a revoked member can backdate. Historical membership
+   needs a non-backdatable acceptance-time anchor (service-signed receipt or
+   witnessed log).
+4. **The "only cert transport is missing" claim was materially too small.**
+   No public certificate-blob fetch; team-key rotation overwrites
+   `teams.team_did_key` with no history; the revocation route truncates at
+   the oldest 1000 rows with no pagination while clients consume it as
+   complete (filed as its own bug); no end-to-end freshness bound exists or
+   can exist without witnessing/transparency.
+5. **Replay/downgrade were undefined**: the signed envelope binds no team ID
+   or certificate digest, so a carried certificate could be substituted or
+   stripped.
+
+Standing ruling until Juan decides otherwise: **Option 1** (status quo,
+documented; instrument standardization already on main at `93c308fa`). Option
+2 must not ship as `verified`; if ever built it needs a distinct
+`verified_server_attested` status and must still fail on roster mismatch when
+the reader can obtain the roster. Option 3 remains the target *direction*
+only as the larger protocol in the review's "required shape" list: current
+write-side enforcement fixed first, signed envelope binding of
+team/certificate/delegation, non-backdatable acceptance-time proof, public
+immutable certificate blobs, namespace-authorized team-key history, complete
+paginated revocations, an honest freshness model, and custody preserved as a
+separate claim.
+
+Decisions that are Juan's, not a coordinator's: (a) whether partial-service
+compromise is in scope of the trust model; (b) whether an unbounded
+source-suppression residual is acceptable or witnessing/transparency is
+required.
+
+The sections below are the original analysis, kept intact as the record the
+review examined. Where a claim was broken, the outcome above supersedes it.
 
 ## Why this document exists
 
