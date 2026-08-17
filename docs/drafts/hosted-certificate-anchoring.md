@@ -1,8 +1,9 @@
 # Hosted certificate anchoring, read-back, and expiry
 
-Status: **design draft, review rounds 1-3 and the AC inventory
-incorporated — not normative, no implementation authorized (Juan's hold
-stands).** Round 1 verified the core decision
+Status: **design draft, final: six adversarial review rounds complete (ACK
+at `cc2990ba`) and the AC inventory incorporated — not normative, no
+implementation authorized (Juan's hold stands, and the hosted
+roster-visibility default awaits his ruling).** Round 1 verified the core decision
 (existing registry routes accept hosted registration: no controller-key,
 namespace, or addressless-member barrier exists in code) and broke the
 original backfill scope; the reconciliation sweep, the expiry hard cutoff,
@@ -325,8 +326,10 @@ From the adversarial review of the verification-authority draft (task
    bound tied to the certificate validity window escalates loudly, because an
    unregistered certificate is a silent enforcement gap, not a UX
    inconvenience.
-5. **AC reader inventory** (open, assigned): the enumeration of AC-side
-   consumers reading `cloud_agent_certificates` directly, and whether AC
-   retains signed blobs for revoked certificates (decides the reconciliation
-   sweep's fallback), is owned by the retirement instance and remains
-   unanswered; asked by mail 2026-08-17.
+5. **AC reader inventory** — answered 2026-08-17 by the retirement
+   instance's authorized read (evidence on `aweb-aaum.9`): direct
+   readers/writers enumerated; signed blobs are NOT reliably retained after
+   revocation (hence the sweep's required deletion fallback); and the
+   findings are incorporated above ("Conditions the AC inventory adds" and
+   the registry-classified sweep). Retained here as the record that the
+   question is closed, not open.
