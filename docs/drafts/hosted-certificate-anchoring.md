@@ -218,9 +218,14 @@ aweb-aaum.9, 2026-08-17):
    individual remediation completed**. The named remedy for the hardest case
    — a legitimate, active member whose signed blob is lost or corrupted, who
    can neither be registered (no blob to submit) nor deleted (they are
-   legitimate) — is **re-mint**: issue a fresh certificate for the same
-   member key, register it, and refresh the projection, exactly the
-   replace-key machinery that already exists. Without this gate, a member
+   legitimate) — is **re-issuance**: sign a fresh certificate for the *same*
+   member key, register it, and refresh the projection. The mechanism is the
+   re-issuance command this document already scopes in the Expiry section
+   (built for renewing ahead of expiry; the blob-lost case generalizes it,
+   and hosted teams need it alongside BYOT). It is deliberately NOT the
+   replace-key machinery, which structurally requires a key change at both
+   client and server layers and exists for lost or compromised keys — a
+   different situation than a lost certificate blob. Without this gate, a member
    who did nothing wrong is locked out the moment existence becomes
    required.
 4. **The W ≠ A invariant.** AC's `ensure_stored_agent_team_certificate`
