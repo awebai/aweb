@@ -65,6 +65,11 @@ aw check
 aw team invite
 ```
 
+A healthy setup reports `Doctor: ok`. The default `aw check` run stays offline
+for the server checks and prints a note saying how many it skipped; run
+`aw check --online` to include them. Any `fail` or `warn` line names the broken
+check and its next step.
+
 `aw team invite` prints a token and a join command. Run it from Bob's existing
 directory; the equivalent form is:
 
@@ -132,8 +137,9 @@ projection. Connect the existing certificate explicitly:
 aw workspace connect --service "$AWEB_URL"
 ```
 
-Then run `aw check` in Bob's directory. This localhost path uses the reserved
-`local` namespace. A DNS-backed production deployment needs customer-controlled
+Then run `aw check` in Bob's directory and expect `Doctor: ok` (see the hosted
+section above for how to read the skipped-checks note and `--online`). This
+localhost path uses the reserved `local` namespace. A DNS-backed production deployment needs customer-controlled
 namespace and team authority; use the [self-hosting guide](self-hosting-guide.md)
 rather than treating this local bootstrap as production provisioning.
 

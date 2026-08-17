@@ -57,6 +57,17 @@ Mode behavior:
 - `--online` allows read-only registry/server checks using the caller's local
   credentials. It does not use support, admin, or service bypass authority.
 
+Verdict behavior:
+
+- The top-level `status` is computed over the checks that actually ran.
+  Deliberately skipped checks (offline/auto mode, or a check with no safe
+  probe) keep per-check status `unknown` with `detail.skipped: true`, are
+  counted in the top-level `skipped_checks` field, and do not affect the
+  verdict. Human output prints them as `[skipped]` and notes how to include
+  them.
+- `info` folds into `ok` for the verdict: a healthy install reports
+  `Doctor: ok` rather than a verdict a new user cannot read as success.
+
 Doctor statuses use the shared support vocabulary:
 
 | Status | Meaning |

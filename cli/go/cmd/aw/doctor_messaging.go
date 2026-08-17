@@ -204,5 +204,5 @@ func (r *doctorRunner) addMessagingOnlineChecks(client *aweb.Client) {
 	} else {
 		r.add(awebCheck(doctorCheckMessagingContactsRead, doctorStatusOK, nil, "Messaging contacts can be read under current identity credentials.", "", map[string]any{"contact_count": len(contacts.Contacts)}))
 	}
-	r.add(awebCheck(doctorCheckMessagingPolicyRead, doctorStatusUnknown, nil, "Messaging policy readability was not probed because no safe read-only policy endpoint is available.", "Add a dedicated read-only policy endpoint before making this check authoritative.", map[string]any{"reason": "no_read_endpoint"}))
+	r.add(awebCheck(doctorCheckMessagingPolicyRead, doctorStatusUnknown, nil, "Messaging policy readability was not probed because no safe read-only policy endpoint is available.", "Add a dedicated read-only policy endpoint before making this check authoritative.", map[string]any{"skipped": true, "reason": "no_read_endpoint"}))
 }

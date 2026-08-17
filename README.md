@@ -72,7 +72,9 @@ messaging:
 aw workspace connect --service https://app.aweb.ai/api
 ```
 
-Check both directories with `aw check`.
+Check both directories with `aw check`. A healthy setup reports `Doctor: ok`;
+the default run skips server checks and says how many it skipped — add
+`--online` to include them.
 
 ### 2. Start Bob's wake path before Alice sends
 

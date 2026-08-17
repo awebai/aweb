@@ -101,10 +101,14 @@ type doctorRunOptions struct {
 }
 
 type doctorOutput struct {
-	Version       string                   `json:"version"`
-	GeneratedAt   string                   `json:"generated_at"`
-	Status        doctorStatus             `json:"status"`
-	Mode          doctorMode               `json:"mode"`
+	Version     string       `json:"version"`
+	GeneratedAt string       `json:"generated_at"`
+	Status      doctorStatus `json:"status"`
+	Mode        doctorMode   `json:"mode"`
+	// SkippedChecks counts checks that were deliberately not run (offline/auto
+	// mode, or no safe probe). Status is computed over the checks that ran;
+	// skipped checks keep status unknown in Checks but do not affect Status.
+	SkippedChecks int                      `json:"skipped_checks,omitempty"`
 	Subject       doctorSubject            `json:"subject"`
 	Checks        []doctorCheck            `json:"checks"`
 	Redactions    []doctorRedaction        `json:"redactions"`
@@ -349,6 +353,7 @@ func buildDoctorOutput(opts doctorRunOptions) doctorOutput {
 		runner.runFixFramework()
 	}
 	runner.output.Status = aggregateDoctorStatus(runner.output.Checks)
+	runner.output.SkippedChecks = countSkippedDoctorChecks(runner.output.Checks)
 	return runner.output
 }
 
@@ -464,14 +469,46 @@ func defaultDoctorRedactions() []doctorRedaction {
 	}
 }
 
-func aggregateDoctorStatus(checks []doctorCheck) doctorStatus {
-	if len(checks) == 0 {
-		return doctorStatusOK
+// doctorCheckSkipped reports whether a check was deliberately not run — an
+// offline/auto-mode skip or a check with no safe probe. Skipped checks keep
+// their per-check status (unknown) but are excluded from the aggregate verdict:
+// a verdict that a deliberate skip can dominate reads "unknown" on every
+// healthy install and cannot distinguish healthy from broken (aweb-abfb).
+func doctorCheckSkipped(check doctorCheck) bool {
+	if check.Detail == nil {
+		return false
 	}
+	skipped, ok := check.Detail["skipped"].(bool)
+	return ok && skipped
+}
+
+func countSkippedDoctorChecks(checks []doctorCheck) int {
+	count := 0
+	for _, check := range checks {
+		if doctorCheckSkipped(check) {
+			count++
+		}
+	}
+	return count
+}
+
+// aggregateDoctorStatus computes the verdict over the checks that actually ran.
+// Deliberately skipped checks are excluded (they are counted and reported
+// separately), and info folds into ok: info means acceptable state worth
+// noting, and a verdict line a new user must read as success cannot say
+// anything but ok when nothing degraded was found.
+func aggregateDoctorStatus(checks []doctorCheck) doctorStatus {
 	best := doctorStatusOK
 	for _, check := range checks {
-		if doctorStatusRank(check.Status) > doctorStatusRank(best) {
-			best = check.Status
+		if doctorCheckSkipped(check) {
+			continue
+		}
+		status := check.Status
+		if status == doctorStatusInfo {
+			status = doctorStatusOK
+		}
+		if doctorStatusRank(status) > doctorStatusRank(best) {
+			best = status
 		}
 	}
 	return best
@@ -501,6 +538,13 @@ func formatDoctorOutput(v any) string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Doctor: %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Mode:   %s\n", out.Mode))
+	if out.SkippedChecks > 0 {
+		if out.Mode == doctorModeOnline {
+			sb.WriteString(fmt.Sprintf("Note:   %d check(s) have no safe probe and were skipped; they do not affect the verdict.\n", out.SkippedChecks))
+		} else {
+			sb.WriteString(fmt.Sprintf("Note:   %d online check(s) were skipped and do not affect the verdict; run `aw check --online` to include them.\n", out.SkippedChecks))
+		}
+	}
 	if out.Subject.WorkingDir != "" {
 		sb.WriteString(fmt.Sprintf("Path:   %s\n", abbreviateUserHome(out.Subject.WorkingDir)))
 	}
@@ -510,7 +554,11 @@ func formatDoctorOutput(v any) string {
 	}
 	sb.WriteString("Checks:\n")
 	for _, check := range out.Checks {
-		sb.WriteString(fmt.Sprintf("  [%s] %s — %s\n", check.Status, check.ID, check.Message))
+		statusToken := string(check.Status)
+		if doctorCheckSkipped(check) {
+			statusToken = "skipped"
+		}
+		sb.WriteString(fmt.Sprintf("  [%s] %s — %s\n", statusToken, check.ID, check.Message))
 		if check.Handoff != nil {
 			sb.WriteString(fmt.Sprintf("        handoff: %s\n", conciseDoctorHandoffLine(check.Handoff)))
 			if doctorVerbose {

@@ -29,7 +29,9 @@ func TestDoctorSupportBundleExportSchemaIsExplicit(t *testing.T) {
 		value  any
 		fields []string
 	}{
-		{"doctorOutput", doctorOutput{}, []string{"checks", "fixes", "generated_at", "mode", "redactions", "status", "subject", "support_bundle", "version"}},
+		// skipped_checks (aweb-abfb) is a non-secret count of deliberately
+		// skipped checks; reviewed for support-bundle export.
+		{"doctorOutput", doctorOutput{}, []string{"checks", "fixes", "generated_at", "mode", "redactions", "skipped_checks", "status", "subject", "support_bundle", "version"}},
 		{"doctorSubject", doctorSubject{}, []string{"alias", "aweb_url", "identity_path", "identity_scope", "team_id", "working_dir", "workspace_id"}},
 		{"doctorCheck", doctorCheck{}, []string{"authoritative", "authority", "detail", "fix", "handoff", "id", "message", "next_step", "source", "status", "target"}},
 		{"doctorTarget", doctorTarget{}, []string{"display", "id", "type"}},
@@ -203,7 +205,7 @@ func TestAwDoctorJSONWorksWithoutWorkspaceConfig(t *testing.T) {
 	if got.Version != doctorVersion {
 		t.Fatalf("version=%q", got.Version)
 	}
-	if got.Status != doctorStatusInfo {
+	if got.Status != doctorStatusOK {
 		t.Fatalf("status=%q", got.Status)
 	}
 	if got.SupportBundle != nil {
@@ -244,7 +246,7 @@ func TestAwDoctorHumanOutput(t *testing.T) {
 	}
 	text := string(out)
 	for _, want := range []string{
-		"Doctor: info",
+		"Doctor: ok",
 		"Mode:   auto",
 		"doctor.contract.v1",
 		doctorCheckWorkspaceExists,
@@ -252,6 +254,70 @@ func TestAwDoctorHumanOutput(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("human output missing %q:\n%s", want, text)
 		}
+	}
+}
+
+// aweb-abfb: the verdict must be computable as success on a healthy install.
+// Deliberately skipped checks (offline/auto mode, no safe probe) must not
+// dominate the verdict, info folds into ok, and anything that actually ran and
+// found degraded state still wins.
+func TestAggregateDoctorStatusExcludesSkippedAndFoldsInfo(t *testing.T) {
+	t.Parallel()
+
+	skipped := doctorCheck{ID: "a", Status: doctorStatusUnknown, Detail: map[string]any{"skipped": true, "reason": "auto_mode"}}
+	info := doctorCheck{ID: "b", Status: doctorStatusInfo}
+	ok := doctorCheck{ID: "c", Status: doctorStatusOK}
+
+	if got := aggregateDoctorStatus([]doctorCheck{skipped, info, ok}); got != doctorStatusOK {
+		t.Fatalf("healthy install verdict = %s, want ok", got)
+	}
+	// A check that ran and reported unknown (not a deliberate skip) still
+	// degrades the verdict: only skips are excluded.
+	ranUnknown := doctorCheck{ID: "d", Status: doctorStatusUnknown, Detail: map[string]any{"reason": "aweb_unavailable"}}
+	if got := aggregateDoctorStatus([]doctorCheck{skipped, info, ok, ranUnknown}); got != doctorStatusUnknown {
+		t.Fatalf("verdict with ran-unknown = %s, want unknown", got)
+	}
+	failed := doctorCheck{ID: "e", Status: doctorStatusFail}
+	if got := aggregateDoctorStatus([]doctorCheck{skipped, info, ok, failed}); got != doctorStatusFail {
+		t.Fatalf("verdict with fail = %s, want fail", got)
+	}
+	if got := aggregateDoctorStatus(nil); got != doctorStatusOK {
+		t.Fatalf("empty verdict = %s, want ok", got)
+	}
+}
+
+func TestFormatDoctorOutputReportsSkippedChecks(t *testing.T) {
+	t.Parallel()
+
+	out := doctorOutput{
+		Status:        doctorStatusOK,
+		Mode:          doctorModeAuto,
+		SkippedChecks: 2,
+		Checks: []doctorCheck{
+			{ID: "x.ok", Status: doctorStatusOK, Message: "fine"},
+			{ID: "x.skip", Status: doctorStatusUnknown, Message: "Online aweb check was skipped.", Detail: map[string]any{"skipped": true}},
+		},
+	}
+	text := formatDoctorOutput(out)
+	for _, want := range []string{
+		"Doctor: ok",
+		"2 online check(s) were skipped",
+		"aw check --online",
+		"[skipped] x.skip",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("formatted output missing %q:\n%s", want, text)
+		}
+	}
+	// In online mode the remaining skips have no safe probe; do not recommend
+	// the flag that is already set.
+	out.Mode = doctorModeOnline
+	text = formatDoctorOutput(out)
+	if strings.Contains(text, "aw check --online") {
+		t.Fatalf("online-mode note recommends --online:\n%s", text)
+	}
+	if !strings.Contains(text, "no safe probe") {
+		t.Fatalf("online-mode note missing no-safe-probe wording:\n%s", text)
 	}
 }
 
