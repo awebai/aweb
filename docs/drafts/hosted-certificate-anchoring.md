@@ -118,14 +118,36 @@ round-3 review broke the first version of this section:
   cost is real — bounded by the expiry-plus-exclusion commitment above, not
   avoided.
 
-### Roster visibility is a policy decision, made before implementation
+### Roster visibility: the field exists, but reads do not enforce it
 
-Anchoring makes hosted team rosters (aliases and member keys — not
-identities) readable wherever BYOT rosters already are. The registry's
-existing team-visibility control is the knob; the **default for hosted teams
-is Juan's decision and is required input before implementation starts**, not
-an open question to resolve during it. (Supersedes the softer phrasing in
-open question 1 below.)
+A code check (2026-08-17, prompted by Juan's direct question) corrected an
+assumption earlier versions of this section made: the registry stores a
+`visibility` field with a controller-signed setter, but **no read route
+enforces it**. Today, anonymously and regardless of visibility, rate limits
+permitting: teams in a domain are enumerable (`GET /teams`), a team's
+existence and public key are readable, its certificate **metadata** —
+aliases, member keys, and for global members their `did:aw` and address —
+is listable, individual members are resolvable by alias, and revocations are
+listable. Only the signed certificate **blob** fetch requires
+authentication. BYOT teams live with this exposure now; anchoring would
+extend it to hosted teams' local members.
+
+Consequently a "private by default" ruling is only meaningful if this design
+also delivers **read-side visibility enforcement**: for a private team, the
+certificate/member/revocation reads (and the team's appearance in domain
+enumeration) require a same-team certificate-authenticated caller or the
+trusted-service token — machinery both already existing (the blob fetch's
+path-signature scheme; the abfp exemption). The abfn enforcement path is
+unaffected (it presents the service token). BYOT CLI reads
+(`aw team agent-status`, `aw id team members`) would need to sign their
+requests for private teams — an OSS-side deliverable added to the repo
+split. The **default for hosted teams remains Juan's ruling**, now with the
+honest statement of what each choice means: "private" is a commitment to
+build and enforce the gate; "public" accepts the enumeration described
+above. The coordinator's recommendation (private by default, preserve
+existing values, opt-in to public, backfill never resets visibility) is
+recorded and endorsed. (Supersedes open question 1 below and the earlier
+claim that the visibility control already gates reads.)
 
 ### What happens to `cloud_agent_certificates`
 
@@ -193,6 +215,35 @@ remainder.
 Ordering: backfill and sweep before the removal protocol's commit step starts
 revoking at the registry, so a revoke never targets an unregistered
 certificate.
+
+## Registry availability posture (from operational history)
+
+The team's 2026-06 incident diary recorded weeks of intermittent
+"AWID registry unavailable" 503s on the coordination path. Its own final
+entry reclassified much of that pain: blanket exception-to-503 handling in
+the aweb auth paths converted stale-connection/DNS client faults into
+"registry unavailable", since narrowed to distinct error classes; the
+remainder were genuine per-request transients with green health. Two
+structural changes since then bound the exposure: registry reads on auth
+paths ride the Redis-backed cache (fresh 60s, stale-while-revalidate to
+120s, cache survives restarts), so a transient blip during a cache window
+does not surface at all and a failed background refresh silently serves
+stale; and error classes are distinct. This design adds **no new
+per-request registry calls**: mint-time registration is non-blocking
+(pending state), commit-time revocation is ledger-retryable, and enforcement
+widens which requests consult the *cached* state, not how often the network
+is touched.
+
+The residual: a sustained registry outage longer than 120 seconds turns into
+503s for team-context messaging — the posture the certificate path has
+always had, now covering more requests. **Decision for Juan, alongside the
+visibility ruling**: keep strict fail-closed at 120 seconds, or adopt a
+bounded outage grace — on refresh failure, serve the last-known revocation
+set up to a stated window (proposed: 15 minutes), loudly logged, then fail
+closed. The grace trades a bounded revocation delay during outages for
+messaging availability; it sits inside the already-ruled bounded-staleness
+doctrine, and the operational history above is the argument for it.
+id-bugs recommends the bounded grace.
 
 ## Conditions the AC inventory adds to "every mint registers"
 
