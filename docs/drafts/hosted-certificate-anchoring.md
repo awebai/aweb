@@ -386,19 +386,43 @@ implementation:
   renewal adds no revocation rows (which also improves the churn bound
   above).
 
-  The priced scope this commits to, stated fully (unchanged from the
-  option analysis): an explicit current-vs-still-valid certificate state in
-  the registry (`superseded_at` or equivalent — today's unique active-alias
-  index encodes "active = unrevoked" and must evolve to "current = unrevoked
-  and unsuperseded"); roster reads resolve *current*; verification accepts
-  superseded-unexpired; principal removal and the `aweb-aauy` commit
-  enumerate and revoke EVERY still-valid certificate for the member, not
-  one; concurrent renewal is fenced; and the reconciliation sweep and abfn
-  checks handle multiple valid certificates per member. The rejected
+  The priced scope this commits to, stated fully (option analysis plus two
+  round-11 review findings): an explicit current-vs-still-valid certificate
+  state in the registry — and this is a **constraint migration, not just
+  application logic**: today's unique active-alias index forbids two
+  unrevoked rows per (team, alias), so a superseded-but-unrevoked row
+  violates it outright and the index must be migrated (e.g., unique WHERE
+  `revoked_at IS NULL AND superseded_at IS NULL`), a harder and less
+  reversible change than new columns alone. Roster reads resolve *current*;
+  verification accepts superseded-unexpired; principal removal and the
+  `aweb-aauy` commit enumerate and revoke EVERY still-valid certificate for
+  the member, not one; concurrent renewal is fenced; the reconciliation
+  sweep and abfn checks handle multiple valid certificates per member. And
+  the second round-11 finding: `agents.certificate_id` is a single-value
+  field whose opportunistic refresh fires on ANY presented-certificate
+  difference — under supersession a fleet legitimately presenting either
+  certificate would ping-pong the projection non-deterministically,
+  silently degrading the W ≠ A invariant ("one certificate ID carried
+  consistently"). Resolution committed here: the field's meaning becomes
+  **the member's current certificate**; the refresh must never overwrite a
+  current certificate id with a superseded one (prefer-current rule), and
+  the W ≠ A invariant is restated over the current certificate. Enforcement
+  verdicts are unaffected either way (neither certificate is revoked), so
+  this is a consistency requirement, not a security fix. The rejected
   alternative (atomic cutover, revoke-on-renewal) is retained in history as
   the minimal adaptation of today's schema; it was rejected because it
   conflates paperwork with loss of authority and couples worker lifecycle
-  to certificate maintenance.
+  to certificate maintenance. For the record: the round-11 adversarial
+  arbitration, delivered before the owner ruling reached it, recommended
+  the cutover — weighting the supersession scope (constraint migration plus
+  the projection-consistency work above) against an interruption cost it
+  read the design as pricing at zero. The owner ruling distinguishes
+  cleanup (free by TTL, the design's actual zero-cost claim) from
+  re-provisioning (grant minting authority lives in the owner's custody
+  outside every worker, so renewal-killed grants mean custody-orchestrated
+  re-provisioning of every resident's fleet, roughly quarterly) — the
+  coupling the design exists to eliminate. Both positions are preserved so
+  the trade can be revisited if the facts change.
 
 ## Explicitly out of scope, mapped to the eight-point required shape
 
