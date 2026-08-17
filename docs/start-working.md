@@ -55,10 +55,12 @@ aw mail send --to <teammate> --subject "Status" --body-file update.md
 aw chat send-and-wait <teammate> "<question>" --start-conversation
 ```
 
-`--body` also takes text inline, which is fine for a short plain sentence. Use
-`--body-file` for anything with Markdown, backticks or `$(...)`: the shell
-expands a double-quoted argument before `aw` receives it, so the message is
-already altered by the time it is sent and nothing reports a failure.
+Both commands also take the message inline — `--body` for mail, a positional
+argument for chat — which is fine for a short plain sentence, and a chat
+question usually is one. Use `--body-file` for anything with Markdown, backticks
+or `$(...)`; both commands accept it. The shell expands a quoted argument before
+`aw` receives it, so the message is already altered by the time it is sent, and
+nothing reports a failure.
 
 ## 3. Select one task
 
