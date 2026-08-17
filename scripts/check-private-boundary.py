@@ -49,6 +49,7 @@ from pathlib import Path
 # source and removing those the public server or awid implements. Re-derive with
 # --derive rather than editing by hand.
 HOSTED_ENDPOINT_BASELINE = {
+    # Reached by public CLI source.
     "/api/v1/auth/namespaces",
     "/api/v1/claim-human",
     "/api/v1/discovery",
@@ -59,16 +60,45 @@ HOSTED_ENDPOINT_BASELINE = {
     "/api/v1/spawn/create-invite",
     "/api/v1/teams/byoidt/projection-delete",
     "/api/v1/workspaces/init",
+    # Found only once the scan covered the whole corpus rather than CLI Go
+    # source. The first derivation missed these: byoidt/import sits inside the
+    # import-request help string rather than a request literal, and the rest
+    # appear in tests, conformance vectors and the generated reference.
+    "/api/v1/teams/byoidt/import",
+    "/api/v1/teams/default",
+    "/api/v1/network/directory",
+    "/api/v1/network/directory/acme/researcher",
+    "/api/v1/a2a/gateway/routes",
 }
 
 # --- baseline: hosted account-model schemas ----------------------------------
-# org_id and user_id model the hosted product's account, which the OSS product
-# does not have. api_key is deliberately NOT a marker: workspace API keys are a
-# real OSS concept and appear throughout config and redaction code.
-HOSTED_ACCOUNT_FIELDS = ("org_id", "user_id")
+# Only org_id. It appears nowhere in this repository except the two baselined
+# structs below, so it genuinely has no OSS meaning.
+#
+# user_id was a marker here and was WRONG: the OSS server uses it in
+# internal_auth.py, team_auth.py and routes/dashboard.py, and aweb-sot.md
+# documents it in a response shape. It is a real OSS concept, and the earlier
+# scan only passed because it read cli/go source alone — widening the corpus
+# without fixing the marker would have failed on the server immediately.
+#
+# api_key is excluded for the same reason and was caught earlier: workspace API
+# keys are real OSS state throughout config and redaction code.
+#
+# Split so this file does not match itself.
+HOSTED_ACCOUNT_FIELDS = ("org" + "_id",)
 HOSTED_SCHEMA_BASELINE = {
+    # Go declarations, keyed by struct name: moving one to another file keeps its
+    # exemption, renaming it loses the exemption.
     "CliSignupResponse",
     "SpawnAcceptInviteResponse",
+    # JSON fixtures that mock the hosted signup response for those structs. Keyed
+    # by file because a JSON literal has no type name to key on — the weakest key
+    # in this file, and stated as such. Renaming one, or adding a fifth, trips the
+    # gate and needs its own decision.
+    "cli/go/awid/onboarding_cli_signup_test.go",
+    "cli/go/cmd/aw/hosted_signup_test.go",
+    "cli/go/cmd/aw/init_inbound_mode_test.go",
+    "cli/go/cmd/aw/onboarding_wizard_test.go",
 }
 
 # --- private repository and source paths -------------------------------------
@@ -135,13 +165,45 @@ def decodable_text(path: Path) -> str | None:
         return None
 
 
+# OSS services that live in this repository and serve their own routes. The
+# public deployment mounts the aweb server under /api, so /api/v1/messages IS the
+# server's /v1/messages; comparing literally would call every mounted route
+# hosted-only.
+OSS_SERVICE_SOURCES = ("server/src", "awid/src", "naapp")
+
+
 def oss_served_endpoints(root: Path) -> set[str]:
     out = subprocess.run(
         ["git", "-C", str(root), "grep", "-rh", "-o", "-E",
-         r"/api/v1/[a-zA-Z0-9/_{}.\-]*", "--", "server/src", "awid/src"],
+         r"/(api/)?v1/[a-zA-Z0-9/_{}.\-]*", "--", *OSS_SERVICE_SOURCES],
         check=False, capture_output=True, text=True,
     )
-    return {s for s in out.stdout.split() if len(s) > len("/api/v1/")}
+    return {
+        s.replace("/api/v1/", "/v1/") for s in out.stdout.split()
+        if len(s.replace("/api/v1/", "/v1/")) > len("/v1/")
+    }
+
+
+def is_oss_route(endpoint: str, served: set[str]) -> bool:
+    core = endpoint.replace("/api/v1/", "/v1/").rstrip("/")
+    return any(
+        core == s.rstrip("/") or core.startswith(s.rstrip("/") + "/")
+        for s in served
+    )
+
+
+def normalized_endpoint(raw: str) -> str | None:
+    """Trim prose punctuation; reject fragments that are not a whole endpoint."""
+    endpoint = raw.rstrip(".,)\"'`")
+    if "..." in endpoint or endpoint.endswith("/"):
+        return None
+    # A whole endpoint has at least three separators: the two in the prefix plus
+    # one before its first segment. Requiring four dropped every single-segment
+    # endpoint, which is how the first version of this rule lost three baselined
+    # entries without failing.
+    if endpoint.count("/") < 3:
+        return None
+    return endpoint
 
 
 def cli_source_files(files: list[str]) -> list[str]:
@@ -153,35 +215,58 @@ def cli_source_files(files: list[str]) -> list[str]:
 
 
 def find_hosted_endpoints(root: Path, files: list[str]) -> dict[str, set[str]]:
+    """Hosted-only endpoints anywhere in the corpus, not only in CLI Go source.
+
+    An endpoint literal means the same thing in a YAML example, an OAS document
+    or a Markdown code block as it does in Go, so the corpus is every tracked
+    decodable file. An earlier version read CLI Go source alone and reported
+    whole-corpus coverage it did not have.
+    """
     served = oss_served_endpoints(root)
     found: dict[str, set[str]] = {}
-    for rel in cli_source_files(files):
+    for rel in sorted(files):
+        if rel.endswith(SKIP_SUFFIXES):
+            continue
         text = decodable_text(root / rel)
         if text is None:
             continue
-        for match in re.finditer(r'"(/api/v1/[a-zA-Z0-9/_{}.\-]*)"', text):
-            endpoint = match.group(1)
-            if any(s.startswith(endpoint.rstrip("/")) or endpoint.startswith(s.rstrip("/"))
-                   for s in served):
+        for match in re.finditer(r"(/api/v1/[a-zA-Z0-9/_{}.\-]*)", text):
+            endpoint = normalized_endpoint(match.group(1))
+            if endpoint is None or is_oss_route(endpoint, served):
                 continue
             found.setdefault(endpoint, set()).add(rel)
     return found
 
 
 def find_hosted_schemas(root: Path, files: list[str]) -> dict[str, set[str]]:
+    """Hosted account fields DECLARED as schema fields, anywhere in the corpus.
+
+    Keyed on declaration rather than mention: prose naming the field — including
+    the documentation of this gate — is describing it, not shipping it. In Go the
+    declaration is attributed to its enclosing struct so the baseline can exempt
+    known instances by name; on any other surface a declaration has no struct to
+    belong to and is reported by file.
+    """
     found: dict[str, set[str]] = {}
-    for rel in cli_source_files(files):
+    for rel in sorted(files):
+        if rel.endswith(SKIP_SUFFIXES):
+            continue
         text = decodable_text(root / rel)
         if text is None:
             continue
+        is_go = rel.endswith(".go") and "_test" not in rel
         current = None
         for line in text.splitlines():
             declared = re.match(r"^type (\w+) struct", line)
             if declared:
                 current = declared.group(1)
             for field in HOSTED_ACCOUNT_FIELDS:
-                if f'json:"{field}' in line and current:
-                    found.setdefault(current, set()).add(rel)
+                go_decl = f'json:"{field}' in line
+                data_decl = f'"{field}":' in line or re.search(rf"^\s*{field}:\s", line)
+                if go_decl and is_go:
+                    found.setdefault(current or rel, set()).add(rel)
+                elif data_decl and not go_decl:
+                    found.setdefault(rel, set()).add(rel)
     return found
 
 
@@ -230,7 +315,20 @@ def check(root: Path) -> list[str]:
 
 
 def derive(root: Path) -> int:
-    """Print a freshly measured baseline. Never writes; the file is edited by hand."""
+    """Print a freshly measured baseline. Never writes; the file is edited by hand.
+
+    This is an aid to classification, not a generator. OSS routes are recognised
+    by grepping service source for path fragments, and a router registers its
+    prefix and its paths separately — so matching a prefix can suppress a hosted
+    route that merely lives under a shared one. The workspaces prefix is a real
+    instance: the OSS server serves /v1/workspaces but has no init route, and
+    the hosted init endpoint disappears from this output because of it.
+
+    So entries in the committed baseline that this no longer finds are printed
+    too. Each is either coupling that was removed — delete it, and the gate gets
+    stricter — or an endpoint this heuristic is suppressing. Silence would make
+    those indistinguishable.
+    """
     files = tracked_files(root)
     print("HOSTED_ENDPOINT_BASELINE = {")
     for endpoint in sorted(find_hosted_endpoints(root, files)):
@@ -240,6 +338,18 @@ def derive(root: Path) -> int:
     for schema in sorted(find_hosted_schemas(root, files)):
         print(f'    "{schema}",')
     print("}")
+
+    endpoints = set(find_hosted_endpoints(root, files))
+    schemas = set(find_hosted_schemas(root, files))
+    unfound = sorted(
+        (HOSTED_ENDPOINT_BASELINE - endpoints) | (HOSTED_SCHEMA_BASELINE - schemas)
+    )
+    if unfound:
+        print("\n# committed baseline entries this run did not find — each is either")
+        print("# coupling that is gone (delete the entry) or one this heuristic")
+        print("# suppresses (keep it, and see the docstring):")
+        for entry in unfound:
+            print(f"#   {entry}")
     return 0
 
 
@@ -269,9 +379,10 @@ def self_test(root: Path) -> int:
         # An eleventh hosted endpoint must fail. This is the control that makes
         # the green run above mean something: without it, a gate whose baseline
         # covers everything is indistinguishable from one that cannot fail.
-        write("cli/go/awid/new.go", 'const p = "/api/v1/onboarding/invented-endpoint"\n')
+        invented = "/api/v1/onboarding/" + "invented-endpoint"
+        write("cli/go/awid/new.go", f'const p = "{invented}"\n')
         failures = check(tmp)
-        if not any("invented-endpoint" in f for f in failures):
+        if not any(invented in f for f in failures):
             print("self-test failed: an endpoint outside the baseline was not rejected")
             return 1
         (tmp / "cli/go/awid/new.go").unlink()
