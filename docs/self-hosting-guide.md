@@ -339,24 +339,6 @@ still fail closed. For incident triage, preserve `correlation_id` and use the
 limiting emits `Retry-After: 1`. Do not collect keys, DID logs, DNS answers, peer
 bodies, or internal URLs from users.
 
-### The Consolidated Schema Baseline Is Reset-Only
-
-`001_initial.sql` is a consolidated baseline. It **changes the checksum of
-`001_initial.sql` and removes the later filenames** that older databases already
-applied, so it is not a normal pgdbm upgrade path.
-
-- **Do not apply it in place.** Against an already-migrated database whose
-  `schema_migrations` holds rows for `001..011`, pgdbm's migration manager
-  refuses on a checksum mismatch for the previously-applied `001_initial.sql`.
-- **The only supported consumption is a fresh rebuild**, where `schema_migrations`
-  is rebuilt by pgdbm's first apply of the consolidated baseline.
-- **Do not path-swap `schema_migrations` to claim the consolidated checksum.**
-  It is the workaround the refusal above invites, and it silently breaks
-  checksum provenance. If an environment still runs the historical `001..011`
-  chain and cannot be rebuilt, either rebuild it from a dump, or pin the
-  historical chain in a parallel `aweb` package version until that environment is
-  decommissioned.
-
 ### Health and Smoke Tests
 
 ```bash

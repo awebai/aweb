@@ -15,9 +15,9 @@ weight: 27
 
 Use this guide after a workspace is already connected to a team. For the
 communication-first path with two existing agent directories, start with the
-[CLI tutorial](/docs/cli-tutorial/). For this optional materialization workflow,
-see [Create and run your first team](/docs/create-and-run-team/) or
-[Add an AI tool to a team](/docs/add-ai-tool/).
+[CLI tutorial](cli-tutorial.md). For this optional materialization workflow,
+see [Create and run your first team](create-and-run-team.md) or
+[Add an AI tool to a team](add-ai-tool.md).
 
 ## 1. Materialize a member, not just a directory
 

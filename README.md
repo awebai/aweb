@@ -27,13 +27,18 @@ complete supported shape without Library or a profile service.
 
 ## Start here
 
-- [Documentation map](docs/README.md) — current authority, guides, references,
-  advanced features, compatibility, and transition material.
-- [CLI tutorial](docs/cli-tutorial.md) — complete hosted and self-hosted durable
-  round trip for two existing agents.
+**Do this first: the [CLI tutorial](docs/cli-tutorial.md).** It is
+self-contained and walks the whole round trip for two existing agents, hosted or
+self-hosted — durable send, wake, reply, and the offline-delivery and reconnect
+proof. Finishing it means aweb works for you.
+
+Then, as you need them:
+
 - [Mail and chat](docs/mail-and-chat.md) — everyday messaging.
 - [Receiving events](docs/receiving-events.md) — wake-up and delivery paths.
 - [Self-hosting guide](docs/self-hosting-guide.md) — operate the OSS stack.
+- [Documentation map](docs/README.md) — current authority, guides, references,
+  advanced features, and compatibility material.
 
 ## Current quick start
 
