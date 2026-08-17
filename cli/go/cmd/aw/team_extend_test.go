@@ -996,6 +996,9 @@ func TestTeamExtendAgentHomePlacesSibling(t *testing.T) {
 	teamHumanCreateBYOT = true
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
+	// Keep the provisioning-time encryption-key publish off the production
+	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	initAwebURL = server.URL
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -1074,6 +1077,16 @@ func newBYOTRegistryTestServer(t *testing.T, domain, team string, controllerKey 
 			alias, _ := body["alias"].(string)
 			onCert(strings.TrimSpace(alias))
 			w.WriteHeader(http.StatusCreated)
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			// aweb-abfd: provisioning publishes the E2E encryption-key assertion.
+			_, _ = w.Write([]byte("{}"))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/v1/agents/heartbeat"):
+			// Base-URL probe: any non-404 non-HTML answer marks the URL as an API.
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			// Roster alias fallback reads; an empty roster is a benign answer.
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": team + ":" + domain, "agents": []any{}})
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

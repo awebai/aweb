@@ -1767,6 +1767,9 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 	defer server.Close()
 	t.Setenv("AWID_REGISTRY_URL", server.URL)
 	teamHumanCreateFirstGlobal = true
+	// Keep the provisioning-time encryption-key publish off the production
+	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Eng"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)
@@ -2011,6 +2014,9 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "claimed", "domain": "acme.com", "name": "ops", "did_aw": createdDIDAW, "current_did_key": createdDIDKey, "did_status": "created", "address_status": "created"})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/did/"+createdDIDAW+"/encryption-key":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "published"})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			// aweb-abfd: provisioning publishes to the aweb service once a binding exists.
+			_, _ = w.Write([]byte("{}"))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/namespaces/acme.com/addresses/ops":
 			_ = json.NewEncoder(w).Encode(map[string]any{"domain": "acme.com", "name": "ops", "did_aw": createdDIDAW, "current_did_key": createdDIDKey})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams":
@@ -2034,6 +2040,9 @@ func TestTeamHumanCreateBYOTFirstAgentGlobalMintsWithNamespaceAuthority(t *testi
 	teamHumanCreateNamespace = "acme.com"
 	teamHumanCreateRegistryURL = server.URL
 	teamHumanCreateFirstGlobal = true
+	// Keep the provisioning-time encryption-key publish off the production
+	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)
@@ -2127,6 +2136,9 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 	teamHumanCreateRegistryURL = server.URL
 	teamHumanCreateAlias = "captain"
 	teamHumanCreateFirstGlobal = true
+	// Keep the provisioning-time encryption-key publish off the production
+	// default aweb URL (aweb-abfd wiring publishes once a binding exists).
+	initAwebURL = server.URL
 
 	if err := runTeamHumanCreate(nil, []string{"Ops"}); err != nil {
 		t.Fatalf("runTeamHumanCreate: %v", err)

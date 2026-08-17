@@ -248,7 +248,18 @@ func TestRecordAcceptedTeamMembershipEnsuresEncryptionKeyForCreator(t *testing.T
 		t.Fatalf("precondition: encryption state should be absent, stat err=%v", err)
 	}
 
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true, WriteWorkspaceBinding: true}); err != nil {
+	// A fake service, never the production URL: with the binding written, the
+	// aweb-abfd wiring publishes the encryption-key assertion to this URL.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key" {
+			_, _ = w.Write([]byte("{}"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+
+	if err := recordAcceptedTeamMembership(dir, output, cert, "", server.URL, recordMembershipOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true, WriteWorkspaceBinding: true}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
 	}
 	requireEncryptionKeyRecordForTest(t, dir)
