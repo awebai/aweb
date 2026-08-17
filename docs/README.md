@@ -197,7 +197,7 @@ notice where one exists.
 - [Messaging contract matrix](messaging-contract-matrix.md) — subordinate
   maintainer cases for routing, read state, chat waits, reconnect, and content
   modes.
-- [Protocol conformance vectors](vectors/README.md) — canonical index for all 16
+- [Protocol conformance vectors](vectors/README.md) — canonical index for all 19
   root JSON fixtures, with current, experimental, compatibility, and digest-only
   authority distinguished.
 - [Self-hosted A2A gateway configuration](examples/a2a-gateway.yaml) — retained

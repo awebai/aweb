@@ -612,6 +612,8 @@ def check(
         failures.append("docs/README.md tracked-Markdown count is stale")
     if f"{len(expected_public)} public Markdown" not in readme:
         failures.append("docs/README.md public-Markdown count is stale")
+    if not re.search(rf"all {len(vectors)}\s+root JSON fixtures", readme):
+        failures.append("docs/README.md root JSON fixture count is stale")
 
     return failures
 
@@ -666,6 +668,24 @@ def self_test(root: Path) -> int:
         if not any("tracked Markdown is missing" in failure for failure in failures):
             print("self-test failed: missing tracked Markdown was not detected")
             return 1
+
+        readme = tmp / "docs/README.md"
+        readme_original = readme.read_text(encoding="utf-8")
+        readme_mutated = re.sub(
+            r"all \d+\s+root JSON fixtures",
+            "all 999 root JSON fixtures",
+            readme_original,
+            count=1,
+        )
+        if readme_mutated == readme_original:
+            print("self-test setup failed: docs/README.md lacks the root JSON fixture count")
+            return 1
+        readme.write_text(readme_mutated, encoding="utf-8")
+        mutation_failures = check(tmp, tracked_markdown, tracked_files)
+        if not any("root JSON fixture count is stale" in failure for failure in mutation_failures):
+            print("self-test failed: stale root JSON fixture count was not detected")
+            return 1
+        readme.write_text(readme_original, encoding="utf-8")
 
         private_transition_mutations = (
             (
@@ -928,6 +948,7 @@ def self_test(root: Path) -> int:
     print(
         "self-test passed: tracked corpus, public-strategy exclusion, removed-strategy paths, "
         "private-transition removal, managed-gateway neutrality, "
+        "vector-count freshness, "
         "federation SOT/error-reference coverage, event/call-site multiplicity, "
         "dynamic-expression, and real-workspace release-mount controls reject their mutations"
     )
