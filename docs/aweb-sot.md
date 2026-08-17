@@ -1054,7 +1054,7 @@ namespace family.
    → identity created at awid (did:aw, did:key, address)
 
 2. Team controller invites alice:
-   aw id team invite --global
+   aw id team invite --member-global
    → returns invite token
 
 3. Alice accepts:
@@ -1139,7 +1139,7 @@ relies on are:
 | `aw init` | Bind the current workspace using the active certificate from `.aw/team-certs/` (`POST /v1/connect`) |
 | `aw connect --bootstrap-token TOKEN [--address ADDRESS]` | Join a team via a dashboard-issued bootstrap token; global when `--address` is supplied, local otherwise |
 | `aw id team create --name X --namespace Y` | Create team at awid |
-| `aw id team invite [--team X --namespace Y] [--global]` | Create invite token; defaults to the active team and a local invite |
+| `aw id team invite [--team X --namespace Y] [--member-global]` | Create invite token; defaults to the active team and a local invite. `--member-local` is the explicit default; the old `--global` and `--local` spellings are deprecated hidden aliases |
 | `aw id team accept-invite <token>` | Accept a hosted `aw_inv_` or local-controller invite, receive certificate |
 | `aw id team add <token>` | Deprecated alias for `aw id team accept-invite --global <token>`; use `aw team join --global <token>` or `aw id team accept-invite --global <token>` |
 | `aw id team switch <team_id>` | Change the active local team membership for this workspace |

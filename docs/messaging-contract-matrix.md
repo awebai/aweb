@@ -2,8 +2,12 @@
 
 Status: **subordinate maintainer conformance inventory**. These cases identify
 what tests and release evidence must prove. They do not override the current
-user, event, identity-routing, or E2E authorities listed in
-[`messaging.md`](messaging.md).
+authorities: [mail and chat](mail-and-chat.md) for everyday user behavior,
+[receiving events](receiving-events.md) for wake and reconnect, the
+[identity and messaging contract](identity-messaging-contract.md) for routing
+and first contact, and the [E2E messaging contract](e2e-messaging-contract.md)
+with its [legacy plaintext policy](e2e-legacy-plaintext-policy.md) for encrypted
+content. Where this matrix and one of those disagree, that authority wins.
 
 ## Authority controls
 

@@ -38,6 +38,23 @@ for pack in sorted(p for p in root.iterdir() if p.is_dir()):
         if not (pack / rel).exists():
             raise SystemExit(f'{manifest}: referenced path does not exist: {rel}')
 
+    # And the inverse. Checking only declared-then-exists leaves a file that
+    # nobody declared invisible: it ships in the pack, no manifest mentions it,
+    # and nothing says whether it is content or debris. Both directions together
+    # are what make the manifest a classification of the pack rather than a
+    # partial index of it.
+    declared = set(paths)
+    for path in sorted(pack.rglob('*')):
+        if not path.is_file():
+            continue
+        rel = str(path.relative_to(pack))
+        if rel == 'resource-pack.yaml' or rel in declared:
+            continue
+        raise SystemExit(
+            f'{manifest}: {rel} is present in the pack but declared nowhere; '
+            f'add it to the manifest or remove it'
+        )
+
     role_files = sorted((pack / 'resources' / 'roles').glob('*.md'))
     if role_files and 'aw roles add' not in readme.read_text():
         raise SystemExit(f'{readme}: packs with Markdown roles must teach aw roles add')

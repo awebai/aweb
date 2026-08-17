@@ -13,23 +13,91 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-PRIVATE_TRANSITION_DOCS = {
-    "restructuring/ac-cross-boundary-fk-inventory.md",
-    "support/aasn-migration-evidence-runbook.md",
+PRIVATE_TRANSITION_PATHS = (
+    "docs/restructuring/" + "ac-cross-boundary-" + "fk-inventory.md",
+    "docs/support/" + "aasn-migration-" + "evidence-runbook.md",
+)
+
+PRIVATE_TRANSITION_PATH_NAMES = (
+    "ac-cross-boundary-" + "fk-inventory",
+    "aasn-migration-" + "evidence-runbook",
+)
+
+PRIVATE_TRANSITION_CONTENT_RULES = (
+    (
+        "private database inventory",
+        ("cross-boundary " + "foreign keys", "aweb_" + "cloud", "aweb_" + "overlay"),
+    ),
+    (
+        "private production runbook",
+        ("migration " + "evidence runbook", "production " + "stop conditions"),
+    ),
+    (
+        "AC-only path/name",
+        ("ac/backend/src/" + "aweb_cloud/migrations",),
+    ),
+    (
+        "credentialed operator procedure",
+        ("database_url=" + "service=", "pg_dump --" + "data-only"),
+    ),
+    (
+        "private version/image baseline",
+        ("production baseline: " + "ac", "server-v1."),
+    ),
+    (
+        "private personnel approval flow",
+        ("credentialed " + "human operator", "reviews this plan before execution"),
+    ),
+)
+
+# One non-document surface per content rule, so every category is proven outside
+# docs/. Keyed by rule label: adding a rule without a fixture fails the self-test.
+PRIVATE_TRANSITION_NON_DOC_SURFACES = {
+    "private database inventory": "skills/transition-evidence/SKILL.md",
+    "private production runbook": "scripts/self-test-transition-evidence.sh",
+    "AC-only path/name": "channel/self-test-package.json",
+    "credentialed operator procedure": "deploy/self-test-operator.yaml",
+    "private version/image baseline": "server/tests/fixtures/self-test-baseline.txt",
+    "private personnel approval flow": "cli/go/npm/self-test-approval.js",
 }
 
 REMOVED_DOCS = {
+    "aapm6-equivalence-evidence.md",
+    "agents-layout-lifecycle-contract.md",
     "aweb-product-sot.md",
+    "awid-registry-unavailable-log.md",
+    "bootstrap-layout-contract.md",
     "bootstrapping-operating-patterns-worklog.md",
     "cli-setup-surface-sot.md",
     "company-agent-platform-thesis.md",
+    "coordination.md",
+    "drafts/agent-guide-running-agents-update.md",
+    "duplicate-1to1-conversation-cleanup.md",
+    "federation-architecture.md",
     "launch-readiness-sot.md",
     "market-entry-wedge-research.md",
+    "messaging.md",
+    "naapp-move-preflight.md",
     "orchestrator-evidence-review.md",
+    "pre-deploy-conversation-close-cleanup.md",
+    "restructuring-sot.md",
+    "restructuring/agent-instantiation-runbook.md",
     "restructuring/app-event-subscriptions-contract.md",
     "restructuring/app-manifest-schema.md",
     "restructuring/app-registry-grants-read-api.md",
+    "restructuring/archive/channel-stack-map.md",
+    "restructuring/aw-command-surface.md",
+    "restructuring/cli-go-map.md",
+    "restructuring/core-surface-shrink-scorecard.md",
+    "restructuring/decisions.md",
+    "restructuring/layer-mapping.md",
+    "restructuring/messaging-as-app-seam.md",
+    "restructuring/oss-core-inventory.md",
+    "restructuring/team-cert-issuer-seam.md",
+    "restructuring/team-create-and-membership-model.md",
     "team-blueprints-sot.md",
+    "team-bootstrap.md",
+    "team-extend-implementation-plan.md",
     "website-dashboard-strategy.md",
 }
 
@@ -37,6 +105,13 @@ REMOVED_REPO_PATHS = {
     "agents/souls/consultant/decisions/aweb-control-plane-and-apps.md",
     "agents/souls/consultant/docs/customer-centered-aweb-positioning.md",
     "agents/souls/consultant/memory/aweb-anapp-product-constraints.md",
+}
+
+# Non-document paths deleted alongside the superseded documentation they served.
+# Kept separate from the company-strategy set so each diagnostic stays accurate.
+REMOVED_SUPERSEDED_REPO_PATHS = {
+    "agents/souls/coordinator/memory/log-awid-registry-unavailable.md",
+    "skills/aweb-agent-instantiation/SKILL.md",
 }
 
 PUBLIC_EXTENSION_DOCS = (
@@ -257,6 +332,36 @@ def _tracked_docs_markdown(root: Path, failures: list[str]) -> set[str]:
     }
 
 
+def _decodable_text(path: Path) -> str | None:
+    """Return casefolded file text, or None when the content is binary or not UTF-8.
+
+    Content rules run over every tracked file, so binary blobs are excluded
+    explicitly rather than coerced into text with replacement characters.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if b"\0" in raw:
+        return None
+    try:
+        return raw.decode("utf-8").casefold()
+    except UnicodeDecodeError:
+        return None
+
+
+def _tracked_text_corpus(root: Path, tracked_files: set[str]) -> dict[str, str]:
+    corpus: dict[str, str] = {}
+    for relative in tracked_files:
+        path = root / relative
+        if not path.is_file():
+            continue
+        text = _decodable_text(path)
+        if text is not None:
+            corpus[relative] = text
+    return corpus
+
+
 def _is_managed_gateway_surface(relative: str) -> bool:
     return (
         any("a2a" in part.lower() for part in Path(relative).parts)
@@ -342,10 +447,29 @@ def check(
         for token in MANAGED_GATEWAY_PRIVATE_TOKENS:
             if token.casefold() in normalized_relative:
                 failures.append(f"tracked path {relative} retains private managed-gateway name {token!r}")
+        for name in PRIVATE_TRANSITION_PATH_NAMES:
+            if name.casefold() in normalized_relative:
+                failures.append(f"tracked path {relative} retains private transition document name")
+
+    for relative, normalized_text in sorted(_tracked_text_corpus(root, tracked_files).items()):
+        for name in PRIVATE_TRANSITION_PATH_NAMES:
+            if name.casefold() in normalized_text:
+                failures.append(f"tracked file {relative} references private transition document name")
+        for label, terms in PRIVATE_TRANSITION_CONTENT_RULES:
+            if all(term.casefold() in normalized_text for term in terms):
+                failures.append(f"{relative} retains {label}")
+
+    for relative in PRIVATE_TRANSITION_PATHS:
+        if (root / relative).exists():
+            failures.append(f"removed private transition path returned: {relative}")
 
     for relative in sorted(REMOVED_REPO_PATHS):
         if (root / relative).exists():
             failures.append(f"removed company-strategy path returned: {relative}")
+
+    for relative in sorted(REMOVED_SUPERSEDED_REPO_PATHS):
+        if (root / relative).exists():
+            failures.append(f"removed superseded repository path returned: {relative}")
 
     for relative in sorted(tracked_files):
         path = root / relative
@@ -464,7 +588,7 @@ def check(
     for relative in sorted(all_markdown):
         if not (docs / relative).is_file():
             failures.append(f"tracked Markdown is missing from the working tree: docs/{relative}")
-    expected_public = all_markdown - {"README.md"} - PRIVATE_TRANSITION_DOCS
+    expected_public = all_markdown - {"README.md"}
     readme = (docs / "README.md").read_text(encoding="utf-8")
     links = [
         target
@@ -543,6 +667,120 @@ def self_test(root: Path) -> int:
             print("self-test failed: missing tracked Markdown was not detected")
             return 1
 
+        private_transition_mutations = (
+            (
+                "private database inventory",
+                "Cross-boundary " + "foreign keys\naweb_" + "cloud rows\naweb_" + "overlay changes\n",
+            ),
+            (
+                "private production runbook",
+                "Migration " + "evidence runbook\nProduction " + "stop conditions\n",
+            ),
+            (
+                "AC-only path/name",
+                "ac/backend/src/" + "aweb_cloud/migrations/001.sql\n",
+            ),
+            (
+                "credentialed operator procedure",
+                "DATABASE_URL=" + "service=production\npg_dump --" + "data-only\n",
+            ),
+            (
+                "private version/image baseline",
+                "Production baseline: " + "AC v9.9.9\nserver-v1.2.3\n",
+            ),
+            (
+                "private personnel approval flow",
+                "Credentialed " + "human operator\nReviewer reviews this plan before execution\n",
+            ),
+        )
+        rule_labels = {label for label, _ in PRIVATE_TRANSITION_CONTENT_RULES}
+        if {label for label, _ in private_transition_mutations} != rule_labels:
+            print("self-test failed: every content rule needs a document fixture")
+            return 1
+        if set(PRIVATE_TRANSITION_NON_DOC_SURFACES) != rule_labels:
+            print("self-test failed: every content rule needs a non-document surface fixture")
+            return 1
+
+        for index, (label, content) in enumerate(private_transition_mutations):
+            relative = f"docs/private-transition-negative-{index}.md"
+            path = tmp / relative
+            path.write_text(content, encoding="utf-8")
+            mutation_failures = check(
+                tmp,
+                tracked_markdown | {relative.removeprefix("docs/")},
+                tracked_files | {relative},
+            )
+            expected = f"{relative} retains {label}"
+            if expected not in mutation_failures:
+                print(f"self-test failed: {label} fixture was not detected")
+                return 1
+            path.unlink()
+
+        for label, content in private_transition_mutations:
+            relative = PRIVATE_TRANSITION_NON_DOC_SURFACES[label]
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"{relative} retains {label}"
+            if expected not in mutation_failures:
+                print(f"self-test failed: {label} was not detected on non-document surface {relative}")
+                return 1
+            path.unlink()
+
+        for index, (label, content) in enumerate(private_transition_mutations):
+            relative = f"server/tests/fixtures/private-transition-binary-{index}.bin"
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"\0\x1f\x8b" + content.encode("utf-8") + b"\0")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            if any(failure.startswith(f"{relative} retains") for failure in mutation_failures):
+                print(f"self-test failed: binary content was scanned as text for {label}")
+                return 1
+            path.write_bytes("Príväte".encode("latin-1") + content.encode("utf-8"))
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            if any(failure.startswith(f"{relative} retains") for failure in mutation_failures):
+                print(f"self-test failed: undecodable content was scanned as text for {label}")
+                return 1
+            path.unlink()
+
+        for transition_path in PRIVATE_TRANSITION_PATHS:
+            transition_file = tmp / transition_path
+            transition_file.parent.mkdir(parents=True, exist_ok=True)
+            transition_file.write_text("generic: true\n", encoding="utf-8")
+            transition_failures = check(tmp, tracked_markdown, tracked_files)
+            expected = f"removed private transition path returned: {transition_path}"
+            if expected not in transition_failures:
+                print(f"self-test failed: private transition path returned: {transition_path}")
+                return 1
+            transition_file.unlink()
+
+        for index, transition_name in enumerate(PRIVATE_TRANSITION_PATH_NAMES):
+            relative = f"reviewer/{transition_name}-{index}.md"
+            transition_file = tmp / relative
+            transition_file.parent.mkdir(parents=True, exist_ok=True)
+            transition_file.write_text("generic: true\n", encoding="utf-8")
+            transition_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"tracked path {relative} retains private transition document name"
+            if expected not in transition_failures:
+                print(f"self-test failed: private transition name returned: {transition_name}")
+                return 1
+            transition_file.unlink()
+
+            consumer_relative = f"reviewer/private-transition-consumer-{index}.txt"
+            consumer_file = tmp / consumer_relative
+            consumer_file.write_text(f"docs/archive/{transition_name}.md\n", encoding="utf-8")
+            transition_failures = check(
+                tmp,
+                tracked_markdown,
+                tracked_files | {consumer_relative},
+            )
+            expected = f"tracked file {consumer_relative} references private transition document name"
+            if expected not in transition_failures:
+                print(f"self-test failed: private transition consumer returned: {transition_name}")
+                return 1
+            consumer_file.unlink()
+
         neutrality_mutations = (
             ("README.md", "a" + "c_config", False),
             ("cli/go/cmd/aweb-a2a-gw/audit.go", "a" + "c_config", False),
@@ -598,6 +836,17 @@ def self_test(root: Path) -> int:
             expected = f"removed company-strategy path returned: {relative}"
             if not any(expected in failure for failure in mutation_failures):
                 print(f"self-test failed: removed strategy path was not detected: {relative}")
+                return 1
+            path.unlink()
+
+        for relative in sorted(REMOVED_SUPERSEDED_REPO_PATHS):
+            path = tmp / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("superseded machinery\n", encoding="utf-8")
+            mutation_failures = check(tmp, tracked_markdown, tracked_files | {relative})
+            expected = f"removed superseded repository path returned: {relative}"
+            if not any(expected in failure for failure in mutation_failures):
+                print(f"self-test failed: removed superseded path was not detected: {relative}")
                 return 1
             path.unlink()
 
@@ -678,9 +927,9 @@ def self_test(root: Path) -> int:
 
     print(
         "self-test passed: tracked corpus, public-strategy exclusion, removed-strategy paths, "
-        "managed-gateway neutrality, federation SOT/error-reference coverage, "
-        "event/call-site multiplicity, dynamic-expression, and real-workspace release-mount "
-        "controls reject their mutations"
+        "private-transition removal, managed-gateway neutrality, "
+        "federation SOT/error-reference coverage, event/call-site multiplicity, "
+        "dynamic-expression, and real-workspace release-mount controls reject their mutations"
     )
     return 0
 

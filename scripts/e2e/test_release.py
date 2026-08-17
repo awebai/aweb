@@ -25,6 +25,7 @@ def load_script(name: str):
     spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -412,6 +413,168 @@ class WorkflowContractTest(unittest.TestCase):
         for workflow, check in checks.items():
             self.assertIn(
                 check, (ROOT / ".github" / "workflows" / workflow).read_text()
+            )
+
+
+release_gate_runner = load_script("release_gate_runner")
+
+
+class GateScopeContractTest(unittest.TestCase):
+    """The suite map's artifact column is part of the reviewed release graph."""
+
+    def steps(self):
+        return release_gate_runner.load_map(ROOT / "release-gate" / "suite-map.tsv")
+
+    def test_map_keys_are_release_graph_keys_and_coverage_is_complete(self) -> None:
+        steps = self.steps()
+        keys = {artifact.key for artifact in release.ARTIFACTS}
+        for key in keys:
+            guarded = [
+                step
+                for step in steps
+                if step.artifacts is not None and key in step.artifacts
+            ]
+            self.assertTrue(guarded, f"{key} has no dedicated gate rows")
+            self.assertTrue(
+                any(step.category == "artifact" for step in guarded),
+                f"{key} has no artifact build row",
+            )
+
+    def test_every_release_rows_are_a_deliberate_set(self) -> None:
+        always = {step.name for step in self.steps() if step.artifacts is None}
+        self.assertEqual(
+            always,
+            {
+                "docker-boundaries",
+                "version-authority",
+                "node-dependencies",
+                "aw-binary",
+                "sot-inventories",
+                "automatic-release",
+                "a2a-copy-contract",
+                "freshness",
+                "release-residue",
+                "tmux-guard",
+            },
+        )
+
+    def test_unknown_artifact_key_in_map_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "map.tsv"
+            path.write_text("alpha\tcontract\tt-alpha\tno-such-artifact\n")
+            with self.assertRaisesRegex(
+                release_gate_runner.MapError, "unknown artifact keys"
+            ):
+                release_gate_runner.load_map(path)
+
+    def test_three_field_row_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / "map.tsv"
+            path.write_text("alpha\tcontract\tt-alpha\n")
+            with self.assertRaisesRegex(
+                release_gate_runner.MapError, "four trimmed fields"
+            ):
+                release_gate_runner.load_map(path)
+
+
+class GateScopeSelectionTest(unittest.TestCase):
+    """A scoped gate runs the guarding rows, records the rest as SKIPPED."""
+
+    MAP = (
+        "alpha\tcontract\tt-alpha\tall\n"
+        "beta\tunit\tt-beta\taweb-server\n"
+        "gamma\tunit\tt-gamma\taw-cli\n"
+    )
+
+    def run_gate(self, scope, map_body=MAP, failing: str | None = None) -> tuple[int, str, Path]:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        (root / "map.tsv").write_text(map_body)
+        script = f'case "$1" in {failing or "none"}) exit 1;; *) exit 0;; esac'
+        with mock.patch("builtins.print"):
+            status = release_gate_runner.run(
+                root / "map.tsv",
+                root / "logs",
+                ["/bin/sh", "-c", script, "make"],
+                probe=lambda phase: None,
+                scope=scope,
+            )
+        summary = (root / "logs" / "summary.tsv").read_text()
+        return status, summary, root / "logs"
+
+    def test_scoped_run_skips_unrelated_rows_and_passes(self) -> None:
+        status, summary, logs = self.run_gate(frozenset({"aw-cli"}))
+        self.assertEqual(status, 0)
+        self.assertIn("alpha\tPASSED\t", summary)
+        self.assertIn("beta\tSKIPPED\t", summary)
+        self.assertIn("gamma\tPASSED\t", summary)
+        self.assertEqual((logs / "release-scope").read_text(), "aw-cli\n")
+
+    def test_scoped_failure_still_fails_the_gate(self) -> None:
+        status, summary, _ = self.run_gate(frozenset({"aw-cli"}), failing="t-gamma")
+        self.assertEqual(status, 1)
+        self.assertIn("gamma\tFAILED\t", summary)
+
+    def test_unscoped_run_selects_every_row(self) -> None:
+        status, summary, logs = self.run_gate(None)
+        self.assertEqual(status, 0)
+        self.assertNotIn("SKIPPED", summary)
+        self.assertEqual((logs / "release-scope").read_text(), "all\n")
+
+    def test_unknown_scope_key_is_refused(self) -> None:
+        with self.assertRaisesRegex(
+            release_gate_runner.MapError, "unknown artifact keys"
+        ):
+            self.run_gate(frozenset({"no-such-artifact"}))
+
+    def test_empty_artifacts_flag_is_refused(self) -> None:
+        with self.assertRaisesRegex(release_gate_runner.MapError, "scope is empty"):
+            release_gate_runner.parse_scope(",")
+
+
+class GateScopePropagationTest(unittest.TestCase):
+    def setUp(self) -> None:
+        versions = {artifact.key: "1.2.3" for artifact in release.ARTIFACTS}
+        self.intent = release.Intent("a" * 40, versions, ("aweb-server",))
+
+    def test_workflow_artifact_map_is_the_exact_inverse(self) -> None:
+        keys = {artifact.key for artifact in release.ARTIFACTS}
+        for key in keys:
+            workflows = release.expected_aweb_workflows({key})
+            self.assertIn(key, release.workflow_artifact_keys(workflows))
+        self.assertEqual(
+            {key for value in release.WORKFLOW_ARTIFACTS.values() for key in value},
+            keys,
+        )
+        with self.assertRaisesRegex(release.Refusal, "no artifact mapping"):
+            release.workflow_artifact_keys({"unknown.yml"})
+
+    def test_gate_invocation_carries_the_publication_scope(self) -> None:
+        with mock.patch.multiple(
+            release,
+            require_clean=mock.DEFAULT,
+            require_main_tip=mock.DEFAULT,
+            fetch=mock.DEFAULT,
+            git=mock.Mock(return_value="a" * 40),
+            open_intent=mock.Mock(side_effect=[None]),
+            compute_intent=mock.Mock(return_value=(self.intent, {"aweb-server"})),
+            missing_aweb_workflows=mock.Mock(return_value={"pypi-release.yml"}),
+            run=mock.DEFAULT,
+            ensure_intent_tag=mock.DEFAULT,
+            reconcile_aweb=mock.DEFAULT,
+            mark_done=mock.DEFAULT,
+        ) as mocks:
+            release.release(Path("/aweb"))
+            gates = [
+                call
+                for call in mocks["run"].call_args_list
+                if call.args and call.args[0] == ("scripts/release-gate.sh",)
+            ]
+            self.assertEqual(len(gates), 1)
+            self.assertEqual(
+                gates[0].kwargs["env"]["RELEASE_GATE_ARTIFACTS"],
+                "aweb-server,awid-service",
             )
 
 

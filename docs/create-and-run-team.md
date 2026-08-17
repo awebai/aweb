@@ -171,10 +171,10 @@ line for each agent so you can open the agents manually in separate terminals.
 ## What to do next
 
 - Give the running agents a real task. Their first operating steps are in
-  [Start working in your team](/docs/start-working/).
-- Add one more agent with [Add an AI tool to a team](/docs/add-ai-tool/).
-- Expand a team from another context with [Grow an existing team](/docs/grow-team/).
-- Learn what was materialized in [Profiles and blueprints](/docs/profiles-and-blueprints/).
+  [Start working in your team](start-working.md).
+- Add one more agent with [Add an AI tool to a team](add-ai-tool.md).
+- Expand a team from another context with [Grow an existing team](grow-team.md).
+- Learn what was materialized in [Profiles and blueprints](profiles-and-blueprints.md).
 
 `aw init` remains the connect-existing-workspace path. It is not the primary
 way to create and staff a new team.

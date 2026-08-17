@@ -181,15 +181,19 @@ pinned commit, while later runs reuse and reset the repository-owned cache.
 
 ## Comprehensive release proof
 
-The release command runs one complete gate in a clean local Docker environment
-before publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
+The release command runs one gate in a clean local Docker environment before
+publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
 packages/images, unit and contract suites, OATS and real-stack journeys, freshness,
-process guards, and vulnerability audits. Hosted workflows retain focused pull
+process guards, and vulnerability audits. Each row names the artifact keys it
+guards; a release runs the rows guarding what it publishes plus every `all` row,
+and records the rest as `SKIPPED`. Hosted workflows retain focused pull
 request checks but no longer repeat this complete proof on `main`.
 
-The gate runs every table row independently and writes a full log plus a summary
-that names every row `PASSED`, `FAILED`, or `NOT RUN`; any failure or unobserved row
-makes the gate red. It starts from one exact clean aweb commit, records the exact
+The gate runs each selected row independently and writes a full log plus a summary
+that names every row `PASSED`, `FAILED`, `SKIPPED`, or `NOT RUN`; any failure or
+unobserved selected row makes the gate red. Gate runs share lockfile-keyed
+package and layer caches; determinism is carried by the committed lockfiles,
+whose hashes the gate records in its evidence. It starts from one exact clean aweb commit, records the exact
 clean Library and blueprint input commits, and rejects dirty or missing inputs.
 The gate is internal to release preparation and is deliberately not a third
 operator command.
@@ -245,6 +249,34 @@ artifacts and public AWID site document mirrors still match their sources, and
 that repository paths referenced in `docs/` actually exist
 (`scripts/check-doc-paths.sh`).
 
+Two further gates run in the same command and answer different questions:
+
+- **`scripts/check-doc-links.py`** resolves every relative Markdown link between
+  tracked documents. `check-doc-paths.sh` validates backtick-quoted repository
+  paths, which start with a top-level directory; a bare `[text](sibling.md)`
+  carries no such prefix and is invisible to it. Deleting a document therefore
+  used to leave live cross-references pointing at nothing while every other gate
+  stayed green.
+- **`scripts/check-private-boundary.py`** keeps the hosted product's private
+  surface out of the public repository: hosted-only HTTP endpoints, the hosted
+  account model (`org_id`, `user_id`) as schema fields, and private repository
+  paths. Naming `app.aweb.ai` as a deployment you can talk to is fine and is not
+  what this looks for.
+
+  The hosted coupling that exists today is frozen in that file as an enumerated
+  **baseline**, not an allowlist: it names exact endpoint literals and exact
+  struct names, so moving one to a different file still trips the gate and an
+  eleventh endpoint fails. If you remove coupling, delete its baseline entry —
+  that makes the gate stricter and needs no discussion. If you add coupling, the
+  gate fails and that is a decision to argue in review, not a line to add.
+  Re-measure with `scripts/check-private-boundary.py --derive`, which prints a
+  freshly derived baseline and never writes.
+- **`scripts/check-copied-resources.py`** compares hand-maintained copies against
+  their sources. The Codex plugin ships its own copy of each canonical skill body
+  and nothing regenerates it, so editing one side leaves two valid files that
+  disagree. If you change a skill, change both — the gate names the copy, because
+  the copy is the side that gets forgotten.
+
 It **cannot** verify that documentation prose is true. A path can resolve while
 the sentence around it is wrong, a `:LINE` anchor can point at unrelated code
 after a refactor, and a hand-written inventory can be stale while every link
@@ -259,8 +291,11 @@ still works. Those remain review obligations, so when you change code:
 ### Point-in-time documents
 
 Analyses written to understand the tree at a moment (familiarization maps,
-migration surveys) rot by construction. Do not quietly update them: either keep
-them genuinely live, or move them to `docs/restructuring/archive/` with a
-prominent header giving the date and SHA and stating that they are unmaintained.
-Archived documents are excluded from the path check by design, because their
-references are *expected* to be stale — that is what makes them a record.
+migration surveys) rot by construction. Do not quietly update them, and do not
+park them: either keep them genuinely live, or delete them and let Git history
+be the record. This repository keeps no archive directory, and the path check
+has no archive exemption — every documented path must resolve.
+
+If such a document holds an operational fact that is still true, move the fact
+into the live document whose reader needs it before deleting the container. A
+fact preserved only inside a stale document is a fact nobody will find.

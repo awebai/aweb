@@ -46,5 +46,6 @@ of the trickiest code we have (the non-blind tmux prompt handshake).
 
 Directed the extraction as part of aaeq.12 (before it hardens), re-review
 by aw-reviewer, then merge the re-ACKed SHA. The channel launch mechanics
-this rests on are in memory `aweb-channel-claude-launch-mechanism` and the
-AR `aweb-agent-instantiation` skill (the tested ground truth).
+this rests on are in memory `aweb-channel-claude-launch-mechanism`; the tested
+ground truth is now `cli/go/cmd/aw/team_up.go` and `team_human.go` with their
+tests, and the `spawn-instance` skill.

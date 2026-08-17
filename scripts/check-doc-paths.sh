@@ -11,9 +11,9 @@
 # It deliberately checks only backtick-quoted paths that are UNAMBIGUOUSLY
 # repo-relative, meaning they start with one of the top-level directories below.
 # Three exclusions are intentional:
-#   - Documents that declare their own base directory (docs/restructuring/
-#     cli-go-map.md states its paths are relative to cli/go/) would otherwise
-#     produce false failures.
+#   - A document that declares its own base directory, so that its backticked
+#     paths are relative to something other than the repository root, would
+#     otherwise produce false failures.
 #   - awid/ and a2a/ are top-level directories AND names of cli/go/
 #     subdirectories, so a bare `awid/client.go` is ambiguous. They are omitted
 #     rather than guessed at. Consequence, stated rather than hidden: stale
@@ -40,11 +40,6 @@ is_allowed() {
     # A path in the UPSTREAM A2A repository, not this one. docs/a2a.md cites it
     # to record how the golden fixtures were cross-checked against upstream.
     scripts/proto_to_json_schema.sh) return 0 ;;
-    # Paths in the AC repository, not this one. The aasn migration evidence
-    # runbook runs AC's dump/restore tooling and pins each file by SHA-256, so
-    # the digests in that document — not this existence check — are what detect
-    # the tooling changing underneath the procedure.
-    scripts/prod_db_reset.py|scripts/verify_db_reset_roundtrip.py) return 0 ;;
     # The release authority is deliberately cross-repository. These paths are
     # named under an explicit AC heading in docs/release.md and are verified by
     # AC's own docs/model gates, not by pretending they live in aweb.
@@ -70,14 +65,13 @@ is_placeholder() {
 scan_docs() {
   local base="$1" docs_dir="$2" missing=0 scanned=0 ref where
 
-  # Archived snapshots are excluded BY DESIGN: an archive records the tree as it
-  # was at a stated date and SHA, so its paths are EXPECTED not to resolve.
-  # Requiring them to resolve would force us either to rewrite history or to
-  # delete the record. The exclusion is narrow (one directory) and every
-  # archived document must carry a prominent historical header.
+  # Every documented path is scanned. There is no archive exemption: the docs
+  # tree holds no archived snapshots, so nothing needs paths that are expected
+  # not to resolve. An exemption kept past the last document it covered would
+  # silently cover whatever landed at that path next.
   local refs
   refs="$(find "$docs_dir" -name '*.md' -not -path '*/node_modules/*' \
-      -not -path '*/restructuring/archive/*' -print0 2>/dev/null \
+      -print0 2>/dev/null \
     | xargs -0 grep -ohE '`('"$TOP_LEVEL"')/[A-Za-z0-9_./-]+(:[0-9]+)?`' 2>/dev/null \
     | tr -d '`' | sed 's/:[0-9]*$//' | sort -u)"
 

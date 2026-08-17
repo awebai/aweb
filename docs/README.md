@@ -1,41 +1,51 @@
 # aweb documentation
 
 This is the source map for the public aweb repository. It separates shipped
-protocol authority, current guides, optional and experimental features,
-compatibility material, and documents waiting for their reviewed transition.
+protocol authority, current guides, optional and experimental features, and
+compatibility material.
 
 Company strategy, market research, positioning, and private hosted-product
 plans deliberately do not live in this OSS repository.
 
 The [repository README](../README.md) has install and server-start commands.
-Use this page to decide which document has authority after the stack is running.
+Use this page to find the document you need, and to see which documents carry
+authority over shipped behavior.
 
-## How authority works
+The baseline contains 65 tracked Markdown documents. This front door does not
+self-link. The remaining 64 public Markdown paths appear below exactly once.
+
+## Start here
+
+**Do this first: the [CLI tutorial](cli-tutorial.md).** It is self-contained and
+walks the whole round trip from two existing directories — durable send, wake,
+reply, and the offline-delivery and reconnect proof. Finishing it means aweb
+works for you.
+
+Then, as you need them:
+
+- [Mail and chat](mail-and-chat.md) — everyday messaging patterns beyond the
+  round trip.
+- [Receiving events and waking agents](receiving-events.md) — wiring wake
+  signals into a running agent and recovering after disconnect.
+- [Self-hosting guide](self-hosting-guide.md) — operating the OSS services
+  yourself. The tutorial's self-hosted path already inlines what you need to
+  finish; this is for running them properly.
+
+## How to read the sections below
 
 - **Current protocol authority** governs shipped identity, trust, routing,
   encryption, authentication, and coordination behavior.
 - **Guides and references** explain those contracts; they do not override them.
 - **Advanced, optional, and experimental** does not mean unsupported or safe to
   delete. These features remain available under their stated lifecycle.
-- **Compatibility and transition material** is not current product authority.
-  It remains visible until its reviewed consumer migration, consolidation, or
-  removal is complete.
+- **Compatibility material** is not current product authority. It remains
+  visible for existing users until its reviewed consumer migration or
+  consolidation is complete.
 
-The baseline contains 92 tracked Markdown documents. This front door does not
-self-link, and two private-purpose transition artifacts are deliberately not
-exposed by public path or title. The remaining 89 public Markdown paths appear
-below exactly once.
-
-## Start here
-
-The shortest current path is:
-
-1. [CLI tutorial](cli-tutorial.md) — complete the hosted or self-hosted durable
-   send, wake, reply, and reconnect round trip from two existing directories.
-2. [Mail and chat](mail-and-chat.md) — send durable mail, open chat, and reply.
-3. [Receiving events and waking agents](receiving-events.md) — connect wake
-   signals to a running agent and recover after disconnect.
-4. [Self-hosting guide](self-hosting-guide.md) — run the OSS services yourself.
+Every section is expanded. The two long ones are collapsible for convenience;
+collapsing ranks nothing, and no section here is on its way out. Superseded and
+completed material is deleted rather than parked, and Git history is its
+archive.
 
 ## Canonical protocol authority
 
@@ -103,7 +113,7 @@ contracts; Library/profile services and runtime materialization are opt-in. An
 empty-profile, one-repository team is complete, and external orchestrators keep
 ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
 
-<details>
+<details open>
 <summary>Profiles, runtime, coordination, integrations, and extension contracts</summary>
 
 - [Profiles and blueprints](profiles-and-blueprints.md) — advanced optional
@@ -122,7 +132,7 @@ ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
   home/worktree and launch helpers, not an aweb-owned lifecycle.
 - [Runtime support](runtime-support.md) — current maintained wake integrations
   and advanced optional materialize/launch helpers.
-- [Agent home composition contract](restructuring/agent-home-composition-contract.md)
+- [Agent home composition contract](agent-home-composition-contract.md)
   — current home-layout facts pending consolidation.
 - [Start working in your team](start-working.md) — optional task-first workflow
   scheduled for repositioning.
@@ -167,19 +177,9 @@ These paths remain for current users or because durable facts have not yet been
 consolidated. Prefer the canonical/current guide named in each document's status
 notice where one exists.
 
-- [Retired agents layout and lifecycle](agents-layout-lifecycle-contract.md) —
-  bootstrap-era compatibility.
-- [`aw run`](aw-run.md) — current compatibility launcher; opt-in, provider-
-  specific, and not an aweb runtime-lifecycle guarantee.
-- [Retired bootstrap layout contract](bootstrap-layout-contract.md) — historical
-  layout compatibility.
-- [Coordination](coordination.md) — overlapping guide pending consolidation.
-- [Messaging documentation authority](messaging.md) — compatibility authority
-  map for current user, wake, routing, encryption, and conformance documents.
-- [Team create and membership model](restructuring/team-create-and-membership-model.md)
-  — compatibility command facts pending consolidation.
-- [Retired repo-local team bootstrap](team-bootstrap.md) — compatibility
-  tombstone.
+- [`aw run`](aw-run.md) — opt-in, provider-specific launcher, and the supported
+  wake path for Codex today. It sits in this section because aweb does not
+  guarantee runtime lifecycle, not because the command is superseded.
 - [`aw team extend` command SOT](team-extend-sot.md) — shipped compatibility
   contract preserving authority discovery, ambiguity, rollback, and batch
   semantics; use the current growth guide and generated reference for everyday
@@ -222,65 +222,3 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   cross-repository maintainer harness; unrelated to encrypted messaging.
 - [Per-team agent tmux cutover](agent-tmux-cutover.md) — specialized reviewed
   runtime migration procedure.
-
-## Superseded and temporary transition material
-
-> **Non-authoritative transition inventory.** Nothing in this section sets
-> current product direction or creates new work. Files remain at their current
-> paths only until the reviewed extraction and consumer-migration conditions are
-> met. Git and durable task history are sufficient for removed material; no
-> duplicate archive is implied unless a reviewed row explicitly requires
-> archival treatment.
-
-<details>
-<summary>Show the transition inventory and reviewed next action</summary>
-
-- [aapm.6 equivalence evidence](aapm6-equivalence-evidence.md) — relocate as
-  dated, unrendered migration history.
-- [AWID registry-unavailable log](awid-registry-unavailable-log.md) — move useful
-  incident facts to current operational/task history and remove from rendered
-  docs.
-- [Agent-guide running-agents draft](drafts/agent-guide-running-agents-update.md)
-  — remove after confirming incorporated text.
-- [Duplicate 1:1 conversation cleanup](duplicate-1to1-conversation-cleanup.md) —
-  remove after consumer migration and reusable-authority extraction.
-- [Federated messaging architecture](federation-architecture.md) — durable rules
-  are consolidated in current routing authority; relocate this historical
-  snapshot during the reviewed archive/pruning lane.
-- [naapp move preflight](naapp-move-preflight.md) — completed preflight; remove
-  after consumer checks.
-- [Pre-deploy conversation-close cleanup](pre-deploy-conversation-close-cleanup.md)
-  — completed one-time procedure; remove after reusable warnings are extracted.
-- [Restructuring SOT](restructuring-sot.md) — superseded destination architecture;
-  extract still-current protocol facts, migrate links, then remove with no
-  duplicate archive.
-- **Application cross-boundary FK inventory** — private-purpose Markdown,
-  deliberately unlinked; repoint its exact downstream consumers, then remove
-  the public copy.
-- [Agent instantiation runbook](restructuring/agent-instantiation-runbook.md) —
-  remove after its skill consumer and valid runtime facts migrate.
-- [Archived channel stack map](restructuring/archive/channel-stack-map.md) — the
-  one retained dated/SHA-bound historical archive; never current authority.
-- [aw command surface](restructuring/aw-command-surface.md) — remove after current
-  command facts are covered by live/generated reference.
-- [Go CLI restructuring map](restructuring/cli-go-map.md) — remove after its path
-  checker consumer and current facts migrate; no archive copy.
-- [Core-surface shrink scorecard](restructuring/core-surface-shrink-scorecard.md)
-  — remove after any reusable measurement becomes maintainer tooling.
-- [Restructuring decisions worksheet](restructuring/decisions.md) — remove;
-  durable decisions belong in current authority and task history.
-- [Layer mapping](restructuring/layer-mapping.md) — remove after current extension
-  contracts are extracted; no archive copy.
-- [Messaging-as-app seam](restructuring/messaging-as-app-seam.md) — remove after
-  current messaging invariants move to canonical contracts; no archive copy.
-- [OSS core inventory](restructuring/oss-core-inventory.md) — remove after reusable
-  inventory checks become current tooling; no archive copy.
-- [Scrapped team-certificate issuer seam](restructuring/team-cert-issuer-seam.md)
-  — remove after its historical memory consumer points to Git/task history.
-- **Production migration evidence runbook** — private-purpose Markdown,
-  deliberately unlinked; relocate to its production-operations owner after
-  consumer migration.
-- [`aw team extend` implementation plan](team-extend-implementation-plan.md) —
-  completed plan; remove because Git/task history is sufficient.
-
-</details>

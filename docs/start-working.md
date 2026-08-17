@@ -51,9 +51,18 @@ Use mail for updates that do not require both agents to remain present. Use
 chat for a bounded decision or question that needs an immediate answer.
 
 ```bash
-aw mail send --to <teammate> --subject "Status" --body "<update>"
+aw mail send --to <teammate> --subject "Status" --body-file update.md
 aw chat send-and-wait <teammate> "<question>" --start-conversation
 ```
+
+Both commands also take the message inline — `--body` for mail, a positional
+argument for chat — which is fine for a short plain sentence, and a chat
+question usually is one. Use `--body-file` for anything with Markdown, backticks
+or `$(...)`; both commands accept it. The shell expands an unquoted or
+double-quoted argument before `aw` receives it, so the message is already
+altered by the time it is sent, and nothing reports a failure. Single quotes do
+not expand, but they cannot contain a single quote, which is why a file is the
+reliable answer rather than a quoting trick.
 
 ## 3. Select one task
 
@@ -119,6 +128,9 @@ where the team expects it. Then close the task with concrete evidence:
 aw task close <ref> --reason "<result and verification>"
 ```
 
+Use `--reason-file` when the evidence runs to more than a sentence or contains
+command output.
+
 If the work is incomplete, leave the task open and hand it off with:
 
 - what is finished;
@@ -140,5 +152,5 @@ receipt before you leave.
 - the same repair attempt has already failed and you do not have new evidence.
 
 For the complete command and identity reference, read the
-[aweb Agent Guide](/docs/agent-guide/). For everyday workflows, this shorter guide
+[aweb Agent Guide](agent-guide.md). For everyday workflows, this shorter guide
 is the operating loop to return to.

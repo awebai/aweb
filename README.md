@@ -27,13 +27,18 @@ complete supported shape without Library or a profile service.
 
 ## Start here
 
-- [Documentation map](docs/README.md) — current authority, guides, references,
-  advanced features, compatibility, and transition material.
-- [CLI tutorial](docs/cli-tutorial.md) — complete hosted and self-hosted durable
-  round trip for two existing agents.
+**Do this first: the [CLI tutorial](docs/cli-tutorial.md).** It is
+self-contained and walks the whole round trip for two existing agents, hosted or
+self-hosted — durable send, wake, reply, and the offline-delivery and reconnect
+proof. Finishing it means aweb works for you.
+
+Then, as you need them:
+
 - [Mail and chat](docs/mail-and-chat.md) — everyday messaging.
 - [Receiving events](docs/receiving-events.md) — wake-up and delivery paths.
 - [Self-hosting guide](docs/self-hosting-guide.md) — operate the OSS stack.
+- [Documentation map](docs/README.md) — current authority, guides, references,
+  advanced features, and compatibility material.
 
 ## Current quick start
 
@@ -56,8 +61,20 @@ aw init --username <username> --name alice
 aw team invite
 ```
 
-Run the printed join command in Bob's existing directory. The equivalent form
-is:
+`--username` creates a hosted account on aweb.ai, along with its namespace,
+team, and API key. If you would rather not create one, use `aw init --byod` with
+a domain you control, or follow the self-hosted path in the
+[CLI tutorial](docs/cli-tutorial.md), which runs entirely against your own
+Compose stack.
+
+`aw team invite` prints a token and a command of the form:
+
+```text
+Command:     aw id team accept-invite <invite-token> --name <name>
+```
+
+Use `aw team join` instead, in Bob's existing directory. It accepts the same
+token and is the path this guide continues from:
 
 ```bash
 aw team join <invite-token> --name bob
@@ -184,7 +201,7 @@ aw chat pending
 | `awid/` | Public identity and team registry service |
 | `cli/go/` | Go CLI and client library |
 | `channel-core/`, `channel/`, `pi-extension/` | Event protocol and maintained runtime integrations |
-| `docs/` | Public protocol contracts, guides, references, and transition material |
+| `docs/` | Public protocol contracts, guides, references, and compatibility material |
 | `test-vectors/`, `docs/vectors/` | Sanitized protocol and conformance fixtures |
 
 Real `.aw/` directories contain local identity/workspace state and must never be

@@ -26,6 +26,24 @@ LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPR
 LOG_DIR="/tmp/aweb-release-gate-$SOURCE_SHA"
 IMAGE="aweb-release-gate:${SOURCE_SHA:0:12}"
 
+# The scope names the artifact keys this release publishes; the runner then
+# executes the suite-map rows guarding them plus every `all` row, and records
+# the rest as SKIPPED. Empty/unset runs the complete map. Key validity is
+# checked by the runner against the release graph, the single authority.
+RELEASE_GATE_ARTIFACTS="${RELEASE_GATE_ARTIFACTS:-}"
+if [[ -n "$RELEASE_GATE_ARTIFACTS" ]]; then
+  [[ "$RELEASE_GATE_ARTIFACTS" =~ ^[a-z0-9-]+(,[a-z0-9-]+)*$ ]] \
+    || refuse "RELEASE_GATE_ARTIFACTS must be comma-separated artifact keys"
+fi
+
+# Persistent caches, shared across gate runs. Determinism is carried by the
+# committed lockfiles (uv.lock, go.sum, package-lock.json), whose hashes are
+# recorded in inputs.tsv; every store here is content-addressed or checksum
+# verified against those locks, so a warm hit yields the same bytes as a cold
+# fetch. The uv and go paths match the ones the Makefile targets already pin.
+CACHE_ROOT="${AWEB_RELEASE_GATE_CACHE:-/tmp/aweb-release-gate-cache}"
+mkdir -p "$CACHE_ROOT/uv" "$CACHE_ROOT/go-build" "$CACHE_ROOT/go-mod" "$CACHE_ROOT/npm"
+
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_SOURCE_SHA must be a full lowercase SHA"
 [[ "$RELEASE_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_BASE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
@@ -44,8 +62,10 @@ fi
 work="$(cd "$work" && pwd -P)"
 owned_containers=()
 owned_network=""
-owned_builder=""
-buildx_config="$work/buildx-config"
+# The builder and its layer cache persist across gate runs; the runner bounds
+# the cache with a keep-storage prune after the largest build.
+builder_name="aweb-release-gate"
+buildx_config="${AWEB_RELEASE_GATE_BUILDX:-/tmp/aweb-release-gate-buildx}"
 docker_bind_root=""
 gate_run_id="aweb-release-suite-${SOURCE_SHA:0:12}-$$"
 suite_projects=(
@@ -82,21 +102,20 @@ cleanup() {
   [[ "${#owned_containers[@]}" -eq 0 ]] \
     || docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 \
     || cleanup_status=1
-  if [[ -n "$owned_builder" ]]; then
-    BUILDX_CONFIG="$buildx_config" docker buildx rm "$owned_builder" >/dev/null 2>&1 || true
-    docker rm -f "buildx_buildkit_${owned_builder}0" >/dev/null 2>&1 || true
-    docker volume rm -f "buildx_buildkit_${owned_builder}0_state" >/dev/null 2>&1 || true
-  fi
   [[ -z "$owned_network" ]] || docker network rm "$owned_network" >/dev/null 2>&1 \
     || cleanup_status=1
+  # Bound the persistent builder's layer cache on every invocation, whatever
+  # rows ran; the runner's in-run reclaim after a2a-image only fires when that
+  # row is selected. Best-effort: a failed prune is not this run's residue, and
+  # the runner's disk-space floor fails the next gate closed before space runs
+  # out.
+  BUILDX_CONFIG="$buildx_config" docker buildx prune --all --force \
+    --keep-storage=10GB --builder "$builder_name" >/dev/null 2>&1 \
+    || printf 'release gate: builder cache prune skipped\n' >&2
   docker image rm "$IMAGE" >/dev/null 2>&1 || true
   for ids in "${owned_containers[@]}"; do
     ! docker container inspect "$ids" >/dev/null 2>&1 || cleanup_status=1
   done
-  [[ -z "$owned_builder" ]] \
-    || { ! docker container inspect "buildx_buildkit_${owned_builder}0" >/dev/null 2>&1 \
-      && ! docker volume inspect "buildx_buildkit_${owned_builder}0_state" >/dev/null 2>&1; } \
-    || cleanup_status=1
   [[ -z "$owned_network" ]] || ! docker network inspect "$owned_network" >/dev/null 2>&1 \
     || cleanup_status=1
   ! docker image inspect "$IMAGE" >/dev/null 2>&1 || cleanup_status=1
@@ -204,12 +223,21 @@ for db in postgres template1; do
   [[ "$ext_schema" == "public" ]] \
     || refuse "pgcrypto pre-provision did not land in public for $db: '$ext_schema'"
 done
-owned_builder="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
 docker_bind_root="$checkout/.release-docker-bind"
 mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.release-home"
-BUILDX_CONFIG="$buildx_config" docker buildx create \
-  --name "$owned_builder" --driver docker-container \
-  "unix:///var/run/docker.sock" --bootstrap >/dev/null
+# Reuse the persistent builder when it is healthy; recreate it when its
+# container or state has been removed since the last run. Gate invocations are
+# expected not to overlap on one host (they share this builder and the cache
+# root); a lost creation race is tolerated below, and the final inspect is the
+# authority either way.
+if ! BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null 2>&1; then
+  BUILDX_CONFIG="$buildx_config" docker buildx rm "$builder_name" >/dev/null 2>&1 || true
+  BUILDX_CONFIG="$buildx_config" docker buildx create \
+    --name "$builder_name" --driver docker-container \
+    "unix:///var/run/docker.sock" --bootstrap >/dev/null 2>&1 || true
+  BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null \
+    || refuse "could not provision the persistent release builder"
+fi
 socket_gid="$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
 read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port < <(
@@ -228,6 +256,9 @@ finally:
 PY
 )
 
+runner_args=(--map release-gate/suite-map.tsv --log-dir "$LOG_DIR")
+[[ -z "$RELEASE_GATE_ARTIFACTS" ]] || runner_args+=(--artifacts "$RELEASE_GATE_ARTIFACTS")
+
 set +e
 docker run --rm --init \
   --network "$owned_network" \
@@ -242,7 +273,12 @@ docker run --rm --init \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e RELEASE_GATE_LOG_DIR="$LOG_DIR" \
   -e BUILDX_CONFIG="$buildx_config" \
-  -e BUILDX_BUILDER="$owned_builder" \
+  -e BUILDX_BUILDER="$builder_name" \
+  -e UV_CACHE_DIR=/tmp/uv-cache \
+  -e UV_LINK_MODE=copy \
+  -e GOCACHE=/tmp/go-build \
+  -e GOMODCACHE=/tmp/go-mod \
+  -e NPM_CONFIG_CACHE=/tmp/npm-cache \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
   -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
   -e AWEB_A2A_E2E_PORT="$a2a_aweb_port" \
@@ -268,14 +304,17 @@ docker run --rm --init \
   -e RELEASE_GATE_IMAGE="$IMAGE" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$buildx_config:$buildx_config" \
+  -v "$CACHE_ROOT/uv:/tmp/uv-cache" \
+  -v "$CACHE_ROOT/go-build:/tmp/go-build" \
+  -v "$CACHE_ROOT/go-mod:/tmp/go-mod" \
+  -v "$CACHE_ROOT/npm:/tmp/npm-cache" \
   -v "$checkout:$checkout" \
   -v "$LOG_DIR:$LOG_DIR" \
   -v "$LIBRARY_E2E_LIBRARY_CONTEXT:$LIBRARY_E2E_LIBRARY_CONTEXT:ro" \
   -v "$LIBRARY_E2E_BLUEPRINT_SRC:$LIBRARY_E2E_BLUEPRINT_SRC:ro" \
   -w "$checkout" \
   "$IMAGE" \
-  python3 scripts/release_gate_runner.py \
-    --map release-gate/suite-map.tsv --log-dir "$LOG_DIR" \
+  python3 scripts/release_gate_runner.py "${runner_args[@]}" \
   2>&1 | tee "$LOG_DIR/gate.log"
 status="${PIPESTATUS[0]}"
 set -e
@@ -287,4 +326,5 @@ if [[ "$status" -ne 0 ]]; then
   printf 'release gate FAILED; logs: %s\n' "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
   exit "$status"
 fi
-printf 'release gate PASSED at %s; logs: %s\n' "$SOURCE_SHA" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"
+printf 'release gate PASSED at %s (scope: %s); logs: %s\n' \
+  "$SOURCE_SHA" "${RELEASE_GATE_ARTIFACTS:-all}" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"

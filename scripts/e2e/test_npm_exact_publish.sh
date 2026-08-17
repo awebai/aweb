@@ -460,7 +460,10 @@ default = {
     "aweb-messaging",
     "aweb-team-membership",
 }
-internal = {"aweb-agent-instantiation"}
+# No internal-only skills remain; every canonical directory ships in the default
+# set. The gate still requires each one to be classified explicitly, so a new
+# directory cannot silently ship nowhere.
+internal = set()
 canonical = {
     name
     for name in os.listdir(os.path.join(root, "skills"))
@@ -675,11 +678,11 @@ for dead in ("release-channel-check", "release-channel-tag", "release-channel-pu
     assert dead not in makefile, f"deleted Make path survives: {dead}"
 suite_map = (root / "release-gate/suite-map.tsv").read_text()
 for row in (
-    "channel-version-equality\tcontract\t_release-gate-channel-version\n",
-    "node-dependencies\tcontract\t_release-node-deps\n",
-    "channel-unit\tunit\t_release-unit-channel\n",
-    "channel-core-unit\tunit\t_release-unit-channel-core\n",
-    "channel-package\tartifact\t_release-artifact-channel\n",
+    "channel-version-equality\tcontract\t_release-gate-channel-version\tchannel-plugin\n",
+    "node-dependencies\tcontract\t_release-node-deps\tall\n",
+    "channel-unit\tunit\t_release-unit-channel\tchannel-plugin\n",
+    "channel-core-unit\tunit\t_release-unit-channel-core\tchannel-plugin,pi-extension\n",
+    "channel-package\tartifact\t_release-artifact-channel\tchannel-plugin\n",
 ):
     assert row in suite_map, f"missing local-gate mapping: {row}"
 
