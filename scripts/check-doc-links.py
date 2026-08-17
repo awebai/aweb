@@ -55,6 +55,34 @@ def strip_code(text: str) -> str:
     return "".join(out)
 
 
+# Public documentation URLs this repository promises. The published site serves
+# docs/<name>.md at both /docs/<name>.md and /docs/<name>/, so a rename breaks a
+# live URL silently — the epic's "canonical onboarding URLs serve the intended
+# content" criterion has no other enforcement.
+PUBLIC_DOC_URL = re.compile(r"https?://(?:www\.)?aweb\.ai/docs/([A-Za-z0-9._/-]*)")
+
+
+def promised_doc_slugs(root: Path) -> dict[str, set[str]]:
+    """Public /docs/ URLs named anywhere in the tracked corpus, by referring file."""
+    out = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-z"], check=False, capture_output=True
+    )
+    promised: dict[str, set[str]] = {}
+    for rel in (p for p in out.stdout.decode("utf-8").split("\0") if p):
+        path = root / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for match in PUBLIC_DOC_URL.finditer(text):
+            slug = match.group(1).rstrip("./").removesuffix(".md")
+            if slug:
+                promised.setdefault(slug, set()).add(rel)
+    return promised
+
+
 def tracked_markdown(root: Path) -> list[str]:
     out = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-z", "*.md"], check=False, capture_output=True
@@ -83,6 +111,14 @@ def check(root: Path, extra: list[str] | None = None) -> tuple[list[str], int]:
             checked += 1
             if not (base / target).resolve().is_file():
                 failures.append(f"{rel} links to a missing document: {target}")
+
+    for slug, referrers in sorted(promised_doc_slugs(root).items()):
+        if not (root / "docs" / f"{slug}.md").is_file():
+            where = ", ".join(sorted(referrers))
+            failures.append(
+                f"promised public URL /docs/{slug} has no docs/{slug}.md ({where})"
+            )
+        checked += 1
     return failures, checked
 
 
@@ -157,6 +193,27 @@ def self_test(root: Path) -> int:
             print("self-test failed: fence handling swallowed a real link")
             return 1
         (tmp / "docs/showing.md").unlink()
+        subprocess.run(["git", "-C", str(tmp), "add", "-A"], check=True)
+
+        # A promised public URL must have its document. Both served spellings
+        # resolve to the same file, and trailing sentence punctuation must not
+        # become part of the slug.
+        # Split so this file does not promise these URLs itself when it is
+        # scanned as part of the tracked corpus — the gate found that self-match
+        # on its own first run.
+        site = "https://aweb.ai/" + "docs/"
+        write("docs/urls.md",
+              f"see {site}real.md and {site}real/ and {site}real.md.\n")
+        failures, _ = check(tmp)
+        if failures:
+            print(f"self-test failed: a valid promised URL was rejected: {failures[0]}")
+            return 1
+        write("docs/urls.md", f"see {site}never-written/\n")
+        failures, _ = check(tmp)
+        if not any("never-written" in f for f in failures):
+            print("self-test failed: a promised URL with no document was not rejected")
+            return 1
+        (tmp / "docs/urls.md").unlink()
         subprocess.run(["git", "-C", str(tmp), "add", "-A"], check=True)
 
     print("self-test passed: valid relative links accepted; sibling, subdirectory and "

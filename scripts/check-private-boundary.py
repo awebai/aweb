@@ -80,21 +80,34 @@ PRIVATE_PATH_MARKERS = (
     "aweb-" + "saas/backend",
 )
 
-# This class — and ONLY this class — excludes the repository's own agent
-# operating material. Stated plainly because it is a location exclusion, which
-# the hosted-coupling baselines above deliberately are not:
+# This class — and ONLY this class — has exclusions. They rest on two DIFFERENT
+# arguments, and conflating them would exempt a future violation, so they are
+# separate constants rather than one list.
 #
-#   - agents/ is preserve-by-default by explicit ruling: only falsity justifies
-#     a change there, so a gate that fails on it cannot be satisfied by anyone
-#     acting within that rule;
-#   - .claude/skills/cross-repo-change/ exists to coordinate changes spanning
-#     the OSS and hosted repositories. Naming the other repository's layout is
-#     the skill's subject, not leakage into product surface.
+# 1. agents/ is preserve-by-default by explicit ruling. It protects regardless of
+#    content, because the content is stored operating knowledge whose absence is
+#    invisible; only falsity justifies changing it. A gate that failed here could
+#    not be satisfied by anyone acting within that rule. The test is the tree's
+#    nature, so a prefix is the right shape.
+PRIVATE_PATH_EXCLUDED_PREFIXES = ("agents/",)
+
+# 2. This one file is excluded on entirely separate grounds: it is not product
+#    documentation surface. The epic's constraint is that aweb *documentation*
+#    must not name the private codebase; this is operator tooling for people
+#    working in this repository, and a cross-repository coordination skill whose
+#    subject is both repositories cannot do its job without naming the other
+#    one's layout.
 #
-# Neither is published product surface. The two current instances were measured
-# and reported rather than silently absorbed; see aweb-aazb.9.1. If agent
-# material ever ships as a product artifact, this exclusion stops being correct.
-PRIVATE_PATH_EXCLUDED_PREFIXES = ("agents/", ".claude/")
+#    Deliberately a file and not a .claude/ prefix. A prefix would exempt every
+#    future file placed there, unscanned, on grounds established for one skill —
+#    the same shape as the archive exclusion that outlived its subject and
+#    silently covered whatever arrived next. A new .claude/ file naming private
+#    paths must trip this gate and get its own decision.
+#
+#    If a file under .claude/ ever teaches the product while naming private
+#    internals, it fails this test — which the agents/ argument would have
+#    wrongly protected.
+PRIVATE_PATH_EXCLUDED_FILES = (".claude/skills/cross-repo-change/SKILL.md",)
 
 SKIP_SUFFIXES = (".woff2", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf")
 
@@ -178,6 +191,8 @@ def find_private_paths(root: Path, files: list[str]) -> list[str]:
         if rel.endswith(SKIP_SUFFIXES):
             continue
         if rel.startswith(PRIVATE_PATH_EXCLUDED_PREFIXES):
+            continue
+        if rel in PRIVATE_PATH_EXCLUDED_FILES:
             continue
         path = root / rel
         if not path.is_file():
@@ -316,6 +331,23 @@ def self_test(root: Path) -> int:
                 return 1
             (tmp / rel).unlink()
             subprocess.run(["git", "-C", str(tmp), "add", "-A"], check=True)
+
+        # The file exclusion covers exactly its file. A sibling under the same
+        # directory must still fail, or it is a prefix exclusion wearing a
+        # filename.
+        for rel in PRIVATE_PATH_EXCLUDED_FILES:
+            write(rel, "see " + "backend/" + "src/aweb_cloud/x\n")
+            if any("private repository path" in f for f in check(tmp)):
+                print(f"self-test failed: {rel} was expected to be excluded")
+                return 1
+            sibling = str(Path(rel).parent / "OTHER.md")
+            write(sibling, "see " + "backend/" + "src/aweb_cloud/x\n")
+            if not any("private repository path" in f for f in check(tmp)):
+                print("self-test failed: the file exclusion covered a sibling")
+                return 1
+            (tmp / rel).unlink()
+            (tmp / sibling).unlink()
+            subprocess.run(["git", "-C", str(tmp), "add", "-A"], check=True)
         write("server/src/probe.py", "# see " + "backend/" + "src/aweb_cloud/x\n")
         if not any("private repository path" in f for f in check(tmp)):
             print("self-test failed: the exclusion leaked outside agent material")
@@ -333,8 +365,9 @@ def self_test(root: Path) -> int:
     print(
         "self-test passed: the baseline admits its known instances, rejects a new "
         "endpoint, a new account schema and a renamed one, follows a baselined "
-        "schema across files, rejects private paths on non-source surfaces, and "
-        "skips binary content"
+        "schema across files, rejects private paths on non-source surfaces, keeps "
+        "the file exclusion off a sibling in the same directory, and skips binary "
+        "content"
     )
     return 0
 
