@@ -372,7 +372,13 @@ The committed exit ladder, in order:
 Certificate expiry was previously the ladder's first rung and was **removed
 by owner decision (2026-08-17)** — not deferred: it is not part of the
 architecture. Certificates remain valid until revoked, and revocation is the
-sole end of membership authority.
+sole end of membership authority. Stated plainly, because this section
+exists to make trust assumptions explicit: expiry was the only mechanism
+that put an **unconditional time bound** on the suppression residual above;
+the remaining ladder items are detection and corroboration mechanisms, not
+a replacement bound. With expiry removed, a suppressed revocation has no
+architectural ceiling — the residual is accepted as unbounded, resting
+entirely on the operator trust assumption already named.
 
 The full assessment and its adversarial review live in
 [drafts/local-sender-verification-authority.md](drafts/local-sender-verification-authority.md)

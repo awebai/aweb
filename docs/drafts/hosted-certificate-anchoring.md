@@ -91,15 +91,27 @@ means per-team revocation lists grow with every retirement, and since
 `aweb-abfn` every server refreshes that list each minute. The bound rests
 on two facts, both already in place:
 
-- **The resident-identities model keeps membership churn small.** Ephemeral
-  workers are session grants, which create no certificates and no
-  revocations; revocation rows accrue only when durable residents are
-  actually retired or replaced — rare by construction. List growth is
-  proportional to real membership turnover, not worker turnover.
-- **Complete enumeration already scales.** The `aweb-abfo` cursor pagination
-  handles arbitrarily large lists correctly, and clients can refresh
-  incrementally via the route's `since` parameter (the Python client
-  currently re-pulls fully — an implementation item).
+- **The resident-identities model keeps membership churn small — where it
+  is used.** Ephemeral workers served as session grants create no
+  certificates and no revocations, so for resident-based teams revocation
+  rows accrue only on real membership turnover. Stated honestly against
+  current practice, though: today's grants cover only pure-messaging
+  workers, and teams that spawn full-member task-scoped instances (this
+  project's own spawn/retire-instance pattern — every reviewer and
+  developer instance is a full certificate, revoked at retirement) make
+  worker turnover BE membership turnover. For such teams the revocation
+  list grows monotonically with no stated ceiling or retention policy —
+  slowly, but forever. The honest bound today is "growth proportional to
+  full-member turnover, unbounded over a team's life"; shrinking it means
+  either widening grant scopes so coordinated workers stop being members
+  (future design) or a retention policy, neither of which this contract
+  commits to.
+- **Complete enumeration scales on the read side.** The `aweb-abfo` cursor
+  pagination handles arbitrarily large lists correctly, and clients can
+  refresh incrementally via the route's `since` parameter (the Python
+  client currently re-pulls fully — an implementation item). This is a
+  claim about clients handling the list, not about the list staying
+  small.
 - **Session grants fit only pure messaging workers — and this is the
   resident-identities design, not an accident.** The prior product design
   (strategy/product/2026-08-12-resident-identities-and-session-grants.md)
@@ -281,10 +293,9 @@ aweb-aaum.9, 2026-08-17):
    individual remediation completed**. The named remedy for the hardest case
    — a legitimate, active member whose signed blob is lost or corrupted, who
    can neither be registered (no blob to submit) nor deleted (they are
-   legitimate) — is **re-issuance**: sign a fresh certificate for the *same*
-   member key, register it, and refresh the projection. The mechanism is the
-   **fresh-certificate re-issuance operation**: mint a fresh certificate for
-   the same member key, register it, refresh the projection. No alias
+   legitimate) — is the **fresh-certificate re-issuance operation**: sign a
+   fresh certificate for the *same* member key, register it, and refresh
+   the projection. No alias
    conflict arises because a lost-blob certificate was never registered, so
    the registry holds no active row for that alias. Hosted teams need this
    operation alongside BYOT; it is an OSS deliverable in the repo split. It is deliberately NOT the
@@ -344,19 +355,20 @@ From the adversarial review of the verification-authority draft (task
    membership readable wherever BYOT membership already is. Is the existing
    team-visibility control sufficient policy, and what should the default be
    for hosted teams?
-3. **Backfill authority**: run by the hosted operator offline, or exposed as
+2. **Backfill authority**: run by the hosted operator offline, or exposed as
    a support-audited admin operation?
-4. **Failure isolation at mint time** — resolved by review recommendation,
+3. **Failure isolation at mint time** — resolved by review recommendation,
    adopted: creation does not hard-fail on a registry hiccup, but the gap is
    not a one-shot warning either. The member surfaces as `certificate:
    pending registration` through the same read-back this design builds
    (agent-status/members must never show "active" for an unregistered
    certificate); a background reconciliation sweep (the backfill logic run as
    an ongoing job) retries until it lands; and failure to self-heal within a
-   bound tied to the certificate validity window escalates loudly, because an
-   unregistered certificate is a silent enforcement gap, not a UX
-   inconvenience.
-5. **AC reader inventory** — answered 2026-08-17 by the retirement
+   fixed operational bound (proposed: three consecutive failed
+   reconciliation cycles, or 24 hours, whichever comes first) escalates
+   loudly, because an unregistered certificate is a silent enforcement gap,
+   not a UX inconvenience.
+4. **AC reader inventory** — answered 2026-08-17 by the retirement
    instance's authorized read (evidence on `aweb-aaum.9`): direct
    readers/writers enumerated; signed blobs are NOT reliably retained after
    revocation (hence the sweep's required deletion fallback); and the
