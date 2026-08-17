@@ -205,7 +205,6 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 		"agents/souls/coordinator/AGENTS.md",
 		"agents/souls/developer/AGENTS.md",
 		"docs/configuration.md",
-		"docs/coordination.md",
 		"docs/start-working.md",
 		"docs/tasks-and-work.md",
 		"resource-packs/coord-workflows/resources/instructions.md",
