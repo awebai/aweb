@@ -171,7 +171,11 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		return connectOutput{}, fmt.Errorf("set up E2E encryption key: %w", err)
 	}
 	if _, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false, explicitEncryptionKeyIdentityHome(identityHome)); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not publish E2E encryption key automatically: %v\n", err)
+		fmt.Fprintf(os.Stderr,
+			"Warning: could not publish E2E encryption key automatically: %v\n"+
+				"Counterparties cannot discover this identity's encryption key until the assertion is published.\n"+
+				"Run `aw id encryption-key setup` to publish it; `aw check` reports the unpublished state as identity.e2ee.assertion_published.\n",
+			err)
 	}
 
 	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)

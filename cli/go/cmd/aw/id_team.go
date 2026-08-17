@@ -2130,7 +2130,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 			}, existingCert, "", "", false); err != nil {
 				return err
 			}
-			if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
+			if err := ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
 				return err
 			}
 			printOutput(teamFetchCertOutput{
@@ -2191,7 +2191,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	}, cert, registryURL, "", false); err != nil {
 		return err
 	}
-	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
+	if err := ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
 		return err
 	}
 
@@ -3282,7 +3282,7 @@ func recordAcceptedTeamMembership(workingDir string, output *teamAcceptInviteOut
 			return err
 		}
 	}
-	return ensureLocalIdentityEncryptionKeyForDir(workingDir, opts.IdentityHome)
+	return ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, opts.IdentityHome)
 }
 
 func upsertAcceptedTeamMembershipState(workingDir string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, registryURL, awebURL string, setActive bool, identityHomes ...string) error {

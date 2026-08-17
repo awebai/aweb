@@ -27,6 +27,7 @@ const (
 	doctorCheckIdentityEncryptionState     = "identity.e2ee.encryption_state"
 	doctorCheckIdentityEncryptionPrivate   = "identity.e2ee.private_key"
 	doctorCheckIdentityEncryptionAssertion = "identity.e2ee.assertion"
+	doctorCheckIdentityEncryptionPublished = "identity.e2ee.assertion_published"
 
 	doctorCheckAWIDDIDResolve            = "awid.did.resolve"
 	doctorCheckAWIDDIDCurrentKey         = "awid.did.current_key_matches_local"
@@ -364,6 +365,36 @@ func (r *doctorRunner) addIdentityEncryptionKeyLocalChecks(state *doctorIdentity
 		return
 	}
 	r.add(localPathCheck(doctorCheckIdentityEncryptionAssertion, doctorStatusOK, doctorIdentityStateStoredPath(state, record.AssertionPath), "Local E2E encryption-key assertion verifies under the identity signing key.", "", map[string]any{"encryption_key_id": assertion.EncryptionKeyID}))
+	r.addIdentityEncryptionPublishedCheck(state, record)
+}
+
+// addIdentityEncryptionPublishedCheck reports, without going online, whether the
+// active E2E encryption-key assertion has ever been recorded as published. A key
+// whose assertion exists only locally cannot be discovered by any counterparty,
+// so nobody can encrypt to this identity — and every local check reads healthy
+// while that is true (aweb-abfd). published_at is local bookkeeping, not a
+// registry read: `aw check --online` (awid.did.encryption_key_matches_local) is
+// what confirms the published copy against awid.
+func (r *doctorRunner) addIdentityEncryptionPublishedCheck(state *doctorIdentityState, record *awconfig.EncryptionKeyRecord) {
+	if strings.TrimSpace(record.PublishedAt) != "" {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionPublished, doctorStatusOK, state.encryptionStatePath, "Local E2E encryption-key assertion was recorded as published.", "Confirm against the registry with `aw check --online` if in doubt.", map[string]any{"published_at": strings.TrimSpace(record.PublishedAt)}))
+		return
+	}
+	hasPublishTarget := strings.TrimSpace(state.stableID) != ""
+	if !hasPublishTarget {
+		workspace, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(state.workingDir)
+		if strings.TrimSpace(state.identityHome) != "" {
+			workspace, teamState, _, err = awconfig.LoadWorkspaceAndTeamStateFromIdentityHome(state.identityHome)
+		}
+		if err == nil && workspace != nil {
+			hasPublishTarget = awconfig.ActiveMembershipFor(workspace, teamState) != nil
+		}
+	}
+	if !hasPublishTarget {
+		r.add(localPathCheck(doctorCheckIdentityEncryptionPublished, doctorStatusInfo, state.encryptionStatePath, "Local E2E encryption-key assertion has no publish target yet.", "Publishing happens once this identity joins a service or registers globally.", map[string]any{"reason": "no_publish_target"}))
+		return
+	}
+	r.add(localPathCheck(doctorCheckIdentityEncryptionPublished, doctorStatusWarn, state.encryptionStatePath, "Local E2E encryption-key assertion is not recorded as published; counterparties cannot discover this identity's encryption key.", "Run `aw id encryption-key setup` to publish it, then confirm with `aw check --online`.", map[string]any{"reason": "published_at_empty"}))
 }
 
 func doctorIdentityStateStoredPath(state *doctorIdentityState, storedPath string) string {

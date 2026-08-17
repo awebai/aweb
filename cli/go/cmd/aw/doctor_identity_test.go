@@ -517,6 +517,54 @@ func TestAwDoctorIdentityOutputRedactsRegistrySecrets(t *testing.T) {
 	}
 }
 
+// aweb-abfd: an unpublished E2E encryption-key assertion must be discoverable
+// without --online. published_at is local bookkeeping; the check warns only
+// when a publish target exists.
+func TestDoctorIdentityEncryptionPublishedCheck(t *testing.T) {
+	t.Parallel()
+
+	find := func(runner *doctorRunner) doctorCheck {
+		t.Helper()
+		for _, check := range runner.output.Checks {
+			if check.ID == doctorCheckIdentityEncryptionPublished {
+				return check
+			}
+		}
+		t.Fatalf("missing %s check", doctorCheckIdentityEncryptionPublished)
+		return doctorCheck{}
+	}
+
+	// Global identity (stable id present), never recorded as published: warn.
+	runner := &doctorRunner{}
+	runner.addIdentityEncryptionPublishedCheck(
+		&doctorIdentityState{workingDir: t.TempDir(), stableID: "did:aw:abc"},
+		&awconfig.EncryptionKeyRecord{KeyID: "sha256:x"},
+	)
+	if check := find(runner); check.Status != doctorStatusWarn {
+		t.Fatalf("unpublished global = %s, want warn: %+v", check.Status, check)
+	}
+
+	// Recorded as published: ok.
+	runner = &doctorRunner{}
+	runner.addIdentityEncryptionPublishedCheck(
+		&doctorIdentityState{workingDir: t.TempDir(), stableID: "did:aw:abc"},
+		&awconfig.EncryptionKeyRecord{KeyID: "sha256:x", PublishedAt: "2026-08-17T00:00:00Z"},
+	)
+	if check := find(runner); check.Status != doctorStatusOK {
+		t.Fatalf("published = %s, want ok", check.Status)
+	}
+
+	// Local identity with no workspace binding: nothing to publish to yet.
+	runner = &doctorRunner{}
+	runner.addIdentityEncryptionPublishedCheck(
+		&doctorIdentityState{workingDir: t.TempDir()},
+		&awconfig.EncryptionKeyRecord{KeyID: "sha256:x"},
+	)
+	if check := find(runner); check.Status != doctorStatusInfo {
+		t.Fatalf("no publish target = %s, want info", check.Status)
+	}
+}
+
 func TestAwDoctorRootHasNoDuplicateCheckIDs(t *testing.T) {
 	t.Parallel()
 

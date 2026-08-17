@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -117,6 +121,21 @@ func TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperat
 	if err != nil {
 		t.Fatal(err)
 	}
+	// aweb-abfd: provisioning must also publish the target's encryption-key
+	// assertion; a key whose assertion is only local cannot be discovered by
+	// any counterparty. The fake service records the publish.
+	var publishCalls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key" {
+			publishCalls.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"agent_id": "a", "team_id": "default:gracehosted.aweb.ai", "alias": "bob"})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(server.Close)
+	awebURL := server.URL
+
 	dir := filepath.Join(root, "target")
 	operatorDir := filepath.Join(root, "operator")
 	teamID := "default:gracehosted.aweb.ai"
@@ -134,7 +153,7 @@ func TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperat
 	targetEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(dir)
 	operatorEncryptionStatePath := awconfig.WorktreeEncryptionStatePath(operatorDir)
 
-	if err := recordAcceptedTeamMembership(dir, output, cert, "", "https://app.aweb.ai", recordMembershipOptions{
+	if err := recordAcceptedTeamMembership(dir, output, cert, "", awebURL, recordMembershipOptions{
 		IdentityHome: explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(dir)), SetActive: true, WriteWorkspaceBinding: true,
 	}); err != nil {
 		t.Fatalf("record accepted membership: %v", err)
@@ -161,15 +180,25 @@ func TestRecordAcceptedTeamMembershipProvisionWritesTargetEncryptionKeyNotOperat
 	if err != nil {
 		t.Fatalf("load workspace binding: %v", err)
 	}
-	if workspace.AwebURL != "https://app.aweb.ai" {
-		t.Fatalf("workspace aweb_url=%q want https://app.aweb.ai", workspace.AwebURL)
+	if workspace.AwebURL != awebURL {
+		t.Fatalf("workspace aweb_url=%q want fake service URL", workspace.AwebURL)
 	}
 	if workspace.Membership(teamID) == nil {
 		t.Fatalf("workspace binding missing membership cache: %#v", workspace)
 	}
 	membership := teamState.Membership(teamID)
-	if membership.AwebURL != "https://app.aweb.ai" {
-		t.Fatalf("teams.yaml membership aweb_url=%q want https://app.aweb.ai", membership.AwebURL)
+	if membership.AwebURL != awebURL {
+		t.Fatalf("teams.yaml membership aweb_url=%q want fake service URL", membership.AwebURL)
+	}
+	if publishCalls.Load() == 0 {
+		t.Fatal("provision did not publish the encryption-key assertion to the service (aweb-abfd)")
+	}
+	targetState, targetStateErr = awconfig.LoadEncryptionKeyStateFrom(targetEncryptionStatePath)
+	if targetStateErr != nil || targetState.ActiveRecord() == nil {
+		t.Fatalf("reload target encryption state: %+v err=%v", targetState, targetStateErr)
+	}
+	if targetState.ActiveRecord().PublishedAt == "" {
+		t.Fatal("publish was not recorded as published_at on the active key record")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -271,6 +272,79 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 		PublishSkipped: skipped,
 		Warning:        encryptionKeyBackupWarning(),
 	}, nil
+}
+
+// ensureAndPublishLocalIdentityEncryptionKeyForDir ensures the local E2E
+// encryption key exists and then publishes its assertion to the discovery
+// surfaces available to this identity (awid for global identities, the aweb
+// service where a workspace binding exists).
+//
+// Provisioning paths must call this rather than the bare ensure: a key whose
+// assertion is only local cannot be discovered by any counterparty, so nobody
+// can encrypt to this identity, and nothing else in the provisioning sequence
+// publishes it (aweb-abfd). A publish failure does not fail the provisioning —
+// the membership state is already recorded and the failure is recoverable —
+// but it is reported loudly with the remedy, and the unpublished state stays
+// visible offline through `aw check` (identity.e2ee.assertion_published).
+func ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir string, identityHome encryptionKeyIdentityHomeIntent) error {
+	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, identityHome); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, _, err := publishEnsuredIdentityEncryptionKeyForDir(ctx, workingDir, identityHome); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"Warning: the E2E encryption key was created but its assertion was not published: %v\n"+
+				"Counterparties cannot discover this identity's encryption key until the assertion is published.\n"+
+				"Run `aw id encryption-key setup` to publish it; `aw check` reports the unpublished state as identity.e2ee.assertion_published.\n",
+			err)
+	}
+	return nil
+}
+
+// publishEnsuredIdentityEncryptionKeyForDir publishes the active encryption-key
+// assertion for the identity in workingDir and records published_at on success.
+// It publishes nothing (and reports no error) for non-self-custodial identities
+// or when no discovery target exists yet — a local identity before its
+// workspace binding is written has nowhere to publish to.
+func publishEnsuredIdentityEncryptionKeyForDir(ctx context.Context, workingDir string, identityHome encryptionKeyIdentityHomeIntent) ([]string, []string, error) {
+	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, identityHome)
+	if err != nil {
+		return nil, nil, err
+	}
+	if strings.TrimSpace(identity.Custody) != awid.CustodySelf {
+		return nil, nil, nil
+	}
+	signingKey, err := resolveIdentitySigningKey(identity)
+	if err != nil {
+		return nil, nil, err
+	}
+	statePath, err := encryptionStatePathForIdentity(identity)
+	if err != nil {
+		return nil, nil, err
+	}
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	record := state.ActiveRecord()
+	if record == nil {
+		return nil, nil, errors.New("local E2E encryption key state has no active key")
+	}
+	assertion, err := loadEncryptionAssertionAt(identity.WorkingDir, identity.IdentityHome, record.AssertionPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	published, skipped, err := publishIdentityEncryptionKey(ctx, identity, signingKey, assertion)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(published) > 0 {
+		record.PublishedAt = time.Now().UTC().Format(time.RFC3339)
+		state.UpsertRecord(*record)
+		_ = awconfig.SaveEncryptionKeyStateTo(statePath, state)
+	}
+	return published, skipped, nil
 }
 
 func ensureLocalIdentityEncryptionKeyForDir(workingDir string, identityHome encryptionKeyIdentityHomeIntent) error {
@@ -600,6 +674,9 @@ func rebindLocalEncryptionKeyRecord(identity *awconfig.ResolvedIdentity, signing
 	next.CreatedAt = assertion.CreatedAt
 	next.NotBefore = assertion.NotBefore
 	next.ExpiresAt = assertion.ExpiresAt
+	// The re-signed assertion differs from whatever was published before, so a
+	// prior published_at no longer describes the current assertion.
+	next.PublishedAt = ""
 	return &next, assertion, nil
 }
 
@@ -699,7 +776,17 @@ func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.Resolv
 	}
 
 	if hasWorkspaceBinding(identity) {
-		client, _, err := resolveClientSelectionForDir(identity.WorkingDir)
+		// The client must belong to the same identity home as the key being
+		// published. Resolving by directory alone follows the operator's active
+		// identity home (flag or AWEB_IDENTITY_HOME), which during foreign-agent
+		// provisioning is a different principal than the target identity.
+		var client *aweb.Client
+		var err error
+		if home := strings.TrimSpace(identity.IdentityHome); home != "" {
+			client, _, err = resolveClientSelectionAtIdentityHome(identity.WorkingDir, awconfig.IdentityHome{Root: home})
+		} else {
+			client, _, err = resolveClientSelectionForDir(identity.WorkingDir)
+		}
 		if err != nil {
 			return nil, nil, err
 		}

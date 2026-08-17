@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1316,6 +1317,7 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	t.Parallel()
 
+	var encryptionKeyPublished atomic.Bool
 	var registeredCert map[string]any
 	var memberDIDKey string
 	var memberStableID string
@@ -1335,6 +1337,11 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
 				t.Fatal(err)
 			}
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			// aweb-abfd: accepting a membership for a global identity now publishes
+			// the E2E encryption-key assertion to the registry.
+			encryptionKeyPublished.Store(true)
 			w.WriteHeader(http.StatusCreated)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -1462,6 +1469,9 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	teamPub := teamKey.Public().(ed25519.PublicKey)
 	if err := awid.VerifyTeamCertificate(cert, teamPub); err != nil {
 		t.Fatalf("verify certificate: %v", err)
+	}
+	if !encryptionKeyPublished.Load() {
+		t.Fatal("membership accept did not publish the E2E encryption-key assertion (aweb-abfd)")
 	}
 }
 
@@ -1883,9 +1893,15 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	var expectedGlobalStableID string
 	var acceptBody map[string]any
 	var acceptVerifiedDID bool
+	var encryptionKeyPublished atomic.Bool
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			// aweb-abfd: accepting a membership for a global identity now publishes
+			// the E2E encryption-key assertion to the registry.
+			encryptionKeyPublished.Store(true)
+			w.WriteHeader(http.StatusCreated)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
 			body, _ := io.ReadAll(r.Body)
 			if err := json.Unmarshal(body, &acceptBody); err != nil {
@@ -2045,6 +2061,9 @@ func TestTeamAcceptHostedInviteWithAddressCreatesGlobalIdentity(t *testing.T) {
 	requireWorktreeEncryptionKeyForTest(t, acceptDir)
 	if _, err := os.Stat(filepath.Join(acceptDir, awconfig.DefaultWorktreeWorkspaceRelativePath())); !os.IsNotExist(err) {
 		t.Fatalf("accept-invite should not create workspace.yaml before aw init, stat err=%v", err)
+	}
+	if !encryptionKeyPublished.Load() {
+		t.Fatal("hosted global accept did not publish the E2E encryption-key assertion (aweb-abfd)")
 	}
 }
 
@@ -2989,6 +3008,7 @@ func TestRollbackDefaultAddressClaimDeletesOnlyNewlyCreatedAddress(t *testing.T)
 func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	t.Parallel()
 
+	var encryptionKeyPublished atomic.Bool
 	var registeredCert map[string]any
 	var memberDIDKey string
 	var memberStableID string
@@ -3008,6 +3028,11 @@ func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&registeredCert); err != nil {
 				t.Fatal(err)
 			}
+			w.WriteHeader(http.StatusCreated)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+			// aweb-abfd: accepting a membership for a global identity now publishes
+			// the E2E encryption-key assertion to the registry.
+			encryptionKeyPublished.Store(true)
 			w.WriteHeader(http.StatusCreated)
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -3092,6 +3117,9 @@ func TestTeamAcceptInviteAddressOverrideUsesRegisteredAddress(t *testing.T) {
 	}
 	if registeredCert["member_did_aw"] != memberStableID {
 		t.Fatalf("registry cert member_did_aw=%v", registeredCert["member_did_aw"])
+	}
+	if !encryptionKeyPublished.Load() {
+		t.Fatal("membership accept did not publish the E2E encryption-key assertion (aweb-abfd)")
 	}
 }
 
