@@ -149,6 +149,31 @@ else
   status=1
 fi
 
+# 11. Markdown cross-references between documents. check-doc-paths.sh above
+#    validates backtick-quoted repository paths, which by construction start with
+#    a top-level directory; a bare relative link between two documents carries no
+#    such prefix and is invisible to it. That gap let a deleted document leave a
+#    subordination claim pointing at a 404 through every other gate here.
+section "documentation cross-references"
+if scripts/check-doc-links.py --self-test && scripts/check-doc-links.py; then
+  echo "documentation cross-references resolve"
+else
+  echo "FAIL: a document links to a missing document (or the checker's self-test failed)"
+  status=1
+fi
+
+# 12. Private-infrastructure boundary. Public aweb may talk to a hosted
+#    deployment; it may not carry the hosted product's private surface. The
+#    hosted coupling that exists today is frozen as an enumerated baseline
+#    because aweb-aazb.11 was retired, so this gate is about what is NEW.
+section "private-infrastructure boundary"
+if scripts/check-private-boundary.py --self-test && scripts/check-private-boundary.py; then
+  echo "no private infrastructure outside the frozen baseline"
+else
+  echo "FAIL: private infrastructure outside the frozen baseline (or the checker's self-test failed)"
+  status=1
+fi
+
 if [ "$status" -eq 0 ]; then
   printf '\nAll freshness checks passed.\n'
 else

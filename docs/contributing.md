@@ -249,6 +249,29 @@ artifacts and public AWID site document mirrors still match their sources, and
 that repository paths referenced in `docs/` actually exist
 (`scripts/check-doc-paths.sh`).
 
+Two further gates run in the same command and answer different questions:
+
+- **`scripts/check-doc-links.py`** resolves every relative Markdown link between
+  tracked documents. `check-doc-paths.sh` validates backtick-quoted repository
+  paths, which start with a top-level directory; a bare `[text](sibling.md)`
+  carries no such prefix and is invisible to it. Deleting a document therefore
+  used to leave live cross-references pointing at nothing while every other gate
+  stayed green.
+- **`scripts/check-private-boundary.py`** keeps the hosted product's private
+  surface out of the public repository: hosted-only HTTP endpoints, the hosted
+  account model (`org_id`, `user_id`) as schema fields, and private repository
+  paths. Naming `app.aweb.ai` as a deployment you can talk to is fine and is not
+  what this looks for.
+
+  The hosted coupling that exists today is frozen in that file as an enumerated
+  **baseline**, not an allowlist: it names exact endpoint literals and exact
+  struct names, so moving one to a different file still trips the gate and an
+  eleventh endpoint fails. If you remove coupling, delete its baseline entry —
+  that makes the gate stricter and needs no discussion. If you add coupling, the
+  gate fails and that is a decision to argue in review, not a line to add.
+  Re-measure with `scripts/check-private-boundary.py --derive`, which prints a
+  freshly derived baseline and never writes.
+
 It **cannot** verify that documentation prose is true. A path can resolve while
 the sentence around it is wrong, a `:LINE` anchor can point at unrelated code
 after a refactor, and a hand-written inventory can be stale while every link
