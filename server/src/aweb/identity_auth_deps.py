@@ -14,7 +14,7 @@ from aweb.awid_error_handling import (
     awid_registry_not_configured_exception,
 )
 from aweb.deps import get_db
-from aweb.team_auth_deps import TeamIdentity, _aweb_db, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_revoked_certificates, get_team_identity
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,7 @@ async def lookup_identity_agent_context(
     aweb_db = _aweb_db(db)
     rows = await aweb_db.fetch_all(
         """
-        SELECT agent_id, team_id, alias, did_aw, address, identity_scope
+        SELECT agent_id, team_id, alias, did_aw, address, identity_scope, certificate_id
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND (did_key = $1 OR ($2 <> '' AND did_aw = $2))
@@ -148,6 +148,47 @@ async def lookup_identity_agent_context(
             return None
         raise HTTPException(status_code=409, detail="Authenticated DID matches multiple active local agents")
     return dict(rows[0])
+
+
+async def _enforce_current_membership(request: Request, row: dict | None) -> dict | None:
+    """Refuse team context derived from a projection whose admitting
+    certificate is revoked (aweb-abfn).
+
+    Identity-only auth proves key possession; the team_id/alias it inherits
+    from the agents projection is only as current as that row. A revoked
+    member whose projection survived — the split-state family recorded on
+    aweb-aaum.9 — would otherwise keep sending under its team alias forever by
+    omitting the certificate header. This applies the same registry revocation
+    check the certificate-presenting path performs, with the same fail-closed
+    503 on registry unavailability.
+
+    Revocation ends membership, not the identity: the row's team_id, alias,
+    and agent_id are stripped, while the DID-scoped facts stand, so the
+    identity keeps reading its own mailbox and loses only team attribution
+    and team-gated behavior. A row with no recorded certificate predates the
+    recording (migration 017) and passes unchanged; it heals at the next
+    certificate-authenticated connect or request.
+    """
+    if not row:
+        return row
+    team_id = (row.get("team_id") or "").strip()
+    certificate_id = (row.get("certificate_id") or "").strip()
+    if not team_id or not certificate_id:
+        return row
+    revoked = await _get_revoked_certificates(request, team_id)
+    if certificate_id not in revoked:
+        return row
+    logger.warning(
+        "identity-auth team context stripped: certificate %s for alias %r in %s is revoked",
+        certificate_id,
+        row.get("alias"),
+        team_id,
+    )
+    stripped = dict(row)
+    stripped["team_id"] = None
+    stripped["alias"] = None
+    stripped["agent_id"] = None
+    return stripped
 
 
 async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingAuth:
@@ -191,6 +232,7 @@ async def get_messaging_auth(request: Request, db=Depends(get_db)) -> MessagingA
         did_aw=identity.did_aw,
         allow_ambiguous_global_identity=True,
     )
+    row = await _enforce_current_membership(request, row)
     return MessagingAuth(
         did_key=identity.did_key,
         did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),

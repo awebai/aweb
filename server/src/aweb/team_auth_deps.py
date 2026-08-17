@@ -90,7 +90,7 @@ async def resolve_team_identity(
 
     row = await db.fetch_one(
         """
-        SELECT agent_id FROM {{tables.agents}}
+        SELECT agent_id, certificate_id FROM {{tables.agents}}
         WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
         """,
         team_id,
@@ -101,6 +101,19 @@ async def resolve_team_identity(
         raise ValueError(
             f"Agent not connected: no agent with did_key {did_key[:20]}... "
             f"in team {team_id}"
+        )
+
+    # Keep the admitting certificate recorded on the projection current
+    # (aweb-abfn): identity-only auth checks THIS value against the registry's
+    # revocations, so a row still naming a replaced certificate would either
+    # miss a revocation or strip a live member. The certificate presented here
+    # was verified against the registry (signature and revocation) above.
+    presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
+    if presented_certificate_id and presented_certificate_id != (row.get("certificate_id") or "").strip():
+        await db.execute(
+            "UPDATE {{tables.agents}} SET certificate_id = $2 WHERE agent_id = $1",
+            row["agent_id"],
+            presented_certificate_id,
         )
 
     return TeamIdentity(

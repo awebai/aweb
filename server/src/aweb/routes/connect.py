@@ -87,6 +87,7 @@ async def _ensure_agent(
     human_name: str,
     agent_type: str,
     role: str,
+    certificate_id: str,
 ) -> str:
     """Find or create the agent row. Returns agent_id as string.
 
@@ -112,7 +113,7 @@ async def _ensure_agent(
             """
             UPDATE {{tables.agents}}
             SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                agent_type = $5, role = $6, status = 'active'
+                agent_type = $5, role = $6, status = 'active', certificate_id = $8
             WHERE agent_id = $7
             """,
             did_aw or None,
@@ -122,6 +123,7 @@ async def _ensure_agent(
             agent_type,
             role,
             existing_agent["agent_id"],
+            (certificate_id or "").strip() or None,
         )
         return str(existing_agent["agent_id"])
 
@@ -144,8 +146,9 @@ async def _ensure_agent(
             """
             INSERT INTO {{tables.agents}}
                 (agent_id, team_id, did_key, did_aw, address,
-                 alias, identity_scope, human_name, agent_type, role, inbound_mode)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open')
+                 alias, identity_scope, human_name, agent_type, role, inbound_mode,
+                 certificate_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'open', $11)
             ON CONFLICT (team_id, did_key) WHERE deleted_at IS NULL DO NOTHING
             """,
             agent_id,
@@ -158,6 +161,7 @@ async def _ensure_agent(
             human_name,
             agent_type,
             role,
+            (certificate_id or "").strip() or None,
         )
     except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
         if isinstance(exc, QueryError) and not isinstance(exc.__cause__, asyncpg.exceptions.UniqueViolationError):
@@ -180,7 +184,7 @@ async def _ensure_agent(
                 """
                 UPDATE {{tables.agents}}
                 SET did_aw = $1, address = $2, identity_scope = $3, human_name = $4,
-                    agent_type = $5, role = $6, status = 'active'
+                    agent_type = $5, role = $6, status = 'active', certificate_id = $8
                 WHERE agent_id = $7
                 """,
                 did_aw or None,
@@ -190,6 +194,7 @@ async def _ensure_agent(
                 agent_type,
                 role,
                 existing_agent["agent_id"],
+                (certificate_id or "").strip() or None,
             )
             return str(existing_agent["agent_id"])
         existing_alias = await db.fetch_one(
@@ -397,6 +402,7 @@ async def connect_agent(
         human_name=human_name,
         agent_type=agent_type,
         role=role,
+        certificate_id=cert_info.get("certificate_id", ""),
     )
 
     workspace_id = await _ensure_workspace(

@@ -21,7 +21,7 @@ from awid.signing import canonical_json_bytes, verify_did_key_signature
 
 from aweb.config import get_settings
 from aweb.identity_auth_deps import MessagingAuth
-from aweb.team_auth_deps import _aweb_db
+from aweb.team_auth_deps import _aweb_db, _get_revoked_certificates
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
@@ -137,6 +137,7 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.scopes, g.expires_at, g.revoked_at,
+               g.issued_by_certificate_id,
                a.did_key AS subject_did_key, a.did_aw, a.address, a.alias,
                a.agent_id, a.identity_scope, a.status, a.deleted_at
         FROM {{tables.identity_session_grants}} AS g
@@ -153,6 +154,16 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
         raise HTTPException(status_code=403, detail="grant expired")
     if row["status"] != "active" or row["deleted_at"] is not None:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
+    # A grant is a delegation from a membership; revoking the issuing
+    # certificate must end the delegation with it (aweb-abfn). Grants minted
+    # before issued_by_certificate_id was recorded cannot be checked and are
+    # bounded by their own expiry. Registry unavailability fails closed with
+    # the same 503 the certificate-presenting path raises.
+    issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
+    if issuing_certificate_id:
+        revoked_certs = await _get_revoked_certificates(request, row["team_id"])
+        if issuing_certificate_id in revoked_certs:
+            raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
 
     required = required_grant_scope(request.method, _app_relative_path(request))
     if required is not None and required not in list(row["scopes"] or []):

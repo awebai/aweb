@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 from dataclasses import asdict
+from unittest.mock import AsyncMock
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -94,6 +95,11 @@ def _build_app(aweb_db) -> FastAPI:
     app.dependency_overrides[get_team_identity] = _identity
     app.state.db = _DbShim(aweb_db)
     app.state.public_origin = "http://test"
+    # Grant auth checks the issuing certificate against the registry's
+    # revocations (aweb-abfn); default to none revoked.
+    registry = AsyncMock()
+    registry.get_team_revocations = AsyncMock(return_value=set())
+    app.state.awid_registry_client = registry
 
     @app.middleware("http")
     async def cache_body_middleware(request, call_next):
@@ -433,3 +439,77 @@ async def test_tampered_signed_payload_path_is_rejected(aweb_cloud_db):
 def test_identity_grant_routes_are_registered_on_production_app():
     paths = {route.path for route in create_app().routes}
     assert {"/v1/identity-grants", "/v1/identity-grants/{grant_id}/revoke"} <= paths
+
+
+@pytest.mark.asyncio
+async def test_grant_with_revoked_issuing_certificate_is_rejected(aweb_cloud_db):
+    """aweb-abfn: revoking the membership certificate that minted a grant ends
+    the delegation, even though the grant row itself is unrevoked and unexpired."""
+    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    signing_key, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        before = await client.post(
+            "/v1/messages",
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
+                method="POST", path="/v1/messages",
+            ),
+        )
+        assert before.status_code == 200, before.text
+        app.state.awid_registry_client.get_team_revocations = AsyncMock(return_value={"cert-1"})
+        after = await client.post(
+            "/v1/messages",
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
+                method="POST", path="/v1/messages",
+            ),
+        )
+    assert after.status_code == 403
+    assert after.json()["detail"] == "grant issuing certificate revoked"
+
+
+@pytest.mark.asyncio
+async def test_grant_registry_unavailable_fails_closed(aweb_cloud_db):
+    """Registry unavailability must not silently skip the issuing-certificate
+    check: same fail-closed posture as the certificate-presenting path."""
+    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    signing_key, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        import httpx as _httpx
+
+        app.state.awid_registry_client.get_team_revocations = AsyncMock(
+            side_effect=_httpx.ConnectError("registry down")
+        )
+        resp = await client.post(
+            "/v1/messages",
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
+                method="POST", path="/v1/messages",
+            ),
+        )
+    assert resp.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_legacy_grant_without_issuing_certificate_still_works(aweb_cloud_db):
+    """Grants minted before issued_by_certificate_id was recorded cannot be
+    checked; they keep working, bounded by their own expiry."""
+    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    signing_key, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.identity_session_grants}} SET issued_by_certificate_id = NULL WHERE grant_id = $1::UUID",
+            grant_id,
+        )
+        app.state.awid_registry_client.get_team_revocations = AsyncMock(return_value={"cert-1"})
+        resp = await client.post(
+            "/v1/messages",
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
+                method="POST", path="/v1/messages",
+            ),
+        )
+    assert resp.status_code == 200, resp.text
