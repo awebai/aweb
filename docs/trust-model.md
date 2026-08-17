@@ -353,6 +353,12 @@ below lands, **revocation freshness rests on the honesty and availability of
 the consulted registry operator.** That is a named trust assumption of the
 current system.
 
+The client half is quantified: verifiers cache a team's revocation list for at
+most 60 seconds (hard worst case 120 seconds through the stale-while-revalidate
+window), matching the federation authority reuse ceiling. Against an honest
+registry, a revocation therefore takes effect on enforcement within about a
+minute. Raising that constant is a trust-model change, not a tuning decision.
+
 The committed exit ladder, in order:
 
 1. **Certificate expiry and re-issuance** — bounds suppression to the validity

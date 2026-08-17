@@ -69,7 +69,15 @@ _ADDRESS_CACHE_TTL_SECONDS = 5 * 60
 _NAMESPACE_CACHE_TTL_SECONDS = 15 * 60
 _DID_KEY_CACHE_TTL_SECONDS = 5 * 60
 _TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
-_TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
+# Revocations get a much shorter bound than other team metadata: since
+# aweb-abfn they are load-bearing for membership enforcement on every
+# authenticated messaging request, and this TTL is the client half of how fast
+# a revocation takes effect (aweb-abfp; the ruling in trust-model.md's
+# "Threat-model rulings" accepts bounded client staleness). 60 seconds matches
+# the federation authority reuse ceiling. With the stale-while-revalidate
+# window below, the hard worst case is 2x this value; the cache lives in Redis
+# and survives process restarts, so the TTL is the only bound.
+_TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 60
 _TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.

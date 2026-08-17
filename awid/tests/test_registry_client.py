@@ -668,3 +668,17 @@ async def test_get_team_revocations_missing_team_is_empty():
     finally:
         await registry.aclose()
     assert revoked == set()
+
+
+def test_revocation_cache_ttl_stays_within_the_ruled_bound():
+    """aweb-abfp: revocations are load-bearing for membership enforcement on
+    every authenticated request (aweb-abfn), and this TTL is the client half of
+    how fast a revocation takes effect. The hard worst case is twice this value
+    (the stale-while-revalidate window), and the Redis-backed cache survives
+    process restarts, so the constant is the only bound. 60 seconds matches the
+    federation authority reuse ceiling. Raising it is a trust-model change and
+    belongs next to the rulings in trust-model.md, not in a refactor."""
+    from awid.registry import _STALE_MULTIPLIER, _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
+
+    assert _TEAM_REVOCATIONS_CACHE_TTL_SECONDS <= 60
+    assert _TEAM_REVOCATIONS_CACHE_TTL_SECONDS * _STALE_MULTIPLIER <= 120
