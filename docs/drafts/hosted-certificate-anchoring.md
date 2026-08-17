@@ -1,7 +1,8 @@
 # Hosted certificate anchoring, read-back, and expiry
 
-Status: **design draft, first adversarial review round incorporated — not
-normative, no implementation authorized.** Round 1 verified the core decision
+Status: **design draft, review rounds 1-3 and the AC inventory
+incorporated — not normative, no implementation authorized (Juan's hold
+stands).** Round 1 verified the core decision
 (existing registry routes accept hosted registration: no controller-key,
 namespace, or addressless-member barrier exists in code) and broke the
 original backfill scope; the reconciliation sweep, the expiry hard cutoff,
@@ -81,22 +82,36 @@ membership/revocation state, not identity state.
 
 Local agents are spawned and retired constantly; anchoring every certificate
 means per-team revocation lists grow with every retirement, and since
-`aweb-abfn` every server refreshes that list each minute. Two answers, both
-part of this design:
+`aweb-abfn` every server refreshes that list each minute. Restated after the
+round-3 review broke the first version of this section:
 
-- **Expiry bounds the working set.** A revoked certificate that has also
-  expired no longer needs consulting — expiry alone refuses it — so the
-  enforcement-relevant revocation set caps at one validity window (~90 days)
-  of churn. Clients should additionally refresh incrementally (the route's
-  `since` parameter exists; the Python client currently re-pulls fully — an
-  implementation item, not a protocol change).
-- **Ephemeral workers should be session grants, not members.** The system
-  already has the right primitive for throwaways: identity session grants are
-  scoped, expiring, revocable, and die with their issuing certificate under
-  the landed enforcement. Membership with an anchored certificate is the
-  right weight for durable agents; provisioning guidance should steer
-  short-lived workers to grants rather than full membership, which also keeps
-  roster churn and revocation growth proportional to real membership.
+- **Expiry lets verifiers reject without the list — once expiry exists.**
+  Nothing in landed code has any expiry concept today; this is future v2
+  behavior. Once `expires_at` lands, a verifier refuses an expired
+  certificate outright, with no registry change required.
+- **The list-size bound is a separate, explicit commitment.** Verifier-side
+  expiry does NOT by itself stop the revocation list growing forever. This
+  design therefore commits: after the legacy transition window closes,
+  `list_revocations` excludes certificates that are both revoked and expired
+  (or a periodic cleanup purges them from its result set). The exclusion is
+  safe precisely because verifiers hard-fail expired certificates on their
+  own — absence from the list cannot resurrect one — and it cannot apply to
+  legacy no-expiry certificates, which is one more reason the transition
+  window must actually close. With both halves, the enforcement-relevant
+  revocation set caps at ~one validity window (90 days) of churn. Clients
+  should additionally refresh incrementally (the route's `since` parameter
+  exists; the Python client currently re-pulls fully — an implementation
+  item).
+- **Session grants fit only pure messaging workers.** Grants are scoped,
+  expiring, revocable, and die with their issuing certificate under the
+  landed enforcement — but they are hard-refused (403) outside mail/chat and
+  roster reads, cannot claim tasks or hold locks, and act as their subject
+  rather than appearing in the roster independently. So the guidance is
+  narrower than first drafted: steer an ephemeral worker to a grant only when
+  its job is messaging as its principal; any worker that must claim work,
+  hold locks, or appear as itself needs full membership, and its anchoring
+  cost is real — bounded by the expiry-plus-exclusion commitment above, not
+  avoided.
 
 ### Roster visibility is a policy decision, made before implementation
 
@@ -145,14 +160,22 @@ fail to register are enumerated in the backfill report, not silently skipped.
 certificate that was never registered can never appear in the registry's
 revocation set, so it passes the revocation check *by omission*: a hosted
 member revoked at AC before this design lands, whose `agents` row is still
-live, would be protected by neither enforcement path, indefinitely. The
-migration therefore includes, before the removal protocol starts relying on
-registry-revoke-at-commit: for every live `agents` row whose corresponding
-cloud certificate is already revoked, force-remediate — register the
-certificate at the registry and immediately revoke it there (or, where the
-signed blob is unavailable, delete the projection row) — and report each
-remediation. This population is bounded and enumerable; it is exactly the
-split-state class aaum.9 describes.
+live, would be protected by neither enforcement path, indefinitely.
+
+The AC inventory (aweb-aaum.9, 2026-08-17) showed the sweep's predicate is
+not locally computable: `cloud_agent_certificates` has no certificate-ID
+column, no registration status, and no revoked marker — a present row may be
+active, registry-revoked, or never registered, indistinguishably — and AC
+carries a second uncontrolled blob store (`aweb.agents.team_cert_blob`) with
+no consistency constraint. The sweep is therefore **registry-classified**:
+decode the certificate ID from every stored blob (both stores), classify each
+against AWID (registered-active / registered-revoked / never-registered),
+then per class: registered rows are left (or cache-synced); never-registered
+rows with a valid blob are registered (then revoked if their member is
+retired); rows whose blob is missing or unusable get their projection deleted
+— blobs are not reliably retained after revocation, so the deletion fallback
+is required, not optional. Each remediation is reported. This population is
+bounded and enumerable; it is exactly the split-state class aaum.9 describes.
 
 Historical revoked certificates beyond that population are not backfilled.
 The honest reason is **data availability** — registration requires the
@@ -165,6 +188,38 @@ remainder.
 Ordering: backfill and sweep before the removal protocol's commit step starts
 revoking at the registry, so a revoke never targets an unregistered
 certificate.
+
+## Conditions the AC inventory adds to "every mint registers"
+
+From the retirement instance's authorized read of AC (evidence on
+aweb-aaum.9, 2026-08-17):
+
+1. **Team registration is a precondition.** Controller key material always
+   exists at mint, but the team's own registry registration is a separate
+   sequencing condition; certificate registration requires the team to be
+   registered first (or atomically ensured).
+2. **The `team-service` certificate class must be classified.** The Library
+   hosted-auth controller branch mints fresh, unregistered, non-roster
+   certificates. Default position: they register like any other certificate;
+   if a reason exists to keep them off-registry it must be argued explicitly
+   and they get their own named class and verification rule.
+3. **Verification eventually requires registration — staged.** AC's own
+   bridge (like the pre-abfn OSS paths) passes unregistered certificates by
+   omission: it checks signature plus not-in-revocations, never existence.
+   End state on both sides: a certificate that is not registered fails
+   verification. This CANNOT precede completed backfill and sweep — enabling
+   it early breaks every legitimate member — so it is staged behind them,
+   with the ordering stated in the rollout plan.
+4. **The W ≠ A invariant.** AC's `ensure_stored_agent_team_certificate`
+   currently keys the cloud table by agent UUID as though it were the
+   workspace UUID; hosted workspace and agent UUIDs are decoupled. The
+   invariant this contract requires: one blob-derived certificate ID carried
+   consistently through workspace `W`, projected agent `A`, and AWID. Fixing
+   that helper is a prerequisite before the mapping is trusted.
+5. **Migration-017 alignment.** AC paths that create or refresh agent
+   projections outside the OSS connect flow (direct-connect, remint, generic
+   projection writes) must set `agents.certificate_id`, or abfn enforcement
+   stays blind for members provisioned through them.
 
 ## Expiry (exit-ladder rung 1) rides with this change
 
