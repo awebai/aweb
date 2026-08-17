@@ -199,7 +199,8 @@ async def test_list_teams(client, controller_identity):
         headers = _sign(signing_key, controller_did, domain="list.com", operation="create_team", name=name)
         await client.post(
             "/v1/namespaces/list.com/teams",
-            json={"name": name, "team_did_key": did_from_public_key(pub)},
+            # Public: anonymous enumeration only lists public teams.
+            json={"name": name, "team_did_key": did_from_public_key(pub), "visibility": "public"},
             headers=headers,
         )
 
@@ -236,7 +237,9 @@ async def test_get_team(client, controller_identity):
     headers = _sign(signing_key, controller_did, domain="get.com", operation="create_team", name="infra")
     await client.post(
         "/v1/namespaces/get.com/teams",
-        json={"name": "infra", "team_did_key": team_did_key},
+        # Public: this test reads the team anonymously; the private-team read
+        # matrix lives in test_team_visibility_enforcement.py.
+        json={"name": "infra", "team_did_key": team_did_key, "visibility": "public"},
         headers=headers,
     )
 
@@ -246,7 +249,7 @@ async def test_get_team(client, controller_identity):
     assert body["team_id"] == "infra:get.com"
     assert body["name"] == "infra"
     assert body["team_did_key"] == team_did_key
-    assert body["visibility"] == "private"
+    assert body["visibility"] == "public"
 
 
 @pytest.mark.asyncio
@@ -259,7 +262,8 @@ async def test_get_team_member_by_alias(client, controller_identity):
     headers = _sign(signing_key, controller_did, domain="members.com", operation="create_team", name="backend")
     resp = await client.post(
         "/v1/namespaces/members.com/teams",
-        json={"name": "backend", "team_did_key": team_did_key},
+        # Public: the member resolve below is anonymous.
+        json={"name": "backend", "team_did_key": team_did_key, "visibility": "public"},
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
@@ -407,10 +411,13 @@ async def test_get_team_read_only_availability_contract(client, controller_ident
     )
     assert resp.status_code == 200, resp.text
 
-    # Existing active team: unauthenticated 200 means unavailable/taken.
+    # Existing active team: any non-404 means unavailable/taken. A team
+    # created with the default (private) visibility answers unauthenticated
+    # reads with 403 team_private — existence is deliberately disclosed so
+    # this availability contract keeps working.
     resp = await client.get("/v1/namespaces/avail.com/teams/default")
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["team_id"] == "default:avail.com"
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"]["code"] == "team_private"
 
     headers = _sign(signing_key, controller_did, domain="avail.com", operation="delete_team", team_name="default")
     resp = await client.delete("/v1/namespaces/avail.com/teams/default", headers=headers)
@@ -590,7 +597,8 @@ async def test_rotate_team_key(client, controller_identity):
     headers = _sign(signing_key, controller_did, domain="rot.com", operation="create_team", name="svc")
     await client.post(
         "/v1/namespaces/rot.com/teams",
-        json={"name": "svc", "team_did_key": old_did_key},
+        # Public: the post-rotate confirmation read below is anonymous.
+        json={"name": "svc", "team_did_key": old_did_key, "visibility": "public"},
         headers=headers,
     )
 

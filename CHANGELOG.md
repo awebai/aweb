@@ -64,6 +64,17 @@
   120-second stale-while-revalidate window, and every other cache tier's
   retention are unchanged; the fifteen-minute bound is a pinned constant with
   no configuration knob.
+- awid service: team visibility is now enforced on the read side. For teams
+  not marked `public`, team get, certificate list, member resolve, and
+  revocation list require a same-team path-signature (the certificate
+  blob-fetch scheme, from the team controller key or an unrevoked member key)
+  or the trusted `AWID_SERVICE_TOKEN`; unauthorized reads return 403 with the
+  stable error code `team_private`. Domain team enumeration omits private
+  teams for anonymous and unprivileged signed callers. New teams default to
+  private at the schema level (unchanged, now load-bearing). Deployments
+  running aweb revocation enforcement against private teams must configure
+  `AWID_SERVICE_TOKEN`; the blob-fetch route and the controller-signed
+  visibility setter are unchanged.
 
 ### CLI compatibility
 

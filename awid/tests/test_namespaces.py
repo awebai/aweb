@@ -134,7 +134,9 @@ async def _create_team(client, signing_key, controller_did, domain, team_name):
     )
     resp = await client.post(
         f"/v1/namespaces/{domain}/teams",
-        json={"name": team_name, "team_did_key": team_did_key},
+        # Public visibility: these tests read teams anonymously, which the
+        # visibility gate only allows for public teams.
+        json={"name": team_name, "team_did_key": team_did_key, "visibility": "public"},
         headers=headers,
     )
     assert resp.status_code == 200, resp.text

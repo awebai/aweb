@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+import secrets
 from datetime import datetime, timezone
 
 import asyncpg
@@ -17,7 +18,7 @@ _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 from awid_service.deps import get_db
 from awid.contract import normalize_identity_scope
 from awid.pagination import encode_cursor, validate_pagination_params
-from awid.ratelimit import rate_limit_dep
+from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER, rate_limit_dep
 from awid.dns_auth import validate_did_key as _validate_did_key
 from awid.dns_auth import (
     enforce_timestamp_skew,
@@ -244,6 +245,82 @@ def _verify_path_signature(request: Request, authorization: str | None) -> str:
         raise
     except Exception as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+
+# Machine-readable code for reads blocked by team visibility. The CLI branches
+# on it to retry with a signed request; keep it stable.
+TEAM_PRIVATE_ERROR_CODE = "team_private"
+
+
+def _team_private_error() -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail={
+            "code": TEAM_PRIVATE_ERROR_CODE,
+            "message": (
+                "Team is private; reads require a same-team signed request "
+                "or the trusted service token"
+            ),
+        },
+    )
+
+
+def _presents_trusted_service_token(request: Request) -> bool:
+    """True when the caller presents the configured AWID service token.
+
+    Same header, state attribute, and constant-time comparison as the rate
+    limiter's allow_trusted_service exemption (awid.ratelimit.rate_limit_dep);
+    an unconfigured deployment accepts no token.
+    """
+    expected = getattr(request.app.state, "awid_service_token", None)
+    presented = (request.headers.get(AWID_SERVICE_TOKEN_HEADER) or "").strip()
+    return bool(
+        expected
+        and presented
+        and secrets.compare_digest(expected.encode("utf-8"), presented.encode("utf-8"))
+    )
+
+
+async def _require_team_read_access(
+    request: Request,
+    db,
+    *,
+    team_uuid,
+    team_did_key: str,
+    visibility: str,
+    authorization: str | None,
+) -> None:
+    """Enforce team visibility on a read route.
+
+    Public teams are readable by anyone. For a private team the caller must
+    present either the trusted service token (the aweb server's
+    server-to-server revocation fetch) or a path-signature — the exact scheme
+    the certificate blob fetch uses — from the team controller key or an
+    unrevoked member key. Anything else is 403 team_private: existence is
+    deliberately disclosed (the team-availability read contract depends on
+    404 meaning "name free", and the CLI needs the signal to retry signed).
+    """
+    if visibility == "public":
+        return
+    if _presents_trusted_service_token(request):
+        return
+    if authorization:
+        caller_did = _verify_path_signature(request, authorization)
+        if caller_did == team_did_key:
+            return
+        member = await db.fetch_one(
+            """
+            SELECT 1
+            FROM {{tables.team_certificates}}
+            WHERE team_uuid = $1 AND member_did_key = $2 AND revoked_at IS NULL
+            LIMIT 1
+            """,
+            team_uuid,
+            caller_did,
+        )
+        if member is not None:
+            return
+    raise _team_private_error()
 
 
 # ---------------------------------------------------------------------------
@@ -498,9 +575,11 @@ async def create_team(
     dependencies=[Depends(rate_limit_dep("team_list"))],
 )
 async def list_teams(
+    request: Request,
     domain: str,
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamListResponse:
     db = db_infra.get_manager("aweb")
@@ -509,8 +588,26 @@ async def list_teams(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    where_clauses = ["domain = $1", "deleted_at IS NULL"]
+    where_clauses = ["t.domain = $1", "t.deleted_at IS NULL"]
     params: list[object] = [domain]
+
+    # Visibility: private teams are enumerable only by the trusted service, or
+    # by a path-signed caller who controls the team or holds an unrevoked
+    # member certificate in it. Anonymous callers see public teams only.
+    if not _presents_trusted_service_token(request):
+        if authorization:
+            viewer_did = _verify_path_signature(request, authorization)
+            params.append(viewer_did)
+            idx = len(params)
+            where_clauses.append(
+                f"(t.visibility = 'public' OR t.team_did_key = ${idx}"
+                " OR EXISTS ("
+                "SELECT 1 FROM {{tables.team_certificates}} tc"
+                f" WHERE tc.team_uuid = t.team_uuid AND tc.member_did_key = ${idx}"
+                " AND tc.revoked_at IS NULL))"
+            )
+        else:
+            where_clauses.append("t.visibility = 'public'")
 
     if decoded_cursor is not None:
         cursor_created_at = decoded_cursor.get("created_at")
@@ -528,10 +625,10 @@ async def list_teams(
 
     params.append(validated_limit + 1)
     query = (
-        "SELECT team_uuid, domain, name, display_name, team_did_key, visibility, created_at"
-        " FROM {{tables.teams}}"
+        "SELECT t.team_uuid, t.domain, t.name, t.display_name, t.team_did_key, t.visibility, t.created_at"
+        " FROM {{tables.teams}} t"
         " WHERE " + " AND ".join(where_clauses)
-        + f" ORDER BY created_at, team_uuid"
+        + f" ORDER BY t.created_at, t.team_uuid"
         f" LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
@@ -557,7 +654,13 @@ async def list_teams(
     response_model=TeamResponse,
     dependencies=[Depends(rate_limit_dep("team_get"))],
 )
-async def get_team(domain: str, name: str, db_infra=Depends(get_db)) -> TeamResponse:
+async def get_team(
+    request: Request,
+    domain: str,
+    name: str,
+    authorization: str | None = Header(default=None),
+    db_infra=Depends(get_db),
+) -> TeamResponse:
     name = _validate_team_name_path(name)
     db = db_infra.get_manager("aweb")
     row = await db.fetch_one(
@@ -571,6 +674,14 @@ async def get_team(domain: str, name: str, db_infra=Depends(get_db)) -> TeamResp
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Team not found")
+    await _require_team_read_access(
+        request,
+        db,
+        team_uuid=row["team_uuid"],
+        team_did_key=row["team_did_key"],
+        visibility=row["visibility"],
+        authorization=authorization,
+    )
     return _team_response(row)
 
 
@@ -790,23 +901,34 @@ async def set_team_visibility(
     dependencies=[Depends(rate_limit_dep("certificate_list"))],
 )
 async def list_certificates(
+    request: Request,
     domain: str,
     name: str,
     active_only: bool = Query(default=False),
     since: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> CertificateListResponse:
     db = db_infra.get_manager("aweb")
 
     # Resolve internal team UUID.
     team_row = await db.fetch_one(
-        "SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
+        "SELECT team_uuid, team_did_key, visibility FROM {{tables.teams}}"
+        " WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
         domain, name,
     )
     if team_row is None:
         raise HTTPException(status_code=404, detail="Team not found")
+    await _require_team_read_access(
+        request,
+        db,
+        team_uuid=team_row["team_uuid"],
+        team_did_key=team_row["team_did_key"],
+        visibility=team_row["visibility"],
+        authorization=authorization,
+    )
 
     try:
         validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
@@ -875,35 +997,48 @@ async def list_certificates(
     dependencies=[Depends(rate_limit_dep("team_member_get"))],
 )
 async def get_team_member(
+    request: Request,
     domain: str,
     name: str,
     alias: str,
+    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> TeamMemberReferenceResponse:
     db = db_infra.get_manager("aweb")
+    team_row = await db.fetch_one(
+        "SELECT team_uuid, team_did_key, visibility FROM {{tables.teams}}"
+        " WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
+        domain, name,
+    )
+    if team_row is None:
+        raise HTTPException(status_code=404, detail="Team member not found")
+    await _require_team_read_access(
+        request,
+        db,
+        team_uuid=team_row["team_uuid"],
+        team_did_key=team_row["team_did_key"],
+        visibility=team_row["visibility"],
+        authorization=authorization,
+    )
+
     row = await db.fetch_one(
         """
         SELECT tc.certificate_id, tc.member_did_key, tc.member_did_aw,
-               tc.member_address, tc.alias, tc.identity_scope, tc.issued_at,
-               t.domain, t.name
+               tc.member_address, tc.alias, tc.identity_scope, tc.issued_at
         FROM {{tables.team_certificates}} tc
-        JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
-        WHERE t.domain = $1
-          AND t.name = $2
-          AND t.deleted_at IS NULL
-          AND tc.alias = $3
+        WHERE tc.team_uuid = $1
+          AND tc.alias = $2
           AND tc.revoked_at IS NULL
         ORDER BY tc.issued_at DESC, tc.id DESC
         LIMIT 1
         """,
-        domain,
-        name,
+        team_row["team_uuid"],
         alias,
     )
     if row is None:
         raise HTTPException(status_code=404, detail="Team member not found")
     return TeamMemberReferenceResponse(
-        team_id=build_team_id(row["domain"], row["name"]),
+        team_id=build_team_id(domain, name),
         certificate_id=row["certificate_id"],
         member_did_key=row["member_did_key"],
         member_did_aw=row["member_did_aw"],
@@ -1022,21 +1157,35 @@ async def revoke_certificate(
     dependencies=[Depends(rate_limit_dep("revocation_list", allow_trusted_service=True))],
 )
 async def list_revocations(
+    request: Request,
     domain: str,
     name: str,
     since: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
     db_infra=Depends(get_db),
 ) -> RevocationListResponse:
     db = db_infra.get_manager("aweb")
 
     team_row = await db.fetch_one(
-        "SELECT team_uuid FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
+        "SELECT team_uuid, team_did_key, visibility FROM {{tables.teams}}"
+        " WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
         domain, name,
     )
     if team_row is None:
         raise HTTPException(status_code=404, detail="Team not found")
+    # The aweb server's revocation enforcement fetches this route
+    # server-to-server with AWID_SERVICE_TOKEN; the token passes the gate for
+    # private teams, so enforcement keeps working when a team goes private.
+    await _require_team_read_access(
+        request,
+        db,
+        team_uuid=team_row["team_uuid"],
+        team_did_key=team_row["team_did_key"],
+        visibility=team_row["visibility"],
+        authorization=authorization,
+    )
 
     try:
         validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
