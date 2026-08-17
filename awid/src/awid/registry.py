@@ -78,6 +78,16 @@ _TEAM_METADATA_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # window below, the hard worst case is 2x this value; the cache lives in Redis
 # and survives process restarts, so the TTL is the only bound.
 _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 60
+# Registry-outage grace for the revocations tier ONLY (adopted, Juan
+# 2026-08-17; see trust-model.md "Registry availability posture"). When a
+# revocation refresh fails, the last-known-good set is served — loudly logged —
+# for as long as the data is at most this old; past it the read fails closed
+# (503 upstream). This is a constant, not a configuration knob: raising it is a
+# trust-model change and belongs next to the rulings in trust-model.md. The
+# grace decision is made on the stored fetch timestamp (data age), not on Redis
+# expiry; Redis merely retains revocation entries long enough for the grace to
+# be decidable.
+_TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS = 15 * 60
 _TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
@@ -1271,14 +1281,83 @@ class CachedRegistryClient(RegistryClient):
         )
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
-        result = await self._cached_read(
-            cache_key=self._team_revocations_cache_key(domain, name),
-            ttl_seconds=_TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
-            fetcher=lambda: super(CachedRegistryClient, self).get_team_revocations(domain, name),
-            encode=lambda value: sorted(value),
-            decode=lambda payload: set(payload),
+        # Revocations get a dedicated read path rather than _cached_read: they
+        # are the only tier with an outage grace (see
+        # _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS). Freshness, staleness, and
+        # grace are all decided on the age of the cached data (its stored fetch
+        # timestamp), never on Redis expiry alone.
+        cache_key = self._team_revocations_cache_key(domain, name)
+        ttl_seconds = _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
+        retention_seconds = ttl_seconds + _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+        fetcher = lambda: super(CachedRegistryClient, self).get_team_revocations(domain, name)
+        encode = lambda value: sorted(value)
+
+        cached = await self._read_cache_entry(cache_key, decode=lambda payload: set(payload))
+        cached_age: int | None = None
+        if cached is not None:
+            fetched_at = cached["fetched_at"]
+            if fetched_at is None:
+                # Entry written before age accounting existed: its freshness
+                # horizon implies the fetch time.
+                fetched_at = cached["fresh_until"] - ttl_seconds
+            cached_age = max(0, _cache_now() - fetched_at)
+            if cached["fresh"]:
+                return cached["value"]
+            if cached_age <= ttl_seconds * _STALE_MULTIPLIER:
+                # Stale-while-revalidate, as before — but a failed background
+                # refresh is now loud instead of a swallowed debug line.
+                def _on_refresh_failure(exc: BaseException) -> None:
+                    logger.warning(
+                        "AWID revocation refresh failed for team %s/%s; "
+                        "serving last-known-good revocation set aged %ds "
+                        "(outage grace bound %ds): %s",
+                        domain,
+                        name,
+                        max(0, _cache_now() - fetched_at),
+                        _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
+                        exc,
+                    )
+
+                if self._schedule_refresh(
+                    cache_key=cache_key,
+                    ttl_seconds=ttl_seconds,
+                    fetcher=fetcher,
+                    encode=encode,
+                    retention_seconds=retention_seconds,
+                    on_failure=_on_refresh_failure,
+                ):
+                    return cached["value"]
+
+        try:
+            fresh_value = await fetcher()
+        except Exception as exc:
+            if (
+                cached is not None
+                and cached_age is not None
+                and cached_age <= _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+            ):
+                logger.warning(
+                    "AWID revocation refresh failed for team %s/%s; "
+                    "serving last-known-good revocation set aged %ds "
+                    "(outage grace bound %ds): %s",
+                    domain,
+                    name,
+                    cached_age,
+                    _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
+                    exc,
+                )
+                return cached["value"]
+            # Beyond the grace (or nothing cached): fail closed, exactly as
+            # before the grace existed — the enforcement path sees the failure.
+            raise
+        await self._write_cache_entry(
+            cache_key,
+            value=fresh_value,
+            ttl_seconds=ttl_seconds,
+            encode=encode,
+            retention_seconds=retention_seconds,
         )
-        return result if isinstance(result, set) else set()
+        return fresh_value if isinstance(fresh_value, set) else set()
 
     async def list_team_certificates(
         self,
@@ -1579,6 +1658,8 @@ class CachedRegistryClient(RegistryClient):
             value = decode(payload["value"])
             return {
                 "fresh": payload["fresh_until"] > _cache_now(),
+                "fresh_until": payload["fresh_until"],
+                "fetched_at": payload.get("fetched_at"),
                 "value": value,
             }
         except Exception:
@@ -1593,16 +1674,21 @@ class CachedRegistryClient(RegistryClient):
         value: Any,
         ttl_seconds: int,
         encode: Callable[[Any], Any],
+        retention_seconds: int | None = None,
     ) -> None:
+        now = _cache_now()
         payload = json.dumps(
             {
-                "fresh_until": _cache_now() + ttl_seconds,
+                "fetched_at": now,
+                "fresh_until": now + ttl_seconds,
                 "value": encode(value),
             },
             separators=(",", ":"),
             sort_keys=True,
         )
-        await self._redis_set(cache_key, payload, ex=ttl_seconds * _STALE_MULTIPLIER)
+        if retention_seconds is None:
+            retention_seconds = ttl_seconds * _STALE_MULTIPLIER
+        await self._redis_set(cache_key, payload, ex=retention_seconds)
 
     def _schedule_refresh(
         self,
@@ -1611,6 +1697,8 @@ class CachedRegistryClient(RegistryClient):
         ttl_seconds: int,
         fetcher: Callable[[], Awaitable[Any]],
         encode: Callable[[Any], Any],
+        retention_seconds: int | None = None,
+        on_failure: Callable[[BaseException], None] | None = None,
     ) -> bool:
         existing = self._refresh_tasks.get(cache_key)
         if existing is not None and not existing.done():
@@ -1622,6 +1710,8 @@ class CachedRegistryClient(RegistryClient):
                     ttl_seconds=ttl_seconds,
                     fetcher=fetcher,
                     encode=encode,
+                    retention_seconds=retention_seconds,
+                    on_failure=on_failure,
                 )
             )
         except RuntimeError:
@@ -1637,6 +1727,8 @@ class CachedRegistryClient(RegistryClient):
         ttl_seconds: int,
         fetcher: Callable[[], Awaitable[Any]],
         encode: Callable[[Any], Any],
+        retention_seconds: int | None = None,
+        on_failure: Callable[[BaseException], None] | None = None,
     ) -> None:
         try:
             fresh_value = await fetcher()
@@ -1645,9 +1737,13 @@ class CachedRegistryClient(RegistryClient):
                 value=fresh_value,
                 ttl_seconds=ttl_seconds,
                 encode=encode,
+                retention_seconds=retention_seconds,
             )
-        except Exception:
-            logger.debug("AWID cache refresh failed for %s", cache_key, exc_info=True)
+        except Exception as exc:
+            if on_failure is not None:
+                on_failure(exc)
+            else:
+                logger.debug("AWID cache refresh failed for %s", cache_key, exc_info=True)
 
     async def _peek_cached_address(self, cache_key: str) -> Address | None:
         cached_payload = await self._read_cache_entry(

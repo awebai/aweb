@@ -55,6 +55,15 @@
   minutes, so a revocation takes effect on enforcement within about a minute;
   raising that constant is a trust-model change (see trust-model.md,
   "Threat-model rulings").
+- Registry-outage grace for team revocation reads (owner-adopted 2026-08-17):
+  the cached registry client retains the last-known-good revocation set for
+  fifteen minutes beyond freshness and, when a refresh fails, serves it while
+  the data is at most fifteen minutes old, logging each occurrence at warning
+  level with the team, the data's age, and the error; past that age the read
+  fails closed (503 upstream) exactly as before. The 60-second fresh TTL, the
+  120-second stale-while-revalidate window, and every other cache tier's
+  retention are unchanged; the fifteen-minute bound is a pinned constant with
+  no configuration knob.
 
 ### CLI compatibility
 

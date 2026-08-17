@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import inspect
 import json
+import logging
 
 import httpx
 import pytest
@@ -319,16 +320,19 @@ async def test_registry_client_sanitizes_error_controls():
 class FakeRedis:
     def __init__(self) -> None:
         self.values: dict[str, str] = {}
+        self.expirations: dict[str, int | None] = {}
 
     async def get(self, key: str) -> str | None:
         return self.values.get(key)
 
     async def set(self, key: str, value: str, ex: int | None = None) -> None:
         self.values[key] = value
+        self.expirations[key] = ex
 
     async def delete(self, *keys: str) -> None:
         for key in keys:
             self.values.pop(key, None)
+            self.expirations.pop(key, None)
 
 
 @pytest.mark.asyncio
@@ -668,6 +672,201 @@ async def test_get_team_revocations_missing_team_is_empty():
     finally:
         await registry.aclose()
     assert revoked == set()
+
+
+def _revocations_cache_payload(*, fetched_at: int, certificate_ids: list[str]) -> str:
+    from awid.registry import _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
+
+    return json.dumps(
+        {
+            "fetched_at": fetched_at,
+            "fresh_until": fetched_at + _TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+            "value": sorted(certificate_ids),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _failing_registry(redis: FakeRedis, *, detail: str = "registry down") -> CachedRegistryClient:
+    return CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(lambda _request: Response(500, json={"detail": detail})),
+    )
+
+
+def test_revocation_outage_grace_stays_within_the_adopted_bound():
+    """The registry-outage grace for revocations is a constant, not a knob
+    (adopted, Juan 2026-08-17; trust-model.md 'Registry availability posture').
+    Serving a last-known-good revocation set is bounded at 15 minutes of data
+    age; past that the enforcement path must fail closed. Raising this is a
+    trust-model change and belongs next to the rulings in trust-model.md."""
+    from awid.registry import _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+
+    assert _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS <= 15 * 60
+
+
+@pytest.mark.asyncio
+async def test_cached_revocations_fresh_entry_served_without_fetch_or_warning(
+    monkeypatch, caplog
+):
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list[str] = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        return Response(500, json={"detail": "must not be called"})
+
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(handler),
+    )
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _revocations_cache_payload(fetched_at=now - 10, certificate_ids=["c1"])
+    )
+    try:
+        with caplog.at_level(logging.WARNING):
+            revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+    assert revoked == {"c1"}
+    assert requests == []
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+
+
+@pytest.mark.asyncio
+async def test_cached_revocations_refresh_failure_within_grace_serves_stale_loudly(
+    monkeypatch, caplog
+):
+    """Registry-outage grace: past the stale-while-revalidate window but within
+    15 minutes of data age, a failed refresh serves the last-known-good set and
+    logs at WARNING with the team, the served data's age, and the error."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    registry = _failing_registry(redis)
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _revocations_cache_payload(fetched_at=now - 300, certificate_ids=["c1", "c2"])
+    )
+    try:
+        with caplog.at_level(logging.WARNING):
+            revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+    assert revoked == {"c1", "c2"}
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "acme.com/ops" in message
+    assert "aged 300s" in message
+    assert "registry down" in message
+
+
+@pytest.mark.asyncio
+async def test_cached_revocations_stale_window_refresh_failure_is_loud(
+    monkeypatch, caplog
+):
+    """Inside the stale-while-revalidate window the stale set is still served
+    with a background refresh, but a failed refresh is no longer a swallowed
+    debug line: it warns with team, age, and error."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    registry = _failing_registry(redis)
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _revocations_cache_payload(fetched_at=now - 90, certificate_ids=["c1"])
+    )
+    try:
+        with caplog.at_level(logging.WARNING):
+            revoked = await registry.get_team_revocations("acme.com", "ops")
+            refresh_tasks = list(registry._refresh_tasks.values())
+            assert refresh_tasks, "stale read should schedule a background refresh"
+            await asyncio.gather(*refresh_tasks, return_exceptions=True)
+    finally:
+        await registry.aclose()
+    assert revoked == {"c1"}
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "acme.com/ops" in message
+    assert "aged 90s" in message
+    assert "registry down" in message
+
+
+@pytest.mark.asyncio
+async def test_cached_revocations_refresh_failure_beyond_grace_fails_closed(monkeypatch):
+    """Past 15 minutes of data age the last-known-good set must NOT be served:
+    the fetch failure propagates so the enforcement path returns 503."""
+    from awid.registry import _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    registry = _failing_registry(redis)
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _revocations_cache_payload(
+            fetched_at=now - (_TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS + 1),
+            certificate_ids=["c1"],
+        )
+    )
+    try:
+        with pytest.raises(RegistryError):
+            await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+
+@pytest.mark.asyncio
+async def test_grace_retention_applies_only_to_revocation_entries():
+    """The grace lengthens Redis retention for the revocations tier only; a
+    non-revocation cached read keeps the shared ttl * stale-multiplier."""
+    from awid.registry import (
+        _STALE_MULTIPLIER,
+        _TEAM_METADATA_CACHE_TTL_SECONDS,
+        _TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+        _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
+    )
+
+    def handler(request):
+        if request.url.path.endswith("/revocations"):
+            return Response(200, json={"revocations": [], "has_more": False})
+        return Response(
+            200,
+            json={
+                "team_id": "team-1",
+                "domain": "acme.com",
+                "name": "ops",
+                "display_name": "Ops",
+                "team_did_key": "did:key:z6MkTeam",
+                "visibility": "private",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        )
+
+    redis = FakeRedis()
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(handler),
+    )
+    try:
+        await registry.get_team_revocations("acme.com", "ops")
+        await registry.get_team("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    revocations_key = registry._team_revocations_cache_key("acme.com", "ops")
+    team_key = registry._team_metadata_cache_key("acme.com", "ops")
+    assert redis.expirations[revocations_key] == (
+        _TEAM_REVOCATIONS_CACHE_TTL_SECONDS + _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+    )
+    assert redis.expirations[team_key] == (
+        _TEAM_METADATA_CACHE_TTL_SECONDS * _STALE_MULTIPLIER
+    )
 
 
 def test_revocation_cache_ttl_stays_within_the_ruled_bound():

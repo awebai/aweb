@@ -355,14 +355,19 @@ current system.
 
 The client half is quantified: verifiers cache a team's revocation list for at
 most 60 seconds (hard worst case 120 seconds through the stale-while-revalidate
-window), matching the federation authority reuse ceiling. Against an honest
-registry, a revocation therefore takes effect on enforcement within about a
-minute. Raising that constant is a trust-model change, not a tuning decision.
-An adopted-but-not-yet-implemented extension (owner decision, 2026-08-17):
-during registry FAILURE, verifiers serve the last-known revocation set for a
-bounded grace of 15 minutes, loudly logged, then fail closed — messaging
-survives registry outages at the cost of a revocation issued mid-outage
-remaining effective up to the grace window.
+window), matching the federation authority reuse ceiling. Against an honest,
+available registry, a revocation therefore takes effect on enforcement within
+about a minute. Raising that constant is a trust-model change, not a tuning
+decision. An implemented extension (owner decision, 2026-08-17): during
+registry FAILURE, verifiers serve the last-known revocation set while it is at
+most 15 minutes old — every such serve, and every failed refresh inside the
+stale window, is logged at warning level with the team, the served data's age,
+and the underlying error — and once the last-known set exceeds 15 minutes of
+age the read fails closed. The 15-minute bound is a constant, pinned by test,
+with no configuration knob; the grace decision is made on the stored fetch
+timestamp of the cached data, and the longer retention applies to revocation
+entries only. Messaging thus survives registry outages at the cost of a
+revocation issued mid-outage remaining effective up to the grace window.
 
 The committed exit ladder, in order:
 

@@ -270,18 +270,19 @@ fetched server-to-server once per team per minute; the list carries only
 certificate UUIDs and timestamps, and clients never receive it — the
 pull-and-cache CRL shape is deliberate, chosen over per-check registry
 queries which would be chattier, harder-coupled, and leak usage patterns to
-the registry. **The grace is new engineering, not a tunable parameter** (round-8
-review finding): the cached entry is deleted from Redis at 120 seconds by
-the shared stale-multiplier, so a 15-minute grace requires a
-revocation-specific retention tier (a third fresh/stale/grace state in the
-cache client), and "loudly logged" requires upgrading the background-refresh
-failure handler from its current silent debug level. Bounded scope, but
-scope. The grace trades a bounded revocation delay during outages for
+the registry. **The grace is implemented** (epic task aweb-abfs.3), and it is
+not a tunable parameter (round-8 review finding, honored in the build): the
+cache client gained a revocation-specific retention tier — revocation
+entries carry their fetch timestamp and are retained fifteen minutes beyond
+freshness, with fresh/stale/grace decided on data age, never on Redis
+expiry — and both the background-refresh and foreground-fetch failure paths
+log at warning level with the team, the served data's age, and the error,
+replacing the previously silent debug handler. Past fifteen minutes of age
+the read fails closed exactly as before; the bound is a constant pinned by
+test, with no configuration knob, and no other cache tier's retention
+widened. The grace trades a bounded revocation delay during outages for
 messaging availability; it sits inside the already-ruled bounded-staleness
 doctrine, and the operational history above is the argument for it.
-The engineering it requires (the revocation-specific retention tier and
-loud failure logging, priced above) is an OSS deliverable in the repo
-split.
 
 ## Conditions the AC inventory adds to "every mint registers"
 
@@ -350,7 +351,7 @@ From the adversarial review of the verification-authority draft (task
 ## Repo split and sequencing
 
 - **OSS (id-bugs)**: the outage-grace retention tier and loud
-  refresh-failure logging in the cached registry client; the
+  refresh-failure logging in the cached registry client (done, aweb-abfs.3); the
   fresh-certificate re-issuance operation (blob-lost
   remediation); read-side
   visibility enforcement on the registry's team/certificate/member/
