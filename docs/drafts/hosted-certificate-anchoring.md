@@ -138,7 +138,12 @@ certificate/member/revocation reads (and the team's appearance in domain
 enumeration) require a same-team certificate-authenticated caller or the
 trusted-service token — machinery both already existing (the blob fetch's
 path-signature scheme; the abfp exemption). The abfn enforcement path is
-unaffected (it presents the service token). BYOT CLI reads
+unaffected where `AWID_SERVICE_TOKEN` is configured (the server's registry
+client sends it end to end, verified); an UNCONFIGURED deployment that marks
+a team private would lock its own enforcement traffic out of that team's
+revocations once the gate exists — the same unconfigured-token population
+the abfp rate-limit round already flagged, and one more reason the token
+setup belongs in the deployment checklist. BYOT CLI reads
 (`aw team agent-status`, `aw id team members`) would need to sign their
 requests for private teams — an OSS-side deliverable added to the repo
 split. The **default for hosted teams remains Juan's ruling**, now with the
@@ -240,10 +245,16 @@ always had, now covering more requests. **Decision for Juan, alongside the
 visibility ruling**: keep strict fail-closed at 120 seconds, or adopt a
 bounded outage grace — on refresh failure, serve the last-known revocation
 set up to a stated window (proposed: 15 minutes), loudly logged, then fail
-closed. The grace trades a bounded revocation delay during outages for
+closed. **The grace is new engineering, not a tunable parameter** (round-8
+review finding): the cached entry is deleted from Redis at 120 seconds by
+the shared stale-multiplier, so a 15-minute grace requires a
+revocation-specific retention tier (a third fresh/stale/grace state in the
+cache client), and "loudly logged" requires upgrading the background-refresh
+failure handler from its current silent debug level. Bounded scope, but
+scope. The grace trades a bounded revocation delay during outages for
 messaging availability; it sits inside the already-ruled bounded-staleness
 doctrine, and the operational history above is the argument for it.
-id-bugs recommends the bounded grace.
+id-bugs recommends the bounded grace, priced as above.
 
 ## Conditions the AC inventory adds to "every mint registers"
 
