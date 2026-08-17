@@ -89,15 +89,19 @@ round-3 review broke the first version of this section:
   Nothing in landed code has any expiry concept today; this is future v2
   behavior. Once `expires_at` lands, a verifier refuses an expired
   certificate outright, with no registry change required.
-- **The list-size bound is a separate, explicit commitment.** Verifier-side
-  expiry does NOT by itself stop the revocation list growing forever. This
-  design therefore commits: after the legacy transition window closes,
-  `list_revocations` excludes certificates that are both revoked and expired
-  (or a periodic cleanup purges them from its result set). The exclusion is
-  safe precisely because verifiers hard-fail expired certificates on their
-  own — absence from the list cannot resurrect one — and it cannot apply to
-  legacy no-expiry certificates, which is one more reason the transition
-  window must actually close. With both halves, the enforcement-relevant
+- **The list-size bound is a separate, explicit commitment — a filter,
+  never a deletion.** Verifier-side expiry does NOT by itself stop the
+  revocation list growing forever. This design therefore commits: after the
+  legacy transition window closes, the default `list_revocations` response
+  excludes certificates that are both revoked and expired. **Revocation rows
+  are never deleted**: the exclusion is query-time only, because future
+  acceptance-time and historical-verification work (this document's own
+  eight-point table) needs "was this certificate in good standing at time T"
+  answerable after expiry, and purging would foreclose it. The exclusion is
+  safe for live enforcement precisely because verifiers hard-fail expired
+  certificates on their own — absence from the default list cannot resurrect
+  one — and it cannot apply to legacy no-expiry certificates, which is one
+  more reason the transition window must actually close. With both halves, the enforcement-relevant
   revocation set caps at ~one validity window (90 days) of churn. Clients
   should additionally refresh incrementally (the route's `since` parameter
   exists; the Python client currently re-pulls fully — an implementation
@@ -203,13 +207,22 @@ aweb-aaum.9, 2026-08-17):
    certificates. Default position: they register like any other certificate;
    if a reason exists to keep them off-registry it must be argued explicitly
    and they get their own named class and verification rule.
-3. **Verification eventually requires registration — staged.** AC's own
-   bridge (like the pre-abfn OSS paths) passes unregistered certificates by
-   omission: it checks signature plus not-in-revocations, never existence.
-   End state on both sides: a certificate that is not registered fails
-   verification. This CANNOT precede completed backfill and sweep — enabling
-   it early breaks every legitimate member — so it is staged behind them,
-   with the ordering stated in the rollout plan.
+3. **Verification eventually requires registration — staged, with an
+   emptiness gate.** AC's own bridge (like the pre-abfn OSS paths) passes
+   unregistered certificates by omission: it checks signature plus
+   not-in-revocations, never existence. End state on both sides: a
+   certificate that is not registered fails verification. Staging: it cannot
+   precede backfill and sweep, and — round-4 amendment — "have run" is not
+   sufficient: existence-required verification may activate **only once the
+   backfill's failure enumeration is empty or every enumerated failure has an
+   individual remediation completed**. The named remedy for the hardest case
+   — a legitimate, active member whose signed blob is lost or corrupted, who
+   can neither be registered (no blob to submit) nor deleted (they are
+   legitimate) — is **re-mint**: issue a fresh certificate for the same
+   member key, register it, and refresh the projection, exactly the
+   replace-key machinery that already exists. Without this gate, a member
+   who did nothing wrong is locked out the moment existence becomes
+   required.
 4. **The W ≠ A invariant.** AC's `ensure_stored_agent_team_certificate`
    currently keys the cloud table by agent UUID as though it were the
    workspace UUID; hosted workspace and agent UUIDs are decoupled. The
