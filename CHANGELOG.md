@@ -189,6 +189,16 @@
   `--did-aw`, `--address` for persistent agents.
 - `claim-human --username <override>`: works for any awid-registered
   domain, not just `*.aweb.ai`.
+- `aw id team reissue-cert <alias>`: mint, register, and optionally install a
+  fresh team certificate for an existing member whose signed blob is lost or
+  was never registered — same member did:key, alias, and identity scope, new
+  certificate id and issued_at. Revokes the currently registered certificate
+  first (so the registry's one-active-certificate-per-alias constraint is
+  never violated), registers the fresh one after, and is safe to re-run
+  across a partial failure. Requires the locally held team controller key;
+  this is the blob-lost remedy from the hosted-certificate-anchoring
+  contract and is not key rotation — for a lost or compromised member key,
+  use `aw team replace-key`.
 
 ### Removed from CLI surface
 
