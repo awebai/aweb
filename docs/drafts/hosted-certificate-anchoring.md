@@ -62,13 +62,59 @@ What this buys, with no new protocol surface:
   blob-fetch path, team-key history, and acceptance-time anchoring — tracked
   below, deliberately out of this design's scope.)
 
+### What this does and does not change about local identities
+
+Registering a certificate registers a **membership fact**, not an identity.
+The negative guarantee is part of this contract: anchoring a local member's
+certificate must not confer any global property on the identity — no
+`did:aw`, no address, no reachability, no resolvability as an identity.
+Local identities keep no registry row *as identities*; global identities are
+unchanged. This is already how the registry routes behave (round-1 review:
+addressless local members pass registration with zero address validation, and
+BYOT teams register local-scope member certificates today — the tutorial pair
+exercises it live); the contract states it so it cannot drift. The
+message-trust split is also unchanged: global senders verify against public
+identity records, local senders against the live roster; this design adds
+membership/revocation state, not identity state.
+
+### Churn: local members are many and short-lived
+
+Local agents are spawned and retired constantly; anchoring every certificate
+means per-team revocation lists grow with every retirement, and since
+`aweb-abfn` every server refreshes that list each minute. Two answers, both
+part of this design:
+
+- **Expiry bounds the working set.** A revoked certificate that has also
+  expired no longer needs consulting — expiry alone refuses it — so the
+  enforcement-relevant revocation set caps at one validity window (~90 days)
+  of churn. Clients should additionally refresh incrementally (the route's
+  `since` parameter exists; the Python client currently re-pulls fully — an
+  implementation item, not a protocol change).
+- **Ephemeral workers should be session grants, not members.** The system
+  already has the right primitive for throwaways: identity session grants are
+  scoped, expiring, revocable, and die with their issuing certificate under
+  the landed enforcement. Membership with an anchored certificate is the
+  right weight for durable agents; provisioning guidance should steer
+  short-lived workers to grants rather than full membership, which also keeps
+  roster churn and revocation growth proportional to real membership.
+
+### Roster visibility is a policy decision, made before implementation
+
+Anchoring makes hosted team rosters (aliases and member keys — not
+identities) readable wherever BYOT rosters already are. The registry's
+existing team-visibility control is the knob; the **default for hosted teams
+is Juan's decision and is required input before implementation starts**, not
+an open question to resolve during it. (Supersedes the softer phrasing in
+open question 1 below.)
+
 ### What happens to `cloud_agent_certificates`
 
 The registry becomes the only certificate authority; the cloud table becomes
 a **non-authoritative cache, never consulted for verification verdicts**. Its
-`revoked_at` is written in the same transaction as the removal ledger's
-commit (alongside the registry revoke), so it cannot silently disagree with
-the registry for its remaining operational readers. The AC-side inventory of
+`revoked_at` is written in the same commit step as the registry revoke —
+ordered and never eventually-consistent, though not a literal single
+transaction across two services — so it cannot silently disagree with the
+registry for its remaining operational readers. The AC-side inventory of
 those readers — dashboard, support tooling, any auth overlay reading the
 table directly — is owned by the retirement instance, under one rule: no
 consumer may report certificate state the registry contradicts; each reader
@@ -206,3 +252,8 @@ From the adversarial review of the verification-authority draft (task
    bound tied to the certificate validity window escalates loudly, because an
    unregistered certificate is a silent enforcement gap, not a UX
    inconvenience.
+5. **AC reader inventory** (open, assigned): the enumeration of AC-side
+   consumers reading `cloud_agent_certificates` directly, and whether AC
+   retains signed blobs for revoked certificates (decides the reconciliation
+   sweep's fallback), is owned by the retirement instance and remains
+   unanswered; asked by mail 2026-08-17.
