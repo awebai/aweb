@@ -12,7 +12,10 @@ the second edit happened only because the author noticed the copy existed. A
 gate is the difference between noticing and being told.
 
 WHAT THIS CHECKS. For each declared pair: every source has a copy, every copy
-has a source, and the bytes are identical.
+has a source, and the bytes are identical — for EVERY file under the resource,
+not only its entry point. A first version of this gate compared SKILL.md alone
+and silently ignored the references/ files beside it, which are copied the same
+way and drift the same way.
 
 WHAT IT DOES NOT CHECK. Whether the copy SHOULD exist — that is a packaging
 decision. And it compares bytes, so it cannot tell a meaningful divergence from
@@ -42,6 +45,13 @@ def names_in(root: Path, directory: str) -> set[str]:
     return {p.name for p in base.iterdir() if (p / RESOURCE).is_file()}
 
 
+def files_under(base: Path) -> set[str]:
+    """Every file in a resource, relative to it — not just its entry point."""
+    return {
+        str(p.relative_to(base)) for p in base.rglob("*") if p.is_file()
+    }
+
+
 def check(root: Path) -> list[str]:
     failures: list[str] = []
     for source_dir, copy_dir in COPY_SETS:
@@ -57,13 +67,24 @@ def check(root: Path) -> list[str]:
                 f"{copy_dir}/{name}/{RESOURCE} has no source at {source_dir}/{name}/{RESOURCE}"
             )
         for name in sorted(sources & copies):
-            source = (root / source_dir / name / RESOURCE).read_bytes()
-            copy = (root / copy_dir / name / RESOURCE).read_bytes()
-            if source != copy:
+            source_base = root / source_dir / name
+            copy_base = root / copy_dir / name
+            source_files = files_under(source_base)
+            copy_files = files_under(copy_base)
+            for rel in sorted(source_files - copy_files):
                 failures.append(
-                    f"{copy_dir}/{name}/{RESOURCE} differs from "
-                    f"{source_dir}/{name}/{RESOURCE}; edit the source and re-copy"
+                    f"{source_dir}/{name}/{rel} has no copy at {copy_dir}/{name}/{rel}"
                 )
+            for rel in sorted(copy_files - source_files):
+                failures.append(
+                    f"{copy_dir}/{name}/{rel} has no source at {source_dir}/{name}/{rel}"
+                )
+            for rel in sorted(source_files & copy_files):
+                if (source_base / rel).read_bytes() != (copy_base / rel).read_bytes():
+                    failures.append(
+                        f"{copy_dir}/{name}/{rel} differs from "
+                        f"{source_dir}/{name}/{rel}; edit the source and re-copy"
+                    )
     return failures
 
 
@@ -115,6 +136,26 @@ def self_test(root: Path) -> int:
             return 1
         (tmp / source_dir / "beta" / RESOURCE).unlink()
 
+        # A file BESIDE the entry point is compared too. This is the hole the
+        # first version of this gate had: it compared SKILL.md and ignored the
+        # references/ files copied alongside it.
+        (tmp / source_dir / "alpha" / "references").mkdir(parents=True, exist_ok=True)
+        (tmp / copy_dir / "alpha" / "references").mkdir(parents=True, exist_ok=True)
+        (tmp / source_dir / "alpha" / "references" / "r.md").write_text("r\n")
+        (tmp / copy_dir / "alpha" / "references" / "r.md").write_text("r\n")
+        if failures := check(tmp):
+            print(f"self-test failed: matching non-entry file rejected: {failures[0]}")
+            return 1
+        (tmp / copy_dir / "alpha" / "references" / "r.md").write_text("r edited\n")
+        if not any("references/r.md" in f and "differs from" in f for f in check(tmp)):
+            print("self-test failed: a divergent non-entry file was not detected")
+            return 1
+        (tmp / copy_dir / "alpha" / "references" / "r.md").unlink()
+        if not any("references/r.md" in f and "has no copy" in f for f in check(tmp)):
+            print("self-test failed: a missing non-entry copy was not detected")
+            return 1
+        (tmp / source_dir / "alpha" / "references" / "r.md").unlink()
+
         # An orphaned copy fails — the shape that happens when a source is
         # deleted and its copy is left behind.
         place(copy_dir, "gamma", "# gamma\n")
@@ -124,8 +165,8 @@ def self_test(root: Path) -> int:
 
     print(
         "self-test passed: matching copies accepted; divergent content, a "
-        "whitespace-only divergence, a source without a copy, and an orphaned "
-        "copy each rejected"
+        "whitespace-only divergence, a source without a copy, an orphaned copy, "
+        "and a divergent or missing file beside the entry point each rejected"
     )
     return 0
 
@@ -145,8 +186,11 @@ def main() -> int:
         for failure in failures:
             print(f"- {failure}")
         return 1
-    pairs = sum(len(names_in(args.root, s) & names_in(args.root, c)) for s, c in COPY_SETS)
-    print(f"copied resources match their sources ({pairs} checked)")
+    files = 0
+    for source_dir, copy_dir in COPY_SETS:
+        for name in names_in(args.root, source_dir) & names_in(args.root, copy_dir):
+            files += len(files_under(args.root / source_dir / name))
+    print(f"copied resources match their sources ({files} files checked)")
     return 0
 
 
