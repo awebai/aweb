@@ -356,9 +356,23 @@ implementation:
   an expiry comparison once `expires_at` exists; minting caps the grant's
   `expires_at` at the parent certificate's (the default chosen here —
   explicit mid-grant invalidation is the fallback if capping proves
-  operationally awkward, and choosing it must be recorded). Ordinary
-  re-issuance does not disturb live grants: their issuing certificate
-  remains valid-until-expiry unless revoked.
+  operationally awkward, and choosing it must be recorded). Renewal is an
+  **atomic cutover, and it does invalidate live grants** — corrected from an
+  earlier claim, with the coordinator's code evidence (2026-08-17): the
+  registry's unique active-alias index (one unrevoked certificate per
+  (team, alias)) makes revoke-old-then-register-new the only possible
+  same-alias sequence; there is no overlap state. The v2 renewal operation
+  is therefore specified as revoking the old certificate and registering
+  the replacement in one atomic registry transaction (never a
+  revoke-then-crash gap that strands the alias), and its stated consequence
+  is that grants issued under the old certificate are invalidated at
+  cutover: workers remint and restart, which the resident-identities design
+  prices as cheap by construction. The alternative — grants surviving
+  renewal via certificate overlap/supersession — was considered and
+  rejected as a materially larger certificate-state model (overlap
+  semantics, roster resolution among concurrent certificates, alias
+  concurrency, and principal removal having to revoke every still-valid
+  certificate) that nothing currently needs.
 
 ## Explicitly out of scope, mapped to the eight-point required shape
 
