@@ -4,8 +4,8 @@ Status: **CONTRACT — implementation authorized (Juan, 2026-08-17: "yes go
 ahead, also do the implementation"). The hosted roster-visibility default is
 ruled: private by default, every existing team keeps its current value,
 public is an explicit controller/admin opt-in, and the backfill never
-resets visibility — with read-side enforcement built so private is a fact,
-not a label. The registry-outage grace is adopted. Implementation is
+resets visibility — read-side enforcement is committed as an epic task so
+that private will be a fact, not a label. The registry-outage grace is adopted. Implementation is
 tracked as an epic with per-repo tasks.** Sixteen adversarial review rounds
 plus the AC inventory are incorporated. Certificate expiry, and everything
 that existed only to serve it, was **removed from this design by owner
