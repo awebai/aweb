@@ -88,8 +88,9 @@ membership/revocation state, not identity state.
 
 Local agents are spawned and retired constantly; anchoring every certificate
 means per-team revocation lists grow with every retirement, and since
-`aweb-abfn` every server refreshes that list each minute. The bound rests
-on two facts, both already in place:
+`aweb-abfn` every server refreshes that list each minute. What is actually
+known about the list rests on two facts, neither of which is a size
+ceiling:
 
 - **The resident-identities model keeps membership churn small — where it
   is used.** Ephemeral workers served as session grants create no
