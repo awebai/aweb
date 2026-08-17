@@ -5,7 +5,9 @@ normative, no implementation authorized.** Round 1 verified the core decision
 (existing registry routes accept hosted registration: no controller-key,
 namespace, or addressless-member barrier exists in code) and broke the
 original backfill scope; the reconciliation sweep, the expiry hard cutoff,
-and the cloud-table disposition below are its required amendments.** Owned by id-bugs as the acceptance-2 half of the
+and the cloud-table disposition below are its required amendments.
+
+Owned by id-bugs as the acceptance-2 half of the
 `aweb-aaum.9` split recorded there on 2026-08-17; the removal-protocol half
 (acceptance 1, `aweb-aauy`) is owned by the retirement instance in aweb-saas.
 Their operation ledger is operational state and must not become a second
