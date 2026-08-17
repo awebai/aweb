@@ -1013,7 +1013,13 @@ async def revoke_certificate(
 @router.get(
     "/{name}/revocations",
     response_model=RevocationListResponse,
-    dependencies=[Depends(rate_limit_dep("revocation_list"))],
+    # allow_trusted_service: since aweb-abfn/abfp, aweb backends poll this
+    # route per team per revocation-cache TTL (60s) as the input to membership
+    # enforcement, and a 429 here becomes a fail-closed 503 on every
+    # authenticated request they serve for the team. A backend presenting the
+    # configured service token bypasses the per-IP bucket, the same exemption
+    # did_key/did_addresses already use; anonymous callers keep the limit.
+    dependencies=[Depends(rate_limit_dep("revocation_list", allow_trusted_service=True))],
 )
 async def list_revocations(
     domain: str,

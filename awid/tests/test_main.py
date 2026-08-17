@@ -223,3 +223,33 @@ async def test_namespace_mutation_routes_use_overridden_domain_verifier(client, 
 
     assert response.status_code == 200, response.text
     assert response.json()["domain"] == "example.com"
+
+
+@pytest.mark.asyncio
+async def test_trusted_service_token_bypasses_revocation_list_limit(
+    awid_db_infra, fake_redis, fake_domain_verifier, monkeypatch
+):
+    """aweb-abfp: aweb backends poll revocations per team per 60s as the input
+    to membership enforcement, and a 429 here becomes a fail-closed 503 on the
+    requests they serve. A trusted service token bypasses the per-IP bucket;
+    anonymous callers keep it."""
+    token = "trusted-service-token-with-at-least-32-bytes"
+    monkeypatch.setenv("AWID_SERVICE_TOKEN", token)
+    app = create_app(db_infra=awid_db_infra, redis=fake_redis)
+    app.dependency_overrides[get_domain_verifier] = lambda: fake_domain_verifier
+    headers = {"X-AWID-Service-Token": token}
+
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://testserver") as test_client:
+            fake_redis.eval_calls.clear()
+            with_token = await test_client.get(
+                "/v1/namespaces/acme.com/teams/ops/revocations", headers=headers
+            )
+            assert with_token.status_code == 404  # team absent; the route ran
+            assert fake_redis.eval_calls == []
+
+            anonymous = await test_client.get("/v1/namespaces/acme.com/teams/ops/revocations")
+            assert anonymous.status_code == 404
+            rate_keys = [call[0][2] for call in fake_redis.eval_calls]
+            assert any(":revocation_list:" in key for key in rate_keys)
