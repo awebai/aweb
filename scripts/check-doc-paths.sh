@@ -65,14 +65,13 @@ is_placeholder() {
 scan_docs() {
   local base="$1" docs_dir="$2" missing=0 scanned=0 ref where
 
-  # Archived snapshots are excluded BY DESIGN: an archive records the tree as it
-  # was at a stated date and SHA, so its paths are EXPECTED not to resolve.
-  # Requiring them to resolve would force us either to rewrite history or to
-  # delete the record. The exclusion is narrow (one directory) and every
-  # archived document must carry a prominent historical header.
+  # Every documented path is scanned. There is no archive exemption: the docs
+  # tree holds no archived snapshots, so nothing needs paths that are expected
+  # not to resolve. An exemption kept past the last document it covered would
+  # silently cover whatever landed at that path next.
   local refs
   refs="$(find "$docs_dir" -name '*.md' -not -path '*/node_modules/*' \
-      -not -path '*/restructuring/archive/*' -print0 2>/dev/null \
+      -print0 2>/dev/null \
     | xargs -0 grep -ohE '`('"$TOP_LEVEL"')/[A-Za-z0-9_./-]+(:[0-9]+)?`' 2>/dev/null \
     | tr -d '`' | sed 's/:[0-9]*$//' | sort -u)"
 

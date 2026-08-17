@@ -64,11 +64,3 @@ that state as private identity material. Never delete it casually.
   into blueprint profile instructions or a manually maintained home.
 - Final names, DIDs, addresses, certificates, and `.aw` state must remain local
   runtime state; do not commit them into resource packs.
-
-## References
-
-Historical context only:
-
-- `docs/team-bootstrap.md`
-- `docs/bootstrap-layout-contract.md`
-- `docs/agents-layout-lifecycle-contract.md`

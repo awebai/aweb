@@ -1,8 +1,8 @@
 # aweb documentation
 
 This is the source map for the public aweb repository. It separates shipped
-protocol authority, current guides, optional and experimental features,
-compatibility material, and documents waiting for their reviewed transition.
+protocol authority, current guides, optional and experimental features, and
+compatibility material.
 
 Company strategy, market research, positioning, and private hosted-product
 plans deliberately do not live in this OSS repository.
@@ -11,8 +11,8 @@ The [repository README](../README.md) has install and server-start commands.
 Use this page to find the document you need, and to see which documents carry
 authority over shipped behavior.
 
-The baseline contains 75 tracked Markdown documents. This front door does not
-self-link. The remaining 74 public Markdown paths appear below exactly once.
+The baseline contains 65 tracked Markdown documents. This front door does not
+self-link. The remaining 64 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -38,12 +38,14 @@ Then, as you need them:
 - **Guides and references** explain those contracts; they do not override them.
 - **Advanced, optional, and experimental** does not mean unsupported or safe to
   delete. These features remain available under their stated lifecycle.
-- **Compatibility and transition material** is not current product authority.
-  It remains visible until its reviewed consumer migration, consolidation, or
-  removal is complete.
+- **Compatibility material** is not current product authority. It remains
+  visible for existing users until its reviewed consumer migration or
+  consolidation is complete.
 
-Sections that set current behavior are expanded. Only material that is not
-current product authority is collapsed.
+Every section is expanded. The two long ones are collapsible for convenience;
+collapsing ranks nothing, and no section here is on its way out. Superseded and
+completed material is deleted rather than parked, and Git history is its
+archive.
 
 ## Canonical protocol authority
 
@@ -130,7 +132,7 @@ ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
   home/worktree and launch helpers, not an aweb-owned lifecycle.
 - [Runtime support](runtime-support.md) — current maintained wake integrations
   and advanced optional materialize/launch helpers.
-- [Agent home composition contract](restructuring/agent-home-composition-contract.md)
+- [Agent home composition contract](agent-home-composition-contract.md)
   — current home-layout facts pending consolidation.
 - [Start working in your team](start-working.md) — optional task-first workflow
   scheduled for repositioning.
@@ -175,20 +177,9 @@ These paths remain for current users or because durable facts have not yet been
 consolidated. Prefer the canonical/current guide named in each document's status
 notice where one exists.
 
-- [Retired agents layout and lifecycle](agents-layout-lifecycle-contract.md) —
-  bootstrap-era compatibility.
 - [`aw run`](aw-run.md) — opt-in, provider-specific launcher, and the supported
   wake path for Codex today. It sits in this section because aweb does not
   guarantee runtime lifecycle, not because the command is superseded.
-- [Retired bootstrap layout contract](bootstrap-layout-contract.md) — historical
-  layout compatibility.
-- [Coordination](coordination.md) — overlapping guide pending consolidation.
-- [Messaging documentation authority](messaging.md) — compatibility authority
-  map for current user, wake, routing, encryption, and conformance documents.
-- [Team create and membership model](restructuring/team-create-and-membership-model.md)
-  — compatibility command facts pending consolidation.
-- [Retired repo-local team bootstrap](team-bootstrap.md) — compatibility
-  tombstone.
 - [`aw team extend` command SOT](team-extend-sot.md) — shipped compatibility
   contract preserving authority discovery, ambiguity, rollback, and batch
   semantics; use the current growth guide and generated reference for everyday
@@ -231,27 +222,3 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   cross-repository maintainer harness; unrelated to encrypted messaging.
 - [Per-team agent tmux cutover](agent-tmux-cutover.md) — specialized reviewed
   runtime migration procedure.
-
-## Superseded and temporary transition material
-
-> **Non-authoritative transition inventory.** Nothing in this section sets
-> current product direction or creates new work. Files remain at their current
-> paths only until the reviewed extraction and consumer-migration conditions are
-> met. Git and durable task history are sufficient for removed material; no
-> duplicate archive is implied unless a reviewed row explicitly requires
-> archival treatment.
-
-<details>
-<summary>Show the transition inventory and reviewed next action</summary>
-
-- [aapm.6 equivalence evidence](aapm6-equivalence-evidence.md) — relocate as
-  dated, unrendered migration history.
-- [Federated messaging architecture](federation-architecture.md) — durable rules
-  are consolidated in current routing authority; relocate this historical
-  snapshot during the reviewed archive/pruning lane.
-- [naapp move preflight](naapp-move-preflight.md) — completed preflight; remove
-  after consumer checks.
-- [Archived channel stack map](restructuring/archive/channel-stack-map.md) — the
-  one retained dated/SHA-bound historical archive; never current authority.
-
-</details>

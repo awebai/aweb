@@ -263,8 +263,11 @@ still works. Those remain review obligations, so when you change code:
 ### Point-in-time documents
 
 Analyses written to understand the tree at a moment (familiarization maps,
-migration surveys) rot by construction. Do not quietly update them: either keep
-them genuinely live, or move them to `docs/restructuring/archive/` with a
-prominent header giving the date and SHA and stating that they are unmaintained.
-Archived documents are excluded from the path check by design, because their
-references are *expected* to be stale — that is what makes them a record.
+migration surveys) rot by construction. Do not quietly update them, and do not
+park them: either keep them genuinely live, or delete them and let Git history
+be the record. This repository keeps no archive directory, and the path check
+has no archive exemption — every documented path must resolve.
+
+If such a document holds an operational fact that is still true, move the fact
+into the live document whose reader needs it before deleting the container. A
+fact preserved only inside a stale document is a fact nobody will find.
