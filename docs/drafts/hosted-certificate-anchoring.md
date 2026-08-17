@@ -1,20 +1,18 @@
-# Hosted certificate anchoring, read-back, and expiry
+# Hosted certificate anchoring and read-back
 
 Status: **design draft — not normative, no implementation authorized
 (Juan's hold stands; the hosted roster-visibility default and the
 registry-outage grace await his ruling).** Twelve adversarial review rounds
-plus the AC inventory are incorporated. **Certificate expiry and everything
-that existed only to serve it (renewal semantics, supersession state, grant
-expiry inheritance) are DEFERRED by owner ruling (Juan, 2026-08-17,
-"forget expiry and focus on the other things")** — preserved below as
-finished design for the named re-triggers, outside the current contract.
+plus the AC inventory are incorporated. Certificate expiry, and everything
+that existed only to serve it, was **removed from this design by owner
+decision (Juan, 2026-08-17)**; it is not deferred, pending, or triggered —
+it is not part of the architecture.
 
 Review history in brief: round 1 verified the core decision (existing
 registry routes accept hosted registration: no controller-key, namespace, or
 addressless-member barrier exists in code) and broke the original backfill
 scope; subsequent rounds shaped the reconciliation sweep, the cloud-table
-disposition, the visibility and availability sections, and the
-now-deferred expiry/renewal design.
+disposition, and the visibility and availability sections.
 
 Owned by id-bugs as the acceptance-2 half of the
 `aweb-aaum.9` split recorded there on 2026-08-17; the removal-protocol half
@@ -90,8 +88,8 @@ membership/revocation state, not identity state.
 
 Local agents are spawned and retired constantly; anchoring every certificate
 means per-team revocation lists grow with every retirement, and since
-`aweb-abfn` every server refreshes that list each minute. With expiry
-deferred, the bound rests on two facts, both already in place:
+`aweb-abfn` every server refreshes that list each minute. The bound rests
+on two facts, both already in place:
 
 - **The resident-identities model keeps membership churn small.** Ephemeral
   workers are session grants, which create no certificates and no
@@ -101,9 +99,7 @@ deferred, the bound rests on two facts, both already in place:
 - **Complete enumeration already scales.** The `aweb-abfo` cursor pagination
   handles arbitrarily large lists correctly, and clients can refresh
   incrementally via the route's `since` parameter (the Python client
-  currently re-pulls fully — an implementation item). When expiry returns,
-  the deferred filter commitment (exclude revoked-and-expired rows from the
-  default response, never deleting history) caps the working set further.
+  currently re-pulls fully — an implementation item).
 - **Session grants fit only pure messaging workers — and this is the
   resident-identities design, not an accident.** The prior product design
   (strategy/product/2026-08-12-resident-identities-and-session-grants.md)
@@ -206,10 +202,7 @@ carries a second uncontrolled blob store (`aweb.agents.team_cert_blob`) with
 no consistency constraint. The sweep is therefore **registry-classified**:
 decode the certificate ID from every stored blob (both stores), classify each
 against AWID (registered-active / registered-revoked / never-registered),
-then per class (under v2 supersession, "registered-active" covers both
-current and superseded-unexpired certificates — a fourth label worth
-distinguishing in the sweep report, though both are treated identically:
-found, not revoked, left alone): registered rows are left (or cache-synced); never-registered
+then per class: registered rows are left (or cache-synced); never-registered
 rows with a valid blob are registered (then revoked if their member is
 retired); rows whose blob is missing or unusable get their projection deleted
 — blobs are not reliably retained after revocation, so the deletion fallback
@@ -218,7 +211,7 @@ bounded and enumerable; it is exactly the split-state class aaum.9 describes.
 
 Historical revoked certificates beyond that population are not backfilled.
 The honest reason is **data availability** — registration requires the
-original signed blob, which AC may not retain for superseded certificates —
+original signed blob, which AC may not retain for replaced certificates —
 not alias reuse: the registry's alias uniqueness is a partial index over
 unrevoked rows only, so revoked rows sharing an alias are schema-supported.
 Criterion 2 asks for current state; the sweep covers the security-relevant
@@ -290,10 +283,11 @@ aweb-aaum.9, 2026-08-17):
    can neither be registered (no blob to submit) nor deleted (they are
    legitimate) — is **re-issuance**: sign a fresh certificate for the *same*
    member key, register it, and refresh the projection. The mechanism is the
-   fresh-certificate re-issuance operation, which survives the expiry
-   deferral into the current contract precisely for this case (see the
-   deferred-expiry section's survival note); hosted teams need it alongside
-   BYOT. It is deliberately NOT the
+   **fresh-certificate re-issuance operation**: mint a fresh certificate for
+   the same member key, register it, refresh the projection. No alias
+   conflict arises because a lost-blob certificate was never registered, so
+   the registry holds no active row for that alias. Hosted teams need this
+   operation alongside BYOT; it is an OSS deliverable in the repo split. It is deliberately NOT the
    replace-key machinery, which structurally requires a key change at both
    client and server layers and exists for lost or compromised keys — a
    different situation than a lost certificate blob. Without this gate, a member
@@ -303,153 +297,12 @@ aweb-aaum.9, 2026-08-17):
    currently keys the cloud table by agent UUID as though it were the
    workspace UUID; hosted workspace and agent UUIDs are decoupled. The
    invariant this contract requires: one blob-derived certificate ID carried
-   consistently through workspace `W`, projected agent `A`, and AWID — under
-   the committed supersession semantics, restated over the member's
-   *current* certificate (see the renewal-semantics commitment in the
-   Expiry section, which owns the precise form). Fixing
+   consistently through workspace `W`, projected agent `A`, and AWID. Fixing
    that helper is a prerequisite before the mapping is trusted.
 5. **Migration-017 alignment.** AC paths that create or refresh agent
    projections outside the OSS connect flow (direct-connect, remint, generic
    projection writes) must set `agents.certificate_id`, or abfn enforcement
    stays blind for members provisioned through them.
-
-## Deferred: certificate expiry and renewal semantics (owner ruling, 2026-08-17)
-
-Certificate expiry — and with it the entire renewal apparatus the review
-rounds specified (supersession validity per Juan's renewal ruling, the
-constraint migration, the prefer-current projection rule, renewal fencing,
-grant expiry inheritance) — is **deferred out of the current contract**.
-The reasons, argued in full to Juan before the ruling: the resident/grants
-model removed the revocation-churn pressure (grants create no
-certificates); against an honest registry the landed enforcement already
-makes revocation effective in about a minute; the dishonest-registry
-suppression bound matters when the deployment is genuinely multi-operator —
-the same trigger as witnessing (rung 3); and the backdating hole's real fix
-is the acceptance-time receipts work, with which expiry should compose.
-
-**Re-triggers, named**: registry federation / genuinely multi-operator
-deployment; grant lifetimes growing beyond the design's hour-scale center;
-or the acceptance-time receipts work starting. When any fires, everything
-below is finished design — twelve review rounds refined it — and resumes
-from here rather than from scratch. Two pieces survive the deferral into
-the CURRENT contract because they never depended on expiry: the
-**fresh-certificate re-issuance operation** (needed today as the blob-lost
-remediation in the reconciliation sweep: mint a fresh certificate for the
-same member key, register it, refresh the projection — no alias conflict
-arises because the lost-blob certificate was never registered), and grant
-invalidation on **revocation**, which is landed.
-
-The preserved deferred design follows, unchanged:
-
-- Certificate format gains `expires_at` (v2 field). Verifiers: a certificate
-  with `expires_at` in the past fails closed. A certificate without the field
-  is legacy-valid only during a declared transition window of **one full
-  validity cycle (90 days) from the date v2 issuance begins**, recorded as a
-  concrete date in the SOT when implementation starts; after that date,
-  absence is a **hard verification failure**, not a warning. An open-ended
-  "may warn" would let any issuer keep the pre-expiry world alive
-  indefinitely, which is no bound at all (review amendment). Because the
-  format is issuer-controlled and signatures cover the full payload, a
-  presenter cannot strip `expires_at` from an issued v2 certificate; the
-  window governs issuers, not presenters.
-- Issuance policy: hosted teams re-issue automatically ahead of expiry (the
-  operator holds the controller key and the member roster); BYOT teams get a
-  CLI re-issuance command and a doctor check that warns at
-  expiry-minus-margin. Validity length is a policy knob for Juan; the draft
-  proposes 90 days with re-issuance at 30 remaining, matching the E2E
-  encryption-key assertion's existing lifetime shape.
-- Expiry bounds suppression: a registry (or operator) freezing old state can
-  keep a revoked-but-unexpired certificate alive only until `expires_at`.
-  With revocation (60s, honest registry) and expiry (validity window,
-  dishonest or frozen registry), both halves of the freshness story have
-  bounds.
-- Interplay with re-issuance and `agents.certificate_id`: re-issuing rotates
-  the certificate id; the abfn projection refresh already tracks the presented
-  certificate on every authenticated request, so enforcement follows
-  re-issuance with no new machinery.
-- **Grants inherit expiry (coordinator-recorded invariant, 2026-08-17):**
-  grant authorization must fail when the issuing certificate has expired,
-  not only when it is revoked — a grant minted near certificate expiry must
-  not outlive membership authority merely because its own TTL remains. Two
-  complementary mechanisms, both required (coordinator recommendation,
-  adopted): at mint, `grant.expires_at = min(requested,
-  parent_certificate.expires_at)`, so no grant ever reports a validity
-  window membership authority cannot support; at use, the verifier
-  independently resolves the immutable `issued_by_certificate_id` and fails
-  closed if that parent is revoked or expired — authoritative for races,
-  pre-v2 grants, imported state, and mint-path defects. Effective grant
-  validity is the intersection of grant and parent-certificate validity.
-  The earlier fallback (nominal longer TTL, use-time invalidation only) is
-  dropped as knowingly misleading. Practical note (round-10 review, restated
-  under the committed supersession semantics): the cap against the issuing
-  (possibly superseded) parent's own expiry is exactly the operative bound —
-  renewal never shortens a live grant's life, and only revocation ends it
-  early. **Renewal semantics: committed to
-  supersession validity (decision owner ruling, Juan, 2026-08-17)** — "a
-  renewal should not force us to redo grants, but a revocation should revoke
-  grants." This is the resident-identities design's own core rule applied to
-  certificates: a lifecycle credential must never require cleanup or
-  re-provisioning from a routine event above it, and grant minting authority
-  lives in the owner's custody outside every worker — so a renewal that
-  killed grants would not be "workers remint cheaply" but a recurring
-  operational event requiring custody/spawn machinery to re-provision every
-  live worker of every resident, roughly quarterly. Rejected accordingly.
-
-  Committed semantics: routine same-subject, same-key renewal marks the old
-  certificate `superseded_at`; it remains **valid until its own expiry**
-  while the fresh certificate is *current* for new presentations and mints.
-  Grants continue to min(grant, old-parent expiry) with no worker
-  interruption. Revocation remains the loss-of-authority act — compromise,
-  replacement, retirement — and kills every dependent grant immediately;
-  the revocation list stays a pure loss-of-authority signal, and routine
-  renewal adds no revocation rows (which also improves the churn bound
-  above).
-
-  The priced scope this commits to, stated fully (option analysis plus two
-  round-11 review findings): an explicit current-vs-still-valid certificate
-  state in the registry — and this is a **constraint migration, not just
-  application logic**: today's unique active-alias index forbids two
-  unrevoked rows per (team, alias), so a superseded-but-unrevoked row
-  violates it outright and the index must be migrated (e.g., unique WHERE
-  `revoked_at IS NULL AND superseded_at IS NULL`), a harder and less
-  reversible change than new columns alone. Roster reads resolve *current*;
-  verification accepts superseded-unexpired; principal removal and the
-  `aweb-aauy` commit enumerate and revoke EVERY still-valid certificate for
-  the member, not one; concurrent renewal is fenced; the reconciliation
-  sweep and abfn checks handle multiple valid certificates per member. And
-  the second round-11 finding: `agents.certificate_id` is a single-value
-  field whose opportunistic refresh fires on ANY presented-certificate
-  difference — under supersession a fleet legitimately presenting either
-  certificate would ping-pong the projection non-deterministically,
-  silently degrading the W ≠ A invariant ("one certificate ID carried
-  consistently"). Resolution committed here: the field's meaning becomes
-  **the member's current certificate**; the refresh must never overwrite a
-  current certificate id with a superseded one (prefer-current rule), and
-  the W ≠ A invariant is restated over the current certificate. The rule's
-  mechanism is **local-only** (round-12 commitment): the `agents` row also
-  stores the recorded certificate's `issued_at` (one more column in the
-  same migration family), and the refresh prefers the newer `issued_at`,
-  never consulting the registry — a registry read here would silently break
-  the Registry-availability section's no-new-per-request-calls commitment.
-  When the comparison cannot be made confidently (missing timestamp,
-  pre-migration rows), the refresh keeps the existing value — fail-open is
-  correct because this is a consistency rule, not a security check. Enforcement
-  verdicts are unaffected either way (neither certificate is revoked), so
-  this is a consistency requirement, not a security fix. The rejected
-  alternative (atomic cutover, revoke-on-renewal) is retained in history as
-  the minimal adaptation of today's schema; it was rejected because it
-  conflates paperwork with loss of authority and couples worker lifecycle
-  to certificate maintenance. For the record: the round-11 adversarial
-  arbitration, delivered before the owner ruling reached it, recommended
-  the cutover — weighting the supersession scope (constraint migration plus
-  the projection-consistency work above) against an interruption cost it
-  read the design as pricing at zero. The owner ruling distinguishes
-  cleanup (free by TTL, the design's actual zero-cost claim) from
-  re-provisioning (grant minting authority lives in the owner's custody
-  outside every worker, so renewal-killed grants mean custody-orchestrated
-  re-provisioning of every resident's fleet, roughly quarterly) — the
-  coupling the design exists to eliminate. Both positions are preserved so
-  the trade can be revisited if the facts change.
 
 ## Explicitly out of scope, mapped to the eight-point required shape
 
@@ -462,7 +315,7 @@ From the adversarial review of the verification-authority draft (task
 | Complete, paginated revocations | Landed (`aweb-abfo`) |
 | Bounded freshness, honestly stated | Landed (`aweb-abfp`, trust-model text) |
 | Certificate availability to verifiers | **This design** (registry anchoring) |
-| Expiry / suppression bound | Deferred (owner ruling 2026-08-17; re-triggers named above) |
+| Expiry / suppression bound | Removed by owner decision (2026-08-17) |
 | Signed envelope binding of team/cert IDs | Option-3 work, later |
 | Non-backdatable acceptance-time proof | Removal ledger + receipts (`aweb-aauy` family), later |
 | Team-key history for historical verification | Later; named gap |
@@ -471,11 +324,10 @@ From the adversarial review of the verification-authority draft (task
 ## Repo split and sequencing
 
 - **OSS (id-bugs)**: the fresh-certificate re-issuance operation (blob-lost
-  remediation; also the renewal primitive if expiry returns); read-side
+  remediation); read-side
   visibility enforcement on the registry's team/certificate/member/
   revocation reads for private teams; doctor checks; SOT/docs updates; test
-  vectors. (Certificate-format v2 with `expires_at` and its verifier
-  changes: deferred with expiry.)
+  vectors.
 - **AC (retirement instance)**: mint-time registration, the backfill, and
   wiring the removal protocol's commit to the registry revoke. These ride
   their prepare/commit implementation; the interface between us is exactly
@@ -492,9 +344,6 @@ From the adversarial review of the verification-authority draft (task
    membership readable wherever BYOT membership already is. Is the existing
    team-visibility control sufficient policy, and what should the default be
    for hosted teams?
-2. **Expiry policy** — deferred with expiry itself (owner ruling,
-   2026-08-17). The 90/30-day proposal and the hard transition cutoff are
-   preserved in the deferred section for when a re-trigger fires.
 3. **Backfill authority**: run by the hosted operator offline, or exposed as
    a support-audited admin operation?
 4. **Failure isolation at mint time** — resolved by review recommendation,
