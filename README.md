@@ -199,7 +199,7 @@ aw chat pending
 | `awid/` | Public identity and team registry service |
 | `cli/go/` | Go CLI and client library |
 | `channel-core/`, `channel/`, `pi-extension/` | Event protocol and maintained runtime integrations |
-| `docs/` | Public protocol contracts, guides, references, and transition material |
+| `docs/` | Public protocol contracts, guides, references, and compatibility material |
 | `test-vectors/`, `docs/vectors/` | Sanitized protocol and conformance fixtures |
 
 Real `.aw/` directories contain local identity/workspace state and must never be
