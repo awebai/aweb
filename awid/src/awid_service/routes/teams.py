@@ -413,6 +413,12 @@ class CertificateRevokeResponse(BaseModel):
     certificate_id: str
 
 
+# The pre-pagination revocation route returned up to this many rows; legacy
+# clients read that page as the complete set, so the no-limit page size must
+# never shrink below it (aweb-abfo).
+_LEGACY_REVOCATION_PAGE_ROWS = 1000
+
+
 class RevocationEntry(BaseModel):
     certificate_id: str
     revoked_at: str
@@ -1030,6 +1036,13 @@ async def list_revocations(
         validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if limit is None:
+        # Legacy clients (pre-pagination) send no limit and read the first
+        # page as complete; their historical page was 1000 rows. Keep that as
+        # this endpoint's no-limit page size so a mixed deployment never gets
+        # a SHORTER complete-looking page than it did before pagination
+        # existed. Explicit limits use the shared clamp.
+        validated_limit = _LEGACY_REVOCATION_PAGE_ROWS
 
     where_clauses = ["team_uuid = $1", "revoked_at IS NOT NULL"]
     params: list[object] = [team_row["team_uuid"]]

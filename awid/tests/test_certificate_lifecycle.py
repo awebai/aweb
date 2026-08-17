@@ -337,3 +337,47 @@ async def test_list_revocations_paginates_with_stable_cursor(client, controller_
     # A malformed cursor is a 400, not a silent full restart.
     resp = await client.get("/v1/namespaces/revpage.com/teams/ops/revocations?cursor=%25%25not-b64")
     assert resp.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_list_revocations_no_limit_default_is_legacy_page_size(client, controller_identity, awid_db_infra):
+    """A legacy client sends no limit and reads the first page as complete.
+    The no-limit page must stay 1000 rows (the pre-pagination size), never the
+    shared 50-row default — shrinking it would make legacy truncation worse."""
+    ns_key, ns_did = controller_identity
+    await _setup_team(client, ns_key, ns_did, "revbulk.com", "ops")
+
+    db = awid_db_infra.get_manager("aweb")
+    team_row = await db.fetch_one(
+        "SELECT team_uuid FROM {{tables.teams}} WHERE domain = 'revbulk.com' AND name = 'ops'"
+    )
+    await db.execute(
+        """
+        INSERT INTO {{tables.team_certificates}}
+            (team_uuid, certificate_id, member_did_key, alias, issued_at, revoked_at)
+        SELECT $1, 'bulk-' || n, 'did:key:zBulk', 'bulk-' || n,
+               NOW(), '2026-08-17T12:00:00+00:00'::timestamptz
+        FROM generate_series(1, 1050) AS n
+        """,
+        team_row["team_uuid"],
+    )
+
+    resp = await client.get("/v1/namespaces/revbulk.com/teams/ops/revocations")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["revocations"]) == 1000
+    assert body["has_more"] is True
+    assert body["next_cursor"]
+
+    # The cursor reaches the rows past the legacy page, shared timestamp and all.
+    resp = await client.get(
+        f"/v1/namespaces/revbulk.com/teams/ops/revocations?cursor={body['next_cursor']}"
+    )
+    assert resp.status_code == 200
+    tail = resp.json()
+    assert len(tail["revocations"]) == 50
+    assert tail["has_more"] is False
+    all_ids = {r["certificate_id"] for r in body["revocations"]} | {
+        r["certificate_id"] for r in tail["revocations"]
+    }
+    assert len(all_ids) == 1050
