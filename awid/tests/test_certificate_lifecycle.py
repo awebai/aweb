@@ -268,3 +268,72 @@ async def test_list_revocations_empty(client, controller_identity):
     resp = await client.get("/v1/namespaces/revempty.com/teams/web/revocations")
     assert resp.status_code == 200
     assert resp.json()["revocations"] == []
+
+
+@pytest.mark.asyncio
+async def test_list_revocations_paginates_with_stable_cursor(client, controller_identity, awid_db_infra):
+    """aweb-abfo: the revocation list must be completely enumerable.
+
+    Three revocations are forced onto ONE shared revoked_at (the mass-revocation
+    shape a team rotation produces) and paged with limit=1: a timestamp-only
+    cursor would drop rows at the tie, so this pins the (revoked_at, id) cursor.
+    """
+    ns_key, ns_did = controller_identity
+    team_key, team_did = await _setup_team(client, ns_key, ns_did, "revpage.com", "ops")
+
+    cert_ids = []
+    for alias in ("alice", "bob", "carol"):
+        cert_id, _ = await _register_cert(client, team_key, team_did, "revpage.com", "ops", alias)
+        cert_ids.append(cert_id)
+        headers = _sign(
+            team_key, team_did,
+            domain="revpage.com", operation="revoke_certificate",
+            team_name="ops", certificate_id=cert_id,
+        )
+        resp = await client.post(
+            "/v1/namespaces/revpage.com/teams/ops/certificates/revoke",
+            json={"certificate_id": cert_id},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    db = awid_db_infra.get_manager("aweb")
+    await db.execute(
+        "UPDATE {{tables.team_certificates}} SET revoked_at = '2026-08-17T12:00:00+00:00'"
+        " WHERE certificate_id = ANY($1::text[])",
+        cert_ids,
+    )
+
+    seen: list[str] = []
+    cursor = None
+    pages = 0
+    while True:
+        url = "/v1/namespaces/revpage.com/teams/ops/revocations?limit=1"
+        if cursor:
+            url += f"&cursor={cursor}"
+        resp = await client.get(url)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(body["revocations"]) <= 1
+        seen.extend(r["certificate_id"] for r in body["revocations"])
+        pages += 1
+        assert pages <= 10, "cursor did not terminate"
+        if not body["has_more"]:
+            assert body["next_cursor"] is None
+            break
+        assert body["next_cursor"]
+        cursor = body["next_cursor"]
+
+    assert sorted(seen) == sorted(cert_ids)
+    assert len(seen) == len(set(seen)), "cursor produced duplicates"
+
+    # Default call (no pagination params) still returns the complete short list
+    # with an explicit not-truncated signal.
+    resp = await client.get("/v1/namespaces/revpage.com/teams/ops/revocations")
+    body = resp.json()
+    assert sorted(r["certificate_id"] for r in body["revocations"]) == sorted(cert_ids)
+    assert body["has_more"] is False
+
+    # A malformed cursor is a 400, not a silent full restart.
+    resp = await client.get("/v1/namespaces/revpage.com/teams/ops/revocations?cursor=%25%25not-b64")
+    assert resp.status_code == 400

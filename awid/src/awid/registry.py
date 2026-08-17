@@ -12,7 +12,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from nacl.signing import SigningKey
@@ -753,22 +753,54 @@ class RegistryClient:
         return _team_from_json(data)
 
     async def get_team_revocations(self, domain: str, name: str) -> set[str]:
-        """Fetch the set of revoked certificate IDs for a team.
+        """Fetch the complete set of revoked certificate IDs for a team.
 
         GET /v1/namespaces/{domain}/teams/{name}/revocations
-        Returns set of certificate_id strings.
+
+        Completeness is the contract (aweb-abfo): verifiers treat the returned
+        set as the whole revocation state, so this pages with the server's
+        cursor until has_more is false. Against an old server that sends no
+        has_more (and ignored pagination while truncating at its oldest-first
+        hard limit), fall back to timestamp paging with `since` until a page
+        adds nothing new — best effort, strictly better than reading one
+        truncated page as complete.
         """
-        try:
-            data = await self._request_json(
-                "GET",
-                f"/v1/namespaces/{domain}/teams/{name}/revocations",
-                registry_url=await self._registry_url_for_domain(domain),
-            )
-        except RegistryError as exc:
-            if exc.status_code == 404:
-                return set()
-            raise
-        return {r["certificate_id"] for r in data.get("revocations", [])}
+        registry_url = await self._registry_url_for_domain(domain)
+        base_path = f"/v1/namespaces/{domain}/teams/{name}/revocations"
+        revoked: set[str] = set()
+        cursor: str | None = None
+        legacy_since: str | None = None
+        while True:
+            query = "limit=200"
+            if cursor is not None:
+                query += f"&cursor={quote(cursor, safe='')}"
+            elif legacy_since is not None:
+                query += f"&since={quote(legacy_since, safe='')}"
+            try:
+                data = await self._request_json(
+                    "GET",
+                    f"{base_path}?{query}",
+                    registry_url=registry_url,
+                )
+            except RegistryError as exc:
+                if exc.status_code == 404:
+                    return revoked
+                raise
+            entries = data.get("revocations", [])
+            before = len(revoked)
+            revoked |= {r["certificate_id"] for r in entries}
+            if "has_more" in data:
+                if not data.get("has_more") or not data.get("next_cursor"):
+                    return revoked
+                cursor = data["next_cursor"]
+                continue
+            # Legacy server: no truncation signal. Its hard limit was 1000
+            # oldest-first rows; a shorter page, or a page that added nothing
+            # new, is the end.
+            if len(entries) < 1000 or len(revoked) == before:
+                return revoked
+            legacy_since = max(r["revoked_at"] for r in entries)
+            cursor = None
 
     async def list_team_certificates(
         self,

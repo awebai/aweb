@@ -420,6 +420,13 @@ class RevocationEntry(BaseModel):
 
 class RevocationListResponse(BaseModel):
     revocations: list[RevocationEntry]
+    # Absent has_more/next_cursor (old servers) is not "complete": clients that
+    # consume revocations as a completeness-bearing set must page until
+    # has_more is false. aweb-abfo: the route previously returned the oldest
+    # 1000 rows with no truncation signal, and verifiers read that as the
+    # complete revocation set.
+    has_more: bool = False
+    next_cursor: str | None = None
 
 
 class TeamRotateResponse(BaseModel):
@@ -1006,6 +1013,8 @@ async def list_revocations(
     domain: str,
     name: str,
     since: str | None = Query(default=None),
+    limit: int | None = Query(default=None, ge=1),
+    cursor: str | None = Query(default=None),
     db_infra=Depends(get_db),
 ) -> RevocationListResponse:
     db = db_infra.get_manager("aweb")
@@ -1016,6 +1025,11 @@ async def list_revocations(
     )
     if team_row is None:
         raise HTTPException(status_code=404, detail="Team not found")
+
+    try:
+        validated_limit, decoded_cursor = validate_pagination_params(limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     where_clauses = ["team_uuid = $1", "revoked_at IS NOT NULL"]
     params: list[object] = [team_row["team_uuid"]]
@@ -1028,16 +1042,41 @@ async def list_revocations(
         params.append(since_ts)
         where_clauses.append(f"revoked_at > ${len(params)}::timestamptz")
 
-    _REVOCATION_HARD_LIMIT = 1000
-    params.append(_REVOCATION_HARD_LIMIT)
+    # Pagination orders by (revoked_at, id): a mass revocation (team rotation)
+    # stamps many rows with one revoked_at, so a timestamp-only cursor would
+    # drop rows at page boundaries — the exact rows a verifier most needs.
+    if decoded_cursor is not None:
+        cursor_revoked_at = decoded_cursor.get("revoked_at")
+        cursor_id = decoded_cursor.get("id")
+        if not isinstance(cursor_revoked_at, str) or not isinstance(cursor_id, str):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+        try:
+            cursor_ts = datetime.fromisoformat(cursor_revoked_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid cursor") from exc
+        params.extend([cursor_ts, cursor_id])
+        where_clauses.append(
+            f"(revoked_at, id) > (${len(params) - 1}::timestamptz, ${len(params)}::uuid)"
+        )
+
+    params.append(validated_limit + 1)
     query = (
-        "SELECT certificate_id, revoked_at"
+        "SELECT id, certificate_id, revoked_at"
         " FROM {{tables.team_certificates}}"
         " WHERE " + " AND ".join(where_clauses)
-        + f" ORDER BY revoked_at"
+        + " ORDER BY revoked_at, id"
         f" LIMIT ${len(params)}"
     )
     rows = await db.fetch_all(query, *params)
+    has_more = len(rows) > validated_limit
+    page_rows = rows[:validated_limit]
+    next_cursor = None
+    if has_more and page_rows:
+        last = page_rows[-1]
+        next_cursor = encode_cursor({
+            "revoked_at": last["revoked_at"].isoformat(),
+            "id": str(last["id"]),
+        })
 
     return RevocationListResponse(
         revocations=[
@@ -1045,8 +1084,10 @@ async def list_revocations(
                 certificate_id=r["certificate_id"],
                 revoked_at=r["revoked_at"].isoformat(),
             )
-            for r in rows
+            for r in page_rows
         ],
+        has_more=has_more,
+        next_cursor=next_cursor,
     )
 
 

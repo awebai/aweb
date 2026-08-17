@@ -581,3 +581,90 @@ async def test_cached_registry_client_forwards_every_field_it_names():
             assert getattr(registry, name) == value, name
     finally:
         await registry.aclose()
+
+
+@pytest.mark.asyncio
+async def test_get_team_revocations_pages_until_complete():
+    """aweb-abfo: the client must not read one page as the complete set."""
+    pages = [
+        {"revocations": [{"certificate_id": "c1", "revoked_at": "2026-01-01T00:00:00+00:00"}],
+         "has_more": True, "next_cursor": "cur-1"},
+        {"revocations": [{"certificate_id": "c2", "revoked_at": "2026-01-01T00:00:00+00:00"}],
+         "has_more": True, "next_cursor": "cur-2"},
+        {"revocations": [{"certificate_id": "c3", "revoked_at": "2026-01-02T00:00:00+00:00"}],
+         "has_more": False, "next_cursor": None},
+    ]
+    requests: list[str] = []
+
+    def handler(request):
+        requests.append(str(request.url))
+        cursor = request.url.params.get("cursor")
+        if cursor == "cur-1":
+            return Response(200, json=pages[1])
+        if cursor == "cur-2":
+            return Response(200, json=pages[2])
+        return Response(200, json=pages[0])
+
+    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+    assert revoked == {"c1", "c2", "c3"}
+    assert len(requests) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_team_revocations_legacy_server_short_page_is_complete():
+    """An old server sends no has_more; a page shorter than its hard limit is
+    the whole set and must not trigger extra requests."""
+    def handler(request):
+        return Response(200, json={"revocations": [
+            {"certificate_id": "c1", "revoked_at": "2026-01-01T00:00:00+00:00"},
+        ]})
+
+    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+    assert revoked == {"c1"}
+
+
+@pytest.mark.asyncio
+async def test_get_team_revocations_legacy_server_full_page_pages_by_since():
+    """An old server returning its full 1000-row page must be paged with
+    `since` rather than read as complete."""
+    first_page = {"revocations": [
+        {"certificate_id": f"old-{i}", "revoked_at": "2026-01-01T00:00:00+00:00"}
+        for i in range(1000)
+    ]}
+    second_page = {"revocations": [
+        {"certificate_id": "new-1", "revoked_at": "2026-01-02T00:00:00+00:00"},
+    ]}
+
+    def handler(request):
+        if request.url.params.get("since"):
+            return Response(200, json=second_page)
+        return Response(200, json=first_page)
+
+    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+    assert len(revoked) == 1001
+    assert "new-1" in revoked
+
+
+@pytest.mark.asyncio
+async def test_get_team_revocations_missing_team_is_empty():
+    def handler(request):
+        return Response(404, json={"detail": "Team not found"})
+
+    registry = RegistryClient(registry_url="http://registry.test", transport=MockTransport(handler))
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+    assert revoked == set()
