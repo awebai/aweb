@@ -361,7 +361,11 @@ implementation:
   pre-v2 grants, imported state, and mint-path defects. Effective grant
   validity is the intersection of grant and parent-certificate validity.
   The earlier fallback (nominal longer TTL, use-time invalidation only) is
-  dropped as knowingly misleading. **Renewal semantics
+  dropped as knowingly misleading. Practical note (round-10 review): under
+  option R1 below, renewal at the 30-days-remaining margin is what actually
+  ends a surviving grant's life — the cutover, not the cap — so the cap is
+  a rarely-binding truthfulness ceiling, not the operative bound; under R2
+  the cap against the OLD parent's expiry is exactly the operative bound. **Renewal semantics
   are an open decision with two priced options** — the substrate fact is
   settled (coordinator code evidence, 2026-08-17: the registry's unique
   active-alias index permits one unrevoked certificate per (team, alias),
