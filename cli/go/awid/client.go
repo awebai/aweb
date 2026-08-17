@@ -435,6 +435,16 @@ func (c *Client) SetRequireRecipientBindingForDirectAddresses(required bool) {
 // for to_did binding in signed envelopes.
 func (c *Client) SetResolver(r IdentityResolver) { c.resolver = r }
 
+// Resolver returns the configured identity resolver, if any.
+func (c *Client) Resolver() IdentityResolver { return c.resolver }
+
+// HasTeamCertificateAuth reports whether this client can authenticate with a
+// team certificate — the credential TeamRosterResolver requires for
+// certificate-authenticated roster reads.
+func (c *Client) HasTeamCertificateAuth() bool {
+	return c != nil && strings.TrimSpace(c.teamCertHeader) != "" && len(c.signingKey) != 0
+}
+
 func (c *Client) SetE2EEKey(assertion *EncryptionKeyAssertion, privateKey *ecdh.PrivateKey) {
 	if c == nil {
 		return

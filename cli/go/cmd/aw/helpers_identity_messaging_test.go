@@ -65,4 +65,20 @@ func TestResolveIdentityMessagingClientSelectionFallsBackToSigningKeyWithoutIden
 	if got := sel.DID; got != "" {
 		t.Fatalf("selection did=%q want empty without identity file", got)
 	}
+
+	// aweb-abfc: the identity-auth client itself must stay identity-scoped, but
+	// its team-roster resolver must be certificate-authenticated when the
+	// workspace holds a certificate. Otherwise the mandatory fresh roster
+	// re-resolution in NormalizeSenderTrust fails auth and every verified
+	// message from a current-team member renders as verification_stale.
+	if client.Client.HasTeamCertificateAuth() {
+		t.Fatalf("identity messaging client unexpectedly certificate-authenticated")
+	}
+	chain, ok := client.Client.Resolver().(*awid.ChainResolver)
+	if !ok || chain.Team == nil {
+		t.Fatalf("identity messaging client resolver missing team roster resolver: %#v", client.Client.Resolver())
+	}
+	if !chain.Team.Client.HasTeamCertificateAuth() {
+		t.Fatalf("team roster resolver client is not certificate-authenticated; local senders would verify as stale")
+	}
 }
