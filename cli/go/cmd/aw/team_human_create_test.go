@@ -1755,6 +1755,11 @@ func TestTeamHumanCreateExistingSelfCustodialIdentityCreatesTeam(t *testing.T) {
 				t.Fatal(err)
 			}
 			w.WriteHeader(http.StatusCreated)
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			// aweb-abfd: creating/enrolling a member now publishes the E2E
+			// encryption-key assertion (POST to the registry for global
+			// identities, PUT to the aweb service where a binding exists).
+			_, _ = w.Write([]byte("{}"))
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -1872,6 +1877,11 @@ func TestTeamHumanCreateBYOTWithAgentsCreatesTeamAndRoster(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{})
 		case r.Method == http.MethodGet && (r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat"):
 			_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			// aweb-abfd: creating/enrolling a member now publishes the E2E
+			// encryption-key assertion (POST to the registry for global
+			// identities, PUT to the aweb service where a binding exists).
+			_, _ = w.Write([]byte("{}"))
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -2102,6 +2112,11 @@ func TestTeamHumanCreateBYOTEnrollsCreatorAndPreservesExistingMembership(t *test
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/acme.com/teams/ops/certificates":
 			certCalls++
 			w.WriteHeader(http.StatusCreated)
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			// aweb-abfd: creating/enrolling a member now publishes the E2E
+			// encryption-key assertion (POST to the registry for global
+			// identities, PUT to the aweb service where a binding exists).
+			_, _ = w.Write([]byte("{}"))
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

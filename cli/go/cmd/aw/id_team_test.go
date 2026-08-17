@@ -4273,6 +4273,11 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 				t.Fatal(err)
 			}
 			w.WriteHeader(http.StatusCreated)
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			// aweb-abfd: creating/enrolling a member now publishes the E2E
+			// encryption-key assertion (POST to the registry for global
+			// identities, PUT to the aweb service where a binding exists).
+			_, _ = w.Write([]byte("{}"))
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
