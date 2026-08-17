@@ -1,7 +1,11 @@
 # Hosted certificate anchoring, read-back, and expiry
 
-Status: **design draft under adversarial review — not normative, no
-implementation authorized.** Owned by id-bugs as the acceptance-2 half of the
+Status: **design draft, first adversarial review round incorporated — not
+normative, no implementation authorized.** Round 1 verified the core decision
+(existing registry routes accept hosted registration: no controller-key,
+namespace, or addressless-member barrier exists in code) and broke the
+original backfill scope; the reconciliation sweep, the expiry hard cutoff,
+and the cloud-table disposition below are its required amendments.** Owned by id-bugs as the acceptance-2 half of the
 `aweb-aaum.9` split recorded there on 2026-08-17; the removal-protocol half
 (acceptance 1, `aweb-aauy`) is owned by the retirement instance in aweb-saas.
 Their operation ledger is operational state and must not become a second
@@ -56,6 +60,20 @@ What this buys, with no new protocol surface:
   blob-fetch path, team-key history, and acceptance-time anchoring — tracked
   below, deliberately out of this design's scope.)
 
+### What happens to `cloud_agent_certificates`
+
+The registry becomes the only certificate authority; the cloud table becomes
+a **non-authoritative cache, never consulted for verification verdicts**. Its
+`revoked_at` is written in the same transaction as the removal ledger's
+commit (alongside the registry revoke), so it cannot silently disagree with
+the registry for its remaining operational readers. The AC-side inventory of
+those readers — dashboard, support tooling, any auth overlay reading the
+table directly — is owned by the retirement instance, under one rule: no
+consumer may report certificate state the registry contradicts; each reader
+is either repointed at the registry or documented as reading the synced
+cache. Leaving any reader on an unsynced table would recreate the second
+source of truth this design exists to remove.
+
 ### Rejected alternatives
 
 - **A new AC read surface** (cloud certificate status endpoint + CLI client):
@@ -72,15 +90,33 @@ What this buys, with no new protocol surface:
 
 Backfill: for each live row in `cloud_agent_certificates`, the hosted service
 registers the certificate at the registry under the team controller key
-(idempotent by `certificate_id`; conflicts mean already-registered). Scope:
-**active certificates only.** Historical revoked certificates are not
-backfilled — criterion 2 asks for current state, and alias reuse (many
-historical holders of one alias) makes historical backfill a correctness
-minefield the acceptance does not require. Rows that fail to register are
-enumerated in the backfill report, not silently skipped.
+(idempotent by `certificate_id`; conflicts mean already-registered). Rows that
+fail to register are enumerated in the backfill report, not silently skipped.
 
-Ordering: backfill before the removal protocol's commit step starts revoking
-at the registry, so a revoke never targets an unregistered certificate.
+**Reconciliation sweep (review amendment — this closes a traced hole).** A
+certificate that was never registered can never appear in the registry's
+revocation set, so it passes the revocation check *by omission*: a hosted
+member revoked at AC before this design lands, whose `agents` row is still
+live, would be protected by neither enforcement path, indefinitely. The
+migration therefore includes, before the removal protocol starts relying on
+registry-revoke-at-commit: for every live `agents` row whose corresponding
+cloud certificate is already revoked, force-remediate — register the
+certificate at the registry and immediately revoke it there (or, where the
+signed blob is unavailable, delete the projection row) — and report each
+remediation. This population is bounded and enumerable; it is exactly the
+split-state class aaum.9 describes.
+
+Historical revoked certificates beyond that population are not backfilled.
+The honest reason is **data availability** — registration requires the
+original signed blob, which AC may not retain for superseded certificates —
+not alias reuse: the registry's alias uniqueness is a partial index over
+unrevoked rows only, so revoked rows sharing an alias are schema-supported.
+Criterion 2 asks for current state; the sweep covers the security-relevant
+remainder.
+
+Ordering: backfill and sweep before the removal protocol's commit step starts
+revoking at the registry, so a revoke never targets an unregistered
+certificate.
 
 ## Expiry (exit-ladder rung 1) rides with this change
 
@@ -90,9 +126,16 @@ work rather than alone. Design outline, to be specified fully before
 implementation:
 
 - Certificate format gains `expires_at` (v2 field). Verifiers: a certificate
-  with `expires_at` in the past fails closed; a certificate without the field
-  is legacy-valid during a declared transition window, after which issuers
-  must set it and verifiers may warn on absence.
+  with `expires_at` in the past fails closed. A certificate without the field
+  is legacy-valid only during a declared transition window of **one full
+  validity cycle (90 days) from the date v2 issuance begins**, recorded as a
+  concrete date in the SOT when implementation starts; after that date,
+  absence is a **hard verification failure**, not a warning. An open-ended
+  "may warn" would let any issuer keep the pre-expiry world alive
+  indefinitely, which is no bound at all (review amendment). Because the
+  format is issuer-controlled and signatures cover the full payload, a
+  presenter cannot strip `expires_at` from an issued v2 certificate; the
+  window governs issuers, not presenters.
 - Issuance policy: hosted teams re-issue automatically ahead of expiry (the
   operator holds the controller key and the member roster); BYOT teams get a
   CLI re-issuance command and a doctor check that warns at
@@ -151,9 +194,13 @@ From the adversarial review of the verification-authority draft (task
    days); whether the legacy transition window has a hard end date.
 3. **Backfill authority**: run by the hosted operator offline, or exposed as
    a support-audited admin operation?
-4. **Failure isolation at mint time**: if registry registration fails during
-   hosted member creation, does creation fail (certificate authority
-   unavailable) or succeed with a loud pending-registration state? The abfd
-   precedent (publish loudly, don't fail the recorded membership, make the
-   gap visible offline) suggests the latter, but a certificate is closer to
-   the trust core than an encryption assertion — reviewer judgment wanted.
+4. **Failure isolation at mint time** — resolved by review recommendation,
+   adopted: creation does not hard-fail on a registry hiccup, but the gap is
+   not a one-shot warning either. The member surfaces as `certificate:
+   pending registration` through the same read-back this design builds
+   (agent-status/members must never show "active" for an unregistered
+   certificate); a background reconciliation sweep (the backfill logic run as
+   an ongoing job) retries until it lands; and failure to self-heal within a
+   bound tied to the certificate validity window escalates loudly, because an
+   unregistered certificate is a silent enforcement gap, not a UX
+   inconvenience.
