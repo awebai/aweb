@@ -363,8 +363,15 @@ The committed exit ladder, in order:
 
 1. **Certificate expiry and re-issuance** — bounds suppression to the validity
    window and closes timestamp backdating against expiry-less certificates.
-   The format change rides with the certificate read-back design (aweb-aaum.9
-   family), not alone.
+   **Deferred by owner ruling (2026-08-17)**: the resident/grants model
+   removed the revocation-churn pressure, revocation against an honest
+   registry is already effective within about a minute, and the
+   dishonest-registry bound shares its trigger with witnessing below.
+   Re-triggers: registry federation / genuinely multi-operator deployment,
+   grant lifetimes growing beyond hours, or the acceptance-time receipts
+   work starting — with which expiry should compose. The finished design
+   (format, renewal supersession semantics, grant expiry inheritance) is
+   preserved in the aaum.9-family read-back design document.
 2. **Hash-chained revocation log with client-persisted checkpoints** — the
    same anti-rollback treatment DID logs already have, applied to revocations;
    folded into the certificate-chain verification protocol when that work
