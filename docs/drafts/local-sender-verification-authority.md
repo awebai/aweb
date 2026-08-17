@@ -1,9 +1,12 @@
 # Local-sender verification authority
 
-Status: **recommendation rejected by adversarial review (aweb, 2026-08-17) —
-kept as the record of the analysis and its correction. Not normative.** Filed
-from the aweb-abfc root-cause work at Juan's direction; full review findings
-on task `aweb-abfm`.
+Status: **resolved — Juan ruled 2026-08-17; the rulings are normative in
+[trust-model.md](../trust-model.md) ("Threat-model rulings"). This file is the
+record of the analysis, its adversarial correction, and the path to the
+ruling.** Partial-service compromise is in scope (Option 2 as drafted is
+permanently dead); the suppression residual is accepted as a named operator
+trust assumption with a committed exit ladder (expiry → chained revocation
+log → witnessing). Full review findings on task `aweb-abfm`.
 
 ## Adversarial review outcome (2026-08-17)
 

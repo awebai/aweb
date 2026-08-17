@@ -324,6 +324,53 @@ support.
 Message trust has two layers: Ed25519 signature/recipient-binding verification,
 then continuity handling for a globally addressed sender.
 
+### Threat-model rulings (2026-08-17)
+
+Two rulings, made explicitly so they are design constraints rather than
+implicit assumptions:
+
+**Partial-service compromise is in scope.** The aweb service is multiple
+components (ingest, message store, roster, registry client) with different
+attack surfaces, and the trust model does not assume they fail only together.
+Consequences: a reader's fresh roster re-resolution of a local sender is a
+load-bearing cross-check against a compromised message store or ingest
+component, not a redundant read, and must not be removed in favor of trusting
+stored attribution alone. Any future verdict that rests on the service's own
+attestation instead of a completed reader-side check must carry a distinct
+status (for example `verified_server_attested`) and must still fail on a
+roster mismatch whenever the reader can obtain the roster. Plain `verified`
+always means the reader completed the binding and continuity checks itself.
+
+**The revocation source-suppression residual is accepted, and named.** A
+verifier learns revocation state only by asking a registry (or, for local
+members, the team's aweb service). Signed artifacts prove presence; nothing in
+this protocol proves absence. An authority that keeps serving old but
+cryptographically valid state — maliciously, or as innocently as a restore
+from backup — can suppress a revocation the verifier has never seen, for as
+long as the verifier has no second channel. Client cache ceilings bound the
+verifier's own staleness, not the source's honesty. Until the exit ladder
+below lands, **revocation freshness rests on the honesty and availability of
+the consulted registry operator.** That is a named trust assumption of the
+current system.
+
+The committed exit ladder, in order:
+
+1. **Certificate expiry and re-issuance** — bounds suppression to the validity
+   window and closes timestamp backdating against expiry-less certificates.
+   The format change rides with the certificate read-back design (aweb-aaum.9
+   family), not alone.
+2. **Hash-chained revocation log with client-persisted checkpoints** — the
+   same anti-rollback treatment DID logs already have, applied to revocations;
+   folded into the certificate-chain verification protocol when that work
+   proceeds.
+3. **Witness/transparency mechanisms** — deferred until the deployment is
+   genuinely multi-operator; before that a witness set adds ceremony, not
+   security.
+
+The full assessment and its adversarial review live in
+[drafts/local-sender-verification-authority.md](drafts/local-sender-verification-authority.md)
+and on task `aweb-abfm`.
+
 For cross-registry ingress, the receiving service's strict external-address
 path is stronger and separate from general client TOFU/cache behavior. It
 selects authority from the client-signed address, not the receiver's home
