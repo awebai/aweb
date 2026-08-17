@@ -107,16 +107,27 @@ round-3 review broke the first version of this section:
   should additionally refresh incrementally (the route's `since` parameter
   exists; the Python client currently re-pulls fully — an implementation
   item).
-- **Session grants fit only pure messaging workers.** Grants are scoped,
-  expiring, revocable, and die with their issuing certificate under the
-  landed enforcement — but they are hard-refused (403) outside mail/chat and
-  roster reads, cannot claim tasks or hold locks, and act as their subject
-  rather than appearing in the roster independently. So the guidance is
-  narrower than first drafted: steer an ephemeral worker to a grant only when
-  its job is messaging as its principal; any worker that must claim work,
-  hold locks, or appear as itself needs full membership, and its anchoring
-  cost is real — bounded by the expiry-plus-exclusion commitment above, not
-  avoided.
+- **Session grants fit only pure messaging workers — and this is the
+  resident-identities design, not an accident.** The prior product design
+  (strategy/product/2026-08-12-resident-identities-and-session-grants.md,
+  surfaced by the coordinator 2026-08-17) defines the model this section
+  must align with: one durable **resident identity** per role is rostered
+  and (under this design) AWID-anchored; concurrent session grants act *as*
+  it; external parties see one principal and worker provenance stays
+  private; grants make no fencing claim — two live grants may both act, and
+  any stale-worker fencing belongs to the managed-mode architecture, never
+  to grants or the removal ledger. Consequences reconciled here:
+  worker retirement is grant-revoke-plus-TTL and must never run the
+  `aweb-aauy` principal retirement or touch the resident's certificate;
+  grants create zero roster or certificate churn (reinforcing this
+  section's bound); and principal retirement's commit invalidates every
+  outstanding grant through the issuing-certificate relation — a property
+  the landed `aweb-abfn` check already provides. The current grant scope is
+  messaging-only (the original design illustratively included wider scopes
+  such as task claiming; extending scopes is future design, out of this
+  contract). Any worker that must claim work, hold locks, or appear as
+  itself today needs full membership, with the anchoring cost bounded as
+  above.
 
 ### Roster visibility: the field exists, but reads do not enforce it
 
@@ -151,7 +162,9 @@ honest statement of what each choice means: "private" is a commitment to
 build and enforce the gate; "public" accepts the enumeration described
 above. The coordinator's recommendation (private by default, preserve
 existing values, opt-in to public, backfill never resets visibility) is
-recorded and endorsed. (Supersedes open question 1 below and the earlier
+recorded and endorsed. The resident-identities model keeps this coherent at
+any visibility: readers of a roster see one resident member per role, never
+its session-grant workers, whose provenance is private by design. (Supersedes open question 1 below and the earlier
 claim that the visibility control already gates reads.)
 
 ### What happens to `cloud_agent_certificates`
@@ -335,6 +348,17 @@ implementation:
   the certificate id; the abfn projection refresh already tracks the presented
   certificate on every authenticated request, so enforcement follows
   re-issuance with no new machinery.
+- **Grants inherit expiry (coordinator-recorded invariant, 2026-08-17):**
+  grant authorization must fail when the issuing certificate has expired,
+  not only when it is revoked — a grant minted near certificate expiry must
+  not outlive membership authority merely because its own TTL remains. The
+  verifier check extends the landed `issued_by_certificate_id` relation with
+  an expiry comparison once `expires_at` exists; minting caps the grant's
+  `expires_at` at the parent certificate's (the default chosen here —
+  explicit mid-grant invalidation is the fallback if capping proves
+  operationally awkward, and choosing it must be recorded). Ordinary
+  re-issuance does not disturb live grants: their issuing certificate
+  remains valid-until-expiry unless revoked.
 
 ## Explicitly out of scope, mapped to the eight-point required shape
 
