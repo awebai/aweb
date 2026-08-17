@@ -114,7 +114,8 @@ AWID service and aweb server. The aweb RegistryClient then sends that bearer
 secret in `X-AWID-Service-Token` only to its exact configured home registry;
 it never forwards the credential to a DNS-discovered external registry. AWID
 uses constant-time comparison and exempts a matching credential only from the
-`did_key` and `did_addresses` public-read rate-limit buckets. The credential
+`did_key`, `did_addresses`, and `revocation_list` public-read rate-limit
+buckets. The credential
 does not authorize writes, disclose additional data, or bypass any other
 bucket. Missing credentials use the normal public IP limits. A wrong presented
 credential also uses those limits and emits the stable

@@ -411,7 +411,9 @@ cannot accept a new binding.
 
 When `AWID_SERVICE_TOKEN` is configured, the aweb RegistryClient sends it in
 `X-AWID-Service-Token` only to the exact configured home registry. AWID may use
-it to exempt the `did_key` and `did_addresses` reads from public IP limits. The
+it to exempt the `did_key`, `did_addresses`, and `revocation_list` reads from
+public IP limits; the revocation list is refreshed per team per minute as the
+input to membership enforcement (aweb-abfn/abfp). The
 client never forwards it to DNS-discovered external registries. A missing token
 emits `awid_service_credential_missing` once at aweb startup and uses public
 limits; AWID emits `awid_service_credential_rejected` when a presented token is
