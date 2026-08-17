@@ -215,7 +215,10 @@ carries a second uncontrolled blob store (`aweb.agents.team_cert_blob`) with
 no consistency constraint. The sweep is therefore **registry-classified**:
 decode the certificate ID from every stored blob (both stores), classify each
 against AWID (registered-active / registered-revoked / never-registered),
-then per class: registered rows are left (or cache-synced); never-registered
+then per class (under v2 supersession, "registered-active" covers both
+current and superseded-unexpired certificates — a fourth label worth
+distinguishing in the sweep report, though both are treated identically:
+found, not revoked, left alone): registered rows are left (or cache-synced); never-registered
 rows with a valid blob are registered (then revoked if their member is
 retired); rows whose blob is missing or unusable get their projection deleted
 — blobs are not reliably retained after revocation, so the deletion fallback
@@ -308,7 +311,10 @@ aweb-aaum.9, 2026-08-17):
    currently keys the cloud table by agent UUID as though it were the
    workspace UUID; hosted workspace and agent UUIDs are decoupled. The
    invariant this contract requires: one blob-derived certificate ID carried
-   consistently through workspace `W`, projected agent `A`, and AWID. Fixing
+   consistently through workspace `W`, projected agent `A`, and AWID — under
+   the committed supersession semantics, restated over the member's
+   *current* certificate (see the renewal-semantics commitment in the
+   Expiry section, which owns the precise form). Fixing
    that helper is a prerequisite before the mapping is trusted.
 5. **Migration-017 alignment.** AC paths that create or refresh agent
    projections outside the OSS connect flow (direct-connect, remint, generic
@@ -406,7 +412,15 @@ implementation:
   consistently"). Resolution committed here: the field's meaning becomes
   **the member's current certificate**; the refresh must never overwrite a
   current certificate id with a superseded one (prefer-current rule), and
-  the W ≠ A invariant is restated over the current certificate. Enforcement
+  the W ≠ A invariant is restated over the current certificate. The rule's
+  mechanism is **local-only** (round-12 commitment): the `agents` row also
+  stores the recorded certificate's `issued_at` (one more column in the
+  same migration family), and the refresh prefers the newer `issued_at`,
+  never consulting the registry — a registry read here would silently break
+  the Registry-availability section's no-new-per-request-calls commitment.
+  When the comparison cannot be made confidently (missing timestamp,
+  pre-migration rows), the refresh keeps the existing value — fail-open is
+  correct because this is a consistency rule, not a security check. Enforcement
   verdicts are unaffected either way (neither certificate is revoked), so
   this is a consistency requirement, not a security fix. The rejected
   alternative (atomic cutover, revoke-on-renewal) is retained in history as
