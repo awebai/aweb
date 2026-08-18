@@ -168,6 +168,15 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	memberRef := oldRef
+	if memberRef == nil {
+		memberRef, err = resolveLatestRevokedReissueCertMember(
+			ctx, registry, registryURL, domain, team, teamID, alias, memberDID, teamKey,
+		)
+		if err != nil {
+			return err
+		}
+	}
 
 	scope := awid.IdentityModeLocal
 	if teamReissueCertGlobal {
@@ -175,27 +184,27 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 	}
 	memberDIDAW := strings.TrimSpace(teamReissueCertDIDAW)
 	memberAddress := strings.TrimSpace(teamReissueCertAddress)
-	if oldRef != nil {
-		oldDID := strings.TrimSpace(oldRef.MemberDIDKey)
+	if memberRef != nil {
+		oldDID := strings.TrimSpace(memberRef.MemberDIDKey)
 		if oldDID != "" && oldDID != memberDID {
 			return usageError(
-				"the registered active certificate %s for %s in %s binds member did:key %s, not %s; reissue-cert never changes the member key. For a lost or compromised member key, use `aw team replace-key`",
-				strings.TrimSpace(oldRef.CertificateID), alias, teamID, oldDID, memberDID,
+				"the registered certificate %s for %s in %s binds member did:key %s, not %s; reissue-cert never changes the member key. For a lost or compromised member key, use `aw team replace-key`",
+				strings.TrimSpace(memberRef.CertificateID), alias, teamID, oldDID, memberDID,
 			)
 		}
-		registeredScope := awid.NormalizeIdentityScope(oldRef.IdentityScope)
+		registeredScope := awid.NormalizeIdentityScope(memberRef.IdentityScope)
 		if (teamReissueCertLocal || teamReissueCertGlobal) && scope != registeredScope {
-			return usageError("requested identity scope %q conflicts with the registered active certificate's scope %q; reissue-cert keeps the member's identity scope", scope, registeredScope)
+			return usageError("requested identity scope %q conflicts with the registered certificate history's scope %q; reissue-cert keeps the member's identity scope", scope, registeredScope)
 		}
 		scope = registeredScope
-		if memberDIDAW != "" && memberDIDAW != strings.TrimSpace(oldRef.MemberDIDAW) {
-			return usageError("--did-aw %s does not match the registered active certificate's did:aw %q", memberDIDAW, strings.TrimSpace(oldRef.MemberDIDAW))
+		if memberDIDAW != "" && memberDIDAW != strings.TrimSpace(memberRef.MemberDIDAW) {
+			return usageError("--did-aw %s does not match the registered certificate history's did:aw %q", memberDIDAW, strings.TrimSpace(memberRef.MemberDIDAW))
 		}
-		if memberAddress != "" && memberAddress != strings.TrimSpace(oldRef.MemberAddress) {
-			return usageError("--address %s does not match the registered active certificate's address %q", memberAddress, strings.TrimSpace(oldRef.MemberAddress))
+		if memberAddress != "" && memberAddress != strings.TrimSpace(memberRef.MemberAddress) {
+			return usageError("--address %s does not match the registered certificate history's address %q", memberAddress, strings.TrimSpace(memberRef.MemberAddress))
 		}
-		memberDIDAW = strings.TrimSpace(oldRef.MemberDIDAW)
-		memberAddress = strings.TrimSpace(oldRef.MemberAddress)
+		memberDIDAW = strings.TrimSpace(memberRef.MemberDIDAW)
+		memberAddress = strings.TrimSpace(memberRef.MemberAddress)
 	} else {
 		if scope == awid.IdentityModeLocal && (memberDIDAW != "" || memberAddress != "") {
 			return usageError("--did-aw and --address require --global; local members carry neither")
@@ -355,6 +364,76 @@ func resolveActiveReissueCertMember(
 		return nil, fmt.Errorf("no active certificate is registered for %s in %s, and the team itself could not be read back from the registry: %w; certificate registration requires the team to be registered first", alias, teamID, teamErr)
 	}
 	return nil, nil
+}
+
+// resolveLatestRevokedReissueCertMember recovers the member facts needed by a
+// retry after the previous run revoked the active certificate but failed to
+// register its replacement. The registry history is complete and signed with
+// the team controller key. Only the newest unambiguous record for the exact
+// alias and member key may supply facts; a tie with different facts fails
+// rather than silently changing identity scope or global identity.
+func resolveLatestRevokedReissueCertMember(
+	ctx context.Context,
+	registry *awid.RegistryClient,
+	registryURL, domain, team, teamID, alias, memberDID string,
+	teamKey ed25519.PrivateKey,
+) (*awid.TeamMemberReference, error) {
+	certificates, err := registry.ListCertificates(
+		ctx, registryURL, domain, team, false, teamKey,
+	)
+	if err != nil {
+		if friendly := friendlyTeamReadError(err, teamID, true); friendly != err {
+			return nil, friendly
+		}
+		return nil, fmt.Errorf("read complete certificate history for %s in %s: %w", alias, teamID, err)
+	}
+
+	var selected *awid.RegistryCertificate
+	var selectedIssuedAt time.Time
+	for i := range certificates {
+		candidate := &certificates[i]
+		if strings.TrimSpace(candidate.Alias) != alias ||
+			strings.TrimSpace(candidate.MemberDIDKey) != memberDID ||
+			strings.TrimSpace(candidate.RevokedAt) == "" {
+			continue
+		}
+		issuedAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(candidate.IssuedAt))
+		if err != nil {
+			return nil, fmt.Errorf(
+				"certificate history for %s in %s contains invalid issued_at on %s: %w",
+				alias, teamID, strings.TrimSpace(candidate.CertificateID), err,
+			)
+		}
+		if selected == nil || issuedAt.After(selectedIssuedAt) {
+			selected = candidate
+			selectedIssuedAt = issuedAt
+			continue
+		}
+		if !issuedAt.Equal(selectedIssuedAt) {
+			continue
+		}
+		if awid.NormalizeIdentityScope(candidate.IdentityScope) != awid.NormalizeIdentityScope(selected.IdentityScope) ||
+			strings.TrimSpace(candidate.MemberDIDAW) != strings.TrimSpace(selected.MemberDIDAW) ||
+			strings.TrimSpace(candidate.MemberAddress) != strings.TrimSpace(selected.MemberAddress) {
+			return nil, fmt.Errorf(
+				"certificate history for %s in %s is ambiguous at issued_at %s; pass explicit member facts only after resolving the conflicting registry records",
+				alias, teamID, issuedAt.Format(time.RFC3339Nano),
+			)
+		}
+	}
+	if selected == nil {
+		return nil, nil
+	}
+	return &awid.TeamMemberReference{
+		TeamID:        strings.TrimSpace(selected.TeamID),
+		CertificateID: strings.TrimSpace(selected.CertificateID),
+		MemberDIDKey:  strings.TrimSpace(selected.MemberDIDKey),
+		MemberDIDAW:   strings.TrimSpace(selected.MemberDIDAW),
+		MemberAddress: strings.TrimSpace(selected.MemberAddress),
+		Alias:         strings.TrimSpace(selected.Alias),
+		IdentityScope: awid.NormalizeIdentityScope(selected.IdentityScope),
+		IssuedAt:      strings.TrimSpace(selected.IssuedAt),
+	}, nil
 }
 
 // preflightReissueCertMemberHome verifies the member home records this

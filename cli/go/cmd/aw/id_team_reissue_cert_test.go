@@ -132,6 +132,29 @@ func (f *fakeReissueRegistry) handler() http.Handler {
 				"team_id": "backend:acme.com", "domain": "acme.com", "name": "backend",
 				"team_did_key": "did:key:team", "visibility": "private", "created_at": "2026-08-01T00:00:00Z",
 			})
+		case r.Method == http.MethodGet && r.URL.Path == base+"/certificates":
+			f.calls = append(f.calls, "list-certificates")
+			activeOnly := r.URL.Query().Get("active_only") == "true"
+			certificates := make([]map[string]any, 0, len(f.certs))
+			for _, cert := range f.certs {
+				if activeOnly && cert.Revoked {
+					continue
+				}
+				revokedAt := ""
+				if cert.Revoked {
+					revokedAt = "2026-08-02T00:00:00Z"
+				}
+				certificates = append(certificates, map[string]any{
+					"team_id": "backend:acme.com", "certificate_id": cert.CertificateID,
+					"member_did_key": cert.MemberDIDKey, "member_did_aw": cert.MemberDIDAW,
+					"member_address": cert.MemberAddress, "alias": cert.Alias,
+					"identity_scope": cert.IdentityScope, "issued_at": cert.IssuedAt,
+					"revoked_at": revokedAt,
+				})
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"certificates": certificates, "has_more": false,
+			})
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, base+"/members/"):
 			alias := strings.TrimPrefix(r.URL.Path, base+"/members/")
 			f.calls = append(f.calls, "resolve:"+alias)
@@ -310,7 +333,7 @@ func TestTeamReissueCertNeverRegisteredRegistersWithoutRevoke(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("runTeamReissueCert: %v", runErr)
 	}
-	if got := strings.Join(fake.snapshotCalls(), ","); got != "resolve:alice,get-team,register" {
+	if got := strings.Join(fake.snapshotCalls(), ","); got != "resolve:alice,get-team,list-certificates,register" {
 		t.Fatalf("registry calls=%q; a never-registered alias must register without any revoke", got)
 	}
 	certs := fake.snapshotCerts()
@@ -370,6 +393,75 @@ func TestTeamReissueCertRerunAfterCrashBetweenRevokeAndRegister(t *testing.T) {
 	}
 	if revokes != 1 {
 		t.Fatalf("revoke calls=%d; the re-run must find no active certificate and register only", revokes)
+	}
+}
+
+func TestTeamReissueCertGlobalRerunRecoversFactsAfterRevokeAndRegisterFailure(t *testing.T) {
+	fake, server := newReissueCertFakeRegistry(t)
+	seedReissueCertController(t, server.URL)
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	fake.certs = append(fake.certs, &fakeReissueRegistryCert{
+		CertificateID: "cert-old-global", MemberDIDKey: memberDID,
+		MemberDIDAW: "did:aw:alice", MemberAddress: "acme.com/alice",
+		Alias: "alice", IdentityScope: awid.IdentityModeGlobal,
+		IssuedAt: "2026-08-01T00:00:00Z",
+	})
+	fake.failNextRegister = true
+	teamReissueCertDID = memberDID
+
+	if err := runTeamReissueCert(nil, []string{"alice"}); err == nil {
+		t.Fatal("expected the simulated failure after revocation")
+	}
+	if fake.activeCertForAlias("alice") != nil {
+		t.Fatal("failed first run must leave no active certificate")
+	}
+
+	if err := runTeamReissueCert(nil, []string{"alice"}); err != nil {
+		t.Fatalf("re-run after partial global reissue: %v", err)
+	}
+	fresh := fake.activeCertForAlias("alice")
+	if fresh == nil || fresh.IdentityScope != awid.IdentityModeGlobal ||
+		fresh.MemberDIDAW != "did:aw:alice" || fresh.MemberAddress != "acme.com/alice" {
+		t.Fatalf("re-run must preserve the revoked global certificate facts: %+v", fresh)
+	}
+}
+
+func TestTeamReissueCertRefusesAmbiguousNewestRevokedMemberFacts(t *testing.T) {
+	fake, server := newReissueCertFakeRegistry(t)
+	seedReissueCertController(t, server.URL)
+	memberPub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	for _, cert := range []*fakeReissueRegistryCert{
+		{
+			CertificateID: "cert-global", MemberDIDKey: memberDID,
+			MemberDIDAW: "did:aw:alice", MemberAddress: "acme.com/alice",
+			Alias: "alice", IdentityScope: awid.IdentityModeGlobal,
+			IssuedAt: "2026-08-01T00:00:00Z", Revoked: true,
+		},
+		{
+			CertificateID: "cert-local", MemberDIDKey: memberDID,
+			Alias: "alice", IdentityScope: awid.IdentityModeLocal,
+			IssuedAt: "2026-08-01T00:00:00Z", Revoked: true,
+		},
+	} {
+		fake.certs = append(fake.certs, cert)
+	}
+	teamReissueCertDID = memberDID
+
+	err = runTeamReissueCert(nil, []string{"alice"})
+	if err == nil || !strings.Contains(err.Error(), "certificate history") ||
+		!strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("expected ambiguous history refusal, got %v", err)
+	}
+	if fake.activeCertForAlias("alice") != nil {
+		t.Fatal("ambiguous history must not register a replacement")
 	}
 }
 
