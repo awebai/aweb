@@ -4,8 +4,9 @@ Status: **CONTRACT — implementation authorized (Juan, 2026-08-17: "yes go
 ahead, also do the implementation"). The hosted roster-visibility default is
 ruled: private by default, every existing team keeps its current value,
 public is an explicit controller/admin opt-in, and the backfill never
-resets visibility — read-side enforcement is committed as an epic task so
-that private will be a fact, not a label. The registry-outage grace is adopted. Implementation is
+resets visibility. Read-side enforcement is implemented, including the trusted
+same-operator service credential used for private verification reads. The
+registry-outage grace is adopted. Implementation is
 tracked as an epic with per-repo tasks.** Sixteen adversarial review rounds
 plus the AC inventory are incorporated. Certificate expiry, and everything
 that existed only to serve it, was **removed from this design by owner
@@ -112,11 +113,13 @@ ceiling:
   (future design) or a retention policy, neither of which this contract
   commits to.
 - **Complete enumeration scales on the read side.** The `aweb-abfo` cursor
-  pagination handles arbitrarily large lists correctly, and clients can
-  refresh incrementally via the route's `since` parameter (the Python
-  client currently re-pulls fully — an implementation item). This is a
-  claim about clients handling the list, not about the list staying
-  small.
+  pagination handles arbitrarily large lists correctly. The Python verifier
+  deliberately re-pulls the complete paginated revocation set: `revoked_at`
+  is a transaction-start timestamp, not a commit-order cursor, so an
+  incremental high-water mark can miss a late commit after a row-lock wait.
+  Incremental refresh remains deferred until the protocol exposes a durable
+  monotonic resume cursor. This is a claim about clients handling the list,
+  not about the list staying small.
 - **Session grants fit only pure messaging workers — and this is the
   resident-identities design, not an accident.** The prior product design
   (strategy/product/2026-08-12-resident-identities-and-session-grants.md)
@@ -133,44 +136,25 @@ ceiling:
   worker that must claim work, hold locks, or appear as itself needs full
   membership.
 
-### Roster visibility: the field exists, but reads do not enforce it
+### Roster visibility: read enforcement is implemented
 
-A code check (2026-08-17, prompted by Juan's direct question) corrected an
-assumption earlier versions of this section made: the registry stores a
-`visibility` field with a controller-signed setter, but **no read route
-enforces it**. Today, anonymously and regardless of visibility, rate limits
-permitting: teams in a domain are enumerable (`GET /teams`), a team's
-existence and public key are readable, its certificate **metadata** —
-aliases, member keys, and for global members their `did:aw` and address —
-is listable, individual members are resolvable by alias, and revocations are
-listable. Only the signed certificate **blob** fetch requires
-authentication. BYOT teams live with this exposure now; anchoring would
-extend it to hosted teams' local members.
+The registry stores controller-set visibility and now enforces it across team
+metadata, domain enumeration, certificate history, member lookup, and
+revocations. Public teams remain anonymously readable. Private-team reads
+require a controller or unrevoked-member path signature, or the configured
+trusted same-operator service credential. That credential is a confidential
+private-roster read capability used by server-side verification and
+reconciliation; it is not merely a rate-limit exemption, grants no write
+authority, and the registry client sends it only to its exact configured home
+registry. An unconfigured service must sign with a same-team key or fail the
+private read rather than bypass visibility. BYOT CLI reads sign with available
+team credentials.
 
-Consequently a "private by default" ruling is only meaningful if this design
-also delivers **read-side visibility enforcement**: for a private team, the
-certificate/member/revocation reads (and the team's appearance in domain
-enumeration) require a same-team certificate-authenticated caller or the
-trusted-service token — machinery both already existing (the blob fetch's
-path-signature scheme; the abfp exemption). The abfn enforcement path is
-unaffected where `AWID_SERVICE_TOKEN` is configured (the server's registry
-client sends it end to end, verified); an UNCONFIGURED deployment that marks
-a team private would lock its own enforcement traffic out of that team's
-revocations once the gate exists — the same unconfigured-token population
-the abfp rate-limit round already flagged, and one more reason the token
-setup belongs in the deployment checklist. BYOT CLI reads
-(`aw team agent-status`, `aw id team members`) would need to sign their
-requests for private teams — an OSS-side deliverable added to the repo
-split. The default is **ruled (Juan, 2026-08-17): private by
-default**, every existing team keeps its current value, public is an
-explicit controller/admin opt-in, and the backfill never resets
-visibility — adopting the coordinator's recommendation, with the honest
-statement of what the ruling commits us to: "private" is a commitment to
-build and enforce the read-side gate above, and that gate is now an epic
-task, not an open question. The resident-identities model keeps this coherent at
-any visibility: readers of a roster see one resident member per role, never
-its session-grant workers, whose provenance is private by design. (Supersedes open question 1 below and the earlier
-claim that the visibility control already gates reads.)
+The default is **ruled (Juan, 2026-08-17): private by default**. Every existing
+team keeps its current value, public is an explicit controller/admin opt-in,
+and the backfill never resets visibility. The resident-identities model keeps
+this coherent at any visibility: roster readers see one resident member per
+role, never its session-grant workers, whose provenance is private by design.
 
 ### What happens to `cloud_agent_certificates`
 
@@ -250,8 +234,9 @@ remainder were genuine per-request transients with green health. Two
 structural changes since then bound the exposure: registry reads on auth
 paths ride the Redis-backed cache (fresh 60s, stale-while-revalidate to
 120s, cache survives restarts), so a transient blip during a cache window
-does not surface at all and a failed background refresh silently serves
-stale; and error classes are distinct. This design adds **no new
+does not surface at all and a failed background refresh serves stale with a
+warning naming the team, data age, and failure; error classes are distinct.
+This design adds **no new
 per-request registry calls**: mint-time registration is non-blocking
 (pending state), commit-time revocation is ledger-retryable, and enforcement
 widens which requests consult the *cached* state, not how often the network

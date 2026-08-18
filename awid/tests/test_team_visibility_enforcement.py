@@ -240,11 +240,13 @@ async def test_private_team_service_token_reads(service_client, controller_ident
     team_key, team_did, _ = await _create_team(service_client, ns_key, ns_did, domain, "ops")
     _, _, cert_id = await _register_member(service_client, team_key, team_did, domain, "ops", "alice")
     await _revoke_member(service_client, team_key, team_did, domain, "ops", cert_id)
+    await _register_member(service_client, team_key, team_did, domain, "ops", "bob")
 
     token_headers = {"X-AWID-Service-Token": SERVICE_TOKEN}
     for path in (
         f"/v1/namespaces/{domain}/teams/ops",
         f"/v1/namespaces/{domain}/teams/ops/certificates",
+        f"/v1/namespaces/{domain}/teams/ops/members/bob",
         f"/v1/namespaces/{domain}/teams/ops/revocations",
     ):
         resp = await service_client.get(path, headers=token_headers)

@@ -371,7 +371,7 @@ that backend. The internal client builder has an uncached fallback for direct
 library/testing use, but no standard server startup mode omits Redis; operators
 must plan around the cache policy below.
 
-The cached client applies the same policy to the two team-auth inputs:
+The cached client applies separate policies to the two team-auth inputs:
 
 - **Team metadata** from
   `GET /v1/namespaces/{domain}/teams/{name}` supplies the current
@@ -380,20 +380,22 @@ The cached client applies the same policy to the two team-auth inputs:
   `GET /v1/namespaces/{domain}/teams/{name}/revocations` supplies revoked
   certificate ids.
 
-Both entries are fresh for **600 seconds (10 minutes)** and remain available
-for one additional **600-second stale-while-revalidate window**. A read during
-that second window returns the stale value and schedules a background refresh.
-After 1,200 seconds the Redis entry has expired; the request performs a
-synchronous AWID read, and a failed read follows the route's fail-closed/error
-behavior. These values come from `_TEAM_METADATA_CACHE_TTL_SECONDS`,
+Team metadata is fresh for **600 seconds (10 minutes)** and remains available
+for one additional 600-second stale-while-revalidate window. Revocations are
+fresh for **60 seconds** and have one additional 60-second stale window. A read
+during a stale window returns the stale value and schedules a background
+refresh. Revocation refresh always fetches the complete paginated set: the
+registry's timestamp-only `since` parameter is not a safe commit cursor because
+PostgreSQL timestamps a transaction before a possible row-lock wait. These
+values come from `_TEAM_METADATA_CACHE_TTL_SECONDS`,
 `_TEAM_REVOCATIONS_CACHE_TTL_SECONDS`, and `_STALE_MULTIPLIER` in
 `awid/src/awid/registry.py`. The checked source facts are:
 
 <!-- BEGIN SOURCE INVENTORY: aweb-awid-cache -->
 - `team_metadata_fresh_seconds=600`
 - `team_metadata_stale_seconds=600`
-- `team_revocations_fresh_seconds=600`
-- `team_revocations_stale_seconds=600`
+- `team_revocations_fresh_seconds=60`
+- `team_revocations_stale_seconds=60`
 <!-- END SOURCE INVENTORY: aweb-awid-cache -->
 
 Identity-only auth uses separate Redis entries for the current `did:aw` key and
@@ -411,14 +413,19 @@ cannot accept a new binding.
 
 When `AWID_SERVICE_TOKEN` is configured, the aweb RegistryClient sends it in
 `X-AWID-Service-Token` only to the exact configured home registry. AWID may use
-it to exempt the `did_key`, `did_addresses`, and `revocation_list` reads from
-public IP limits; the revocation list is refreshed per team per minute as the
-input to membership enforcement (aweb-abfn/abfp). The
-client never forwards it to DNS-discovered external registries. A missing token
-emits `awid_service_credential_missing` once at aweb startup and uses public
-limits; AWID emits `awid_service_credential_rejected` when a presented token is
-wrong. Operators count those stable events through log/Sentry telemetry.
-Rotating this shared secret is a coordinated two-service configuration change.
+it as a confidential same-operator read capability for private-team metadata,
+enumeration, certificate history, member references, and revocations. This is
+how server-side membership verification and reconciliation read a private team
+without possessing a member key. The credential authorizes no write. It also
+exempts the `did_key`, `did_addresses`, and `revocation_list` reads from public
+IP limits; the revocation list is refreshed per team per minute as the input to
+membership enforcement (aweb-abfn/abfp). The client never forwards it to
+DNS-discovered external registries. A missing token emits
+`awid_service_credential_missing` once at aweb startup and uses normal
+visibility/rate-limit rules; AWID emits `awid_service_credential_rejected` when
+a presented token is wrong. Operators count those stable events through
+log/Sentry telemetry. Rotating this shared secret is a coordinated two-service
+configuration change.
 
 **Team-key rotation.** AWID rotates a team key at
 `POST /v1/namespaces/{domain}/teams/{name}/rotate`. With the Redis cache, aweb
@@ -428,9 +435,11 @@ new key fail closed until refresh. Deleting that team's exact metadata and
 revocation cache entries is the operator's immediate invalidation mechanism;
 this contract does not promise a broad key-prefix flush command.
 
-**Revocation.** A newly revoked certificate may continue to verify for up to
-the same 20-minute maximum. This cache window is the only supported timing
-claim; no narrower refresh interval is promised.
+**Revocation.** Against an honest, available registry, a newly revoked
+certificate may continue to verify for at most the 120-second fresh-plus-stale
+window. During a registry failure only, the revocation tier may serve the last
+known set while its data is at most 15 minutes old, with warning telemetry; it
+then fails closed. The outage grace is not a normal refresh interval.
 
 ---
 
@@ -1303,9 +1312,10 @@ GET /v1/namespaces/{domain}/teams/{name}/revocations
 → { "revocations": [{ "certificate_id": "uuid", "revoked_at": "..." }] }
 ```
 
-The current aweb registry client fetches the complete revocation set; it does
-not send the endpoint's optional `since` parameter. Cache TTL is the same as
-team metadata; see [Caching from awid](#caching-from-awid) above.
+The current aweb registry client fetches the complete paginated revocation set
+and does not send the endpoint's optional `since` parameter. Its cache policy is
+the revocation-specific 60-second fresh plus 60-second stale window described
+in [Caching from awid](#caching-from-awid) above.
 
 Dashboard reads use cached awid visibility:
 

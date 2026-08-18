@@ -104,21 +104,28 @@ envelope (`docs/team-auth-envelope-v2.md`), and the hosted deployment pattern
 interchangeable; see the per-endpoint signed payload examples below for each
 operation's exact envelope shape.
 
-Public read endpoints (`GET /v1/namespaces/{domain}`,
-`GET /v1/did/{did_aw}/key`, team metadata, revocations, etc.) are rate-limited
-and do not require signatures. Identity-private reads and certificate-blob fetch
-have their separately documented authentication requirements.
+Public identity and namespace read endpoints (`GET /v1/namespaces/{domain}`,
+`GET /v1/did/{did_aw}/key`, etc.) are rate-limited and do not require
+signatures. Team reads follow team visibility: public teams are anonymous;
+private-team metadata, enumeration, certificate history, member lookup, and
+revocations require a controller or unrevoked-member path signature, or the
+trusted same-operator service credential described below. Identity-private
+reads and certificate-blob fetch have their separately documented
+authentication requirements.
 
 An operator may configure the same high-entropy `AWID_SERVICE_TOKEN` on its
 AWID service and aweb server. The aweb RegistryClient then sends that bearer
 secret in `X-AWID-Service-Token` only to its exact configured home registry;
 it never forwards the credential to a DNS-discovered external registry. AWID
-uses constant-time comparison and exempts a matching credential only from the
-`did_key`, `did_addresses`, and `revocation_list` public-read rate-limit
-buckets. The credential
-does not authorize writes, disclose additional data, or bypass any other
-bucket. Missing credentials use the normal public IP limits. A wrong presented
-credential also uses those limits and emits the stable
+uses constant-time comparison. A matching credential is a confidential
+same-operator read capability: it may read and enumerate private-team metadata,
+certificate history, member references, and revocations so the aweb server can
+verify and reconcile memberships without holding every member key. It also
+exempts the `did_key`, `did_addresses`, and `revocation_list` read buckets from
+public-IP rate limits. It never authorizes a write, and must not be shared with
+clients or sent to a discovered external registry. Missing credentials use the
+normal visibility and public-IP rules. A wrong presented credential grants no
+private read access, uses those limits, and emits the stable
 `awid_service_credential_rejected` telemetry event without logging the secret.
 
 ---
@@ -411,7 +418,9 @@ POST   /v1/namespaces/{domain}/teams
 
 GET    /v1/namespaces/{domain}/teams
        List teams in namespace.
-       Auth: none (public).
+       Auth: none returns public teams only. A controller or unrevoked-member
+             path signature, or the trusted same-operator service credential,
+             also returns private teams visible to that authority.
        Response: { "teams": [{ "name": "backend",
                    "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
@@ -419,9 +428,10 @@ GET    /v1/namespaces/{domain}/teams
 
 GET    /v1/namespaces/{domain}/teams/{name}
        Get team details.
-       Auth: none (public). Services call this to get the team
-       public key and visibility metadata for certificate verification
-       and dashboard auth.
+       Auth: none for a public team. A private team requires its controller or
+             unrevoked-member path signature, or the trusted same-operator
+             service credential. Services call this to get the team public key
+             and visibility metadata for certificate verification.
        Response: { "team_id": "backend:acme.com", "domain": "acme.com",
                    "name": "backend", "display_name": "Backend Team",
                    "team_did_key": "did:key:z6Mk...",
@@ -478,7 +488,7 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
 
 GET    /v1/namespaces/{domain}/teams/{name}/certificates
        List issued certificates (active and revoked).
-       Auth: none (public).
+       Auth: none for a public team; private-team read authority as above.
        Query params: active_only (boolean), since (timestamp)
        Response: { "certificates": [{
                    "team_id": "backend:acme.com",
@@ -497,7 +507,7 @@ GET    /v1/namespaces/{domain}/teams/{name}/members/{alias}
        Resolve an active team-member reference. The path segment is the
        member name; it is called alias in the current wire path for
        compatibility.
-       Auth: none (public).
+       Auth: none for a public team; private-team read authority as above.
        Response: { "team_id": "backend:acme.com",
                    "certificate_id": "uuid",
                    "member_did_key": "did:key:z6Mk...",
@@ -518,7 +528,8 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates/revoke
 
 GET    /v1/namespaces/{domain}/teams/{name}/revocations
        List revoked certificates only.
-       Auth: none (public). Services cache this.
+       Auth: none for a public team; private-team read authority as above.
+             Services cache this.
        Query params: since (timestamp, optional — for incremental sync)
        Response: { "revocations": [{ "certificate_id": "uuid",
                    "revoked_at": "..." }] }
