@@ -10,7 +10,7 @@ import logging
 from json import loads as json_loads
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
 
@@ -88,36 +88,6 @@ _TEAM_REVOCATIONS_CACHE_TTL_SECONDS = 60
 # expiry; Redis merely retains revocation entries long enough for the grace to
 # be decidable.
 _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS = 15 * 60
-# Incremental refresh (aweb-abfs.6). The revocation list grows monotonically
-# with no ceiling — task-scoped full-member instances turn worker churn into
-# membership churn — so refetching the whole list every TTL does not scale. A
-# refresh instead asks for entries at/after a stored high-water mark and unions
-# them into the cached set.
-#
-# The route's `since` filter is strictly `revoked_at > since`, and its resume
-# cursor is the composite (revoked_at, id) — but `id` is not in the response
-# body, so a client cannot reconstruct that cursor from what it received. The
-# client therefore rewinds the mark by this overlap and relies on set union to
-# absorb the re-read rows. The overlap must cover two things: (a) rows sharing
-# the mark's exact revoked_at, which a `>` filter at the mark would skip, and
-# (b) rows committed after our read but stamped earlier, since revoke_certificate
-# writes revoked_at = NOW() (transaction start time) — so a revoke transaction
-# would have to run longer than this to escape the window, which a single-row
-# UPDATE cannot. One TTL's worth is far more than either needs and costs a few
-# re-read rows.
-_TEAM_REVOCATIONS_INCREMENTAL_OVERLAP_SECONDS = 60
-# ... and no matter how well the increment works, resync the whole list this
-# often so drift can never accumulate silently. Bounded by the outage grace: the
-# grace is already the longest window over which this tier may act on data that
-# is not current, so any divergence is corrected within a window the trust model
-# has accepted. Cost is one full page-through per team per 15 minutes instead of
-# per 60 seconds, with the 60s enforcement latency untouched.
-_TEAM_REVOCATIONS_FULL_RESYNC_SECONDS = 15 * 60
-# Cache-payload field holding the incremental-refresh bookkeeping. It sits
-# beside "value" rather than inside it, so an entry written by a client that
-# never heard of incremental refresh decodes exactly as before — and reads back
-# with no mark, which is the "degrade to a full refetch" case.
-_REVOCATIONS_SYNC_FIELD = "revocations_sync"
 _TEAM_CERTIFICATES_CACHE_TTL_SECONDS = 10 * 60  # 10 minutes
 # Keep stale entries for one additional TTL window so callers can get
 # stale-while-revalidate behavior instead of taking a hard miss immediately.
@@ -150,17 +120,6 @@ class _RevocationScan:
     team_missing: bool
 
 
-@dataclass(frozen=True)
-class _CachedRevocations:
-    """A revocation set plus the bookkeeping that lets the next read be
-    incremental. Written to the cache entry as one unit, so the set and the mark
-    that describes it can never be stored out of step with each other."""
-
-    certificate_ids: set[str]
-    high_water_mark: str | None
-    full_sync_at: int
-
-
 def _parse_revoked_at(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value:
         return None
@@ -171,60 +130,6 @@ def _parse_revoked_at(value: Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
-
-
-def _advanced_high_water_mark(existing: str | None, newest: datetime | None) -> str | None:
-    """The later of a stored mark and a scan's newest timestamp.
-
-    Never moves the mark backwards: an incremental scan that returns nothing new
-    leaves it exactly where it was.
-    """
-    candidates = [
-        value
-        for value in (_parse_revoked_at(existing), newest)
-        if value is not None
-    ]
-    if not candidates:
-        return None
-    return max(candidates).isoformat()
-
-
-def _revocations_since_parameter(high_water_mark: str) -> str | None:
-    """The `since` value that reads the tail of the list from a mark.
-
-    Rewound by the overlap because the route filters `revoked_at > since`:
-    asking at the mark itself would skip every entry sharing that timestamp,
-    and the composite (revoked_at, id) cursor that would express "at the mark,
-    after this row" cannot be built by a client — the route does not return
-    `id`. Re-reading the overlap is harmless because the caller unions.
-    """
-    parsed = _parse_revoked_at(high_water_mark)
-    if parsed is None:
-        return None
-    rewound = parsed - timedelta(seconds=_TEAM_REVOCATIONS_INCREMENTAL_OVERLAP_SECONDS)
-    return rewound.isoformat()
-
-
-def _revocations_sync_state(entry: dict[str, Any] | None) -> tuple[str | None, int | None]:
-    """Read the incremental bookkeeping out of a cache entry.
-
-    Anything missing, mistyped or unparseable reads as absent, which is the
-    signal to refetch the whole list. Correctness never depends on this field
-    being present or well-formed.
-    """
-    if entry is None:
-        return None, None
-    payload = entry.get("payload")
-    sync = payload.get(_REVOCATIONS_SYNC_FIELD) if isinstance(payload, dict) else None
-    if not isinstance(sync, dict):
-        return None, None
-    mark = sync.get("high_water_mark")
-    if not isinstance(mark, str) or _parse_revoked_at(mark) is None:
-        mark = None
-    full_sync_at = sync.get("full_sync_at")
-    if isinstance(full_sync_at, bool) or not isinstance(full_sync_at, int):
-        full_sync_at = None
-    return mark, full_sync_at
 
 
 @dataclass(frozen=True)
@@ -976,15 +881,43 @@ class RegistryClient:
         name: str,
         *,
         active_only: bool = True,
+        signing_key: bytes | None = None,
     ) -> list[TeamCertificate]:
         active_only_value = "true" if active_only else "false"
-        path = f"/v1/namespaces/{domain}/teams/{name}/certificates?active_only={active_only_value}"
-        data = await self._request_json(
-            "GET",
-            path,
-            registry_url=await self._registry_url_for_domain(domain),
+        base_path = f"/v1/namespaces/{domain}/teams/{name}/certificates"
+        registry_url = await self._registry_url_for_domain(domain)
+        headers = (
+            self._signed_path_headers("GET", base_path, signing_key)
+            if signing_key is not None
+            else None
         )
-        return [_team_certificate_from_json(item) for item in data.get("certificates", [])]
+        certificates: list[TeamCertificate] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while True:
+            query = f"active_only={active_only_value}&limit=200"
+            if cursor is not None:
+                query += f"&cursor={quote(cursor, safe='')}"
+            data = await self._request_json(
+                "GET",
+                f"{base_path}?{query}",
+                headers=headers,
+                registry_url=registry_url,
+            )
+            certificates.extend(
+                _team_certificate_from_json(item)
+                for item in data.get("certificates", [])
+            )
+            if not data.get("has_more"):
+                return certificates
+            next_cursor = str(data.get("next_cursor") or "").strip()
+            if not next_cursor or next_cursor in seen_cursors:
+                raise RegistryError(
+                    "AWID certificate pagination did not advance",
+                    status_code=502,
+                )
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
 
     async def register_team_certificate(
         self,
@@ -1441,17 +1374,14 @@ class CachedRegistryClient(RegistryClient):
         retention_seconds = ttl_seconds + _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
 
         cached = await self._read_cache_entry(cache_key, decode=lambda payload: set(payload))
-        # Every refresh below — foreground or background — goes through this one
-        # fetcher, so the incremental/full decision, the union and the mark are
-        # made in exactly one place, against the entry read here.
-        fetcher = lambda: self._refresh_team_revocations(domain, name, cached=cached)
-        encode = lambda value: sorted(value.certificate_ids)
-        extra_from_value = lambda value: {
-            _REVOCATIONS_SYNC_FIELD: {
-                "high_water_mark": value.high_water_mark,
-                "full_sync_at": value.full_sync_at,
-            }
-        }
+        # Refresh the complete paginated set. A timestamp-only high-water mark
+        # cannot safely order commits: PostgreSQL NOW() is transaction-start
+        # time, so a revocation that waited on a row lock can commit after our
+        # read with an older timestamp and be missed by an incremental `since`.
+        fetcher = lambda: super(CachedRegistryClient, self).get_team_revocations(
+            domain, name
+        )
+        encode = lambda value: sorted(value)
         cached_age: int | None = None
         if cached is not None:
             fetched_at = _cache_entry_fetched_at(cached, ttl_seconds)
@@ -1480,7 +1410,6 @@ class CachedRegistryClient(RegistryClient):
                     encode=encode,
                     retention_seconds=retention_seconds,
                     on_failure=_on_refresh_failure,
-                    extra_from_value=extra_from_value,
                 ):
                     return cached["value"]
 
@@ -1516,70 +1445,8 @@ class CachedRegistryClient(RegistryClient):
             ttl_seconds=ttl_seconds,
             encode=encode,
             retention_seconds=retention_seconds,
-            extra_from_value=extra_from_value,
         )
-        return set(fresh_value.certificate_ids)
-
-    async def _refresh_team_revocations(
-        self,
-        domain: str,
-        name: str,
-        *,
-        cached: dict[str, Any] | None,
-    ) -> _CachedRevocations:
-        """Produce the team's current revocation set, incrementally when safe.
-
-        Incremental means: read only entries at/after the stored high-water
-        mark and union them into the cached set. That is sound because
-        revocations are append-only at the registry — revoke_certificate only
-        ever stamps revoked_at on a row where it is NULL, nothing clears it, and
-        the only DELETEs are team/namespace deletion, after which this route
-        404s. So a union can never carry a stale membership decision that a full
-        refetch would have dropped.
-
-        Every way this can go wrong degrades to a full refetch: no cached entry,
-        no mark, an unparseable mark, an unparseable full-sync timestamp, a mark
-        older than the resync bound, a 404, or a page whose entries carry no
-        usable revoked_at. None of them can produce a shrunken set.
-        """
-        now = _cache_now()
-        high_water_mark, full_sync_at = _revocations_sync_state(cached)
-        since = (
-            _revocations_since_parameter(high_water_mark)
-            if high_water_mark is not None
-            else None
-        )
-        if (
-            cached is not None
-            and since is not None
-            and full_sync_at is not None
-            and now - full_sync_at < _TEAM_REVOCATIONS_FULL_RESYNC_SECONDS
-        ):
-            scan = await self._scan_team_revocations(domain, name, since=since)
-            if not scan.team_missing and scan.entries_all_timestamped:
-                return _CachedRevocations(
-                    certificate_ids=set(cached["value"]) | scan.certificate_ids,
-                    high_water_mark=_advanced_high_water_mark(
-                        high_water_mark, scan.newest_revoked_at
-                    ),
-                    # Carried forward, never restamped: the whole point of the
-                    # bound is that a run of incremental refreshes cannot keep
-                    # deferring the full one.
-                    full_sync_at=full_sync_at,
-                )
-            # The increment is not trustworthy (team gone, or an entry we cannot
-            # place on the timeline). Resync rather than build on it.
-
-        scan = await self._scan_team_revocations(domain, name)
-        return _CachedRevocations(
-            certificate_ids=scan.certificate_ids,
-            high_water_mark=(
-                _advanced_high_water_mark(None, scan.newest_revoked_at)
-                if scan.entries_all_timestamped
-                else None
-            ),
-            full_sync_at=now,
-        )
+        return set(fresh_value)
 
     async def list_team_certificates(
         self,
@@ -1587,6 +1454,7 @@ class CachedRegistryClient(RegistryClient):
         name: str,
         *,
         active_only: bool = True,
+        signing_key: bytes | None = None,
     ) -> list[TeamCertificate]:
         # This tier is security-relevant: the server's staged existence check
         # (AWEB_REQUIRE_REGISTERED_CERTIFICATES) reads through it on every
@@ -1610,7 +1478,10 @@ class CachedRegistryClient(RegistryClient):
             cache_key=self._team_certificates_cache_key(domain, name, active_only=active_only),
             ttl_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
             fetcher=lambda: super(CachedRegistryClient, self).list_team_certificates(
-                domain, name, active_only=active_only
+                domain,
+                name,
+                active_only=active_only,
+                signing_key=signing_key,
             ),
             encode=lambda value: [_team_certificate_to_json(item) for item in value],
             decode=lambda payload: [_team_certificate_from_json(item) for item in payload],
