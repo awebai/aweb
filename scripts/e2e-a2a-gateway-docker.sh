@@ -254,6 +254,7 @@ AWEB_LOG_JSON=true
 AWID_LOG_JSON=true
 AWID_RATE_LIMIT_BACKEND=redis
 AWID_RATE_LIMIT_DISABLED=1
+AWID_SERVICE_TOKEN=aweb-a2a-gateway-e2e-service-token-32-bytes
 AWID_SKIP_DNS_VERIFY=1
 EOF
 docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up --build -d

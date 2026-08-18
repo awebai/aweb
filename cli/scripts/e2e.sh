@@ -9,10 +9,10 @@
 # Usage:
 #   ./cli/scripts/e2e.sh            (or: make -C cli e2e)
 #
-# Requires Docker and the sibling ../library + ../blueprints checkouts. The
-# stack script auto-resolves those even from a git worktree, so no manual env
-# vars are needed; override with LIBRARY_E2E_LIBRARY_CONTEXT /
-# LIBRARY_E2E_BLUEPRINT_SRC if your layout differs.
+# Requires Docker. The stack uses the committed naapp/library source and
+# aweb.team fixture, so no sibling checkout is needed; override with
+# LIBRARY_E2E_LIBRARY_CONTEXT / LIBRARY_E2E_BLUEPRINT_SRC to test another
+# checked-out input.
 #
 # Environment overrides:
 #   LIBRARY_E2E_AWID_PORT     awid host port    (default: 18010)

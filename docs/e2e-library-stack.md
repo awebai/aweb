@@ -14,7 +14,7 @@ brings up, from source, on one Docker network:
 | redis    | `redis:7`         | (internal only)     | 6379         |
 | awid     | `awid/Dockerfile` | 18010               | 8010         |
 | aweb     | `server/Dockerfile` | 18000             | 8000         |
-| library  | `../library/Dockerfile` | 18765         | 8765         |
+| library  | `naapp/library/Dockerfile` | 18765      | 8765         |
 
 It then **seeds** the current `aweb.team` catalog blueprint into Library over
 real AWID team-certificate auth, so the materializer is exercised against the
@@ -25,38 +25,17 @@ This harness contains postgres + redis + AWID + OSS aweb + Library. Hosted
 service infrastructure and hosted controller-key flows are not part of this
 compose or prerequisites for using it.
 
-## Cross-repo dependencies
+## Versioned inputs
 
-This harness depends on two checkouts sitting beside the aweb repo:
+The harness builds Library from `naapp/library` and seeds its committed
+`naapp/library/test-vectors/blueprints/team` aweb.team fixture. All inputs are
+therefore in the same checkout as awid and aweb (`context: .`), and the local
+release gate records one clean exact source SHA for the complete journey.
 
-- **`../library`** — the Library service. It is the build context for the
-  `library` service. Override with `LIBRARY_E2E_LIBRARY_CONTEXT`.
-- **`../blueprints/team`** — the `aweb.team` blueprint from the selected
-  checkout that the seed publishes into Library. Override with
-  `LIBRARY_E2E_BLUEPRINT_SRC`.
-
-The clean local-Docker release gate records the exact commit and requires a
-clean working tree for each sibling input before it starts. Pull-request CI
-checks out the current public default branches without stale fixed pins.
-
-The expected layout is the standard sibling checkout:
-
-```
-prj/awebai/
-├── aweb/        <- this repo
-├── library/
-└── blueprints/
-    └── team/
-```
-
-awid and aweb build from this repo (`context: .`), so they need no override.
-
-These sibling paths are resolved automatically, **including from a git
-worktree** — where `../library` would otherwise point beside the worktree
-instead of beside the main checkout. The harness falls back to the main repo's
-parent (via `git --git-common-dir`), so a worktree run needs no manual env vars.
-Set `LIBRARY_E2E_LIBRARY_CONTEXT` / `LIBRARY_E2E_BLUEPRINT_SRC` only if your
-layout is non-standard.
+`LIBRARY_E2E_LIBRARY_CONTEXT` and `LIBRARY_E2E_BLUEPRINT_SRC` remain explicit
+maintainer overrides for testing another checked-out source. A release gate
+requires either override to remain inside a clean Git checkout; it does not
+accept an archive or an unversioned working directory.
 
 ## Run it
 

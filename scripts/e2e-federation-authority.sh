@@ -175,6 +175,7 @@ services:
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
       AWID_RATE_LIMIT_DISABLED: "1"
+      AWID_SERVICE_TOKEN: aweb-federation-authority-e2e-service-token-32-bytes
       AWID_SKIP_DNS_VERIFY: "1"
       APP_ENV: development
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
@@ -191,6 +192,7 @@ services:
       AWID_HOST: 0.0.0.0
       AWID_PORT: 8010
       AWID_RATE_LIMIT_DISABLED: "1"
+      AWID_SERVICE_TOKEN: aweb-federation-authority-e2e-service-token-32-bytes
       AWID_SKIP_DNS_VERIFY: "1"
       APP_ENV: development
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
@@ -218,6 +220,7 @@ services:
       AWEB_DATABASE_URL: postgresql://aweb:disposable@postgres-a:5432/aweb
       AWEB_REDIS_URL: redis://redis-a:6379/1
       AWID_REGISTRY_URL: http://awid-a:8010
+      AWID_SERVICE_TOKEN: aweb-federation-authority-e2e-service-token-32-bytes
       AWEB_PUBLIC_ORIGIN: http://aweb-a:8000
       APP_ENV: development
     volumes:
@@ -238,6 +241,7 @@ services:
       AWEB_DATABASE_URL: postgresql://aweb:disposable@postgres-b:5432/aweb
       AWEB_REDIS_URL: redis://redis-b:6379/1
       AWID_REGISTRY_URL: http://awid-b:8010
+      AWID_SERVICE_TOKEN: aweb-federation-authority-e2e-service-token-32-bytes
       AWEB_PUBLIC_ORIGIN: http://aweb-b:8000
       APP_ENV: development
     volumes:

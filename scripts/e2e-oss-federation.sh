@@ -603,6 +603,7 @@ services:
       AWID_PORT: 8010
       AWID_DB_SCHEMA: awid
       AWID_RATE_LIMIT_DISABLED: "1"
+      AWID_SERVICE_TOKEN: aweb-oss-federation-e2e-service-token-32-bytes
       AWID_SKIP_DNS_VERIFY: "1"
       APP_ENV: development
       AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "1"
@@ -638,6 +639,7 @@ $ALPHA_SERVER_BUILD
       AWEB_DATABASE_URL: postgresql://aweb:aweb-fed-e2e@postgres-alpha:5432/aweb
       AWEB_REDIS_URL: redis://redis-alpha:6379/0
       AWID_REGISTRY_URL: http://awid:8010
+      AWID_SERVICE_TOKEN: aweb-oss-federation-e2e-service-token-32-bytes
       AWEB_PUBLIC_ORIGIN: $ALPHA_ORIGIN
       AWEB_DISCOVERY_ORIGIN: $ALPHA_URL
       AWEB_HOST: 0.0.0.0
@@ -681,6 +683,7 @@ $BETA_SERVER_BUILD
       AWEB_DATABASE_URL: postgresql://aweb:aweb-fed-e2e@postgres-beta:5432/aweb
       AWEB_REDIS_URL: redis://redis-beta:6379/0
       AWID_REGISTRY_URL: http://awid:8010
+      AWID_SERVICE_TOKEN: aweb-oss-federation-e2e-service-token-32-bytes
       AWEB_PUBLIC_ORIGIN: $BETA_ORIGIN
       AWEB_DISCOVERY_ORIGIN: $BETA_URL
       AWEB_HOST: 0.0.0.0

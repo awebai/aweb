@@ -85,6 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         holder["team_cache"] = AWIDTeamCache(
             registry_url=resolved.awid_registry_url,
             ttl_seconds=resolved.auth_cache_ttl_seconds,
+            service_token=resolved.awid_service_token,
         )
         try:
             yield
@@ -227,7 +228,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         skill = await browse_views.skill_view(
             database, blueprint_ref=blueprint_id, profile_ref=profile_id, skill_name=skill_name
         )
-        return HTMLResponse(browse.render_skill_page(public_origin=resolved.public_origin, skill=skill))
+        return HTMLResponse(
+            browse.render_skill_page(public_origin=resolved.public_origin, skill=skill)
+        )
 
     @app.get("/robots.txt", response_class=PlainTextResponse)
     async def robots_route() -> PlainTextResponse:

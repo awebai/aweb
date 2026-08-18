@@ -15,9 +15,9 @@
 #     server-proof    bind installed aweb version/wheel bytes to container identity
 #     down            tear the stack down and remove all state (-v)
 #
-# Cross-repo dependencies (see docs/e2e-library-stack.md):
-#   ../library              Library service source (build context)
-#   ../blueprints/team      the aweb.team blueprint seeded into Library
+# Committed local inputs (see docs/e2e-library-stack.md):
+#   naapp/library                                  Library service source
+#   naapp/library/test-vectors/blueprints/team     seeded aweb.team blueprint
 # Override either with LIBRARY_E2E_LIBRARY_CONTEXT / LIBRARY_E2E_BLUEPRINT_SRC.
 #
 # Environment overrides:
@@ -63,37 +63,10 @@ AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
 AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
 LIBRARY_URL="http://$DOCKER_PUBLISHED_HOST:$LIBRARY_PORT"
 
-# Resolve a cross-repo sibling checkout. The two inputs (../library, ../blueprints)
-# live beside the *main* repo. In a normal checkout that is $REPO_ROOT/..; in a
-# git worktree $REPO_ROOT/.. is the worktree's parent, not the main repo's, so we
-# also try the main repo's parent (via --git-common-dir). An explicit override
-# always wins. Result: a worktree run works with no manual env vars.
-resolve_sibling() {
-  local subpath="$1" explicit="$2"
-  if [[ -n "$explicit" ]]; then
-    echo "$explicit"
-    return
-  fi
-  if [[ -d "$REPO_ROOT/../$subpath" ]]; then
-    (cd "$REPO_ROOT/../$subpath" && pwd -P)
-    return
-  fi
-  local common main
-  if common="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null)"; then
-    main="$(cd "$REPO_ROOT" && cd "$(dirname "$common")" && pwd -P)"
-    if [[ -d "$main/../$subpath" ]]; then
-      (cd "$main/../$subpath" && pwd -P)
-      return
-    fi
-  fi
-  # Conventional path; stack_up fails with a clear message if it does not exist.
-  echo "$REPO_ROOT/../$subpath"
-}
-
-# Cross-repo build inputs. Exported so the compose file's build context and the
-# seed script pick them up.
-export LIBRARY_E2E_LIBRARY_CONTEXT="$(resolve_sibling library "${LIBRARY_E2E_LIBRARY_CONTEXT:-}")"
-export LIBRARY_E2E_BLUEPRINT_SRC="$(resolve_sibling blueprints/team "${LIBRARY_E2E_BLUEPRINT_SRC:-}")"
+# Both inputs are versioned under this checkout, so release evidence and normal
+# e2e runs consume the same exact source. Explicit overrides remain supported.
+export LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$REPO_ROOT/naapp/library}"
+export LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$REPO_ROOT/naapp/library/test-vectors/blueprints/team}"
 # Keep every advertised public endpoint in lockstep with the published-host probes.
 export LIBRARY_E2E_AWEB_PUBLIC_ORIGIN="${LIBRARY_E2E_AWEB_PUBLIC_ORIGIN:-$AWEB_URL}"
 export LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL="${LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL:-$AWID_URL}"

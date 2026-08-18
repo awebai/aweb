@@ -4,9 +4,8 @@
 #   postgres (tmpfs, ephemeral) + redis + awid + aweb + library
 #
 # awid and aweb build from this repo (context `.`). library builds from the
-# sibling ../library checkout; the engineering blueprint seeded into library
-# lives in the sibling ../blueprints checkout. Both sibling paths are
-# overridable via the *_CONTEXT env vars (see docs/e2e-library-stack.md).
+# in-repository naapp/library source. Its committed aweb.team fixture is selected
+# by the e2e stack script; both inputs remain overridable via the *_CONTEXT vars.
 #
 # Rate limiting is disabled and DNS verification skipped (like folio's
 # docker-compose.e2e.yml) so a freshly created test team works offline.
@@ -54,6 +53,7 @@ services:
       AWID_LOG_JSON: "false"
       AWID_RATE_LIMIT_BACKEND: redis
       AWID_RATE_LIMIT_DISABLED: "true"
+      AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
       AWID_SKIP_DNS_VERIFY: "1"
     ports:
       - "${LIBRARY_E2E_AWID_PORT:-18010}:8010"
@@ -82,6 +82,7 @@ services:
       APP_ENV: development
       AWEB_LOG_JSON: "false"
       AWID_REGISTRY_URL: http://awid:8010
+      AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
       AWID_PUBLIC_REGISTRY_URL: ${LIBRARY_E2E_AWID_PUBLIC_REGISTRY_URL:-http://127.0.0.1:18010}
     ports:
       - "${LIBRARY_E2E_AWEB_PORT:-18000}:8000"
@@ -101,11 +102,12 @@ services:
 
   library:
     build:
-      context: ${LIBRARY_E2E_LIBRARY_CONTEXT:-../library}
+      context: ${LIBRARY_E2E_LIBRARY_CONTEXT:-./naapp/library}
       dockerfile: Dockerfile
     environment:
       LIBRARY_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/library
       LIBRARY_AWID_REGISTRY_URL: http://awid:8010
+      LIBRARY_AWID_SERVICE_TOKEN: library-e2e-service-token-with-at-least-32-bytes
       # Clients sign the team-auth audience (aud) as scheme://host of the URL
       # they POST to. The seed posts to this host:port, so the audience library
       # enforces must match the seed's target origin exactly.

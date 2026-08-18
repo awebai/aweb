@@ -602,6 +602,7 @@ async function ensureServer(tempRoot: string): Promise<ServerHandle> {
     "AWID_LOG_JSON=true",
     "AWEB_LOG_JSON=true",
     "AWID_RATE_LIMIT_BACKEND=redis",
+    "AWID_SERVICE_TOKEN=aweb-channel-e2e-service-token-32-bytes",
     "AWID_SKIP_DNS_VERIFY=1",
   ].join("\n"));
 

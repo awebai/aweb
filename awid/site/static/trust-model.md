@@ -324,6 +324,76 @@ support.
 Message trust has two layers: Ed25519 signature/recipient-binding verification,
 then continuity handling for a globally addressed sender.
 
+### Threat-model rulings (2026-08-17)
+
+Two rulings, made explicitly so they are design constraints rather than
+implicit assumptions:
+
+**Partial-service compromise is in scope.** The aweb service is multiple
+components (ingest, message store, roster, registry client) with different
+attack surfaces, and the trust model does not assume they fail only together.
+Consequences: a reader's fresh roster re-resolution of a local sender is a
+load-bearing cross-check against a compromised message store or ingest
+component, not a redundant read, and must not be removed in favor of trusting
+stored attribution alone. Any future verdict that rests on the service's own
+attestation instead of a completed reader-side check must carry a distinct
+status (for example `verified_server_attested`) and must still fail on a
+roster mismatch whenever the reader can obtain the roster. Plain `verified`
+always means the reader completed the binding and continuity checks itself.
+
+**The revocation source-suppression residual is accepted, and named.** A
+verifier learns revocation state only by asking a registry (or, for local
+members, the team's aweb service). Signed artifacts prove presence; nothing in
+this protocol proves absence. An authority that keeps serving old but
+cryptographically valid state — maliciously, or as innocently as a restore
+from backup — can suppress a revocation the verifier has never seen, for as
+long as the verifier has no second channel. Client cache ceilings bound the
+verifier's own staleness, not the source's honesty. Until the exit ladder
+below lands, **revocation freshness rests on the honesty and availability of
+the consulted registry operator.** That is a named trust assumption of the
+current system.
+
+The client half is quantified: verifiers cache a team's revocation list for at
+most 60 seconds (hard worst case 120 seconds through the stale-while-revalidate
+window), matching the federation authority reuse ceiling. Against an honest,
+available registry, a revocation therefore takes effect on enforcement within
+about a minute. Raising that constant is a trust-model change, not a tuning
+decision. An implemented extension (owner decision, 2026-08-17): during
+registry FAILURE, verifiers serve the last-known revocation set while it is at
+most 15 minutes old — every such serve, and every failed refresh inside the
+stale window, is logged at warning level with the team, the served data's age,
+and the underlying error — and once the last-known set exceeds 15 minutes of
+age the read fails closed. The 15-minute bound is a constant, pinned by test,
+with no configuration knob; the grace decision is made on the stored fetch
+timestamp of the cached data, and the longer retention applies to revocation
+entries only. Messaging thus survives registry outages at the cost of a
+revocation issued mid-outage remaining effective up to the grace window.
+
+The committed exit ladder, in order:
+
+1. **Hash-chained revocation log with client-persisted checkpoints** — the
+   same anti-rollback treatment DID logs already have, applied to revocations;
+   folded into the certificate-chain verification protocol when that work
+   proceeds.
+2. **Witness/transparency mechanisms** — deferred until the deployment is
+   genuinely multi-operator; before that a witness set adds ceremony, not
+   security.
+
+Certificate expiry was previously the ladder's first rung and was **removed
+by owner decision (2026-08-17)** — not deferred: it is not part of the
+architecture. Certificates remain valid until revoked, and revocation is the
+sole end of membership authority. Stated plainly, because this section
+exists to make trust assumptions explicit: expiry was the only mechanism
+that put an **unconditional time bound** on the suppression residual above;
+the remaining ladder items are detection and corroboration mechanisms, not
+a replacement bound. With expiry removed, a suppressed revocation has no
+architectural ceiling — the residual is accepted as unbounded, resting
+entirely on the operator trust assumption already named.
+
+The full assessment and its adversarial review live in
+[local sender-verification authority assessment](https://github.com/awebai/aweb/blob/main/docs/drafts/local-sender-verification-authority.md)
+and on task `aweb-abfm`.
+
 For cross-registry ingress, the receiving service's strict external-address
 path is stronger and separate from general client TOFU/cache behavior. It
 selects authority from the client-signed address, not the receiver's home

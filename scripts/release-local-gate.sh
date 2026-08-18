@@ -3,12 +3,11 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMMON_REPO="$(cd "$(dirname "$(git -C "$ROOT" rev-parse --git-common-dir)")" && pwd)"
 SOURCE_SHA="${RELEASE_SOURCE_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 RELEASE_BASE_SHA="${RELEASE_BASE_SHA:-$(git -C "$ROOT" merge-base "$SOURCE_SHA" origin/main)}"
 refuse() { printf 'release gate refused: %s\n' "$*" >&2; exit 2; }
-LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$COMMON_REPO/../library}"
-LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$COMMON_REPO/../blueprints/team}"
+LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$ROOT/naapp/library}"
+LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$ROOT/naapp/library/test-vectors/blueprints/team}"
 canonical_git_input() {
   local name="$1" path="$2" top canonical
   top="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" \
@@ -161,7 +160,7 @@ record_input library "$LIBRARY_E2E_LIBRARY_CONTEXT"
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
 printf '%s\n' "$SOURCE_SHA" > "$LOG_DIR/source-sha"
 printf '%s\n' "$RELEASE_BASE_SHA" > "$LOG_DIR/comparison-base-sha"
-printf 'NOT RELEVANT: this slice changes only the release gate mechanism, not a released runtime boundary.\n' \
+printf 'NOT RELEVANT: this OSS release does not package Library; its versioned source input proves the activation journey only.\n' \
   > "$LOG_DIR/compatibility.txt"
 
 docker build --pull -f "$checkout/release-gate/Dockerfile" -t "$IMAGE" "$checkout/release-gate" \
