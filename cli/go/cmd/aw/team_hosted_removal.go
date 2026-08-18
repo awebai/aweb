@@ -395,11 +395,18 @@ func resumeHostedRemoval(ctx context.Context, client *aweb.Client, workingDir, t
 	if operation.OperationID != operationID {
 		return nil, fmt.Errorf("hosted removal get returned a different operation")
 	}
-	if operation.Status == "committed" {
+	switch operation.Status {
+	case "committed":
 		if err := clearHostedRemovalRecovery(workingDir, operationID); err != nil {
 			return nil, fmt.Errorf("hosted removal committed but local recovery cleanup failed: %w", err)
 		}
 		return operation, nil
+	case "prepared", "revocation_pending":
+		// These are the only states whose durable operation can still converge.
+	case "aborted":
+		return nil, fmt.Errorf("hosted removal %s was aborted; refusing to release coordination state", operationID)
+	default:
+		return nil, fmt.Errorf("hosted removal %s has unknown status %q; refusing to release coordination state", operationID, operation.Status)
 	}
 	workspace := aweb.WorkspaceInfo{WorkspaceID: operation.WorkspaceID, AgentID: operation.AgentID, Alias: operation.Alias}
 	_, _ = releaseExactHostedWorkspace(ctx, client, workspace)

@@ -32,6 +32,7 @@ type hostedRemovalHTTPFixture struct {
 	calls                    []string
 	prepareStatus            int
 	commitStatus             int
+	getStatus                string
 	preparedWorkspace        string
 	preparedAgent            string
 	deleteWorkspace          string
@@ -41,7 +42,7 @@ type hostedRemovalHTTPFixture struct {
 
 func newHostedRemovalHTTPFixture(t *testing.T) (*hostedRemovalHTTPFixture, *httptest.Server) {
 	t.Helper()
-	fixture := &hostedRemovalHTTPFixture{t: t, prepareStatus: http.StatusOK, commitStatus: http.StatusOK}
+	fixture := &hostedRemovalHTTPFixture{t: t, prepareStatus: http.StatusOK, commitStatus: http.StatusOK, getStatus: "prepared"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fixture.mu.Lock()
 		defer fixture.mu.Unlock()
@@ -78,7 +79,7 @@ func newHostedRemovalHTTPFixture(t *testing.T) (*hostedRemovalHTTPFixture, *http
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/agents/removals/"+hostedRemovalTestOp):
 			fixture.calls = append(fixture.calls, "get")
 			_ = json.NewEncoder(w).Encode(hostedRemovalOperation{
-				OperationID: hostedRemovalTestOp, Status: "prepared", TeamID: "server-team-id",
+				OperationID: hostedRemovalTestOp, Status: fixture.getStatus, TeamID: "server-team-id",
 				CanonicalTeamID: hostedRemovalTestTeam, WorkspaceID: hostedRemovalTestW,
 				AgentID: hostedRemovalTestA, CertificateID: hostedRemovalTestC,
 				Alias: "retiree", IdentityScope: "local",
@@ -252,6 +253,24 @@ func TestTeamRemoveAgentBinaryUsesHostedPrepareBeforeExactRelease(t *testing.T) 
 	}
 	if result.Status != retirementRetired || result.WorkspaceID != hostedRemovalTestW || result.CertificateID != hostedRemovalTestC || result.OperationID != hostedRemovalTestOp || result.RecoveryPath != "" {
 		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestResumeHostedRemovalRefusesTerminalAbortedAndUnknownBeforeDelete(t *testing.T) {
+	for _, status := range []string{"aborted", "queued_for_operator"} {
+		t.Run(status, func(t *testing.T) {
+			fixture, server := newHostedRemovalHTTPFixture(t)
+			fixture.getStatus = status
+			workingDir := configureHostedRemovalTest(t, server.URL)
+			client, _ := aweb.New(server.URL)
+			_, err := resumeHostedRemoval(context.Background(), client, workingDir, hostedRemovalTestTeam, hostedRemovalTestOp)
+			if err == nil || !strings.Contains(err.Error(), "refusing to release coordination state") {
+				t.Fatalf("status=%s error=%v", status, err)
+			}
+			if got := strings.Join(fixture.order(), ","); got != "get" {
+				t.Fatalf("status %s caused a destructive call: %s", status, got)
+			}
+		})
 	}
 }
 
