@@ -19,9 +19,9 @@ from awid.dns_auth import enforce_timestamp_skew, require_timestamp
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
-from aweb.config import get_settings
+from aweb.config import get_settings, require_registered_certificates
 from aweb.identity_auth_deps import MessagingAuth
-from aweb.team_auth_deps import _aweb_db, _get_revoked_certificates
+from aweb.team_auth_deps import _aweb_db, _get_registered_certificates, _get_revoked_certificates
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
@@ -164,6 +164,17 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
         revoked_certs = await _get_revoked_certificates(request, row["team_id"])
         if issuing_certificate_id in revoked_certs:
             raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
+        # Staged existence requirement (default OFF): an unregistered issuing
+        # certificate is unrevocable, so with
+        # AWEB_REQUIRE_REGISTERED_CERTIFICATES on it must exist at the
+        # registry or the delegation ends, mirroring the certificate paths.
+        # Ordering preserved: revocation keeps its own distinct verdict above.
+        if require_registered_certificates():
+            registered_certs = await _get_registered_certificates(request, row["team_id"])
+            if issuing_certificate_id not in registered_certs:
+                raise HTTPException(
+                    status_code=403, detail="grant issuing certificate not registered"
+                )
 
     required = required_grant_scope(request.method, _app_relative_path(request))
     if required is not None and required not in list(row["scopes"] or []):

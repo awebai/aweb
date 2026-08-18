@@ -40,6 +40,7 @@ class Settings:
     awid_service_token: str | None
     public_origin: str
     dashboard_jwt_secret: str
+    require_registered_certificates: bool
 
 
 def get_awid_registry_url() -> str:
@@ -51,6 +52,33 @@ def get_awid_registry_url() -> str:
             "AWID_REGISTRY_URL=local is no longer supported. Run the awid service separately and point AWEB at its HTTP origin."
         )
     return value
+
+
+def require_registered_certificates() -> bool:
+    """Staged existence-required certificate verification (hosted anchoring).
+
+    Controlled by ``AWEB_REQUIRE_REGISTERED_CERTIFICATES`` (default OFF).
+
+    When ON, a team certificate that passes signature and revocation checks
+    must ALSO exist at the AWID registry: an unregistered certificate is
+    unrevocable (the revocation check can never name it), so once the hosted
+    anchoring backfill has run, "not registered" becomes a verification
+    failure rather than a pass-by-omission.
+
+    Activation contract (docs/drafts/hosted-certificate-anchoring.md):
+    this flag may be enabled only once the anchoring backfill's failure
+    enumeration is EMPTY or every enumerated failure has an individual
+    remediation completed (the emptiness gate). Unregistered-certificate
+    gaps that do not self-heal escalate within the operational bound of
+    three consecutive failed reconciliation cycles or 24 hours, whichever
+    comes first. Flipping this ON in production is an ops act gated on the
+    backfill report — enabling it before backfill locks out every
+    pre-anchoring hosted member.
+
+    Read from the environment at call time (like the rest of the settings)
+    so the OFF path costs nothing and tests can toggle it per-case.
+    """
+    return _env_bool("AWEB_REQUIRE_REGISTERED_CERTIFICATES")
 
 
 def get_settings() -> Settings:
@@ -113,4 +141,5 @@ def get_settings() -> Settings:
             os.getenv("AWEB_PUBLIC_ORIGIN") or f"http://localhost:{port}"
         ),
         dashboard_jwt_secret=os.getenv("AWEB_DASHBOARD_JWT_SECRET", ""),
+        require_registered_certificates=require_registered_certificates(),
     )

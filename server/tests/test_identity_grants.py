@@ -493,6 +493,63 @@ async def test_grant_registry_unavailable_fails_closed(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_grant_with_unregistered_issuing_certificate_rejected_when_required(aweb_cloud_db, monkeypatch):
+    """Staged existence requirement (AWEB_REQUIRE_REGISTERED_CERTIFICATES):
+    an unregistered issuing certificate is unrevocable, so with the flag on
+    the delegation ends with a verdict distinct from revocation."""
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "true")
+    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app.state.awid_registry_client.list_team_certificates = AsyncMock(return_value=[])
+    signing_key, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        resp = await client.post(
+            "/v1/messages",
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
+                method="POST", path="/v1/messages",
+            ),
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"] == "grant issuing certificate not registered"
+
+        # A registered issuing certificate keeps the delegation working.
+        app.state.awid_registry_client.list_team_certificates = AsyncMock(
+            return_value=[SimpleNamespace(certificate_id="cert-1")]
+        )
+        ok = await client.post(
+            "/v1/messages",
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
+                method="POST", path="/v1/messages",
+            ),
+        )
+    assert ok.status_code == 200, ok.text
+
+
+@pytest.mark.asyncio
+async def test_grant_flag_off_makes_no_existence_read(aweb_cloud_db, monkeypatch):
+    """Default OFF: byte-identical to today, zero registry existence reads."""
+    monkeypatch.delenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", raising=False)
+    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    app.state.awid_registry_client.list_team_certificates = AsyncMock(return_value=[])
+    signing_key, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        resp = await client.post(
+            "/v1/messages",
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=did_key, grant_id=grant_id,
+                method="POST", path="/v1/messages",
+            ),
+        )
+    assert resp.status_code == 200, resp.text
+    app.state.awid_registry_client.list_team_certificates.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_legacy_grant_without_issuing_certificate_still_works(aweb_cloud_db):
     """Grants minted before issued_by_certificate_id was recorded cannot be
     checked; they keep working, bounded by their own expiry."""

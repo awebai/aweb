@@ -43,7 +43,24 @@
   stale window), and deployments should configure `AWID_SERVICE_TOKEN` so
   revocation refreshes bypass the registry's public per-IP rate limits.
   Limitation: hosted-custody members whose certificates never reach the AWID
-  registry are not covered by this check.
+  registry are not covered by this check — the staged existence requirement
+  below closes that gap once hosted anchoring has backfilled.
+- Staged existence-required certificate verification, default off
+  (`AWEB_REQUIRE_REGISTERED_CERTIFICATES`). An unregistered team certificate is
+  unrevocable — the registry's revocation set can never name it — so once the
+  hosted anchoring backfill completes, "not registered at the AWID registry"
+  becomes a verification failure rather than a pass by omission. When enabled,
+  the presented-certificate path (team routes, connect, MCP), the identity-only
+  paths (HTTP and MCP), and a session grant's issuing certificate all require
+  registry existence, with verdicts distinct from signature failure and from
+  revocation (`Certificate not registered`, `grant issuing certificate not
+  registered`). The existence read rides the cached registry client's existing
+  team-certificates tier (10-minute freshness, stale-while-revalidate), adding
+  no per-request registry round-trip, and fails closed on registry
+  unavailability exactly as the revocation check does. Off by default and
+  byte-identical to previous behavior with zero added registry calls; enabling
+  it in production is an ops act gated on the anchoring backfill's failure
+  enumeration being empty or individually remediated.
 - The AWID team revocation list is completely enumerable: the route paginates
   with a `(revoked_at, id)` cursor and reports `has_more`/`next_cursor`, and
   the Python registry client follows it to the end (with a best-effort `since`

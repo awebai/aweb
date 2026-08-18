@@ -25,7 +25,7 @@ from aweb.awid_error_handling import (
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
-from aweb.config import get_settings
+from aweb.config import get_settings, require_registered_certificates
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.team_auth import parse_and_verify_certificate
 from aweb.team_auth_envelope import team_auth_signature_payload
@@ -230,6 +230,29 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
+    # -- Step 5b (staged, default OFF): require registry existence --
+    # An unregistered certificate is unrevocable — the revocation set can
+    # never name it — so once hosted anchoring backfill completes,
+    # "not registered" becomes a verification failure. Ordering matters:
+    # this runs only after signature and revocation checks pass, so a
+    # revoked certificate keeps its revocation verdict. See
+    # aweb.config.require_registered_certificates for the activation
+    # contract; when OFF this adds zero registry reads.
+    if require_registered_certificates():
+        registered_certs = await _get_registered_certificates(request, cert_team_id)
+        presented_certificate_id = (cert_info.get("certificate_id") or "").strip()
+        if presented_certificate_id not in registered_certs:
+            logger.warning(
+                "certificate existence check failed: certificate %s presented for team %s "
+                "is not registered at the AWID registry",
+                presented_certificate_id,
+                cert_team_id,
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"Certificate not registered: {presented_certificate_id}",
+            )
+
     # Include the registry-resolved team key (not the certificate's claim)
     cert_info["verified_team_did_key"] = team_did_key
     return cert_info
@@ -311,3 +334,53 @@ async def _get_revoked_certificates(request: Request, team_id: str) -> set[str]:
     except Exception as exc:
         logger.exception("Unexpected AWID registry dependency error for revocation check: %s", team_id)
         raise awid_dependency_http_exception(exc, operation="AWID team revocation check") from exc
+
+
+async def _get_registered_certificates(request: Request, team_id: str) -> set[str]:
+    """Get the set of certificate IDs the AWID registry knows for a team.
+
+    Used only when AWEB_REQUIRE_REGISTERED_CERTIFICATES is on. Reads through
+    the cached registry client's team-certificates tier (same pull-and-cache
+    shape as the revocation set — no per-request registry round-trip), with
+    active_only=False so existence means "the registry has seen this
+    certificate", independent of revocation state (revocation is checked
+    separately, first). Same availability posture as the revocation check:
+    if the registry cannot be consulted past the cached client's internal
+    staleness allowance, fail closed with 503 — an existence check must not
+    silently fail open.
+    """
+    try:
+        domain, team_name = parse_team_id(team_id)
+    except ValueError:
+        return set()
+
+    registry_client = getattr(request.app.state, "awid_registry_client", None)
+    if registry_client is None:
+        raise awid_registry_not_configured_exception(operation="AWID certificate existence check")
+
+    try:
+        certificates = await registry_client.list_team_certificates(
+            domain, team_name, active_only=False
+        )
+    except AWID_DEPENDENCY_ERRORS as exc:
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 404:
+            # Team unknown to the registry: nothing is registered. Mirrors
+            # the revocation read's 404-means-empty behavior rather than
+            # treating a definitive answer as an outage.
+            return set()
+        logger.warning(
+            "AWID registry dependency failed for certificate existence check: %s", team_id, exc_info=True
+        )
+        raise awid_dependency_http_exception(exc, operation="AWID certificate existence check") from exc
+    except Exception as exc:
+        logger.exception(
+            "Unexpected AWID registry dependency error for certificate existence check: %s", team_id
+        )
+        raise awid_dependency_http_exception(exc, operation="AWID certificate existence check") from exc
+
+    return {
+        cert_id
+        for cert_id in ((cert.certificate_id or "").strip() for cert in certificates)
+        if cert_id
+    }

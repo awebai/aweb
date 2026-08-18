@@ -13,8 +13,15 @@ from aweb.awid_error_handling import (
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
+from aweb.config import require_registered_certificates
 from aweb.deps import get_db
-from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_revoked_certificates, get_team_identity
+from aweb.team_auth_deps import (
+    TeamIdentity,
+    _aweb_db,
+    _get_registered_certificates,
+    _get_revoked_certificates,
+    get_team_identity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -177,13 +184,32 @@ async def _enforce_current_membership(request: Request, row: dict | None) -> dic
         return row
     revoked = await _get_revoked_certificates(request, team_id)
     if certificate_id not in revoked:
-        return row
-    logger.warning(
-        "identity-auth team context stripped: certificate %s for alias %r in %s is revoked",
-        certificate_id,
-        row.get("alias"),
-        team_id,
-    )
+        # Staged existence requirement (default OFF): an unregistered
+        # certificate can never appear in the revocation set, so once
+        # AWEB_REQUIRE_REGISTERED_CERTIFICATES is on the recorded
+        # certificate must also exist at the registry or team context is
+        # stripped — otherwise omitting the certificate header would
+        # bypass the existence check the presenting path enforces. Same
+        # remedy as revocation here: strip membership, keep the identity.
+        if not require_registered_certificates():
+            return row
+        registered = await _get_registered_certificates(request, team_id)
+        if certificate_id in registered:
+            return row
+        logger.warning(
+            "identity-auth team context stripped: certificate %s for alias %r in %s "
+            "is not registered at the AWID registry",
+            certificate_id,
+            row.get("alias"),
+            team_id,
+        )
+    else:
+        logger.warning(
+            "identity-auth team context stripped: certificate %s for alias %r in %s is revoked",
+            certificate_id,
+            row.get("alias"),
+            team_id,
+        )
     stripped = dict(row)
     stripped["team_id"] = None
     stripped["alias"] = None
