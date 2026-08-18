@@ -50,10 +50,6 @@ type hostedRemovalRecovery struct {
 	CreatedAt       string `json:"created_at"`
 }
 
-type hostedRemovalListResponse struct {
-	Operations []hostedRemovalOperation `json:"operations"`
-}
-
 func prepareHostedRemoval(ctx context.Context, awebURL, apiKey, teamID, workspaceID, agentID string) (*hostedRemovalOperation, error) {
 	return doHostedRemovalRequest(ctx, http.MethodPost, awebURL, apiKey, teamID, "/agents/removals/prepare", map[string]string{
 		"workspace_id": workspaceID,
@@ -222,28 +218,6 @@ func saveHostedRemovalRecovery(workingDir string, recovery hostedRemovalRecovery
 	return path, nil
 }
 
-func loadHostedRemovalRecovery(workingDir, operationID string) (*hostedRemovalRecovery, string, error) {
-	path, err := hostedRemovalRecoveryPath(workingDir, operationID)
-	if err != nil {
-		return nil, "", err
-	}
-	if err := pathpreflight.PreflightFile(path, "hosted removal recovery file", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
-		return nil, path, err
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return nil, path, err
-	}
-	var recovery hostedRemovalRecovery
-	if err := json.Unmarshal(body, &recovery); err != nil {
-		return nil, path, fmt.Errorf("decode hosted removal recovery: %w", err)
-	}
-	if recovery.OperationID != operationID {
-		return nil, path, fmt.Errorf("hosted removal recovery operation mismatch")
-	}
-	return &recovery, path, nil
-}
-
 func clearHostedRemovalRecovery(workingDir, operationID string) error {
 	path, err := hostedRemovalRecoveryPath(workingDir, operationID)
 	if err != nil {
@@ -365,8 +339,8 @@ func runHostedLocalRemoval(ctx context.Context, client *aweb.Client, workingDir,
 	switch committed.RegistryRevokeOutcome {
 	case "revoked":
 		out.Stores = append(out.Stores, retireStoreOutcome{Store: storeCertificate, Result: storeChanged, Detail: "AWID revocation and terminal hosted cleanup committed"})
-	case "already_revoked", "not_found":
-		out.Stores = append(out.Stores, retireStoreOutcome{Store: storeCertificate, Result: storeUnchanged, Detail: "AWID already had no active exact certificate; terminal hosted cleanup committed"})
+	case "already_revoked":
+		out.Stores = append(out.Stores, retireStoreOutcome{Store: storeCertificate, Result: storeUnchanged, Detail: "AWID read-back proved the exact certificate was already revoked; terminal hosted cleanup committed"})
 	default:
 		out.Status = retirementIncomplete
 		out.Stores = append(out.Stores, retireStoreOutcome{Store: storeCertificate, Result: storeFailed, Detail: "committed response carried an unknown registry revoke outcome; recovery retained"})

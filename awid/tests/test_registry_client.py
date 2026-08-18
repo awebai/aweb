@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 from httpx import MockTransport, Response
+from redis.exceptions import RedisError
 
 import awid.registry as registry_module
 from awid.ratelimit import AWID_SERVICE_TOKEN_HEADER
@@ -334,6 +335,18 @@ class FakeRedis:
         for key in keys:
             self.values.pop(key, None)
             self.expirations.pop(key, None)
+
+
+class ScanUnavailableRedis(FakeRedis):
+    def __init__(self, error: Exception | None = None) -> None:
+        super().__init__()
+        self.error = error or OSError("Redis scan unavailable")
+        self.scan_calls = 0
+
+    async def scan_iter(self, *, match: str):
+        self.scan_calls += 1
+        raise self.error
+        yield ""  # pragma: no cover
 
 
 @pytest.mark.asyncio
@@ -719,6 +732,93 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
     assert anonymous_key not in redis.values
     assert revocations_key not in redis.values
     assert redis.values["unrelated"] == "keep"
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_scan_outage_does_not_block_certificate_registration():
+    redis = ScanUnavailableRedis()
+    controller_key, _ = generate_keypair()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> Response:
+        requests.append(request)
+        return Response(201)
+
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(handler),
+    )
+    try:
+        await registry.register_team_certificate(
+            "example.com",
+            "backend",
+            team_controller_signing_key=controller_key,
+            certificate_id="cert-1",
+            member_did_key="did:key:z6MkMember",
+            member_did_aw=None,
+            member_address=None,
+            alias="member",
+            identity_scope="local",
+        )
+    finally:
+        await registry.aclose()
+
+    assert redis.scan_calls == 2
+    assert [request.url.path for request in requests] == [
+        "/v1/namespaces/example.com/teams/backend/certificates"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_scan_outage_does_not_block_certificate_revocation():
+    redis = ScanUnavailableRedis(RedisError("Redis scan unavailable"))
+    controller_key, _ = generate_keypair()
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> Response:
+        requests.append(request)
+        return Response(204)
+
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(handler),
+    )
+    try:
+        await registry.revoke_team_certificate(
+            "example.com",
+            "backend",
+            team_controller_signing_key=controller_key,
+            certificate_id="cert-1",
+        )
+    finally:
+        await registry.aclose()
+
+    assert redis.scan_calls == 2
+    assert [request.url.path for request in requests] == [
+        "/v1/namespaces/example.com/teams/backend/certificates/revoke"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_cached_registry_client_reports_incomplete_explicit_invalidation_after_known_key_cleanup():
+    redis = ScanUnavailableRedis()
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(lambda _request: Response(500)),
+    )
+    revocations_key = registry._team_revocations_cache_key("example.com", "backend")
+    redis.values[revocations_key] = "stale"
+    try:
+        with pytest.raises(OSError, match="Redis scan unavailable"):
+            await registry.invalidate_team_certificate_cache("example.com", "backend")
+    finally:
+        await registry.aclose()
+
+    assert redis.scan_calls == 1
+    assert revocations_key not in redis.values
 
 
 @pytest.mark.asyncio

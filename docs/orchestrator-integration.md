@@ -292,32 +292,18 @@ history by alias.
 legacy hosted addressed/global path reporting that it had nothing to revoke; it
 does **not** establish that no certificate exists.
 
-Current source includes an independent workspace/claim read, but the npm release
-used by this guide's install command (`aw` 1.34.1) does not. Check availability
-from the parent's command listing; probing the unknown subcommand directly is
-unsafe because Cobra prints parent help and exits 0:
-
-```bash
-aw team --help | grep -w agent-status
-```
-
-Only when that listing contains the verb may you run:
+The installable CLI includes an independent workspace, claim, and certificate
+read:
 
 ```bash
 aw team agent-status <member-name> --team-id <team:namespace> --json
 ```
 
-That current-source command reads workspace and claim state, not hosted local
-certificate state. Until it reaches an installable release, the released
-fallback is the structured `remove-agent` result plus a fresh workspace listing:
-
-```bash
-aw workspace status --all --json
-```
-
-The fallback is weaker because part of its evidence comes from the mutation
-reporting on itself. Record that limitation. On hosted teams, an unknown
-certificate result remains unknown even when workspace and claims are clear.
+It reads certificate, workspace, and claim state independently of the removal
+mutation. Older clients without this command cannot establish the same evidence
+from `remove-agent` plus `workspace status`; upgrade them before treating a
+retirement as confirmed. On hosted teams, an unknown certificate result remains
+unknown even when workspace and claims are clear.
 
 Customer-controlled teams require the customer-held controller key. Hosted
 managed teams require hosted removal authority. Runtime hosting alone does not
@@ -339,7 +325,7 @@ same display name.
 | Service projection | `aw workspace connect` / `POST /v1/connect` | Same explicit authority boundary, easier orchestration API. |
 | Wake | Snapshot/diff SSE and maintained runtime adapters | Durable server cursor/resume only after a reviewed protocol exists. |
 | Fetch/reply | Exact mail, conversation, and chat commands/APIs | Stable SDK operations preserving ids and verification metadata. |
-| Retirement | Stale local-identity workspace cleanup plus authority-dependent team removal; global archive/replace is a separate owner-authorized flow; `agent-status` is current-source pending an installable release | One reconciled lifecycle operation without taking runtime ownership. |
+| Retirement | Stale local-identity workspace cleanup plus authority-dependent team removal and independent `agent-status`; global archive/replace is a separate owner-authorized flow | One reconciled lifecycle operation without taking runtime ownership. |
 
 Do not write code against the target column as though it already ships.
 

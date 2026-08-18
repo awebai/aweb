@@ -32,6 +32,7 @@ type hostedRemovalHTTPFixture struct {
 	calls                    []string
 	prepareStatus            int
 	commitStatus             int
+	commitOutcome            string
 	getStatus                string
 	preparedWorkspace        string
 	preparedAgent            string
@@ -42,7 +43,7 @@ type hostedRemovalHTTPFixture struct {
 
 func newHostedRemovalHTTPFixture(t *testing.T) (*hostedRemovalHTTPFixture, *httptest.Server) {
 	t.Helper()
-	fixture := &hostedRemovalHTTPFixture{t: t, prepareStatus: http.StatusOK, commitStatus: http.StatusOK, getStatus: "prepared"}
+	fixture := &hostedRemovalHTTPFixture{t: t, prepareStatus: http.StatusOK, commitStatus: http.StatusOK, commitOutcome: "revoked", getStatus: "prepared"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fixture.mu.Lock()
 		defer fixture.mu.Unlock()
@@ -108,7 +109,7 @@ func newHostedRemovalHTTPFixture(t *testing.T) (*hostedRemovalHTTPFixture, *http
 				OperationID: hostedRemovalTestOp, Status: "committed", TeamID: "server-team-id",
 				CanonicalTeamID: hostedRemovalTestTeam, WorkspaceID: hostedRemovalTestW,
 				AgentID: hostedRemovalTestA, CertificateID: hostedRemovalTestC,
-				Alias: "retiree", IdentityScope: "local", RegistryRevokeOutcome: "revoked",
+				Alias: "retiree", IdentityScope: "local", RegistryRevokeOutcome: fixture.commitOutcome,
 			})
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
@@ -313,5 +314,25 @@ func TestHostedLocalRemovalCommitFailureKeepsCredentialFreeRecoveryAndResumeConv
 	}
 	if !strings.Contains(strings.Join(fixture.order(), ","), "get,delete,commit") {
 		t.Fatalf("resume did not use exact operation and workspace: %v", fixture.order())
+	}
+}
+
+func TestHostedLocalRemovalRefusesUnprovenNotFoundOutcome(t *testing.T) {
+	fixture, server := newHostedRemovalHTTPFixture(t)
+	fixture.commitOutcome = "not_found"
+	workingDir := configureHostedRemovalTest(t, server.URL)
+	client, _ := aweb.New(server.URL)
+	out, err := runHostedLocalRemoval(context.Background(), client, workingDir, hostedRemovalTestTeam, "alice.aweb.ai/retiree", aweb.WorkspaceInfo{
+		WorkspaceID: hostedRemovalTestW, AgentID: hostedRemovalTestA, Alias: "retiree",
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown registry outcome") {
+		t.Fatalf("out=%+v err=%v", out, err)
+	}
+	if out.Status != retirementIncomplete {
+		t.Fatalf("status=%s", out.Status)
+	}
+	path, _ := hostedRemovalRecoveryPath(workingDir, hostedRemovalTestOp)
+	if _, statErr := os.Stat(path); statErr != nil {
+		t.Fatalf("unproven outcome did not retain recovery: %v", statErr)
 	}
 }
