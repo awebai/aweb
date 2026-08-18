@@ -182,7 +182,7 @@ func (s *retirementStores) retireVerified(t *testing.T, typedAddress string) (te
 	}
 	verified, err := verifyRetirementTarget(
 		context.Background(), client, registry, s.registry.URL,
-		"acme.com", "backend", typedAddress, s.alias,
+		"acme.com", "backend", typedAddress, s.alias, nil,
 	)
 	if err != nil {
 		return teamRemoveAgentOutput{}, err

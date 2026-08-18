@@ -2483,6 +2483,7 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 		verified, err = verifyRetirementTarget(
 			ctx, client, registry, resolveTeamRemoveRegistryURL(registry),
 			domain, name, teamRemoveMember, alias,
+			teamReadSigners(workingDir, domain, name),
 		)
 		if err != nil {
 			return err

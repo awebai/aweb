@@ -92,7 +92,7 @@ func TestGetTeam(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	team, err := client.GetTeam(ctx, server.URL, "acme.com", "backend")
+	team, err := client.GetTeam(ctx, server.URL, "acme.com", "backend", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +507,7 @@ func TestListCertificates(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true)
+	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +546,7 @@ func TestResolveTeamMember(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	member, err := client.ResolveTeamMember(ctx, server.URL, "acme.com", "backend", "alice")
+	member, err := client.ResolveTeamMember(ctx, server.URL, "acme.com", "backend", "alice", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -676,7 +676,7 @@ func TestListCertificatesReturnsEveryCertificateBeyondTheFirstPage(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true)
+	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,7 +734,7 @@ func TestListCertificatesRefusesToReturnATruncatedListing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true)
+	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true, nil)
 	if err == nil {
 		t.Fatalf("got %d certificates and no error; a listing that cannot be completed must not read as complete", len(certs))
 	}
@@ -779,7 +779,7 @@ func TestListCertificatesRefusesAListingWhoseCursorNeverAdvances(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true)
+	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true, nil)
 	if err == nil {
 		t.Fatalf("got %d certificates and no error from a cursor that never advanced", len(certs))
 	}
@@ -819,7 +819,7 @@ func TestListCertificatesRefusesToReturnWhatItGatheredAtThePageCap(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true)
+	certs, err := client.ListCertificates(ctx, server.URL, "acme.com", "backend", true, nil)
 	if err == nil {
 		t.Fatalf("got %d certificates and no error; the walk hit its bound and returned a prefix as complete", len(certs))
 	}

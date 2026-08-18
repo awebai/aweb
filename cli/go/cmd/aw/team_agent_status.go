@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"fmt"
 	"net/http"
 	"os"
@@ -119,7 +120,7 @@ func runTeamHumanAgentStatus(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	out := teamAgentStatusOutput{TeamID: teamID, Alias: alias}
-	readAgentCertificateState(ctx, &out, domain, team, isAwebHostedNamespace(domain))
+	readAgentCertificateState(ctx, &out, domain, team, isAwebHostedNamespace(domain), teamReadSigners(workingDir, domain, team))
 	readAgentCoordinationState(ctx, client, &out, alias)
 
 	out.deriveState()
@@ -185,7 +186,10 @@ func (out *teamAgentStatusOutput) deriveState() {
 // unestablished absence this whole change exists to remove; verified against the
 // live team, where the registry holds one certificate and four working local
 // agents hold none of it.
-func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, domain, team string, hosted bool) {
+// signers are the locally held keys that may authorize the read of a private
+// team, in precedence order (see teamReadSigners); an empty slice reads
+// anonymously, which is what a public team has always done.
+func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, domain, team string, hosted bool, signers []ed25519.PrivateKey) {
 	registry, err := newConfiguredRegistryClient(nil, "")
 	if err != nil {
 		out.Certificate = agentCertificateUnknown
@@ -194,8 +198,19 @@ func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, 
 	}
 	registryURL := resolveTeamRemoveRegistryURL(registry)
 
-	if _, err := registry.GetTeam(ctx, registryURL, domain, team); err != nil {
+	// The key the team read was admitted with is the one the member read
+	// reuses: the second read is gated on the same visibility, so re-walking
+	// the candidates could only arrive at the same answer more slowly.
+	signingKey, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
+		_, err := registry.GetTeam(ctx, registryURL, domain, team, key)
+		return err
+	})
+	if err != nil {
 		out.Certificate = agentCertificateUnknown
+		if friendly := friendlyTeamReadError(err, awid.BuildTeamID(domain, team), len(signers) > 0); friendly != err {
+			out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", friendly))
+			return
+		}
 		out.Unreadable = append(out.Unreadable, fmt.Sprintf(
 			"certificate store: could not read team %s from %s, so an absent member cannot be told from an unreachable registry: %v",
 			awid.BuildTeamID(domain, team), registryURL, err,
@@ -203,7 +218,7 @@ func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, 
 		return
 	}
 
-	member, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, out.Alias)
+	member, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, out.Alias, signingKey)
 	if err == nil {
 		out.Certificate = agentCertificateActive
 		out.CertificateID = strings.TrimSpace(member.CertificateID)
@@ -223,7 +238,8 @@ func readAgentCertificateState(ctx context.Context, out *teamAgentStatusOutput, 
 		return
 	}
 	out.Certificate = agentCertificateUnknown
-	out.Unreadable = append(out.Unreadable, fmt.Sprintf("certificate store: %v", err))
+	out.Unreadable = append(out.Unreadable, fmt.Sprintf(
+		"certificate store: %v", friendlyTeamReadError(err, awid.BuildTeamID(domain, team), signingKey != nil)))
 }
 
 // readAgentCoordinationState answers whether the alias still has a workspace

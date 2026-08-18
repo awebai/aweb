@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"strings"
@@ -363,11 +364,24 @@ func verifyRetirementTarget(
 	client *aweb.Client,
 	registry *awid.RegistryClient,
 	registryURL, domain, team, memberAddress, alias string,
+	signers []ed25519.PrivateKey,
 ) (*verifiedMember, error) {
 	resolveCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	memberRef, err := registry.ResolveTeamMember(resolveCtx, registryURL, domain, team, alias)
+	var memberRef *awid.TeamMemberReference
+	_, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
+		var resolveErr error
+		memberRef, resolveErr = registry.ResolveTeamMember(resolveCtx, registryURL, domain, team, alias, key)
+		return resolveErr
+	})
 	cancel()
 	if err != nil {
+		// A visibility refusal is not an unresolvable member: the registry
+		// answered, and what it said is that this caller may not read the
+		// team. Explaining the ambiguity of a 404 would point away from the
+		// actual remedy, which is a credential.
+		if friendly := friendlyTeamReadError(err, awid.BuildTeamID(domain, team), len(signers) > 0); friendly != err {
+			return nil, friendly
+		}
 		return nil, unresolvedRetirementTargetError(ctx, client, memberAddress, alias, err)
 	}
 	if err := verifyNamedMember(memberAddress, domain, memberRef); err != nil {

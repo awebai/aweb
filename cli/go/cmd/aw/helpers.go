@@ -590,13 +590,22 @@ func resolveLiveTeamMemberAliasTarget(ctx context.Context, sel *awconfig.Selecti
 			return liveTeamMemberAliasTarget{}, false, err
 		}
 	}
-	member, err := registry.ResolveTeamMember(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, targetAlias)
-	if err != nil {
+	// The selection's own signing key is the member credential for this team,
+	// which is what lets the roster read keep working after the team goes
+	// private. Best-effort: with no usable key the read goes out unsigned,
+	// exactly as before.
+	signers := teamReadSignersForKeyPath(sel.SigningKey, domain, team)
+	var member *awid.TeamMemberReference
+	if _, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
+		var resolveErr error
+		member, resolveErr = registry.ResolveTeamMember(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, targetAlias, key)
+		return resolveErr
+	}); err != nil {
 		var registryErr *awid.RegistryError
 		if errors.As(err, &registryErr) && registryErr.StatusCode == http.StatusNotFound {
 			return liveTeamMemberAliasTarget{}, false, nil
 		}
-		return liveTeamMemberAliasTarget{}, false, err
+		return liveTeamMemberAliasTarget{}, false, friendlyTeamReadError(err, strings.TrimSpace(sel.TeamID), len(signers) > 0)
 	}
 	return liveTeamMemberAliasTarget{
 		Alias:   strings.TrimSpace(member.Alias),

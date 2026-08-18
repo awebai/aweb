@@ -164,7 +164,7 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 	// The registry enforces one unrevoked certificate per (team, alias), so the
 	// alias's active registration - if any - is both the row to revoke and the
 	// authoritative record of the member facts the fresh certificate must keep.
-	oldRef, err := resolveActiveReissueCertMember(ctx, registry, registryURL, domain, team, teamID, alias)
+	oldRef, err := resolveActiveReissueCertMember(ctx, registry, registryURL, domain, team, teamID, alias, teamKey)
 	if err != nil {
 		return err
 	}
@@ -334,15 +334,24 @@ func resolveActiveReissueCertMember(
 	ctx context.Context,
 	registry *awid.RegistryClient,
 	registryURL, domain, team, teamID, alias string,
+	teamKey ed25519.PrivateKey,
 ) (*awid.TeamMemberReference, error) {
-	ref, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, alias)
+	ref, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, alias, teamKey)
 	if err == nil {
 		return ref, nil
 	}
 	if status, ok := awid.HTTPStatusCode(err); !ok || status != http.StatusNotFound {
+		// The team key is in hand here, so a visibility refusal means it is not
+		// the team's key - said plainly rather than wrapped as a failed lookup.
+		if friendly := friendlyTeamReadError(err, teamID, true); friendly != err {
+			return nil, friendly
+		}
 		return nil, fmt.Errorf("resolve active certificate for %s in %s: %w", alias, teamID, err)
 	}
-	if _, teamErr := registry.GetTeam(ctx, registryURL, domain, team); teamErr != nil {
+	if _, teamErr := registry.GetTeam(ctx, registryURL, domain, team, teamKey); teamErr != nil {
+		if friendly := friendlyTeamReadError(teamErr, teamID, true); friendly != teamErr {
+			return nil, friendly
+		}
 		return nil, fmt.Errorf("no active certificate is registered for %s in %s, and the team itself could not be read back from the registry: %w; certificate registration requires the team to be registered first", alias, teamID, teamErr)
 	}
 	return nil, nil

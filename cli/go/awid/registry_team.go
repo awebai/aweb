@@ -11,6 +11,24 @@ import (
 
 const RegistryCodeCertificateAlreadyRegistered = "certificate_already_registered"
 
+// RegistryCodeTeamPrivate is the registry's machine-readable code for reads
+// blocked by team visibility (awid_service/routes/teams.py
+// TEAM_PRIVATE_ERROR_CODE). The CLI branches on it to explain the refusal;
+// keep it in sync with the service.
+const RegistryCodeTeamPrivate = "team_private"
+
+// IsTeamPrivateError reports whether err is the registry's team_private
+// visibility refusal. The parsed detail code is preferred; a 403 whose raw
+// body carries the code is accepted as a fallback so a registry that answers
+// with a differently shaped detail is still recognized.
+func IsTeamPrivateError(err error) bool {
+	var regErr *RegistryError
+	if !errors.As(err, &regErr) || regErr.StatusCode != http.StatusForbidden {
+		return false
+	}
+	return regErr.HasCode(RegistryCodeTeamPrivate) || strings.Contains(regErr.Detail, RegistryCodeTeamPrivate)
+}
+
 // RegistryTeam represents a team from the awid registry.
 type RegistryTeam struct {
 	TeamID      string `json:"team_id"`
@@ -208,17 +226,24 @@ func (c *RegistryClient) SetTeamVisibility(
 }
 
 // GetTeam fetches team details from awid.
+//
+// signingKey is optional. When present the request carries the same
+// path-signature the certificate blob fetch uses, which is what lets a team
+// member or the team controller read a private team; nil keeps the request
+// anonymous, which is enough for public teams and is the pre-visibility
+// behavior byte for byte.
 func (c *RegistryClient) GetTeam(
 	ctx context.Context,
 	registryURL string,
 	domain string,
 	name string,
+	signingKey ed25519.PrivateKey,
 ) (*RegistryTeam, error) {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name)
 	var out RegistryTeam
-	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, optionalSignedPathHeaders(http.MethodGet, path, signingKey), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -380,12 +405,16 @@ func (c *RegistryClient) FetchTeamCertificate(
 // pagination to the end. Callers read the result as a complete roster, so a
 // listing that cannot be completed is returned as an error rather than as a
 // short list that reads like the whole team.
+//
+// signingKey is optional; see GetTeam. Each page request is signed separately
+// so a long walk never rides on a stale timestamp.
 func (c *RegistryClient) ListCertificates(
 	ctx context.Context,
 	registryURL string,
 	domain string,
 	name string,
 	activeOnly bool,
+	signingKey ed25519.PrivateKey,
 ) ([]RegistryCertificate, error) {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
@@ -404,7 +433,7 @@ func (c *RegistryClient) ListCertificates(
 			path += "&cursor=" + urlQueryEscape(cursor)
 		}
 		var out certificateListResponse
-		if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
+		if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, optionalSignedPathHeaders(http.MethodGet, path, signingKey), nil, &out); err != nil {
 			return nil, err
 		}
 		certificates = append(certificates, out.Certificates...)
@@ -430,12 +459,15 @@ func (c *RegistryClient) ListCertificates(
 }
 
 // ResolveTeamMember resolves an active (team_id, alias) team-member reference.
+//
+// signingKey is optional; see GetTeam.
 func (c *RegistryClient) ResolveTeamMember(
 	ctx context.Context,
 	registryURL string,
 	domain string,
 	name string,
 	alias string,
+	signingKey ed25519.PrivateKey,
 ) (*TeamMemberReference, error) {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
@@ -451,7 +483,7 @@ func (c *RegistryClient) ResolveTeamMember(
 	}
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/members/" + urlPathEscape(alias)
 	var out TeamMemberReference
-	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &out); err != nil {
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, optionalSignedPathHeaders(http.MethodGet, path, signingKey), nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

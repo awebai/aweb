@@ -105,7 +105,7 @@ func (s *agentStores) read(t *testing.T) teamAgentStatusOutput {
 	}
 
 	out := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: s.alias}
-	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false)
+	readAgentCertificateState(context.Background(), &out, "acme.com", "backend", false, nil)
 	readAgentCoordinationState(context.Background(), client, &out, s.alias)
 	out.deriveState()
 	return out
@@ -224,7 +224,7 @@ func TestAgentStatusWillNotReadAHostedRegistrySilenceAsAnAbsentCertificate(t *te
 	}
 
 	hosted := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: stores.alias}
-	readAgentCertificateState(context.Background(), &hosted, "acme.com", "backend", true)
+	readAgentCertificateState(context.Background(), &hosted, "acme.com", "backend", true, nil)
 	readAgentCoordinationState(context.Background(), client, &hosted, stores.alias)
 	if hosted.Certificate != agentCertificateUnknown {
 		t.Fatalf("hosted certificate=%q, want %q", hosted.Certificate, agentCertificateUnknown)
@@ -236,7 +236,7 @@ func TestAgentStatusWillNotReadAHostedRegistrySilenceAsAnAbsentCertificate(t *te
 	// On a team whose certificates really are in the registry, the same silence
 	// after a readable team does establish absence.
 	byot := teamAgentStatusOutput{TeamID: "backend:acme.com", Alias: stores.alias}
-	readAgentCertificateState(context.Background(), &byot, "acme.com", "backend", false)
+	readAgentCertificateState(context.Background(), &byot, "acme.com", "backend", false, nil)
 	if byot.Certificate != agentCertificateNone {
 		t.Fatalf("customer-controlled certificate=%q, want %q", byot.Certificate, agentCertificateNone)
 	}

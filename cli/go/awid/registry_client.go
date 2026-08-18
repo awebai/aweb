@@ -632,6 +632,21 @@ func (c *RegistryClient) httpClient() *http.Client {
 	return &http.Client{Timeout: APITimeout(), Transport: NewAPITransport()}
 }
 
+// optionalSignedPathHeaders signs like signedPathHeaders when a key is
+// present and stays anonymous when it is not. Any query string is excluded
+// from the signed payload: the registry verifies over request.url.path only
+// (awid_service/routes/teams.py _verify_path_signature), so signing the query
+// would fail verification on every paginated read.
+func optionalSignedPathHeaders(method, path string, signingKey ed25519.PrivateKey) map[string]string {
+	if signingKey == nil {
+		return nil
+	}
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		path = path[:i]
+	}
+	return signedPathHeaders(method, path, signingKey)
+}
+
 func signedPathHeaders(method, path string, signingKey ed25519.PrivateKey) map[string]string {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	did := ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))

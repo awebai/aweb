@@ -126,6 +126,15 @@
   publishable identity has never recorded a publish; `aw id encryption-key
   setup` republishes. Previously provisioning created the key locally and
   never published, leaving counterparties nothing to encrypt to.
+- BYOT CLI reads work against private teams. `aw team agent-status`, `aw id
+  team members`, agent retirement, and the roster alias fallback now attach
+  the same path-signature the certificate blob fetch uses when the invoking
+  workspace holds a usable key — its own identity signing key, falling back
+  to a locally held team controller key, tried in that order and advancing
+  only on the registry's visibility refusal. Public teams and every non-403
+  failure are unchanged, and a `team_private` refusal now prints what to do
+  (run from a workspace holding a certificate for the team, or ask the team
+  controller, who sets visibility) instead of a raw HTTP error.
 
 ### Channel compatibility
 

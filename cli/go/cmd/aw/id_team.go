@@ -1077,8 +1077,16 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	certs, err := registry.ListCertificates(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, !teamMembersIncludeRevoked)
-	if err != nil {
+	signers := teamReadSigners(workingDir, domain, team)
+	var certs []awid.RegistryCertificate
+	if _, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
+		var listErr error
+		certs, listErr = registry.ListCertificates(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, team, !teamMembersIncludeRevoked, key)
+		return listErr
+	}); err != nil {
+		if friendly := friendlyTeamReadError(err, teamID, len(signers) > 0); friendly != err {
+			return friendly
+		}
 		return fmt.Errorf("list team members for %s: %w", teamID, err)
 	}
 	items := make([]teamMemberItem, 0, len(certs))
@@ -2259,8 +2267,14 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
-		memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName)
+		memberRef, err := registry.ResolveTeamMember(ctx, registryURL, domain, team, memberName, teamKey)
 		if err != nil {
+			// The team key is in hand here, so a visibility refusal means this
+			// key is not the team's - a different fault from an unresolvable
+			// member, and it is stated rather than wrapped in a lookup failure.
+			if friendly := friendlyTeamReadError(err, teamID, true); friendly != err {
+				return friendly
+			}
 			// A 404 here is ambiguous: it looks the same whether the member has
 			// no active certificate or the request never reached the registry at
 			// all. The command cannot establish the postcondition, so it fails
@@ -2911,9 +2925,13 @@ func verifyTeamRegisterLocalKey(ctx context.Context, teamKey ed25519.PrivateKey,
 			return fmt.Errorf("invalid --registry: %w", err)
 		}
 	}
-	team, err := registry.GetTeam(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, teamName)
+	team, err := registry.GetTeam(ctx, strings.TrimSpace(registry.DefaultRegistryURL), domain, teamName, teamKey)
 	if err != nil {
-		return fmt.Errorf("load AWID team %s: %w", awid.BuildTeamID(domain, teamName), err)
+		teamID := awid.BuildTeamID(domain, teamName)
+		if friendly := friendlyTeamReadError(err, teamID, true); friendly != err {
+			return friendly
+		}
+		return fmt.Errorf("load AWID team %s: %w", teamID, err)
 	}
 	localDID := awid.ComputeDIDKey(teamKey.Public().(ed25519.PublicKey))
 	registryDID := strings.TrimSpace(team.TeamDIDKey)
@@ -3428,7 +3446,7 @@ func ensureLocalTeamRegistered(
 		if code, ok := registryStatusCode(err); !ok || code != http.StatusConflict {
 			return nil, fmt.Errorf("create team at registry: %w", err)
 		}
-		existingTeam, getErr := registry.GetTeam(ctx, registryURL, domain, name)
+		existingTeam, getErr := registry.GetTeam(ctx, registryURL, domain, name, teamPriv)
 		if getErr != nil {
 			return nil, fmt.Errorf("create team at registry: %w", err)
 		}
