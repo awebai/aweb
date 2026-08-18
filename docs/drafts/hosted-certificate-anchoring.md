@@ -311,15 +311,39 @@ aweb-aaum.9, 2026-08-17):
    can neither be registered (no blob to submit) nor deleted (they are
    legitimate) — is the **fresh-certificate re-issuance operation**: sign a
    fresh certificate for the *same* member key, register it, and refresh
-   the projection. No alias
-   conflict arises because a lost-blob certificate was never registered, so
-   the registry holds no active row for that alias. Hosted teams need this
-   operation alongside BYOT; it is an OSS deliverable in the repo split. It is deliberately NOT the
+   the projection. **Two cases, corrected after the coordinator's post-land
+   finding and settled by what shipped** (`aw id team reissue-cert`,
+   aweb-abfs.4, landed `ebf87401`): where the lost-blob certificate was
+   never registered, the fresh registration is direct and no alias conflict
+   can arise; where the registry *does* hold a row for that alias — which
+   `docs/awid-sot.md` explicitly provides for as a registered, metadata-only
+   pre-blob row with no stored blob — the operation revokes that row and
+   registers the fresh certificate after, in that order, because the
+   registry permits one unrevoked row per `(team_uuid, alias)` and its
+   insert-only registration route answers `409 Alias already active in
+   team`. The earlier claim that no conflict could arise "because a lost-blob
+   certificate was never registered" was false for the BYOT metadata-row
+   case and is withdrawn. This is exceptional, controller-authorized blob
+   recovery — not renewal, supersession, or expiry, all of which remain
+   removed from this architecture. Hosted teams need the equivalent operation
+   alongside BYOT; the BYOT half is an OSS deliverable in the repo split
+   (done). It is deliberately NOT the
    replace-key machinery, which structurally requires a key change at both
    client and server layers and exists for lost or compromised keys — a
    different situation than a lost certificate blob. Without this gate, a member
    who did nothing wrong is locked out the moment existence becomes
-   required.
+   required. **One non-member object is classified here** (coordinator
+   ruling, 2026-08-17), because strict verification must not silently bless
+   it: the Library binding's per-material-load `team-service` object presents
+   a pseudo-membership certificate that is non-roster, non-durable, and not
+   registered — it is not a member and must not be registered on every load.
+   The live Library provider is therefore unsupported while the strict flag
+   is on, until a separately authorized design replaces the per-load
+   certificate with an explicit controller-auth/service-delegation rule or a
+   durable registered service member. Absent `LIBRARY_BASE_URL` the static
+   stub is selected, which is the default; the production activation
+   checklist must confirm that. This is a classification only — it authorizes
+   no Library work, which remains paused.
 4. **The W ≠ A invariant.** AC's `ensure_stored_agent_team_certificate`
    currently keys the cloud table by agent UUID as though it were the
    workspace UUID; hosted workspace and agent UUIDs are decoupled. The
@@ -353,9 +377,11 @@ From the adversarial review of the verification-authority draft (task
 - **OSS (id-bugs)**: the outage-grace retention tier and loud
   refresh-failure logging in the cached registry client (done, aweb-abfs.3); the
   fresh-certificate re-issuance operation (blob-lost
-  remediation); read-side
+  remediation) (done, aweb-abfs.4); read-side
   visibility enforcement on the registry's team/certificate/member/
-  revocation reads for private teams; doctor checks; SOT/docs updates; test
+  revocation reads for private teams (done, aweb-abfs.1), with CLI signed
+  reads following (aweb-abfs.2); staged existence-required verification
+  (done, aweb-abfs.5, default off); doctor checks; SOT/docs updates; test
   vectors.
 - **AC (retirement instance)**: mint-time registration, the backfill, and
   wiring the removal protocol's commit to the registry revoke. These ride
