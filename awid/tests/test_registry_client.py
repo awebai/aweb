@@ -5,6 +5,7 @@ import dataclasses
 import inspect
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 
 import httpx
 import pytest
@@ -867,6 +868,610 @@ async def test_grace_retention_applies_only_to_revocation_entries():
     assert redis.expirations[team_key] == (
         _TEAM_METADATA_CACHE_TTL_SECONDS * _STALE_MULTIPLIER
     )
+
+
+# ---------------------------------------------------------------------------
+# Incremental revocation refresh (aweb-abfs.6)
+#
+# The revocation list grows monotonically with no ceiling, so a refresh reads
+# only the tail — entries at/after a stored high-water mark — and unions it into
+# the cached set. Every test below is about the same invariant: the increment is
+# an optimisation, and losing it, corrupting it or outrunning it must cost
+# bandwidth, never correctness.
+# ---------------------------------------------------------------------------
+
+_MARK = "2026-01-02T00:00:00+00:00"
+_MARK_DT = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+
+def _incremental_revocations_cache_payload(
+    *,
+    fetched_at: int,
+    certificate_ids: list[str],
+    high_water_mark,
+    full_sync_at,
+) -> str:
+    """A cached revocation entry that also carries incremental bookkeeping.
+
+    Deliberately separate from _revocations_cache_payload: that helper builds
+    the entry a client with no incremental support writes, and the pre-existing
+    tests keep exercising exactly that shape.
+    """
+    from awid.registry import (
+        _REVOCATIONS_SYNC_FIELD,
+        _TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+    )
+
+    return json.dumps(
+        {
+            "fetched_at": fetched_at,
+            "fresh_until": fetched_at + _TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+            "value": sorted(certificate_ids),
+            _REVOCATIONS_SYNC_FIELD: {
+                "high_water_mark": high_water_mark,
+                "full_sync_at": full_sync_at,
+            },
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _stored_revocations_entry(redis: FakeRedis, registry: CachedRegistryClient) -> dict:
+    return json.loads(redis.values[registry._team_revocations_cache_key("acme.com", "ops")])
+
+
+def _stored_sync_state(redis: FakeRedis, registry: CachedRegistryClient) -> dict:
+    from awid.registry import _REVOCATIONS_SYNC_FIELD
+
+    return _stored_revocations_entry(redis, registry)[_REVOCATIONS_SYNC_FIELD]
+
+
+def _cached_registry(redis: FakeRedis, handler) -> CachedRegistryClient:
+    return CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(handler),
+    )
+
+
+def _revocation_page(entries, *, has_more: bool | None = False, next_cursor=None) -> Response:
+    body: dict = {
+        "revocations": [
+            {"certificate_id": cert_id, "revoked_at": revoked_at}
+            for cert_id, revoked_at in entries
+        ]
+    }
+    if has_more is not None:
+        body["has_more"] = has_more
+        body["next_cursor"] = next_cursor
+    return Response(200, json=body)
+
+
+def _since_honouring_handler(all_entries, requests: list, *, paginated: bool = True):
+    """A server that applies the route's own `revoked_at > since` filter."""
+
+    def handler(request):
+        requests.append(request.url)
+        since = request.url.params.get("since")
+        entries = all_entries
+        if since:
+            cutoff = datetime.fromisoformat(since)
+            entries = [e for e in all_entries if datetime.fromisoformat(e[1]) > cutoff]
+        return _revocation_page(entries, has_more=False if paginated else None)
+
+    return handler
+
+
+def test_incremental_refresh_bounds_are_pinned():
+    """Two relationships, not two magic numbers.
+
+    The overlap must be at least one refresh interval, because it is what stops
+    a `revoked_at > since` filter from skipping entries that share the mark's
+    timestamp or that commit out of timestamp order. The full-resync bound must
+    not exceed the outage grace: the grace is already the longest window in
+    which this tier may act on data that is not current, so undetected drift
+    must not be able to outlive it.
+    """
+    from awid.registry import (
+        _TEAM_REVOCATIONS_CACHE_TTL_SECONDS,
+        _TEAM_REVOCATIONS_FULL_RESYNC_SECONDS,
+        _TEAM_REVOCATIONS_INCREMENTAL_OVERLAP_SECONDS,
+        _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS,
+    )
+
+    assert (
+        _TEAM_REVOCATIONS_INCREMENTAL_OVERLAP_SECONDS
+        >= _TEAM_REVOCATIONS_CACHE_TTL_SECONDS
+    )
+    assert (
+        _TEAM_REVOCATIONS_FULL_RESYNC_SECONDS
+        <= _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+    )
+
+
+@pytest.mark.asyncio
+async def test_incremental_revocation_refresh_scopes_by_since_and_unions(monkeypatch):
+    """The refresh reads the tail, not the list, and adds it to what it had."""
+    from awid.registry import _TEAM_REVOCATIONS_INCREMENTAL_OVERLAP_SECONDS
+
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+
+    def handler(request):
+        requests.append(request.url)
+        return _revocation_page([("c3", "2026-01-03T00:00:30+00:00")])
+
+    registry = _cached_registry(redis, handler)
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            # Older than the stale-while-revalidate window, so the refresh is
+            # the synchronous one and its result is what the caller sees.
+            fetched_at=now - 300,
+            certificate_ids=["c1", "c2"],
+            high_water_mark=_MARK,
+            full_sync_at=now - 60,
+        )
+    )
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert revoked == {"c1", "c2", "c3"}
+    assert len(requests) == 1
+    since = requests[0].params.get("since")
+    assert since is not None
+    assert datetime.fromisoformat(since) == _MARK_DT - timedelta(
+        seconds=_TEAM_REVOCATIONS_INCREMENTAL_OVERLAP_SECONDS
+    )
+
+    stored = _stored_revocations_entry(redis, registry)
+    assert set(stored["value"]) == {"c1", "c2", "c3"}
+    # The union really is current as of now, so restamping the age is honest.
+    assert stored["fetched_at"] == now
+    sync = _stored_sync_state(redis, registry)
+    assert datetime.fromisoformat(sync["high_water_mark"]) == datetime(
+        2026, 1, 3, 0, 0, 30, tzinfo=timezone.utc
+    )
+    # An incremental refresh never restamps the full-sync clock.
+    assert sync["full_sync_at"] == now - 60
+
+
+@pytest.mark.asyncio
+async def test_incremental_refresh_does_not_skip_entries_sharing_the_mark(monkeypatch):
+    """A mass revocation stamps many rows with one revoked_at, and the route
+    filters `revoked_at > since`. Asking at the mark would drop every sibling
+    of the newest row we already saw — and the composite (revoked_at, id)
+    cursor that would express "at the mark, after this row" cannot be built by
+    a client, because the route does not return `id`. So the mark is rewound
+    and the union absorbs the re-read."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+    all_entries = [
+        ("c1", "2026-01-01T00:00:00+00:00"),
+        ("cA", _MARK),
+        ("cB", _MARK),  # same revoked_at as the mark; committed after our read
+        ("cC", "2026-01-02T00:00:01+00:00"),
+    ]
+    registry = _cached_registry(redis, _since_honouring_handler(all_entries, requests))
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            fetched_at=now - 300,
+            certificate_ids=["c1", "cA"],
+            high_water_mark=_MARK,
+            full_sync_at=now - 60,
+        )
+    )
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert revoked == {"c1", "cA", "cB", "cC"}
+    since = requests[0].params.get("since")
+    assert datetime.fromisoformat(since) < _MARK_DT, (
+        "since must be strictly before the mark or siblings sharing it are skipped"
+    )
+    sync = _stored_sync_state(redis, registry)
+    assert datetime.fromisoformat(sync["high_water_mark"]) == datetime(
+        2026, 1, 2, 0, 0, 1, tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "high_water_mark, full_sync_at",
+    [
+        (None, 1_000_000 - 60),  # never stored
+        ("not-a-timestamp", 1_000_000 - 60),  # corrupt
+        (_MARK, None),  # full-sync clock lost
+        (_MARK, "recently"),  # full-sync clock corrupt
+    ],
+)
+async def test_lost_or_corrupt_mark_refetches_fully_and_never_shrinks(
+    monkeypatch, high_water_mark, full_sync_at
+):
+    """A mark the client cannot trust costs one full read, not a shrunken set.
+
+    The server here answers a `since`-scoped request with only the tail, so if
+    the client had used the unusable mark the result would be missing c1/c2 —
+    the failure this test exists to forbid.
+    """
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+
+    def handler(request):
+        requests.append(request.url)
+        if request.url.params.get("since"):
+            return _revocation_page([("c9", "2026-01-04T00:00:00+00:00")])
+        return _revocation_page(
+            [
+                ("c1", "2026-01-01T00:00:00+00:00"),
+                ("c2", _MARK),
+                ("c9", "2026-01-04T00:00:00+00:00"),
+            ]
+        )
+
+    registry = _cached_registry(redis, handler)
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            fetched_at=now - 300,
+            certificate_ids=["c1", "c2"],
+            high_water_mark=high_water_mark,
+            full_sync_at=full_sync_at,
+        )
+    )
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert revoked == {"c1", "c2", "c9"}
+    assert requests[0].params.get("since") is None
+    sync = _stored_sync_state(redis, registry)
+    assert sync["full_sync_at"] == now
+    assert datetime.fromisoformat(sync["high_water_mark"]) == datetime(
+        2026, 1, 4, tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.asyncio
+async def test_entry_without_a_usable_timestamp_forces_a_full_resync(monkeypatch):
+    """An entry we cannot place on the timeline cannot advance a mark, and a
+    mark that did not advance would re-read that tail forever. Resync instead,
+    and drop the mark so the next read is full too."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+
+    def handler(request):
+        requests.append(request.url)
+        if request.url.params.get("since"):
+            return Response(
+                200,
+                json={
+                    "revocations": [{"certificate_id": "c3", "revoked_at": None}],
+                    "has_more": False,
+                },
+            )
+        return _revocation_page(
+            [("c1", "2026-01-01T00:00:00+00:00"), ("c2", _MARK)]
+        )
+
+    registry = _cached_registry(redis, handler)
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            fetched_at=now - 300,
+            certificate_ids=["c1", "c2"],
+            high_water_mark=_MARK,
+            full_sync_at=now - 60,
+        )
+    )
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert revoked == {"c1", "c2"}
+    assert requests[0].params.get("since") is not None
+    assert requests[1].params.get("since") is None
+    assert _stored_sync_state(redis, registry)["full_sync_at"] == now
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expired", [False, True])
+async def test_periodic_full_resync_fires_at_its_bound(monkeypatch, expired: bool):
+    """Incremental until the bound, full at it — so drift cannot accumulate
+    silently no matter how well the increment appears to be working."""
+    from awid.registry import _TEAM_REVOCATIONS_FULL_RESYNC_SECONDS
+
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+    age = _TEAM_REVOCATIONS_FULL_RESYNC_SECONDS + (0 if expired else -1)
+    all_entries = [("c1", "2026-01-01T00:00:00+00:00"), ("c2", _MARK)]
+    registry = _cached_registry(redis, _since_honouring_handler(all_entries, requests))
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            fetched_at=now - 300,
+            certificate_ids=["c1", "c2"],
+            high_water_mark=_MARK,
+            full_sync_at=now - age,
+        )
+    )
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert revoked == {"c1", "c2"}
+    sync = _stored_sync_state(redis, registry)
+    if expired:
+        assert requests[0].params.get("since") is None
+        assert sync["full_sync_at"] == now
+    else:
+        assert requests[0].params.get("since") is not None
+        assert sync["full_sync_at"] == now - age
+
+
+@pytest.mark.asyncio
+async def test_failed_incremental_refresh_serves_stale_at_its_original_age(
+    monkeypatch, caplog
+):
+    """The grace is decided on how old the data really is. A failed incremental
+    refresh must not touch the entry, so the age keeps counting from the last
+    genuinely-current fetch — 300s here, not 0s."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    registry = _failing_registry(redis)
+    cache_key = registry._team_revocations_cache_key("acme.com", "ops")
+    payload = _incremental_revocations_cache_payload(
+        fetched_at=now - 300,
+        certificate_ids=["c1", "c2"],
+        high_water_mark=_MARK,
+        full_sync_at=now - 60,
+    )
+    redis.values[cache_key] = payload
+    try:
+        with caplog.at_level(logging.WARNING):
+            revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert revoked == {"c1", "c2"}
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "aged 300s" in warnings[0].getMessage()
+    assert redis.values[cache_key] == payload
+
+
+@pytest.mark.asyncio
+async def test_partly_read_incremental_refresh_does_not_look_current(
+    monkeypatch, caplog
+):
+    """A page-through that dies half way has read a prefix of the tail, which is
+    neither a complete increment nor grounds for a new mark. It must leave the
+    entry — and therefore its age — exactly as it was."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+
+    def handler(request):
+        requests.append(request.url)
+        if request.url.params.get("cursor"):
+            return Response(500, json={"detail": "registry down"})
+        return _revocation_page(
+            [("c3", "2026-01-03T00:00:00+00:00")], has_more=True, next_cursor="cur-1"
+        )
+
+    registry = _cached_registry(redis, handler)
+    cache_key = registry._team_revocations_cache_key("acme.com", "ops")
+    payload = _incremental_revocations_cache_payload(
+        fetched_at=now - 300,
+        certificate_ids=["c1", "c2"],
+        high_water_mark=_MARK,
+        full_sync_at=now - 60,
+    )
+    redis.values[cache_key] = payload
+    try:
+        with caplog.at_level(logging.WARNING):
+            revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert len(requests) == 2
+    # c3 was read but is not adopted: a half-read tail proves nothing.
+    assert revoked == {"c1", "c2"}
+    assert redis.values[cache_key] == payload
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "aged 300s" in warnings[0].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_failed_incremental_refresh_beyond_grace_still_fails_closed(monkeypatch):
+    """Incremental refresh does not buy extra staleness: past 15 minutes of data
+    age the failure propagates, mark or no mark."""
+    from awid.registry import _TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS
+
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    registry = _failing_registry(redis)
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            fetched_at=now - (_TEAM_REVOCATIONS_OUTAGE_GRACE_SECONDS + 1),
+            certificate_ids=["c1"],
+            high_water_mark=_MARK,
+            full_sync_at=now - 60,
+        )
+    )
+    try:
+        with pytest.raises(RegistryError):
+            await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+
+@pytest.mark.asyncio
+async def test_incremental_refresh_of_a_deleted_team_resyncs_fully(monkeypatch):
+    """Deleting a team is the one path that removes revocation rows, and it
+    leaves the route answering 404. Unioning onto the cached set would pin a
+    dead team's revocations forever, so a 404 mid-increment resyncs."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+
+    def handler(request):
+        requests.append(request.url)
+        return Response(404, json={"detail": "Team not found"})
+
+    registry = _cached_registry(redis, handler)
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            fetched_at=now - 300,
+            certificate_ids=["c1", "c2"],
+            high_water_mark=_MARK,
+            full_sync_at=now - 60,
+        )
+    )
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert revoked == set()
+    assert requests[0].params.get("since") is not None
+    assert requests[1].params.get("since") is None
+    sync = _stored_sync_state(redis, registry)
+    assert sync["high_water_mark"] is None
+    assert sync["full_sync_at"] == now
+
+
+@pytest.mark.asyncio
+async def test_incremental_refresh_against_a_legacy_server(monkeypatch):
+    """`since` predates pagination, so a server that sends no has_more still
+    supports an incremental read; the union and the mark work unchanged."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+    all_entries = [
+        ("c1", "2026-01-01T00:00:00+00:00"),
+        ("c2", _MARK),
+        ("c3", "2026-01-03T00:00:00+00:00"),
+    ]
+    registry = _cached_registry(
+        redis, _since_honouring_handler(all_entries, requests, paginated=False)
+    )
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            fetched_at=now - 300,
+            certificate_ids=["c1", "c2"],
+            high_water_mark=_MARK,
+            full_sync_at=now - 60,
+        )
+    )
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+    finally:
+        await registry.aclose()
+
+    assert revoked == {"c1", "c2", "c3"}
+    assert len(requests) == 1
+    assert requests[0].params.get("since") is not None
+    sync = _stored_sync_state(redis, registry)
+    assert datetime.fromisoformat(sync["high_water_mark"]) == datetime(
+        2026, 1, 3, tzinfo=timezone.utc
+    )
+
+
+@pytest.mark.asyncio
+async def test_first_full_read_stores_the_mark_the_next_read_uses(monkeypatch):
+    """End to end on a live cache: read once with nothing cached, then again
+    after the TTL. Only the first read is a full page-through."""
+    clock = {"now": 1_000_000}
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: clock["now"])
+    redis = FakeRedis()
+    requests: list = []
+    all_entries = [("c1", "2026-01-01T00:00:00+00:00"), ("c2", _MARK)]
+    handler = _since_honouring_handler(all_entries, requests)
+    registry = _cached_registry(redis, handler)
+    try:
+        assert await registry.get_team_revocations("acme.com", "ops") == {"c1", "c2"}
+        assert requests[0].params.get("since") is None
+        first_sync = _stored_sync_state(redis, registry)
+        assert datetime.fromisoformat(first_sync["high_water_mark"]) == _MARK_DT
+        assert first_sync["full_sync_at"] == 1_000_000
+
+        # Past the stale window so the refresh is synchronous, and a new
+        # revocation has landed in the meantime.
+        clock["now"] = 1_000_300
+        all_entries.append(("c3", "2026-01-02T00:00:00.500000+00:00"))
+        assert await registry.get_team_revocations("acme.com", "ops") == {
+            "c1",
+            "c2",
+            "c3",
+        }
+    finally:
+        await registry.aclose()
+
+    assert requests[1].params.get("since") is not None
+    second_sync = _stored_sync_state(redis, registry)
+    assert datetime.fromisoformat(second_sync["high_water_mark"]) == datetime(
+        2026, 1, 2, 0, 0, 0, 500000, tzinfo=timezone.utc
+    )
+    assert second_sync["full_sync_at"] == 1_000_000
+
+
+@pytest.mark.asyncio
+async def test_background_revalidation_refreshes_incrementally(monkeypatch):
+    """The stale-while-revalidate path shares the one refresh routine, so it
+    increments and advances the mark just like the synchronous path."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    requests: list = []
+    all_entries = [
+        ("c1", "2026-01-01T00:00:00+00:00"),
+        ("c2", _MARK),
+        ("c3", "2026-01-03T00:00:00+00:00"),
+    ]
+    registry = _cached_registry(redis, _since_honouring_handler(all_entries, requests))
+    redis.values[registry._team_revocations_cache_key("acme.com", "ops")] = (
+        _incremental_revocations_cache_payload(
+            # Inside the stale window: served immediately, refreshed behind.
+            fetched_at=now - 90,
+            certificate_ids=["c1", "c2"],
+            high_water_mark=_MARK,
+            full_sync_at=now - 60,
+        )
+    )
+    try:
+        revoked = await registry.get_team_revocations("acme.com", "ops")
+        refresh_tasks = list(registry._refresh_tasks.values())
+        assert refresh_tasks
+        await asyncio.gather(*refresh_tasks)
+    finally:
+        await registry.aclose()
+
+    assert revoked == {"c1", "c2"}
+    assert requests[0].params.get("since") is not None
+    stored = _stored_revocations_entry(redis, registry)
+    assert set(stored["value"]) == {"c1", "c2", "c3"}
+    assert _stored_sync_state(redis, registry)["full_sync_at"] == now - 60
 
 
 def _certificates_cache_payload(*, fetched_at: int, certificate_ids: list[str]) -> str:

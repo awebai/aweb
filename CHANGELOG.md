@@ -61,6 +61,19 @@
   byte-identical to previous behavior with zero added registry calls; enabling
   it in production is an ops act gated on the anchoring backfill's failure
   enumeration being empty or individually remediated.
+- Revocation cache refreshes incrementally. A refresh now reads only entries
+  at or after a per-team high-water mark and unions them into the cached set,
+  instead of refetching the whole (unbounded, monotonically growing) list every
+  60 seconds. The mark is stored with the set in one cache entry and is purely
+  an optimization: a lost, corrupt, or missing mark, a deleted team, or an entry
+  without a usable timestamp all degrade to a full refetch, and the set can only
+  grow between full resyncs. The whole list resyncs at least every 15 minutes
+  regardless, so drift cannot accumulate silently. Because the route filters
+  `revoked_at > since` and does not expose the `id` half of its composite
+  cursor, the mark is rewound by 60 seconds so entries sharing a timestamp are
+  never skipped. Fresh TTL, stale window, the 15-minute registry-outage grace
+  and its logging, fail-closed behavior, and Redis retention are unchanged; a
+  partly-read refresh never restamps the cached entry's age.
 - Registry cache: background-refresh failures for the team-certificate tier now
   log at warning level with the team, the age of the last-known-good list being
   served, and the underlying error, matching the revocation tier. That tier
