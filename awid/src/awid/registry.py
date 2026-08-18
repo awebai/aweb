@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import hashlib
 import ipaddress
 import json
 import logging
@@ -1475,7 +1476,12 @@ class CachedRegistryClient(RegistryClient):
             )
 
         return await self._cached_read(
-            cache_key=self._team_certificates_cache_key(domain, name, active_only=active_only),
+            cache_key=self._team_certificates_cache_key(
+                domain,
+                name,
+                active_only=active_only,
+                signing_key=signing_key,
+            ),
             ttl_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
             fetcher=lambda: super(CachedRegistryClient, self).list_team_certificates(
                 domain,
@@ -1503,10 +1509,7 @@ class CachedRegistryClient(RegistryClient):
         certificate: str | None = None,
         lifetime: str | None = None,
     ) -> None:
-        await self._invalidate_keys(
-            self._team_certificates_cache_key(domain, name, active_only=True),
-            self._team_certificates_cache_key(domain, name, active_only=False),
-        )
+        await self._invalidate_team_certificate_cache_keys(domain, name)
         await super().register_team_certificate(
             domain,
             name,
@@ -1520,10 +1523,7 @@ class CachedRegistryClient(RegistryClient):
             certificate=certificate,
             lifetime=lifetime,
         )
-        await self._invalidate_keys(
-            self._team_certificates_cache_key(domain, name, active_only=True),
-            self._team_certificates_cache_key(domain, name, active_only=False),
-        )
+        await self._invalidate_team_certificate_cache_keys(domain, name)
 
     async def revoke_team_certificate(
         self,
@@ -1533,9 +1533,9 @@ class CachedRegistryClient(RegistryClient):
         team_controller_signing_key: bytes,
         certificate_id: str,
     ) -> None:
+        certificate_cache_keys = await self._team_certificate_cache_keys(domain, name)
         await self._invalidate_keys(
-            self._team_certificates_cache_key(domain, name, active_only=True),
-            self._team_certificates_cache_key(domain, name, active_only=False),
+            *certificate_cache_keys,
             self._team_revocations_cache_key(domain, name),
         )
         await super().revoke_team_certificate(
@@ -1544,18 +1544,12 @@ class CachedRegistryClient(RegistryClient):
             team_controller_signing_key=team_controller_signing_key,
             certificate_id=certificate_id,
         )
-        await self._invalidate_keys(
-            self._team_certificates_cache_key(domain, name, active_only=True),
-            self._team_certificates_cache_key(domain, name, active_only=False),
-            self._team_revocations_cache_key(domain, name),
-        )
+        await self._invalidate_team_certificate_cache_keys(domain, name)
+        await self._invalidate_keys(self._team_revocations_cache_key(domain, name))
 
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
-        await self._invalidate_keys(
-            self._team_certificates_cache_key(domain, name, active_only=True),
-            self._team_certificates_cache_key(domain, name, active_only=False),
-            self._team_revocations_cache_key(domain, name),
-        )
+        await self._invalidate_team_certificate_cache_keys(domain, name)
+        await self._invalidate_keys(self._team_revocations_cache_key(domain, name))
 
     async def register_did(
         self,
@@ -1918,6 +1912,24 @@ class CachedRegistryClient(RegistryClient):
         except (RedisError, OSError):
             logger.debug("AWID cache invalidation skipped because Redis is unavailable", exc_info=True)
 
+    async def _team_certificate_cache_keys(
+        self,
+        domain: str,
+        name: str,
+    ) -> list[str]:
+        return await self._matching_cache_keys(
+            f"{self._team_certificates_cache_key_prefix(domain, name)}:*"
+        )
+
+    async def _invalidate_team_certificate_cache_keys(
+        self,
+        domain: str,
+        name: str,
+    ) -> None:
+        await self._invalidate_keys(
+            *await self._team_certificate_cache_keys(domain, name)
+        )
+
     async def _redis_get(self, key: str) -> str | None:
         try:
             value = await self.redis_client.get(key)
@@ -1978,9 +1990,30 @@ class CachedRegistryClient(RegistryClient):
     def _team_revocations_cache_key(self, domain: str, name: str) -> str:
         return f"awid:registry_cache:v1:team_revocations:{self.registry_url}:{domain}/{name}"
 
-    def _team_certificates_cache_key(self, domain: str, name: str, *, active_only: bool) -> str:
+    def _team_certificates_cache_key(
+        self,
+        domain: str,
+        name: str,
+        *,
+        active_only: bool,
+        signing_key: bytes | None = None,
+    ) -> str:
         suffix = "active" if active_only else "all"
-        return f"awid:registry_cache:v1:team_certificates:{self.registry_url}:{domain}/{name}:{suffix}"
+        return (
+            f"{self._team_certificates_cache_key_prefix(domain, name)}:"
+            f"{suffix}:{self._team_certificates_cache_scope(signing_key)}"
+        )
+
+    def _team_certificates_cache_key_prefix(self, domain: str, name: str) -> str:
+        return f"awid:registry_cache:v2:team_certificates:{self.registry_url}:{domain}/{name}"
+
+    def _team_certificates_cache_scope(self, signing_key: bytes | None) -> str:
+        if signing_key is not None:
+            return _did_key_from_signing_key(signing_key)
+        if self.service_token is not None:
+            token_digest = hashlib.sha256(self.service_token.encode("utf-8")).hexdigest()
+            return f"service-sha256:{token_digest}"
+        return "anon"
 
 
 def _utc_timestamp() -> str:

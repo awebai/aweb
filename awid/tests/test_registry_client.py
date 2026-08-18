@@ -548,20 +548,161 @@ async def test_registry_client_list_team_certificates_pages_complete_private_his
 
 
 @pytest.mark.asyncio
+async def test_cached_private_certificate_history_never_crosses_signer_authority():
+    signing_key, _ = generate_keypair()
+    requests: list[str] = []
+
+    def handler(request):
+        authorization = request.headers.get("authorization", "")
+        requests.append(authorization)
+        if authorization.startswith("DIDKey "):
+            return Response(
+                200,
+                json={
+                    "certificates": [
+                        {
+                            "certificate_id": "private-cert",
+                            "member_did_key": "did:key:z6MkMember",
+                            "alias": "member",
+                            "identity_scope": "local",
+                            "issued_at": "2026-01-01T00:00:00Z",
+                            "revoked_at": None,
+                        }
+                    ],
+                    "has_more": False,
+                },
+            )
+        return Response(
+            403,
+            json={
+                "code": "team_private",
+                "message": "Private history requires authority",
+            },
+        )
+
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=FakeRedis(),  # type: ignore[arg-type]
+        transport=MockTransport(handler),
+    )
+    try:
+        signed = await registry.list_team_certificates(
+            "example.com",
+            "backend",
+            active_only=False,
+            signing_key=signing_key,
+        )
+        assert [item.certificate_id for item in signed] == ["private-cert"]
+        with pytest.raises(RegistryError) as caught:
+            await registry.list_team_certificates(
+                "example.com",
+                "backend",
+                active_only=False,
+            )
+    finally:
+        await registry.aclose()
+
+    assert caught.value.status_code == 403
+    assert len(requests) == 2
+    assert requests[0].startswith("DIDKey ")
+    assert requests[1] == ""
+
+
+@pytest.mark.asyncio
+async def test_cached_certificate_history_is_reused_only_by_the_same_service_capability():
+    redis = FakeRedis()
+    service_token = "trusted-service-token-with-at-least-32-bytes"
+    fetches = 0
+
+    def successful_handler(_request):
+        nonlocal fetches
+        fetches += 1
+        return Response(
+            200,
+            json={
+                "certificates": [],
+                "has_more": False,
+            },
+        )
+
+    def unexpected_handler(_request):
+        raise AssertionError("same service capability should reuse its cache")
+
+    first = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(successful_handler),
+        service_token=service_token,
+    )
+    same_service = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(unexpected_handler),
+        service_token=service_token,
+    )
+    different_service = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(
+            lambda _request: Response(
+                403,
+                json={
+                    "code": "service_token_invalid",
+                    "message": "Different service capability",
+                },
+            )
+        ),
+        service_token="different-service-token-with-at-least-32-bytes",
+    )
+    try:
+        assert await first.list_team_certificates("example.com", "backend") == []
+        assert await same_service.list_team_certificates("example.com", "backend") == []
+        with pytest.raises(RegistryError) as caught:
+            await different_service.list_team_certificates("example.com", "backend")
+    finally:
+        await first.aclose()
+        await same_service.aclose()
+        await different_service.aclose()
+
+    assert caught.value.status_code == 403
+    assert fetches == 1
+
+
+@pytest.mark.asyncio
 async def test_cached_registry_client_can_invalidate_team_certificate_reads():
     redis = FakeRedis()
     registry = CachedRegistryClient(
         registry_url="http://registry.test",
         redis_client=redis,  # type: ignore[arg-type]
         transport=MockTransport(lambda _request: Response(500)),
+        service_token="trusted-service-token-with-at-least-32-bytes",
     )
+    anonymous_registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(lambda _request: Response(500)),
+    )
+    signing_key, _ = generate_keypair()
     active_key = registry._team_certificates_cache_key("example.com", "backend", active_only=True)
     all_key = registry._team_certificates_cache_key("example.com", "backend", active_only=False)
+    signed_key = registry._team_certificates_cache_key(
+        "example.com",
+        "backend",
+        active_only=False,
+        signing_key=signing_key,
+    )
+    anonymous_key = anonymous_registry._team_certificates_cache_key(
+        "example.com",
+        "backend",
+        active_only=False,
+    )
     revocations_key = registry._team_revocations_cache_key("example.com", "backend")
     redis.values.update(
         {
             active_key: "active",
             all_key: "all",
+            signed_key: "signed",
+            anonymous_key: "anonymous",
             revocations_key: "revocations",
             "unrelated": "keep",
         }
@@ -570,9 +711,12 @@ async def test_cached_registry_client_can_invalidate_team_certificate_reads():
         await registry.invalidate_team_certificate_cache("example.com", "backend")
     finally:
         await registry.aclose()
+        await anonymous_registry.aclose()
 
     assert active_key not in redis.values
     assert all_key not in redis.values
+    assert signed_key not in redis.values
+    assert anonymous_key not in redis.values
     assert revocations_key not in redis.values
     assert redis.values["unrelated"] == "keep"
 

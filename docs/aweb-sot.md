@@ -427,6 +427,13 @@ a presented token is wrong. Operators count those stable events through
 log/Sentry telemetry. Rotating this shared secret is a coordinated two-service
 configuration change.
 
+Redis certificate-history entries are partitioned by read authority: anonymous,
+a digest of the exact service capability, or the signing `did:key`. The raw
+service secret is never a cache-key component. Certificate mutations invalidate
+every authority partition for that team, so an authorized private read can
+never populate an entry later served to an unsigned or differently authorized
+caller.
+
 **Team-key rotation.** AWID rotates a team key at
 `POST /v1/namespaces/{domain}/teams/{name}/rotate`. With the Redis cache, aweb
 may continue reading the old key for up to 20 minutes. Old-key certificates may
