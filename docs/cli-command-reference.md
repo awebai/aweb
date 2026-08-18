@@ -665,6 +665,7 @@ Subcommands:
 - `list` List team memberships for this identity
 - `members` List a team's members from AWID certificates
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
+- `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `switch` Switch the active team for this identity
@@ -886,6 +887,51 @@ Flags:
 - `--service string Service URL to register with`
 - `--team string Canonical AWID team id (<team>:<namespace>)`
 - `--timestamp string RFC3339 timestamp to sign (defaults to now; accepted for five minutes by service)`
+
+## `id team reissue-cert`
+
+### `id team reissue-cert`
+
+Mint, register, and (optionally) install a fresh team certificate for an existing
+member, keeping the member's did:key, alias, and identity scope unchanged.
+
+This is the remedy for a lost or never-registered certificate blob: the signed
+blob cannot be reconstructed, so the team controller signs a fresh certificate
+(new certificate id, fresh issued_at) for the same member key. If the registry
+holds an active certificate for the alias, it is revoked first and the fresh one
+is registered after, so the registry's one-active-certificate-per-alias
+constraint is never violated. If none is registered, the fresh certificate is
+simply registered. Re-running after a partial failure is safe: a run that
+revoked but died before registering finds no active certificate and registers;
+a run against an already-reissued member revokes the current certificate and
+swaps in a fresh one.
+
+Revoking the old certificate invalidates any grants issued under it, and the
+member's server projection refreshes at its next certificate-authenticated
+connect, so expect the member to reconnect.
+
+This is NOT key rotation: the member keeps its did:key, and the command refuses
+to run when the registered member key differs from the one attested. For a lost
+or compromised member KEY, use `aw team replace-key` instead.
+
+Requires the locally-held team controller key (BYOT/local-controller teams).
+Hosted aweb.ai teams keep the controller key in cloud custody; hosted
+re-issuance runs through the hosted service or operator support.
+
+Pass --home to verify the member's local home and install the fresh blob there;
+without --home the command prints the blob and where the member must place it.
+
+Flags:
+- `--address string Global member address when no registered certificate states it; requires --did-aw`
+- `--did string Member did:key the fresh certificate binds (required unless --home is supplied)`
+- `--did-aw string Global member did:aw when no registered certificate states it`
+- `--global Assert global identity scope`
+- `-h, --help help for reissue-cert`
+- `--home string Member home whose signing key attests the did:key and where the fresh certificate is installed`
+- `--local Assert local identity scope (default when no registered certificate states it)`
+- `--namespace string Namespace domain`
+- `--registry string Registry origin override`
+- `--team string Team name`
 
 ## `id team remove-member`
 
@@ -1157,15 +1203,20 @@ Retire an agent from a team across the stores that hold its state.
 It first deletes the agent's workspace record, which releases the task claims
 held under it, and only then revokes its certificate. That order matters: an
 agent can release its own claims until its certificate is revoked, and the
-hosted removal deletes the same workspace record without releasing anything.
+legacy hosted remove-member path can delete the same workspace record without
+releasing anything. The prepared hosted-local path preserves the same order.
 
 If the claims cannot be released the command stops before revoking and says
 which store changed and which did not, rather than leaving an agent with no
 credential and claims nobody can clear. To revoke access immediately and
 accept that outcome, use `aw id team remove-member`.
 
-Customer-controlled teams revoke with the local team controller key; hosted
-aweb.ai teams call the cloud-mediated controller revoke endpoint.
+Customer-controlled teams revoke with the local team controller key. Hosted
+local members first prepare an immutable workspace/agent/certificate operation,
+persist non-secret recovery state, release exact coordination state, and commit
+cloud-mediated revocation. Use --resume-operation after a partial failure,
+--list-pending when local recovery state is lost, or --abort-operation only
+before release. Addressed/global hosted members retain the exact-certificate path.
 
 STATUS VALUES. These are a contract; branch on them rather than on the prose.
 Each says what its evidence supports, and the second column is the part that
@@ -1206,10 +1257,13 @@ rather than a no-op, because that answer is indistinguishable from a request
 that never arrived - while a registry saying already-revoked is success.
 
 Flags:
+- `--abort-operation string Abort exact hosted removal operation ID before coordination release`
 - `--api-key string Team API key for hosted removal (overrides AWEB_API_KEY; workspace-bound API keys are rejected by hosted aweb)`
 - `--aweb-url string Hosted aweb API URL override for cloud-mediated removal`
 - `-h, --help help for remove-agent`
+- `--list-pending List owner/admin hosted removal operations requiring recovery`
 - `--registry string Registry origin override`
+- `--resume-operation string Resume exact hosted removal operation ID; no member address is accepted`
 - `--team-id string Canonical team id (<name>:<namespace>) to remove from (defaults to active team)`
 
 ## `team replace-key`

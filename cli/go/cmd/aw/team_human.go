@@ -21,42 +21,45 @@ import (
 )
 
 var (
-	teamHumanCreateBYOT        bool
-	teamHumanCreateName        string
-	teamHumanCreateNamespace   string
-	teamHumanCreateDisplayName string
-	teamHumanCreateServiceURL  string
-	teamHumanCreateRegistryURL string
-	teamHumanCreateAlias       string
-	teamHumanCreateUsername    string
-	teamHumanCreateHome        string
-	teamHumanCreateRuntime     string
-	teamHumanCreateLibraryURL  string
-	teamHumanCreateProfiles    []string
-	teamHumanCreateAgents      []string
-	teamHumanCreateBlueprint   string
-	teamHumanCreateFirstLocal  bool
-	teamHumanCreateFirstGlobal bool
-	teamHumanInviteTeamID      string
-	teamHumanAddLocal          bool
-	teamHumanAddGlobal         bool
-	teamHumanAddLayoutOnly     bool
-	teamHumanAddStart          bool
-	teamHumanAddAttach         bool
-	teamHumanAddNoAttach       bool
-	teamHumanAddSession        string
-	teamHumanAddHome           string
-	teamHumanAddWorkDir        string
-	teamHumanAddRuntime        string
-	teamHumanAddLibraryURL     string
-	teamHumanAddBlueprint      string
-	teamHumanExtendAPIKey      string
-	teamHumanExtendTeamID      string
-	teamHumanRemoveTeamID      string
-	teamHumanAgentStatusTeamID string
-	teamHumanRemoveRegistryURL string
-	teamHumanRemoveAwebURL     string
-	teamHumanRemoveAPIKey      string
+	teamHumanCreateBYOT            bool
+	teamHumanCreateName            string
+	teamHumanCreateNamespace       string
+	teamHumanCreateDisplayName     string
+	teamHumanCreateServiceURL      string
+	teamHumanCreateRegistryURL     string
+	teamHumanCreateAlias           string
+	teamHumanCreateUsername        string
+	teamHumanCreateHome            string
+	teamHumanCreateRuntime         string
+	teamHumanCreateLibraryURL      string
+	teamHumanCreateProfiles        []string
+	teamHumanCreateAgents          []string
+	teamHumanCreateBlueprint       string
+	teamHumanCreateFirstLocal      bool
+	teamHumanCreateFirstGlobal     bool
+	teamHumanInviteTeamID          string
+	teamHumanAddLocal              bool
+	teamHumanAddGlobal             bool
+	teamHumanAddLayoutOnly         bool
+	teamHumanAddStart              bool
+	teamHumanAddAttach             bool
+	teamHumanAddNoAttach           bool
+	teamHumanAddSession            string
+	teamHumanAddHome               string
+	teamHumanAddWorkDir            string
+	teamHumanAddRuntime            string
+	teamHumanAddLibraryURL         string
+	teamHumanAddBlueprint          string
+	teamHumanExtendAPIKey          string
+	teamHumanExtendTeamID          string
+	teamHumanRemoveTeamID          string
+	teamHumanAgentStatusTeamID     string
+	teamHumanRemoveRegistryURL     string
+	teamHumanRemoveAwebURL         string
+	teamHumanRemoveAPIKey          string
+	teamHumanRemoveResumeOperation string
+	teamHumanRemoveAbortOperation  string
+	teamHumanRemoveListPending     bool
 )
 
 var teamHumanCmd = &cobra.Command{
@@ -140,19 +143,24 @@ var teamHumanLeaveCmd = &cobra.Command{
 }
 
 var teamHumanRemoveAgentCmd = &cobra.Command{
-	Use:   "remove-agent <member-address>",
+	Use:   "remove-agent [member-address]",
 	Short: "Retire an agent: release its claims, then revoke its certificate",
 	Long: "Retire an agent from a team across the stores that hold its state.\n\n" +
 		"It first deletes the agent's workspace record, which releases the task claims\n" +
 		"held under it, and only then revokes its certificate. That order matters: an\n" +
 		"agent can release its own claims until its certificate is revoked, and the\n" +
-		"hosted removal deletes the same workspace record without releasing anything.\n\n" +
+		"legacy hosted remove-member path can delete the same workspace record without\n" +
+		"releasing anything. The prepared hosted-local path preserves the same order.\n\n" +
 		"If the claims cannot be released the command stops before revoking and says\n" +
 		"which store changed and which did not, rather than leaving an agent with no\n" +
 		"credential and claims nobody can clear. To revoke access immediately and\n" +
 		"accept that outcome, use `aw id team remove-member`.\n\n" +
-		"Customer-controlled teams revoke with the local team controller key; hosted\n" +
-		"aweb.ai teams call the cloud-mediated controller revoke endpoint.\n\n" +
+		"Customer-controlled teams revoke with the local team controller key. Hosted\n" +
+		"local members first prepare an immutable workspace/agent/certificate operation,\n" +
+		"persist non-secret recovery state, release exact coordination state, and commit\n" +
+		"cloud-mediated revocation. Use --resume-operation after a partial failure,\n" +
+		"--list-pending when local recovery state is lost, or --abort-operation only\n" +
+		"before release. Addressed/global hosted members retain the exact-certificate path.\n\n" +
 		"STATUS VALUES. These are a contract; branch on them rather than on the prose.\n" +
 		"Each says what its evidence supports, and the second column is the part that\n" +
 		"matters, because the defect this command was built to remove was a status word\n" +
@@ -185,7 +193,7 @@ var teamHumanRemoveAgentCmd = &cobra.Command{
 		"customer-controlled team, retiring a name that no longer resolves is an error\n" +
 		"rather than a no-op, because that answer is indistinguishable from a request\n" +
 		"that never arrived - while a registry saying already-revoked is success.",
-	Args: cobra.ExactArgs(1),
+	Args: validateTeamRemoveAgentArgs,
 	RunE: runTeamHumanRemoveAgent,
 }
 
@@ -268,6 +276,9 @@ func init() {
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveRegistryURL, "registry", "", "Registry origin override")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAwebURL, "aweb-url", "", "Hosted aweb API URL override for cloud-mediated removal")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAPIKey, "api-key", "", "Team API key for hosted removal (overrides AWEB_API_KEY; workspace-bound API keys are rejected by hosted aweb)")
+	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveResumeOperation, "resume-operation", "", "Resume exact hosted removal operation ID; no member address is accepted")
+	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAbortOperation, "abort-operation", "", "Abort exact hosted removal operation ID before coordination release")
+	teamHumanRemoveAgentCmd.Flags().BoolVar(&teamHumanRemoveListPending, "list-pending", false, "List owner/admin hosted removal operations requiring recovery")
 	teamHumanCmd.AddCommand(teamHumanRemoveAgentCmd)
 	rootCmd.AddCommand(teamHumanCmd)
 }
@@ -2442,16 +2453,10 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	}
 	teamRemoveTeam = name
 	teamRemoveNamespace = domain
-	teamRemoveMember = strings.TrimSpace(args[0])
 	teamRemoveCertID = ""
 	teamRemoveRegistryURL = teamHumanRemoveRegistryURL
 	teamRemoveAwebURL = teamHumanRemoveAwebURL
 	teamRemoveAPIKey = teamHumanRemoveAPIKey
-
-	_, alias, err := parseAddress(teamRemoveMember)
-	if err != nil {
-		return err
-	}
 
 	workingDir, err := os.Getwd()
 	if err != nil {
@@ -2461,19 +2466,104 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Establish WHICH principal this is about before anything is written.
-	//
-	// Only a customer-controlled team can: the registry resolve says which member
-	// the alias belongs to, so a typed namespace that names someone else is caught
-	// before the first mutation. A hosted team has no read that can answer it at
-	// all - see aweb-aaum.9 - so the retirement proceeds on the alias and says so
-	// in its result rather than refusing a verification it cannot perform. Nothing
-	// printed asserts more than the evidence supports, which is the property; a
-	// refusal is one way to honour it and an accurate disclosure is the other.
+	if teamHumanRemoveListPending || strings.TrimSpace(teamHumanRemoveResumeOperation) != "" || strings.TrimSpace(teamHumanRemoveAbortOperation) != "" {
+		if !isAwebHostedNamespace(domain) {
+			return usageError("hosted removal recovery flags require an aweb-hosted team")
+		}
+		awebURL, apiKey, authErr := resolveHostedTeamRemoveAuth(workingDir, teamID)
+		if authErr != nil {
+			return authErr
+		}
+		switch {
+		case teamHumanRemoveListPending:
+			operations, listErr := listHostedRemovals(ctx, awebURL, apiKey, teamID)
+			if listErr != nil {
+				return listErr
+			}
+			printOutput(operations, formatHostedRemovalList)
+			return nil
+		case strings.TrimSpace(teamHumanRemoveAbortOperation) != "":
+			operationID := strings.TrimSpace(teamHumanRemoveAbortOperation)
+			before, getErr := getHostedRemoval(ctx, awebURL, apiKey, teamID, operationID)
+			if getErr != nil {
+				return getErr
+			}
+			if err := validateHostedRemovalOperation(before, teamID, "", "", ""); err != nil || before.OperationID != operationID {
+				if err != nil {
+					return err
+				}
+				return fmt.Errorf("hosted removal get returned a different operation")
+			}
+			aborted, abortErr := abortHostedRemoval(ctx, awebURL, apiKey, teamID, operationID)
+			if abortErr != nil {
+				return abortErr
+			}
+			if err := validateHostedRemovalOperation(aborted, teamID, before.WorkspaceID, before.AgentID, before.CertificateID); err != nil {
+				return err
+			}
+			if aborted.Status != "aborted" && aborted.Status != "committed" {
+				return fmt.Errorf("hosted removal abort returned unexpected status %q", aborted.Status)
+			}
+			if err := clearHostedRemovalRecovery(workingDir, operationID); err != nil {
+				return fmt.Errorf("hosted removal %s reached %s but local recovery cleanup failed: %w", operationID, aborted.Status, err)
+			}
+			printOutput(aborted, formatHostedRemovalOperation)
+			return nil
+		default:
+			operation, resumeErr := resumeHostedRemoval(ctx, client, workingDir, teamID, strings.TrimSpace(teamHumanRemoveResumeOperation))
+			if resumeErr != nil {
+				return resumeErr
+			}
+			printOutput(operation, formatHostedRemovalOperation)
+			return nil
+		}
+	}
+
+	teamRemoveMember = strings.TrimSpace(args[0])
+	memberDomain, alias, err := parseAddress(teamRemoveMember)
+	if err != nil {
+		return err
+	}
+
+	// Hosted local members use immutable W/A prepare before any coordination
+	// write. Addressed/global and customer-controlled members retain their
+	// existing exact-certificate paths.
+	if isAwebHostedNamespace(domain) {
+		workspace, resolveErr := resolveExactRetirementWorkspace(ctx, client, alias)
+		if resolveErr != nil {
+			return resolveErr
+		}
+		scope := ""
+		if workspace.AgentIdentityScope != nil {
+			scope = strings.TrimSpace(*workspace.AgentIdentityScope)
+		}
+		if scope == "" {
+			return fmt.Errorf("hosted removal workspace did not report identity scope; refusing before coordination release")
+		}
+		if scope == "local" {
+			if !strings.EqualFold(awconfig.NormalizeDomain(memberDomain), awconfig.NormalizeDomain(domain)) {
+				return fmt.Errorf("local hosted member %s must be named in team namespace %s", alias, domain)
+			}
+			out, hostedErr := runHostedLocalRemoval(ctx, client, workingDir, teamID, teamRemoveMember, *workspace)
+			if out.TeamID != "" {
+				printOutput(out, formatTeamRemoveAgent)
+			}
+			if hostedErr != nil || !retirementSucceeded(out.Status) {
+				if hostedErr != nil {
+					return &cliError{code: 1, msg: hostedErr.Error()}
+				}
+				return &cliError{code: 1, msg: fmt.Sprintf("%s is not fully retired; see the per-store results above", teamRemoveMember)}
+			}
+			return nil
+		}
+		if scope != "global" {
+			return fmt.Errorf("hosted removal workspace has unsupported identity scope %q", scope)
+		}
+	}
+
 	var verified *verifiedMember
 	if !isAwebHostedNamespace(domain) {
 		registry, regErr := newConfiguredRegistryClient(nil, "")

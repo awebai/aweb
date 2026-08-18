@@ -90,6 +90,8 @@ type teamRemoveAgentOutput struct {
 	CertificateResult string               `json:"certificate_result,omitempty"`
 	CertificateID     string               `json:"certificate_id,omitempty"`
 	WorkspaceID       string               `json:"workspace_id,omitempty"`
+	OperationID       string               `json:"operation_id,omitempty"`
+	RecoveryPath      string               `json:"recovery_path,omitempty"`
 	ClaimsReleased    *int                 `json:"claims_released"`
 	Stores            []retireStoreOutcome `json:"stores"`
 }
@@ -551,6 +553,12 @@ func formatTeamRemoveAgent(v any) string {
 	}
 	if strings.TrimSpace(out.WorkspaceID) != "" {
 		sb.WriteString(fmt.Sprintf("Workspace:   %s\n", out.WorkspaceID))
+	}
+	if strings.TrimSpace(out.OperationID) != "" {
+		sb.WriteString(fmt.Sprintf("Operation:   %s\n", out.OperationID))
+	}
+	if strings.TrimSpace(out.RecoveryPath) != "" {
+		sb.WriteString(fmt.Sprintf("Recovery:    %s\n", out.RecoveryPath))
 	}
 	sb.WriteString("Stores:\n")
 	for _, store := range out.Stores {

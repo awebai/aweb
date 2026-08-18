@@ -279,9 +279,18 @@ aw team remove-agent <member-address-or-name> \
 ```
 
 This path releases coordination claims before attempting certificate
-revocation and reports each store separately. `incomplete` means cleanup did not
-finish. `reported_retired` may rest on a hosted service reporting that it had
-nothing to revoke; it does **not** establish that no certificate exists.
+revocation and reports each store separately. For a hosted local member, it first
+prepares an immutable W/A/C operation before any write and atomically persists a
+non-secret recovery record; it then releases exact W and commits by opaque
+operation ID. On a partial hosted result, retain the record and run
+`aw team remove-agent --resume-operation <operation-id> --team-id <team:namespace>`.
+Use `--list-pending` if local recovery state was lost, or `--abort-operation`
+only before coordination release. These recovery modes never search deleted
+history by alias.
+
+`incomplete` means cleanup did not finish. `reported_retired` may rest on the
+legacy hosted addressed/global path reporting that it had nothing to revoke; it
+does **not** establish that no certificate exists.
 
 Current source includes an independent workspace/claim read, but the npm release
 used by this guide's install command (`aw` 1.34.1) does not. Check availability
