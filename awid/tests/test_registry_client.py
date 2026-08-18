@@ -869,6 +869,143 @@ async def test_grace_retention_applies_only_to_revocation_entries():
     )
 
 
+def _certificates_cache_payload(*, fetched_at: int, certificate_ids: list[str]) -> str:
+    from awid.registry import _TEAM_CERTIFICATES_CACHE_TTL_SECONDS
+
+    return json.dumps(
+        {
+            "fetched_at": fetched_at,
+            "fresh_until": fetched_at + _TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
+            "value": [
+                {
+                    "certificate_id": certificate_id,
+                    "member_did_key": "did:key:z6MkMember",
+                    "member_did_aw": None,
+                    "member_address": None,
+                    "alias": "member",
+                    "identity_scope": "local",
+                    "issued_at": "2026-01-01T00:00:00Z",
+                    "revoked_at": None,
+                }
+                for certificate_id in certificate_ids
+            ],
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _team_cache_payload(*, fetched_at: int, ttl_seconds: int) -> str:
+    return json.dumps(
+        {
+            "fetched_at": fetched_at,
+            "fresh_until": fetched_at + ttl_seconds,
+            "value": {
+                "team_id": "team-1",
+                "domain": "acme.com",
+                "name": "ops",
+                "display_name": "Ops",
+                "team_did_key": "did:key:z6MkTeam",
+                "visibility": "private",
+                "created_at": "2026-01-01T00:00:00Z",
+            },
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_cached_certificates_stale_refresh_failure_is_loud(monkeypatch, caplog):
+    """The team-certificate tier gates every authenticated request once the
+    staged existence check (AWEB_REQUIRE_REGISTERED_CERTIFICATES) is enabled, so
+    a failed background refresh warns with the team, the served data's age and
+    the error — the sibling of the revocation-refresh warning, not a swallowed
+    debug line."""
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    registry = _failing_registry(redis)
+    cache_key = registry._team_certificates_cache_key("acme.com", "ops", active_only=True)
+    redis.values[cache_key] = _certificates_cache_payload(
+        fetched_at=now - 900, certificate_ids=["cert-1"]
+    )
+    try:
+        with caplog.at_level(logging.DEBUG):
+            certificates = await registry.list_team_certificates("acme.com", "ops")
+            refresh_tasks = list(registry._refresh_tasks.values())
+            assert refresh_tasks, "stale read should schedule a background refresh"
+            await asyncio.gather(*refresh_tasks, return_exceptions=True)
+    finally:
+        await registry.aclose()
+
+    assert [c.certificate_id for c in certificates] == ["cert-1"]
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    message = warnings[0].getMessage()
+    assert "acme.com/ops" in message
+    assert "aged 900s" in message
+    assert "registry down" in message
+    assert "AWID cache refresh failed" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_cached_read_without_failure_hook_stays_silent(monkeypatch, caplog):
+    """Tiers that pass no failure hook keep the pre-existing silent behavior: a
+    failed background refresh logs at debug and never at warning."""
+    from awid.registry import _TEAM_METADATA_CACHE_TTL_SECONDS
+
+    now = 1_000_000
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: now)
+    redis = FakeRedis()
+    registry = _failing_registry(redis)
+    cache_key = registry._team_metadata_cache_key("acme.com", "ops")
+    redis.values[cache_key] = _team_cache_payload(
+        fetched_at=now - (_TEAM_METADATA_CACHE_TTL_SECONDS + 60),
+        ttl_seconds=_TEAM_METADATA_CACHE_TTL_SECONDS,
+    )
+    try:
+        with caplog.at_level(logging.DEBUG):
+            team = await registry.get_team("acme.com", "ops")
+            refresh_tasks = list(registry._refresh_tasks.values())
+            assert refresh_tasks, "stale read should schedule a background refresh"
+            await asyncio.gather(*refresh_tasks, return_exceptions=True)
+    finally:
+        await registry.aclose()
+
+    assert team is not None and team.team_id == "team-1"
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+    debugs = [
+        r
+        for r in caplog.records
+        if r.levelno == logging.DEBUG and "AWID cache refresh failed" in r.getMessage()
+    ]
+    assert len(debugs) == 1
+
+
+@pytest.mark.asyncio
+async def test_certificate_cache_retention_is_unchanged_by_refresh_logging():
+    """The certificates tier gets louder logging only: no outage grace and no
+    widened retention. Its Redis expiry stays ttl * stale-multiplier."""
+    from awid.registry import _STALE_MULTIPLIER, _TEAM_CERTIFICATES_CACHE_TTL_SECONDS
+
+    redis = FakeRedis()
+    registry = CachedRegistryClient(
+        registry_url="http://registry.test",
+        redis_client=redis,  # type: ignore[arg-type]
+        transport=MockTransport(lambda _request: Response(200, json={"certificates": []})),
+    )
+    try:
+        assert await registry.list_team_certificates("acme.com", "ops") == []
+    finally:
+        await registry.aclose()
+
+    cache_key = registry._team_certificates_cache_key("acme.com", "ops", active_only=True)
+    assert redis.expirations[cache_key] == (
+        _TEAM_CERTIFICATES_CACHE_TTL_SECONDS * _STALE_MULTIPLIER
+    )
+
+
 def test_revocation_cache_ttl_stays_within_the_ruled_bound():
     """aweb-abfp: revocations are load-bearing for membership enforcement on
     every authenticated request (aweb-abfn), and this TTL is the client half of

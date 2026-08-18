@@ -61,6 +61,13 @@
   byte-identical to previous behavior with zero added registry calls; enabling
   it in production is an ops act gated on the anchoring backfill's failure
   enumeration being empty or individually remediated.
+- Registry cache: background-refresh failures for the team-certificate tier now
+  log at warning level with the team, the age of the last-known-good list being
+  served, and the underlying error, matching the revocation tier. That tier
+  gates every authenticated request once
+  `AWEB_REQUIRE_REGISTERED_CERTIFICATES` is enabled, so a registry outage is no
+  longer silent there. Logging only: no cache TTL, retention, or outage grace
+  changed, and tiers that opt out keep their previous debug-level behavior.
 - The AWID team revocation list is completely enumerable: the route paginates
   with a `(revoked_at, id)` cursor and reports `has_more`/`next_cursor`, and
   the Python registry client follows it to the end (with a best-effort `since`

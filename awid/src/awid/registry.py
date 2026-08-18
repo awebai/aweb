@@ -1295,11 +1295,7 @@ class CachedRegistryClient(RegistryClient):
         cached = await self._read_cache_entry(cache_key, decode=lambda payload: set(payload))
         cached_age: int | None = None
         if cached is not None:
-            fetched_at = cached["fetched_at"]
-            if fetched_at is None:
-                # Entry written before age accounting existed: its freshness
-                # horizon implies the fetch time.
-                fetched_at = cached["fresh_until"] - ttl_seconds
+            fetched_at = _cache_entry_fetched_at(cached, ttl_seconds)
             cached_age = max(0, _cache_now() - fetched_at)
             if cached["fresh"]:
                 return cached["value"]
@@ -1366,6 +1362,24 @@ class CachedRegistryClient(RegistryClient):
         *,
         active_only: bool = True,
     ) -> list[TeamCertificate]:
+        # This tier is security-relevant: the server's staged existence check
+        # (AWEB_REQUIRE_REGISTERED_CERTIFICATES) reads through it on every
+        # authenticated request, so a failed background refresh degrades
+        # enforcement input exactly as a failed revocation refresh does, and is
+        # logged as loudly. Retention is unchanged: no grace, no widened TTL —
+        # this is a logging-parity change only.
+        def _on_refresh_failure(exc: BaseException, age_seconds: int) -> None:
+            logger.warning(
+                "AWID team-certificate refresh failed for team %s/%s; "
+                "serving last-known-good certificate list aged %ds "
+                "(stale-serve bound %ds): %s",
+                domain,
+                name,
+                age_seconds,
+                _TEAM_CERTIFICATES_CACHE_TTL_SECONDS * _STALE_MULTIPLIER,
+                exc,
+            )
+
         return await self._cached_read(
             cache_key=self._team_certificates_cache_key(domain, name, active_only=active_only),
             ttl_seconds=_TEAM_CERTIFICATES_CACHE_TTL_SECONDS,
@@ -1374,6 +1388,7 @@ class CachedRegistryClient(RegistryClient):
             ),
             encode=lambda value: [_team_certificate_to_json(item) for item in value],
             decode=lambda payload: [_team_certificate_from_json(item) for item in payload],
+            on_refresh_failure=_on_refresh_failure,
         )
 
     async def register_team_certificate(
@@ -1622,16 +1637,31 @@ class CachedRegistryClient(RegistryClient):
         fetcher: Callable[[], Awaitable[Any]],
         encode: Callable[[Any], Any],
         decode: Callable[[Any], Any],
+        on_refresh_failure: Callable[[BaseException, int], None] | None = None,
     ) -> Any:
+        # on_refresh_failure is opt-in: a tier that passes nothing keeps the
+        # silent debug line _refresh_cache_entry falls back to. When given, it
+        # is called with the exception and the age of the data still being
+        # served, measured from the entry's stored fetch timestamp.
         cached_payload = await self._read_cache_entry(cache_key, decode=decode)
         if cached_payload is not None:
             if cached_payload["fresh"]:
                 return cached_payload["value"]
+            on_failure: Callable[[BaseException], None] | None = None
+            if on_refresh_failure is not None:
+                fetched_at = _cache_entry_fetched_at(cached_payload, ttl_seconds)
+                report = on_refresh_failure
+
+                def report_refresh_failure(exc: BaseException) -> None:
+                    report(exc, max(0, _cache_now() - fetched_at))
+
+                on_failure = report_refresh_failure
             if self._schedule_refresh(
                 cache_key=cache_key,
                 ttl_seconds=ttl_seconds,
                 fetcher=fetcher,
                 encode=encode,
+                on_failure=on_failure,
             ):
                 return cached_payload["value"]
 
@@ -1854,6 +1884,19 @@ def _lookup_cache_scope(caller_did_key: str | None) -> str:
 
 def _cache_now() -> int:
     return int(time.time())
+
+
+def _cache_entry_fetched_at(entry: dict[str, Any], ttl_seconds: int) -> int:
+    """When the data in a cache entry was fetched.
+
+    Entries written before age accounting existed carry no ``fetched_at``; their
+    freshness horizon implies the fetch time. Single mechanism, so every tier
+    that reports the age of what it is serving reports the same quantity.
+    """
+    fetched_at = entry.get("fetched_at")
+    if fetched_at is None:
+        return entry["fresh_until"] - ttl_seconds
+    return fetched_at
 
 
 def _did_key_from_signing_key(signing_key: bytes) -> str:
