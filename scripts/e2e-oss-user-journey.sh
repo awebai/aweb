@@ -79,6 +79,7 @@ case "$DOCKER_PUBLISHED_HOST" in
 esac
 AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
 AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
+AWID_E2E_SERVICE_TOKEN="aweb-oss-user-e2e-service-token-32-bytes"
 PROJECT="${AWEB_E2E_PROJECT:-aweb-user-e2e-$RANDOM-$$}"
 compose() {
   docker compose -p "$PROJECT" --env-file .env.e2e "$@"
@@ -592,7 +593,7 @@ AWID_LOG_JSON=true
 AWID_ALLOW_INSECURE_DELIVERY_ORIGIN=1
 AWID_RATE_LIMIT_BACKEND=redis
 AWID_RATE_LIMIT_DISABLED=1
-AWID_SERVICE_TOKEN=aweb-oss-user-e2e-service-token-32-bytes
+AWID_SERVICE_TOKEN=$AWID_E2E_SERVICE_TOKEN
 AWID_SKIP_DNS_VERIFY=1
 EOF
 
@@ -2311,11 +2312,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 16: Verify team at awid ==="
 
-team_get="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam" 2>/dev/null || echo '{}')"
+team_get="$(curl -sf -H "X-AWID-Service-Token: $AWID_E2E_SERVICE_TOKEN" "$AWID_URL/v1/namespaces/test.local/teams/devteam" 2>/dev/null || echo '{}')"
 team_get_name="$(echo "$team_get" | jq_field name)"
 assert_eq "awid team name" "devteam" "$team_get_name"
 
-certs_list="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
+certs_list="$(curl -sf -H "X-AWID-Service-Token: $AWID_E2E_SERVICE_TOKEN" "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 cert_count="$(echo "$certs_list" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
 assert_eq "6 active certificates (alice, bob, erin, eve, gsk, and nokey)" "6" "$cert_count"
 echo ""
@@ -2343,11 +2344,11 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 18: Verify revocation at awid ==="
 
-revocations="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/revocations" 2>/dev/null || echo '{"revocations":[]}')"
+revocations="$(curl -sf -H "X-AWID-Service-Token: $AWID_E2E_SERVICE_TOKEN" "$AWID_URL/v1/namespaces/test.local/teams/devteam/revocations" 2>/dev/null || echo '{"revocations":[]}')"
 revocation_count="$(echo "$revocations" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('revocations',[])))" 2>/dev/null || echo "0")"
 assert_eq "1 revocation" "1" "$revocation_count"
 
-active_certs="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
+active_certs="$(curl -sf -H "X-AWID-Service-Token: $AWID_E2E_SERVICE_TOKEN" "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 active_count="$(echo "$active_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
 assert_eq "5 active certificates (alice, erin, eve, gsk, and nokey)" "5" "$active_count"
 echo ""
@@ -2422,7 +2423,7 @@ assert_eq "retirement deleted nokey's workspace record" "t" "$workspace_deleted"
 retire_claims_released="$(echo "$retire_out" | python3 -c "import sys,json; print(json.load(sys.stdin).get('claims_released'))" 2>/dev/null || echo "")"
 assert_eq "retirement reported the claim it released" "1" "$retire_claims_released"
 
-nokey_active_certs="$(curl -sf "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
+nokey_active_certs="$(curl -sf -H "X-AWID-Service-Token: $AWID_E2E_SERVICE_TOKEN" "$AWID_URL/v1/namespaces/test.local/teams/devteam/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
 nokey_active_count="$(echo "$nokey_active_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
 assert_eq "4 active certificates after retiring nokey" "4" "$nokey_active_count"
 echo ""
@@ -2593,11 +2594,11 @@ phase_aw_init_local_quickstart() {
   wizard_namespace_domain="$(echo "$wizard_namespace" | jq_field domain)"
   assert_eq "local namespace registered" "local" "$wizard_namespace_domain"
 
-  wizard_team_get="$(curl -sf "$local_awid_url/v1/namespaces/local/teams/default" 2>/dev/null || echo '{}')"
+  wizard_team_get="$(curl -sf -H "X-AWID-Service-Token: $AWID_E2E_SERVICE_TOKEN" "$local_awid_url/v1/namespaces/local/teams/default" 2>/dev/null || echo '{}')"
   wizard_team_name="$(echo "$wizard_team_get" | jq_field name)"
   assert_eq "local team registered" "default" "$wizard_team_name"
 
-  wizard_certs="$(curl -sf "$local_awid_url/v1/namespaces/local/teams/default/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
+  wizard_certs="$(curl -sf -H "X-AWID-Service-Token: $AWID_E2E_SERVICE_TOKEN" "$local_awid_url/v1/namespaces/local/teams/default/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
   wizard_cert_count="$(echo "$wizard_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
   assert_eq "wizard active certificate count" "1" "$wizard_cert_count"
 
