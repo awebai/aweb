@@ -66,20 +66,16 @@ This is the ONLY boundary with that property. Do not generalise it.
 2. **OSS first** — land the OSS change on aweb main after the relevant focused
    tests pass.
 
-3. **Release** — for an OSS-only release, run `make release` from aweb (`release`
-   skill; `docs/release.md` is authoritative). For a SaaS release, follow
-   `ac/docs/release.md` from the AC repository; its single command invokes the OSS
-   release first, then owns dependency derivation, gating, and deployment. Do not
-   maintain a parallel tag/push/verification sequence here.
+3. **Release OSS** — run `make release-candidate TAGS='...'` in aweb, then push
+   each resulting tag separately. `docs/release.md` is authoritative. Wait for
+   the exact package versions to be public.
 
-4. **Cloud pins** — the reconciler derives `backend/pyproject.toml` floors and
-   `backend/uv.lock` mechanically at the recorded AC base and gates the
-   derived commit in clean Docker; do not hand-edit the pin as part of the
-   release. The complete desired dependency set is always checked.
+4. **Cloud pins** — update and review `backend/pyproject.toml` and
+   `backend/uv.lock` to the exact public OSS versions on AC `main`.
 
-5. **Cloud change** — land the cloud-side source change on AC main before
-   the release selects its base, or after the release completes; the derived commit
-   itself stays dependency-only.
+5. **Cloud candidate** — land the cloud-side source change on AC `main`, then
+   run `make release-candidate VERSION=X.Y.Z`. Push the resulting `vX.Y.Z` tag;
+   AC never publishes OSS artifacts.
 
 6. **Verify** — cloud tests pass against the real aweb package (not
    editable/sibling source).

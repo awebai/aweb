@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Internal clean-Docker gate invoked by release preparation; not an operator command.
+# Complete local Docker gate for one exact OSS candidate commit.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE_SHA="${RELEASE_SOURCE_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
-RELEASE_BASE_SHA="${RELEASE_BASE_SHA:-$(git -C "$ROOT" merge-base "$SOURCE_SHA" origin/main)}"
-refuse() { printf 'release gate refused: %s\n' "$*" >&2; exit 2; }
+SOURCE_SHA="${CANDIDATE_SOURCE_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
+refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
 LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$ROOT/naapp/library}"
 LIBRARY_E2E_BLUEPRINT_SRC="${LIBRARY_E2E_BLUEPRINT_SRC:-$ROOT/naapp/library/test-vectors/blueprints/team}"
 canonical_git_input() {
@@ -22,51 +21,42 @@ canonical_git_input() {
 }
 LIBRARY_E2E_LIBRARY_CONTEXT="$(canonical_git_input library "$LIBRARY_E2E_LIBRARY_CONTEXT")"
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
-LOG_DIR="/tmp/aweb-release-gate-$SOURCE_SHA"
-IMAGE="aweb-release-gate:${SOURCE_SHA:0:12}"
-
-# The scope names the artifact keys this release publishes; the runner then
-# executes the suite-map rows guarding them plus every `all` row, and records
-# the rest as SKIPPED. Empty/unset runs the complete map. Key validity is
-# checked by the runner against the release graph, the single authority.
-RELEASE_GATE_ARTIFACTS="${RELEASE_GATE_ARTIFACTS:-}"
-if [[ -n "$RELEASE_GATE_ARTIFACTS" ]]; then
-  [[ "$RELEASE_GATE_ARTIFACTS" =~ ^[a-z0-9-]+(,[a-z0-9-]+)*$ ]] \
-    || refuse "RELEASE_GATE_ARTIFACTS must be comma-separated artifact keys"
-fi
+LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
+IMAGE="aweb-candidate-gate:${SOURCE_SHA:0:12}"
 
 # Persistent caches, shared across gate runs. Determinism is carried by the
 # committed lockfiles (uv.lock, go.sum, package-lock.json), whose hashes are
 # recorded in inputs.tsv; every store here is content-addressed or checksum
 # verified against those locks, so a warm hit yields the same bytes as a cold
 # fetch. The uv and go paths match the ones the Makefile targets already pin.
-CACHE_ROOT="${AWEB_RELEASE_GATE_CACHE:-/tmp/aweb-release-gate-cache}"
+CACHE_ROOT="${AWEB_CANDIDATE_CACHE:-/tmp/aweb-candidate-cache}"
 mkdir -p "$CACHE_ROOT/uv" "$CACHE_ROOT/go-build" "$CACHE_ROOT/go-mod" "$CACHE_ROOT/npm"
 
-[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_SOURCE_SHA must be a full lowercase SHA"
-[[ "$RELEASE_BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "RELEASE_BASE_SHA must be a full lowercase SHA"
+[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || refuse "source checkout is dirty or has untracked files"
-git -C "$ROOT" cat-file -e "$SOURCE_SHA^{commit}" || refuse "source SHA is unavailable"
-git -C "$ROOT" merge-base --is-ancestor "$RELEASE_BASE_SHA" "$SOURCE_SHA" \
-  || refuse "comparison base is not an ancestor of the source SHA"
+git -C "$ROOT" fetch --quiet origin main
+git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+  || refuse "source SHA is not on the synchronized origin/main history"
 [[ -d "$LIBRARY_E2E_LIBRARY_CONTEXT" ]] || refuse "Library input is missing"
 [[ -d "$LIBRARY_E2E_BLUEPRINT_SRC" ]] || refuse "blueprint input is missing"
 command -v docker >/dev/null || refuse "docker is unavailable"
 docker info >/dev/null || refuse "docker daemon is unavailable"
+CLI_VERSION="${CLI_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" aw-v)}"
+A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" a2a-gw-v)}"
 
-if ! work="$(mktemp -d "/tmp/aweb-release-work.XXXXXX")"; then
-  refuse "could not allocate the release work directory"
+if ! work="$(mktemp -d "/tmp/aweb-candidate-work.XXXXXX")"; then
+  refuse "could not allocate the candidate work directory"
 fi
 work="$(cd "$work" && pwd -P)"
 owned_containers=()
 owned_network=""
-# The builder and its layer cache persist across gate runs; the runner bounds
+# The builder and its layer cache persist across gate runs; the suite bounds
 # the cache with a keep-storage prune after the largest build.
-builder_name="aweb-release-gate"
-buildx_config="${AWEB_RELEASE_GATE_BUILDX:-/tmp/aweb-release-gate-buildx}"
+builder_name="aweb-candidate-gate"
+buildx_config="${AWEB_CANDIDATE_BUILDX:-/tmp/aweb-candidate-buildx}"
 docker_bind_root=""
-gate_run_id="aweb-release-suite-${SOURCE_SHA:0:12}-$$"
+gate_run_id="aweb-candidate-suite-${SOURCE_SHA:0:12}-$$"
 suite_projects=(
   "$gate_run_id-channel"
   "$gate_run_id-user"
@@ -93,7 +83,7 @@ cleanup() {
       ids="$("${list[@]}" --filter "label=com.docker.compose.project=$project")" \
         || cleanup_status=1
       if [[ -n "$ids" ]]; then
-        printf 'release gate cleanup residue: %s %s\n' "$project" "$resource" >&2
+        printf 'candidate gate cleanup residue: %s %s\n' "$project" "$resource" >&2
         cleanup_status=1
       fi
     done
@@ -104,13 +94,10 @@ cleanup() {
   [[ -z "$owned_network" ]] || docker network rm "$owned_network" >/dev/null 2>&1 \
     || cleanup_status=1
   # Bound the persistent builder's layer cache on every invocation, whatever
-  # rows ran; the runner's in-run reclaim after a2a-image only fires when that
-  # row is selected. Best-effort: a failed prune is not this run's residue, and
-  # the runner's disk-space floor fails the next gate closed before space runs
-  # out.
+  # tests ran. Best-effort: a failed cleanup prune is not this run's residue.
   BUILDX_CONFIG="$buildx_config" docker buildx prune --all --force \
     --keep-storage=10GB --builder "$builder_name" >/dev/null 2>&1 \
-    || printf 'release gate: builder cache prune skipped\n' >&2
+    || printf 'candidate gate: builder cache prune skipped\n' >&2
   docker image rm "$IMAGE" >/dev/null 2>&1 || true
   for ids in "${owned_containers[@]}"; do
     ! docker container inspect "$ids" >/dev/null 2>&1 || cleanup_status=1
@@ -120,13 +107,13 @@ cleanup() {
   ! docker image inspect "$IMAGE" >/dev/null 2>&1 || cleanup_status=1
   case "$work" in
     /|"$ROOT"|"$ROOT"/*) cleanup_status=1 ;;
-    */aweb-release-work.*) rm -rf -- "$work" || cleanup_status=1 ;;
+    */aweb-candidate-work.*) rm -rf -- "$work" || cleanup_status=1 ;;
     *) cleanup_status=1 ;;
   esac
   if [[ "$cleanup_status" -ne 0 ]]; then
-    printf 'release gate cleanup FAILED\n' | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
+    printf 'candidate gate cleanup FAILED\n' | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
   else
-    printf 'release gate cleanup PASSED\n' | tee -a "$LOG_DIR/wrapper-verdict.log"
+    printf 'candidate gate cleanup PASSED\n' | tee -a "$LOG_DIR/wrapper-verdict.log"
   fi
   [[ "$original_status" -ne 0 ]] && exit "$original_status"
   exit "$cleanup_status"
@@ -142,8 +129,8 @@ git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \
 [[ -z "$(git -C "$checkout" status --porcelain --untracked-files=all)" ]] \
   || refuse "cloned checkout contains untracked input"
 
-[[ "$LOG_DIR" == "/tmp/aweb-release-gate-$SOURCE_SHA" && "$LOG_DIR" != / && "$LOG_DIR" != "$ROOT" ]] \
-  || refuse "unsafe release log directory: $LOG_DIR"
+[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA" && "$LOG_DIR" != / && "$LOG_DIR" != "$ROOT" ]] \
+  || refuse "unsafe candidate log directory: $LOG_DIR"
 rm -rf -- "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 record_input() {
@@ -159,21 +146,20 @@ record_input() {
 record_input library "$LIBRARY_E2E_LIBRARY_CONTEXT"
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
 printf '%s\n' "$SOURCE_SHA" > "$LOG_DIR/source-sha"
-printf '%s\n' "$RELEASE_BASE_SHA" > "$LOG_DIR/comparison-base-sha"
-printf 'NOT RELEVANT: this OSS release does not package Library; its versioned source input proves the activation journey only.\n' \
+printf 'NOT RELEVANT: OSS packages do not bundle Library; this input is used only by its activation journey.\n' \
   > "$LOG_DIR/compatibility.txt"
 
-docker build --pull -f "$checkout/release-gate/Dockerfile" -t "$IMAGE" "$checkout/release-gate" \
+docker build --pull -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout/candidate-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
 
 # Record the run's mutable inputs in the evidence (adoption compares them):
 # the resolved base-image digest and the tracked lock-set hash. Package
 # manager fetches inside the build are not recorded and adoption names that.
-base_ref="$(awk '/^FROM /{print $2; exit}' "$checkout/release-gate/Dockerfile")"
+base_ref="$(awk '/^FROM /{print $2; exit}' "$checkout/candidate-gate/Dockerfile")"
 base_digest="$(docker image inspect "$base_ref" --format '{{join .RepoDigests ","}}' 2>/dev/null || echo unresolved)"
 locks_digest="$(git -C "$checkout" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
 printf 'base\t%s\t%s\nlocks\t%s\n' "$base_ref" "$base_digest" "$locks_digest" > "$LOG_DIR/inputs.tsv"
-owned_network="aweb-release-gate-${SOURCE_SHA:0:12}-$$"
+owned_network="aweb-candidate-gate-${SOURCE_SHA:0:12}-$$"
 docker network create "$owned_network" >/dev/null
 pg_name="${owned_network}-postgres"
 redis_name="${owned_network}-redis"
@@ -222,8 +208,8 @@ for db in postgres template1; do
   [[ "$ext_schema" == "public" ]] \
     || refuse "pgcrypto pre-provision did not land in public for $db: '$ext_schema'"
 done
-docker_bind_root="$checkout/.release-docker-bind"
-mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.release-home"
+docker_bind_root="$checkout/.candidate-docker-bind"
+mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.candidate-home"
 # Reuse the persistent builder when it is healthy; recreate it when its
 # container or state has been removed since the last run. Gate invocations are
 # expected not to overlap on one host (they share this builder and the cache
@@ -255,22 +241,20 @@ finally:
 PY
 )
 
-runner_args=(--map release-gate/suite-map.tsv --log-dir "$LOG_DIR")
-[[ -z "$RELEASE_GATE_ARTIFACTS" ]] || runner_args+=(--artifacts "$RELEASE_GATE_ARTIFACTS")
-
 set +e
 docker run --rm --init \
   --network "$owned_network" \
   --user "$(id -u):$(id -g)" \
   --group-add "$socket_gid" \
   --add-host aweb-docker.test:host-gateway \
-  -e HOME="$checkout/.release-home" \
-  -e RELEASE_BASE_SHA="$RELEASE_BASE_SHA" \
-  -e RELEASE_GATE_SOURCE_SHA="$SOURCE_SHA" \
-  -e RELEASE_GATE_CHECKOUT_ROOT="$checkout" \
+  -e HOME="$checkout/.candidate-home" \
+  -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
+  -e CANDIDATE_CHECKOUT_ROOT="$checkout" \
+  -e CLI_VERSION="${CLI_VERSION:-}" \
+  -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
   -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
-  -e RELEASE_GATE_LOG_DIR="$LOG_DIR" \
+  -e CANDIDATE_LOG_DIR="$LOG_DIR" \
   -e BUILDX_CONFIG="$buildx_config" \
   -e BUILDX_BUILDER="$builder_name" \
   -e UV_CACHE_DIR=/tmp/uv-cache \
@@ -300,7 +284,7 @@ docker run --rm --init \
   -e PGPASSWORD=postgres \
   -e PGDATABASE=postgres \
   -e REDIS_URL="redis://$redis_name:6379/0" \
-  -e RELEASE_GATE_IMAGE="$IMAGE" \
+  -e CANDIDATE_GATE_IMAGE="$IMAGE" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$buildx_config:$buildx_config" \
   -v "$CACHE_ROOT/uv:/tmp/uv-cache" \
@@ -313,17 +297,14 @@ docker run --rm --init \
   -v "$LIBRARY_E2E_BLUEPRINT_SRC:$LIBRARY_E2E_BLUEPRINT_SRC:ro" \
   -w "$checkout" \
   "$IMAGE" \
-  python3 scripts/release_gate_runner.py "${runner_args[@]}" \
+  bash scripts/candidate-suite.sh \
   2>&1 | tee "$LOG_DIR/gate.log"
 status="${PIPESTATUS[0]}"
 set -e
 
-[[ -f "$LOG_DIR/summary.tsv" ]] || refuse "gate produced no summary"
-if grep -q $'\tNOT RUN\t' "$LOG_DIR/summary.tsv"; then status=1; fi
-if grep -q $'\tFAILED\t' "$LOG_DIR/summary.tsv"; then status=1; fi
 if [[ "$status" -ne 0 ]]; then
-  printf 'release gate FAILED; logs: %s\n' "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
+  printf 'candidate gate FAILED; logs: %s\n' "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
   exit "$status"
 fi
-printf 'release gate PASSED at %s (scope: %s); logs: %s\n' \
-  "$SOURCE_SHA" "${RELEASE_GATE_ARTIFACTS:-all}" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"
+printf 'candidate gate PASSED at %s; logs: %s\n' \
+  "$SOURCE_SHA" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"

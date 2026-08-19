@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MAKEFILE = REPO_ROOT / "Makefile"
 PIN_FILE = REPO_ROOT / "oats" / "upstream-test-pin.json"
 PREPARE_SCRIPT = REPO_ROOT / "scripts" / "prepare-pinned-oats.mjs"
-RELEASE_GATE_MAP = REPO_ROOT / "release-gate" / "suite-map.tsv"
+CANDIDATE_SUITE = REPO_ROOT / "scripts" / "candidate-suite.sh"
 
 
 class OATSPinnedCheckoutContractTests(unittest.TestCase):
@@ -183,12 +183,12 @@ class OATSPinnedCheckoutContractTests(unittest.TestCase):
             self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep me\n")
 
     def test_clean_release_gate_runs_the_pinned_oats_contract(self) -> None:
-        """The local release gate must execute the OATS seam from its fixed map."""
-        suite_map = RELEASE_GATE_MAP.read_text(encoding="utf-8")
-        self.assertIn("oats\tjourney\t_release-oats\taw-cli,pi-extension\n", suite_map)
+        """The local release gate must execute both OATS seam tests."""
+        candidate_suite = CANDIDATE_SUITE.read_text(encoding="utf-8")
+        self.assertIn("run _candidate-oats\n", candidate_suite)
         self.assertIn(
-            "oats-proof-helpers\tjourney\t_release-oats-proof-helpers\taw-cli,pi-extension\n",
-            suite_map,
+            "run _candidate-oats-proof-helpers\n",
+            candidate_suite,
         )
 
 

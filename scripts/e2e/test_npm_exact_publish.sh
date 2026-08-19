@@ -520,208 +520,46 @@ printf '%s\n' aweb-identity > "$ziproot/skills/aweb-identity/SKILL.md"
 printf '%s\n' aweb-identity-ref > "$ziproot/skills/aweb-identity/references/ref.md"
 (cd "$ziproot/packages/claude-ai-skills" && ./build-zips.sh >/dev/null)
 
-# Execute the workflow's exact GitHub Release block with a stateful fake gh.
-python3 - "$ROOT/.github/workflows/npm-release.yml" "$tmp/skills-release-block.sh" <<'PYBLOCK'
-import sys
-lines = open(sys.argv[1]).read().splitlines()
-start = next(i for i, line in enumerate(lines) if "SKILLS_RELEASE_BEGIN" in line) + 1
-end = next(i for i, line in enumerate(lines) if "SKILLS_RELEASE_END" in line)
-block = "\n".join(line[12:] for line in lines[start:end]) + "\n"
-open(sys.argv[2], "w").write("set -euo pipefail\nfail() { printf 'REFUSE: %s\\n' \"$1\" >&2; exit 1; }\n" + block)
-PYBLOCK
-cat > "$tmp/fake-bin/gh" <<'PYGH'
-#!/usr/bin/env python3
-import json, os, shutil, sys
-state, mode, staging = os.environ["GH_FIXTURE_STATE"], os.environ["GH_FIXTURE_MODE"], os.environ["staging"]
-assets = os.path.join(state, "assets"); os.makedirs(assets, exist_ok=True)
-log = os.path.join(state, "actions")
-expected = sorted(n for n in os.listdir(staging) if n.endswith(".zip"))
-def seed(kind):
-    for name in expected:
-        if kind == "missing" and name == "aweb-identity.zip": continue
-        shutil.copyfile(os.path.join(staging, name), os.path.join(assets, name))
-    if kind == "extra": open(os.path.join(assets, "extra.zip"), "wb").write(b"x")
-    if kind == "bytes": open(os.path.join(assets, expected[0]), "ab").write(b"wrong")
-if sys.argv[1] == "api":
-    count_path=os.path.join(state,"reads"); count=int(open(count_path).read())+1 if os.path.exists(count_path) else 1; open(count_path,"w").write(str(count))
-    if count == 1:
-        if mode in ("absent", "concurrent_create"): print("HTTP 404", file=sys.stderr); sys.exit(1)
-        if mode == "outage": print("HTTP 503", file=sys.stderr); sys.exit(1)
-        if mode == "auth": print("HTTP 403", file=sys.stderr); sys.exit(1)
-        if mode == "malformed": print("not-json"); sys.exit(0)
-        if mode == "concurrent_upload": seed("missing")
-        if mode == "name_conflict": seed("extra")
-        if mode == "byte_conflict": seed("bytes")
-    print(json.dumps({"assets":[{"name":n} for n in sorted(os.listdir(assets))]})); sys.exit(0)
-if sys.argv[1:3] == ["release", "create"]:
-    open(log,"a").write("create\n"); seed("exact")
-    sys.exit(1 if mode == "concurrent_create" else 0)
-if sys.argv[1:3] == ["release", "upload"]:
-    open(log,"a").write("upload\n"); source=sys.argv[-1]; shutil.copyfile(source, os.path.join(assets, os.path.basename(source)))
-    sys.exit(1 if mode == "concurrent_upload" else 0)
-if sys.argv[1:3] == ["release", "download"]:
-    name=sys.argv[sys.argv.index("--pattern")+1]; out=sys.argv[sys.argv.index("--output")+1]; shutil.copyfile(os.path.join(assets,name),out); sys.exit(0)
-sys.exit(2)
-PYGH
-chmod +x "$tmp/fake-bin/gh"
-run_gh_fixture() {
-  local mode="$1" expect="$2"
-  local state="$tmp/gh-$mode" run_tmp="$tmp/gh-run-$mode"
-  rm -rf "$state" "$run_tmp"; mkdir -p "$state" "$run_tmp"
-  local output
-  if output="$(GH_FIXTURE_STATE="$state" GH_FIXTURE_MODE="$mode" \
-      staging="$ziproot/packages/claude-ai-skills/dist" RUNNER_TEMP="$run_tmp" \
-      GITHUB_REPOSITORY=awebai/aweb tag=skills-v1.2.3 \
-      PATH="$tmp/fake-bin:$PATH" bash "$tmp/skills-release-block.sh" 2>&1)"; then
-    [[ "$expect" == pass ]] || fail "$mode GitHub fixture unexpectedly passed"
-  else
-    [[ "$expect" == refuse ]] || fail "$mode GitHub fixture unexpectedly refused: $output"
-  fi
-  case "$mode" in
-    outage|auth|malformed) [[ ! -e "$state/actions" ]] || fail "$mode attempted a GitHub write" ;;
-  esac
-}
-run_gh_fixture absent pass
-run_gh_fixture outage refuse
-run_gh_fixture auth refuse
-run_gh_fixture malformed refuse
-run_gh_fixture concurrent_create pass
-run_gh_fixture concurrent_upload pass
-run_gh_fixture name_conflict refuse
-run_gh_fixture byte_conflict refuse
-ok "GitHub fixture proves 404/create, outage/auth/malformed refusal, races, and conflicts"
-
-# Execute the workflow's exact conditional Pi aw-floor block.
-python3 - "$ROOT/.github/workflows/npm-release.yml" "$tmp/pi-floor-block.sh" <<'PYFLOOR'
-import sys
-lines=open(sys.argv[1]).read().splitlines()
-start=next(i for i,l in enumerate(lines) if "PI_AW_FLOOR_BEGIN" in l)+1
-end=next(i for i,l in enumerate(lines) if "PI_AW_FLOOR_END" in l)
-block="\n".join(l[10:] for l in lines[start:end])+"\n"
-open(sys.argv[2],"w").write("set -euo pipefail\nfail(){ printf 'REFUSE: %s\\n' \"$1\" >&2; exit 1; }\n"+block+"printf proceed > \"$FLOOR_PROCEEDED\"\n")
-PYFLOOR
-cat > "$tmp/fake-bin/curl" <<'PYCURL'
-#!/usr/bin/env python3
-import json, os, sys
-args=sys.argv[1:]; out=args[args.index("-o")+1]; url=args[-1]; mode=os.environ["FLOOR_MODE"]
-open(os.environ["FLOOR_QUERIES"],"a").write(url+"\n")
-if url.endswith("%40awebai%2Fpi"):
-    status={"none":"404","history_outage":"503","history_auth":"403"}.get(mode,"200")
-    if status=="200":
-        if mode=="history_malformed": open(out,"w").write("not-json")
-        else:
-            floor="^1.22.1" if mode=="same" else "^1.21.0"
-            json.dump({"dist-tags":{"latest":"0.3.5"},"versions":{"0.3.5":{"dependencies":{"@awebai/aw":floor}}}},open(out,"w"))
-else:
-    status={"aw_outage":"503","aw_auth":"403","aw_absent":"404"}.get(mode,"200")
-    if mode=="aw_lag":
-        prior=sum(1 for line in open(os.environ["FLOOR_QUERIES"]) if "%40awebai%2Faw" in line)
-        status="404" if prior == 1 else "200"
-    if status=="200":
-        if mode=="aw_malformed": open(out,"w").write("not-json")
-        else: json.dump({"version":"9.9.9" if mode=="aw_mismatch" else "1.22.1"},open(out,"w"))
-print(status,end="")
-PYCURL
-chmod +x "$tmp/fake-bin/curl"
-run_floor_fixture(){
-  local mode="$1" expect="$2"
-  local queries="$tmp/floor-$mode-queries" proceeded="$tmp/floor-$mode-proceeded" run_tmp="$tmp/floor-$mode"
-  rm -rf "$run_tmp" "$queries" "$proceeded"; mkdir -p "$run_tmp"
-  local output
-  if output="$(cd "$ROOT" && FLOOR_MODE="$mode" FLOOR_QUERIES="$queries" FLOOR_PROCEEDED="$proceeded" \
-      RUNNER_TEMP="$run_tmp" encoded=%40awebai%2Fpi \
-      PI_AW_FLOOR_TIMEOUT_SECONDS="$([[ "$mode" == aw_lag ]] && echo 2 || echo 0)" \
-      PI_AW_FLOOR_BACKOFF_SECONDS=0 PATH="$tmp/fake-bin:$PATH" \
-      bash "$tmp/pi-floor-block.sh" 2>&1)"; then
-    [[ "$expect" == pass ]] || fail "$mode floor fixture unexpectedly passed"
-    [[ -f "$proceeded" ]] || fail "$mode passed without proceeding"
-  else
-    [[ "$expect" == refuse ]] || fail "$mode floor fixture unexpectedly refused: $output"
-    [[ ! -f "$proceeded" ]] || fail "$mode refusal proceeded"
-    case "$mode" in
-      history_outage) needle='history unavailable' ;;
-      history_auth) needle='history authorization' ;;
-      history_malformed) needle='history evidence is malformed' ;;
-      aw_outage) needle='floor observation unavailable' ;;
-      aw_auth) needle='floor observation authorization' ;;
-      aw_absent) needle='propagation deadline exceeded' ;;
-      aw_malformed) needle='floor evidence is malformed' ;;
-      aw_mismatch) needle='floor evidence mismatch' ;;
-    esac
-    grep -qi "$needle" <<<"$output" || fail "$mode refusal was unrelated: $output"
-  fi
-  if [[ "$mode" == same ]]; then
-    [[ "$(wc -l < "$queries" | tr -d ' ')" == 1 ]] || fail "unchanged floor queried public aw"
-  elif [[ "$mode" == moved || "$mode" == none ]]; then
-    [[ "$(wc -l < "$queries" | tr -d ' ')" == 2 ]] || fail "$mode did not query exact public aw"
-  elif [[ "$mode" == aw_lag ]]; then
-    [[ "$(wc -l < "$queries" | tr -d ' ')" == 3 ]] || fail "lag fixture did not poll 404 to exact success"
-  fi
-}
-run_floor_fixture same pass
-run_floor_fixture moved pass
-run_floor_fixture none pass
-run_floor_fixture aw_lag pass
-for mode in history_outage history_auth history_malformed aw_outage aw_auth aw_absent aw_malformed aw_mismatch; do
-  run_floor_fixture "$mode" refuse
-done
-ok "Pi floor fixture proves unchanged independence, moved/404 wait, and named failures"
-
-# ── thin release workflow static contract + causal mutations ───────
+# ── tag-only workflow static contract + causal mutations ──────────
 python3 - "$ROOT" <<'PYWORKFLOW'
 import os, re, sys
 from pathlib import Path
 root = Path(sys.argv[1])
 workflow = (root / ".github/workflows/npm-release.yml").read_text()
 makefile = (root / "Makefile").read_text()
-for dead in ("release-channel-check", "release-channel-tag", "release-channel-push"):
-    assert dead not in makefile, f"deleted Make path survives: {dead}"
-suite_map = (root / "release-gate/suite-map.tsv").read_text()
-for row in (
-    "channel-version-equality\tcontract\t_release-gate-channel-version\tchannel-plugin\n",
-    "node-dependencies\tcontract\t_release-node-deps\tall\n",
-    "channel-unit\tunit\t_release-unit-channel\tchannel-plugin\n",
-    "channel-core-unit\tunit\t_release-unit-channel-core\tchannel-plugin,pi-extension\n",
-    "channel-package\tartifact\t_release-artifact-channel\tchannel-plugin\n",
+candidate_suite = (root / "scripts/candidate-suite.sh").read_text()
+for command in (
+    "run _candidate-channel-version\n",
+    "run _candidate-node-deps\n",
+    "run _candidate-unit-channel\n",
+    "run _candidate-unit-channel-core\n",
+    "run _candidate-artifact-channel\n",
 ):
-    assert row in suite_map, f"missing local-gate mapping: {row}"
+    assert command in candidate_suite, f"missing candidate command: {command}"
 
 def validate(text):
     triggers = text[text.index("\non:\n"):text.index("\njobs:\n")]
     assert "push:" in triggers, "missing push trigger"
-    assert re.search(r"branches:\s*\[release\]", triggers), "missing release branches trigger"
-    for forbidden in ("workflow_dispatch", "tags:", "main", "pull_request", "schedule"):
+    assert "tags:" in triggers, "missing tag trigger"
+    for tag in ("channel-v*", "pi-v*", "skills-v*"):
+        assert tag in triggers, f"missing {tag} trigger"
+    for forbidden in ("workflow_dispatch", "branches:", "main", "pull_request", "schedule"):
         assert forbidden not in triggers, f"forbidden trigger {forbidden}"
     for marker in (
-        "SOURCE_SHA: ${{ github.sha }}", "matrix:", "package: [channel, pi, skills]",
-        "fail-fast: false", "ref: ${{ github.sha }}", "git ls-remote origin refs/heads/release",
-        '[[ "$release_tip" == "$SOURCE_SHA" ]]',
-        'git merge-base --is-ancestor "$SOURCE_SHA" origin/main',
-        "npm-exact-publish.sh pack-inspect", "npm-exact-publish.sh decide-npm",
-        "npm-exact-publish.sh publish-exact", "verify-published-bounded",
-        "channel-core source bundle", "canonical skills source bundle",
-        "committed plugin version", "packed plugin version", "AW_FLOOR_MOVED",
-        "public aw floor", "build-zips.sh", "EXPECTED_ZIPS", "gh release",
-        "GitHub release observation unavailable", "HTTP 404", "timeout 30 gh",
-        "require_tag_compatible", "publish_tag",
+        "ref: ${{ github.sha }}", "scripts/publish_release.py",
+        "${GITHUB_REF_NAME}", "NODE_AUTH_TOKEN", "secrets.NPM_TOKEN",
     ):
         assert marker in text, f"missing {marker}"
-    for skill in ("aweb-bootstrap", "aweb-coordination", "aweb-identity", "aweb-messaging", "aweb-team-membership"):
-        assert skill in text, f"missing canonical skill {skill}"
-    assert "aweb-agent-instantiation" not in text, "forbidden sixth source aweb-agent-instantiation"
-    for forbidden in ("inputs.", "stage-only", "publish-continuation", "upload-artifact", "download-artifact", "pytest", "npm test", "make test"):
+    for forbidden in ("pytest", "npm test", "make test", "release_tip", "publish_tag"):
         assert forbidden not in text, f"forbidden thin-workflow marker {forbidden}"
 
 validate(workflow)
 mutations = (
-    ("wrong branch", workflow.replace("branches: [release]", "branches: [main]", 1), "branches"),
-    ("tag trigger", workflow.replace("branches: [release]", "branches: [release]\n    tags: ['v*']", 1), "tags:"),
-    ("channel-core drift", workflow.replace("channel-core source bundle", "channel source", 1), "channel-core source bundle"),
-    ("missing skill", workflow.replace("aweb-identity", "missing-identity"), "aweb-identity"),
-    ("sixth skill", workflow.replace("aweb-team-membership", "aweb-team-membership aweb-agent-instantiation", 1), "aweb-agent-instantiation"),
-    ("plugin drift", workflow.replace("committed plugin version", "unchecked plugin"), "committed plugin version"),
-    ("Pi races aw", workflow.replace("AW_FLOOR_MOVED", "AW_FLOOR_IGNORED"), "AW_FLOOR_MOVED"),
-    ("registry verify removed", workflow.replace("verify-published-bounded", "echo unverified", 1), "verify-published-bounded"),
+    ("branch trigger", workflow.replace("tags:", "branches:", 1), "tag trigger"),
+    ("missing channel", workflow.replace('      - "channel-v*"\n', "", 1), "channel-v*"),
+    ("missing pi", workflow.replace('      - "pi-v*"\n', "", 1), "pi-v*"),
+    ("missing skills", workflow.replace('      - "skills-v*"\n', "", 1), "skills-v*"),
+    ("publisher removed", workflow.replace("scripts/publish_release.py", "echo skipped", 1), "scripts/publish_release.py"),
     ("suite reintroduced", workflow + "\n# npm test\n", "npm test"),
 )
 for name, mutation, expected in mutations:
@@ -736,6 +574,6 @@ for name, mutation, expected in mutations:
     else:
         raise AssertionError(f"{name} mutation stayed green")
 PYWORKFLOW
-ok "thin npm workflow and nine intended-property mutations"
+ok "tag-only npm workflow and intended-property mutations"
 
 printf 'SELFTEST OK: %d assertions\n' "$PASS"

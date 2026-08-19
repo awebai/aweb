@@ -1,3 +1,4 @@
+# Tool image for the complete local candidate suite.
 FROM python:3.12-bookworm
 
 ARG GO_VERSION=1.24.13

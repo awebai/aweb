@@ -1,4 +1,4 @@
-.PHONY: help clean test test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension test-release check-release-gate-residue release test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
+.PHONY: help clean test test-shipping test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
 	e2e-library-stack e2e-library-stack-up e2e-library-stack-seed e2e-library-stack-down \
@@ -9,10 +9,10 @@
 	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
-	cli-e2e _release-gate-version-authority _release-gate-channel-version _release-node-deps \
-	_release-unit-channel _release-unit-channel-core _release-unit-pi _release-oats _release-marketplace-pointer \
-	_release-artifact-server _release-artifact-awid-package _release-artifact-awid-image \
-	_release-artifact-channel _release-artifact-pi _release-artifact-skills _release-artifact-a2a-image
+	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
+	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers _candidate-marketplace-pointer \
+	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
+	_candidate-artifact-channel _candidate-artifact-pi _candidate-artifact-skills _candidate-artifact-a2a-image
 
 SERVER_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' server/pyproject.toml | head -n 1)
 AWID_VERSION := $(shell sed -n 's/^version = "\(.*\)"/\1/p' awid/pyproject.toml | head -n 1)
@@ -20,9 +20,9 @@ CHANNEL_VERSION := $(shell node -p "require('./channel/package.json').version" 2
 CHANNEL_PLUGIN_VERSION := $(shell node -p "require('./channel/.claude-plugin/plugin.json').version" 2>/dev/null)
 # aw CLI releases have independent semver. Derive the next patch from the
 # published aw-v* history; the release guard below rejects stale overrides.
-CLI_VERSION = $(shell ./scripts/cli-release-version.sh next)
+CLI_VERSION ?= $(shell ./scripts/cli-release-version.sh next)
 # The gateway is a Go artifact with independent patch history.
-A2A_GATEWAY_VERSION = $(shell python3 scripts/release_artifact_version.py a2a-gateway-image)
+A2A_GATEWAY_VERSION ?= $(shell python3 scripts/next_tag_version.py a2a-gw-v)
 # OATS seam tests default to an immutable reviewed upstream commit materialized
 # under this repository's ignored cache. That makes local and CI runs consume the
 # same clean input instead of a colleague's mutable sibling checkout. Deliberate
@@ -86,13 +86,16 @@ help:
 	@echo "  awid-prod-restore   Restore a dump into awid prod (DUMP=path)"
 	@echo "  awid-prod-migrate   Apply pending migrations to awid prod"
 	@echo ""
-	@echo "  RELEASING - one rerunnable OSS command, no prompt or release-time judgment:"
-	@echo "    make release"
+	@echo "  RELEASING - test locally, then push the exact local tags:"
+	@echo "    make release-candidate TAGS='server-vX.Y.Z awid-service-vX.Y.Z ...'"
+	@echo "    git push origin refs/tags/<tag> [...]"
+	@echo "    make release-publish TAG=<tag>   # runnerless registry publisher"
 	@echo "    docs/release.md is the authoritative specification."
 	@echo ""
 	@echo "  verify-site  Verify the awid.ai Hugo site without deploying"
 	@echo "  deploy-site  Advance the verified origin/main commit to $(SITE_DEPLOY_BRANCH)"
-	@echo "  release                               test, reconcile, and publish the desired OSS artifacts"
+	@echo "  release-candidate TAGS='...'          run every Docker test/E2E, then create local tags"
+	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
 	@echo "  clean        Remove all build artifacts and caches"
 
 build:
@@ -102,7 +105,10 @@ build:
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: check-aw-commit-repo-stamp test-release check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+
+test-shipping:
+	python3 scripts/test_shipping.py
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.
@@ -297,12 +303,6 @@ test-channel-core-process-guard:
 test-pi-extension:
 	cd pi-extension && npm test
 
-test-release:
-	python3 scripts/e2e/test_release.py
-
-check-release-gate-residue:
-	python3 scripts/check_release_gate_residue.py
-
 prepare-oats-test-root:
 	@if [ "$(abspath $(OATS_TEST_ROOT))" = "$(abspath $(OATS_PINNED_ROOT))" ]; then \
 		node scripts/prepare-pinned-oats.mjs --pin-file "$(OATS_PIN_FILE)" --target "$(OATS_PINNED_ROOT)"; \
@@ -410,9 +410,8 @@ awid-prod-migrate:
 	cd awid && uv run python scripts/prod_db_reset.py migrate --env-file $(AWID_PROD_ENV_FILE)
 
 # ── Release-shaped local-gate checks ────────────────────────────────
-# PyPI and image publication are thin release-branch workflows. Their expensive
-# suites and release-shaped builds are part of scripts/release-local-gate.sh;
-# these lock checks remain named inputs to that complete local proof.
+# Publishers are thin tag workflows. Their expensive suites and release-shaped
+# builds run once in the complete local candidate gate.
 
 # Deterministic, no network, no toolchain: it reads two checked-in files and compares
 # them. Safe to run anywhere, which is why it is a target rather than only a release step.
@@ -447,8 +446,13 @@ check-awid-locked-suite:
 
 # ── awid.ai static-site deployment ─────────────────────────────────
 
-release:
-	python3 scripts/release.py
+release-candidate:
+	@test -n "$(TAGS)" || (echo "TAGS='server-vX.Y.Z ...' is required" >&2; exit 2)
+	python3 scripts/release_candidate.py $(TAGS)
+
+release-publish:
+	@test -n "$(TAG)" || (echo "TAG=<artifact-vX.Y.Z> is required" >&2; exit 2)
+	python3 scripts/publish_release.py "$(TAG)"
 
 deploy-site: verify-site
 	@set -eu; \
@@ -481,90 +485,83 @@ test-release-cli-version:
 
 # ── Unified release ──────────────────────────────────────────────────
 
-# Internal steps consumed only by scripts/release-local-gate.sh's fixed map.
-# They are intentionally absent from help; the release reconciler invokes the gate.
-_release-gate-docker-boundaries:
-	@test -n "$(RELEASE_GATE_IMAGE)" || (echo "RELEASE_GATE_IMAGE is required"; exit 2)
-	python3 scripts/e2e/test_release_gate_docker_boundaries.py --image "$(RELEASE_GATE_IMAGE)"
+# Internal steps consumed only by the complete local candidate map.
+_candidate-gate-docker-boundaries:
+	@test -n "$(CANDIDATE_GATE_IMAGE)" || (echo "CANDIDATE_GATE_IMAGE is required"; exit 2)
+	python3 scripts/e2e/test_candidate_gate_docker_boundaries.py --image "$(CANDIDATE_GATE_IMAGE)"
 
-_release-gate-version-authority:
-	@test -n "$(RELEASE_BASE_SHA)" || (echo "RELEASE_BASE_SHA is required"; exit 2)
-	./scripts/check-server-version-bump-test.sh
-	./scripts/check-server-version-bump.sh "$(RELEASE_BASE_SHA)"
-	./scripts/cli-release-version.sh check "$(CLI_VERSION)"
-
-_release-gate-channel-version:
+_candidate-channel-version:
 	@test "$(CHANNEL_VERSION)" = "$(CHANNEL_PLUGIN_VERSION)" || \
 		(echo "channel package.json != plugin.json"; exit 1)
 
-_release-node-deps:
+_candidate-node-deps:
 	cd channel-core && npm ci --no-audit --no-fund
 	cd channel && npm ci --no-audit --no-fund
 	cd pi-extension && npm ci --no-audit --no-fund
 
-_release-unit-channel:
+_candidate-unit-channel:
 	cd channel && npm test
 
-_release-unit-channel-core:
+_candidate-unit-channel-core:
 	cd channel-core && npm test
 
-_release-unit-pi:
+_candidate-unit-pi:
 	cd pi-extension && npm test
 
-_release-oats: check-oats-launch-environment-contract check-oats-pi-launch-order
+_candidate-oats: check-oats-launch-environment-contract check-oats-pi-launch-order
 	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
 
-_release-oats-proof-helpers:
+_candidate-oats-proof-helpers:
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
 
-_release-marketplace-pointer:
+_candidate-marketplace-pointer:
 	python3 scripts/e2e/test_pointer_adapter_marketplace.py
 
-_release-artifact-server:
+_candidate-artifact-server:
 	rm -rf server/dist
 	cd server && uv build
 	test -f server/dist/aweb-$(SERVER_VERSION).tar.gz
 	test -f server/dist/aweb-$(SERVER_VERSION)-py3-none-any.whl
 
-_release-artifact-awid-package:
+_candidate-artifact-awid-package:
 	rm -rf awid/dist
 	cd awid && uv build
 	test -f awid/dist/awid_service-$(AWID_VERSION).tar.gz
 	test -f awid/dist/awid_service-$(AWID_VERSION)-py3-none-any.whl
 
-_release-artifact-awid-image:
-	@mkdir -p /tmp/aweb-release-gate
+_candidate-artifact-awid-image:
+	@mkdir -p /tmp/aweb-candidate-gate
 	docker buildx build --platform linux/amd64,linux/arm64 \
-		-f awid/Dockerfile.release --output type=oci,dest=/tmp/aweb-release-gate/awid.oci.tar .
-	test -s /tmp/aweb-release-gate/awid.oci.tar
+		-f awid/Dockerfile.release --output type=oci,dest=/tmp/aweb-candidate-gate/awid.oci.tar .
+	test -s /tmp/aweb-candidate-gate/awid.oci.tar
 
-_release-artifact-channel:
-	@mkdir -p /tmp/aweb-release-gate
+_candidate-artifact-channel:
+	@mkdir -p /tmp/aweb-candidate-gate
 	cd channel && npm run build
-	cd channel && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+	cd channel && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 
-_release-artifact-pi:
-	@mkdir -p /tmp/aweb-release-gate
+_candidate-artifact-pi:
+	@mkdir -p /tmp/aweb-candidate-gate
 	cd pi-extension && npm run build
-	cd pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+	cd pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 
-_release-artifact-skills:
-	@mkdir -p /tmp/aweb-release-gate
-	cd packages/claude-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-release-gate
+_candidate-artifact-skills:
+	@mkdir -p /tmp/aweb-candidate-gate
+	cd packages/claude-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 	cd packages/claude-ai-skills && ./build-zips.sh
 	@test "$$(find packages/claude-ai-skills/dist -name 'aweb-*.zip' -type f | wc -l | tr -d ' ')" = 5
 
-_release-artifact-a2a-image:
-	@mkdir -p /tmp/aweb-release-gate
+_candidate-artifact-a2a-image:
+	@mkdir -p /tmp/aweb-candidate-gate
 	docker buildx build --platform linux/amd64,linux/arm64 \
 		-f cli/go/Dockerfile.a2a-gw \
 		--build-arg VERSION=$(A2A_GATEWAY_VERSION) \
 		--build-arg RELEASE_TAG=a2a-gw-v$(A2A_GATEWAY_VERSION) \
 		--build-arg COMMIT=$$(git rev-parse HEAD) \
 		--build-arg DATE=1970-01-01T00:00:00Z \
-		--output type=oci,dest=/tmp/aweb-release-gate/a2a-gateway.oci.tar cli/go
-	test -s /tmp/aweb-release-gate/a2a-gateway.oci.tar
+		--output type=oci,dest=/tmp/aweb-candidate-gate/a2a-gateway.oci.tar cli/go
+	test -s /tmp/aweb-candidate-gate/a2a-gateway.oci.tar
 
 # Real-stack CLI/Library journey retained in the fixed local release gate.
 cli-e2e:

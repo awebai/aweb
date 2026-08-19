@@ -1,147 +1,89 @@
-# Releasing aweb
+# Shipping aweb OSS artifacts
 
-This repository owns the aweb open-source artifacts. Its complete release is one
-rerunnable command from a clean checkout at `origin/main`:
+`main` remains the reviewed synchronization branch and never publishes by
+itself. Each artifact is released by an immutable tag on one exact tested
+commit.
+
+| Tag | Published artifact |
+|---|---|
+| `server-vX.Y.Z` | PyPI `aweb` |
+| `awid-service-vX.Y.Z` | PyPI `awid-service` |
+| `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
+| `aw-vX.Y.Z` | `aw` CLI distributions and npm platform packages |
+| `channel-vX.Y.Z` | npm Claude channel |
+| `pi-vX.Y.Z` | npm Pi extension |
+| `skills-vX.Y.Z` | npm skills package and resumable hosted ZIP assets |
+| `a2a-gw-vX.Y.Z` | `ghcr.io/awebai/a2a-gateway` image |
+
+Manifest-backed tags must equal the version in their package manifest. CLI and
+A2A gateway versions are explicit in their tags.
+
+## 1. Test the final candidate locally
+
+Choose every artifact tag that this commit should publish, then run one command:
 
 ```sh
-make release
+make release-candidate \
+  TAGS='awid-service-v0.5.19 server-v1.35.0 awid-v0.5.19'
 ```
 
-There is no prepare/continue split, release card, prompt, or release-time
-compatibility decision. Reviewed source declares the versions. When the clean
-gate passes, the command publishes every owed artifact and verifies the public
-result. It never changes a running service.
+The command requires a clean commit on `origin/main`. It runs the explicit
+product-test list in `scripts/candidate-suite.sh`—all unit, integration,
+packaging, image, audit, and E2E journeys—in isolated local Docker. There is no
+artifact scoping and no reuse of a previous green result. Only after every test
+passes does it create the requested annotated tags locally on the exact tested
+SHA.
 
-Prerequisites the gate refuses without: a running Docker daemon, and clean git
-checkouts of the Library (`../library` beside this repository) and the team
-blueprints (`../blueprints/team`), overridable via `LIBRARY_E2E_LIBRARY_CONTEXT`
-and `LIBRARY_E2E_BLUEPRINT_SRC`.
+`main` may move while the gate runs. The tested SHA and its local tags do not.
 
-## Authority
+## 2. Publish the tested tags
 
-- Package manifests declare package versions.
-- Artifacts without manifests derive their next patch from their immutable tag
-  history.
-- An artifact's source tag identifies the commit that produced it.
-- Registry observation establishes whether the desired output exists.
-- Exact-publish helpers compare staged and served output. An occupied version
-  with different bytes is a refusal, never an adoption.
-- For OCI artifacts, the version tag and `latest` must resolve to the same
-  immutable index digest.
+Push the tags explicitly, one command at a time:
 
-## Artifact and dependency graph
+```sh
+git push origin refs/tags/awid-service-v0.5.19
+git push origin refs/tags/server-v1.35.0
+git push origin refs/tags/awid-v0.5.19
+```
 
-The graph is explicit in `scripts/release.py`. `content_paths` is the
-maintained build-input closure for each artifact: a change in any listed path
-makes that artifact move. Package-manager dependencies remain in their normal
-manifests; the release graph records additional bundled and shared-source edges.
+Each tag starts only its owning thin publisher. Publishers rebuild or stage the
+exact tagged source, publish or adopt exact bytes, verify registry readback,
+and stop. They do not run product suites, move a branch, infer changed
+artifacts, create another aweb tag, or contact AC.
 
-| Artifact | Build-input closure | Version authority |
-|---|---|---|
-| PyPI `aweb` | `server/` | `server/pyproject.toml` |
-| PyPI `awid-service` | `awid/` | `awid/pyproject.toml` |
-| AWID image | `awid/` and `server/` | AWID manifest |
-| `aw` CLI and platform npm packages | `cli/go/` | next `aw-v*` patch |
-| Claude channel | `channel/` and bundled `channel-core/` | channel manifest |
-| Pi extension | `pi-extension/`, bundled `channel-core/`, and the five default skills | Pi manifest |
-| Skills packages and archives | both package layouts and the five default skills | skills manifest |
-| A2A gateway image | `cli/go/` | next `a2a-gw-v*` patch |
+GitHub omits tag-push events when more than three tags are pushed together, so
+never batch this step. When `awid-service` and `aweb` move together, push both
+tags separately. The `aweb`
+publisher waits for the exact declared AWID dependency to become public before
+publishing its package.
 
-The Python `aweb` package declares its `awid-service` floor in
-`server/pyproject.toml`. Release selection requires that floor to equal the
-exact desired AWID version, so an AWID version change also requires a reviewed
-`aweb` floor and version change. The Pi extension's compatible `@awebai/aw`
-range is not an exact co-release edge. Shared or copied sources are release
-edges because their bytes are bundled into the consumer.
+## Runnerless publication
 
-Any edit to this table in code requires a matching contract-test and
-documentation update. This makes a new bundled dependency a visible reviewed
-decision instead of an inferred side effect.
+Every registry-backed tag can publish from the operator machine using the same
+tag dispatcher:
 
-## Gate scope and caches
+```sh
+make release-publish TAG=server-v1.35.0
+make release-publish TAG=channel-v1.2.3
+make release-publish TAG=awid-v0.5.19
+```
 
-The gate is one fixed table, `release-gate/suite-map.tsv`, but a release runs
-only the rows that guard what it publishes: rows naming any artifact key in the
-release's publication scope, plus every `all` row (shared prerequisites and
-repository-wide contracts). The scope is the moving set joined with every
-artifact the triggered workflows can republish. Rows outside the scope are
-recorded as `SKIPPED` in the summary, so the evidence names what was not run
-and why. The artifact column is part of the reviewed release graph: the runner
-refuses unknown keys, and editing the column requires the matching
-contract-test update in `scripts/e2e/test_release.py`.
+Provide the credential required by the destination:
 
-Gate runs share lockfile-keyed caches: uv, Go module and build, and npm caches,
-and the persistent buildx builder's layer cache, which every invocation bounds
-with a keep-storage reclaim on exit (and mid-run after the largest image build
-when that row is selected). Determinism is carried by the committed lockfiles,
-whose hashes the gate records in its evidence; a warm cache hit yields the same
-bytes as a cold fetch. Gate invocations share the builder and cache root and
-are expected not to overlap on one host.
+- PyPI: `UV_PUBLISH_TOKEN`
+- npm: `NODE_AUTH_TOKEN` or `NPM_TOKEN`
+- GHCR: `GHCR_USERNAME` and `GHCR_TOKEN`
 
-## What the command does
+The runnerless path builds from a detached worktree at the local tag and
+refuses a same-version byte conflict. `aw-v` can publish all npm platform
+packages directly; hosted binary assets remain resumable when GitHub returns.
+Skills ZIPs are likewise resumable hosted assets after the npm package is safe.
 
-1. Fetch tags and branches, reject a dirty checkout, and require the exact
-   `origin/main` commit.
-2. Find any unfinished intent. If none exists, compare every artifact's complete
-   build-input closure with its newest source tag and validate all versions.
-3. Observe the complete desired public artifact set. An absent artifact whose
-   source did not move is not silently rebuilt under an occupied version; the
-   command requires a version bump.
-4. Run the fixed clean-Docker gate once, before creating publication state,
-   scoped to the rows guarding the artifacts being published plus every row
-   that guards all releases.
-5. Write `release-intent-<source>`, whose canonical JSON binds the source SHA,
-   all desired versions, and every publication still owed.
-6. Fast-forward the path-scoped `release` branch. Workflows build the exact
-   commit, publish or adopt exact bytes, verify the public result, and create
-   source tags.
-7. Re-observe the complete desired public set, update the public marketplace
-   pointer when its packages moved, and write the matching
-   `release-done-<source>` tag.
+## Repository boundary
 
-Publication grouping is only an execution optimization. The intent and final
-observation always cover the complete desired artifact set.
+This repository never changes or deploys AC. When AC needs a new OSS version,
+publish the relevant OSS tags first. AC then updates its exact dependency lock,
+runs its own complete Docker candidate gate, and publishes its own `vX.Y.Z` tag.
 
-## Failure and retry
-
-Run `make release` again.
-
-Before an intent tag exists, a failure made no publication decision. After the
-tag exists, it is authoritative: a rerun uses its exact source, versions, and
-owed publications. Already-correct public outputs are adopted; missing work is
-continued; conflicting bytes, tags, or branch ancestry stop the run.
-
-If the checkout's current `main` advanced while an older intent was unfinished,
-the command finishes the recorded intent from an automatic detached worktree,
-then continues through the current `main` desired state in the same invocation.
-
-There is no resume subcommand and no editable operator state file. A terminated
-shell, expired credential, workflow failure, or temporary registry outage does
-not require a person to reconstruct context.
-
-## Static site
-
-The `awid.ai` Hugo site is independent of artifact release. Its source and
-mirrored documents are reviewed on `main`; deployment never creates or repairs
-a commit.
-
-After production authorization, `make deploy-site` verifies the mirrors and
-Hugo build, requires a clean checkout at the exact fetched `origin/main`, then
-fast-forwards that SHA to `deploy-awid-landing` and reads the remote ref back.
-Render must build `awid/site` from that branch. A successful branch push is a
-delivery request, not proof that Render completed: verify the provider deploy
-and the live `https://awid.ai` site afterward.
-
-## Implementation map
-
-- `scripts/release.py`: desired-state selection and reconciliation.
-- `scripts/release-gate.sh`: fixed clean gate.
-- `release-gate/suite-map.tsv`: named gate inventory; each row names the
-  artifact keys it guards (`all` = every release).
-- `scripts/*-exact-publish.sh`: exact npm, PyPI, and OCI decisions.
-- `scripts/release-tag-helpers.sh`: immutable tag observation.
-- `.github/workflows/*release.yml`: thin, path-scoped publishers.
-- `scripts/e2e/test_release.py`: intent, retry, registry, and ownership
-  contracts.
-
-Low-level helpers are mechanisms, not alternate maintained release commands.
+There are no release-intent tags, done tags, release branches, workflow
+monitors, or cross-repository release transactions.

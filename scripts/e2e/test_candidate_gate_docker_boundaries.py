@@ -25,15 +25,10 @@ PROBE_SERVICE_IMAGE = (
 )
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
-from unittest.mock import patch
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import release_gate_runner as runner
 
 
 def run(
@@ -49,7 +44,7 @@ class DockerBoundaryTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls) -> None:
-        cls.image = os.environ["RELEASE_GATE_TEST_IMAGE"]
+        cls.image = os.environ["CANDIDATE_GATE_TEST_IMAGE"]
         run("docker", "info")
 
     def socket_gid(self) -> str:
@@ -93,15 +88,10 @@ class DockerBoundaryTests(unittest.TestCase):
             self.assertNotEqual(remains.returncode, 0, "probe volume survived cleanup")
 
     def test_builder_cache_reclaim_is_scoped_bounded_and_builder_remains_usable(self) -> None:
-        with patch.dict(os.environ, {"BUILDX_BUILDER": "", "BUILDX_CONFIG": "/tmp"}):
-            with self.assertRaisesRegex(RuntimeError, "BUILDX_BUILDER is empty"):
-                runner.bound_builder_cache(Path("/tmp/unused-cache-log"))
-        with patch.dict(os.environ, {"BUILDX_BUILDER": "unused", "BUILDX_CONFIG": ""}):
-            with self.assertRaisesRegex(RuntimeError, "BUILDX_CONFIG is empty"):
-                runner.bound_builder_cache(Path("/tmp/unused-cache-log"))
-        source = Path(runner.__file__).read_text()
-        self.assertIn('if step.name == "a2a-image":', source)
-        self.assertIn('bound_builder_cache(log_dir / "a2a-image-cache-reclaim.log")', source)
+        source = (Path(__file__).resolve().parents[1] / "candidate-suite.sh").read_text()
+        self.assertIn('${BUILDX_BUILDER:?BUILDX_BUILDER is required}', source)
+        self.assertIn('${BUILDX_CONFIG:?BUILDX_CONFIG is required}', source)
+        self.assertIn('docker buildx prune --all --force --keep-storage=10GB', source)
 
         builder = f"aweb-gate-proof-{uuid.uuid4().hex[:12]}"
         unrelated = f"aweb-unrelated-proof-{uuid.uuid4().hex[:12]}"
@@ -164,22 +154,24 @@ class DockerBoundaryTests(unittest.TestCase):
                     "--format", du_format, env=unrelated_env,
                 ).stdout
                 self.assertTrue(owned_before.strip())
-                with patch.dict(
-                    os.environ,
-                    {"BUILDX_BUILDER": builder, "BUILDX_CONFIG": str(config)},
-                ):
-                    # Under the production bound a small cache is kept intact...
-                    runner.bound_builder_cache(root / "cache-reclaim-bounded.log")
-                    owned_bounded = run(
-                        "docker", "buildx", "du", "--builder", builder,
-                        "--format", du_format, env=buildx_env,
-                    ).stdout
-                    self.assertEqual(
-                        len(owned_bounded.splitlines()), len(owned_before.splitlines())
-                    )
-                    # ...while a zero bound reclaims it completely.
-                    runner.bound_builder_cache(root / "cache-reclaim.log", keep="0")
-                self.assertGreater((root / "cache-reclaim.log").stat().st_size, 0)
+                # Under the production bound a small cache is kept intact...
+                run(
+                    "docker", "buildx", "prune", "--all", "--force",
+                    "--keep-storage=10GB", "--builder", builder, env=buildx_env,
+                )
+                owned_bounded = run(
+                    "docker", "buildx", "du", "--builder", builder,
+                    "--format", du_format, env=buildx_env,
+                ).stdout
+                self.assertEqual(
+                    len(owned_bounded.splitlines()), len(owned_before.splitlines())
+                )
+                # ...while a zero bound reclaims it completely.
+                reclaim = run(
+                    "docker", "buildx", "prune", "--all", "--force",
+                    "--keep-storage=0", "--builder", builder, env=buildx_env,
+                )
+                self.assertTrue(reclaim.stdout or reclaim.stderr)
                 owned_after = run(
                     "docker", "buildx", "du", "--builder", builder,
                     "--format", du_format, env=buildx_env,
@@ -255,7 +247,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--image", required=True)
     args, remaining = parser.parse_known_args()
-    os.environ["RELEASE_GATE_TEST_IMAGE"] = args.image
+    os.environ["CANDIDATE_GATE_TEST_IMAGE"] = args.image
     program = unittest.main(argv=[__file__, *remaining], exit=False)
     return 0 if program.result.wasSuccessful() else 1
 

@@ -135,14 +135,14 @@ packs, the public AWID site mirrors of `docs/identity-guide.md` and
 `docs/trust-model.md`, and the built claude-channel and pi-extension bundles
 (both rebuilt from `channel-core` source at build time).
 
-Before opening a release PR, run the single freshness command and commit any
+Before finalizing a candidate, run the single freshness command and commit any
 regenerated output:
 
 ```
 make freshness
 ```
 
-The internal clean-Docker release gate runs the same check and fails on drift.
+The complete Docker candidate gate runs the same check and fails on drift.
 
 Run the Node installs first if you are invoking it directly on a fresh checkout:
 
@@ -152,7 +152,7 @@ Run the Node installs first if you are invoking it directly on a fresh checkout:
 
 Without them the bundle sections fail on a missing `esbuild` binary, and they
 report it as `bundle stale or missing the security surface` — which reads as
-artifact drift rather than as an absent install. The internal release gate
+artifact drift rather than as an absent install. The candidate gate
 installs all three Node workspaces once before it reaches freshness; running
 `make freshness` on its own skips that step.
 
@@ -179,24 +179,23 @@ for the pinned release result. Update the committed pin deliberately when the
 reviewed OATS seam advances; a clean first run requires network access to fetch the
 pinned commit, while later runs reuse and reset the repository-owned cache.
 
-## Comprehensive release proof
+## Comprehensive candidate proof
 
-The release command runs one gate in a clean local Docker environment before
-publication. Its fixed table is `release-gate/suite-map.tsv`: release-shaped
-packages/images, unit and contract suites, OATS and real-stack journeys, freshness,
-process guards, and vulnerability audits. Each row names the artifact keys it
-guards; a release runs the rows guarding what it publishes plus every `all` row,
-and records the rest as `SKIPPED`. Hosted workflows retain focused pull
-request checks but no longer repeat this complete proof on `main`.
+`make release-candidate TAGS='...'` runs one gate in a clean local Docker
+environment before creating any local release tag. Its complete product-test
+list is the readable shell script `scripts/candidate-suite.sh`: release-shaped
+packages/images, unit and contract suites, OATS and real-stack journeys,
+freshness, process guards, and vulnerability audits. Every test runs for every
+candidate; there is no artifact scoping or skipped proof. Hosted tag workflows
+do not repeat this complete suite.
 
-The gate runs each selected row independently and writes a full log plus a summary
-that names every row `PASSED`, `FAILED`, `SKIPPED`, or `NOT RUN`; any failure or
-unobserved selected row makes the gate red. Gate runs share lockfile-keyed
+The suite stops on the first failing command and the gate retains its complete
+output. Gate runs share lockfile-keyed
 package and layer caches; determinism is carried by the committed lockfiles,
 whose hashes the gate records in its evidence. It starts from one exact clean aweb commit, records the exact
 clean Library and blueprint input commits, and rejects dirty or missing inputs.
-The gate is internal to release preparation and is deliberately not a third
-operator command.
+The candidate command creates the requested local tags only after the exact
+checkout remains clean and every test is green.
 
 Reproducible here means reproducible on a clean runner with no helpful ambient
 tools. The OATS seam builds `aw` from the exact aweb checkout and selects the real
@@ -212,7 +211,7 @@ acceptance usable when runners are unavailable or urgency warrants proceeding.
 ## Vulnerability audits
 
 `make check-node-audit` and `make check-go-vulnerability-audit` audit the
-dependencies a release ships. Both run from the internal clean-Docker release
+dependencies a release ships. Both run from the complete Docker candidate
 gate, and neither runs from `make test`: the Go audit pins itself to the toolchain in
 `cli/go/go.mod` and refuses to run under any other, and both consult an
 advisory database that moves without any repo change, which would make `make
@@ -227,7 +226,7 @@ only checked when an audit runs. This is an accepted limitation, tracked in
 The Go audit refuses to run under the wrong toolchain and prints the two
 commands that install the pinned one. `make check-node-audit` needs the
 workspace dependencies installed (`npm ci` in `channel-core`, `channel` and
-`pi-extension`); the internal release gate installs them before auditing.
+`pi-extension`); the candidate gate installs them before auditing.
 
 Routine `make test` uses `uv run --frozen`, so tests never silently repair a
 stale lock — regenerate it explicitly with `cd server && uv lock` (or `cd awid

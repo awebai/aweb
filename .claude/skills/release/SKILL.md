@@ -1,23 +1,18 @@
 ---
 name: release
-description: Reconcile and publish aweb OSS artifacts with one rerunnable command. Read docs/release.md first.
-allowed-tools: Bash(make *), Bash(git *), Bash(gh run *), Bash(npm view *), Bash(curl *)
+description: Test and publish one exact aweb OSS candidate using artifact tags.
 ---
 
-# Release aweb OSS artifacts
+# Release OSS
 
-Read `docs/release.md`, then run from a clean aweb checkout at `origin/main`:
+`main` is synchronization only. Decide the artifact tags before testing.
 
-```sh
-make release
-```
+1. Run `make release-candidate TAGS='tag-vX.Y.Z ...'` from the final clean
+   commit. It runs every local Docker test and E2E and creates the tags only on
+   complete success.
+2. Push each resulting tag separately with `git push origin refs/tags/<tag>`.
+3. Each tag invokes only its thin artifact publisher; hosted publishers never
+   rerun product suites.
 
-There is no card, prompt, prepare phase, or separate resume command. Reviewed
-manifests are the version and compatibility declaration. The command runs the
-gate, records an automatic intent in Git tags, and publishes exact OSS artifacts.
-Hosted products own their dependency locking and deployment from their own
-repositories.
-
-On failure, fix the named external or source problem and run the same command.
-Never edit intent tags, move a `release` branch by hand, reuse a conflicting
-version, or publish a mutable image tag by hand.
+During a hosted-runner outage, use `make release-publish TAG=<tag>` with the
+registry credential documented in `docs/release.md`.

@@ -29,7 +29,7 @@ From a clean reviewed candidate in the aweb repository:
 
 ```bash
 make test-a2a
-make release
+make release-candidate TAGS='a2a-gw-vX.Y.Z'
 ```
 
 `make test-a2a` runs:
@@ -39,7 +39,8 @@ make release
 - AWID publication route tests; and
 - the public-copy wording guard.
 
-`make release` runs the complete clean-Docker gate before publication. That
+`make release-candidate` runs the complete clean-Docker gate before it creates
+the local tag. That
 gate builds the release image, validates the maintained public YAML inside the
 container, and runs the real Docker gateway journey against aweb and AWID.
 
