@@ -28,6 +28,7 @@ The compose stack lives in [`server/docker-compose.yml`](../server/docker-compos
 ```bash
 cd server
 cp .env.example .env
+echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up --build -d
 curl http://localhost:8000/health
 curl http://localhost:8010/health
@@ -40,6 +41,10 @@ Default host ports:
 
 If you want different host ports, change `AWEB_PORT` and `AWID_PORT` in
 `server/.env` before `docker compose up`.
+
+Compose refuses to start any container when `AWID_SERVICE_TOKEN` is missing or
+empty. Generate it once as shown above; Compose passes that exact value to both
+aweb and AWID. Do not commit `server/.env`.
 
 ### Create the First Workspace
 
@@ -118,6 +123,13 @@ docker compose up --build -d
 That resets Postgres and Redis. You can then rerun `aw init` in a fresh
 directory or after removing `.aw/`.
 
+Do not remove `.aw/` to recover from an `aw init` that reached AWID but then
+reported an `AWID_SERVICE_TOKEN` trusted-lane error. Correct the token so aweb
+and AWID use the same value, restart aweb, and rerun the same `aw init` command
+from the same directory with the same name. The retry reuses the signing key and
+certificate already written locally and converges on one agent/workspace; no
+database repair or alias cleanup is required.
+
 ## 2. Company Deployment
 
 Use this path when you are deploying for a real team on a domain you control.
@@ -139,6 +151,7 @@ Direct `uv` startup:
 ```bash
 cd awid
 uv sync
+export AWID_SERVICE_TOKEN="$(openssl rand -hex 32)"
 export AWID_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 export AWID_REDIS_URL=redis://localhost:6379/0
 uv run awid
@@ -148,6 +161,7 @@ uv sync
 export AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 export AWEB_REDIS_URL=redis://localhost:6379/0
 export AWID_REGISTRY_URL=http://localhost:8010
+export AWID_SERVICE_TOKEN=<the-same-value-used-by-awid>
 export AWEB_PUBLIC_ORIGIN=https://aweb.acme.internal
 export APP_ENV=development
 uv run aweb serve

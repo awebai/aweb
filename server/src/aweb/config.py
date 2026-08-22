@@ -37,7 +37,7 @@ class Settings:
     database_statement_cache_size: Optional[int]
     presence_ttl_seconds: int
     awid_registry_url: str
-    awid_service_token: str | None
+    awid_service_token: str
     public_origin: str
     dashboard_jwt_secret: str
     require_registered_certificates: bool
@@ -52,6 +52,17 @@ def get_awid_registry_url() -> str:
             "AWID_REGISTRY_URL=local is no longer supported. Run the awid service separately and point AWEB at its HTTP origin."
         )
     return value
+
+
+def get_awid_service_token() -> str:
+    token = normalize_service_token(os.getenv("AWID_SERVICE_TOKEN"))
+    if token is None:
+        raise ValueError(
+            "AWID_SERVICE_TOKEN is required so aweb can verify private-team "
+            "certificates through AWID. Generate one with `openssl rand -hex 32`, "
+            "configure the same value on aweb and AWID, and restart both services."
+        )
+    return token
 
 
 def require_registered_certificates() -> bool:
@@ -136,7 +147,7 @@ def get_settings() -> Settings:
         ),
         presence_ttl_seconds=presence_ttl,
         awid_registry_url=get_awid_registry_url(),
-        awid_service_token=normalize_service_token(os.getenv("AWID_SERVICE_TOKEN")),
+        awid_service_token=get_awid_service_token(),
         public_origin=canonical_server_origin(
             os.getenv("AWEB_PUBLIC_ORIGIN") or f"http://localhost:{port}"
         ),

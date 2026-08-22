@@ -411,21 +411,22 @@ closed and never turns the differing key into an accepted binding. Thus stale
 handling can extend an already verified binding within the shipped bound, but
 cannot accept a new binding.
 
-When `AWID_SERVICE_TOKEN` is configured, the aweb RegistryClient sends it in
-`X-AWID-Service-Token` only to the exact configured home registry. AWID may use
-it as a confidential same-operator read capability for private-team metadata,
-enumeration, certificate history, member references, and revocations. This is
-how server-side membership verification and reconciliation read a private team
-without possessing a member key. The credential authorizes no write. It also
+The aweb server requires `AWID_SERVICE_TOKEN` at startup. Its RegistryClient
+sends it in `X-AWID-Service-Token` only to the exact configured home registry.
+AWID may use it as a confidential same-operator read capability for private-team
+metadata, enumeration, certificate history, member references, and revocations.
+This is how server-side membership verification and reconciliation read a
+private team without possessing a member key. The credential authorizes no
+write. It also
 exempts the `did_key`, `did_addresses`, and `revocation_list` reads from public
 IP limits; the revocation list is refreshed per team per minute as the input to
 membership enforcement (aweb-abfn/abfp). The client never forwards it to
-DNS-discovered external registries. A missing token emits
-`awid_service_credential_missing` once at aweb startup and uses normal
-visibility/rate-limit rules; AWID emits `awid_service_credential_rejected` when
-a presented token is wrong. Operators count those stable events through
-log/Sentry telemetry. Rotating this shared secret is a coordinated two-service
-configuration change.
+DNS-discovered external registries. A missing or empty token fails aweb startup
+with a generation/remediation instruction; a coupled Compose deployment fails
+during configuration before creating containers. AWID emits
+`awid_service_credential_rejected` when a presented token is wrong. Operators
+count that stable event through log/Sentry telemetry. Rotating this shared
+secret is a coordinated two-service configuration change.
 
 Redis certificate-history entries are partitioned by read authority: anonymous,
 a digest of the exact service capability, or the signing `did:key`. The raw
@@ -1617,8 +1618,9 @@ AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 
 # awid registry (optional; default https://api.awid.ai)
 AWID_REGISTRY_URL=https://api.awid.ai
-# Optional trusted caller lane; the same >=32-byte value must be configured on AWID.
-AWID_SERVICE_TOKEN=
+# Required trusted caller lane; generate with `openssl rand -hex 32` and
+# configure the same value on AWID.
+AWID_SERVICE_TOKEN=<generated-secret>
 
 # Dashboard JWT validation (shared secret with whichever upstream
 # service mints the X-Dashboard-Token JWTs; only required if a

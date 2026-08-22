@@ -67,6 +67,12 @@ def classify_awid_dependency_error(exc: Exception, *, operation: str = "AWID reg
     if isinstance(exc, RegistryError):
         detail = (getattr(exc, "detail", None) or message or class_name).strip()
         status_code = int(getattr(exc, "status_code", 500) or 500)
+        if status_code == http.HTTPStatus.FORBIDDEN and "team_private" in detail:
+            return 503, (
+                f"{operation} cannot read private team metadata because the AWID trusted lane "
+                "rejected the request. Configure the same >=32-byte AWID_SERVICE_TOKEN on "
+                "aweb and AWID, restart aweb, then rerun `aw init`."
+            )
         mapped_status, status_label = _classify_upstream_status(status_code)
         return mapped_status, f"{operation} {status_label} ({class_name} status={status_code}): {detail}"
     return 500, f"Unexpected {operation} dependency error ({class_name}){suffix}"

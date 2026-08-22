@@ -79,7 +79,7 @@ case "$DOCKER_PUBLISHED_HOST" in
 esac
 AWEB_URL="http://$DOCKER_PUBLISHED_HOST:$AWEB_PORT"
 AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
-AWID_E2E_SERVICE_TOKEN="aweb-oss-user-e2e-service-token-32-bytes"
+AWID_E2E_SERVICE_TOKEN="${AWEB_E2E_SERVICE_TOKEN:-$(openssl rand -hex 32)}"
 PROJECT="${AWEB_E2E_PROJECT:-aweb-user-e2e-$RANDOM-$$}"
 compose() {
   docker compose -p "$PROJECT" --env-file .env.e2e "$@"
@@ -595,9 +595,31 @@ else
   fail=$((fail + 1))
 fi
 
-# Exercise the documented quickstart shape: copy the shipped example first,
-# then add the required token and test-only port/configuration overrides.
+# A missing token must fail during Compose interpolation, before any container
+# can be created or any registry state can be written.
+missing_token_env="$E2E_ROOT/server.env.missing-token"
+cp "$SERVER_DIR/.env.example" "$missing_token_env"
+echo "AWID_SERVICE_TOKEN=" >> "$missing_token_env"
+if missing_token_out="$(cd "$SERVER_DIR" && docker compose \
+  -p "$PROJECT-missing-token" --env-file "$missing_token_env" config 2>&1)"; then
+  missing_token_exit=0
+else
+  missing_token_exit=$?
+fi
+if [[ "$missing_token_exit" != "0" ]]; then
+  echo "  PASS: compose rejects a missing awid service token before startup"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: compose accepted a missing awid service token"
+  fail=$((fail + 1))
+fi
+assert_contains "compose missing-token error names configuration" "$missing_token_out" "AWID_SERVICE_TOKEN"
+assert_contains "compose missing-token error gives generation command" "$missing_token_out" "openssl rand -hex 32"
+
+# Exercise the documented quickstart shape: copy the shipped example, generate
+# one token, then add only test port/configuration overrides.
 cp "$SERVER_DIR/.env.example" "$SERVER_DIR/.env.e2e"
+echo "AWID_SERVICE_TOKEN=$AWID_E2E_SERVICE_TOKEN" >> "$SERVER_DIR/.env.e2e"
 cat >> "$SERVER_DIR/.env.e2e" <<EOF
 POSTGRES_USER=aweb
 POSTGRES_PASSWORD=aweb-e2e-test
@@ -616,7 +638,6 @@ AWID_LOG_JSON=true
 AWID_ALLOW_INSECURE_DELIVERY_ORIGIN=1
 AWID_RATE_LIMIT_BACKEND=redis
 AWID_RATE_LIMIT_DISABLED=1
-AWID_SERVICE_TOKEN=$AWID_E2E_SERVICE_TOKEN
 AWID_SKIP_DNS_VERIFY=1
 EOF
 
@@ -2551,12 +2572,16 @@ phase_aw_init_local_quickstart() {
   local local_team="default:local"
   local local_awid_url="http://127.0.0.1:$AWID_PORT"
   local local_aweb_url="http://127.0.0.1:$AWEB_PORT"
-  start_quickstart_bridge "TCP4-LISTEN:$AWID_PORT,bind=127.0.0.1,reuseaddr,fork" \
-    "TCP4:aweb-docker.test:$AWID_PORT" &
-  QUICKSTART_AWID_SOCAT_PID=$!
-  start_quickstart_bridge "TCP4-LISTEN:$AWEB_PORT,bind=127.0.0.1,reuseaddr,fork" \
-    "TCP4:aweb-docker.test:$AWEB_PORT" &
-  QUICKSTART_AWEB_SOCAT_PID=$!
+  local quickstart_bridge_required=0
+  if [[ "$DOCKER_PUBLISHED_HOST" != "127.0.0.1" ]]; then
+    quickstart_bridge_required=1
+    start_quickstart_bridge "TCP4-LISTEN:$AWID_PORT,bind=127.0.0.1,reuseaddr,fork" \
+      "TCP4:aweb-docker.test:$AWID_PORT" &
+    QUICKSTART_AWID_SOCAT_PID=$!
+    start_quickstart_bridge "TCP4-LISTEN:$AWEB_PORT,bind=127.0.0.1,reuseaddr,fork" \
+      "TCP4:aweb-docker.test:$AWEB_PORT" &
+    QUICKSTART_AWEB_SOCAT_PID=$!
+  fi
   local bridges_ready=0
   for _ in $(seq 1 50); do
     if curl -fsS "$local_awid_url/health" >/dev/null 2>&1 \
@@ -2564,9 +2589,11 @@ phase_aw_init_local_quickstart() {
       bridges_ready=1
       break
     fi
-    kill -0 "$QUICKSTART_AWID_SOCAT_PID" 2>/dev/null \
-      && kill -0 "$QUICKSTART_AWEB_SOCAT_PID" 2>/dev/null \
-      || break
+    if [[ "$quickstart_bridge_required" == "1" ]]; then
+      kill -0 "$QUICKSTART_AWID_SOCAT_PID" 2>/dev/null \
+        && kill -0 "$QUICKSTART_AWEB_SOCAT_PID" 2>/dev/null \
+        || break
+    fi
     sleep 0.1
   done
   if [[ "$bridges_ready" != "1" ]]; then
@@ -2575,6 +2602,62 @@ phase_aw_init_local_quickstart() {
     stop_quickstart_bridges
     return
   fi
+
+  # A wrong but nonempty credential is the only way to get past startup and
+  # reproduce the old half-initialized state. AWID keeps the generated token;
+  # only aweb is restarted with a different value.
+  local wrong_service_token="wrong-awid-service-token-generated-for-e2e-only"
+  (
+    cd "$SERVER_DIR"
+    export AWID_SERVICE_TOKEN="$wrong_service_token"
+    compose up -d --force-recreate --no-deps aweb
+  )
+  for _ in $(seq 1 60); do
+    curl -fsS "$local_aweb_url/health" >/dev/null 2>&1 && break
+    sleep 1
+  done
+
+  if wizard_failed_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
+    --awid-registry "$local_awid_url" \
+    --aweb-url "$local_aweb_url" \
+    --name "$local_alias" 2>&1)"; then
+    wizard_failed_exit=0
+  else
+    wizard_failed_exit=$?
+  fi
+  if [[ "$wizard_failed_exit" != "0" ]]; then
+    echo "  PASS: init fails closed when aweb and AWID tokens differ"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: init succeeded with mismatched aweb and AWID tokens"
+    fail=$((fail + 1))
+  fi
+  assert_contains "failed init names awid service token" "$wizard_failed_out" "AWID_SERVICE_TOKEN"
+  assert_contains "failed init gives retry command" "$wizard_failed_out" 'rerun `aw init`'
+  assert_file_exists "failed init preserves signing key for retry" "$WIZARD_BYOD_DIR/.aw/signing.key"
+  wizard_cert_path="$(team_cert_path "$WIZARD_BYOD_DIR" "$local_team")"
+  assert_file_exists "failed init preserves certificate for retry" "$wizard_cert_path"
+  if [[ ! -f "$WIZARD_BYOD_DIR/.aw/workspace.yaml" ]]; then
+    echo "  PASS: failed init does not claim a connected workspace"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: failed init wrote workspace.yaml before connect succeeded"
+    fail=$((fail + 1))
+  fi
+  local signing_key_before_retry
+  signing_key_before_retry="$(shasum -a 256 "$WIZARD_BYOD_DIR/.aw/signing.key" | awk '{print $1}')"
+
+  # Repair only configuration, then retry the exact same user command in the
+  # exact same directory. No .aw cleanup and no database mutation is allowed.
+  (
+    cd "$SERVER_DIR"
+    export AWID_SERVICE_TOKEN="$AWID_E2E_SERVICE_TOKEN"
+    compose up -d --force-recreate --no-deps aweb
+  )
+  for _ in $(seq 1 60); do
+    curl -fsS "$local_aweb_url/health" >/dev/null 2>&1 && break
+    sleep 1
+  done
 
   if wizard_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
     --awid-registry "$local_awid_url" \
@@ -2601,6 +2684,8 @@ phase_aw_init_local_quickstart() {
   assert_file_mode "wizard signing.key mode" "$WIZARD_BYOD_DIR/.aw/signing.key" "600"
   wizard_cert_path="$(team_cert_path "$WIZARD_BYOD_DIR" "$local_team")"
   assert_file_exists "wizard team certificate written" "$wizard_cert_path"
+  signing_key_after_retry="$(shasum -a 256 "$WIZARD_BYOD_DIR/.aw/signing.key" | awk '{print $1}')"
+  assert_eq "retry preserves local identity" "$signing_key_before_retry" "$signing_key_after_retry"
 
   wizard_workspace_team="$(yaml_field "$WIZARD_BYOD_DIR/.aw/teams.yaml" active_team)"
   wizard_workspace_alias="$(workspace_membership_field "$WIZARD_BYOD_DIR/.aw/workspace.yaml" "$wizard_workspace_team" alias)"
@@ -2624,6 +2709,10 @@ phase_aw_init_local_quickstart() {
   wizard_certs="$(curl -sf -H "X-AWID-Service-Token: $AWID_E2E_SERVICE_TOKEN" "$local_awid_url/v1/namespaces/local/teams/default/certificates?active_only=true" 2>/dev/null || echo '{"certificates":[]}')"
   wizard_cert_count="$(echo "$wizard_certs" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('certificates',[])))" 2>/dev/null || echo "0")"
   assert_eq "wizard active certificate count" "1" "$wizard_cert_count"
+  wizard_agent_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.agents WHERE team_id = 'default:local' AND alias = 'local-alice' AND deleted_at IS NULL;")"
+  wizard_workspace_count="$(psql_scalar "SELECT COUNT(*) FROM aweb.workspaces WHERE team_id = 'default:local' AND alias = 'local-alice' AND deleted_at IS NULL;")"
+  assert_eq "retry converges on one agent alias" "1" "$wizard_agent_count"
+  assert_eq "retry converges on one workspace alias" "1" "$wizard_workspace_count"
 
   if wizard_mail_out="$(run_aw_in "$WIZARD_BYOD_DIR" mail send --plaintext --to "$local_alias" --subject "Local quickstart e2e" --body "Local quickstart path works" 2>&1)"; then
     wizard_mail_exit=0
@@ -2636,19 +2725,21 @@ phase_aw_init_local_quickstart() {
   fi
   assert_contains "wizard output shows local team" "$wizard_out" "default:local"
   stop_quickstart_bridges
-  if curl -fsS --connect-timeout 1 "$local_awid_url/health" >/dev/null 2>&1; then
-    echo "  FAIL: phase-only AWID loopback endpoint remained reachable"
-    fail=$((fail + 1))
-  else
-    echo "  PASS: phase-only AWID loopback endpoint removed"
-    pass=$((pass + 1))
-  fi
-  if curl -fsS --connect-timeout 1 "$local_aweb_url/health" >/dev/null 2>&1; then
-    echo "  FAIL: phase-only aweb loopback endpoint remained reachable"
-    fail=$((fail + 1))
-  else
-    echo "  PASS: phase-only aweb loopback endpoint removed"
-    pass=$((pass + 1))
+  if [[ "$quickstart_bridge_required" == "1" ]]; then
+    if curl -fsS --connect-timeout 1 "$local_awid_url/health" >/dev/null 2>&1; then
+      echo "  FAIL: phase-only AWID loopback endpoint remained reachable"
+      fail=$((fail + 1))
+    else
+      echo "  PASS: phase-only AWID loopback endpoint removed"
+      pass=$((pass + 1))
+    fi
+    if curl -fsS --connect-timeout 1 "$local_aweb_url/health" >/dev/null 2>&1; then
+      echo "  FAIL: phase-only aweb loopback endpoint remained reachable"
+      fail=$((fail + 1))
+    else
+      echo "  PASS: phase-only aweb loopback endpoint removed"
+      pass=$((pass + 1))
+    fi
   fi
   echo ""
 }

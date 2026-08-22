@@ -153,12 +153,15 @@ The Compose stack starts aweb, AWID, PostgreSQL, and Redis:
 ```bash
 cd server
 cp .env.example .env
+echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up --build -d
 curl http://localhost:8000/health
 ```
 
 By default, aweb listens on `localhost:8000` and AWID on `localhost:8010`. Set
 `AWEB_PORT` or `AWID_PORT` in `server/.env` if those ports are occupied.
+Compose refuses to start any container if `AWID_SERVICE_TOKEN` is missing or
+empty. The generated value is shared with only the aweb and AWID containers.
 
 Initialize a workspace against that stack:
 
