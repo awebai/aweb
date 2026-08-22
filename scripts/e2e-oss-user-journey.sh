@@ -575,7 +575,19 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 1: Start awid + aweb in Docker ==="
 
-cat > "$SERVER_DIR/.env.e2e" <<EOF
+if grep -Fq 'echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" >> .env' \
+  "$REPO_ROOT/docs/cli-tutorial.md"; then
+  echo "  PASS: tutorial configures the required awid service token"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: tutorial omits the required awid service token"
+  fail=$((fail + 1))
+fi
+
+# Exercise the documented quickstart shape: copy the shipped example first,
+# then add the required token and test-only port/configuration overrides.
+cp "$SERVER_DIR/.env.example" "$SERVER_DIR/.env.e2e"
+cat >> "$SERVER_DIR/.env.e2e" <<EOF
 POSTGRES_USER=aweb
 POSTGRES_PASSWORD=aweb-e2e-test
 POSTGRES_DB=aweb

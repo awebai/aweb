@@ -113,10 +113,15 @@ Start the OSS services from this repository:
 ```bash
 cd server
 cp .env.example .env
+echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up --build -d
 curl http://localhost:8000/health
 curl http://localhost:8010/health
 ```
+
+`AWID_SERVICE_TOKEN` gives the aweb container the trusted lane it needs to
+resolve team keys in the awid container. Without it, the first `aw init`
+fails with a 502 from `/v1/connect` (`team_private` from the registry).
 
 In both existing agent shells, point `aw` at the local services:
 
