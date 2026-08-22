@@ -113,8 +113,9 @@ trusted same-operator service credential described below. Identity-private
 reads and certificate-blob fetch have their separately documented
 authentication requirements.
 
-An operator may configure the same high-entropy `AWID_SERVICE_TOKEN` on its
-AWID service and aweb server. The aweb RegistryClient then sends that bearer
+An AWID service used by aweb must configure the same high-entropy
+`AWID_SERVICE_TOKEN` as the aweb server (standalone AWID deployments that do not
+serve aweb may omit it). The aweb RegistryClient sends that bearer
 secret in `X-AWID-Service-Token` only to its exact configured home registry;
 it never forwards the credential to a DNS-discovered external registry. AWID
 uses constant-time comparison. A matching credential is a confidential
@@ -813,7 +814,7 @@ DATABASE_URL=postgresql://awid:password@localhost:5432/awid
 AWID_PORT=8001
 AWID_LOG_JSON=true
 
-# Optional trusted caller lane; set the same >=32-byte secret on AWID and aweb.
+# Required when this AWID serves aweb; set the same >=32-byte secret on both.
 # Generate, for example, with: openssl rand -hex 32
 AWID_SERVICE_TOKEN=
 ```

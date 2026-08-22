@@ -118,8 +118,17 @@ curl http://localhost:8010/health
 ```
 
 `AWID_SERVICE_TOKEN` gives the aweb container the trusted lane it needs to
-resolve team keys in the awid container. Without it, the first `aw init`
-fails with a 502 from `/v1/connect` (`team_private` from the registry).
+resolve private-team keys and revocations in the AWID container. Compose fails
+before starting any container if it is missing or empty. Generate it once as
+shown; Compose passes the same value to both services and the untracked `.env`
+file keeps it out of the repository.
+
+If the two services were started with different nonempty values, `aw init`
+names `AWID_SERVICE_TOKEN` and the trusted lane in its error. Correct the value,
+restart aweb, and rerun the same command in the same directory with the same
+name. The retry preserves the signing key and certificate from the first
+attempt and creates no duplicate alias; do not delete `.aw/` or edit the
+database.
 
 In both existing agent shells, point `aw` at the local services:
 

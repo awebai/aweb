@@ -56,6 +56,22 @@ def test_awid_dependency_http_exception_caps_registry_unactionable_4xx_to_bad_ga
     assert forbidden.detail == "AWID team visibility lookup upstream returned unexpected status (RegistryError status=403): Forbidden"
 
 
+def test_awid_dependency_http_exception_explains_missing_private_team_trusted_lane():
+    err = awid_dependency_http_exception(
+        RegistryError(
+            "team private",
+            status_code=403,
+            detail="{'code': 'team_private', 'message': 'Private history requires authority'}",
+        ),
+        operation="AWID team key resolution",
+    )
+
+    assert err.status_code == 503
+    assert "AWID_SERVICE_TOKEN" in err.detail
+    assert "same >=32-byte" in err.detail
+    assert "rerun `aw init`" in err.detail
+
+
 def test_awid_dependency_http_exception_maps_registry_429_to_retryable_503():
     err = awid_dependency_http_exception(
         RegistryError("rate limited", status_code=429, detail="Too many requests"),

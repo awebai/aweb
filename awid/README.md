@@ -27,9 +27,9 @@ Optional environment:
 - `AWID_PORT` default `8010`
 - `AWID_DB_SCHEMA` default `awid`
 - `AWID_RATE_LIMIT_BACKEND` default `redis`
-- `AWID_SERVICE_TOKEN` optional >=32-byte trusted caller secret; configure the
-  same value on aweb to exempt the DID key/address auth reads and the team
-  revocation list from public IP limits
+- `AWID_SERVICE_TOKEN` optional for standalone AWID, but required when AWID
+  serves an aweb deployment. Configure the same >=32-byte value on both so
+  aweb can read private-team keys and revocations.
 
 ## Docker
 

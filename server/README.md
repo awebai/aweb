@@ -23,23 +23,45 @@ Recommended OSS path: Docker Compose.
 
 ```bash
 cp .env.example .env
+echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up --build -d
 curl http://localhost:8000/health
 ```
 
-That stack runs `aweb`, `awid`, Postgres, and Redis together. Only the aweb
-HTTP port is published by default.
+That stack runs `aweb`, `awid`, Postgres, and Redis together. It publishes aweb
+on `localhost:8000` and AWID on `localhost:8010` by default.
 
 Direct `uv` mode is also supported:
+
+Generate the shared secret once and keep it outside the repository:
+
+```bash
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+mkdir -p "$(dirname "$AWID_TOKEN_FILE")"
+if [ ! -s "$AWID_TOKEN_FILE" ]; then
+  umask 077
+  openssl rand -hex 32 > "$AWID_TOKEN_FILE"
+fi
+```
+
+In the AWID service terminal:
 
 ```bash
 cd ../awid
 uv sync
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+export AWID_SERVICE_TOKEN="$(tr -d '\r\n' < "$AWID_TOKEN_FILE")"
 uv run awid
+```
 
+In the aweb service terminal:
+
+```bash
 cd ../server
 uv sync
 export AWID_REGISTRY_URL=http://localhost:8010
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+export AWID_SERVICE_TOKEN="$(tr -d '\r\n' < "$AWID_TOKEN_FILE")"
 export APP_ENV=development
 uv run aweb serve
 ```
@@ -51,7 +73,7 @@ Common environment variables:
 - `AWEB_DATABASE_URL` or `DATABASE_URL`
 - `AWEB_REDIS_URL` or `REDIS_URL`
 - `AWID_REGISTRY_URL`
-- `AWID_SERVICE_TOKEN` optional >=32-byte trusted caller secret shared with the
+- `AWID_SERVICE_TOKEN` required >=32-byte trusted caller secret shared with the
   configured home AWID registry
 - `AWEB_HOST`
 - `AWEB_PORT`
