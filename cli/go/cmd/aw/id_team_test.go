@@ -40,18 +40,21 @@ func resetTeamAcceptInviteGlobals(t *testing.T) {
 	oldLocal := teamAcceptLocal
 	oldGlobal := teamAcceptGlobal
 	oldNoAddress := teamAcceptNoAddress
+	oldNoConnect := teamHumanJoinNoConnect
 	t.Cleanup(func() {
 		teamAcceptAlias = oldAlias
 		teamAcceptAddress = oldAddress
 		teamAcceptLocal = oldLocal
 		teamAcceptGlobal = oldGlobal
 		teamAcceptNoAddress = oldNoAddress
+		teamHumanJoinNoConnect = oldNoConnect
 	})
 	teamAcceptAlias = ""
 	teamAcceptAddress = ""
 	teamAcceptLocal = false
 	teamAcceptGlobal = false
 	teamAcceptNoAddress = false
+	teamHumanJoinNoConnect = false
 }
 
 // writeControllerKeyForTest writes a controller key to the test HOME's AWID state directory.
@@ -1475,7 +1478,7 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	}
 }
 
-func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
+func TestTeamInviteJoinConnectsWorkspaceByDefault(t *testing.T) {
 	t.Parallel()
 
 	var registeredCert map[string]any
@@ -1560,7 +1563,7 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 		CreatedAt:     "2026-05-16T00:00:00Z",
 	})
 
-	runInvite := exec.CommandContext(ctx, bin, "id", "team", "invite")
+	runInvite := exec.CommandContext(ctx, bin, "team", "invite", "--team-id", "backend:acme.com")
 	runInvite.Env = testCommandEnv(home)
 	runInvite.Dir = inviterDir
 	inviteOut, err := runInvite.CombinedOutput()
@@ -1574,15 +1577,15 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 			continue
 		}
 		fields := strings.Fields(line)
-		if len(fields) >= 6 && fields[1] == "aw" && fields[4] == "accept-invite" {
-			token = fields[5]
+		if len(fields) >= 5 && fields[1] == "aw" && fields[2] == "team" && fields[3] == "join" {
+			token = fields[4]
 		}
 	}
 	if token == "" {
 		t.Fatalf("invite output did not include accept command with token:\n%s", string(inviteOut))
 	}
 
-	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token, "--name", "bob", "--json")
+	runAccept := exec.CommandContext(ctx, bin, "team", "join", token, "--name", "bob", "--json")
 	runAccept.Env = testCommandEnv(home)
 	runAccept.Dir = acceptDir
 	acceptOut, err := runAccept.CombinedOutput()
@@ -1598,6 +1601,9 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 	}
 	if acceptGot["alias"] != "bob" {
 		t.Fatalf("alias=%v", acceptGot["alias"])
+	}
+	if acceptGot["connected"] != true || acceptGot["aweb_url"] != server.URL {
+		t.Fatalf("join did not report its completed connection: %v", acceptGot)
 	}
 
 	cert, err := awid.LoadTeamCertificate(awconfig.TeamCertificatePath(acceptDir, "backend:acme.com"))
@@ -1630,13 +1636,6 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 		t.Fatalf("membership aweb_url=%q want %q", membership.AwebURL, server.URL)
 	}
 
-	runInit := exec.CommandContext(ctx, bin, "init")
-	runInit.Env = testCommandEnv(home)
-	runInit.Dir = acceptDir
-	initOut, err := runInit.CombinedOutput()
-	if err != nil {
-		t.Fatalf("init after accept-invite failed: %v\n%s", err, string(initOut))
-	}
 	if connectCalls != 1 {
 		t.Fatalf("connect calls=%d", connectCalls)
 	}
@@ -1647,12 +1646,57 @@ func TestTeamInviteDefaultsToActiveTeamAndLocal(t *testing.T) {
 	if workspace.AwebURL != server.URL {
 		t.Fatalf("workspace aweb_url=%q want %q", workspace.AwebURL, server.URL)
 	}
-	agentsDoc, err := os.ReadFile(filepath.Join(acceptDir, "AGENTS.md"))
-	if err != nil {
-		t.Fatalf("expected aw init to create AGENTS.md by default: %v\n%s", err, string(initOut))
+	reconnect := exec.CommandContext(ctx, bin, "workspace", "connect", "--service", server.URL, "--json")
+	reconnect.Env = testCommandEnv(home)
+	reconnect.Dir = acceptDir
+	if reconnectOut, err := reconnect.CombinedOutput(); err != nil {
+		t.Fatalf("explicit connection retry did not converge: %v\n%s", err, string(reconnectOut))
 	}
-	if !strings.Contains(string(agentsDoc), awDocsMarkerStart) || !strings.Contains(string(agentsDoc), "Use aw mail inbox and aw chat pending.") {
-		t.Fatalf("AGENTS.md missing marked aw instructions:\n%s", string(agentsDoc))
+	if connectCalls != 2 {
+		t.Fatalf("connection retry calls=%d", connectCalls)
+	}
+	identityOnlyDir := filepath.Join(home, "charlie")
+	if err := os.MkdirAll(identityOnlyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runSecondInvite := exec.CommandContext(ctx, bin, "team", "invite", "--team-id", "backend:acme.com", "--json")
+	runSecondInvite.Env = testCommandEnv(home)
+	runSecondInvite.Dir = inviterDir
+	secondInviteOut, err := runSecondInvite.CombinedOutput()
+	if err != nil {
+		t.Fatalf("second team invite failed: %v\n%s", err, string(secondInviteOut))
+	}
+	var secondInvite map[string]any
+	if err := json.Unmarshal(extractJSON(t, secondInviteOut), &secondInvite); err != nil {
+		t.Fatalf("decode second invite: %v\n%s", err, string(secondInviteOut))
+	}
+	secondToken, _ := secondInvite["token"].(string)
+	if secondToken == "" {
+		t.Fatal("second invite token is empty")
+	}
+	runIdentityOnlyJoin := exec.CommandContext(ctx, bin, "team", "join", secondToken, "--name", "charlie", "--no-connect", "--json")
+	runIdentityOnlyJoin.Env = testCommandEnv(home)
+	runIdentityOnlyJoin.Dir = identityOnlyDir
+	identityOnlyOut, err := runIdentityOnlyJoin.CombinedOutput()
+	if err != nil {
+		t.Fatalf("identity-only join failed: %v\n%s", err, string(identityOnlyOut))
+	}
+	var identityOnly map[string]any
+	if err := json.Unmarshal(extractJSON(t, identityOnlyOut), &identityOnly); err != nil {
+		t.Fatalf("decode identity-only join: %v\n%s", err, string(identityOnlyOut))
+	}
+	wantConnect := "aw workspace connect --service " + server.URL
+	if identityOnly["connect_command"] != wantConnect || identityOnly["aweb_url"] != server.URL {
+		t.Fatalf("identity-only join recovery=%v want command %q and URL %q", identityOnly, wantConnect, server.URL)
+	}
+	if identityOnly["connected"] != false {
+		t.Fatalf("identity-only join did not truthfully report connected=false: %v", identityOnly)
+	}
+	if _, err := os.Stat(filepath.Join(identityOnlyDir, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("--no-connect wrote workspace.yaml: %v", err)
+	}
+	if connectCalls != 2 {
+		t.Fatalf("--no-connect changed connect calls to %d", connectCalls)
 	}
 }
 

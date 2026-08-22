@@ -308,6 +308,11 @@ func resolveClientForSelection(workingDir string, sel *awconfig.Selection) (*awe
 }
 
 func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
+	if sel != nil && strings.TrimSpace(sel.WorkspacePath) == "" {
+		if recovery, ok := workspaceConnectRecoveryCommand(workingDir, identityHome); ok {
+			return nil, nil, usageError("current identity is not connected to an aweb workspace; run `%s`", recovery)
+		}
+	}
 	if err := checkIdentityMismatchAtIdentityHome(workingDir, identityHome, sel); err != nil {
 		return nil, nil, err
 	}

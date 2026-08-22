@@ -28,7 +28,7 @@ func formatTeamInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Invite ID:   %s\n", out.InviteID))
 	sb.WriteString(fmt.Sprintf("Token:       %s\n", out.Token))
-	sb.WriteString(fmt.Sprintf("Command:     aw id team accept-invite %s --name <name>\n", out.Token))
+	sb.WriteString(fmt.Sprintf("Command:     aw team join %s --name <name>\n", out.Token))
 	return sb.String()
 }
 
@@ -39,6 +39,11 @@ func formatTeamAcceptInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Team:        %s\n", out.TeamID))
 	sb.WriteString(fmt.Sprintf("Name:        %s\n", out.Alias))
 	sb.WriteString(fmt.Sprintf("Certificate: %s\n", out.CertPath))
+	if out.Connected != nil && *out.Connected {
+		sb.WriteString(fmt.Sprintf("Connected to %s as %s\n", strings.TrimSpace(out.AwebURL), strings.TrimSpace(out.Alias)))
+	} else if strings.TrimSpace(out.ConnectCommand) != "" {
+		sb.WriteString(fmt.Sprintf("Not connected. Run: %s\n", strings.TrimSpace(out.ConnectCommand)))
+	}
 	return sb.String()
 }
 

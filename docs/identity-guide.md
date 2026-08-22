@@ -71,12 +71,10 @@ Run the printed join command in a clean directory for the second agent:
 aw team join <invite-token> --name bob
 ```
 
-Joining installs the second agent's identity and membership but does not create
-`.aw/workspace.yaml` or report service-connection state. Connect it explicitly:
-
-```bash
-aw workspace connect --service https://app.aweb.ai/api
-```
+Joining installs the second agent's identity and membership, then connects the
+workspace to the service URL embedded in the invite. Success reports
+`Connected to <url> as bob`. `--no-connect` preserves an intentional
+identity-only install and prints the exact connection command for later.
 
 The terminal workspaces remain self-custodial: their private signing keys stay
 local. The hosted operator supplies namespace/team authority and signs the
@@ -104,13 +102,9 @@ aw team join <invite-token> --name bob
 
 This local-controller invite is a same-machine convenience because the invite
 state and controller key stay on that host. For a member on another machine, use
-the request/controller/fetch flow below. Join installs membership but does not
-create the aweb workspace projection, so connect the second directory to the
-intended coordination service explicitly:
-
-```bash
-aw workspace connect --service <service-url>
-```
+the request/controller/fetch flow below. The invite carries the intended
+coordination service, so ordinary join creates the workspace projection without
+a second setup command.
 
 Neither hosting choice transfers namespace or team controller private keys. See
 [Fully Hosted and BYOT Onboarding Contract](https://github.com/awebai/aweb/blob/main/docs/byot-onboarding-contract.md) for the

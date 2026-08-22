@@ -1032,9 +1032,9 @@ Flags:
 Join a team from an invite token.
 
 Run this in a clean target directory. It refuses to overwrite an existing
-.aw identity/key. Join installs identity and membership state but does not create
-`.aw/workspace.yaml` or report service-connection state. After joining, always
-run `aw workspace connect --service <service-url>` before checks or messaging.
+.aw identity/key. Join installs the identity and membership, then connects this
+workspace to the aweb service carried by the invite. Use --no-connect only when
+you intentionally want identity state without a workspace binding.
 
 Flags:
 - `--address string Advanced: existing owned address to place in the global member certificate`
@@ -1043,6 +1043,7 @@ Flags:
 - `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
+- `--no-connect Install identity and membership without connecting this workspace`
 
 ## `team leave`
 

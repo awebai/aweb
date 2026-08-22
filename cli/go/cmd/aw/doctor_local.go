@@ -115,12 +115,16 @@ func (r *doctorRunner) runLocalChecks() {
 	workspace, workspacePath, err := loadDoctorWorkspaceAt(r.workingDir, r.identityHome)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
+			nextStep := "Run `aw init` when you are ready to connect this directory."
+			if recovery, ok := workspaceConnectRecoveryCommand(r.workingDir, r.identityHome); ok {
+				nextStep = "Run `" + recovery + "` to connect this identity."
+			}
 			r.add(localPathCheck(
 				doctorCheckWorkspaceExists,
 				doctorStatusInfo,
 				state.workspacePath,
 				"No local workspace binding was found.",
-				"Run `aw init` when you are ready to connect this directory.",
+				nextStep,
 				map[string]any{"state": "missing"},
 			))
 			return

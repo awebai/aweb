@@ -84,12 +84,10 @@ form is:
 aw team join <invite-token> --name bob
 ```
 
-Joining installs Bob's local identity and team membership; it does not create
-the aweb workspace projection. Connect that existing membership explicitly,
-then verify it:
+Joining installs Bob's local identity and team membership and connects the
+workspace using the self-hosted URL carried by the invite. Verify it directly:
 
 ```bash
-aw workspace connect --service http://localhost:8000
 aw check
 ```
 

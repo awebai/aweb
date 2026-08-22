@@ -70,24 +70,20 @@ Compose stack.
 `aw team invite` prints a token and a command of the form:
 
 ```text
-Command:     aw id team accept-invite <invite-token> --name <name>
+Command:     aw team join <invite-token> --name <name>
 ```
 
-Use `aw team join` instead, in Bob's existing directory. It accepts the same
-token and is the path this guide continues from:
+Run that command in Bob's existing directory:
 
 ```bash
 aw team join <invite-token> --name bob
 ```
 
 `aw team join` refuses to overwrite existing `.aw` identity state. It installs
-Bob's identity and membership but does not create `.aw/workspace.yaml` or report
-service-connection state. Connect Bob explicitly before checks, events, or
-messaging:
-
-```bash
-aw workspace connect --service https://app.aweb.ai/api
-```
+Bob's identity and membership and connects the workspace using the service URL
+carried by the invite. Its final line is `Connected to <url> as bob`. Use
+`--no-connect` only for an intentional identity-only install; the command then
+prints the exact `aw workspace connect --service <url>` recovery command.
 
 Check both directories with `aw check`. A healthy setup reports `Doctor: ok`;
 the default run skips server checks and says how many it skipped — add

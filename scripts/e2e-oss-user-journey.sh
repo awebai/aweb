@@ -820,28 +820,38 @@ BOB_DID_AW="$(echo "$bob_create" | jq_field did_aw)"
 assert_not_empty "bob did_key" "$BOB_DID_KEY"
 assert_not_empty "bob did_aw" "$BOB_DID_AW"
 
-# Alice creates invite for bob
-capture_success bob_invite_out "bob_invite_out" run_aw_in "$ALICE_DIR" id team invite \
-  --team devteam \
-  --namespace test.local \
-  --global \
+# Alice uses the ordinary invite surface. Its token carries the service URL.
+capture_success bob_invite_out "bob_invite_out" run_aw_in "$ALICE_DIR" team invite \
+  --team-id devteam:test.local \
+  --member-global \
   --json
 
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
 assert_not_empty "bob invite token" "$BOB_INVITE_TOKEN"
 
-# Bob accepts the invite (cert saved under $BOB_DIR/.aw/team-certs/)
-capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" --global \
-  --alias bob \
+# Bob's one join command installs membership and connects the workspace.
+capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" team join "$BOB_INVITE_TOKEN" --global \
+  --name bob \
   --json
 
 BOB_ACCEPT_STATUS="$(echo "$bob_accept" | jq_field status)"
 assert_eq "bob accepted" "accepted" "$BOB_ACCEPT_STATUS"
+BOB_JOIN_CONNECTED="$(echo "$bob_accept" | jq_field connected)"
+BOB_JOIN_AWEB_URL="$(echo "$bob_accept" | jq_field aweb_url)"
+assert_eq "bob join connected" "True" "$BOB_JOIN_CONNECTED"
+assert_eq "bob join used invite service URL" "$AWEB_URL" "$BOB_JOIN_AWEB_URL"
 
-# Bob connects to aweb
-run_success "bob init" run_aw_in "$BOB_DIR" init --url "$AWEB_URL"
-bob_init_exit=$?
-assert_eq "bob init exit" "0" "$bob_init_exit"
+capture_success bob_check "bob_check" run_aw_in "$BOB_DIR" check --online --json
+BOB_CHECK_STATUS="$(echo "$bob_check" | jq_field status)"
+assert_eq "bob check after join" "ok" "$BOB_CHECK_STATUS"
+
+run_success "bob mail lands after join without setup commands" run_aw_in "$BOB_DIR" mail send --plaintext \
+  --to alice \
+  --subject "Join default-connect e2e" \
+  --body "invite join check mail works"
+capture_success alice_join_inbox "alice_join_inbox" run_aw_in "$ALICE_DIR" mail inbox --json --show-all
+alice_join_message="$(echo "$alice_join_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('subject')=='Join default-connect e2e'), ''))" 2>/dev/null || echo "")"
+assert_eq "joiner's mail lands in inviter inbox" "invite join check mail works" "$alice_join_message"
 
 # Create a local-only teammate and remove the service-local E2E key row to
 # simulate an old client. Global identities may already have AWID-published

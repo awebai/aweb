@@ -78,22 +78,20 @@ check and its next step.
 `aw team invite` prints a token and a command of the form:
 
 ```text
-Command:     aw id team accept-invite <invite-token> --name <name>
+Command:     aw team join <invite-token> --name <name>
 ```
 
-Use `aw team join` instead, in Bob's existing directory. It accepts the same
-token and is the path this tutorial continues from:
+Run that command in Bob's existing directory:
 
 ```bash
 aw team join <invite-token> --name bob
 ```
 
-Joining installs Bob's identity and membership but does not create
-`.aw/workspace.yaml` or report service-connection state. Connect Bob explicitly:
-
-```bash
-aw workspace connect --service https://app.aweb.ai/api
-```
+Joining installs Bob's identity and membership and connects the workspace to the
+service URL carried by the invite. Success ends with `Connected to <url> as bob`.
+Use `--no-connect` only when you intentionally want to stop after membership
+installation; it prints the exact `aw workspace connect --service <url>` command
+needed to finish later.
 
 Then verify Bob's directory:
 
@@ -152,12 +150,9 @@ In Bob's existing directory:
 aw team join <invite-token> --name bob
 ```
 
-Joining installs Bob's identity and membership but not the aweb workspace
-projection. Connect the existing certificate explicitly:
-
-```bash
-aw workspace connect --service "$AWEB_URL"
-```
+Joining installs Bob's identity and membership and connects the aweb workspace
+projection using the invite's embedded service URL. No second setup command is
+required.
 
 Then run `aw check` in Bob's directory and expect `Doctor: ok` (see the hosted
 section above for how to read the skipped-checks note and `--online`). This

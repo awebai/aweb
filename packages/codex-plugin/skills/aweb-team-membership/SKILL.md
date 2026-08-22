@@ -94,14 +94,12 @@ aw team invite                 # local-workspace member token
 
 # Joiner side (in a clean target directory):
 aw team join <token> --name <name>
-aw init                        # finish wiring the new workspace if instructed
 ```
 
 `accept-invite` refuses to overwrite an existing `.aw/` identity and generates a fresh local self-custodial identity in the target directory before requesting the certificate. For a hosted global identity, accept the hosted token with `--address <domain>/<name>`:
 
 ```bash
 aw team join <token> --address <domain>/<name>
-aw init                        # finish wiring the new workspace if instructed
 ```
 
 In the hosted `--address` case, the CLI creates a fresh self-custodial global identity for the address, registers it through the hosted service, and installs the hosted team certificate. The hosted service signs the team certificate; it does not receive the accepting directory's private signing key. If the user already has a global identity and only needs a certificate for an existing hosted team, Path 2 (dashboard Add existing identity + `fetch-cert`) remains valid.
@@ -168,10 +166,10 @@ This is the local-controller convenience case only. For cross-machine BYOT joins
 
 Two distinct local actions install a membership:
 
-- **`aw team join <token>`** (human-facing alias for `aw id team accept-invite <token>`) — redeems a CLI invite token. For hosted invites (Path 3), generates a fresh self-custodial identity in the current directory (refusing to overwrite) and installs the certificate; default is local, while `--address <domain>/<name>` creates/registers a fresh global identity through the hosted service before certificate install. For local-controller same-machine invites (BYOT Case 3), local-member behaves the same way as hosted local; global accepts require an existing global identity (from `aw id create`) and attach a team certificate to it via `--address <namespace>/<name>`.
+- **`aw team join <token>`** — redeems a CLI invite token, installs the membership, and connects the current workspace to the service URL embedded in the token. It refuses to overwrite an existing identity. `--no-connect` intentionally stops after membership installation and prints the exact `aw workspace connect --service <url>` recovery command. The lower-level **`aw id team accept-invite <token>`** remains membership-only. For hosted invites (Path 3), local join generates a fresh self-custodial identity; `--global` reuses an existing global identity. Local-controller same-machine invites follow the same scope rules.
 - **`aw id team fetch-cert --namespace <namespace> --team <team> --cert-id <id>`** — installs a certificate that has already been minted server-side (by hosted "Add existing identity") or signed by a controller (BYOT `add-member`). Used for hosted Path 2 and BYOT Case 1.
 
-If you have a token, use `aw team join` (or the underlying primitive `aw id team accept-invite`). If you have a `cert-id` printed by the dashboard or controller, use `fetch-cert`.
+If you have a token, use `aw team join`; it is the complete everyday path. Use the underlying `aw id team accept-invite` only when an orchestrator intentionally separates membership installation from workspace connection. If you have a `cert-id` printed by the dashboard or controller, use `fetch-cert`.
 
 ## Multiple team memberships
 

@@ -110,10 +110,11 @@ aw team invite --team-id <team:namespace> --json
 The new agent directory joins:
 
 ```bash
-aw team join <invite-token> --name <member-name> --json
+aw team join <invite-token> --name <member-name> --no-connect --json
 ```
 
-Invite creation and invite redemption are separate authority operations. After
+The orchestrator uses `--no-connect` because it deliberately keeps invite
+redemption and service projection as separate authority operations. After
 an ambiguous timeout, inspect AWID membership/local certificate state before
 retrying; do not assume the operation failed.
 

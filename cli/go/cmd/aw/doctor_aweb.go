@@ -194,9 +194,13 @@ func (r *doctorRunner) addServerConfiguredChecks(state *doctorAwebState, include
 	target := localPathTarget(state.workspacePath)
 	if state.workspaceErr != nil {
 		if errors.Is(state.workspaceErr, os.ErrNotExist) {
-			r.add(awebCheck(doctorCheckServerAwebURLConfigured, doctorStatusInfo, target, "No workspace aweb_url is configured because workspace.yaml is missing.", "Run `aw init` when you are ready to connect this directory.", map[string]any{"reason": "no_workspace_context"}))
+			nextStep := "Run `aw init` when you are ready to connect this directory."
+			if recovery, ok := workspaceConnectRecoveryCommand(r.workingDir, r.identityHome); ok {
+				nextStep = "Run `" + recovery + "` to connect this identity."
+			}
+			r.add(awebCheck(doctorCheckServerAwebURLConfigured, doctorStatusInfo, target, "No workspace aweb_url is configured because workspace.yaml is missing.", nextStep, map[string]any{"reason": "no_workspace_context"}))
 			if includeRuntime {
-				r.add(awebCheck(doctorCheckServerAwebURLRuntime, doctorStatusInfo, target, "Aweb runtime URL classification is not available without workspace context.", "Run `aw init` when you are ready to connect this directory.", map[string]any{"reason": "no_workspace_context"}))
+				r.add(awebCheck(doctorCheckServerAwebURLRuntime, doctorStatusInfo, target, "Aweb runtime URL classification is not available without workspace context.", nextStep, map[string]any{"reason": "no_workspace_context"}))
 			}
 			return
 		}

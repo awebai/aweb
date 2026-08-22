@@ -109,6 +109,14 @@
 
 ### CLI compatibility
 
+- `aw team invite` now prints the complete porcelain `aw team join` command,
+  and `aw team join` installs membership and connects the current workspace in
+  one step using the invite's embedded aweb service URL. Newly printed hosted
+  invites use a versioned, backward-compatible envelope around the existing
+  opaque bearer token; legacy hosted tokens and local-controller tokens remain
+  accepted. `--no-connect` preserves an explicit membership-only path and
+  prints the exact recovery command. The low-level `aw id team accept-invite`
+  primitive remains membership-only.
 - The aw CLI now sends exact chat read IDs first and retries one rejected,
   well-formed request with the legacy newest-ID watermark. Failed fallbacks
   retain the original 4xx, while malformed IDs make only the authoritative

@@ -261,9 +261,6 @@ func TestRepositoryInstructionCopiesDoNotFreezeLiveRoster(t *testing.T) {
 }
 
 func TestSelfHostingGuideUsesTheCurrentExistingDirectoryLocalIdentityPath(t *testing.T) {
-	if workspaceConnectCmd.Flags().Lookup("service") == nil {
-		t.Fatal("workspace connect no longer accepts the documented --service flag")
-	}
 	if idVerifyCmd.Use != "verify <did_aw>" {
 		t.Fatalf("id verify command shape changed to %q", idVerifyCmd.Use)
 	}
@@ -277,7 +274,8 @@ func TestSelfHostingGuideUsesTheCurrentExistingDirectoryLocalIdentityPath(t *tes
 		"a local self-custodial identity for `default:local`",
 		"Run the join command from a second existing agent directory",
 		"aw team join <invite-token> --name bob",
-		"aw workspace connect --service http://localhost:8000",
+		"workspace using the self-hosted URL carried by the invite",
+		"aw check",
 		"aw id verify <did:aw>",
 	} {
 		if !strings.Contains(guidance, want) {
@@ -287,6 +285,7 @@ func TestSelfHostingGuideUsesTheCurrentExistingDirectoryLocalIdentityPath(t *tes
 	for _, stale := range []string{
 		"a global identity in the local test namespace",
 		"aw workspace add-worktree",
+		"aw workspace connect --service http://localhost:8000",
 	} {
 		if strings.Contains(guidance, stale) {
 			t.Errorf("self-hosting guide retains stale setup path %q", stale)
@@ -294,43 +293,21 @@ func TestSelfHostingGuideUsesTheCurrentExistingDirectoryLocalIdentityPath(t *tes
 	}
 }
 
-func TestPublicTeamJoinGuidanceRequiresExplicitServiceConnection(t *testing.T) {
+func TestPublicTeamJoinGuidanceConnectsByDefault(t *testing.T) {
 	joinHelp := strings.Join(strings.Fields(teamHumanJoinCmd.Long), " ")
-	if !strings.Contains(joinHelp, "does not create `.aw/workspace.yaml`") ||
-		!strings.Contains(joinHelp, "aw workspace connect --service <service-url>") {
-		t.Fatalf("team join help does not state the unconditional service-connection contract:\n%s", teamHumanJoinCmd.Long)
+	if !strings.Contains(joinHelp, "connects this workspace") || !strings.Contains(joinHelp, "--no-connect") {
+		t.Fatalf("team join help does not state its default connection contract:\n%s", teamHumanJoinCmd.Long)
+	}
+	if teamHumanJoinCmd.Flags().Lookup("no-connect") == nil {
+		t.Fatal("team join no longer offers the identity-only escape hatch")
 	}
 
+	connected := true
 	formatted := formatTeamAcceptInvite(teamAcceptInviteOutput{
-		Status: "accepted", TeamID: "default:example.com", Alias: "bob", CertPath: ".aw/team-certs/default_example.com.json",
+		Status: "accepted", TeamID: "default:example.com", Alias: "bob", CertPath: ".aw/team-certs/default_example.com.json", Connected: &connected, AwebURL: "https://app.example/api",
 	})
-	if strings.Contains(strings.ToLower(formatted), "connect") || strings.Contains(strings.ToLower(formatted), "workspace") {
-		t.Fatalf("team join output unexpectedly claims workspace connection state:\n%s", formatted)
-	}
-
-	root := cmdMonorepoRootForTest(t)
-	required := map[string][]string{
-		"README.md":                  {"aw workspace connect --service https://app.aweb.ai/api"},
-		"docs/cli-tutorial.md":       {"aw workspace connect --service https://app.aweb.ai/api", "aw workspace connect --service \"$AWEB_URL\""},
-		"docs/identity-guide.md":     {"aw workspace connect --service https://app.aweb.ai/api", "aw workspace connect --service <service-url>"},
-		"docs/self-hosting-guide.md": {"aw workspace connect --service http://localhost:8000"},
-	}
-	for relative, commands := range required {
-		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		text := string(body)
-		for _, command := range commands {
-			if !strings.Contains(text, command) {
-				t.Errorf("%s omits required post-join command %q", relative, command)
-			}
-		}
-		for _, conditional := range []string{"if its output says", "if the join output says", "if the output says", "may already connect", "follow the join output"} {
-			if strings.Contains(strings.ToLower(text), conditional) {
-				t.Errorf("%s conditions required connection on impossible join output %q", relative, conditional)
-			}
-		}
+	if !strings.Contains(formatted, "Connected to https://app.example/api as bob") {
+		t.Fatalf("team join output does not report the connection it completed:\n%s", formatted)
 	}
 }
 
