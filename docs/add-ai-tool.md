@@ -1,21 +1,22 @@
 ---
-title: "Add an AI tool to a team"
-kicker: "Human guide"
+title: "Materialize a local AI tool"
+kicker: "Advanced guide"
 description: "Materialize one team member, isolate its work, and start a supported runtime."
 weight: 10
 ---
 
-# Add an AI tool to a team
+# Materialize a local AI tool
 
-Use this path when the current directory is already connected to the team and
-you want to add one member. `aw team add` uses the current workspace's `.aw`
-state as the membership authority. If the current directory is not an active
-team workspace, the command stops instead of guessing which team to use.
+Use this optional orchestration path when the current directory is already
+connected to the team and you want `aw` to materialize one local agent home.
+`aw team admin add` uses the current workspace's `.aw` state as the membership
+authority. For an ordinary person or existing agent directory, use the stable
+`aw team invite` and `aw team join` journey instead.
 
 ## Materialize and start one agent
 
 ```bash
-aw team add charlie@aweb.team/developer=pi --start
+aw team admin add charlie@aweb.team/developer=pi --start
 ```
 
 The specification selects Charlie's member name, the `developer` profile from
@@ -31,7 +32,7 @@ repository top-level when `D` is inside a Git worktree; outside Git, `R` is
 R/agents/instances/charlie/
 ```
 
-This means that running `aw team add` from `repo/src/` still creates the home at
+This means that running `aw team admin add` from `repo/src/` still creates the home at
 `repo/agents/instances/charlie/`. The command prints the absolute home path when
 it finishes.
 
@@ -59,7 +60,7 @@ sets up its Git worktree. It does not reuse the caller's `.aw` directory.
 Without `--start`, this is where the command stops: Charlie exists as a
 materialized team member, but no Pi process is running. With `--start`, exactly
 one agent is allowed and the command immediately launches that home through the
-same path as `aw team up`.
+same path as `aw team admin up`.
 
 ## Where the runtime starts
 
@@ -75,8 +76,8 @@ tests, and builds.
 
 `--start` attaches your terminal to the tmux session by default. Use
 `--no-attach` to leave it running in the background. Without `--start`, run
-`aw team up` from anywhere inside the same Git worktree—or from `D` outside
-Git—to start all materialized homes. `aw team up --dry-run` prints each home and
+`aw team admin up` from anywhere inside the same Git worktree—or from `D` outside
+Git—to start all materialized homes. `aw team admin up --dry-run` prints each home and
 runtime command first.
 
 ## Choose another home or work repository
@@ -85,7 +86,7 @@ runtime command first.
 resolved from the directory where you invoke the command:
 
 ```bash
-aw team add charlie@aweb.team/developer=pi \
+aw team admin add charlie@aweb.team/developer=pi \
   --home ~/aweb-agents/charlie
 ```
 
@@ -96,7 +97,7 @@ home.
 Point the agent's worktree at another Git repository with `--work-dir`:
 
 ```bash
-aw team add charlie@aweb.team/developer=pi \
+aw team admin add charlie@aweb.team/developer=pi \
   --home ~/aweb-agents/charlie \
   --work-dir ~/prj/customer-app \
   --start
@@ -111,8 +112,8 @@ the repository it works on do not have to live in the same directory tree.
 Identity scope belongs to the agent, not the team:
 
 ```bash
-aw team add local-reviewer@aweb.team/reviewer:local=pi
-aw team add public-reviewer@aweb.team/reviewer:global=pi
+aw team admin add local-reviewer@aweb.team/reviewer:local=pi
+aw team admin add public-reviewer@aweb.team/reviewer:global=pi
 ```
 
 When you omit the scope, the profile supplies the default. Every currently
@@ -127,7 +128,7 @@ Hosted versus BYOT is a separate choice about who controls the team.
 
 ## Runtime limits
 
-Claude Code and Pi can be started through `--start` and `aw team up`. Codex and
+Claude Code and Pi can be started through `--start` and `aw team admin up`. Codex and
 `local-shell` can be materialized, but must currently be started manually from
 the generated home. Those agents need to poll `aw mail inbox` and
 `aw chat pending` unless their runtime supplies another wake-up mechanism.

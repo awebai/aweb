@@ -1345,7 +1345,7 @@ func TestTeamHumanAddWithoutTeamContextGuidesToConnectNotInviteFlags(t *testing.
 	if strings.Contains(err.Error(), "--team") || strings.Contains(err.Error(), "--namespace") {
 		t.Fatalf("error should not reference invite-only flags: %v", err)
 	}
-	if !strings.Contains(err.Error(), "aw team create") {
+	if !strings.Contains(err.Error(), "aw team admin create") {
 		t.Fatalf("error should guide the user to establish team context: %v", err)
 	}
 }
@@ -1813,7 +1813,7 @@ func TestTeamHumanCreateBYOTWithAgentMissingNamespaceErrorsClearly(t *testing.T)
 	teamHumanCreateAgents = []string{"captain"}
 
 	err := runTeamHumanCreate(nil, []string{"Ops"})
-	if err == nil || !strings.Contains(err.Error(), "aw team create --byot requires --namespace") || strings.Contains(strings.ToLower(err.Error()), "eof") {
+	if err == nil || !strings.Contains(err.Error(), "aw team admin create --byot requires --namespace") || strings.Contains(strings.ToLower(err.Error()), "eof") {
 		t.Fatalf("error=%v", err)
 	}
 	if _, statErr := os.Lstat(filepath.Join(root, ".aw")); !os.IsNotExist(statErr) {

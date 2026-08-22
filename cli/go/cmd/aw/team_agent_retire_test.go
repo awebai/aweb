@@ -449,7 +449,7 @@ func TestRetireTeamAgentDoesNotTurnAReportedNoOpIntoACertificateClaim(t *testing
 	// never consult the registry, so any claim about certificate state is one the
 	// command has not established. That is the defect this whole change removes.
 	const reportedNoOpDetail = "revoked nothing: the service reported it had nothing to revoke, " +
-		"which does not establish that no certificate exists; confirm with aw team agent-status"
+		"which does not establish that no certificate exists; confirm with aw team admin agent-status"
 	if got := storeOutcome(t, out, storeCertificate).Detail; got != reportedNoOpDetail {
 		t.Fatalf("reported no-op detail changed.\n got: %q\nwant: %q", got, reportedNoOpDetail)
 	}
@@ -709,7 +709,7 @@ func TestRetirementRefusalNamesTheStatusRouteWhenNoRecordRemains(t *testing.T) {
 // CALL SITE, through the real binary, for the coordination store.
 //
 // This exists because the rest of the Go suite cannot see the verification being
-// unwired from aw team remove-agent: every other test reaches the helper
+// unwired from aw team admin remove-agent: every other test reaches the helper
 // directly, so removing the call from the command reds nothing. That leaves the
 // most destructive of the four sites - it deletes a workspace and releases its
 // claims, and it runs first - protected only by the OSS journey, which nothing

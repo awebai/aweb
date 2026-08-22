@@ -129,7 +129,7 @@ The suite covers:
   refresh flow. It exercises first-team creation in the shared `local` AWID
   namespace, so it needs a fresh stack (`make -C cli e2e` resets the stack).
 - **`team_create_flow_e2e_test.go`** — the full self-hosted
-  `aw team create --profile` flow: adopting two profiles materializes both homes
+  `aw team admin create --profile` flow: adopting two profiles materializes both homes
   and connects each member to the aweb service so the coordination-docs step
   succeeds (the self-hostability fix). It bootstraps its own unique BYOT
   namespace and therefore does not contend for `local`.

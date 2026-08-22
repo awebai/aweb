@@ -2,7 +2,7 @@
 
 // Full consumer learning-loop refresh against the real stack (default-aaas.14.8).
 // The real demo chain: a profile is adopted + materialized; the team improves it
-// via an APPROVED proposal (a new shelf version is minted); `aw team refresh`
+// via an APPROVED proposal (a new shelf version is minted); `aw team admin refresh`
 // re-materializes the member home from that new shelf version and `aw agent
 // profile show` reflects it - so an agent picks up the team's own learning.
 //
@@ -78,12 +78,12 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 		"--registry", awidURL(),
 		"--agent", "coordinator@"+seededBlueprintRef+"/coordinator=claude-code",
 		"--agent", "reviewer@"+seededBlueprintRef+"/reviewer=pi"); err != nil {
-		t.Fatalf("aw team create --agent failed: %v\n%s", err, out)
+		t.Fatalf("aw team admin create --agent failed: %v\n%s", err, out)
 	}
 	coordinatorHome := filepath.Join(repo, "agents", "instances", "coordinator")
 	assertSingleCoordinationBlock(t, coordinatorHome, "fresh materialization")
 	if out, err := awInRepo("team", "adopt", "coordinator", "--home", coordinatorHome); err != nil {
-		t.Fatalf("aw team adopt failed: %v\n%s", err, out)
+		t.Fatalf("aw team admin adopt failed: %v\n%s", err, out)
 	}
 
 	before := profileRefShow(t, awInRepo, "coordinator", "--home", coordinatorHome)
@@ -97,7 +97,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 
 	// refresh: re-materialize from the latest shelf version (the approved one).
 	if out, err := awInRepo("team", "refresh", "coordinator", "--home", coordinatorHome); err != nil {
-		t.Fatalf("aw team refresh failed: %v\n%s", err, out)
+		t.Fatalf("aw team admin refresh failed: %v\n%s", err, out)
 	}
 	assertSingleCoordinationBlock(t, coordinatorHome, "adopt and refresh")
 

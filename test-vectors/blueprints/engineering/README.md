@@ -35,7 +35,7 @@ or authorization.
 
 Library is not mandatory:
 
-- `aw team create` must be able to create a team with empty profiles when
+- `aw team admin create` must be able to create a team with empty profiles when
   Library is unreachable or unsubscribed.
 - `aw agent add` must be able to add an agent with an empty profile/no binding.
 - Blueprint import, Library refs, binding, and materialization are optional

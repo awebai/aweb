@@ -39,10 +39,10 @@ it is not required for public profile materialization or first-run onboarding.
 From the team layout, adopt the public pin for one member:
 
 ```bash
-aw team adopt <name>
+aw team admin adopt <name>
 ```
 
-`aw team adopt` reads that home's `.aw/profile/ref.json`, imports the pinned
+`aw team admin adopt` reads that home's `.aw/profile/ref.json`, imports the pinned
 public profile to the team's private shelf, binds the agent, and updates the
 local pin to point at the shelf copy. It does not change the agent's runtime,
 identity, or team membership.
@@ -113,7 +113,7 @@ permission increase, weakens review, or only applies to the current task.
 Apply the latest approved shelf version to the local home:
 
 ```bash
-aw team refresh <name>
+aw team admin refresh <name>
 ```
 
 Refresh reads the profile reference recorded locally, re-materializes the
@@ -133,7 +133,7 @@ agent:
 aw library update-from-source \
   --profile_ref <profile> \
   --target_version <version>
-aw team refresh <name>
+aw team admin refresh <name>
 ```
 
 Review upstream changes with the same care as any other dependency update.

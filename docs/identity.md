@@ -159,10 +159,11 @@ global.
 
 Current surfaces:
 
-- `aw team create NAME` is the everyday workflow wrapper.
+- `aw init` is the everyday bootstrap path; `aw team admin create NAME` is the
+  advanced explicit team-creation and local-orchestration wrapper.
 - `aw id team create --namespace DOMAIN --name NAME` is the controller/admin
   primitive for creating the AWID team record and remains controller-only.
-- `aw team create` accepts `--first-agent-local` (default) and
+- `aw team admin create` accepts `--first-agent-local` (default) and
   `--first-agent-global`; these flags scope only the enrolled creator, not the
   team itself. For CREATE, `--first-agent-global` may reuse an existing global
   identity or create/publish the founding global identity when hosted or
@@ -170,7 +171,7 @@ Current surfaces:
 
 ### Agent naming contract
 
-When an `aw team create --agent` or `aw team add` spec omits `NAME`, aw resolves
+When an `aw team admin create --agent` or `aw team admin add` spec omits `NAME`, aw resolves
 it at commit time through the server-authoritative
 `POST /api/v1/agents/suggest-alias-prefix` endpoint, which queries the live team
 roster. The shared preview sequence for UI clients is the classic list
@@ -210,16 +211,16 @@ concept and `identity_scope=local|global` for scope.
 | Verb | Canonical model action | Current command surface | Notes |
 | --- | --- | --- | --- |
 | Claim address | Birth a global identity in a namespace by claiming `domain/name`, or claim an additional address for an existing global identity | `aw id create --domain DOMAIN --name NAME`; `aw id address claim DOMAIN/NAME` | Global-only. Additional-address claims require namespace authority and use the atomic AWID claim primitive. The standalone `aw id address claim` path is for self-controlled namespaces; hosted addresses are claimed during hosted team accept/join. |
-| Create team | Create `name:domain` and enroll the first member | `aw team create NAME`; controller primitive `aw id team create --namespace DOMAIN --name NAME` | Team scope is not local/global; first-member scope is local/global. |
+| Create team | Create `name:domain` and enroll the first member | `aw team admin create NAME`; controller primitive `aw id team create --namespace DOMAIN --name NAME` | Team scope is not local/global; first-member scope is local/global. |
 | Invite to team | Produce a join capability for a future member | `aw team invite`; `aw id team invite` | The invite scopes the future member, not the team. |
 | Join team | Enroll a fresh local identity or an existing global identity | `aw team join <token>`; primitive `aw id team accept-invite <token>` | Scope must be explicit; reuse is global-only. |
-| Add local/profile agent home | Materialize an agent home and then perform team join/enrollment | `aw team add [NAME@]BLUEPRINT/PROFILE[:local\|global][=RUNTIME]` or `aw team add NAME[:local\|global]` | Omitted names use the server-authoritative classic sequence; omitted profile scope comes from `profile.yaml`. |
+| Add local/profile agent home | Materialize an agent home and then perform team join/enrollment | `aw team admin add [NAME@]BLUEPRINT/PROFILE[:local\|global][=RUNTIME]` or `aw team admin add NAME[:local\|global]` | Omitted names use the server-authoritative classic sequence; omitted profile scope comes from `profile.yaml`. |
 | Add existing member by controller | Sign/register a certificate for a supplied identity key | `aw id team add-member` | Controller/admin primitive; not the everyday join verb. |
 | Fetch certificate | Install an already-issued certificate | `aw id team fetch-cert` | Cross-machine BYOT recovery/install path. |
-| Replace local member key | Team-authorized compare-and-swap of a local identity key, old certificate revocation, and replacement certificate issuance | Lost key: `aw team replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key`; pre-generated key: pass `--new-did-key NEW` instead | Current OSS CLI path requires the locally held BYOT/team controller key; hosted-authority replacement requires an authorized hosted-operator equivalent. |
-| Remove member | Revoke a team certificate | `aw team remove-agent <member-address>`; primitive `aw id team remove-member` | Team-scoped revocation; does not delete a global identity. |
+| Replace local member key | Team-authorized compare-and-swap of a local identity key, old certificate revocation, and replacement certificate issuance | Lost key: `aw team admin replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key`; pre-generated key: pass `--new-did-key NEW` instead | Current OSS CLI path requires the locally held BYOT/team controller key; hosted-authority replacement requires an authorized hosted-operator equivalent. |
+| Remove member | Revoke a team certificate | `aw team admin remove-agent <member-address>`; primitive `aw id team remove-member` | Team-scoped revocation; does not delete a global identity. |
 
-These identity/team verbs do not require Library. `aw team create` without an
+These identity/team verbs do not require Library. `aw team admin create` without an
 `--agent`, `--profile`, or `--blueprint` selector creates an empty-profile team
 workspace; identity enrollment and communication remain complete OSS paths.
 Library-backed materialization is an optional orchestration layer above this
@@ -248,7 +249,7 @@ When forced replacement is necessary, preserve the real local home state
 signing key was lost, a local-controller/BYOT team operator runs:
 
 ```bash
-aw team replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key
+aw team admin replace-key NAME --old-did-key OLD --home AGENT_HOME --generate-new-key
 ```
 
 The command refuses to overwrite an existing `.aw/signing.key`, generates and

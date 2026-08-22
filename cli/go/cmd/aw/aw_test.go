@@ -223,6 +223,73 @@ func TestAwTopLevelHelpGroupsCommandsByArchitecture(t *testing.T) {
 	}
 }
 
+func TestTeamHelpSeparatesEverydayMembershipFromAdministration(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	runHelp := func(args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Dir = tmp
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+		}
+		return string(out)
+	}
+
+	teamHelp := runHelp("team", "--help")
+	for _, want := range []string{
+		"Everyday Membership",
+		"invite       Invite an agent or workspace",
+		"join         Join a team from an invite token",
+		"leave        Remove a team membership",
+		"list         List team memberships",
+		"switch       Switch the active team",
+		"Advanced",
+		"admin        Experimental local orchestration and team administration",
+	} {
+		if !strings.Contains(teamHelp, want) {
+			t.Fatalf("team help missing %q:\n%s", want, teamHelp)
+		}
+	}
+	for _, hidden := range []string{"add", "adopt", "agent-status", "create", "extend", "refresh", "remove-agent", "replace-key", "up"} {
+		if strings.Contains(teamHelp, "\n  "+hidden+" ") {
+			t.Fatalf("team help exposes admin command %q:\n%s", hidden, teamHelp)
+		}
+	}
+
+	adminHelp := runHelp("team", "admin", "--help")
+	for _, want := range []string{
+		"Local Agent Orchestration",
+		"Team Administration",
+		"add", "adopt", "agent-status", "create", "extend", "refresh", "remove-agent", "replace-key", "up",
+	} {
+		if !strings.Contains(adminHelp, want) {
+			t.Fatalf("team admin help missing %q:\n%s", want, adminHelp)
+		}
+	}
+
+	// Every former command path remains executable as a hidden compatibility
+	// alias, with the same flags and handler as its canonical admin path.
+	for _, name := range []string{"add", "adopt", "agent-status", "create", "extend", "refresh", "remove-agent", "replace-key", "up"} {
+		legacyHelp := runHelp("team", name, "--help")
+		if !strings.Contains(legacyHelp, "aw team "+name) {
+			t.Fatalf("legacy team %s help does not preserve its command path:\n%s", name, legacyHelp)
+		}
+		canonicalHelp := runHelp("team", "admin", name, "--help")
+		if !strings.Contains(canonicalHelp, "aw team admin "+name) {
+			t.Fatalf("canonical team admin %s help is unavailable:\n%s", name, canonicalHelp)
+		}
+	}
+}
+
 func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 	t.Parallel()
 

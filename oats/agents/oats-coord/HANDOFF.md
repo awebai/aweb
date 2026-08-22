@@ -13,7 +13,7 @@ this epic's agents after they were gone, and to an alias whose current occupant
 was a different agent doing unrelated work — who correctly refused to answer for
 work that was not theirs. Both failures looked exactly like a message in flight.
 
-**Staff through `aw team add … --start`, not `oats spawn`.** That is the proven
+**Staff through `aw team admin add … --start`, not `oats spawn`.** That is the proven
 path on this machine and it provisions identity through the Library, sidestepping
 the hosted-minting gap in `.66`.
 

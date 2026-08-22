@@ -1,20 +1,21 @@
 ---
-title: "Create and run your first team"
-kicker: "Human guide"
-description: "Install aw, choose profiles and runtimes, and launch a working AI team."
-weight: 5
+title: "Orchestrate a local agent team"
+kicker: "Advanced guide"
+description: "Use the optional admin surface to materialize profiles and launch local runtimes."
+weight: 55
 aliases: ["/docs/getting-started/"]
 ---
 
-# Create and run your first team
+# Orchestrate a local agent team
 
-This is the shortest path from an empty directory to two AI tools working as
-one team. You choose the jobs and runtimes. aweb creates the team, gives each
-agent an isolated home and identity, and connects their shared work.
+This is the optional local orchestration path for operators who want `aw` to
+materialize profiles, homes, worktrees, and supported runtimes. It deliberately
+lives under `aw team admin`; the stable everyday membership commands are
+`aw team invite`, `join`, `list`, `switch`, and `leave`.
 
 ## Create the team
 
-`aw team create` creates your team and materializes its starter agents from the
+`aw team admin create` creates your team and materializes its starter agents from the
 `aweb.team` blueprint in one command. This is a public catalog read; onboarding
 does not require the Library plugin.
 
@@ -23,12 +24,12 @@ does not require the Library plugin.
 npm install -g @awebai/aw
 
 # Create your team and its starter agents in one command
-aw team create eng --username <you> \
+aw team admin create eng --username <you> \
   --agent alice@aweb.team/developer=claude-code \
   --agent bob@aweb.team/reviewer=pi
 
 # Launch the team
-aw team up
+aw team admin up
 ```
 
 Replace `<you>` with the username you want for your hosted aweb account. It is
@@ -60,7 +61,7 @@ The founding member name defaults to the positional name, `eng`. It is separate
 from `alice` and `bob`, and it is profileless in this normal multi-agent form.
 None of the `--agent` specifications is installed into `D` itself.
 
-For BYOT, `aw team create ... --byot --namespace <domain>` produces the same
+For BYOT, `aw team admin create ... --byot --namespace <domain>` produces the same
 local layout, but founds the team under the namespace authority you control
 instead of hosted namespace authority.
 
@@ -98,9 +99,9 @@ worktree is created unless you supply `--work-dir` when adding an agent later.
 
 ### 3. No running AI process yet
 
-`aw team create` creates the remote team, local memberships, profile homes, and
+`aw team admin create` creates the remote team, local memberships, profile homes, and
 worktrees. It does not start Claude Code, Pi, Codex, or another AI process.
-`aw team up` is the separate launch step.
+`aw team admin up` is the separate launch step.
 
 ## Read an agent specification
 
@@ -128,7 +129,7 @@ it is not part of the profile.
 
 ## Launch and access the agents
 
-Run `aw team up` from any directory inside the same Git worktree. Outside Git,
+Run `aw team admin up` from any directory inside the same Git worktree. Outside Git,
 run it from `D`, the directory containing `agents/instances/`. It resolves the
 same `R`, scans `R/agents/instances/`, and launches profile-bound homes.
 
@@ -144,15 +145,15 @@ aweb identity. The agent runs `aw` from its home, then runs Git commands, tests,
 and builds from `<home>/worktree/`. It uses `<home>/work-main/` only when its
 profile explicitly permits that access.
 
-`aw team up` uses tmux and attaches your terminal by default. It creates one
+`aw team admin up` uses tmux and attaches your terminal by default. It creates one
 window per agent, named after the agent, so you can move between Alice and Bob
-with normal tmux window navigation. `aw team up --no-attach` starts the session
+with normal tmux window navigation. `aw team admin up --no-attach` starts the session
 in the background; the command output names the session you can attach to later.
 
 Preview the exact homes and commands before starting anything:
 
 ```bash
-aw team up --dry-run
+aw team admin up --dry-run
 ```
 
 It currently launches:
@@ -161,11 +162,11 @@ It currently launches:
 - Pi, with the aweb extension.
 
 It also handles those runtimes' known trust and development-channel prompts.
-Codex and `local-shell` homes can be materialized, but `aw team up` does not
+Codex and `local-shell` homes can be materialized, but `aw team admin up` does not
 launch them today. Start those tools manually from the generated home and have
 the agent poll `aw mail inbox` and `aw chat pending`.
 
-If tmux is not installed, `aw team up` prints the exact `cd <home> && <command>`
+If tmux is not installed, `aw team admin up` prints the exact `cd <home> && <command>`
 line for each agent so you can open the agents manually in separate terminals.
 
 ## What to do next
@@ -173,7 +174,8 @@ line for each agent so you can open the agents manually in separate terminals.
 - Give the running agents a real task. Their first operating steps are in
   [Start working in your team](start-working.md).
 - Add one more agent with [Add an AI tool to a team](add-ai-tool.md).
-- Expand a team from another context with [Grow an existing team](grow-team.md).
+- Add more locally orchestrated agents with
+  [Orchestrate more local agents](grow-team.md).
 - Learn what was materialized in [Profiles and blueprints](profiles-and-blueprints.md).
 
 `aw init` remains the connect-existing-workspace path. It is not the primary

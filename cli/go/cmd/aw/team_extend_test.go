@@ -77,7 +77,7 @@ func TestTeamAddAmbientAPIKeyKeepsActiveTeamAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if bootstrap {
-		t.Fatal("ambient API key overrode aw team add active-team authority")
+		t.Fatal("ambient API key overrode aw team admin add active-team authority")
 	}
 }
 
@@ -199,7 +199,7 @@ func TestTeamExtendCleanDirWithoutAuthorityErrorsClearly(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	text := err.Error()
-	for _, want := range []string{"--api-key", initAPIKeyEnvVar, "agents/instances", "aw team create"} {
+	for _, want := range []string{"--api-key", initAPIKeyEnvVar, "agents/instances", "aw team admin create"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("error missing %q: %v", want, err)
 		}
@@ -385,7 +385,7 @@ func TestTeamAddGlobalPreflightSuggestsSupportedExtendCommand(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected add global authority preflight error")
 	}
-	for _, want := range []string{"aw team add: agent probe", "run aw team extend from a fresh directory with --api-key <key>", "use probe:local"} {
+	for _, want := range []string{"aw team admin add: agent probe", "run aw team admin extend from a fresh directory with --api-key <key>", "use probe:local"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("add error %q missing %q", err, want)
 		}
@@ -453,7 +453,7 @@ func TestTeamExtendCurrentWorkspaceGlobalPreflightHasZeroMutation(t *testing.T) 
 		t.Fatal("expected global authority preflight error")
 	}
 	for _, want := range []string{
-		"aw team extend: agent aw-coord resolves to global identity scope",
+		"aw team admin extend: agent aw-coord resolves to global identity scope",
 		"current-workspace, team " + teamID,
 		"cannot mint global identities",
 		"aw-coord@aweb.team/coordinator:local=claude-code",
@@ -544,7 +544,7 @@ func TestTeamExtendGlobalPreflightUsesProfileDefaultScope(t *testing.T) {
 	err = preflightTeamHumanAddRosterAuthority(t.TempDir(), resolvedPlans, false, teamHumanAddRunOptions{
 		OutputAuthorityTier: teamExtendAuthorityTierDiscoveredAgent,
 		AuthorityTeamID:     "default:hosted.aweb.ai",
-		CommandName:         "aw team extend",
+		CommandName:         "aw team admin extend",
 	})
 	if err == nil {
 		t.Fatal("expected profile-defaulted global preflight error")

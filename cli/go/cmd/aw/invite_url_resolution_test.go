@@ -14,7 +14,7 @@ import (
 // team's aweb_url, but workspace.yaml is intentionally not written until
 // `aw init` (see TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey,
 // which asserts no workspace.yaml before init). When that member then runs
-// `aw team add`, the invite-mint URL resolver must still find the hosted aweb
+// `aw team admin add`, the invite-mint URL resolver must still find the hosted aweb
 // URL from teams.yaml. If it only consults workspace.yaml it returns "", the
 // mint decision falls through to the local-team-key branch, and a legitimately
 // entitled hosted member fails with "no team key".

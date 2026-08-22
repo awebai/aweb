@@ -2,7 +2,7 @@
 
 // Full self-hosted team-create-with-profile flow against the real stack
 // (default-aabq.21). This is the flow aabq.3 had to scope around (Wall 2): on a
-// self-hosted stack, `aw team create --profile` materialized homes but then
+// self-hosted stack, `aw team admin create --profile` materialized homes but then
 // aborted in the configure step (InjectAgentDocs) with aweb 403 "agent not
 // connected", because roster members were given an awid certificate but never
 // connected to the aweb server. With the aabq.21 fix (members connect to the
@@ -27,7 +27,7 @@ import (
 )
 
 // TestRealStackTeamCreateRosterMaterializesAndConnects regresses aabq.21: a
-// self-hosted `aw team create` adopting two profiles materializes both homes -
+// self-hosted `aw team admin create` adopting two profiles materializes both homes -
 // which only completes if each roster member is connected to the aweb server
 // before its coordination-docs are injected.
 func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
@@ -74,7 +74,7 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("aw team create --profile roster failed: %v\noutput:\n%s", err, out)
+		t.Fatalf("aw team admin create --profile roster failed: %v\noutput:\n%s", err, out)
 	}
 
 	// Profile-only team add uses --blueprint + --library-url directly (no plugin)
@@ -83,7 +83,7 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 	addCmd.Dir = repo
 	addCmd.Env = env
 	if out, err := addCmd.CombinedOutput(); err != nil {
-		t.Fatalf("aw team add profile-only from public catalog failed: %v\noutput:\n%s", err, out)
+		t.Fatalf("aw team admin add profile-only from public catalog failed: %v\noutput:\n%s", err, out)
 	}
 
 	// Homes materialize under agents/instances/<profile_ref or name>.

@@ -64,11 +64,41 @@ var (
 
 var teamHumanCmd = &cobra.Command{
 	Use:   "team",
-	Short: "Everyday teams: create, add, invite, join, list, switch, leave, replace-key, remove-agent",
+	Short: "Everyday team membership: invite, join, list, switch, and leave",
 	Long: "Everyday team membership commands.\n\n" +
-		"Use these commands for the normal hosted invite/join membership flow and for\n" +
-		"checking or switching this identity's installed team memberships. Protocol/admin\n" +
-		"controller operations remain under `aw id team`.",
+		"Use these commands to invite a member, join or leave a team, and inspect or\n" +
+		"switch this identity's installed memberships. Local agent orchestration, profile\n" +
+		"management, and owner/admin repair operations live under `aw team admin`.",
+}
+
+const (
+	teamGroupMembership      = "membership"
+	teamGroupAdministration  = "administration"
+	teamAdminGroupLocal      = "local-orchestration"
+	teamAdminGroupOperations = "team-administration"
+)
+
+var teamAdminCmd = &cobra.Command{
+	Use:   "admin",
+	Short: "Experimental local orchestration and team administration",
+	Long: "Experimental local orchestration and team administration.\n\n" +
+		"Use this surface to materialize or launch local agent homes, manage their pinned\n" +
+		"profiles, or perform owner/admin inspection and repair. These operations are\n" +
+		"separate from the everyday invite, join, list, switch, and leave journey.",
+}
+
+// registerTeamAdminCommand makes the explicit admin path canonical while retaining
+// the old aw team <command> path as a hidden compatibility alias. A shallow Cobra
+// command copy is intentional: both paths share the exact flag set and handler, so
+// compatibility cannot drift into a second implementation.
+func registerTeamAdminCommand(cmd *cobra.Command, groupID string) {
+	compatibilityAlias := *cmd
+	compatibilityAlias.Hidden = true
+	compatibilityAlias.GroupID = ""
+
+	cmd.GroupID = groupID
+	teamAdminCmd.AddCommand(cmd)
+	teamHumanCmd.AddCommand(&compatibilityAlias)
 }
 
 var teamHumanCreateCmd = &cobra.Command{
@@ -79,7 +109,7 @@ var teamHumanCreateCmd = &cobra.Command{
 		"and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]\n" +
 		"(or NAME[:local|global] for an empty-profile agent). Omitted names use the\n" +
 		"server-authoritative next classic name; omitted scope comes from profile.yaml.\n" +
-		"All --agent/--profile specs populate agents/instances for aw team up; only\n" +
+		"All --agent/--profile specs populate agents/instances for aw team admin up; only\n" +
 		"--home with a single spec uses that spec for the root workspace profile.\n" +
 		"Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.",
 	Args: cobra.ExactArgs(1),
@@ -100,7 +130,7 @@ var teamHumanInviteCmd = &cobra.Command{
 	Long: "Invite an agent or workspace to the active team.\n\n" +
 		"This creates an invite token using the current team's authority for a separate\n" +
 		"workspace or machine, then the joining workspace runs `aw team join <token>`.\n" +
-		"For local empty-profile homes under agents/instances/, use `aw team add`.",
+		"For local empty-profile homes under agents/instances/, use `aw team admin add`.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := applyHumanTeamIDToInvite(teamHumanInviteTeamID); err != nil {
@@ -218,6 +248,15 @@ func registerTeamMemberAddFlags(cmd *cobra.Command, includePlacementFlags bool) 
 
 func init() {
 	teamHumanCmd.GroupID = groupIdentity
+	teamHumanCmd.AddGroup(
+		&cobra.Group{ID: teamGroupMembership, Title: "Everyday Membership"},
+		&cobra.Group{ID: teamGroupAdministration, Title: "Advanced"},
+	)
+	teamAdminCmd.GroupID = teamGroupAdministration
+	teamAdminCmd.AddGroup(
+		&cobra.Group{ID: teamAdminGroupLocal, Title: "Local Agent Orchestration"},
+		&cobra.Group{ID: teamAdminGroupOperations, Title: "Team Administration"},
+	)
 
 	teamHumanCreateCmd.Flags().BoolVar(&teamHumanCreateBYOT, "byot", false, "Create a customer-controlled AWID team with local namespace controller authority")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateName, "name", "", "Team name")
@@ -237,16 +276,16 @@ func init() {
 	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateAgents, "agent", nil, "Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]")
 	teamHumanCreateCmd.Flags().StringArrayVar(&teamHumanCreateProfiles, "profile", nil, "Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]")
 	teamHumanCreateCmd.Flags().StringVar(&teamHumanCreateBlueprint, "blueprint", "", "With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory")
-	teamHumanCmd.AddCommand(teamHumanCreateCmd)
+	registerTeamAdminCommand(teamHumanCreateCmd, teamAdminGroupLocal)
 
 	teamHumanAddAttach = true
 	registerTeamMemberAddFlags(teamHumanAddCmd, true)
-	teamHumanCmd.AddCommand(teamHumanAddCmd)
+	registerTeamAdminCommand(teamHumanAddCmd, teamAdminGroupLocal)
 
 	teamHumanExtendCmd.Flags().StringVar(&teamHumanExtendAPIKey, "api-key", "", "Team API key for extending a team (overrides AWEB_API_KEY)")
 	teamHumanExtendCmd.Flags().StringVar(&teamHumanExtendTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to extend when discovery is ambiguous or when asserting an API key's team")
 	registerTeamMemberAddFlags(teamHumanExtendCmd, false)
-	teamHumanCmd.AddCommand(teamHumanExtendCmd)
+	registerTeamAdminCommand(teamHumanExtendCmd, teamAdminGroupLocal)
 
 	teamHumanInviteCmd.Flags().StringVar(&teamHumanInviteTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to invite from (defaults to active team)")
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteMemberLocal, "member-local", false, "Create local workspace member invite (default)")
@@ -255,6 +294,7 @@ func init() {
 	teamHumanInviteCmd.Flags().BoolVar(&teamInviteGlobal, "global", false, "Deprecated alias for --member-global")
 	markDeprecatedHiddenFlag(teamHumanInviteCmd, "local", "member-local")
 	markDeprecatedHiddenFlag(teamHumanInviteCmd, "global", "member-global")
+	teamHumanInviteCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamHumanInviteCmd)
 
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
@@ -264,13 +304,17 @@ func init() {
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptGlobal, "global", false, "Join by reusing the existing global identity in this workspace")
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptNoAddress, "no-address", false, "For --global, join with did:aw continuity but no member address")
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Advanced: existing owned address to place in the global member certificate")
+	teamHumanJoinCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamHumanJoinCmd)
 
+	teamHumanListCmd.GroupID = teamGroupMembership
+	teamHumanSwitchCmd.GroupID = teamGroupMembership
+	teamHumanLeaveCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamHumanListCmd)
 	teamHumanCmd.AddCommand(teamHumanSwitchCmd)
 	teamHumanCmd.AddCommand(teamHumanLeaveCmd)
 	teamHumanAgentStatusCmd.Flags().StringVar(&teamHumanAgentStatusTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to read from (defaults to active team)")
-	teamHumanCmd.AddCommand(teamHumanAgentStatusCmd)
+	registerTeamAdminCommand(teamHumanAgentStatusCmd, teamAdminGroupOperations)
 
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveTeamID, "team-id", "", "Canonical team id (<name>:<namespace>) to remove from (defaults to active team)")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveRegistryURL, "registry", "", "Registry origin override")
@@ -279,7 +323,8 @@ func init() {
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveResumeOperation, "resume-operation", "", "Resume exact hosted removal operation ID; no member address is accepted")
 	teamHumanRemoveAgentCmd.Flags().StringVar(&teamHumanRemoveAbortOperation, "abort-operation", "", "Abort exact hosted removal operation ID before coordination release")
 	teamHumanRemoveAgentCmd.Flags().BoolVar(&teamHumanRemoveListPending, "list-pending", false, "List owner/admin hosted removal operations requiring recovery")
-	teamHumanCmd.AddCommand(teamHumanRemoveAgentCmd)
+	registerTeamAdminCommand(teamHumanRemoveAgentCmd, teamAdminGroupOperations)
+	teamHumanCmd.AddCommand(teamAdminCmd)
 	rootCmd.AddCommand(teamHumanCmd)
 }
 
@@ -470,10 +515,10 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 	createHomeOverride := ""
 	if strings.TrimSpace(teamHumanCreateHome) != "" {
 		if len(agentSpecs) == 0 {
-			return usageError("aw team create --home requires --profile/--agent")
+			return usageError("aw team admin create --home requires --profile/--agent")
 		}
 		if len(agentSpecs) > 1 {
-			return usageError("aw team create --home can only be used with a single --agent/--profile")
+			return usageError("aw team admin create --home can only be used with a single --agent/--profile")
 		}
 		homeDir, err := filepath.Abs(strings.TrimSpace(teamHumanCreateHome))
 		if err != nil {
@@ -541,7 +586,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		}
 		domain := awconfig.NormalizeDomain(teamHumanCreateNamespace)
 		if domain == "" {
-			return usageError("aw team create --byot requires --namespace")
+			return usageError("aw team admin create --byot requires --namespace")
 		}
 		if firstAgentScope == awid.IdentityModeGlobal {
 			identityExists, err := teamCreateHasIdentityMaterial(wd)
@@ -561,7 +606,7 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return finishTeamHumanCreateFounding(teamHumanCreateFoundingResult{HomeDir: wd, Selector: selector, LocalBlueprintDir: firstSpec.LocalBlueprintDir, TeamOutput: teamOut}, rosterSpecs)
 	}
 	if strings.TrimSpace(teamHumanCreateNamespace) != "" || strings.TrimSpace(teamHumanCreateRegistryURL) != "" {
-		return usageError("aw team create does not use --namespace or --registry in the local empty-profile path")
+		return usageError("aw team admin create does not use --namespace or --registry in the local empty-profile path")
 	}
 	if createHomeOverride != "" {
 		if err := os.MkdirAll(createHomeOverride, 0o755); err != nil {
@@ -862,7 +907,7 @@ func bootstrapTeamCreateGlobalIdentity(wd, alias, domain, registryURL string, al
 		if allowCreateFlagGuidance {
 			return usageError("--first-agent-global with --byot requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or use hosted onboarding", domain, domain, alias)
 		}
-		return usageError("global identity creation requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or run aw team extend from a fresh directory with --api-key <key>", domain, domain, alias)
+		return usageError("global identity creation requires namespace controller authority for %s; run `aw id create --domain %s --name %s` first, or run aw team admin extend from a fresh directory with --api-key <key>", domain, domain, alias)
 	}
 	_, err = executeIDCreate(wd, idCreateOptions{
 		Name:        alias,
@@ -941,7 +986,7 @@ func resolveTeamHumanCreateFirstAgentScope() (string, error) {
 
 func runTeamHumanCreateForExistingIdentity(wd, teamName, alias, firstAgentScope string, selector *libraryProfileSelector) (*teamCreateOutput, error) {
 	if selector != nil {
-		return nil, usageError("aw team create --profile for an existing identity is not supported yet; use aw team add NAME@BLUEPRINT/PROFILE after creating the team")
+		return nil, usageError("aw team admin create --profile for an existing identity is not supported yet; use aw team admin add NAME@BLUEPRINT/PROFILE after creating the team")
 	}
 	return foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, "", "", strings.TrimSpace(teamHumanCreateDisplayName), firstAgentScope)
 }
@@ -1164,7 +1209,7 @@ func resolveTeamHumanAddAgentSpecs(wd string, args []string, specs []teamAgentSp
 	for _, spec := range inputSpecs {
 		scope := strings.TrimSpace(spec.Scope)
 		if spec.Profile != nil && teamHumanAddLayoutOnly {
-			return nil, usageError("aw team add --layout-only cannot be used with profile selector %s", spec.Raw)
+			return nil, usageError("aw team admin add --layout-only cannot be used with profile selector %s", spec.Raw)
 		}
 		if spec.Profile != nil {
 			parsed, err := applyMaterializeRuntimePolicy(*spec.Profile, teamHumanAddRuntime)
@@ -1423,7 +1468,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		return usageError("--local and --global cannot be used together")
 	}
 	if teamHumanAddStart && teamHumanAddLayoutOnly {
-		return usageError("aw team add --start cannot be used with --layout-only")
+		return usageError("aw team admin add --start cannot be used with --layout-only")
 	}
 	wd := strings.TrimSpace(opts.CWD)
 	var err error
@@ -1443,7 +1488,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	}
 	homeOverride := strings.TrimSpace(teamHumanAddHome)
 	if homeOverride != "" && len(args) != 1 {
-		return usageError("aw team add --home can only be used with a single agent")
+		return usageError("aw team admin add --home can only be used with a single agent")
 	}
 	var explicitHome string
 	if homeOverride != "" {
@@ -1476,7 +1521,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 	plans := make([]teamHumanAddedAgent, 0, len(resolvedSpecs))
 	for _, spec := range resolvedSpecs {
 		if spec.Profile != nil && teamHumanAddLayoutOnly {
-			return usageError("aw team add --layout-only cannot be used with profile selector %s", spec.Raw)
+			return usageError("aw team admin add --layout-only cannot be used with profile selector %s", spec.Raw)
 		}
 		profileMode := "empty"
 		if spec.Profile != nil {
@@ -1489,7 +1534,7 @@ func runTeamHumanAddWithOptions(cmd *cobra.Command, args []string, opts teamHuma
 		plans = append(plans, teamHumanAddedAgent{Name: spec.Name, HomeDir: homeDir, ProfileMode: profileMode, Profile: spec.Profile, Scope: spec.Scope, LocalBlueprintDir: spec.LocalBlueprintDir})
 	}
 	if teamHumanAddStart && len(plans) != 1 {
-		return usageError("aw team add --start requires exactly one agent")
+		return usageError("aw team admin add --start requires exactly one agent")
 	}
 	for _, plan := range plans {
 		if plan.Profile != nil {
@@ -1688,15 +1733,15 @@ func preflightTeamHumanAddRosterAuthority(inviteAnchorDir string, plans []teamHu
 	}
 	commandName := strings.TrimSpace(opts.CommandName)
 	if commandName == "" {
-		commandName = "aw team add"
+		commandName = "aw team admin add"
 	}
 	profileSource := ""
 	if globalPlan.Profile != nil && strings.TrimSpace(globalPlan.Profile.IdentityScope) == "" && !teamHumanAddGlobal {
 		profileSource = " (from profile " + strings.TrimSpace(globalPlan.Profile.SourceBlueprintRef) + "/" + strings.TrimSpace(globalPlan.Profile.ProfileRef) + ")"
 	}
 	apiKeyRecovery := "run from a fresh directory with --api-key <key>"
-	if commandName == "aw team add" {
-		apiKeyRecovery = "run aw team extend from a fresh directory with --api-key <key>"
+	if commandName == "aw team admin add" {
+		apiKeyRecovery = "run aw team admin extend from a fresh directory with --api-key <key>"
 	}
 	return usageError("%s: agent %s resolves to global identity scope%s, but this workspace's authority (%s, team %s) cannot mint global identities.\n\nEither:\n  - %s, or\n  - use %s\n\nNo agents were created.", commandName, globalPlan.Name, profileSource, tier, teamID, apiKeyRecovery, teamHumanLocalOverrideSpec(*globalPlan))
 }
@@ -2137,7 +2182,7 @@ func addPostJoinRollbackError(cause error, accepted *acceptedTeamInvite, memberR
 		if targetErr == nil {
 			fmt.Fprintf(&b, "; dirty server-side member may remain; clean it from an owner/admin workspace with `aw id team remove-member --team %s --namespace %s --cert-id %s`", target.TeamName, target.Domain, target.CertificateID)
 			if target.MemberAddress != "" {
-				fmt.Fprintf(&b, " or `aw team remove-agent %s --team-id %s`", target.MemberAddress, target.TeamID)
+				fmt.Fprintf(&b, " or `aw team admin remove-agent %s --team-id %s`", target.MemberAddress, target.TeamID)
 			}
 		} else {
 			fmt.Fprintf(&b, "; rollback target details unavailable: %v", targetErr)
@@ -2261,10 +2306,10 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(anchorDir)
 	if err != nil {
 		// resolveTeamInviteTarget is shared with `aw id team invite`, whose error
-		// mentions --team/--namespace. Those are not flags on `aw team add`: this
+		// mentions --team/--namespace. Those are not flags on `aw team admin add`: this
 		// command mints against this workspace's active team.
 		if errors.Is(err, errTeamInviteTargetHasNoActiveTeam) {
-			return nil, usageError("aw team add mints against this workspace's active team, but none was found here; run `aw team create <name>` (or `aw init` with your team's AWEB_URL and AWEB_API_KEY) in this directory first, then re-run `aw team add`")
+			return nil, usageError("aw team admin add mints against this workspace's active team, but none was found here; run `aw team admin create <name>` (or `aw init` with your team's AWEB_URL and AWEB_API_KEY) in this directory first, then re-run `aw team admin add`")
 		}
 		return nil, err
 	}

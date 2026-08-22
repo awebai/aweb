@@ -51,7 +51,7 @@ const (
 	// It does not follow that no certificate exists. The hosted service answers
 	// from its own membership records and may never consult the registry, so a
 	// member with a live certificate and no hosted record is reported this way.
-	// Establishing the certificate state needs a direct read: aw team agent-status.
+	// Establishing the certificate state needs a direct read: aw team admin agent-status.
 	certificateNothingReported = "reported_nothing_to_revoke"
 )
 
@@ -66,7 +66,7 @@ const (
 	retirementRetired = "retired"
 	// retirementReported: every store reached that state, but at least one of
 	// them rests on a service reporting a no-op rather than on the state being
-	// established. Confirm with aw team agent-status, which reads the registry.
+	// established. Confirm with aw team admin agent-status, which reads the registry.
 	retirementReported = "reported_retired"
 	// retirementIncomplete: a store did not reach that state.
 	retirementIncomplete = "incomplete"
@@ -199,7 +199,7 @@ func retireTeamAgent(
 		out.Stores = append(out.Stores, retireStoreOutcome{
 			Store:  storeCertificate,
 			Result: storeUnchanged,
-			Detail: "revoked nothing: the service reported it had nothing to revoke, which does not establish that no certificate exists; confirm with aw team agent-status",
+			Detail: "revoked nothing: the service reported it had nothing to revoke, which does not establish that no certificate exists; confirm with aw team admin agent-status",
 		})
 	default:
 		// Every result constant is handled above. A new one reaching here has no
@@ -335,7 +335,7 @@ func releaseCoordinationState(
 			Store:  storeCoordination,
 			Result: storeChanged,
 			Detail: fmt.Sprintf(
-				"deleted workspace %s, which releases its task claims; this server does not report how many, so read them back with aw team agent-status",
+				"deleted workspace %s, which releases its task claims; this server does not report how many, so read them back with aw team admin agent-status",
 				deleted.WorkspaceID,
 			),
 		}, deleted

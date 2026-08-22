@@ -20,7 +20,7 @@ var agentProfileShowCmd = &cobra.Command{
 	Short: "Show the recorded profile ref/snapshot (.aw/profile/ref.json) for a materialized agent",
 	Long: "Show the Library profile a local agent home was materialized from - the blueprint and " +
 		"profile refs, versions, and content digests recorded in .aw/profile/ref.json. This is what " +
-		"`aw team refresh` updates and what the materialize seam records; it never asks a remote service " +
+		"`aw team admin refresh` updates and what the materialize seam records; it never asks a remote service " +
 		"which profile is in use.",
 	Args: cobra.ExactArgs(1),
 	RunE: runAgentProfileShow,
@@ -50,7 +50,7 @@ func runAgentProfileShow(cmd *cobra.Command, args []string) error {
 	data, err := os.ReadFile(refPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("no recorded profile for %q: %s not found (materialize it from a Library profile first, e.g. `aw team add %s@<blueprint>/<profile>`)", name, refPath, name)
+			return fmt.Errorf("no recorded profile for %q: %s not found (materialize it from a Library profile first, e.g. `aw team admin add %s@<blueprint>/<profile>`)", name, refPath, name)
 		}
 		return fmt.Errorf("read %s: %w", refPath, err)
 	}

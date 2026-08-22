@@ -12,7 +12,7 @@ must not be used as a prerequisite in a shipped tutorial.
 
 ## Runtime launch
 
-- Claude Code and Pi can be launched by `aw team up` and one-agent `--start`.
+- Claude Code and Pi can be launched by `aw team admin up` and one-agent `--start`.
 - Codex and `local-shell` can be materialized, but must be started manually.
 - Runtime wake-up is integration-specific; portable polling remains the
   fallback.

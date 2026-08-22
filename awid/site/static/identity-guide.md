@@ -87,7 +87,7 @@ public team certificates.
 If you control a DNS domain and want to hold namespace and team authority:
 
 ```bash
-aw team create engineering \
+aw team admin create engineering \
   --byot \
   --namespace example.com \
   --first-agent-local
@@ -274,7 +274,7 @@ Do not collapse these different trust stories:
 
 - **Global key rotation**: `aw id rotate-key`. The retiring identity key signs
   the replacement, preserving the same `did:aw`.
-- **Local key replacement**: `aw team replace-key`. A locally held BYOT/team
+- **Local key replacement**: `aw team admin replace-key`. A locally held BYOT/team
   controller authorizes an exact old-to-new member-key transition and replaces
   the certificate. The old member key cannot bless its own successor.
 - **Address replacement**: namespace authority moves an address to a different

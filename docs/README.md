@@ -122,9 +122,9 @@ ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
   current advanced optional payload, pin, and provenance contract.
 - [Resource-pack template contract](resource-pack-template-contract.md) —
   current advanced optional harness-neutral operating assets.
-- [Create and run your first team](create-and-run-team.md) — current optional
+- [Orchestrate a local agent team](create-and-run-team.md) — current optional
   materialized-team helper workflow.
-- [Grow an existing team](grow-team.md) — current optional membership-growth
+- [Orchestrate more local agents](grow-team.md) — current optional membership-growth
   helper with operator-owned materialization and launch choices.
 - [Improve a profile](improve-profile.md) — optional Library-backed reviewed
   profile-learning loop.
@@ -143,7 +143,7 @@ ownership of definitions, homes, worktrees, runtimes, processes, and session UX.
 - [Work across teams](work-across-teams.md) — multi-team identity and messaging.
 - [MCP tutorial](mcp-tutorial.md) — optional MCP client journey scheduled for an
   OSS/hosted split.
-- [Materialize and start one team member](add-ai-tool.md) — optional
+- [Materialize a local AI tool](add-ai-tool.md) — optional
   member/home/worktree/runtime workflow.
 
 </details>
@@ -180,7 +180,7 @@ notice where one exists.
 - [`aw run`](aw-run.md) — opt-in, provider-specific launcher, and the supported
   wake path for Codex today. It sits in this section because aweb does not
   guarantee runtime lifecycle, not because the command is superseded.
-- [`aw team extend` command SOT](team-extend-sot.md) — shipped compatibility
+- [`aw team admin extend` command SOT](team-extend-sot.md) — shipped compatibility
   contract preserving authority discovery, ambiguity, rollback, and batch
   semantics; use the current growth guide and generated reference for everyday
   operation.

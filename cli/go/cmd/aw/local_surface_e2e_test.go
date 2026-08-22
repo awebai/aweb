@@ -40,7 +40,7 @@ func localSurfaceTeamUpDryRunPlan(t *testing.T, root string) teamUpPlan {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	if err := runTeamHumanUp(cmd, nil); err != nil {
-		t.Fatalf("aw team up --dry-run: %v", err)
+		t.Fatalf("aw team admin up --dry-run: %v", err)
 	}
 	var plan teamUpPlan
 	if err := json.Unmarshal(out.Bytes(), &plan); err != nil {
@@ -381,7 +381,7 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 
 // TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime is the homepage
 // case: a hosted-team owner with a connected workspace (no local team key) runs
-// `aw team add NAME@BLUEPRINT/PROFILE=RUNTIME`. The listed agent must mint via
+// `aw team admin add NAME@BLUEPRINT/PROFILE=RUNTIME`. The listed agent must mint via
 // the owner's hosted member authority (spawn create/accept-invite), materialize
 // the Library profile into its own home, and apply the requested runtime.
 func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {

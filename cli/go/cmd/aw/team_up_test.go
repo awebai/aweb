@@ -205,8 +205,8 @@ func TestPreflightTeamUpCommandsWithoutTmuxPrintsManualFallback(t *testing.T) {
 	}
 	text := err.Error()
 	for _, want := range []string{
-		"Install tmux, then re-run `aw team up`",
-		"With tmux installed, `aw team up` automatically starts and wires every agent",
+		"Install tmux, then re-run `aw team admin up`",
+		"With tmux installed, `aw team admin up` automatically starts and wires every agent",
 		"channel plugin",
 		"trust/dev-channel prompts",
 		"pi --approve",
@@ -463,7 +463,7 @@ func TestTeamUpRecreateRefusesSessionWithRunningAgentWindow(t *testing.T) {
 		return nil
 	}
 	_, err := executeTeamUpPlan(&cobra.Command{}, plan, true, false, false)
-	if err == nil || !strings.Contains(err.Error(), "refusing aw team up --recreate") || !strings.Contains(err.Error(), "developer(pid 123)") || !strings.Contains(err.Error(), "--force-kill") {
+	if err == nil || !strings.Contains(err.Error(), "refusing aw team admin up --recreate") || !strings.Contains(err.Error(), "developer(pid 123)") || !strings.Contains(err.Error(), "--force-kill") {
 		t.Fatalf("expected protected recreate error, got %v", err)
 	}
 }
@@ -966,7 +966,7 @@ func TestTeamUpCommandRegistered(t *testing.T) {
 	}
 }
 
-// aweb-aawn: `aw team up` treated the existence of .aw/profile/profile.yaml as the
+// aweb-aawn: `aw team admin up` treated the existence of .aw/profile/profile.yaml as the
 // definition of an agent, so any directory carrying that one file was launched - a
 // backup of a home included, holding the original's credentials. A home must now
 // account for itself: it has a workspace identity, and that identity names the place

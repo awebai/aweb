@@ -78,7 +78,7 @@ var teamReissueCertCmd = &cobra.Command{
 		"connect, so expect the member to reconnect.\n\n" +
 		"This is NOT key rotation: the member keeps its did:key, and the command refuses\n" +
 		"to run when the registered member key differs from the one attested. For a lost\n" +
-		"or compromised member KEY, use `aw team replace-key` instead.\n\n" +
+		"or compromised member KEY, use `aw team admin replace-key` instead.\n\n" +
 		"Requires the locally-held team controller key (BYOT/local-controller teams).\n" +
 		"Hosted aweb.ai teams keep the controller key in cloud custody; hosted\n" +
 		"re-issuance runs through the hosted service or operator support.\n\n" +
@@ -144,7 +144,7 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if memberDID != "" && memberDID != homeDID {
-			return usageError("--did %s does not match the signing key in --home (%s); reissue-cert never changes the member key. For a lost or compromised member key, use `aw team replace-key`", memberDID, homeDID)
+			return usageError("--did %s does not match the signing key in --home (%s); reissue-cert never changes the member key. For a lost or compromised member key, use `aw team admin replace-key`", memberDID, homeDID)
 		}
 		memberDID = homeDID
 	}
@@ -188,7 +188,7 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 		oldDID := strings.TrimSpace(memberRef.MemberDIDKey)
 		if oldDID != "" && oldDID != memberDID {
 			return usageError(
-				"the registered certificate %s for %s in %s binds member did:key %s, not %s; reissue-cert never changes the member key. For a lost or compromised member key, use `aw team replace-key`",
+				"the registered certificate %s for %s in %s binds member did:key %s, not %s; reissue-cert never changes the member key. For a lost or compromised member key, use `aw team admin replace-key`",
 				strings.TrimSpace(memberRef.CertificateID), alias, teamID, oldDID, memberDID,
 			)
 		}
@@ -459,7 +459,7 @@ func preflightReissueCertMemberHome(homeDir, teamID, alias string) (string, erro
 	}
 	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(homeDir))
 	if err != nil {
-		return "", fmt.Errorf("load member signing key from --home: %w (reissue-cert remedies a lost certificate blob for an intact key; if the member's signing key is also lost, use `aw team replace-key --generate-new-key`)", err)
+		return "", fmt.Errorf("load member signing key from --home: %w (reissue-cert remedies a lost certificate blob for an intact key; if the member's signing key is also lost, use `aw team admin replace-key --generate-new-key`)", err)
 	}
 	return awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey)), nil
 }

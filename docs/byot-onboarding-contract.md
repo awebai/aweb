@@ -114,7 +114,7 @@ or change who can administer the AWID team. Invite-token joins are different:
 follow their output, because a hosted join may already be connected and must not
 be unconditionally reinitialized.
 
-`aw team create NAME --byot --namespace DOMAIN` is the everyday wrapper when the
+`aw team admin create NAME --byot --namespace DOMAIN` is the advanced wrapper when the
 first workspace should create and join the team in one guided flow.
 
 ### Optional hosted projection/import

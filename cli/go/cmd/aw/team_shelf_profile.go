@@ -52,7 +52,7 @@ const (
 // the shelf: the Library plugin the shelf read dispatches through is not installed.
 // The public read is a direct HTTP GET with no such prerequisite, so a plugin-free
 // home can materialize a public profile while being unable to ask about a shelf at
-// all - which is most homes, and every `aw team create` that bootstraps one.
+// all - which is most homes, and every `aw team admin create` that bootstraps one.
 //
 // Injected into the call and matched with errors.Is rather than recognized from the
 // message text, so rewording the user-facing install hint cannot silently turn this

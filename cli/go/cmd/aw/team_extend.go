@@ -49,7 +49,7 @@ type teamExtendCandidate struct {
 
 func runTeamHumanExtend(cmd *cobra.Command, args []string) error {
 	if teamHumanAddLayoutOnly || strings.TrimSpace(teamHumanAddHome) != "" {
-		return usageError("aw team extend does not support --home or --layout-only; use aw team add from a team workspace for primitive-only placement")
+		return usageError("aw team admin extend does not support --home or --layout-only; use aw team admin add from a team workspace for primitive-only placement")
 	}
 	wd, err := os.Getwd()
 	if err != nil {
@@ -72,7 +72,7 @@ func runTeamHumanExtend(cmd *cobra.Command, args []string) error {
 		OutputStatus:          "extended",
 		OutputAuthorityTier:   authority.Tier,
 		AuthorityTeamID:       authority.TeamID,
-		CommandName:           "aw team extend",
+		CommandName:           "aw team admin extend",
 	})
 }
 
@@ -120,9 +120,9 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 	}
 	if len(candidates) == 0 {
 		if teamID != "" {
-			return teamExtendAuthority{}, usageError("no membership authority found for --team-id %s: no --api-key/%s, and no matching invite-capable agent workspace under %s (checked %d candidate homes); run aw team extend inside a team directory, pass --api-key, or create a new team with aw team create <name>", teamID, initAPIKeyEnvVar, agentsRoot, checked)
+			return teamExtendAuthority{}, usageError("no membership authority found for --team-id %s: no --api-key/%s, and no matching invite-capable agent workspace under %s (checked %d candidate homes); run aw team admin extend inside a team directory, pass --api-key, or create a new team with aw team admin create <name>", teamID, initAPIKeyEnvVar, agentsRoot, checked)
 		}
-		return teamExtendAuthority{}, usageError("no membership authority found: no --api-key/%s, and no invite-capable agent workspace under %s (checked %d candidate homes); run aw team extend inside a team directory, pass --api-key, or create a new team with aw team create <name>", initAPIKeyEnvVar, agentsRoot, checked)
+		return teamExtendAuthority{}, usageError("no membership authority found: no --api-key/%s, and no invite-capable agent workspace under %s (checked %d candidate homes); run aw team admin extend inside a team directory, pass --api-key, or create a new team with aw team admin create <name>", initAPIKeyEnvVar, agentsRoot, checked)
 	}
 	teams := map[string]bool{}
 	for _, candidate := range candidates {
@@ -260,5 +260,5 @@ func printTeamCreateExtendNotice(wd string) {
 	if err != nil || teamState == nil || strings.TrimSpace(teamState.ActiveTeam) == "" {
 		return
 	}
-	fmt.Fprintf(os.Stderr, "Notice: current workspace is already a member of team %s; use `aw team extend` to add members to that existing team. `aw team create` will create a new team.\n", strings.TrimSpace(teamState.ActiveTeam))
+	fmt.Fprintf(os.Stderr, "Notice: current workspace is already a member of team %s; use `aw team admin extend` to add members to that existing team. `aw team admin create` will create a new team.\n", strings.TrimSpace(teamState.ActiveTeam))
 }

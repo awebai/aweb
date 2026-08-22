@@ -86,6 +86,7 @@ def parse_help(text: str) -> dict[str, object]:
         if (
             lines[index]
             and not lines[index].startswith(" ")
+            and not stripped.endswith(":")
             and index + 1 < len(lines)
             and lines[index + 1].startswith("  ")
         ):
@@ -206,9 +207,18 @@ def render_reference(binary: Path) -> str:
             output.extend([description, ""])
         subcommands = parsed["subcommands"]
         assert isinstance(subcommands, list)
-        if subcommands:
+        groups = parsed["groups"]
+        assert isinstance(groups, list)
+        grouped_subcommands = [item for _, items in groups for item in items]
+        all_subcommands = [*grouped_subcommands, *subcommands]
+        # Cobra's generated `aw help --help` prints the root help page. Those
+        # root groups are not children of the help command and recursing through
+        # them would produce an infinite `aw help help ...` tree.
+        if path == ["help"]:
+            all_subcommands = []
+        if all_subcommands:
             output.append("Subcommands:")
-            for name, description in subcommands:
+            for name, description in all_subcommands:
                 suffix = f" {description}" if description else ""
                 output.append(f"- `{name}`{suffix}")
             output.append("")
@@ -218,7 +228,7 @@ def render_reference(binary: Path) -> str:
             output.append("Flags:")
             for flag in flags:
                 output.append(f"- `{flag}`")
-        for name, _ in subcommands:
+        for name, _ in all_subcommands:
             emit_tree([*path, name])
 
     for name in rendered_roots:

@@ -246,7 +246,7 @@ managed set. Homes update
   on change.
 - **Team instructions remain separately owned.** The profile owns the generated
   `AGENTS.md` body; instruction injection owns only the `AWEB:START` / `AWEB:END`
-  region. `aw team refresh` re-fetches and replaces that region only when the
+  region. `aw team admin refresh` re-fetches and replaces that region only when the
   home had exactly one complete marker pair before refresh. An unmarked home
   stays unmarked. `aw instructions inject [directory]` is the explicit operation
   that may create or backfill the region.

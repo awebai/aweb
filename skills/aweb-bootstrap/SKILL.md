@@ -47,7 +47,7 @@ that state as private identity material. Never delete it casually.
      uninitialized repo root.
 2. Back up any `.aw/` directory before moving or deleting a legacy home.
 3. Recreate needed workspaces with current primitives:
-   - create/join teams with `aw team create`, `aw team invite`, `aw team join`,
+   - create/join teams with `aw team admin create`, `aw team invite`, `aw team join`,
      or controller-side `aw id team ...` primitives;
    - connect existing certs with `aw init`, `aw workspace connect`, or
      `aw service init`;

@@ -157,7 +157,7 @@ func TestShelfProfileResolutionMaterializesShelfBytes(t *testing.T) {
 	home := newShelfTestHome(t, server.URL)
 
 	// The scope is EXPLICIT on purpose. That is the shape of the reported command -
-	// `aw team extend aweb.team/developer:local=claude-code` - and it is the path the
+	// `aw team admin extend aweb.team/developer:local=claude-code` - and it is the path the
 	// divergence guard deliberately skips, because an explicitly declared scope
 	// overrides both profiles and there is nothing to compare. So this is the one path
 	// no guard test exercises, and it is the one the bug was reported on.

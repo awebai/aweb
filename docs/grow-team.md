@@ -1,35 +1,38 @@
 ---
-title: "Grow an existing team"
-kicker: "Human guide"
+title: "Orchestrate more local agents"
+kicker: "Advanced guide"
 description: "Add agents by discovering membership authority from a key, workspace, or materialized team."
 weight: 15
 ---
 
-# Grow an existing team
+# Orchestrate more local agents
 
 > **Status: current optional team-growth helper.** Membership is the aweb
 > authority; profiles, homes, worktrees, runtime selection, and process launch
 > remain optional operator/orchestrator choices.
 
-Use `aw team extend` when the team already exists and the current directory may
+For ordinary membership, use `aw team invite` and `aw team join`. The admin
+command below is for operators who also want local home/profile materialization.
+
+Use `aw team admin extend` when the team already exists and the current directory may
 or may not be one of its workspaces. The command discovers authority to add
-members, then uses the same materialization path as `aw team add`.
+members, then uses the same materialization path as `aw team admin add`.
 
 ```bash
-aw team extend charlie@aweb.team/developer=pi
+aw team admin extend charlie@aweb.team/developer=pi
 ```
 
 You can pass more than one agent specification to grow a roster in one command:
 
 ```bash
-aw team extend \
+aw team admin extend \
   charlie@aweb.team/developer=claude-code \
   dana@aweb.team/reviewer=pi
 ```
 
 ## How authority is selected
 
-`aw team extend` uses the first applicable source:
+`aw team admin extend` uses the first applicable source:
 
 1. an explicit `--api-key`, or `AWEB_API_KEY`;
 2. the current workspace when it can invite members;
@@ -41,14 +44,14 @@ directory, it is the complete credential:
 
 ```bash
 AWEB_URL=<url> AWEB_API_KEY=<key> \
-  aw team extend alice@aweb.team/developer=claude-code
+  aw team admin extend alice@aweb.team/developer=claude-code
 ```
 
-If discovered homes belong to more than one team, `aw team extend` refuses to
+If discovered homes belong to more than one team, `aw team admin extend` refuses to
 guess. Select the intended team explicitly:
 
 ```bash
-aw team extend charlie@aweb.team/developer=pi \
+aw team admin extend charlie@aweb.team/developer=pi \
   --team-id <name>:<namespace>
 ```
 
@@ -57,7 +60,7 @@ aw team extend charlie@aweb.team/developer=pi \
 For a single supported runtime, materialize and launch it immediately:
 
 ```bash
-aw team extend charlie@aweb.team/developer=pi --start
+aw team admin extend charlie@aweb.team/developer=pi --start
 ```
 
 `--start` accepts exactly one agent. It supports the same `--session`,
@@ -66,9 +69,9 @@ team commands.
 
 ## Create and extend are different intents
 
-- `aw team create <name>` always creates a new team.
-- `aw team extend <spec>...` adds members to an existing team.
-- `aw team add <spec>...` is the lower-level path when the current workspace
+- `aw team admin create <name>` always creates a new team.
+- `aw team admin extend <spec>...` adds members to an existing team.
+- `aw team admin add <spec>...` is the lower-level path when the current workspace
   itself is the team context.
 
 The `:local` or `:global` part of an agent specification controls that new

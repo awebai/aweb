@@ -78,6 +78,9 @@ class CLIReferenceGeneratorTests(unittest.TestCase):
         self.assertIn("## `session`", reference)
         self.assertIn("### `session lease`", reference)
         self.assertIn("### `session lease acquire`", reference)
+        self.assertIn("### `team admin`", reference)
+        self.assertIn("### `team admin add`", reference)
+        self.assertNotIn("### `team add`", reference)
 
     def test_check_rejects_stale_output_without_rewriting_it(self) -> None:
         binary = os.environ.get("AW_CLI_REFERENCE_BIN")

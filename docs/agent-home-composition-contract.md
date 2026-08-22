@@ -157,7 +157,7 @@ Rendering rules (for byte-exactness; fixtures in §10 are the arbiter):
 
 `AGENTS.md` is the canonical body for every harness. The harness-specific entry
 file is a **symlink** to it, selected by the **operator's explicit runtime
-choice** at materialize time (`aw team add/create --runtime <rt>` /
+choice** at materialize time (`aw team admin add/create --runtime <rt>` /
 `…/PROFILE=<rt>`), **never inferred** from the profile's `runtime_assumptions`
 or `runtime_hints`. Runtime kind is required at the materialization API
 boundary. When an operator omits `--runtime`, the client resolves that omission
@@ -193,7 +193,7 @@ skills by name so the agent knows they exist.
 
 ## 7. Team coordination block + wake-loop wiring
 
-A Library-bound `aw team create --profile ...` or `aw team add NAME@BLUEPRINT/PROFILE`
+A Library-bound `aw team admin create --profile ...` or `aw team admin add NAME@BLUEPRINT/PROFILE`
 materialization also converges the home with the normal `aw init` agent setup:
 
 - append/refresh the team's active aweb coordination instructions in `AGENTS.md`

@@ -30,7 +30,7 @@ the launcher variable correctly, and never performs server-wide teardown.
    binding is the intended `.aw/workspace.yaml`.
 
 2. **Launch replacements.** This atomically persists `aweb_tmux_tmpdir`, creates
-   its mode-0700 directory, and runs `aw team up --force --no-attach`. If the
+   its mode-0700 directory, and runs `aw team admin up --force --no-attach`. If the
    dedicated named session already exists, launch is skipped rather than
    creating duplicate windows.
 

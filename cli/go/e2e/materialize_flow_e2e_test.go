@@ -13,7 +13,7 @@
 //
 // SCOPE NOTE (see the escalation on default-aabq.3): the four bugs live in
 // applyLibraryProfileToHome -> MaterializeLibraryProfilePayload, downstream of
-// which `aw team create --profile` runs the aweb "configure" step
+// which `aw team admin create --profile` runs the aweb "configure" step
 // (InjectAgentDocs). On a self-hosted stack that step used to fail (Wall 2);
 // it is fixed in default-aabq.21 and the full flow is now exercised end to end
 // by TestRealStackTeamCreateRosterMaterializesAndConnects (team_create_flow).

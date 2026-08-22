@@ -85,7 +85,7 @@ that passes at least one:
    not exist**?
 
 **Pause** work primarily concerned with: profile-first onboarding; Team Builder;
-`aw team up` expansion; runtime/home/worktree ownership; app-marketplace growth;
+`aw team admin up` expansion; runtime/home/worktree ownership; app-marketplace growth;
 additional first-party naapps; dynamic gateway composition; secrets or audit
 expansion unrelated to the wedge; deep service extraction justified only by the
 old destination architecture.

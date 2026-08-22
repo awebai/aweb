@@ -1,13 +1,13 @@
-# `aw team extend` — command SOT
+# `aw team admin extend` — command SOT
 
 > **Status: shipped compatibility command contract.** The everyday workflow is
-> [Grow an existing team](grow-team.md); this document preserves the durable
+> [Orchestrate more local agents](grow-team.md); this document preserves the durable
 > authority discovery, ambiguity, rollback, and batch semantics used by the
 > implemented command and its tests. It does not make profiles, homes,
 > worktrees, or runtime launch mandatory.
 
-`aw team extend` adds members to an EXISTING team. It is the sibling of
-`aw team create`: same agent specs, same roster-population machinery, minus
+`aw team admin extend` adds members to an EXISTING team. It is the sibling of
+`aw team admin create`: same agent specs, same roster-population machinery, minus
 team creation, plus membership-authority discovery. It is callable from a
 directory that holds an `agents/instances` team, from an agent home, or from
 a clean directory, and it is fully non-TTY (agents run it).
@@ -22,9 +22,9 @@ document or in the command's output.
 
 | Verb | Purpose | Anchor | When cwd is already a team context |
 |---|---|---|---|
-| `aw team create <name>` | Make a NEW team, optionally populate it (`--agent`) | cwd (or `--home`) becomes the first member workspace | always creates; a non-blocking one-line notice points at `aw team extend` for adding to the EXISTING team |
-| `aw team extend <agent-spec>...` | Add members to an EXISTING team, discovering the authority | discovered (see below) | proceeds; hard error suggesting `aw team create` only when no team + authority can be found |
-| `aw team add <agent-spec>...` | Single/multi-member primitive using the CURRENT workspace identity | cwd's `.aw` workspace | proceeds; errors when cwd has no active team workspace |
+| `aw team admin create <name>` | Make a NEW team, optionally populate it (`--agent`) | cwd (or `--home`) becomes the first member workspace | always creates; a non-blocking one-line notice points at `aw team admin extend` for adding to the EXISTING team |
+| `aw team admin extend <agent-spec>...` | Add members to an EXISTING team, discovering the authority | discovered (see below) | proceeds; hard error suggesting `aw team admin create` only when no team + authority can be found |
+| `aw team admin add <agent-spec>...` | Single/multi-member primitive using the CURRENT workspace identity | cwd's `.aw` workspace | proceeds; errors when cwd has no active team workspace |
 
 `extend` and `create --agent` are batch wrappers over the same
 roster-population path (`runTeamHumanCreateRosterAdd` →
@@ -34,13 +34,13 @@ invites). What makes `extend` distinct is that it may run from a directory
 with no workspace identity of its own and DISCOVERS the authority to add
 members.
 
-`aw team create`'s contract is that it ALWAYS creates a new team. It must
+`aw team admin create`'s contract is that it ALWAYS creates a new team. It must
 not refuse just because cwd already has an active team membership: an agent
 standing in its own home always has one, and the shipped non-TTY create path
 supports agent-run `create`, so a hard block there would contradict it. Instead,
 when cwd has an active membership and there is no `--byot`, `create` emits a
 non-blocking one-line notice — you are already a member of team X;
-`aw team extend` adds members to THAT team — and proceeds to create the new
+`aw team admin extend` adds members to THAT team — and proceeds to create the new
 team. The two halves stay symmetric but only `extend`'s side is a hard
 error, because `extend` genuinely cannot proceed without a team + authority
 whereas `create` always can. The notice ships together with `extend` so
@@ -49,10 +49,10 @@ both halves of the cross-suggestion exist at once.
 ## Synopsis
 
 ```
-aw team extend <agent-spec>... [flags]
+aw team admin extend <agent-spec>... [flags]
 ```
 
-Agent specs are identical to `aw team add`:
+Agent specs are identical to `aw team admin add`:
 `[NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]` or `NAME[:local|global]`
 for empty-profile homes. Omitted names use the server-authoritative next
 classic name; omitted scope comes from `profile.yaml`.
@@ -113,7 +113,7 @@ select an anchor wins; lower tiers are not consulted after that:
 2. **The current workspace, if invite-capable** — cwd has a `.aw` workspace
    with an active team and can mint invites (below). This covers running
    `extend` from an agent home and from a team root whose first member was
-   created in place by `aw team create`.
+   created in place by `aw team admin create`.
 3. **A discovered invite-capable agent** — scan the candidate homes under
    the agents root (next section), gather the qualifying ones, apply the
    ambiguity rule below, and borrow the lexicographically first qualifying
@@ -125,14 +125,14 @@ select an anchor wins; lower tiers are not consulted after that:
    ```
    no membership authority found: no --api-key/AWEB_API_KEY, and no
    invite-capable agent workspace under <agents-root> (checked <n>
-   candidate homes); run aw team extend inside a team directory, pass
-   --api-key, or create a new team with aw team create <name>
+   candidate homes); run aw team admin extend inside a team directory, pass
+   --api-key, or create a new team with aw team admin create <name>
    ```
 
 Why explicit-key-first: tiers 2–3 are discovery — they depend on what
 happens to be on disk. An explicit key is the caller saying exactly which
 team and which authority; it must not be overridden by whatever the scan
-finds. (`aw team add` keeps its existing opposite ordering — workspace
+finds. (`aw team admin add` keeps its existing opposite ordering — workspace
 first, API key as fallback — because for `add` the cwd workspace IS the
 explicit context. The asymmetry is deliberate.)
 
@@ -184,13 +184,13 @@ The **agents root** is the directory that holds the team layout
 2. cwd is inside an `agents/instances` tree (the agent-home case) → that
    enclosing `agents/instances`.
 3. `<git-repo-root(cwd)>/agents/instances` exists → that (matches where
-   `aw team add` and `aw team up` operate from a repo subdirectory).
+   `aw team admin add` and `aw team admin up` operate from a repo subdirectory).
 4. Otherwise there is no layout yet: `<cwd>/agents/instances` is created on
    success (the clean-dir case).
 
 New member homes are placed at `<agents-root>/<name>`, with the same
 preflights, materialization, connect, configure, worktree setup, and
-rollback behavior as `aw team add`.
+rollback behavior as `aw team admin add`.
 
 | Call site | Example cwd | Authority available | Agents root |
 |---|---|---|---|
@@ -200,7 +200,7 @@ rollback behavior as `aw team add`.
 
 A clean dir plus an API key is the remote-populate story: nothing on disk,
 the key names the team, and `extend` builds the layout from scratch —
-`aw team create` minus the create.
+`aw team admin create` minus the create.
 
 ## Non-TTY behavior
 
@@ -243,11 +243,11 @@ per-agent outcome fields are omitted on that path.
 
 ## Cross-references between the verbs
 
-- `aw team create` with an active team membership in cwd (and no `--byot`):
-  a non-blocking notice that names the team and suggests `aw team extend`,
+- `aw team admin create` with an active team membership in cwd (and no `--byot`):
+  a non-blocking notice that names the team and suggests `aw team admin extend`,
   then the create proceeds. Not an error.
-- `aw team extend` with no team + authority: suggests `aw team create`
+- `aw team admin extend` with no team + authority: suggests `aw team admin create`
   (tier-4 error above).
-- `aw team extend` in a workspace that has an active team but cannot mint
+- `aw team admin extend` in a workspace that has an active team but cannot mint
   (no team key, no hosted URL, no API key): says what authority is missing
   for that team, rather than the generic tier-4 text.

@@ -274,7 +274,7 @@ turn an incomplete result into permission to delete local credentials.
 When the orchestrator/operator also has the applicable team removal authority:
 
 ```bash
-aw team remove-agent <member-address-or-name> \
+aw team admin remove-agent <member-address-or-name> \
   --team-id <team:namespace> --json
 ```
 
@@ -283,7 +283,7 @@ revocation and reports each store separately. For a hosted local member, it firs
 prepares an immutable W/A/C operation before any write and atomically persists a
 non-secret recovery record; it then releases exact W and commits by opaque
 operation ID. On a partial hosted result, retain the record and run
-`aw team remove-agent --resume-operation <operation-id> --team-id <team:namespace>`.
+`aw team admin remove-agent --resume-operation <operation-id> --team-id <team:namespace>`.
 Use `--list-pending` if local recovery state was lost, or `--abort-operation`
 only before coordination release. These recovery modes never search deleted
 history by alias.
@@ -296,7 +296,7 @@ The installable CLI includes an independent workspace, claim, and certificate
 read:
 
 ```bash
-aw team agent-status <member-name> --team-id <team:namespace> --json
+aw team admin agent-status <member-name> --team-id <team:namespace> --json
 ```
 
 It reads certificate, workspace, and claim state independently of the removal

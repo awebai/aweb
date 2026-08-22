@@ -124,8 +124,8 @@ DID operations.
 | **Public key location** | awid `did_aw_mappings.current_did_key` (for global identities).  Also embedded in the team certificate as `member_did_key` |
 | **Authorizes** | Message signing, DID registration (identity-only `register_did`, no address), DID key rotation, identity-scoped auth (messaging routes), team-certificate auth (coordination routes, together with the team cert) |
 | **Created by** | Self-custodial: `aw init` for a local workspace or `aw init --global --name <name>` for a global identity.  Custodial: the operator's dashboard |
-| **Rotation** | Global self-custodial: `aw id rotate-key` requires the old key to sign. Local team-scoped: `aw team replace-key` requires the team controller and an exact old→new compare-and-swap. Custodial: operator re-generates server-side. |
-| **Recovery if lost** | Local-controller/BYOT local identity: team-authorized `aw team replace-key`. Self-custodial global identity remains a gap (see [Identity Key Loss](#identity-key-loss)). Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address. |
+| **Rotation** | Global self-custodial: `aw id rotate-key` requires the old key to sign. Local team-scoped: `aw team admin replace-key` requires the team controller and an exact old→new compare-and-swap. Custodial: operator re-generates server-side. |
+| **Recovery if lost** | Local-controller/BYOT local identity: team-authorized `aw team admin replace-key`. Self-custodial global identity remains a gap (see [Identity Key Loss](#identity-key-loss)). Custodial: the operator's replace operation generates a new key, re-registers DID, reassigns address. |
 
 #### Custody modes
 
@@ -230,7 +230,7 @@ address continuity.
 | Namespace controller      | DNS ownership                   | `aw id namespace rotate-controller` — DNS reverify         | **Implemented** |
 | Team controller           | Namespace controller            | `POST /v1/namespaces/{domain}/teams/{name}/rotate` at awid | **Implemented** |
 | Identity (custodial)      | Custody operator plus the actual address/team controllers | Replace — new keypair and new DID; authorized controllers reassign address and membership | **Operator-specific** |
-| Local identity (self-custodial, local-controller team) | Team controller | `aw team replace-key` — roster CAS + certificate replacement + audit | **Implemented** |
+| Local identity (self-custodial, local-controller team) | Team controller | `aw team admin replace-key` — roster CAS + certificate replacement + audit | **Implemented** |
 | Global identity (self-custodial) | Namespace + team controllers | Stable-identity/address recovery flow | **Gap** |
 
 ---
@@ -297,7 +297,7 @@ For a local-controller/BYOT team, a human operator holding the team controller
 can authorize the explicit transition:
 
 ```bash
-aw team replace-key alice \
+aw team admin replace-key alice \
   --old-did-key did:key:OLD \
   --home agents/instances/alice \
   --generate-new-key

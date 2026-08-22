@@ -1,7 +1,7 @@
 ---
 title: "Running materialized agents"
 kicker: "Agent runtime guide"
-description: "How optional aw team add and aw team up helpers materialize homes and start local runtimes without owning their lifecycle."
+description: "How optional aw team admin add and aw team admin up helpers materialize homes and start local runtimes without owning their lifecycle."
 weight: 27
 ---
 
@@ -16,17 +16,17 @@ weight: 27
 Use this guide after a workspace is already connected to a team. For the
 communication-first path with two existing agent directories, start with the
 [CLI tutorial](cli-tutorial.md). For this optional materialization workflow,
-see [Create and run your first team](create-and-run-team.md) or
+see [Orchestrate a local agent team](create-and-run-team.md) or
 [Add an AI tool to a team](add-ai-tool.md).
 
 ## 1. Materialize a member, not just a directory
 
-Run `aw team add` from a directory whose own `.aw` state is connected to the
+Run `aw team admin add` from a directory whose own `.aw` state is connected to the
 team you want to extend:
 
 ```bash
-aw team add developer@aweb.team/developer=claude-code
-aw team add reviewer@aweb.team/reviewer=pi
+aw team admin add developer@aweb.team/developer=claude-code
+aw team admin add reviewer@aweb.team/reviewer=pi
 ```
 
 The command uses that active workspace as the membership authority. It creates
@@ -69,8 +69,8 @@ published `aweb.team` profile defaults to local. Pass `:local` or `:global`
 explicitly to override it:
 
 ```bash
-aw team add local-dev@aweb.team/developer:local=claude-code
-aw team add public-reviewer@aweb.team/reviewer:global=pi
+aw team admin add local-dev@aweb.team/developer:local=claude-code
+aw team admin add public-reviewer@aweb.team/reviewer:global=pi
 ```
 
 - `:local` selects a team-scoped identity.
@@ -79,7 +79,7 @@ aw team add public-reviewer@aweb.team/reviewer:global=pi
 
 ### Home isolation: `worktree/` and `work-main/`
 
-`aw team add` separates the agent's **home** (identity + instructions, where
+`aw team admin add` separates the agent's **home** (identity + instructions, where
 `aw` resolves its identity) from its **work** (where the agent runs `git` and
 builds). When a work repository is available, it:
 
@@ -96,7 +96,7 @@ The operating rule is: **run `aw` from the home, run Git and builds from
 Point the worktree at a separate project repository with `--work-dir`:
 
 ```bash
-aw team add alice@aweb.team/developer=pi --work-dir ~/prj/my-project
+aw team admin add alice@aweb.team/developer=pi --work-dir ~/prj/my-project
 ```
 
 The checkout at `~/prj/my-project` remains untouched. Its Git worktree is
@@ -106,29 +106,29 @@ the agent works directly in its home.
 
 ## 2. Materialization does not necessarily start a process
 
-Plain `aw team add ...` stops after creating the membership, home, profile, and
+Plain `aw team admin add ...` stops after creating the membership, home, profile, and
 worktree. No Claude Code, Pi, Codex, or shell process is running yet.
 
 Use `--start` to materialize and launch exactly one supported agent:
 
 ```bash
-aw team add alice@aweb.team/developer=pi --start
+aw team admin add alice@aweb.team/developer=pi --start
 ```
 
 `--start` requires exactly one agent and is rejected with `--layout-only`. It
 takes the same `--session`, `--attach`, and `--no-attach` options as
-`aw team up`, and skips launching if the home is already a running process's
+`aw team admin up`, and skips launching if the home is already a running process's
 current working directory.
 
 ## 3. Start and access materialized agents
 
-`aw team up` is a local tmux convenience. Run it from any directory in the Git
+`aw team admin up` is a local tmux convenience. Run it from any directory in the Git
 worktree that owns `R/agents/instances/`; outside Git, run it from the directory
 that contains `agents/instances/`.
 
 ```bash
-aw team up --dry-run
-aw team up
+aw team admin up --dry-run
+aw team admin up
 ```
 
 The command resolves the same `R`, scans `R/agents/instances/`, and launches
@@ -146,7 +146,7 @@ It does not start in `worktree/`. This is how the runtime loads the home's
 instructions and resolves the correct aweb identity. The agent changes into
 `worktree/` for Git, tests, and builds.
 
-By default, `aw team up` launched from inside tmux uses the caller's current
+By default, `aw team admin up` launched from inside tmux uses the caller's current
 session, so each launched agent is immediately reachable as a new window there.
 Outside tmux, it uses the active-team-derived session name (or `aw-team`). Use
 normal tmux window navigation to move between agents. `--session` overrides
@@ -161,11 +161,11 @@ Current launch support is narrower than materialization support:
 
 - `claude-code` starts with the aweb channel plugin;
 - `pi` starts with the aweb extension and `--approve`;
-- `codex` and `local-shell` can be materialized, but `aw team up` currently
+- `codex` and `local-shell` can be materialized, but `aw team admin up` currently
   rejects them. Start those runtimes manually from the materialized home and
   have the agent poll `aw mail inbox` and `aw chat pending`.
 
-Before starting windows, `aw team up` installs or verifies the supported
+Before starting windows, `aw team admin up` installs or verifies the supported
 runtime channel and handles the known trust and development-channel prompts.
 For Pi, this is deliberately install-if-missing: the launcher does not silently
 replace executable extension code in Pi's `~/.pi/agent/npm` package tree.
@@ -187,8 +187,8 @@ unless you pass `--force-kill`.
 
 For an explicit `--session`, or for the generated default outside tmux,
 live-agent tmux can be isolated from the human/default socket by setting
-`AWEB_TMUX_TMPDIR` before `aw team up`, `aw team add --start`, or
-`aw team extend --start`. The CLI maps that value to `TMUX_TMPDIR` for each
+`AWEB_TMUX_TMPDIR` before `aw team admin up`, `aw team admin add --start`, or
+`aw team admin extend --start`. The CLI maps that value to `TMUX_TMPDIR` for each
 tmux child and strips inherited `TMUX`. The same value can be persisted as
 `aweb_tmux_tmpdir` in `.aw/workspace.yaml`; the environment variable wins.
 
@@ -215,7 +215,7 @@ per-team migration procedure.
 
 ## 4. Public blueprint source
 
-`aw team add` and `aw team create --agent ...` read public profile payloads from
+`aw team admin add` and `aw team admin create --agent ...` read public profile payloads from
 the Library catalog API and materialize them locally. The public path does not
 import to the private shelf, bind through the Library plugin, or call the
 server-side `/v1/materialize` endpoint.

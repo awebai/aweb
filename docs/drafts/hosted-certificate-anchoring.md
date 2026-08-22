@@ -29,7 +29,7 @@ build against.
 ## The three gaps this closes, and the one artifact they share
 
 1. **aaum.9 criterion 2**: no read-only command can establish whether a hosted
-   local member holds an active certificate. `aw team agent-status` honestly
+   local member holds an active certificate. `aw team admin agent-status` honestly
    reports `unknown` because those certificates exist only in AC's
    `cloud_agent_certificates`, keyed by workspace.
 2. **abfn's hosted limitation**: the landed revocation enforcement checks the
@@ -60,7 +60,7 @@ revoke route are existing, signed, idempotent-by-certificate-id operations.
 
 What this buys, with no new protocol surface:
 
-- **Read-back (aaum.9 crit 2)**: `aw team agent-status` and `aw id team
+- **Read-back (aaum.9 crit 2)**: `aw team admin agent-status` and `aw id team
   members` read hosted local certificate state through the exact reads they
   already perform for BYOT teams. `Certificate: unknown` becomes a real
   answer.

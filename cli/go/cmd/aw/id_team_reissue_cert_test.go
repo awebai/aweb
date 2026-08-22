@@ -654,7 +654,7 @@ func TestTeamReissueCertRefusesRegisteredKeyMismatchPointsToReplaceKey(t *testin
 	if err == nil {
 		t.Fatal("expected key-mismatch refusal")
 	}
-	for _, want := range []string{"never changes the member key", "aw team replace-key"} {
+	for _, want := range []string{"never changes the member key", "aw team admin replace-key"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error missing %q: %v", want, err)
 		}

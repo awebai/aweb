@@ -912,7 +912,7 @@ connect, so expect the member to reconnect.
 
 This is NOT key rotation: the member keeps its did:key, and the command refuses
 to run when the registered member key differs from the one attested. For a lost
-or compromised member KEY, use `aw team replace-key` instead.
+or compromised member KEY, use `aw team admin replace-key` instead.
 
 Requires the locally-held team controller key (BYOT/local-controller teams).
 Hosted aweb.ai teams keep the controller key in cloud custody; hosted
@@ -994,130 +994,20 @@ Flags:
 
 Everyday team membership commands.
 
-Use these commands for the normal hosted invite/join membership flow and for
-checking or switching this identity's installed team memberships. Protocol/admin
-controller operations remain under `aw id team`.
+Use these commands to invite a member, join or leave a team, and inspect or
+switch this identity's installed memberships. Local agent orchestration, profile
+management, and owner/admin repair operations live under `aw team admin`.
 
 Subcommands:
-- `add` Add agents to this team's agents/instances layout
-- `adopt` Adopt a public-pinned agent profile onto the team's private Library shelf
-- `agent-status` Read whether an agent still holds a certificate, a workspace, or task claims
-- `create` Create a local empty-profile team workspace
-- `extend` Add agents to an existing team by discovering membership authority
 - `invite` Invite an agent or workspace to the active team
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
-- `refresh` Refresh a team member's profile and existing team-instructions block
-- `remove-agent` Retire an agent: release its claims, then revoke its certificate
-- `replace-key` Replace a local agent identity key under team-controller authority
 - `switch` Switch the active team for this identity
-- `up` Launch local team agents in tmux
+- `admin` Experimental local orchestration and team administration
 
 Flags:
 - `-h, --help help for team`
-
-## `team add`
-
-### `team add`
-
-Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
-
-Flags:
-- `--attach Attach or switch to the tmux session after --start launch (default true)`
-- `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
-- `--global Add a global AWID identity/address-backed agent`
-- `-h, --help help for add`
-- `--home string Agent home directory override for a single added agent (default: agents/instances/<name>)`
-- `--layout-only Only create agents/instances/<name>; do not create identity state`
-- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
-- `--local Add a local team-scoped agent identity (default)`
-- `--no-attach Do not attach or switch to the tmux session after --start launch`
-- `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
-- `--session string tmux session name for --start (default: caller's session inside tmux, otherwise active team name or aw-team)`
-- `--start Launch the added agent in tmux after materializing it`
-- `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
-
-## `team adopt`
-
-### `team adopt`
-
-Adopt a public-pinned agents/instances/<name> profile onto the team's private Library shelf.
-This reads .aw/profile/ref.json, imports the pinned public blueprint/profile onto the
-team shelf through the installed Library plugin, binds the agent, and re-points the
-local pin to the shelf copy by removing library_url. After adopt, aw team refresh
-uses the shelf path and can pick up approved team-local profile mints.
-
-Flags:
-- `-h, --help help for adopt`
-- `--home string Agent home directory override (default: agents/instances/<name>)`
-
-## `team agent-status`
-
-### `team agent-status`
-
-Read the state of one agent across the stores retirement has to clear.
-
-This reads and never writes. It exists so that the evidence an agent is
-retired comes from somewhere other than the command that retired it.
-
-Flags:
-- `-h, --help help for agent-status`
-- `--team-id string Canonical team id (<name>:<namespace>) to read from (defaults to active team)`
-
-## `team create`
-
-### `team create`
-
-Create a local empty-profile team workspace.
-
-This wraps aw init for the aw-local path. No --agent/--profile means no Library call
-and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]
-(or NAME[:local|global] for an empty-profile agent). Omitted names use the
-server-authoritative next classic name; omitted scope comes from profile.yaml.
-All --agent/--profile specs populate agents/instances for aw team up; only
---home with a single spec uses that spec for the root workspace profile.
-Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
-
-Flags:
-- `--agent stringArray Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]`
-- `--blueprint string With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory`
-- `--byot Create a customer-controlled AWID team with local namespace controller authority`
-- `--display-name string Team display name`
-- `--first-agent-global Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority`
-- `--first-agent-local Enroll the first agent as a local team-scoped identity (default)`
-- `--first-agent-name string Initial workspace member name (defaults to <name>)`
-- `-h, --help help for create`
-- `--home string Agent home directory override for single-agent --profile create`
-- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
-- `--name string Team name`
-- `--namespace string Namespace domain for --byot`
-- `--profile stringArray Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]`
-- `--registry string Registry origin override for --byot`
-- `--runtime string Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)`
-- `--service string Hosted service URL for dashboard guidance`
-- `--username string Hosted username to create when founding through managed aweb onboarding`
-
-## `team extend`
-
-### `team extend`
-
-Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY in a workspace with an active team uses that team as an assertion against the API key's team; explicit --api-key bypasses the workspace assertion.
-
-Flags:
-- `--api-key string Team API key for extending a team (overrides AWEB_API_KEY)`
-- `--attach Attach or switch to the tmux session after --start launch (default true)`
-- `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
-- `--global Add a global AWID identity/address-backed agent`
-- `-h, --help help for extend`
-- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
-- `--local Add a local team-scoped agent identity (default)`
-- `--no-attach Do not attach or switch to the tmux session after --start launch`
-- `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
-- `--session string tmux session name for --start (default: caller's session inside tmux, otherwise active team name or aw-team)`
-- `--start Launch the added agent in tmux after materializing it`
-- `--team-id string Canonical team id (<name>:<namespace>) to extend when discovery is ambiguous or when asserting an API key's team`
-- `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
 
 ## `team invite`
 
@@ -1127,7 +1017,7 @@ Invite an agent or workspace to the active team.
 
 This creates an invite token using the current team's authority for a separate
 workspace or machine, then the joining workspace runs `aw team join <token>`.
-For local empty-profile homes under agents/instances/, use `aw team add`.
+For local empty-profile homes under agents/instances/, use `aw team admin add`.
 
 Flags:
 - `-h, --help help for invite`
@@ -1172,13 +1062,135 @@ List team memberships for this identity
 Flags:
 - `-h, --help help for list`
 
-## `team refresh`
+## `team switch`
 
-### `team refresh`
+### `team switch`
+
+Switch the active team for this identity
+
+Flags:
+- `-h, --help help for switch`
+
+## `team admin`
+
+### `team admin`
+
+Experimental local orchestration and team administration.
+
+Use this surface to materialize or launch local agent homes, manage their pinned
+profiles, or perform owner/admin inspection and repair. These operations are
+separate from the everyday invite, join, list, switch, and leave journey.
+
+Subcommands:
+- `add` Add agents to this team's agents/instances layout
+- `adopt` Adopt a public-pinned agent profile onto the team's private Library shelf
+- `create` Create a local empty-profile team workspace
+- `extend` Add agents to an existing team by discovering membership authority
+- `refresh` Refresh a team member's profile and existing team-instructions block
+- `up` Launch local team agents in tmux
+- `agent-status` Read whether an agent still holds a certificate, a workspace, or task claims
+- `remove-agent` Retire an agent: release its claims, then revoke its certificate
+- `replace-key` Replace a local agent identity key under team-controller authority
+
+Flags:
+- `-h, --help help for admin`
+
+## `team admin add`
+
+### `team admin add`
+
+Add one or more agents to agents/instances/<name>/. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Omitted names use the server-authoritative next classic name; omitted scope comes from profile.yaml. @VERSION is no longer supported.
+
+Flags:
+- `--attach Attach or switch to the tmux session after --start launch (default true)`
+- `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
+- `--global Add a global AWID identity/address-backed agent`
+- `-h, --help help for add`
+- `--home string Agent home directory override for a single added agent (default: agents/instances/<name>)`
+- `--layout-only Only create agents/instances/<name>; do not create identity state`
+- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
+- `--local Add a local team-scoped agent identity (default)`
+- `--no-attach Do not attach or switch to the tmux session after --start launch`
+- `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
+- `--session string tmux session name for --start (default: caller's session inside tmux, otherwise active team name or aw-team)`
+- `--start Launch the added agent in tmux after materializing it`
+- `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
+
+## `team admin adopt`
+
+### `team admin adopt`
+
+Adopt a public-pinned agents/instances/<name> profile onto the team's private Library shelf.
+This reads .aw/profile/ref.json, imports the pinned public blueprint/profile onto the
+team shelf through the installed Library plugin, binds the agent, and re-points the
+local pin to the shelf copy by removing library_url. After adopt, aw team admin refresh
+uses the shelf path and can pick up approved team-local profile mints.
+
+Flags:
+- `-h, --help help for adopt`
+- `--home string Agent home directory override (default: agents/instances/<name>)`
+
+## `team admin create`
+
+### `team admin create`
+
+Create a local empty-profile team workspace.
+
+This wraps aw init for the aw-local path. No --agent/--profile means no Library call
+and no profile materialization. --agent accepts [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]
+(or NAME[:local|global] for an empty-profile agent). Omitted names use the
+server-authoritative next classic name; omitted scope comes from profile.yaml.
+All --agent/--profile specs populate agents/instances for aw team admin up; only
+--home with a single spec uses that spec for the root workspace profile.
+Deprecated --profile is accepted as --agent for transition; @VERSION is dropped.
+
+Flags:
+- `--agent stringArray Agent spec [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global]`
+- `--blueprint string With --agent/--profile, default public Library blueprint for profile-only selectors; without agents, materialize all profiles in a local blueprint directory`
+- `--byot Create a customer-controlled AWID team with local namespace controller authority`
+- `--display-name string Team display name`
+- `--first-agent-global Enroll the first agent as a global identity, reusing an existing global identity or creating one when founding with hosted/namespace authority`
+- `--first-agent-local Enroll the first agent as a local team-scoped identity (default)`
+- `--first-agent-name string Initial workspace member name (defaults to <name>)`
+- `-h, --help help for create`
+- `--home string Agent home directory override for single-agent --profile create`
+- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
+- `--name string Team name`
+- `--namespace string Namespace domain for --byot`
+- `--profile stringArray Deprecated alias for --agent; use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]`
+- `--registry string Registry origin override for --byot`
+- `--runtime string Materialization runtime for agent/profile homes (claude-code|codex|pi|local-shell; default claude-code)`
+- `--service string Hosted service URL for dashboard guidance`
+- `--username string Hosted username to create when founding through managed aweb onboarding`
+
+## `team admin extend`
+
+### `team admin extend`
+
+Add agents to an existing team by discovering membership authority. Specs use [NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME] or NAME[:local|global] for empty-profile homes. Explicit --api-key or --team-id with AWEB_API_KEY wins. An ambient AWEB_API_KEY in a workspace with an active team uses that team as an assertion against the API key's team; explicit --api-key bypasses the workspace assertion.
+
+Flags:
+- `--api-key string Team API key for extending a team (overrides AWEB_API_KEY)`
+- `--attach Attach or switch to the tmux session after --start launch (default true)`
+- `--blueprint string Default public Library blueprint for profile-only selectors (default: AWEB_BLUEPRINT or aweb.team)`
+- `--global Add a global AWID identity/address-backed agent`
+- `-h, --help help for extend`
+- `--library-url string Public Library catalog base URL (default: AWEB_LIBRARY_URL or https://library.aweb.ai)`
+- `--local Add a local team-scoped agent identity (default)`
+- `--no-attach Do not attach or switch to the tmux session after --start launch`
+- `--runtime string Materialization runtime for profile-bound agents (claude-code|codex|pi|local-shell; default claude-code)`
+- `--session string tmux session name for --start (default: caller's session inside tmux, otherwise active team name or aw-team)`
+- `--start Launch the added agent in tmux after materializing it`
+- `--team-id string Canonical team id (<name>:<namespace>) to extend when discovery is ambiguous or when asserting an API key's team`
+- `--work-dir string Git repo to use for the agent's worktree (default: repo containing the home, if any)`
+
+## `team admin refresh`
+
+### `team admin refresh`
 
 Re-materialize agents/instances/<name> from the latest version of the profile it was
 materialized from on the team's private Library shelf. This closes the learning loop: an
-approved profile proposal mints a new shelf version, and `aw team refresh` re-applies it
+approved profile proposal mints a new shelf version, and `aw team admin refresh` re-applies it
 locally and updates .aw/profile/ref.json - so the agent picks up the team's own improvement.
 It reads the recorded profile ref locally and never asks a remote service which profile to use.
 
@@ -1187,16 +1199,45 @@ re-injects the active team instructions. It never creates that block in an unmar
 `aw instructions inject <directory>` when an explicit backfill is intended.
 
 Upstream blueprint updates are a separate, composable step: run `aw library update-from-source`
-first to pull them onto the shelf, then `aw team refresh` to re-materialize.
+first to pull them onto the shelf, then `aw team admin refresh` to re-materialize.
 
 Flags:
 - `-h, --help help for refresh`
 - `--home string Agent home directory override (default: agents/instances/<name>)`
 - `--runtime string Runtime harness to re-materialize for (claude-code|codex|pi|local-shell) (default "claude-code")`
 
-## `team remove-agent`
+## `team admin up`
 
-### `team remove-agent`
+### `team admin up`
+
+Launch local team agents in tmux. This is a local runtime convenience: it reads materialized agents/instances/<name> homes and starts one tmux window per supported interactive harness. Team definitions and profile provenance remain in aweb state and .aw/profile/ref.json.
+
+Flags:
+- `--attach Attach or switch to the tmux session after launch (default true)`
+- `--dry-run Print the tmux launch plan without running it`
+- `--force Start even when another process already has an agent home as its cwd`
+- `--force-kill Allow --recreate to kill a tmux session that contains running agent windows`
+- `-h, --help help for up`
+- `--no-attach Do not attach or switch to the tmux session after launch`
+- `--recreate Kill and recreate an existing tmux session`
+- `--session string tmux session name (default: caller's session inside tmux, otherwise active team name or aw-team)`
+
+## `team admin agent-status`
+
+### `team admin agent-status`
+
+Read the state of one agent across the stores retirement has to clear.
+
+This reads and never writes. It exists so that the evidence an agent is
+retired comes from somewhere other than the command that retired it.
+
+Flags:
+- `-h, --help help for agent-status`
+- `--team-id string Canonical team id (<name>:<namespace>) to read from (defaults to active team)`
+
+## `team admin remove-agent`
+
+### `team admin remove-agent`
 
 Retire an agent from a team across the stores that hold its state.
 
@@ -1266,9 +1307,9 @@ Flags:
 - `--resume-operation string Resume exact hosted removal operation ID; no member address is accepted`
 - `--team-id string Canonical team id (<name>:<namespace>) to remove from (defaults to active team)`
 
-## `team replace-key`
+## `team admin replace-key`
 
-### `team replace-key`
+### `team admin replace-key`
 
 Replace a local team-scoped agent's did:key under locally-held team-controller authority.
 
@@ -1288,31 +1329,6 @@ Flags:
 - `--old-did-key string Expected current local member did:key (required)`
 - `--registry string AWID registry URL override`
 - `--team-id string Canonical team id (<name>:<namespace>; defaults to active team)`
-
-## `team switch`
-
-### `team switch`
-
-Switch the active team for this identity
-
-Flags:
-- `-h, --help help for switch`
-
-## `team up`
-
-### `team up`
-
-Launch local team agents in tmux. This is a local runtime convenience: it reads materialized agents/instances/<name> homes and starts one tmux window per supported interactive harness. Team definitions and profile provenance remain in aweb state and .aw/profile/ref.json.
-
-Flags:
-- `--attach Attach or switch to the tmux session after launch (default true)`
-- `--dry-run Print the tmux launch plan without running it`
-- `--force Start even when another process already has an agent home as its cwd`
-- `--force-kill Allow --recreate to kill a tmux session that contains running agent windows`
-- `-h, --help help for up`
-- `--no-attach Do not attach or switch to the tmux session after launch`
-- `--recreate Kill and recreate an existing tmux session`
-- `--session string tmux session name (default: caller's session inside tmux, otherwise active team name or aw-team)`
 
 ## `whoami`
 
@@ -1820,7 +1836,7 @@ Flags:
 
 ### `agent profile show`
 
-Show the Library profile a local agent home was materialized from - the blueprint and profile refs, versions, and content digests recorded in .aw/profile/ref.json. This is what `aw team refresh` updates and what the materialize seam records; it never asks a remote service which profile is in use.
+Show the Library profile a local agent home was materialized from - the blueprint and profile refs, versions, and content digests recorded in .aw/profile/ref.json. This is what `aw team admin refresh` updates and what the materialize seam records; it never asks a remote service which profile is in use.
 
 Flags:
 - `-h, --help help for show`

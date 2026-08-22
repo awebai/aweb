@@ -23,14 +23,14 @@ var teamHumanRefreshCmd = &cobra.Command{
 	Short: "Refresh a team member's profile and existing team-instructions block",
 	Long: "Re-materialize agents/instances/<name> from the latest version of the profile it was\n" +
 		"materialized from on the team's private Library shelf. This closes the learning loop: an\n" +
-		"approved profile proposal mints a new shelf version, and `aw team refresh` re-applies it\n" +
+		"approved profile proposal mints a new shelf version, and `aw team admin refresh` re-applies it\n" +
 		"locally and updates .aw/profile/ref.json - so the agent picks up the team's own improvement.\n" +
 		"It reads the recorded profile ref locally and never asks a remote service which profile to use.\n\n" +
 		"When the home already has exactly one complete AWEB:START/AWEB:END block, refresh also\n" +
 		"re-injects the active team instructions. It never creates that block in an unmarked home; use\n" +
 		"`aw instructions inject <directory>` when an explicit backfill is intended.\n\n" +
 		"Upstream blueprint updates are a separate, composable step: run `aw library update-from-source`\n" +
-		"first to pull them onto the shelf, then `aw team refresh` to re-materialize.",
+		"first to pull them onto the shelf, then `aw team admin refresh` to re-materialize.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamRefresh,
 }
@@ -128,7 +128,7 @@ func readRecordedProfileRef(home string) (recordedProfileRef, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			base := filepath.Base(home)
-			return ref, fmt.Errorf("%s has no recorded profile (%s not found); materialize it first, e.g. `aw team add %s@<blueprint>/<profile>`", base, refPath, base)
+			return ref, fmt.Errorf("%s has no recorded profile (%s not found); materialize it first, e.g. `aw team admin add %s@<blueprint>/<profile>`", base, refPath, base)
 		}
 		return ref, fmt.Errorf("read %s: %w", refPath, err)
 	}
@@ -380,5 +380,5 @@ func callLibraryGetShelfProfileWithMissingErr(profileRef string, missingErr erro
 func init() {
 	teamHumanRefreshCmd.Flags().StringVar(&agentHomeFlag, "home", "", "Agent home directory override (default: agents/instances/<name>)")
 	teamHumanRefreshCmd.Flags().StringVar(&teamRefreshRuntime, "runtime", "claude-code", "Runtime harness to re-materialize for (claude-code|codex|pi|local-shell)")
-	teamHumanCmd.AddCommand(teamHumanRefreshCmd)
+	registerTeamAdminCommand(teamHumanRefreshCmd, teamAdminGroupLocal)
 }

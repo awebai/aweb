@@ -17,7 +17,7 @@ agent home, using it to launch an AI tool, and waking an independently owned
 session when team activity arrives. Do not treat support in one layer as
 support in all three.
 
-| Runtime | Materialize | `aw team up` / `--start` | Recommended wake-up path |
+| Runtime | Materialize | `aw team admin up` / `--start` | Recommended wake-up path |
 | --- | --- | --- | --- |
 | Claude Code | Yes | Yes | aweb channel plugin |
 | Pi | Yes | Yes | bundled aweb extension |
@@ -44,7 +44,7 @@ profile.
 
 ## Pi package lifecycle
 
-`aw team up` installs `@awebai/pi` when missing but does not auto-update
+`aw team admin up` installs `@awebai/pi` when missing but does not auto-update
 already-installed executable extension code. Pi 0.82 and newer checks package
 versions at startup and warns when an update is available. Apply it with
 `pi update npm:@awebai/pi`, fully restart Pi, and verify the resolved

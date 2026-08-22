@@ -100,7 +100,7 @@ func init() {
 	teamHumanUpCmd.Flags().BoolVar(&teamUpRecreate, "recreate", false, "Kill and recreate an existing tmux session")
 	teamHumanUpCmd.Flags().BoolVar(&teamUpForceKill, "force-kill", false, "Allow --recreate to kill a tmux session that contains running agent windows")
 	teamHumanUpCmd.Flags().BoolVar(&teamUpForce, "force", false, "Start even when another process already has an agent home as its cwd")
-	teamHumanCmd.AddCommand(teamHumanUpCmd)
+	registerTeamAdminCommand(teamHumanUpCmd, teamAdminGroupLocal)
 }
 
 func runTeamHumanUp(cmd *cobra.Command, args []string) error {
@@ -195,7 +195,7 @@ func buildTeamUpPlanForSession(repoRoot string, selection teamUpSessionSelection
 	entries, err := os.ReadDir(agentsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return teamUpPlan{}, fmt.Errorf("no agents/instances directory found; add materialized agents first with `aw team add NAME@BLUEPRINT/PROFILE=<runtime>`")
+			return teamUpPlan{}, fmt.Errorf("no agents/instances directory found; add materialized agents first with `aw team admin add NAME@BLUEPRINT/PROFILE=<runtime>`")
 		}
 		return teamUpPlan{}, err
 	}
@@ -312,9 +312,9 @@ func teamUpCommandForRuntime(runtimeKind string) ([]string, error) {
 	case "pi":
 		return []string{"pi", "--approve"}, nil
 	case "codex", "local-shell":
-		return nil, fmt.Errorf("runtime %q is not supported by this exploratory aw team up; only claude-code and pi are supported", runtimeKind)
+		return nil, fmt.Errorf("runtime %q is not supported by this exploratory aw team admin up; only claude-code and pi are supported", runtimeKind)
 	default:
-		return nil, fmt.Errorf("runtime %q is not supported by aw team up", runtimeKind)
+		return nil, fmt.Errorf("runtime %q is not supported by aw team admin up", runtimeKind)
 	}
 }
 
@@ -363,7 +363,7 @@ func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, forceKill,
 		exists = false
 	}
 	if len(starts) == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "aw team up: no missing agents to start in session %q\n", plan.Session)
+		fmt.Fprintf(cmd.OutOrStdout(), "aw team admin up: no missing agents to start in session %q\n", plan.Session)
 		if attach && exists {
 			return nil, attachTeamUpSession(cmd, plan.TmuxContext, plan.Session)
 		}
@@ -374,7 +374,7 @@ func executeTeamUpPlan(cmd *cobra.Command, plan teamUpPlan, recreate, forceKill,
 			return nil, err
 		}
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "aw team up: started %d missing agent(s) in tmux session %q\n", len(starts), plan.Session)
+	fmt.Fprintf(cmd.OutOrStdout(), "aw team admin up: started %d missing agent(s) in tmux session %q\n", len(starts), plan.Session)
 	if attach {
 		return starts, attachTeamUpSession(cmd, plan.TmuxContext, plan.Session)
 	}
@@ -389,7 +389,7 @@ func guardTeamUpRecreate(plan teamUpPlan) error {
 	if len(live) == 0 {
 		return nil
 	}
-	return fmt.Errorf("refusing aw team up --recreate for tmux session %q because it contains running agent window(s): %s. Use a throwaway --session for dogfood, or pass --force-kill to intentionally kill this session", plan.Session, strings.Join(live, ", "))
+	return fmt.Errorf("refusing aw team admin up --recreate for tmux session %q because it contains running agent window(s): %s. Use a throwaway --session for dogfood, or pass --force-kill to intentionally kill this session", plan.Session, strings.Join(live, ", "))
 }
 
 func liveTeamUpAgentsInSession(plan teamUpPlan) ([]string, error) {
@@ -876,8 +876,8 @@ func teamUpShellCommand(agent teamUpAgentPlan, guardedPath string) string {
 
 func formatTeamUpNoTmuxGuidance(plan teamUpPlan) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "tmux is recommended for `aw team up`. Install tmux, then re-run `aw team up`.\n")
-	fmt.Fprintf(&b, "With tmux installed, `aw team up` automatically starts and wires every agent for you (channel plugin, trust/dev-channel prompts, pi --approve).\n")
+	fmt.Fprintf(&b, "tmux is recommended for `aw team admin up`. Install tmux, then re-run `aw team admin up`.\n")
+	fmt.Fprintf(&b, "With tmux installed, `aw team admin up` automatically starts and wires every agent for you (channel plugin, trust/dev-channel prompts, pi --approve).\n")
 	starts := teamUpAgentsToStart(plan)
 	if len(starts) == 0 {
 		fmt.Fprintf(&b, "No missing agents need a manual launch right now.\n")

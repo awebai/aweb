@@ -32,7 +32,7 @@ copy-pasted into 7 sites, and about 5 of those are the *same*
 `awebURLForTeamInvite` (`id_team.go:768`) is the anomaly: it is the one
 resolver that *forgot* the default and returns `""`. Its registry twin
 `registryURLForTeamInvite` (`id_team.go:749`) does the same. When a member
-provisions an agent (`aw team add`), an empty URL here makes the mint decision
+provisions an agent (`aw team admin add`), an empty URL here makes the mint decision
 (`team_human.go:1367-1378`) fall through to the local-team-key branch and fail
 with `no team key` (`id_team.go:1130`) — even though the member is entitled to
 mint via their hosted member cert. This was the reported "second agent-set
@@ -162,7 +162,7 @@ behaviour. We remove the *duplication* and the *divergence*:
    identity with its own `teams.yaml` + `workspace.yaml`.
 2. Every accept/enroll path leaves: `workspace.AwebURL` set, both stores'
    membership views agreeing, hosted memberships carrying `RegistryURL`, and a
-   joined member able to `aw team add`.
+   joined member able to `aw team admin add`.
 3. The aweb-URL resolver never returns empty for a hosted context.
 4. No behaviour change for existing single-team worktrees beyond the one-time
    migration.

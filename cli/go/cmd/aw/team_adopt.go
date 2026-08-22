@@ -16,7 +16,7 @@ var teamHumanAdoptCmd = &cobra.Command{
 	Long: "Adopt a public-pinned agents/instances/<name> profile onto the team's private Library shelf.\n" +
 		"This reads .aw/profile/ref.json, imports the pinned public blueprint/profile onto the\n" +
 		"team shelf through the installed Library plugin, binds the agent, and re-points the\n" +
-		"local pin to the shelf copy by removing library_url. After adopt, aw team refresh\n" +
+		"local pin to the shelf copy by removing library_url. After adopt, aw team admin refresh\n" +
 		"uses the shelf path and can pick up approved team-local profile mints.",
 	Args: cobra.ExactArgs(1),
 	RunE: runTeamAdopt,
@@ -59,7 +59,7 @@ func runTeamAdopt(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "Adopted %s onto the team Library shelf: %s@%s\n", out.Agent, out.ProfileRef, out.ProfileVersion)
 	fmt.Fprintf(cmd.OutOrStdout(), "  home: %s\n", out.HomeDir)
 	fmt.Fprintf(cmd.OutOrStdout(), "  source: %s@%s (%s)\n", out.SourceBlueprintRef, out.SourceBlueprintVersion, out.SourceBlueprintDigest)
-	fmt.Fprintf(cmd.OutOrStdout(), "  .aw/profile/ref.json now points at the shelf (library_url removed); run `aw team refresh %s` to pick up approved shelf mints.\n", out.Agent)
+	fmt.Fprintf(cmd.OutOrStdout(), "  .aw/profile/ref.json now points at the shelf (library_url removed); run `aw team admin refresh %s` to pick up approved shelf mints.\n", out.Agent)
 	return nil
 }
 
@@ -69,7 +69,7 @@ func adoptLibraryProfilePinToShelf(homeDir, agentID string, old recordedProfileR
 		return teamAdoptOutput{}, usageError("agent name is required")
 	}
 	if strings.TrimSpace(old.LibraryURL) == "" {
-		return teamAdoptOutput{}, usageError("%s is already shelf-pinned (ref.json has no library_url); run `aw team refresh %s` to apply approved shelf mints", agentID, agentID)
+		return teamAdoptOutput{}, usageError("%s is already shelf-pinned (ref.json has no library_url); run `aw team admin refresh %s` to apply approved shelf mints", agentID, agentID)
 	}
 	if strings.TrimSpace(old.SourceBlueprintRef) == "" || strings.TrimSpace(old.ProfileRef) == "" || strings.TrimSpace(old.ProfileVersion) == "" || strings.TrimSpace(old.ProfileDigest) == "" {
 		return teamAdoptOutput{}, fmt.Errorf("%s has an incomplete public profile pin; need source_blueprint_ref, profile_ref, profile_version, and profile_digest in .aw/profile/ref.json", agentID)
@@ -168,5 +168,5 @@ func writeRecordedProfileRef(homeDir string, ref recordedProfileRef) error {
 
 func init() {
 	teamHumanAdoptCmd.Flags().StringVar(&agentHomeFlag, "home", "", "Agent home directory override (default: agents/instances/<name>)")
-	teamHumanCmd.AddCommand(teamHumanAdoptCmd)
+	registerTeamAdminCommand(teamHumanAdoptCmd, teamAdminGroupLocal)
 }
