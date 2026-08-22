@@ -22,16 +22,20 @@ func workspaceConnectRecoveryCommand(workingDir, identityHome string) (string, b
 		membership := state.ActiveMembership()
 		if membership != nil {
 			if raw := strings.TrimSpace(membership.AwebURL); raw != "" {
-				if normalized, normalizeErr := canonicalReconnectAwebURL(raw); normalizeErr == nil {
-					return "aw workspace connect --service " + normalized, true
+				if normalized, normalizeErr := validateInviteAwebURL(raw); normalizeErr == nil {
+					return workspaceConnectCommand(normalized), true
 				}
 			}
 			if raw := awebURLForTeamInviteAt(workingDir, identityHome, membership.TeamID); raw != "" {
-				if normalized, normalizeErr := canonicalReconnectAwebURL(raw); normalizeErr == nil {
-					return "aw workspace connect --service " + normalized, true
+				if normalized, normalizeErr := validateInviteAwebURL(raw); normalizeErr == nil {
+					return workspaceConnectCommand(normalized), true
 				}
 			}
 		}
 	}
 	return "", false
+}
+
+func workspaceConnectCommand(awebURL string) string {
+	return formatShellCommand([]string{"aw", "workspace", "connect", "--service", awebURL})
 }

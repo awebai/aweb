@@ -34,9 +34,10 @@ type teamCreateOutput struct {
 }
 
 type teamInviteOutput struct {
-	Status   string `json:"status"`
-	InviteID string `json:"invite_id"`
-	Token    string `json:"token"`
+	Status        string `json:"status"`
+	InviteID      string `json:"invite_id"`
+	Token         string `json:"token"`
+	PorcelainJoin bool   `json:"-"`
 }
 
 type teamAcceptInviteOutput struct {
@@ -659,17 +660,17 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamInvite(cmd *cobra.Command, args []string) error {
-	return runTeamInviteWithJoinEnvelope(cmd, args, false)
+	return runTeamInviteWithOutput(cmd, args, false)
 }
 
 func runTeamHumanInvite(cmd *cobra.Command, args []string) error {
 	if err := applyHumanTeamIDToInvite(teamHumanInviteTeamID); err != nil {
 		return err
 	}
-	return runTeamInviteWithJoinEnvelope(cmd, args, true)
+	return runTeamInviteWithOutput(cmd, args, true)
 }
 
-func runTeamInviteWithJoinEnvelope(cmd *cobra.Command, args []string, addJoinEnvelope bool) error {
+func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bool) error {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return err
@@ -706,17 +707,11 @@ func runTeamInviteWithJoinEnvelope(cmd *cobra.Command, args []string, addJoinEnv
 			return err
 		}
 	}
-	if addJoinEnvelope && awid.IsHostedSpawnInviteToken(token) && strings.TrimSpace(awebURL) != "" {
-		token, err = encodeHostedJoinToken(token, awebURL)
-		if err != nil {
-			return err
-		}
-	}
-
 	printOutput(teamInviteOutput{
-		Status:   "created",
-		InviteID: inviteID,
-		Token:    token,
+		Status:        "created",
+		InviteID:      inviteID,
+		Token:         token,
+		PorcelainJoin: porcelainJoin,
 	}, formatTeamInvite)
 	return nil
 }
@@ -925,21 +920,25 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 		if connectURL == "" {
 			connectURL = awebURLForTeamInviteAt(workingDir, externalIdentityHomeRoot(home), accepted.Output.TeamID)
 		}
-		if connectURL == "" {
-			return usageError("team membership was installed, but this legacy invite does not identify its aweb service; run `aw workspace connect --service <url>`")
-		}
-		connectURL, err = canonicalReconnectAwebURL(connectURL)
-		if err != nil {
-			return err
-		}
-		accepted.Output.AwebURL = connectURL
-		accepted.Output.ConnectCommand = "aw workspace connect --service " + connectURL
 		if teamHumanJoinNoConnect {
 			connected := false
 			accepted.Output.Connected = &connected
+			if normalized, normalizeErr := validateInviteAwebURL(connectURL); normalizeErr == nil {
+				accepted.Output.AwebURL = normalized
+				accepted.Output.ConnectCommand = workspaceConnectCommand(normalized)
+			}
 			printOutput(*accepted.Output, formatTeamAcceptInvite)
 			return nil
 		}
+		if connectURL == "" {
+			return usageError("team membership was installed, but this legacy invite does not identify its aweb service; run `%s` after choosing the service", workspaceConnectCommand("<url>"))
+		}
+		connectURL, err = validateInviteAwebURL(connectURL)
+		if err != nil {
+			return fmt.Errorf("team membership was installed, but its aweb service URL is invalid: %w", err)
+		}
+		accepted.Output.AwebURL = connectURL
+		accepted.Output.ConnectCommand = workspaceConnectCommand(connectURL)
 		connected, connectErr := initCertificateConnectWithOptions(workingDir, connectURL, certificateConnectOptions{
 			IdentityHome: home.Root,
 		})

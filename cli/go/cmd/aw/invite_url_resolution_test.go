@@ -10,14 +10,13 @@ import (
 // TestAwebURLForTeamInviteResolvesFromTeamStateMembership pins the invariant
 // that breaks maria-style provisioning (epic default-aadu).
 //
-// A member who runs `aw team join` has their teams.yaml populated with the
-// team's aweb_url, but workspace.yaml is intentionally not written until
-// `aw init` (see TestTeamInviteHostedUsesCloudAuthorityWithoutLocalTeamKey,
-// which asserts no workspace.yaml before init). When that member then runs
-// `aw team admin add`, the invite-mint URL resolver must still find the hosted aweb
-// URL from teams.yaml. If it only consults workspace.yaml it returns "", the
-// mint decision falls through to the local-team-key branch, and a legitimately
-// entitled hosted member fails with "no team key".
+// Invite redemption writes the team's aweb_url to teams.yaml before the
+// workspace connection is attempted. That cache remains the recovery source
+// after `aw team join --no-connect` or a failed default connection. When that
+// member later runs `aw team admin add`, the invite-mint URL resolver must still
+// find the hosted aweb URL from teams.yaml. If it only consults workspace.yaml
+// it returns "", the mint decision falls through to the local-team-key branch,
+// and a legitimately entitled hosted member fails with "no team key".
 func TestAwebURLForTeamInviteResolvesFromTeamStateMembership(t *testing.T) {
 	dir := t.TempDir()
 	teamID := "default:gracehosted.aweb.ai"

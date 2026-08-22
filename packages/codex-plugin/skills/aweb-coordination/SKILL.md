@@ -188,10 +188,9 @@ When the human (or another agent) needs a second working copy of the same repo â
 ```bash
 git worktree add ../repo-feature -b feature-branch
 cd ../repo-feature
-# then join/connect this directory with the appropriate team primitive:
+# A fresh invite join connects this directory using the invite's service URL:
 aw team join <invite-token>
-aw init
-# or, for an already-certified BYOT/global workspace:
+# For an already-certified BYOT/global workspace instead:
 aw workspace connect --service <service-url> --team <team>:<namespace>
 ```
 

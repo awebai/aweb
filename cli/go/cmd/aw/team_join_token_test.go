@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,10 +11,7 @@ import (
 )
 
 func TestHostedJoinTokenEnvelopeRoundTrip(t *testing.T) {
-	wrapped, err := encodeHostedJoinToken("aw_inv_server_secret", "https://host.example/api/")
-	if err != nil {
-		t.Fatal(err)
-	}
+	wrapped := hostedJoinTokenForTest(t, "aw_inv_server_secret", "https://host.example/api/")
 	if !strings.HasPrefix(wrapped, hostedJoinTokenPrefix) || strings.Contains(wrapped, "server_secret") {
 		t.Fatalf("unexpected hosted join envelope %q", wrapped)
 	}
@@ -20,9 +19,37 @@ func TestHostedJoinTokenEnvelopeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if raw != "aw_inv_server_secret" || awebURL != "https://host.example/api" {
+	if raw != wrapped || awebURL != "https://host.example/api" {
 		t.Fatalf("decoded raw/url=%q/%q", raw, awebURL)
 	}
+}
+
+func TestHostedJoinTokenRejectsUnsafeServiceURLs(t *testing.T) {
+	for _, rawURL := range []string{
+		"relative/path",
+		"http://[::1",
+		"file://host/path",
+		"https:///missing-host",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			if _, err := validateInviteAwebURL(rawURL); err == nil {
+				t.Fatalf("validation accepted unsafe service URL %q", rawURL)
+			}
+			wireToken := hostedJoinTokenForTest(t, "aw_inv_server_secret", rawURL)
+			if _, _, err := decodeJoinToken(wireToken); err == nil {
+				t.Fatalf("decode accepted unsafe embedded service URL %q", rawURL)
+			}
+		})
+	}
+}
+
+func hostedJoinTokenForTest(t *testing.T, innerToken, awebURL string) string {
+	t.Helper()
+	payload, err := json.Marshal(hostedJoinTokenEnvelope{Version: 1, InnerToken: innerToken, AwebURL: awebURL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hostedJoinTokenPrefix + base64.RawURLEncoding.EncodeToString(payload)
 }
 
 func TestIdentityWithoutWorkspaceErrorUsesCachedServiceURL(t *testing.T) {
@@ -70,6 +97,19 @@ func TestDecodeJoinTokenKeepsLegacyHostedToken(t *testing.T) {
 	}
 }
 
+func TestDecodeJoinTokenPassesThroughLegacyTokenCollidingWithV1Prefix(t *testing.T) {
+	// A legacy token is aw_inv_ plus 43 base64url characters. Its random suffix
+	// may validly start with v1_, making the whole token start with aw_inv_v1_.
+	token := "aw_inv_v1_" + strings.Repeat("A", 40)
+	raw, awebURL, err := decodeJoinToken(token)
+	if err != nil {
+		t.Fatalf("legacy collision was incorrectly decoded as an envelope: %v", err)
+	}
+	if raw != token || awebURL != "" {
+		t.Fatalf("legacy collision raw/url=%q/%q want exact pass-through and legacy URL fallback", raw, awebURL)
+	}
+}
+
 func TestWorkspaceRecoveryUsesCachedInviteServiceURL(t *testing.T) {
 	dir := t.TempDir()
 	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{
@@ -82,5 +122,20 @@ func TestWorkspaceRecoveryUsesCachedInviteServiceURL(t *testing.T) {
 	}
 	if got, ok := workspaceConnectRecoveryCommand(dir, ""); !ok || got != "aw workspace connect --service https://service.example/api" {
 		t.Fatalf("recovery command=%q", got)
+	}
+}
+
+func TestWorkspaceRecoveryShellQuotesServiceURL(t *testing.T) {
+	dir := t.TempDir()
+	if err := awconfig.SaveTeamState(dir, &awconfig.TeamState{
+		ActiveTeam: "ops:example.test",
+		Memberships: []awconfig.TeamMembership{{
+			TeamID: "ops:example.test", Alias: "bob", CertPath: "team-certs/ops__example.test.pem", AwebURL: "http://[::1]:8100/api",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := workspaceConnectRecoveryCommand(dir, ""); !ok || got != "aw workspace connect --service 'http://[::1]:8100/api'" {
+		t.Fatalf("shell-safe recovery command=%q", got)
 	}
 }

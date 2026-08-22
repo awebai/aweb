@@ -14,9 +14,13 @@ runtime-specific canonical files.
    aw init
    aw team invite
    aw team join <invite-token>
-   aw workspace connect --service <service-url>
    aw check
    ```
+
+   Run `aw init` in the first workspace. The printed `aw team join` command
+   connects each fresh invited workspace using the service URL in its token;
+   no separate connect command is needed. Use `aw workspace connect` only for
+   an already-certified identity or an intentional `aw team join --no-connect`.
 
 2. Copy/adapt the resources under `resources/` into your repo for review.
 3. Publish shared operating context explicitly:
@@ -29,7 +33,7 @@ runtime-specific canonical files.
    ```
 
 4. Use normal `git worktree` commands when you want separate working copies;
-   then initialize/connect each workspace with `aw init`, `aw team join`, or
-   `aw workspace connect`.
+   then connect each workspace with `aw team join`, or use `aw workspace
+   connect` for an already-installed certificate.
 
 See `docs/resource-pack-template-contract.md` in the aweb repo for the contract.

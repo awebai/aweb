@@ -55,10 +55,10 @@ A resource pack **never** controls:
 Those are created or connected with explicit primitives such as:
 
 ```bash
+aw init                                      # first workspace
 aw team invite
-aw team join <invite-token>
-aw init
-aw workspace connect --service <service-url> --team <team>:<namespace>
+aw team join <invite-token>                  # fresh invitee; connects from token
+aw workspace connect --service <service-url> --team <team>:<namespace>  # existing cert / --no-connect
 aw roles add <role-name> --title <title> --playbook-file <path>
 aw roles set --bundle-file <path>
 aw instructions set --body-file <path>

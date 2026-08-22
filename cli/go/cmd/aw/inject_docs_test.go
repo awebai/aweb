@@ -309,6 +309,63 @@ func TestPublicTeamJoinGuidanceConnectsByDefault(t *testing.T) {
 	if !strings.Contains(formatted, "Connected to https://app.example/api as bob") {
 		t.Fatalf("team join output does not report the connection it completed:\n%s", formatted)
 	}
+	notConnected := false
+	legacyFormatted := formatTeamAcceptInvite(teamAcceptInviteOutput{Connected: &notConnected})
+	if !strings.Contains(legacyFormatted, "aw workspace connect --service '<url>'") {
+		t.Fatalf("legacy membership-only output does not shell-quote its URL placeholder:\n%s", legacyFormatted)
+	}
+	if got := formatTeamInvite(teamInviteOutput{Token: "token", PorcelainJoin: true}); !strings.Contains(got, "aw team join token --name <name>") {
+		t.Fatalf("human invite does not print the porcelain join path:\n%s", got)
+	}
+	if got := formatTeamInvite(teamInviteOutput{Token: "token"}); !strings.Contains(got, "aw id team accept-invite token --name <name>") {
+		t.Fatalf("low-level invite no longer prints its membership-only primitive:\n%s", got)
+	}
+}
+
+func TestTeamJoinGuidanceMirrorsStayCurrent(t *testing.T) {
+	root := cmdMonorepoRootForTest(t)
+	read := func(relative string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	for canonical, mirrors := range map[string][]string{
+		"docs/identity-guide.md":               {"awid/site/static/identity-guide.md"},
+		"skills/aweb-identity/SKILL.md":        {"packages/codex-plugin/skills/aweb-identity/SKILL.md"},
+		"skills/aweb-team-membership/SKILL.md": {"packages/codex-plugin/skills/aweb-team-membership/SKILL.md"},
+		"skills/aweb-coordination/SKILL.md": {
+			"packages/codex-plugin/skills/aweb-coordination/SKILL.md",
+			"oats/.agents/capabilities/owned/aweb-tasks/skills/aweb-coordination/SKILL.md",
+		},
+	} {
+		want := read(canonical)
+		for _, mirror := range mirrors {
+			if got := read(mirror); got != want {
+				t.Errorf("%s differs from canonical %s", mirror, canonical)
+			}
+		}
+	}
+
+	for _, relative := range []string{
+		"docs/identity-guide.md",
+		"awid/site/static/identity-guide.md",
+		"skills/aweb-coordination/SKILL.md",
+		"resource-packs/coord-workflows/README.md",
+	} {
+		guidance := read(relative)
+		for _, stale := range []string{
+			"aw team join <invite-token>\naw init",
+			"aw team join <invite-token>\naw workspace connect",
+			"Joining installs the second agent's identity and membership but does not create",
+		} {
+			if strings.Contains(guidance, stale) {
+				t.Errorf("%s retains stale post-join setup contract %q", relative, stale)
+			}
+		}
+	}
 }
 
 func TestAwebTeamInstructionsExplainRosterResponsibility(t *testing.T) {

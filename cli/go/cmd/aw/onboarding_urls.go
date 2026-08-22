@@ -2,12 +2,29 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/awebai/aw/awid"
 )
+
+func validateInviteAwebURL(raw string) (string, error) {
+	normalized, err := canonicalReconnectAwebURL(raw)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(normalized)
+	if err != nil {
+		return "", err
+	}
+	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+	if (scheme != "http" && scheme != "https") || strings.TrimSpace(u.Hostname()) == "" {
+		return "", fmt.Errorf("service URL must be an absolute http or https URL with a host")
+	}
+	return normalized, nil
+}
 
 type onboardingServiceURLs struct {
 	OnboardingURL       string

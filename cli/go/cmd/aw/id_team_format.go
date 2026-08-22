@@ -28,7 +28,11 @@ func formatTeamInvite(v any) string {
 	sb.WriteString(fmt.Sprintf("Status:      %s\n", out.Status))
 	sb.WriteString(fmt.Sprintf("Invite ID:   %s\n", out.InviteID))
 	sb.WriteString(fmt.Sprintf("Token:       %s\n", out.Token))
-	sb.WriteString(fmt.Sprintf("Command:     aw team join %s --name <name>\n", out.Token))
+	if out.PorcelainJoin {
+		sb.WriteString(fmt.Sprintf("Command:     aw team join %s --name <name>\n", out.Token))
+	} else {
+		sb.WriteString(fmt.Sprintf("Command:     aw id team accept-invite %s --name <name>\n", out.Token))
+	}
 	return sb.String()
 }
 
@@ -43,6 +47,8 @@ func formatTeamAcceptInvite(v any) string {
 		sb.WriteString(fmt.Sprintf("Connected to %s as %s\n", strings.TrimSpace(out.AwebURL), strings.TrimSpace(out.Alias)))
 	} else if strings.TrimSpace(out.ConnectCommand) != "" {
 		sb.WriteString(fmt.Sprintf("Not connected. Run: %s\n", strings.TrimSpace(out.ConnectCommand)))
+	} else if out.Connected != nil {
+		sb.WriteString(fmt.Sprintf("Not connected. This legacy invite has no service URL; run `%s` after choosing the service.\n", workspaceConnectCommand("<url>")))
 	}
 	return sb.String()
 }

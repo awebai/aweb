@@ -841,32 +841,51 @@ BOB_DID_AW="$(echo "$bob_create" | jq_field did_aw)"
 assert_not_empty "bob did_key" "$BOB_DID_KEY"
 assert_not_empty "bob did_aw" "$BOB_DID_AW"
 
-# Alice uses the ordinary invite surface. Its token carries the service URL.
-capture_success bob_invite_out "bob_invite_out" run_aw_in "$ALICE_DIR" team invite \
-  --team-id devteam:test.local \
-  --member-global \
+# Alice creates invite for bob
+capture_success bob_invite_out "bob_invite_out" run_aw_in "$ALICE_DIR" id team invite \
+  --team devteam \
+  --namespace test.local \
+  --global \
   --json
 
 BOB_INVITE_TOKEN="$(echo "$bob_invite_out" | jq_field token)"
 assert_not_empty "bob invite token" "$BOB_INVITE_TOKEN"
 
-# Bob's one join command installs membership and connects the workspace.
-capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" team join "$BOB_INVITE_TOKEN" --global \
-  --name bob \
+# Bob accepts the invite (cert saved under $BOB_DIR/.aw/team-certs/)
+capture_success bob_accept "bob_accept" run_aw_in "$BOB_DIR" id team accept-invite "$BOB_INVITE_TOKEN" --global \
+  --alias bob \
   --json
 
 BOB_ACCEPT_STATUS="$(echo "$bob_accept" | jq_field status)"
 assert_eq "bob accepted" "accepted" "$BOB_ACCEPT_STATUS"
-BOB_JOIN_CONNECTED="$(echo "$bob_accept" | jq_field connected)"
-BOB_JOIN_AWEB_URL="$(echo "$bob_accept" | jq_field aweb_url)"
-assert_eq "bob join connected" "True" "$BOB_JOIN_CONNECTED"
-assert_eq "bob join used invite service URL" "$AWEB_URL" "$BOB_JOIN_AWEB_URL"
 
-capture_success bob_check "bob_check" run_aw_in "$BOB_DIR" check --online --json
-BOB_CHECK_STATUS="$(echo "$bob_check" | jq_field status)"
-assert_eq "bob check after join" "ok" "$BOB_CHECK_STATUS"
+# Bob connects to aweb
+run_success "bob init" run_aw_in "$BOB_DIR" init --url "$AWEB_URL"
+bob_init_exit=$?
+assert_eq "bob init exit" "0" "$bob_init_exit"
 
-run_success "bob mail lands after join without setup commands" run_aw_in "$BOB_DIR" mail send --plaintext \
+# A fresh local teammate takes the porcelain path from invite to a connected,
+# healthy workspace and real mail without a separate init/connect command.
+capture_success gsk_invite_out "gsk_invite_out" run_aw_in "$ALICE_DIR" team invite \
+  --team-id devteam:test.local \
+  --json
+GSK_INVITE_TOKEN="$(echo "$gsk_invite_out" | jq_field token)"
+assert_not_empty "gsk local invite token" "$GSK_INVITE_TOKEN"
+capture_success gsk_accept "gsk_accept" run_aw_in "$GSK_DIR" team join "$GSK_INVITE_TOKEN" \
+  --name gsk \
+  --json
+GSK_ACCEPT_STATUS="$(echo "$gsk_accept" | jq_field status)"
+assert_eq "gsk accepted local invite" "accepted" "$GSK_ACCEPT_STATUS"
+GSK_JOIN_CONNECTED="$(echo "$gsk_accept" | jq_field connected)"
+GSK_JOIN_AWEB_URL="$(echo "$gsk_accept" | jq_field aweb_url)"
+assert_eq "fresh local join connected" "True" "$GSK_JOIN_CONNECTED"
+assert_eq "fresh local join used invite service URL" "$AWEB_URL" "$GSK_JOIN_AWEB_URL"
+
+capture_success gsk_check "gsk_check" run_aw_in "$GSK_DIR" check --online --json
+GSK_CHECK_STATUS="$(echo "$gsk_check" | jq_field status)"
+assert_eq "fresh local check after join" "ok" "$GSK_CHECK_STATUS"
+
+run_success "fresh local mail lands after join without setup commands" run_aw_in "$GSK_DIR" mail send --plaintext \
   --to alice \
   --subject "Join default-connect e2e" \
   --body "invite join check mail works"
@@ -1585,23 +1604,6 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "=== Phase 12c: Local server-projected addresses ==="
 
-capture_success gsk_invite_out "gsk_invite_out" run_aw_in "$ALICE_DIR" id team invite \
-  --team devteam \
-  --namespace test.local \
-  --local \
-  --json
-GSK_INVITE_TOKEN="$(echo "$gsk_invite_out" | jq_field token)"
-assert_not_empty "gsk local invite token" "$GSK_INVITE_TOKEN"
-
-capture_success gsk_accept "gsk_accept" run_aw_in "$GSK_DIR" id team accept-invite "$GSK_INVITE_TOKEN" \
-  --alias gsk \
-  --json
-GSK_ACCEPT_STATUS="$(echo "$gsk_accept" | jq_field status)"
-assert_eq "gsk accepted local invite" "accepted" "$GSK_ACCEPT_STATUS"
-
-run_success "gsk init" run_aw_in "$GSK_DIR" init --url "$AWEB_URL"
-gsk_init_exit=$?
-assert_eq "gsk init exit" "0" "$gsk_init_exit"
 if [[ ! -f "$GSK_DIR/.aw/identity.yaml" ]]; then
   echo "  PASS: gsk has no identity.yaml"
   pass=$((pass + 1))
