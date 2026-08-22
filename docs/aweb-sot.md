@@ -1618,9 +1618,8 @@ AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 
 # awid registry (optional; default https://api.awid.ai)
 AWID_REGISTRY_URL=https://api.awid.ai
-# Required trusted caller lane; generate with `openssl rand -hex 32` and
-# configure the same value on AWID.
-AWID_SERVICE_TOKEN=<generated-secret>
+# Required trusted caller lane; load the same generated secret on AWID first.
+AWID_SERVICE_TOKEN="${AWID_SERVICE_TOKEN:?load the shared generated secret first}"
 
 # Dashboard JWT validation (shared secret with whichever upstream
 # service mints the X-Dashboard-Token JWTs; only required if a

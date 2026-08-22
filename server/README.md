@@ -33,16 +33,35 @@ on `localhost:8000` and AWID on `localhost:8010` by default.
 
 Direct `uv` mode is also supported:
 
+Generate the shared secret once and keep it outside the repository:
+
+```bash
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+mkdir -p "$(dirname "$AWID_TOKEN_FILE")"
+if [ ! -s "$AWID_TOKEN_FILE" ]; then
+  umask 077
+  openssl rand -hex 32 > "$AWID_TOKEN_FILE"
+fi
+```
+
+In the AWID service terminal:
+
 ```bash
 cd ../awid
 uv sync
-export AWID_SERVICE_TOKEN="$(openssl rand -hex 32)"
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+export AWID_SERVICE_TOKEN="$(tr -d '\r\n' < "$AWID_TOKEN_FILE")"
 uv run awid
+```
 
+In the aweb service terminal:
+
+```bash
 cd ../server
 uv sync
 export AWID_REGISTRY_URL=http://localhost:8010
-export AWID_SERVICE_TOKEN=<the-same-value-used-by-awid>
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+export AWID_SERVICE_TOKEN="$(tr -d '\r\n' < "$AWID_TOKEN_FILE")"
 export APP_ENV=development
 uv run aweb serve
 ```

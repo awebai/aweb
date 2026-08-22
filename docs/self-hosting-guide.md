@@ -146,22 +146,40 @@ This path gives you:
 
 You can start from the compose stack above, or run both services directly.
 
-Direct `uv` startup:
+For direct `uv` startup, generate the shared secret once and keep it outside
+the repository:
+
+```bash
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+mkdir -p "$(dirname "$AWID_TOKEN_FILE")"
+if [ ! -s "$AWID_TOKEN_FILE" ]; then
+  umask 077
+  openssl rand -hex 32 > "$AWID_TOKEN_FILE"
+fi
+```
+
+In the AWID service terminal:
 
 ```bash
 cd awid
 uv sync
-export AWID_SERVICE_TOKEN="$(openssl rand -hex 32)"
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+export AWID_SERVICE_TOKEN="$(tr -d '\r\n' < "$AWID_TOKEN_FILE")"
 export AWID_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 export AWID_REDIS_URL=redis://localhost:6379/0
 uv run awid
+```
 
-cd ../server
+In the aweb service terminal:
+
+```bash
+cd server
 uv sync
 export AWEB_DATABASE_URL=postgresql://aweb:password@localhost:5432/aweb
 export AWEB_REDIS_URL=redis://localhost:6379/0
 export AWID_REGISTRY_URL=http://localhost:8010
-export AWID_SERVICE_TOKEN=<the-same-value-used-by-awid>
+AWID_TOKEN_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/aweb/awid-service-token"
+export AWID_SERVICE_TOKEN="$(tr -d '\r\n' < "$AWID_TOKEN_FILE")"
 export AWEB_PUBLIC_ORIGIN=https://aweb.acme.internal
 export APP_ENV=development
 uv run aweb serve
