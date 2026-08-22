@@ -74,7 +74,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 	// Create + public materialize, then adopt the first agent's public pin onto
 	// the private shelf so proposed/approved shelf mints compose with refresh.
 	if out, err := awInRepo(
-		"team", "create", "eng", "--byot", "--namespace", namespace,
+		"team", "admin", "create", "eng", "--byot", "--namespace", namespace,
 		"--registry", awidURL(),
 		"--agent", "coordinator@"+seededBlueprintRef+"/coordinator=claude-code",
 		"--agent", "reviewer@"+seededBlueprintRef+"/reviewer=pi"); err != nil {
@@ -82,7 +82,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 	}
 	coordinatorHome := filepath.Join(repo, "agents", "instances", "coordinator")
 	assertSingleCoordinationBlock(t, coordinatorHome, "fresh materialization")
-	if out, err := awInRepo("team", "adopt", "coordinator", "--home", coordinatorHome); err != nil {
+	if out, err := awInRepo("team", "admin", "adopt", "coordinator", "--home", coordinatorHome); err != nil {
 		t.Fatalf("aw team admin adopt failed: %v\n%s", err, out)
 	}
 
@@ -96,7 +96,7 @@ func TestRealStackLibraryProfileRefreshPicksUpApprovedProposal(t *testing.T) {
 	marker := proposeApproveInstructionsChange(t, awInRepo)
 
 	// refresh: re-materialize from the latest shelf version (the approved one).
-	if out, err := awInRepo("team", "refresh", "coordinator", "--home", coordinatorHome); err != nil {
+	if out, err := awInRepo("team", "admin", "refresh", "coordinator", "--home", coordinatorHome); err != nil {
 		t.Fatalf("aw team admin refresh failed: %v\n%s", err, out)
 	}
 	assertSingleCoordinationBlock(t, coordinatorHome, "adopt and refresh")

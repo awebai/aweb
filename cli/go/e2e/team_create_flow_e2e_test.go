@@ -67,7 +67,7 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 		t.Fatalf("bootstrap BYOT namespace controller failed: %v\noutput:\n%s", err, out)
 	}
 
-	cmd := exec.Command(bin, "team", "create", "eng", "--byot", "--namespace", namespace, "--registry", awidURL(),
+	cmd := exec.Command(bin, "team", "admin", "create", "eng", "--byot", "--namespace", namespace, "--registry", awidURL(),
 		"--profile", seededBlueprintRef+"/coordinator=claude-code",
 		"--profile", seededBlueprintRef+"/reviewer=pi")
 	cmd.Dir = repo
@@ -77,9 +77,9 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 		t.Fatalf("aw team admin create --profile roster failed: %v\noutput:\n%s", err, out)
 	}
 
-	// Profile-only team add uses --blueprint + --library-url directly (no plugin)
+	// Profile-only team admin add uses --blueprint + --library-url directly (no plugin)
 	// and proves provider selection is a client-side URL, not shelf state.
-	addCmd := exec.Command(bin, "team", "add", "developer@developer", "--blueprint", seededBlueprintRef, "--library-url", libraryURL(), "--runtime", "local-shell")
+	addCmd := exec.Command(bin, "team", "admin", "add", "developer@developer", "--blueprint", seededBlueprintRef, "--library-url", libraryURL(), "--runtime", "local-shell")
 	addCmd.Dir = repo
 	addCmd.Env = env
 	if out, err := addCmd.CombinedOutput(); err != nil {
@@ -151,7 +151,7 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 	}
 
 	// A forced local-key replacement must operate on the real home produced by
-	// team add. Local homes intentionally have no identity.yaml; losing
+	// team admin add. Local homes intentionally have no identity.yaml; losing
 	// signing.key must not make the recovery flow depend on a fixture-only file.
 	developerHome := filepath.Join(repo, "agents", "instances", "developer")
 	oldIdentityCmd := exec.Command(bin, "--json", "id", "show")
@@ -187,7 +187,7 @@ func TestRealStackTeamCreateRosterMaterializesAndConnects(t *testing.T) {
 		t.Fatalf("simulate lost developer signing key: %v", err)
 	}
 
-	replaceCmd := exec.Command(bin, "--json", "team", "replace-key", "developer",
+	replaceCmd := exec.Command(bin, "--json", "team", "admin", "replace-key", "developer",
 		"--old-did-key", oldIdentity.DIDKey,
 		"--home", developerHome,
 		"--generate-new-key",
