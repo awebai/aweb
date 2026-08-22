@@ -153,11 +153,22 @@ fail=0
 QUICKSTART_AWID_SOCAT_PID=""
 QUICKSTART_AWEB_SOCAT_PID=""
 
+start_quickstart_bridge() {
+  # Python is already a journey prerequisite.  Use it to create a dedicated
+  # process group portably: macOS does not ship the Linux `setsid` executable.
+  exec python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])' \
+    socat "$@"
+}
+
 stop_quickstart_bridges() {
   local pids=() pid
   [[ -z "$QUICKSTART_AWID_SOCAT_PID" ]] || pids+=("$QUICKSTART_AWID_SOCAT_PID")
   [[ -z "$QUICKSTART_AWEB_SOCAT_PID" ]] || pids+=("$QUICKSTART_AWEB_SOCAT_PID")
-  [[ "${#pids[@]}" -eq 0 ]] || kill "${pids[@]}" 2>/dev/null || true
+  # Each listener runs in its own process group so the forked per-connection
+  # socat children cannot outlive the phase and keep loopback reachable.
+  for pid in "${pids[@]}"; do
+    kill -- "-$pid" 2>/dev/null || true
+  done
   for pid in "${pids[@]}"; do
     wait "$pid" 2>/dev/null || true
   done
@@ -2540,10 +2551,10 @@ phase_aw_init_local_quickstart() {
   local local_team="default:local"
   local local_awid_url="http://127.0.0.1:$AWID_PORT"
   local local_aweb_url="http://127.0.0.1:$AWEB_PORT"
-  socat "TCP4-LISTEN:$AWID_PORT,bind=127.0.0.1,reuseaddr,fork" \
+  start_quickstart_bridge "TCP4-LISTEN:$AWID_PORT,bind=127.0.0.1,reuseaddr,fork" \
     "TCP4:aweb-docker.test:$AWID_PORT" &
   QUICKSTART_AWID_SOCAT_PID=$!
-  socat "TCP4-LISTEN:$AWEB_PORT,bind=127.0.0.1,reuseaddr,fork" \
+  start_quickstart_bridge "TCP4-LISTEN:$AWEB_PORT,bind=127.0.0.1,reuseaddr,fork" \
     "TCP4:aweb-docker.test:$AWEB_PORT" &
   QUICKSTART_AWEB_SOCAT_PID=$!
   local bridges_ready=0
