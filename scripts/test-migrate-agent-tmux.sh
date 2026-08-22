@@ -14,7 +14,7 @@ cat > "$FAKE_BIN/aw" <<'EOF'
 #!/bin/bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$TMUX_TEST_AW_LOG"
-[[ "$1 $2" == "team up" ]]
+[[ "$1 $2 $3" == "team admin up" ]]
 session=
 while [[ $# -gt 0 ]]; do
   if [[ $1 == --session ]]; then session=$2; shift 2; else shift; fi

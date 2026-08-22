@@ -139,7 +139,7 @@ PY
 print_plan
 if [[ $APPLY -eq 0 ]]; then
   case "$PHASE" in
-    launch) echo "would persist workspace socket, create $SOCKET_DIR, and run: aw team up --session $SESSION --force --no-attach" ;;
+    launch) echo "would persist workspace socket, create $SOCKET_DIR, and run: aw team admin up --session $SESSION --force --no-attach" ;;
     verify) echo "would verify named session $SESSION on $SOCKET_DIR" ;;
     retire-old) echo "would verify the new session, then kill only old named session $SESSION via --old-socket" ;;
     rollback-new) echo "would kill only new named session $SESSION on $SOCKET_DIR; workspace binding remains dedicated" ;;
@@ -158,7 +158,7 @@ case "$PHASE" in
     if new_session_exists; then
       echo "dedicated session already exists; launch is idempotently skipped"
     else
-      (cd "$WORKSPACE" && AWEB_TMUX_TMPDIR="$SOCKET_DIR" "$AW_BIN" team up --session "$SESSION" --force --no-attach)
+      (cd "$WORKSPACE" && AWEB_TMUX_TMPDIR="$SOCKET_DIR" "$AW_BIN" team admin up --session "$SESSION" --force --no-attach)
     fi
     verify_new
     ;;

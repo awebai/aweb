@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Dogfood harness for `aw team extend` (default-aaeq.26).
+# Dogfood harness for `aw team admin extend` (default-aaeq.26).
 #
 # Exercises the three call sites from docs/team-extend-sot.md against a
 # THROWAWAY team, plus the documented negative cases:
@@ -14,7 +14,7 @@
 #   AWEB_URL=... AWEB_API_KEY=... ./scripts/dogfood-team-extend.sh
 #
 # Requirements:
-#   - an `aw` binary with `team extend` (probed up front; fails fast before
+#   - an `aw` binary with `team admin extend` (probed up front; fails fast before
 #     the command exists)
 #   - AWEB_URL and AWEB_API_KEY for a THROWAWAY team only; never point this
 #     at a team you care about — it creates and abandons members
@@ -24,6 +24,9 @@
 #   DOGFOOD_TMUX   set to 1 to also exercise --start. The aw launcher receives
 #                  AWEB_TMUX_TMPDIR; every raw tmux probe receives TMUX_TMPDIR.
 #                  Raw tmux ignores the aweb-prefixed variable.
+#   DOGFOOD_PREFLIGHT_ONLY
+#                  set to 1 to verify the canonical command is discoverable,
+#                  then exit without requiring credentials or mutating anything.
 
 set -euo pipefail
 
@@ -41,20 +44,23 @@ say()  { printf '\n== %s\n' "$*"; }
 pass() { printf 'PASS: %s\n' "$*"; }
 fail() { printf 'FAIL: %s\n' "$*" >&2; FAILURES=$((FAILURES + 1)); }
 
+# `aw team admin extend --help` on an extend-less binary can print parent help
+# with exit 0, so probe the canonical admin subcommand listing instead.
+if ! "$AW_BIN" team admin --help 2>/dev/null | grep -Eq '^[[:space:]]+extend[[:space:]]'; then
+  echo "error: this $AW_BIN has no 'team admin extend'; build one before dogfooding" >&2
+  exit 2
+fi
+if [ "${DOGFOOD_PREFLIGHT_ONLY:-0}" = "1" ]; then
+  pass "canonical aw team admin extend command is discoverable"
+  exit 0
+fi
+
 for var in AWEB_URL AWEB_API_KEY; do
   if [ -z "${!var:-}" ]; then
     echo "error: $var is required, and must be scoped to a THROWAWAY team" >&2
     exit 2
   fi
 done
-
-# `aw team extend --help` on an extend-less binary prints the parent help
-# with exit 0 (cobra treats extend as a positional arg), so probe the
-# subcommand listing instead.
-if ! "$AW_BIN" team --help 2>/dev/null | grep -Eq '^[[:space:]]+extend[[:space:]]'; then
-  echo "error: this $AW_BIN has no 'team extend'; build one before dogfooding" >&2
-  exit 2
-fi
 
 WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/aw-extend-dogfood.XXXXXX")"
 DOGFOOD_TMUX_TMPDIR="$WORK_ROOT/tmux"
@@ -82,10 +88,10 @@ json_field() { sed -n 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' 
 TEAM_ROOT="$WORK_ROOT/team-root"
 mkdir -p "$TEAM_ROOT"
 
-say "seed: throwaway team with one member (aw team create)"
+say "seed: throwaway team with one member (aw team admin create)"
 (
   cd "$TEAM_ROOT"
-  "$AW_BIN" team create dogfood-extend --json >create.json
+  "$AW_BIN" team admin create dogfood-extend --json >create.json
 )
 SEED_TEAM_ID="$(json_field team_id <"$TEAM_ROOT/create.json")"
 if [ -n "$SEED_TEAM_ID" ]; then
@@ -98,7 +104,7 @@ fi
 say "1. team-root call site"
 (
   cd "$TEAM_ROOT"
-  "$AW_BIN" team extend extend-from-root --json >extend-root.json
+  "$AW_BIN" team admin extend extend-from-root --json >extend-root.json
 )
 if [ -d "$TEAM_ROOT/agents/instances/extend-from-root/.aw" ] &&
    [ "$(json_field status <"$TEAM_ROOT/extend-root.json")" = "extended" ]; then
@@ -110,7 +116,7 @@ fi
 say "2. agent-home call site"
 (
   cd "$TEAM_ROOT/agents/instances/extend-from-root"
-  "$AW_BIN" team extend extend-from-home --json >extend-home.json
+  "$AW_BIN" team admin extend extend-from-home --json >extend-home.json
 )
 if [ -d "$TEAM_ROOT/agents/instances/extend-from-home/.aw" ]; then
   pass "agent-home extend placed the member as a sibling, not nested"
@@ -126,7 +132,7 @@ CLEAN_DIR="$WORK_ROOT/clean-dir"
 mkdir -p "$CLEAN_DIR"
 (
   cd "$CLEAN_DIR"
-  env -u AWEB_API_KEY "$AW_BIN" team extend extend-clean \
+  env -u AWEB_API_KEY "$AW_BIN" team admin extend extend-clean \
     --api-key "$AWEB_API_KEY" --json >extend-clean.json
 )
 CLEAN_TEAM_ID="$(json_field team_id <"$CLEAN_DIR/extend-clean.json")"
@@ -139,12 +145,12 @@ fi
 say "N1. clean dir without any key errors and names the fix"
 NOAUTH_DIR="$WORK_ROOT/noauth-dir"
 mkdir -p "$NOAUTH_DIR"
-if out="$(cd "$NOAUTH_DIR" && env -u AWEB_API_KEY "$AW_BIN" team extend nope 2>&1)"; then
+if out="$(cd "$NOAUTH_DIR" && env -u AWEB_API_KEY "$AW_BIN" team admin extend nope 2>&1)"; then
   fail "extend with no authority succeeded; it must error"
 else
   if printf '%s' "$out" | grep -q -- "--api-key" &&
-     printf '%s' "$out" | grep -q "aw team create"; then
-    pass "no-authority error names --api-key and suggests aw team create"
+     printf '%s' "$out" | grep -q "aw team admin create"; then
+    pass "no-authority error names --api-key and suggests aw team admin create"
   else
     fail "no-authority error is missing --api-key or the create suggestion: $out"
   fi
@@ -153,7 +159,7 @@ fi
 say "N2. --team-id mismatch with the key rolls back and leaves no residue"
 MISMATCH_DIR="$WORK_ROOT/mismatch-dir"
 mkdir -p "$MISMATCH_DIR"
-if out="$(cd "$MISMATCH_DIR" && env -u AWEB_API_KEY "$AW_BIN" team extend leftover \
+if out="$(cd "$MISMATCH_DIR" && env -u AWEB_API_KEY "$AW_BIN" team admin extend leftover \
     --api-key "$AWEB_API_KEY" --team-id not-this-team:example.com 2>&1)"; then
   fail "mismatching --team-id succeeded; it must error"
 else
@@ -175,7 +181,7 @@ if [ "${DOGFOOD_TMUX:-0}" = "1" ]; then
   say "optional: --start on an isolated tmux server (TMUX_TMPDIR)"
   (
     cd "$TEAM_ROOT"
-    AWEB_TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" "$AW_BIN" team extend extend-started \
+    AWEB_TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" "$AW_BIN" team admin extend extend-started \
       --start --no-attach --session aw-extend-dogfood --json >extend-started.json
   )
   if TMUX_TMPDIR="$DOGFOOD_TMUX_TMPDIR" tmux list-sessions 2>/dev/null |
