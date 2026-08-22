@@ -26,7 +26,7 @@ carries it too: `[NAME@]BLUEPRINT/PROFILE[:local|global][=RUNTIME]`.
   are local. The verb is **`aw workspace delete`**, which the SOT calls "the
   single user-facing lifecycle verb for local teardown".
 - **Global identity scope** — holds a `did:aw` and a registry certificate. The
-  verb is `aw team remove-agent`, the identity/certificate revocation primitive.
+  verb is `aw team admin remove-agent`, the identity/certificate revocation primitive.
   Hosted removal needs a team-scoped owner/admin API key; a workspace-bound key
   is rejected, so this is not something an agent workspace can do alone.
 
@@ -85,7 +85,7 @@ inst="$REPO/agents/instances/$name"
 aw workspace delete "$name"                       # workspace + local identity
 
 # GLOBAL identity scope only — needs an owner/admin key:
-# aw team remove-agent "<namespace>/$name"        # claims, workspace, certificate
+# aw team admin remove-agent "<namespace>/$name"  # claims, workspace, certificate
 
 git -C "$REPO" worktree remove "$inst/worktree" --force 2>/dev/null
 rm -rf "$inst"
@@ -93,7 +93,7 @@ git -C "$REPO" branch -D "$name" 2>/dev/null
 git -C "$REPO" worktree prune
 ```
 
-**`aw team remove-agent`'s exit status is reliable — branch on it.** It returns
+**`aw team admin remove-agent`'s exit status is reliable — branch on it.** It returns
 non-zero when a store did not reach a terminal state (`cliError{code: 1}`), and
 the owner/admin refusal is a usage error (code 2). Its own help calls the status
 values a contract.
@@ -103,7 +103,7 @@ unknown subcommand prints the parent help and exits 0, so a script sees 1.6 KB o
 usage text as success. That is a property of unrecognised verbs, not of
 `remove-agent`.
 
-`aw team remove-agent` covers the network state: it deletes the workspace
+`aw team admin remove-agent` covers the network state: it deletes the workspace
 record — which is what releases the task claims held under it — and then
 attempts the certificate revoke, in that order. Do not revoke first. An agent can
 release its own claims right up until its certificate is revoked, and the
@@ -132,10 +132,10 @@ itself. That independence is the whole point of this step:
 > comes from somewhere other than the command that retired it."
 
 ```bash
-aw team agent-status "$name"        # reads workspace + claims directly; NOT certificate
+aw team admin agent-status "$name"  # reads workspace + claims directly; NOT certificate
 ```
 
-**Availability, and check this before relying on it.** `aw team agent-status` is
+**Availability, and check this before relying on it.** `aw team admin agent-status` is
 registered on `main` (`team_human.go:264`, added in `52995ab6`) but that commit is
 **not in `aw-v1.34.1`**, so on an installation at that release the verb does not
 run: it prints the parent help and **exits 0**, and a script reads 1.6 KB of usage
@@ -143,12 +143,12 @@ text as a successful status check. Confirm it exists on your installation before
 trusting its result — and note this is how *any* unrecognised `aw` subcommand
 behaves, not a property of this one.
 
-**How to check, because the obvious way silently says yes.** `aw team
+**How to check, because the obvious way silently says yes.** `aw team admin
 agent-status --help` exits 0 on an installation without the verb — it prints the
 parent help. The check that discriminates is the listing:
 
 ```bash
-aw team --help | grep -w agent-status     # no output -> the verb is not there
+aw team admin --help | grep -w agent-status  # no output -> the verb is not there
 ```
 
 **If it is unavailable, say which check you used.** The fallback is to read what
@@ -191,7 +191,7 @@ independently.
   certificate blob and custodial signing key are left as they were and no audit
   row records the attempt. The exit status is 0.
 
-  **`aw team agent-status` cannot settle this and must not be used to try.** It
+  **`aw team admin agent-status` cannot settle this and must not be used to try.** It
   reports `Certificate: unknown` for *every* hosted local agent — a live,
   working teammate reads the same as a retired one, because there is no read
   path from the CLI to a hosted local agent's certificate state (aweb-aaum.9).
@@ -217,6 +217,6 @@ like a request that never reached the registry, and reporting that as a
 successful removal is how a bulk retirement can report success for targets
 it never touched.
 
-Use `aw team remove-agent`, **not** `aw id team leave` — leave refuses an
+Use `aw team admin remove-agent`, **not** `aw id team leave` — leave refuses an
 identity's only team. If the instance died before cleanup and the member is
 orphaned in the roster, remove it via the dashboard.

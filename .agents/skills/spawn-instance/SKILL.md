@@ -1,12 +1,12 @@
 ---
 name: spawn-instance
-description: Add a teammate — one command (`aw team add … --start`) materializes an instance's home from a blueprint profile, sets up its isolated git worktree, and launches it. Use when a human asks for a teammate or assigned work needs one.
+description: Add a teammate — one command (`aw team admin add … --start`) materializes an instance's home from a blueprint profile, sets up its isolated git worktree, and launches it. Use when a human asks for a teammate or assigned work needs one.
 ---
 
 # Spawn an instance (a teammate)
 
 An **instance** is a runnable teammate with its own aweb identity, a home, and —
-for code roles — an isolated git worktree. Since aw 1.31, **`aw team add … --start`
+for code roles — an isolated git worktree. Since aw 1.31, **`aw team admin add … --start`
 does the whole thing in one command**: it materializes the home from a blueprint
 profile, sets up the worktree isolation, and launches the runtime — no manual
 invite / accept / init / symlink / `git worktree add` dance.
@@ -20,7 +20,7 @@ initiative to "get help".
 your own home (it uses your team's authority to add the member):
 
 ```bash
-aw team add <name>@aweb.team/<role>=<runtime> --start \
+aw team admin add <name>@aweb.team/<role>=<runtime> --start \
   --home <abs/path/to/agents/instances/<name>> \
   --session <tmux-session> --no-attach
 ```
@@ -50,7 +50,7 @@ the runtime up (claude: `bypass permissions on`; pi: `✓ aweb connected`).
 ## Materialize now, run later (two-step)
 
 Drop `--start` to just materialize + isolate the home; launch it later with
-`aw team up` (same launch path). Use this when you want the home staged before
+`aw team admin up` (same launch path). Use this when you want the home staged before
 running it.
 
 ## Retire

@@ -33,6 +33,7 @@ test("tmux command guard detects direct and inline-trap teardown", () => {
     "TMUX_TMPDIR=/tmp/test tmux -L dogfood kill-session -t test",
     "TMUX_TMPDIR=/tmp/test tmux kill-sess -t test",
     "trap 'AWEB_TMUX_TMPDIR=/tmp/wrong tmux kill-server' EXIT",
+    "aw team admin up --session test --recreate --force-kill",
     "aw team up --session test --recreate --force-kill",
   ];
   for (const command of blocked) {
@@ -42,12 +43,22 @@ test("tmux command guard detects direct and inline-trap teardown", () => {
   const allowed = [
     "tmux list-sessions",
     "TMUX_TMPDIR=/tmp/test tmux new-session -d -s test",
-    "aw team up --session test --no-attach",
+    "aw team admin up --session test --no-attach",
     "bash scripts/migrate-agent-tmux.sh --dry-run --team cli",
   ];
   for (const command of allowed) {
     assert.equal(tmuxCommandGuardReason(command), undefined, command);
   }
+
+  const canonicalReason = "Blocked aw team admin up --recreate. Agent runtimes may not tear down tmux; use a committed, reviewed, guard-enforced harness.";
+  assert.equal(
+    tmuxCommandGuardReason("aw team admin up --session test --recreate"),
+    canonicalReason,
+  );
+  assert.equal(
+    tmuxCommandGuardReason("aw team up --session test --recreate"),
+    canonicalReason,
+  );
 });
 
 test("aweb extension blocks destructive pi bash tool calls", async () => {

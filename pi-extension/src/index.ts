@@ -55,7 +55,7 @@ export function tmuxCommandGuardReason(command: string): string | undefined {
     if (executable === "aw") {
       const tail = words.slice(index + 1, index + 12);
       if (tail.includes("team") && tail.includes("up") && tail.includes("--recreate")) {
-        return "Blocked aw team up --recreate. Agent runtimes may not tear down tmux; use a committed, reviewed, guard-enforced harness.";
+        return "Blocked aw team admin up --recreate. Agent runtimes may not tear down tmux; use a committed, reviewed, guard-enforced harness.";
       }
     }
   }
