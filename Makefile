@@ -8,9 +8,9 @@
 	test-release-cli-version \
 	test-channel-integration \
 	list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
-	test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
+	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
-	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers _candidate-marketplace-pointer \
+	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
 	_candidate-artifact-server _candidate-artifact-awid-package _candidate-artifact-awid-image \
 	_candidate-artifact-channel _candidate-artifact-pi _candidate-artifact-skills _candidate-artifact-a2a-image
 
@@ -105,7 +105,7 @@ build:
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-pointer-adapter test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
 	python3 scripts/test_shipping.py
@@ -468,9 +468,6 @@ deploy-site: verify-site
 		test "$$observed_sha" = "$$source_sha" || { echo "Deployment ref read-back mismatch: expected $$source_sha, observed $${observed_sha:-missing}" >&2; exit 1; }; \
 		echo "Advanced $(SITE_DEPLOY_BRANCH) to $$source_sha; verify the Render deploy and https://awid.ai"
 
-test-pointer-adapter:
-	python3 scripts/e2e/test_pointer_adapter_marketplace.py
-
 test-npm-exact-publish:
 	bash scripts/e2e/test_npm_exact_publish.sh
 
@@ -514,9 +511,6 @@ _candidate-oats: check-oats-launch-environment-contract check-oats-pi-launch-ord
 _candidate-oats-proof-helpers:
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_pinned_checkout.py
 	OATS_TEST_ROOT="$(OATS_TEST_ROOT)" python3 scripts/e2e/test_oats_tmux_safety.py
-
-_candidate-marketplace-pointer:
-	python3 scripts/e2e/test_pointer_adapter_marketplace.py
 
 _candidate-artifact-server:
 	rm -rf server/dist

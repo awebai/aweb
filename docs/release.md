@@ -10,9 +10,9 @@ commit.
 | `awid-service-vX.Y.Z` | PyPI `awid-service` |
 | `awid-vX.Y.Z` | `ghcr.io/awebai/awid` image |
 | `aw-vX.Y.Z` | `aw` CLI distributions and npm platform packages |
-| `channel-vX.Y.Z` | npm Claude channel |
+| `channel-vX.Y.Z` | npm Claude channel; the unpinned marketplace resolves the public package |
 | `pi-vX.Y.Z` | npm Pi extension |
-| `skills-vX.Y.Z` | npm skills package and resumable hosted ZIP assets |
+| `skills-vX.Y.Z` | npm skills package, unpinned marketplace source, and resumable hosted ZIP assets |
 | `a2a-gw-vX.Y.Z` | `ghcr.io/awebai/a2a-gateway` image |
 
 Manifest-backed tags must equal the version in their package manifest. CLI and
@@ -50,6 +50,13 @@ Each tag starts only its owning thin publisher. Publishers rebuild or stage the
 exact tagged source, publish or adopt exact bytes, verify registry readback,
 and stop. They do not run product suites, move a branch, infer changed
 artifacts, create another aweb tag, or contact AC.
+
+The Claude marketplace does not duplicate channel or skills versions. Its npm
+sources omit `version`, so Claude resolves npm's public `latest`; the packaged
+`.claude-plugin/plugin.json` supplies the installed version and the candidate
+gate keeps it equal to `package.json`. A successful npm publication is therefore
+the complete release action—there is no marketplace-pointer commit or follow-up
+command.
 
 GitHub omits tag-push events when more than three tags are pushed together, so
 never batch this step. When `awid-service` and `aweb` move together, push both

@@ -32,10 +32,12 @@ discovers them automatically.
 
 ## Publish (maintainers)
 
-Use the repository's `release` skill and driver. It stages the package once,
-inspects and publishes those exact bytes, and treats the marketplace pointer as
-a required graph edge rather than a manual follow-up. Do not run `npm publish`
-or bump the marketplace entry as a separate procedure.
+Use the tag-only process in [`docs/release.md`](../../docs/release.md). The
+candidate gate proves that `package.json` and `.claude-plugin/plugin.json`
+carry the same version, and the tag publisher publishes or adopts those exact
+bytes. The marketplace intentionally has no duplicate version pin: after npm
+marks the package public, a marketplace refresh resolves that published
+version directly. There is no second repository bump to remember.
 
 ## Versioning
 

@@ -140,6 +140,8 @@ class SurfaceContractTest(unittest.TestCase):
             "scripts/release_gate_runner.py",
             "scripts/release-gate.sh",
             "scripts/candidate_gate_runner.py",
+            "scripts/pointer-adapter-marketplace-pointer.py",
+            "scripts/e2e/test_pointer_adapter_marketplace.py",
             "candidate-gate/suite-map.tsv",
             "release-gate",
             ".github/workflows/release-tooling.yml",
@@ -147,13 +149,14 @@ class SurfaceContractTest(unittest.TestCase):
             self.assertFalse((ROOT / path).exists(), path)
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         self.assertNotIn("\nrelease:", makefile)
+        self.assertNotIn("marketplace-pointer", makefile)
         self.assertIn("\nrelease-candidate:", makefile)
         self.assertIn("\nrelease-publish:", makefile)
 
     def test_candidate_suite_is_one_explicit_complete_list(self):
         lines = (ROOT / "scripts/candidate-suite.sh").read_text(encoding="utf-8").splitlines()
         targets = [line.removeprefix("run ") for line in lines if line.startswith("run ")]
-        self.assertEqual(len(targets), 47)
+        self.assertEqual(len(targets), 46)
         self.assertEqual(len(targets), len(set(targets)))
         for target in ("test-e2e", "test-federation-e2e", "cli-e2e"):
             self.assertIn(target, targets)
