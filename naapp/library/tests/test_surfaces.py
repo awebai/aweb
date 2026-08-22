@@ -25,7 +25,7 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "https://awid.ai" in response.text
     # Native Agentic App framing: core aw onboarding plus opt-in shelf verbs.
     assert "Native Agentic App" in response.text
-    assert "aw team add alice@aweb.team/developer=claude-code" in response.text
+    assert "aw team admin add alice@aweb.team/developer=claude-code" in response.text
     assert "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in response.text
     assert "pi install npm:@awebai/pi@latest" in response.text
     assert "aw agent start" not in response.text
@@ -46,8 +46,8 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     # Getting-started journey mirrors the reconciled SOT canonical block.
     assert "npm install -g @awebai/aw" in text
     assert "aw init" in text
-    assert "aw team add alice@aweb.team/developer=claude-code" in text
-    assert "aw team add bob@aweb.team/reviewer=claude-code" in text
+    assert "aw team admin add alice@aweb.team/developer=claude-code" in text
+    assert "aw team admin add bob@aweb.team/reviewer=claude-code" in text
     assert "/plugin marketplace add awebai/claude-plugins" in text
     assert "/plugin install aweb-channel@awebai-marketplace" in text
     assert "cd agents/instances/alice" in text
@@ -56,7 +56,8 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     assert "\npi\n" in text
     assert "aw agent start" not in text
     assert "aw run" not in text
-    assert "AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code" in text
+    assert "AWEB_API_KEY=<key> AWEB_URL=<url> aw team admin add alice@aweb.team/developer --runtime claude-code" in text
+    assert "aw team add" not in text
     assert "--blueprint" in text
     assert "AWEB_BLUEPRINT" in text
     assert "--library-url" in text
@@ -117,19 +118,21 @@ def test_landing_is_one_getting_started_zero_to_self_improving_team() -> None:
     # the executed command sequence, byte-exact and IN ORDER, all as panels.
     ordered = [
         "npm install -g @awebai/aw",
-        "aw team create eng --username &lt;you&gt; "
+        "aw team admin create eng --username &lt;you&gt; "
         "--agent alice@aweb.team/developer=claude-code "
         "--agent bob@aweb.team/reviewer=pi",
-        "aw team up",
+        "aw team admin up",
         "aw plugin install https://library.aweb.ai/.well-known/aweb-app.json",
-        "aw team adopt alice",
+        "aw team admin adopt alice",
         "aw library approve --proposal_id &lt;id&gt;",
-        "aw team refresh alice",
+        "aw team admin refresh alice",
     ]
     positions = [html.index(f"<pre>{c}</pre>") if f"<pre>{c}</pre>" in html else html.index(c) for c in ordered]
     assert positions == sorted(positions), "get-started commands are out of order"
-    # aw team up appears twice: start (step 3) and the idempotent reconcile (last step).
-    assert html.count("<pre>aw team up</pre>") == 2
+    # aw team admin up appears twice: start (step 3) and the idempotent reconcile (last step).
+    assert html.count("<pre>aw team admin up</pre>") == 2
+    for legacy_command in ("aw team create", "aw team up", "aw team adopt", "aw team refresh"):
+        assert legacy_command not in html
     # step 4's what-line notes the plugin is required for the adopt step next.
     assert "required for the adopt step" in html
 

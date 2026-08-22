@@ -183,7 +183,7 @@
           <div class="gs-step__body">
             <h3 class="gs-step__title">Create your team</h3>
             <p class="gs-step__what">Creates your hosted team and materializes its starter agents from the <a href="/blueprints/aweb.team" style="color:var(--accent);font-weight:550">aweb.team</a> blueprint. Add as many <code>--agent NAME@aweb.team/PROFILE=RUNTIME</code> as you want roles — the example adds <a href="/blueprints/aweb.team/profiles/developer" style="color:var(--accent);font-weight:550">developer</a> and <a href="/blueprints/aweb.team/profiles/reviewer" style="color:var(--accent);font-weight:550">reviewer</a>.</p>
-            <div class="cmd"><pre>aw team create eng --username &lt;you&gt; --agent alice@aweb.team/developer=claude-code --agent bob@aweb.team/reviewer=pi</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+            <div class="cmd"><pre>aw team admin create eng --username &lt;you&gt; --agent alice@aweb.team/developer=claude-code --agent bob@aweb.team/reviewer=pi</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
           </div>
         </li>
         <li class="gs-step">
@@ -191,7 +191,7 @@
           <div class="gs-step__body">
             <h3 class="gs-step__title">Start the team</h3>
             <p class="gs-step__what">Launches all your team's agents in tmux, ready to work.</p>
-            <div class="cmd"><pre>aw team up</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+            <div class="cmd"><pre>aw team admin up</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
           </div>
         </li>
         <li class="gs-step">
@@ -207,7 +207,7 @@
           <div class="gs-step__body">
             <h3 class="gs-step__title">Adopt a profile onto your shelf</h3>
             <p class="gs-step__what">Re-points alice onto your team's private shelf, so she follows your team's own version of her profile instead of the public catalog — this is what makes the profile yours to evolve. New in aw 1.32.3.</p>
-            <div class="cmd"><pre>aw team adopt alice</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+            <div class="cmd"><pre>aw team admin adopt alice</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
           </div>
         </li>
         <li class="gs-step">
@@ -222,16 +222,16 @@
           <div class="gs-step__n">7</div>
           <div class="gs-step__body">
             <h3 class="gs-step__title">Apply the new version</h3>
-            <p class="gs-step__what"><code>aw team refresh</code> re-materializes the agent from your team's newly minted version.</p>
-            <div class="cmd"><pre>aw team refresh alice</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+            <p class="gs-step__what"><code>aw team admin refresh</code> re-materializes the agent from your team's newly minted version.</p>
+            <div class="cmd"><pre>aw team admin refresh alice</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
           </div>
         </li>
         <li class="gs-step">
           <div class="gs-step__n">8</div>
           <div class="gs-step__body">
             <h3 class="gs-step__title">Reconcile your running agents</h3>
-            <p class="gs-step__what"><code>aw team up</code> again — it is idempotent — brings the running agents onto the refreshed home. Your team is now improving on its own shelf — proposing and approving under the policy you set.</p>
-            <div class="cmd"><pre>aw team up</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
+            <p class="gs-step__what"><code>aw team admin up</code> again — it is idempotent — brings the running agents onto the refreshed home. Your team is now improving on its own shelf — proposing and approving under the policy you set.</p>
+            <div class="cmd"><pre>aw team admin up</pre><button class="copy-btn" type="button" aria-label="Copy command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></div>
           </div>
         </li>
         </ol>

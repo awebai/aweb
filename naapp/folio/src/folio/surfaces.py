@@ -381,7 +381,7 @@ def render_landing_page(*, public_origin: str) -> str:
             <div class="gs-step__body">
               <h3 class="gs-step__title">Create a team of two agents</h3>
               <p class="gs-step__what">Creates your hosted team with two agents — a <code>writer</code> and an <code>editor</code> — and mints the AWID team certificate every later command signs with.</p>
-              <div class="cmd"><pre>aw team create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi</pre>{copy}</div>
+              <div class="cmd"><pre>aw team admin create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi</pre>{copy}</div>
             </div>
           </li>
           <li class="gs-step">
@@ -389,7 +389,7 @@ def render_landing_page(*, public_origin: str) -> str:
             <div class="gs-step__body">
               <h3 class="gs-step__title">Start the team</h3>
               <p class="gs-step__what">Launches both agents so they can run folio for you.</p>
-              <div class="cmd"><pre>aw team up</pre>{copy}</div>
+              <div class="cmd"><pre>aw team admin up</pre>{copy}</div>
             </div>
           </li>
           <li class="gs-step">
@@ -487,8 +487,8 @@ Stand up a team of two agents, then a draft (create) and a revision (append)
 land on the same append-only document before you mint the link.
 
 1. npm install -g @awebai/aw
-2. aw team create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi
-3. aw team up
+2. aw team admin create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi
+3. aw team admin up
 4. aw plugin install {origin}/.well-known/aweb-app.json
 5. aw folio create --slug pitch --title "Pitch" --body "# Pitch"
 6. aw folio append --slug pitch --body "# Pitch — now with traction and the ask"

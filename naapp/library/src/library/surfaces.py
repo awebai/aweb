@@ -370,14 +370,14 @@ _GET_STARTED_STEPS = (
         "<code>--agent NAME@aweb.team/PROFILE=RUNTIME</code> as you want roles — the example adds "
         f'<a href="/blueprints/aweb.team/profiles/developer" {_ACCENT_LINK}>developer</a> and '
         f'<a href="/blueprints/aweb.team/profiles/reviewer" {_ACCENT_LINK}>reviewer</a>.',
-        "aw team create eng --username <you> "
+        "aw team admin create eng --username <you> "
         "--agent alice@aweb.team/developer=claude-code "
         "--agent bob@aweb.team/reviewer=pi",
     ),
     (
         "Start the team",
         "Launches all your team's agents in tmux, ready to work.",
-        "aw team up",
+        "aw team admin up",
     ),
     (
         "Install library for your team",
@@ -390,7 +390,7 @@ _GET_STARTED_STEPS = (
         "Re-points alice onto your team's private shelf, so she follows your team's own version of "
         "her profile instead of the public catalog — this is what makes the profile yours to evolve. "
         "New in aw 1.32.3.",
-        "aw team adopt alice",
+        "aw team admin adopt alice",
     ),
     (
         "Approve what your agents propose",
@@ -402,15 +402,15 @@ _GET_STARTED_STEPS = (
     ),
     (
         "Apply the new version",
-        "<code>aw team refresh</code> re-materializes the agent from your team's newly minted version.",
-        "aw team refresh alice",
+        "<code>aw team admin refresh</code> re-materializes the agent from your team's newly minted version.",
+        "aw team admin refresh alice",
     ),
     (
         "Reconcile your running agents",
-        "<code>aw team up</code> again — it is idempotent — brings the running agents onto the "
+        "<code>aw team admin up</code> again — it is idempotent — brings the running agents onto the "
         "refreshed home. Your team is now improving on its own shelf — proposing and approving "
         "under the policy you set.",
-        "aw team up",
+        "aw team admin up",
     ),
 )
 
@@ -597,7 +597,7 @@ For example, the starter team: {origin}/blueprints/aweb.team,
 
 The minimal do-this-now onboarding. This is the single canonical shape landing
 pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
-and first team; `aw team add` materializes starter agents from the `aweb.team`
+and first team; `aw team admin add` materializes starter agents from the `aweb.team`
 blueprint over a public read (no Library plugin on aw 1.30+); then you run each
 agent **interactively in its home** with its runtime.
 
@@ -607,8 +607,8 @@ npm install -g @awebai/aw
 aw init
 
 # Add starter agents from the aweb.team blueprint
-aw team add alice@aweb.team/developer=claude-code
-aw team add bob@aweb.team/reviewer=claude-code
+aw team admin add alice@aweb.team/developer=claude-code
+aw team admin add bob@aweb.team/reviewer=claude-code
 ```
 
 Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
@@ -641,7 +641,7 @@ Add an agent to an existing hosted team with a team API key (no dashboard
 session; the key is the whole credential):
 
 ```bash
-AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
+AWEB_API_KEY=<key> AWEB_URL=<url> aw team admin add alice@aweb.team/developer --runtime claude-code
 ```
 
 The blueprint is always `aweb.team`; override it with `--blueprint` (or
@@ -659,7 +659,7 @@ to choose the runtime; they are not auto-applied.
 
 ## How to call it
 
-The start path is core aw: aw init, aw team add NAME@aweb.team/PROFILE=RUNTIME,
+The start path is core aw: aw init, aw team admin add NAME@aweb.team/PROFILE=RUNTIME,
 then cd agents/instances/NAME and launch Claude Code or pi directly. The aw library plugin verbs are the authenticated shelf surface for teams that
 want to evolve profiles after onboarding (e.g. aw library import-to-shelf,
 aw library shelf, aw library materialize). The HTTP endpoints below are the same

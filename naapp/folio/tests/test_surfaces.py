@@ -231,8 +231,8 @@ def test_landing_getting_started_is_the_verified_folio_spine() -> None:
     # land on the same append-only document, then the present link.
     spine = [
         "npm install -g @awebai/aw",
-        "aw team create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi",
-        "aw team up",
+        "aw team admin create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi",
+        "aw team admin up",
         "aw plugin install https://folio.aweb.ai/.well-known/aweb-app.json",
         'aw folio create --slug pitch --title "Pitch" --body "# Pitch"',
         "aw folio append --slug pitch",
@@ -241,17 +241,19 @@ def test_landing_getting_started_is_the_verified_folio_spine() -> None:
     positions = [html.find(step) for step in spine]
     assert all(pos != -1 for pos in positions), positions
     assert positions == sorted(positions), "steps must render in executed order"
+    assert "aw team create" not in html
+    assert "aw team up" not in html
 
 
 def test_llms_txt_getting_started_teaches_the_verified_spine() -> None:
     text = _client().get("/llms.txt").text
     assert (
-        "aw team create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi"
+        "aw team admin create my-team --username YOUR_USERNAME --agent writer@aweb.team/developer=pi --agent editor@aweb.team/reviewer=pi"
         in text
     )
     order = [
-        "aw team create my-team",
-        "aw team up",
+        "aw team admin create my-team",
+        "aw team admin up",
         "aw plugin install",
         "aw folio create",
         "aw folio append",
@@ -260,6 +262,8 @@ def test_llms_txt_getting_started_teaches_the_verified_spine() -> None:
     positions = [text.find(step) for step in order]
     assert all(pos != -1 for pos in positions), positions
     assert positions == sorted(positions), "llms.txt steps must render in executed order"
+    assert "aw team create" not in text
+    assert "aw team up" not in text
 
 
 def test_linked_manifest_paths_serve_committed_bytes() -> None:

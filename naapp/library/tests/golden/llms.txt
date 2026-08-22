@@ -38,7 +38,7 @@ https://library.aweb.ai/blueprints/aweb.team/profiles/reviewer.
 
 The minimal do-this-now onboarding. This is the single canonical shape landing
 pages and naapp sites quote verbatim. `aw init` creates the account, workspace,
-and first team; `aw team add` materializes starter agents from the `aweb.team`
+and first team; `aw team admin add` materializes starter agents from the `aweb.team`
 blueprint over a public read (no Library plugin on aw 1.30+); then you run each
 agent **interactively in its home** with its runtime.
 
@@ -48,8 +48,8 @@ npm install -g @awebai/aw
 aw init
 
 # Add starter agents from the aweb.team blueprint
-aw team add alice@aweb.team/developer=claude-code
-aw team add bob@aweb.team/reviewer=claude-code
+aw team admin add alice@aweb.team/developer=claude-code
+aw team admin add bob@aweb.team/reviewer=claude-code
 ```
 
 Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
@@ -82,7 +82,7 @@ Add an agent to an existing hosted team with a team API key (no dashboard
 session; the key is the whole credential):
 
 ```bash
-AWEB_API_KEY=<key> AWEB_URL=<url> aw team add alice@aweb.team/developer --runtime claude-code
+AWEB_API_KEY=<key> AWEB_URL=<url> aw team admin add alice@aweb.team/developer --runtime claude-code
 ```
 
 The blueprint is always `aweb.team`; override it with `--blueprint` (or
@@ -100,7 +100,7 @@ to choose the runtime; they are not auto-applied.
 
 ## How to call it
 
-The start path is core aw: aw init, aw team add NAME@aweb.team/PROFILE=RUNTIME,
+The start path is core aw: aw init, aw team admin add NAME@aweb.team/PROFILE=RUNTIME,
 then cd agents/instances/NAME and launch Claude Code or pi directly. The aw library plugin verbs are the authenticated shelf surface for teams that
 want to evolve profiles after onboarding (e.g. aw library import-to-shelf,
 aw library shelf, aw library materialize). The HTTP endpoints below are the same
