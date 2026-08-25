@@ -346,6 +346,7 @@ test-e2e:
 test-federation-e2e:
 	PATH="$(CURDIR)/scripts/guard-bin:$$PATH" ./scripts/e2e-federation-authority.sh
 	./scripts/e2e-oss-federation.sh
+	./scripts/e2e-cross-registry-messaging.sh
 
 test-a2a-gateway-e2e:
 	./scripts/e2e-a2a-gateway-docker.sh
