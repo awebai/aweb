@@ -102,6 +102,7 @@ type ResolveTxt = (hostname: string) => Promise<string[][]>;
 
 interface RegistryResolverOptions {
   fallbackRegistryURL?: string;
+  identityAddress?: string;
 }
 
 export class RegistryResolver {
@@ -110,6 +111,7 @@ export class RegistryResolver {
   private keyCache = new Map<string, CacheEntry<DidKeyResolution>>();
   private headCache = new Map<string, VerifiedLogHead>();
   private readonly fallbackRegistryURL: string;
+  private readonly identityDomain: string;
 
   constructor(
     private readonly fetchImpl: typeof fetch = fetch,
@@ -120,6 +122,12 @@ export class RegistryResolver {
     this.fallbackRegistryURL = options?.fallbackRegistryURL
       ? canonicalServerOrigin(options.fallbackRegistryURL)
       : "";
+    const identityAddress = (options?.identityAddress || "").trim();
+    const splitIdentityAddress = identityAddress ? splitRegistryAddress(identityAddress) : null;
+    if (identityAddress && !splitIdentityAddress) {
+      throw new Error("identity address must be domain/name");
+    }
+    this.identityDomain = splitIdentityAddress?.domain || "";
   }
 
   async verifyStableIdentity(
@@ -298,12 +306,31 @@ export class RegistryResolver {
 
   private async discoverAuthority(domain: string): Promise<DomainAuthority> {
     domain = canonicalizeDomain(domain);
+    if (this.fallbackRegistryURL && (!this.identityDomain || domain === this.identityDomain)) {
+      return {
+        controllerDid: "",
+        registryURL: this.fallbackRegistryURL,
+        dnsName: awidTXTName(domain),
+        inherited: false,
+      };
+    }
     const cached = this.registryCache.get(domain);
     if (cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
-    const authority = await discoverAuthoritativeRegistry(domain, this.resolveTxtImpl);
-    const resolvedAuthority = this.fallbackRegistryURL
+    let authority: DomainAuthority;
+    try {
+      authority = await discoverAuthoritativeRegistry(domain, this.resolveTxtImpl);
+    } catch (error) {
+      if (!this.fallbackRegistryURL || !isDnsTransportFailure(error)) throw error;
+      return {
+        controllerDid: "",
+        registryURL: this.fallbackRegistryURL,
+        dnsName: awidTXTName(domain),
+        inherited: false,
+      };
+    }
+    const resolvedAuthority = !authority.controllerDid && this.fallbackRegistryURL
       ? { ...authority, registryURL: this.fallbackRegistryURL }
       : authority;
     this.registryCache.set(domain, {
@@ -693,6 +720,11 @@ function splitRegistryAddress(address: string): { domain: string; name: string }
 function isTxtNotFound(error: unknown): boolean {
   const code = (error as { code?: string } | undefined)?.code;
   return code === "ENOTFOUND" || code === "ENODATA" || code === "ENOENT";
+}
+
+function isDnsTransportFailure(error: unknown): boolean {
+  const code = (error as { code?: string } | undefined)?.code;
+  return code === "ETIMEOUT" || code === "ESERVFAIL" || code === "EAI_AGAIN";
 }
 
 function validateRegistryOrigin(value: string): string {

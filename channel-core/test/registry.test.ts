@@ -260,6 +260,68 @@ describe("registry verification", () => {
 });
 
 describe("registry resolver", () => {
+  test("pins the concrete identity domain and discovers a foreign registry", async () => {
+    const resolveTxt = vi.fn(async (hostname: string) => {
+      if (hostname === "_awid.foreign.example") {
+        return [[`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://foreign.registry.example;`]];
+      }
+      throw new Error(`unexpected DNS lookup ${hostname}`);
+    });
+    const resolver = new RegistryResolver(fetch, resolveTxt, () => Date.now(), {
+      fallbackRegistryURL: "https://home.registry.example",
+      identityAddress: "home.example/alice",
+    });
+
+    await expect(resolver.discoverRegistry("home.example")).resolves.toBe("https://home.registry.example");
+    expect(resolveTxt).not.toHaveBeenCalled();
+    await expect(resolver.discoverRegistry("foreign.example")).resolves.toBe("https://foreign.registry.example");
+    expect(resolveTxt).toHaveBeenCalledTimes(1);
+  });
+
+  test.each(["ETIMEOUT", "ESERVFAIL", "EAI_AGAIN"])(
+    "falls back for foreign DNS transport failure %s",
+    async (code) => {
+      const resolveTxt = vi.fn(async () => {
+        throw Object.assign(new Error("DNS transport failure"), { code });
+      });
+      const resolver = new RegistryResolver(fetch, resolveTxt, () => Date.now(), {
+        fallbackRegistryURL: "https://home.registry.example",
+        identityAddress: "home.example/alice",
+      });
+
+      await expect(resolver.discoverRegistry("foreign.example")).resolves.toBe("https://home.registry.example");
+    },
+  );
+
+  test.each([
+    ["malformed version", [[`awid=v2; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://foreign.registry.example;`]], "unsupported awid version"],
+    ["multiple records", [
+      [`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://one.registry.example;`],
+      [`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://two.registry.example;`],
+    ], "multiple awid TXT records"],
+    ["invalid controller", [["awid=v1; controller=did:key:invalid; registry=https://foreign.registry.example;"]], "invalid did:key"],
+    ["invalid registry", [[`awid=v1; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://foreign.registry.example/path;`]], "server URL must not include a path"],
+  ])("rejects foreign %s instead of falling back", async (_name, records, error) => {
+    const resolver = new RegistryResolver(fetch, vi.fn(async () => records as string[][]), () => Date.now(), {
+      fallbackRegistryURL: "https://home.registry.example",
+      identityAddress: "home.example/alice",
+    });
+
+    await expect(resolver.discoverRegistry("foreign.example")).rejects.toThrow(error as string);
+  });
+
+  test("keeps a hard pin when no concrete identity address is available", async () => {
+    const resolveTxt = vi.fn(async () => {
+      throw new Error("DNS must not be consulted without an own-domain boundary");
+    });
+    const resolver = new RegistryResolver(fetch, resolveTxt, () => Date.now(), {
+      fallbackRegistryURL: "https://home.registry.example",
+    });
+
+    await expect(resolver.discoverRegistry("foreign.example")).resolves.toBe("https://home.registry.example");
+    expect(resolveTxt).not.toHaveBeenCalled();
+  });
+
   test("resolves address identity through registry DNS discovery", async () => {
     const rotate = identityLogVectors.entries.find((entry) => entry.name === "rotate_key")!;
     const fetchImpl: typeof fetch = vi.fn(async (input) => {
@@ -585,16 +647,19 @@ describe("registry resolver", () => {
       throw new Error(`unexpected url ${url}`);
     }) as typeof fetch;
 
-    const resolver = new RegistryResolver(fetchImpl, vi.fn(async () => {
+    const resolveTxt = vi.fn(async () => {
       throw txtNotFound();
-    }), () => Date.now(), {
+    });
+    const resolver = new RegistryResolver(fetchImpl, resolveTxt, () => Date.now(), {
       fallbackRegistryURL: "http://127.0.0.1:8000",
+      identityAddress: "home.aweb.local/local",
     });
 
     await expect(resolver.resolveAddressIdentity("probeproj.aweb.local/alice")).resolves.toEqual({
       did: identityLogVectors.mapping.rotated_did_key,
       stableID: identityLogVectors.mapping.did_aw,
     });
+    expect(resolveTxt).toHaveBeenCalled();
   });
 
   test("fails hard when /key returns a different stable identity", async () => {

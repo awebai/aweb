@@ -82,7 +82,7 @@ async function main() {
     process.exit(1);
   });
   if (!pinStore) return;
-  const registry = createRegistryResolver(config.registryURL);
+  const registry = createRegistryResolver(config.registryURL, config.address);
   const trust = new SenderTrustManager(
     client,
     registry,

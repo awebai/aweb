@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -80,6 +82,7 @@ type RegistryResolver struct {
 	DNSResolver         TXTResolver
 	Now                 func() time.Time
 	fallbackRegistryURL string
+	identityDomain      string
 	mu                  sync.Mutex
 	registryCache       map[string]cachedValue[DomainAuthority]
 	addressCache        map[string]cachedValue[*registryAddressCacheValue]
@@ -108,17 +111,53 @@ func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *Regi
 }
 
 func (r *RegistryResolver) SetFallbackRegistryURL(raw string) error {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		r.fallbackRegistryURL = ""
-		return nil
-	}
-	canonical, err := canonicalRegistryServerOrigin(raw)
+	canonical, err := canonicalFallbackRegistryURL(raw)
 	if err != nil {
 		return err
 	}
-	r.fallbackRegistryURL = canonical
+	r.setRegistryPolicy(canonical, "")
 	return nil
+}
+
+// SetIdentityRegistryURL configures the registry pinned for the identity's own
+// domain while allowing address resolution to discover foreign registries.
+func (r *RegistryResolver) SetIdentityRegistryURL(raw, ownDomain string) error {
+	canonical, err := canonicalFallbackRegistryURL(raw)
+	if err != nil {
+		return err
+	}
+	if canonical == "" {
+		r.setRegistryPolicy("", "")
+		return nil
+	}
+	ownDomain = canonicalizeDomain(ownDomain)
+	if ownDomain == "" {
+		return fmt.Errorf("identity domain is required with an identity registry URL")
+	}
+	r.setRegistryPolicy(canonical, ownDomain)
+	return nil
+}
+
+func (r *RegistryResolver) setRegistryPolicy(fallbackRegistryURL, identityDomain string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.fallbackRegistryURL == fallbackRegistryURL && r.identityDomain == identityDomain {
+		return
+	}
+	r.fallbackRegistryURL = fallbackRegistryURL
+	r.identityDomain = identityDomain
+	clear(r.registryCache)
+	clear(r.addressCache)
+	clear(r.memberCache)
+	clear(r.keyCache)
+}
+
+func canonicalFallbackRegistryURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	return canonicalRegistryServerOrigin(raw)
 }
 
 func (r *RegistryResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {
@@ -563,41 +602,32 @@ func (r *RegistryResolver) discoverRegistry(ctx context.Context, domain string) 
 }
 
 func (r *RegistryResolver) DiscoverRegistry(ctx context.Context, domain string) (string, error) {
+	if strings.TrimSpace(r.fallbackRegistryURL) != "" {
+		return r.fallbackRegistryURL, nil
+	}
 	return r.discoverRegistry(ctx, domain)
 }
 
 func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string) (DomainAuthority, error) {
 	domain = canonicalizeDomain(domain)
+	fallback := strings.TrimSpace(r.fallbackRegistryURL)
+	if fallback != "" && (r.identityDomain == "" || domain == r.identityDomain) {
+		return DomainAuthority{RegistryURL: fallback}, nil
+	}
 	if cached, ok := r.loadRegistryCache(domain); ok {
 		return cached, nil
 	}
-	// fallbackRegistryURL (the identity's configured registry_url) is a FALLBACK,
-	// not a per-domain override: a domain that publishes an `_awid` record is
-	// authoritative for its own registry. Discovering per domain is what lets a
-	// sender and recipient in different registries each resolve against theirs
-	// in a single send (cross-registry federation).
-	fallback := strings.TrimSpace(r.fallbackRegistryURL)
 	authority, err := DiscoverAuthoritativeRegistry(ctx, r.DNSResolver, domain)
 	if err != nil {
-		// DNS discovery failed (network/DNS error). Fall back to the configured
-		// registry so offline/private deployments keep working; else surface it.
-		if fallback != "" {
+		var dnsErr *net.DNSError
+		if fallback != "" && errors.As(err, &dnsErr) {
 			return DomainAuthority{RegistryURL: fallback}, nil
 		}
 		return DomainAuthority{}, err
 	}
-	if strings.TrimSpace(authority.ControllerDID) == "" {
-		// No `_awid` record found for the domain or any ancestor. Prefer the
-		// explicitly configured fallback registry; otherwise the public default.
-		if fallback != "" {
-			authority.RegistryURL = fallback
-		} else if strings.TrimSpace(authority.RegistryURL) == "" {
-			authority.RegistryURL = DefaultAWIDRegistryURL
-		}
-		r.storeRegistryCache(domain, authority, registryDiscoveryTTL)
-		return authority, nil
+	if strings.TrimSpace(authority.ControllerDID) == "" && fallback != "" {
+		authority.RegistryURL = fallback
 	}
-	// The domain published an authoritative `_awid` record: honour its registry.
 	if strings.TrimSpace(authority.RegistryURL) == "" {
 		authority.RegistryURL = DefaultAWIDRegistryURL
 	}

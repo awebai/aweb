@@ -129,7 +129,17 @@ publish the same stable failure for five seconds; a wrong claimant cannot poison
 valid evidence for a concurrent correct claim.
 
 Same-registry outbound resolution first checks locally visible recipients before
-registry resolution and keeps the signed address/DID/key/origin contract. First
+registry resolution and keeps the signed address/DID/key/origin contract. A
+client identity's configured registry is an explicit pin for its own address
+domain. For a foreign first-contact address, the CLI and channel runtimes use
+that domain's valid `_awid` record (including bounded parent inheritance) when
+present; absence of a record
+or a DNS lookup failure falls back to the configured identity registry so
+private/offline deployments retain their operator-selected path. Malformed or
+ambiguous AWID records remain errors. This fallback is outbound address
+resolution policy only: explicit registry pins on namespace/team/address
+administrative operations always win and never consult DNS, while strict
+inbound federation authority retains its no-fallback rules above. First
 contact checks target address, DID, current key, and origin. Stored continuation
 requires exact active conversation/session participants and target current-key
 compatibility. Local `did:key` continuation remains separate: it requires that

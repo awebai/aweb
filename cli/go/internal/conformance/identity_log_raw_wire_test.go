@@ -43,6 +43,16 @@ type identityLogRawWireCached struct {
 	CurrentDIDKey string `json:"currentDidKey"`
 }
 
+type forbiddenTXTResolver struct {
+	t *testing.T
+}
+
+func (r forbiddenTXTResolver) LookupTXT(_ context.Context, name string) ([]string, error) {
+	r.t.Helper()
+	r.t.Fatalf("unexpected live DNS lookup for %s", name)
+	return nil, nil
+}
+
 // TestIdentityLogRawWireVectors sends the embedded resolution JSON through the
 // registry resolver unchanged. Decoding it into DidKeyResolution in this test
 // would make encoding/json in the harness, rather than the production registry
@@ -89,7 +99,7 @@ func TestIdentityLogRawWireVectors(t *testing.T) {
 			server := httptest.NewServer(mux)
 			t.Cleanup(server.Close)
 
-			resolver := awid.NewRegistryResolver(server.Client(), nil)
+			resolver := awid.NewRegistryResolver(server.Client(), forbiddenTXTResolver{t: t})
 			if err := resolver.SetFallbackRegistryURL(server.URL); err != nil {
 				t.Fatal(err)
 			}

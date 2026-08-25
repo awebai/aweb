@@ -264,7 +264,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       });
     });
     if (!pinStore) return;
-    const registry = createRegistryResolver(config.registryURL);
+    const registry = createRegistryResolver(config.registryURL, config.address);
     const trust = new SenderTrustManager(
       client,
       registry,

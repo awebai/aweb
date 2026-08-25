@@ -252,7 +252,8 @@ func TestRegisterBootstrapDIDTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 		}
 	}))
 
-	registry := awid.NewAWIDRegistryClient(server.Client(), nil)
+	dns := &countingTXTResolver{}
+	registry := awid.NewAWIDRegistryClient(server.Client(), dns)
 	if err := registry.SetFallbackRegistryURL(server.URL); err != nil {
 		t.Fatal(err)
 	}
@@ -267,6 +268,9 @@ func TestRegisterBootstrapDIDTreatsSameKeyAlreadyRegisteredAsSuccess(t *testing.
 	}
 	if keyLookups != 1 {
 		t.Fatalf("key_lookups=%d want 1", keyLookups)
+	}
+	if dns.calls != 0 {
+		t.Fatalf("DNS calls=%d want 0 for an explicitly pinned registry", dns.calls)
 	}
 }
 

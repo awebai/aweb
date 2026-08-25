@@ -328,9 +328,10 @@ export function resolveRegistryFallbackURL(identityRegistryURL: string = ""): st
   return configuredRegistryURL || undefined;
 }
 
-export function createRegistryResolver(registryURL: string = ""): RegistryResolver {
+export function createRegistryResolver(registryURL: string = "", identityAddress: string = ""): RegistryResolver {
   return new RegistryResolver(fetch, undefined, undefined, {
     fallbackRegistryURL: resolveRegistryFallbackURL(registryURL),
+    identityAddress,
   });
 }
 

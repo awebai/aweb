@@ -7,6 +7,23 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+func TestRegistryIdentityDomainUsesCrossNamespaceMemberAddress(t *testing.T) {
+	t.Parallel()
+
+	selection := awconfig.Selection{
+		TeamID:  "backend:acme.com",
+		Domain:  "acme.com",
+		Address: "partner.com/alice",
+	}
+	domain, ok := registryIdentityDomain(selection.Address)
+	if !ok {
+		t.Fatal("expected a concrete identity address domain")
+	}
+	if domain != "partner.com" {
+		t.Fatalf("identity domain=%q, want partner.com rather than team domain %q", domain, selection.Domain)
+	}
+}
+
 func TestResolveIdentityMessagingClientSelectionFallsBackToSigningKeyWithoutIdentityFile(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)

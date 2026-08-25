@@ -710,7 +710,7 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	}
 	c.SetPinStore(ps, pinPath)
 	c.SetPinStorePersister(compareAndSetPinStore)
-	registry, err := newSelectionRegistryResolver(c.Client.HTTPClient(), baseURL, sel.RegistryURL)
+	registry, err := newSelectionRegistryResolver(c.Client.HTTPClient(), sel.RegistryURL, sel.Address)
 	if err != nil {
 		return err
 	}
@@ -885,21 +885,36 @@ func newConfiguredRegistryResolver(httpClient *http.Client, baseURL, preferredRe
 	return registry, nil
 }
 
-func newSelectionRegistryResolver(httpClient *http.Client, baseURL, selectionRegistryURL string) (*awid.RegistryResolver, error) {
+func newSelectionRegistryResolver(httpClient *http.Client, selectionRegistryURL, identityAddress string) (*awid.RegistryResolver, error) {
 	registry := awid.NewRegistryResolver(httpClient, nil)
-	if registryURL := strings.TrimSpace(selectionRegistryURL); registryURL != "" {
-		if strings.EqualFold(registryURL, "local") {
-			return nil, fmt.Errorf("registry URL 'local' is not supported; use an explicit registry URL")
-		}
-		if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
-			return nil, fmt.Errorf("invalid registry URL: %w", err)
-		}
+	registryURL := strings.TrimSpace(selectionRegistryURL)
+	if registryURL == "" {
+		registryURL = strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
+	}
+	if registryURL == "" {
 		return registry, nil
 	}
-	if err := configureEmbeddedRegistryBaseURL(baseURL, registry.SetFallbackRegistryURL); err != nil {
-		return nil, err
+	if strings.EqualFold(registryURL, "local") {
+		return nil, fmt.Errorf("registry URL 'local' is not supported; use an explicit registry URL")
+	}
+	identityDomain, hasIdentityAddress := registryIdentityDomain(identityAddress)
+	var err error
+	if hasIdentityAddress {
+		err = registry.SetIdentityRegistryURL(registryURL, identityDomain)
+	} else {
+		// Without an own address domain, keep the previous hard-pin behavior;
+		// there is no safe basis for classifying a target as foreign.
+		err = registry.SetFallbackRegistryURL(registryURL)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("invalid registry URL: %w", err)
 	}
 	return registry, nil
+}
+
+func registryIdentityDomain(identityAddress string) (string, bool) {
+	domain, _, ok := awconfig.CutIdentityAddress(identityAddress)
+	return domain, ok
 }
 
 func newConfiguredRegistryClient(httpClient *http.Client, baseURL string) (*awid.RegistryClient, error) {
