@@ -8,7 +8,7 @@ import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
-import { RegistryResolver } from "./identity/registry.js";
+import { RegistryResolver, type ResolveTxt } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
 import type { VerificationStatus } from "./identity/signing.js";
 import {
@@ -328,10 +328,18 @@ export function resolveRegistryFallbackURL(identityRegistryURL: string = ""): st
   return configuredRegistryURL || undefined;
 }
 
-export function createRegistryResolver(registryURL: string = "", identityAddress: string = ""): RegistryResolver {
-  return new RegistryResolver(fetch, undefined, undefined, {
-    fallbackRegistryURL: resolveRegistryFallbackURL(registryURL),
-    identityAddress,
+export interface RegistryIdentityConfig {
+  registryURL: string;
+  address: string;
+}
+
+export function createRegistryResolver(
+  config: RegistryIdentityConfig,
+  resolveTxt?: ResolveTxt,
+): RegistryResolver {
+  return new RegistryResolver(fetch, resolveTxt, undefined, {
+    fallbackRegistryURL: resolveRegistryFallbackURL(config.registryURL),
+    identityAddress: config.address,
   });
 }
 

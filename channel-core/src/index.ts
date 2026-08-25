@@ -4,7 +4,7 @@ export { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 export { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 export { resolveConfig, type AgentConfig } from "./config.js";
 export { PinStore, type IdentityScope, type Pin, type PinResult, type PinStoreWriter } from "./identity/pinstore.js";
-export { RegistryResolver, DEFAULT_AWID_REGISTRY_URL, type StableIdentityVerification } from "./identity/registry.js";
+export { RegistryResolver, DEFAULT_AWID_REGISTRY_URL, type ResolveTxt, type StableIdentityVerification } from "./identity/registry.js";
 export { SenderTrustManager, canonicalReplacementJSON, canonicalRotationJSON, normalizeIdentityScope, type TrustResult, type RotationAnnouncement, type ReplacementAnnouncement } from "./identity/trust.js";
 export { computeDIDKey, extractPublicKey } from "./identity/did.js";
 export { CHANNEL_CORE_SECURITY_CONTRACT } from "./contract.js";
@@ -40,5 +40,6 @@ export {
   type ChannelDeliveryIntent,
   type ChannelLoopOptions,
   type ChannelTraceEntry,
+  type RegistryIdentityConfig,
   type SelfIdentity,
 } from "./channel.js";

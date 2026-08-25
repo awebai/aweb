@@ -4,6 +4,8 @@ import {
   createRegistryResolver,
   formatEventStreamState,
   loadSessionPinStore,
+  type RegistryIdentityConfig,
+  type ResolveTxt,
   resolveConfig,
   SenderTrustManager,
   startChannelLoop,
@@ -38,6 +40,13 @@ const WELCOME_STATE_PATH = join(homedir(), ".config", "aw", "pi-welcome.json");
 
 export function loadChannelConfig(workdir: string) {
   return resolveConfig(workdir);
+}
+
+export function createPiRegistryResolver(
+  config: RegistryIdentityConfig,
+  resolveTxt?: ResolveTxt,
+) {
+  return createRegistryResolver(config, resolveTxt);
 }
 
 export function tmuxCommandGuardReason(command: string): string | undefined {
@@ -264,7 +273,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       });
     });
     if (!pinStore) return;
-    const registry = createRegistryResolver(config.registryURL, config.address);
+    const registry = createPiRegistryResolver(config);
     const trust = new SenderTrustManager(
       client,
       registry,

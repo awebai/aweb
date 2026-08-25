@@ -619,8 +619,7 @@ func (r *RegistryResolver) discoverAuthority(ctx context.Context, domain string)
 	}
 	authority, err := DiscoverAuthoritativeRegistry(ctx, r.DNSResolver, domain)
 	if err != nil {
-		var dnsErr *net.DNSError
-		if fallback != "" && errors.As(err, &dnsErr) {
+		if fallback != "" && isDNSFallbackFailure(err) {
 			return DomainAuthority{RegistryURL: fallback}, nil
 		}
 		return DomainAuthority{}, err
@@ -731,6 +730,20 @@ func (r *RegistryResolver) loadRegistryCache(domain string) (DomainAuthority, bo
 		return DomainAuthority{}, false
 	}
 	return entry.value, true
+}
+
+func isDNSFallbackFailure(err error) bool {
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
+		return false
+	}
+	if dnsErr.IsTimeout || dnsErr.IsTemporary {
+		return true
+	}
+	detail := strings.ToLower(strings.TrimSpace(dnsErr.Err))
+	return strings.Contains(detail, "connection refused") ||
+		strings.Contains(detail, "network is unreachable") ||
+		strings.Contains(detail, "no route to host")
 }
 
 func (r *RegistryResolver) storeRegistryCache(domain string, authority DomainAuthority, ttl time.Duration) {

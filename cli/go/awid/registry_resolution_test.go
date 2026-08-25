@@ -93,6 +93,24 @@ func TestRegistryResolverIdentityRegistrySelection(t *testing.T) {
 			wantCalls: 1,
 		},
 		{
+			name:   "foreign DNS connection refused falls back",
+			domain: "foreign.example",
+			lookups: map[string]registryTXTLookup{
+				"_awid.foreign.example": {err: &net.DNSError{Err: "connection refused"}},
+			},
+			want:      homeRegistry,
+			wantCalls: 1,
+		},
+		{
+			name:   "foreign malformed DNS response fails closed",
+			domain: "foreign.example",
+			lookups: map[string]registryTXTLookup{
+				"_awid.foreign.example": {err: &net.DNSError{Err: "cannot unmarshal DNS message"}},
+			},
+			wantErr:   "cannot unmarshal DNS message",
+			wantCalls: 1,
+		},
+		{
 			name:   "foreign malformed record fails closed",
 			domain: "foreign.example",
 			lookups: map[string]registryTXTLookup{

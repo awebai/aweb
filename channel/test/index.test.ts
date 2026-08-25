@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL } from "../src/index.js";
+import { createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL } from "../src/index.js";
 import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
 
 describe("loadChannelConfig", () => {
@@ -27,6 +27,23 @@ describe("loadChannelConfig", () => {
     expect(config.did).toBe(external.did);
     expect(config.signingKey).toEqual(external.seed);
     expect(config.did).not.toBe(shadow.did);
+  });
+});
+
+describe("createChannelRegistryResolver", () => {
+  test("discovers a foreign authority from the concrete Channel identity address", async () => {
+    const calls: string[] = [];
+    const registry = createChannelRegistryResolver({
+      registryURL: "https://home.registry.example",
+      address: "home.example/alice",
+    }, async (hostname) => {
+      calls.push(hostname);
+      return [["awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd; registry=https://foreign.registry.example;"]];
+    });
+
+    await expect(registry.discoverRegistry("foreign.example"))
+      .resolves.toBe("https://foreign.registry.example");
+    expect(calls).toEqual(["_awid.foreign.example"]);
   });
 });
 

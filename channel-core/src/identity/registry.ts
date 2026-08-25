@@ -98,7 +98,7 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-type ResolveTxt = (hostname: string) => Promise<string[][]>;
+export type ResolveTxt = (hostname: string) => Promise<string[][]>;
 
 interface RegistryResolverOptions {
   fallbackRegistryURL?: string;
@@ -724,7 +724,13 @@ function isTxtNotFound(error: unknown): boolean {
 
 function isDnsTransportFailure(error: unknown): boolean {
   const code = (error as { code?: string } | undefined)?.code;
-  return code === "ETIMEOUT" || code === "ESERVFAIL" || code === "EAI_AGAIN";
+  return code === "ETIMEOUT"
+    || code === "ESERVFAIL"
+    || code === "EAI_AGAIN"
+    || code === "ECONNREFUSED"
+    || code === "EREFUSED"
+    || code === "ENETUNREACH"
+    || code === "EHOSTUNREACH";
 }
 
 function validateRegistryOrigin(value: string): string {

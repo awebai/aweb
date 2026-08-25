@@ -278,7 +278,7 @@ describe("registry resolver", () => {
     expect(resolveTxt).toHaveBeenCalledTimes(1);
   });
 
-  test.each(["ETIMEOUT", "ESERVFAIL", "EAI_AGAIN"])(
+  test.each(["ETIMEOUT", "ESERVFAIL", "EAI_AGAIN", "ECONNREFUSED", "EREFUSED"])(
     "falls back for foreign DNS transport failure %s",
     async (code) => {
       const resolveTxt = vi.fn(async () => {
@@ -292,6 +292,18 @@ describe("registry resolver", () => {
       await expect(resolver.discoverRegistry("foreign.example")).resolves.toBe("https://home.registry.example");
     },
   );
+
+  test.each(["EFORMERR", "EBADRESP"])("rejects foreign malformed DNS response %s", async (code) => {
+    const resolveTxt = vi.fn(async () => {
+      throw Object.assign(new Error("malformed DNS response"), { code });
+    });
+    const resolver = new RegistryResolver(fetch, resolveTxt, () => Date.now(), {
+      fallbackRegistryURL: "https://home.registry.example",
+      identityAddress: "home.example/alice",
+    });
+
+    await expect(resolver.discoverRegistry("foreign.example")).rejects.toMatchObject({ code });
+  });
 
   test.each([
     ["malformed version", [[`awid=v2; controller=${identityLogVectors.mapping.initial_did_key}; registry=https://foreign.registry.example;`]], "unsupported awid version"],

@@ -18,6 +18,8 @@ import {
   type PinStore,
   type PinStoreWriter,
   type ChannelTraceEntry,
+  type RegistryIdentityConfig,
+  type ResolveTxt,
   resolveConfig,
   resolveRegistryFallbackURL,
   type SelfIdentity,
@@ -31,6 +33,13 @@ export { resolveRegistryFallbackURL, CHANNEL_CORE_SECURITY_CONTRACT };
 
 export function loadChannelConfig(workdir: string) {
   return resolveConfig(workdir);
+}
+
+export function createChannelRegistryResolver(
+  config: RegistryIdentityConfig,
+  resolveTxt?: ResolveTxt,
+) {
+  return createRegistryResolver(config, resolveTxt);
 }
 
 export interface ChannelTraceSink {
@@ -82,7 +91,7 @@ async function main() {
     process.exit(1);
   });
   if (!pinStore) return;
-  const registry = createRegistryResolver(config.registryURL, config.address);
+  const registry = createChannelRegistryResolver(config);
   const trust = new SenderTrustManager(
     client,
     registry,

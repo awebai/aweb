@@ -34,7 +34,7 @@ const messages = await fetchHistory(client, sessionID, true, 2000, messageID);
 const pinStore = await loadPinStore();
 const trust = new SenderTrustManager(
   client,
-  createRegistryResolver(config.registryURL),
+  createRegistryResolver(config),
   config.teamID,
   config.did,
   config.stableID,
