@@ -728,7 +728,6 @@ function isDnsTransportFailure(error: unknown): boolean {
     || code === "ESERVFAIL"
     || code === "EAI_AGAIN"
     || code === "ECONNREFUSED"
-    || code === "EREFUSED"
     || code === "ENETUNREACH"
     || code === "EHOSTUNREACH";
 }

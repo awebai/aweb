@@ -278,7 +278,7 @@ describe("registry resolver", () => {
     expect(resolveTxt).toHaveBeenCalledTimes(1);
   });
 
-  test.each(["ETIMEOUT", "ESERVFAIL", "EAI_AGAIN", "ECONNREFUSED", "EREFUSED"])(
+  test.each(["ETIMEOUT", "ESERVFAIL", "EAI_AGAIN", "ECONNREFUSED"])(
     "falls back for foreign DNS transport failure %s",
     async (code) => {
       const resolveTxt = vi.fn(async () => {
@@ -293,9 +293,9 @@ describe("registry resolver", () => {
     },
   );
 
-  test.each(["EFORMERR", "EBADRESP"])("rejects foreign malformed DNS response %s", async (code) => {
+  test.each(["EREFUSED", "EFORMERR", "EBADRESP"])("rejects foreign DNS response error %s", async (code) => {
     const resolveTxt = vi.fn(async () => {
-      throw Object.assign(new Error("malformed DNS response"), { code });
+      throw Object.assign(new Error("DNS response error"), { code });
     });
     const resolver = new RegistryResolver(fetch, resolveTxt, () => Date.now(), {
       fallbackRegistryURL: "https://home.registry.example",

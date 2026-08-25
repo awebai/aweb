@@ -133,10 +133,11 @@ registry resolution and keeps the signed address/DID/key/origin contract. A
 client identity's configured registry is an explicit pin for its own address
 domain. For a foreign first-contact address, the CLI and channel runtimes use
 that domain's valid `_awid` record (including bounded parent inheritance) when
-present; absence of a record, a DNS timeout, a temporary server failure, or an
-unreachable/refusing resolver falls back to the configured identity registry so
-private/offline deployments retain their operator-selected path. Malformed DNS
-responses and malformed or ambiguous AWID records remain errors. This fallback
+present; absence of a record, a DNS timeout, a temporary server failure, an
+unreachable resolver, or connection-refused transport falls back to the
+configured identity registry so private/offline deployments retain their
+operator-selected path. Refused or malformed DNS responses and malformed or
+ambiguous AWID records remain errors. This fallback
 is outbound address resolution policy only: explicit registry pins on
 namespace/team/address
 administrative operations always win and never consult DNS, while strict
