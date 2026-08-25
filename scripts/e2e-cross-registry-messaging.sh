@@ -289,6 +289,7 @@ cat > "$DNS_DIR/test.local.zone.tmp" <<EOF
 @ IN SOA ns.test.local. hostmaster.test.local. ($serial 1 1 1 1)
 @ IN NS ns.test.local.
 ns IN A 127.0.0.1
+_awid IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
 _awid.alpha IN TXT "awid=v1; controller=$ALICE_CONTROLLER; registry=http://awid-a:8010;"
 _awid.beta IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
 EOF
@@ -315,4 +316,38 @@ run_cli bob chat send-and-leave --plaintext alpha.test.local/alice "two registry
 alice_chat="$(run_cli alice chat history beta.test.local/bob --json)"
 assert_chat_message "$alice_chat" "two registry chat reply"
 
-echo "PASS: disjoint-registry CLI mail and chat delivery"
+echo "Proving exact-child removal falls back to a mismatching parent and is rejected"
+python3 - "$DNS_DIR/test.local.zone" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+lines = [line for line in path.read_text().splitlines() if not line.startswith("_awid.alpha ")]
+path.write_text("\n".join(lines) + "\n")
+PY
+compose restart federation-dns aweb-b >/dev/null
+wait_health aweb-b "http://$PUBLISHED_HOST:$AWEB_B_PORT" aweb-b
+strict_rejection="$(docker exec -i "$(compose ps -q aweb-b)" python - <<'PY'
+import asyncio
+from awid.external_authority import SystemTXTOutcomeResolver
+from awid.external_registry import StrictExternalRegistry
+from awid.federation_errors import FederationAuthorityError
+
+async def main():
+    resolver = StrictExternalRegistry(txt_resolver=SystemTXTOutcomeResolver())
+    try:
+        await resolver.fetch_evidence("alpha.test.local/alice", authority_generation=1)
+    except FederationAuthorityError as exc:
+        if exc.reason not in {"sender_address_did_mismatch", "sender_identity_not_found"}:
+            raise
+        print(exc.reason)
+        return
+    finally:
+        await resolver.aclose()
+    raise SystemExit("inherited mismatching parent unexpectedly verified the child")
+
+asyncio.run(main())
+PY
+)"
+[[ "$strict_rejection" == "sender_address_did_mismatch" || "$strict_rejection" == "sender_identity_not_found" ]]
+
+echo "PASS: exact child authorities deliver; inherited mismatching parent is rejected"
