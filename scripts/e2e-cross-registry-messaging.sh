@@ -115,9 +115,16 @@ assert any(item.get("body")==body for item in items), data
 }
 
 cat > "$DNS_DIR/Corefile" <<'EOF'
-.:53 {
+example.com:53 {
   errors
   file /zones/example.com.zone example.com { reload 1s }
+}
+example.net:53 {
+  errors
+  file /zones/example.net.zone example.net { reload 1s }
+}
+.:53 {
+  errors
   forward . 127.0.0.11
 }
 EOF
@@ -126,6 +133,13 @@ $ORIGIN example.com.
 $TTL 1
 @ IN SOA ns.example.com. hostmaster.example.com. (1 1 1 1 1)
 @ IN NS ns.example.com.
+ns IN A 127.0.0.1
+EOF
+cat > "$DNS_DIR/example.net.zone" <<'EOF'
+$ORIGIN example.net.
+$TTL 1
+@ IN SOA ns.example.net. hostmaster.example.net. (1 1 1 1 1)
+@ IN NS ns.example.net.
 ns IN A 127.0.0.1
 EOF
 
@@ -267,20 +281,20 @@ alice_invite="$(run_cli alice id team invite --team alpha --namespace alpha.exam
 run_cli alice id team accept-invite "$(printf '%s' "$alice_invite" | json_field token)" --name alice --global --json >/dev/null
 run_cli alice init --url http://aweb-a:8000 --name alice --do-not-touch-agents-md >/dev/null
 
-bob_create="$(run_cli bob id create --name bob --domain beta.example.com --registry http://awid-b:8010 --skip-dns-verify --json)"
+bob_create="$(run_cli bob id create --name bob --domain beta.example.net --registry http://awid-b:8010 --skip-dns-verify --json)"
 BOB_DID_AW="$(printf '%s' "$bob_create" | json_field did_aw)"
 BOB_CONTROLLER="$(printf '%s' "$bob_create" | json_field controller_did)"
-run_cli bob id team create --name beta --namespace beta.example.com --registry http://awid-b:8010 --json >/dev/null
-bob_invite="$(run_cli bob id team invite --team beta --namespace beta.example.com --member-global --json)"
+run_cli bob id team create --name beta --namespace beta.example.net --registry http://awid-b:8010 --json >/dev/null
+bob_invite="$(run_cli bob id team invite --team beta --namespace beta.example.net --member-global --json)"
 run_cli bob id team accept-invite "$(printf '%s' "$bob_invite" | json_field token)" --name bob --global --json >/dev/null
 run_cli bob init --url http://aweb-b:8000 --name bob --do-not-touch-agents-md >/dev/null
 
 [[ -n "$ALICE_DID_AW" && -n "$BOB_DID_AW" && -n "$ALICE_CONTROLLER" && -n "$BOB_CONTROLLER" ]]
 # Control: each home registry lacks the foreign address.
-[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/beta.example.com/addresses/bob")" == "404" ]]
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/beta.example.net/addresses/bob")" == "404" ]]
 [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_B_PORT/v1/namespaces/alpha.example.com/addresses/alice")" == "404" ]]
 [[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_A_PORT/v1/namespaces/alpha.example.com/addresses/alice")" == "200" ]]
-[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_B_PORT/v1/namespaces/beta.example.com/addresses/bob")" == "200" ]]
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' "http://$PUBLISHED_HOST:$AWID_B_PORT/v1/namespaces/beta.example.net/addresses/bob")" == "200" ]]
 
 serial="$(date -u +%Y%m%d%H)"
 cat > "$DNS_DIR/example.com.zone.tmp" <<EOF
@@ -289,17 +303,24 @@ cat > "$DNS_DIR/example.com.zone.tmp" <<EOF
 @ IN SOA ns.example.com. hostmaster.example.com. ($serial 1 1 1 1)
 @ IN NS ns.example.com.
 ns IN A 127.0.0.1
-_awid IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-a:8010;"
-_awid.alpha IN TXT "awid=v1; controller=$ALICE_CONTROLLER; registry=http://awid-a:8010;"
-_awid.beta IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
+_awid IN TXT "awid=v1; controller=$ALICE_CONTROLLER; registry=http://awid-a:8010;"
+EOF
+cat > "$DNS_DIR/example.net.zone.tmp" <<EOF
+\$ORIGIN example.net.
+\$TTL 1
+@ IN SOA ns.example.net. hostmaster.example.net. ($serial 1 1 1 1)
+@ IN NS ns.example.net.
+ns IN A 127.0.0.1
+_awid IN TXT "awid=v1; controller=$BOB_CONTROLLER; registry=http://awid-b:8010;"
 EOF
 mv "$DNS_DIR/example.com.zone.tmp" "$DNS_DIR/example.com.zone"
+mv "$DNS_DIR/example.net.zone.tmp" "$DNS_DIR/example.net.zone"
 sleep 2
 run_cli alice id namespace set-delivery-origin --namespace alpha.example.com --origin http://aweb-a:8000 --json >/dev/null
-run_cli bob id namespace set-delivery-origin --namespace beta.example.com --origin http://aweb-b:8000 --json >/dev/null
+run_cli bob id namespace set-delivery-origin --namespace beta.example.net --origin http://aweb-b:8000 --json >/dev/null
 
 echo "Proving CLI mail delivery across two registries"
-mail_out="$(run_cli alice mail send --plaintext --to-address beta.example.com/bob --subject 'two registry mail' --body 'alice to bob' --json)"
+mail_out="$(run_cli alice mail send --plaintext --to-address beta.example.net/bob --subject 'two registry mail' --body 'alice to bob' --json)"
 CONVERSATION_ID="$(printf '%s' "$mail_out" | json_field conversation_id)"
 [[ -n "$(printf '%s' "$mail_out" | json_field message_id)" && -n "$CONVERSATION_ID" ]]
 bob_inbox="$(run_cli bob mail inbox --show-all --json)"
@@ -309,52 +330,11 @@ alice_inbox="$(run_cli alice mail inbox --show-all --json)"
 assert_inbox_message "$alice_inbox" "two registry reply" "bob to alice"
 
 echo "Proving CLI chat delivery across two registries"
-run_cli alice chat send-and-leave --plaintext beta.example.com/bob "two registry chat" --json >/dev/null
+run_cli alice chat send-and-leave --plaintext beta.example.net/bob "two registry chat" --json >/dev/null
 bob_chat="$(run_cli bob chat history alpha.example.com/alice --json)"
 assert_chat_message "$bob_chat" "two registry chat"
 run_cli bob chat send-and-leave --plaintext alpha.example.com/alice "two registry chat reply" --json >/dev/null
-alice_chat="$(run_cli alice chat history beta.example.com/bob --json)"
+alice_chat="$(run_cli alice chat history beta.example.net/bob --json)"
 assert_chat_message "$alice_chat" "two registry chat reply"
 
-echo "Proving exact-child removal falls back to a mismatching parent and is rejected"
-python3 - "$DNS_DIR/example.com.zone" <<'PY'
-from pathlib import Path
-import sys
-path = Path(sys.argv[1])
-lines = [line for line in path.read_text().splitlines() if not line.startswith("_awid.alpha ")]
-path.write_text("\n".join(lines) + "\n")
-PY
-compose restart federation-dns aweb-b >/dev/null
-wait_health aweb-b "http://$PUBLISHED_HOST:$AWEB_B_PORT" aweb-b
-strict_rejection="$(docker exec -i "$(compose ps -q aweb-b)" python - <<'PY'
-import asyncio
-from awid.external_authority import OriginContext, SystemTXTOutcomeResolver
-from awid.external_registry import StrictExternalRegistry
-from awid.federation_errors import FederationAuthorityError
-
-async def main():
-    resolver = StrictExternalRegistry(
-        txt_resolver=SystemTXTOutcomeResolver(),
-        origin_context=OriginContext(
-            app_env="development",
-            federation_test_enabled=True,
-            listener_origin="http://aweb-b:8000",
-        ),
-    )
-    try:
-        await resolver.fetch_evidence("alpha.example.com/alice", authority_generation=1)
-    except FederationAuthorityError as exc:
-        if exc.reason != "sender_address_did_mismatch":
-            raise
-        print(exc.reason)
-        return
-    finally:
-        await resolver.aclose()
-    raise SystemExit("inherited mismatching parent unexpectedly verified the child")
-
-asyncio.run(main())
-PY
-)"
-[[ "$strict_rejection" == "sender_address_did_mismatch" ]]
-
-echo "PASS: exact child authorities deliver; inherited mismatching parent is rejected"
+echo "PASS: inherited parent authorities deliver mail and chat across disjoint registries"

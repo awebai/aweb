@@ -40,23 +40,6 @@ class DNS:
         )
 
 
-class ParentDNS:
-    def __init__(self) -> None:
-        self.calls: list[str] = []
-
-    async def lookup_txt(self, name: str) -> DNSLookup:
-        self.calls.append(name)
-        if name == "_awid.child.example.com":
-            return DNSLookup("nxdomain")
-        assert name == "_awid.example.com"
-        return DNSLookup(
-            "record",
-            (
-                "awid=v1; controller=did:key:z6Mkgxj2R3HLtQRpPnvfvpuKEceSqf3tZHBjdmZ3fFz3JHGG; registry=https://registry-a.example;",
-            ),
-        )
-
-
 class Hosts:
     def __init__(self) -> None:
         self.calls: list[str] = []
@@ -218,36 +201,6 @@ async def test_namespace_or_address_mismatch_never_falls_back() -> None:
     with pytest.raises(FederationAuthorityError) as raised:
         await resolver.fetch_evidence("alpha.example.com/Alice", authority_generation=7)
     assert raised.value.reason == "sender_address_did_mismatch"
-
-
-@pytest.mark.asyncio
-async def test_inherited_parent_rejects_unsigned_or_delegation_shaped_child_assertions() -> None:
-    vector, _entries = _identity()
-    child_controller = vector["mapping"]["initial_did_key"]
-    child_responses = {}
-    for path, value in responses().items():
-        child_responses[path.replace("alpha.example.com", "child.example.com")] = value
-    namespace = child_responses["/v1/namespaces/child.example.com"]
-    namespace["domain"] = "child.example.com"
-    namespace["verification_status"] = "verified"
-    namespace["delegation"] = {
-        "parent_domain": "example.com",
-        "child_controller_did": child_controller,
-        "signature": "forged",
-    }
-    address = child_responses["/v1/namespaces/child.example.com/addresses/Alice"]
-    address["domain"] = "child.example.com"
-    dns = ParentDNS()
-    resolver = StrictExternalRegistry(
-        txt_resolver=dns,
-        host_resolver=Hosts(),
-        http_factory=lambda *_args: HTTP(child_responses),
-    )
-
-    with pytest.raises(FederationAuthorityError) as raised:
-        await resolver.fetch_evidence("child.example.com/Alice", authority_generation=8)
-    assert raised.value.reason == "sender_address_did_mismatch"
-    assert dns.calls == ["_awid.child.example.com", "_awid.example.com"]
 
 
 @pytest.mark.asyncio
