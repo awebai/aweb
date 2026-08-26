@@ -619,11 +619,15 @@ client continues to serve its own identities, teams, and ordinary same-registry
 reads. A global sender from an external registry is verified through a separate
 strict external-address path selected only by the client-signed sender address.
 Wrapper registry hints, the home client's fallback, general caches, TOFU pins,
-and bare `did:aw` never select external authority. The path verifies DNS
-controller, exact namespace/address/DID/key/origin, and a genesis-anchored DID
-log before PostgreSQL compare-and-swap commits the checkpoint and complete
-address-authority cohort. `POST /v1/federation/messages` is the single inbound
-route for plaintext-v1 and encrypted-v2. It verifies protected sender bytes
+and bare `did:aw` never select external authority. The approved full-federation
+target verifies either an exact DNS controller or a complete parent-signed delegation chain from
+inherited DNS to the distinct exact namespace controller, then verifies the
+namespace/address/DID/key/origin and a genesis-anchored DID log before
+PostgreSQL compare-and-swap commits delegation and identity checkpoints plus the
+complete address-authority cohort. Until portable delegation lands, the shipped
+strict path rejects inherited DNS with a distinct child controller.
+`POST /v1/federation/messages` is the single inbound route for plaintext-v1 and
+encrypted-v2. It verifies protected sender bytes
 before external work: plaintext uses `signed_payload.from`, encrypted-v2 uses
 `encrypted_envelope.from.address`, and any wrapper address must match. A missing
 wrapper is filled only for a protected `domain/name`; a historical protected DID

@@ -61,13 +61,21 @@ when an authenticated earlier message established a valid learned return route.
 `inbound_mode=team_and_contacts` accepts verified same-team senders plus exact
 active identity contacts. Neither setting changes AWID resolution.
 
-When sender and receiver use different AWID registries, the receiving service
-selects external sender authority from the client-signed sender address, not
-from its configured home registry, a wrapper hint, or bare `did:aw`. It verifies
-the `_awid` DNS controller, exact namespace/address row, stable DID, current key,
-route origin, and genesis-anchored identity log through the separate strict
-external-address path. The receiver's home client remains unchanged for its own
-identities and ordinary same-registry reads.
+The approved full-federation target for senders and receivers using different
+AWID registries selects external sender authority from the client-signed sender
+address, not from its configured home registry, a wrapper hint, or bare
+`did:aw`. It verifies
+either the exact `_awid` DNS controller or a complete parent-signed delegation
+chain from inherited DNS to the exact namespace controller, followed by the
+exact namespace/address row, stable DID, current key, route origin, and
+genesis-anchored identity log through the separate strict external-address
+path. The receiver durably checkpoints delegation links as well as identity
+history. Its home client remains unchanged for its own identities and ordinary
+same-registry reads.
+
+Until portable parent delegation lands, the shipped strict path supports only
+the exact-DNS branch and fails closed for inherited DNS with a distinct child
+controller.
 
 A complete verified address-authority cohort may be reused from PostgreSQL for
 at most 60 seconds, configurable only downward. Expiry forces the whole

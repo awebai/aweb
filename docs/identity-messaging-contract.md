@@ -89,6 +89,10 @@ sender's address belongs to another registry. `POST /v1/federation/messages` is
 the single inbound route for plaintext-v1 and encrypted-v2. Cross-registry
 ingress uses a separate strict external-address authority path:
 
+The direct-DNS branch below is shipped. The parent-delegation branch is the
+approved release-blocking target; until it lands, inherited DNS with a distinct
+child controller fails closed at step 3.
+
 1. Verify the preserved plaintext or encrypted-v2 message signature under the
    presented sender key before external DNS or HTTP work.
 2. Extract authority from `signed_payload.from` for plaintext or
@@ -99,16 +103,22 @@ ingress uses a separate strict external-address authority path:
    only their exact stored participant locator. A sender-supplied registry URL
    is never authority and is not contacted.
 3. Discover the external registry from the signed address's `_awid` DNS
-   authority, fetch the exact namespace and address there, and require the DNS
-   controller, namespace, address, stable `did:aw`, current `did:key`, and
-   delivery origin to agree. Missing sender origin is derived from this verified
-   evidence; a present origin must equal it.
+   authority and fetch the exact namespace and address there. An exact DNS
+   controller may bind the namespace directly. If authority was inherited and
+   the namespace has a distinct controller, require the complete public
+   parent-signed delegation chain from the DNS controller to that exact
+   controller and durably checkpoint every link. Then require the namespace,
+   address, stable `did:aw`, current `did:key`, and delivery origin to agree.
+   `verification_status` or an unsigned registry assertion is never sufficient.
+   Missing sender origin is derived from this verified evidence; a present
+   origin must equal it.
 4. Verify a genesis-anchored DID log, or an adjacent head extending the exact
    durable checkpoint. Degraded, unavailable, truncated, forked, or rollback
    evidence never authorizes delivery.
-5. Commit the checkpoint and the complete address-authority cohort through
-   fenced compare-and-swap in PostgreSQL before recipient policy or message
-   effects are accepted.
+5. Commit every delegation-link checkpoint, the DID checkpoint, and the complete
+   address-authority cohort through one fenced compare-and-swap PostgreSQL
+   transaction before recipient policy or message effects are accepted. Any
+   conflict rolls back the entire authorization update.
 
 A successful cohort may be reused for at most 60 seconds.
 `AWEB_FEDERATION_AUTHORITY_REUSE_SECONDS` defaults to 60 and accepts only 1..60.
