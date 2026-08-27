@@ -83,7 +83,9 @@ the parent's `controller_did`.
 
 This is the standard mechanism, not a hosted special case. Any namespace owner
 can delegate child namespaces; a hosted operator uses the same public protocol
-under the base domain it controls.
+under the base domain it controls. The child may register that same parent
+controller as its namespace controller; hosted `*.aweb.ai` namespaces use this
+shape so inherited parent DNS authority and the exact registry row agree.
 
 Authority flows downward: a namespace controller can rotate the team
 controller key, but the team controller cannot rotate the namespace
@@ -212,8 +214,9 @@ control namespace addresses and team membership.
 
 Controller keys and custodial identity keys are held by the hosted operator for
 the explicit resources it controls. Parent delegation creates hosted child
-namespaces under the operator's base domain. This custody does not extend to a
-customer-controlled BYOT namespace/team or make the aweb server key authority.
+namespaces under the operator's base domain, and those children may reuse the
+parent controller key. This custody does not extend to a customer-controlled
+BYOT namespace/team or make the aweb server key authority.
 
 ---
 

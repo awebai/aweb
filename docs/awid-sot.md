@@ -85,13 +85,15 @@ for identity-scoped writes. The request carries:
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>
 ```
 
-Three controller keys exist, each with its own scope:
+Three controller roles exist, each with its own scope:
 
-- **Parent controller key** (`*.aweb.ai`): managed by the hosted deployment, signs namespace
-  registrations under managed domains
+- **Parent controller key** (`*.aweb.ai`): managed by the hosted deployment,
+  signs namespace registrations under managed domains, and may also be the
+  registered namespace controller for those hosted children
 - **Namespace controller key**: signs namespace operations and team
   creation under a specific namespace; held by the namespace owner (BYOD)
-  or by the hosted deployment (managed)
+  or by the hosted deployment (managed). A hosted child may reuse its parent
+  controller key rather than introducing a distinct child key.
 - **Team controller key**: signs team-scoped operations including
   certificate issuance, certificate revocation, and team visibility toggle;
   held by the team controller (BYOD) or by the hosted deployment (managed).
