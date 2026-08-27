@@ -2,8 +2,9 @@
 """One-time, manifest-bound AWID hosted namespace controller alignment.
 
 This operator script talks directly to PostgreSQL.  It scans AWID's complete
-active ``*.aweb.ai`` child universe, then requires every row to be present in
-the reviewed, canonical manifest supplied by AC before it may update anything.
+active direct-child ``*.aweb.ai`` universe, then requires every row to be
+present in the reviewed, canonical manifest supplied by AC before it may update
+anything.
 """
 from __future__ import annotations
 
@@ -271,14 +272,12 @@ async def _fetch_active_child_universe(
         f"""
         SELECT row_to_json(n)::text AS row_json
         FROM {table} AS n
-        WHERE n.domain LIKE $1
-          AND n.domain <> $2
+        WHERE n.domain ~ $1
           AND n.deleted_at IS NULL
         ORDER BY n.domain
         {lock_clause}
         """,
-        f"%.{base_domain}",
-        base_domain,
+        rf"^[^.]+\.{re.escape(base_domain)}$",
     )
     return _decode_rows(records)
 
@@ -383,8 +382,12 @@ def _result(
         "expected_count": manifest.expected_count,
         "present_count": len(state.rows),
         "absent_count": len(state.absent_domains),
-        "present_domains": [row["domain"] for row in state.rows],
-        "absent_domains": list(state.absent_domains),
+        "present_domains_sha256": hashlib.sha256(
+            _canonical_bytes([row["domain"] for row in state.rows])
+        ).hexdigest(),
+        "absent_domains_sha256": hashlib.sha256(
+            _canonical_bytes(list(state.absent_domains))
+        ).hexdigest(),
         "target_controller_did": manifest.target_controller_did,
         "already_aligned": aligned,
         "needs_alignment": len(state.rows) - aligned,
@@ -746,19 +749,19 @@ async def run_operation(
                     raise AlignmentError(
                         "guarded restore count/domain mismatch; transaction rolled back"
                     )
-                after = await _fetch_rows(
+                restored_state = await _validate_database_state(
                     connection,
                     table=table,
-                    domains=[row["domain"] for row in backup_state.rows],
+                    manifest=manifest,
+                    expected_present_count=expected_present_count,
                     lock=True,
+                    required_controller="old",
                 )
-                if after != list(backup_state.rows):
+                _assert_partition_unchanged(restored_state, backup_state)
+                if restored_state.rows != backup_state.rows:
                     raise AlignmentError(
                         "restore postcondition failed; transaction rolled back"
                     )
-                restored_state = DatabaseState(
-                    rows=tuple(after), absent_domains=backup_state.absent_domains
-                )
                 result = _result(command, manifest, restored_state)
                 result["restored"] = len(changed)
                 return result

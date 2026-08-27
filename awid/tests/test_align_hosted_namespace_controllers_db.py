@@ -226,9 +226,16 @@ async def test_223_manifest_201_row_backup_apply_verify_retry_and_restore(
     assert plan["needs_alignment"] == 201
     assert plan["present_count"] == 201
     assert plan["absent_count"] == 22
-    assert plan["absent_domains"] == [
-        f"tenant-{index:03d}.aweb.ai" for index in range(201, 223)
-    ]
+    assert "present_domains" not in plan
+    assert "absent_domains" not in plan
+    assert plan["present_domains_sha256"] == hashlib.sha256(
+        _canonical([f"tenant-{index:03d}.aweb.ai" for index in range(201)])
+    ).hexdigest()
+    assert plan["absent_domains_sha256"] == hashlib.sha256(
+        _canonical(
+            [f"tenant-{index:03d}.aweb.ai" for index in range(201, 223)]
+        )
+    ).hexdigest()
 
     backed_up = await alignment.run_operation(
         command="backup",
@@ -460,11 +467,6 @@ async def test_apply_rejects_changed_present_absent_partition_atomically(
             "unexpected old controller",
         ),
         (
-            "UPDATE awid.dns_namespaces SET domain = 'nested.tenant.aweb.ai' "
-            "WHERE domain = 'tenant-001.aweb.ai'",
-            "canonical direct child",
-        ),
-        (
             "UPDATE awid.dns_namespaces SET domain = 'rogue.aweb.ai' "
             "WHERE domain = 'tenant-001.aweb.ai'",
             "absent from manifest",
@@ -487,6 +489,35 @@ async def test_plan_rejects_noncanonical_or_unreviewed_universe(
             manifest=manifest,
             expected_present_count=2,
         )
+
+
+@pytest.mark.asyncio
+async def test_nested_namespace_is_outside_direct_child_universe(
+    alignment_database, tmp_path: Path
+) -> None:
+    database_url, connection = alignment_database
+    await _seed(connection, 2)
+    manifest, _digest = _write_manifest(tmp_path / "manifest.json", 2)
+    await connection.execute(
+        """
+        INSERT INTO awid.dns_namespaces
+            (namespace_id, domain, controller_did, verification_status,
+             last_verified_at, scope_id, default_delivery_origin)
+        VALUES ('00000000-0000-0000-0002-000000000009',
+                'nested.tenant.aweb.ai', $1, 'pending',
+                '2026-08-27T12:00:00Z', NULL, 'https://nested.example')
+        """,
+        OLD_DID,
+    )
+
+    result = await alignment.run_operation(
+        command="plan",
+        database_url=database_url,
+        schema="awid",
+        manifest=manifest,
+        expected_present_count=2,
+    )
+    assert result["present_count"] == 2
 
 
 @pytest.mark.asyncio
@@ -540,6 +571,78 @@ async def test_failed_postcondition_rolls_back_every_controller(
     )
     assert {row["controller_did"] for row in rows} == {OLD_DID}
     assert {row["default_delivery_origin"] for row in rows} == {"https://aweb.ai"}
+
+
+@pytest.mark.asyncio
+async def test_restore_partition_postcondition_failure_rolls_back_every_row(
+    alignment_database, tmp_path: Path
+) -> None:
+    database_url, connection = alignment_database
+    await _seed(connection, 3)
+    manifest, _digest = _write_manifest(tmp_path / "manifest.json", 4)
+    backup = tmp_path / "before.json"
+    backed_up = await alignment.run_operation(
+        command="backup",
+        database_url=database_url,
+        schema="awid",
+        manifest=manifest,
+        expected_present_count=3,
+        backup_path=backup,
+    )
+    await alignment.run_operation(
+        command="apply",
+        database_url=database_url,
+        schema="awid",
+        manifest=manifest,
+        expected_present_count=3,
+        backup_path=backup,
+        backup_sha256=backed_up["backup_sha256"],
+    )
+    await connection.execute(
+        """
+        CREATE FUNCTION awid.break_restore_partition() RETURNS trigger
+        LANGUAGE plpgsql AS $$
+        BEGIN
+            IF NEW.domain = 'tenant-002.aweb.ai' THEN
+                INSERT INTO awid.dns_namespaces
+                    (namespace_id, domain, controller_did, verification_status,
+                     last_verified_at, scope_id, default_delivery_origin)
+                VALUES ('00000000-0000-0000-0002-000000000010',
+                        'tenant-003.aweb.ai', NEW.controller_did, 'verified',
+                        '2026-08-27T12:00:00Z', NULL, 'https://aweb.ai');
+            END IF;
+            RETURN NEW;
+        END;
+        $$;
+        CREATE TRIGGER break_restore_partition
+        BEFORE UPDATE OF controller_did ON awid.dns_namespaces
+        FOR EACH ROW EXECUTE FUNCTION awid.break_restore_partition();
+        """
+    )
+
+    with pytest.raises(alignment.AlignmentError, match="universe count mismatch"):
+        await alignment.run_operation(
+            command="restore",
+            database_url=database_url,
+            schema="awid",
+            manifest=manifest,
+            expected_present_count=3,
+            backup_path=backup,
+            backup_sha256=backed_up["backup_sha256"],
+        )
+    rows = await connection.fetch(
+        """
+        SELECT domain, controller_did FROM awid.dns_namespaces
+        WHERE domain ~ '^[^.]+\\.aweb\\.ai$' AND deleted_at IS NULL
+        ORDER BY domain
+        """
+    )
+    assert [row["domain"] for row in rows] == [
+        "tenant-000.aweb.ai",
+        "tenant-001.aweb.ai",
+        "tenant-002.aweb.ai",
+    ]
+    assert {row["controller_did"] for row in rows} == {PARENT_DID}
 
 
 @pytest.mark.asyncio

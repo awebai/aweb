@@ -1,8 +1,9 @@
 # Hosted namespace controller database alignment
 
 This is the one-time AWID half of the hosted `*.aweb.ai` controller alignment.
-It scans the complete active AWID child universe, requires exactly 201 active,
-verified, canonical direct children, and requires all 201 to be in the reviewed
+It scans the complete active AWID direct-child universe (nested namespaces are
+outside this operation), requires exactly 201 active, verified, canonical direct
+children, and requires all 201 to be in the reviewed
 223-domain AC manifest with their exact old controller. The other 22 manifest
 domains must be absent from AWID. It changes only
 `awid.dns_namespaces.controller_did` for those exact 201 rows. It never inserts
@@ -48,7 +49,7 @@ uv run python scripts/align_hosted_namespace_controllers_db.py verify \
 ```
 
 The first command is the default read-only plan. Preserve its output and review
-the exact sorted 201-present/22-absent partition. `backup` then writes a
+the 201-present/22-absent counts and domain-set digests. `backup` then writes a
 canonical, mode-`0600`, non-overwriting document containing the full 201-row
 before-image and the exact 22 absent domains. Preserve and review that file and
 its reported SHA-256 before `apply`. `apply` requires that exact digest, uses a
