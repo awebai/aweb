@@ -429,42 +429,6 @@ stored with the fence and consumed by the normal parent row/delegation update.
 This path may have a fail-closed availability window while DNS changes, but it
 does not strand the parent or silently grant the registry recovery authority.
 
-If exact-DNS key loss prevents AWID from independently establishing the prior
-TTL, automatic overlap release remains fail closed. The sole v1 override is an
-internal DB-credential/Typer capability, never a public controller-authority
-route. It requires live exact DNS selecting this registry's configured canonical
-public origin, fresh new-controller proof over the exact canonical risk payload,
-an explicit assumed prior TTL/change time, operator identity, nonempty reason,
-and literal risk acceptance. AWID stores immutable canonical bytes, signature,
-DNS evidence, `complete_after`, actor/reason hashes, and a loud warning that old
-authority readers may fail if the assumption is short. Exact retries return that
-stored readback even after admission freshness expires; conflicting retries fail.
-The override releases only the overlap fence and never authorizes controller
-change or child signatures.
-
-Registry migration is likewise an internal DB-operator protocol. Source prepare
-requires canonical expected source and destination origins plus a second
-authoritative DNS observation inside the locked snapshot transaction. The
-manifest copies exact subtree state and the reachable ancestor delegation suffix
-under one source generation. Destination import must match its configured public
-origin and preflight every deterministic primary key. Missing rows are inserted;
-semantically exact local rows may be reused; imported rows may be reused only
-after their owner is no longer cancelable. The closed v1 semantic projection
-excludes exactly `state_source_registry_id`, `state_cutover_id`, and
-`state_generation`. Reused provenance is never rewritten. Actual-table readback
-binds source and semantic manifests, per-kind inserted/reused counts, and owner
-provenance.
-
-DNS eligibility and overlap use strict non-self-referential receipts. They bind
-both registry ids, cutover id, source generation, manifests, expected destination
-origin, DNS name/controller/origin, authority-answer digest, observations, old
-authoritative TTL, skew allowance, and shared `complete_after`. Destination and
-source each perform a fresh independent authoritative DNS observation under the
-cutover lock before release. Destination releases first and emits its completion
-receipt; source consumes it and releases second. Exact completed retries use
-stored receipts without rerunning historical DNS. Cancel removes only exact
-`inserted` provenance; reused rows and their owners survive.
-
 Public reads continue during a rollover. Signature attachment does not change
 the entry hash or delegation sequence. These endpoint shapes, exact bytes,
 pagination rules, and fence semantics are part of the v1 contract; live
@@ -1118,10 +1082,6 @@ Current ordered effects are:
 6. `006_identity_encryption_key_custody.sql` adds the assertion custody signal.
 7. `007_a2a_publications.sql` adds digest-bound A2A delegation/publication
    records.
-8. `008_namespace_delegation.sql` atomically adds the complete portable
-   namespace-delegation contract: append-only history/signatures, replay-stable
-   snapshot pages, controller-rollover and recovery fences, source-preserving
-   registry-cutover generations/receipts, and exact-provenance cleanup guards.
 
 The following inventory is exhaustive for current **AWID application tables
 declared by** that ordered component chain. It intentionally excludes pgdbm's
@@ -1142,19 +1102,6 @@ full ordered SQL, not a copied `001` snapshot.
 - `identity_encryption_keys`
 - `a2a_bridge_delegations`
 - `a2a_route_publications`
-- `namespace_delegation_heads`
-- `namespace_delegation_entries`
-- `namespace_delegation_signatures`
-- `namespace_delegation_read_snapshots`
-- `namespace_delegation_read_pages`
-- `namespace_controller_rollovers`
-- `namespace_controller_rollover_children`
-- `namespace_controller_rollover_risk_acceptances`
-- `registry_state`
-- `registry_migration_cutovers`
-- `registry_migration_items`
-- `namespace_controller_rollover_read_pages`
-- `namespace_controller_rollover_first_pages`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---
@@ -1174,9 +1121,6 @@ AWID_LOG_JSON=true
 # Required when this AWID serves aweb; set the same >=32-byte secret on both.
 # Generate, for example, with: openssl rand -hex 32
 AWID_SERVICE_TOKEN=
-
-# Canonical public origin; required by migration import and risk override.
-AWID_PUBLIC_ORIGIN=https://api.awid.ai
 ```
 
 awid has no encryption keys, no custody keys, no signing keys.

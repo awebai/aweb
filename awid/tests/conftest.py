@@ -64,8 +64,6 @@ def fake_domain_verifier(controller_identity):
             controller_did=did_key,
             registry_url="https://api.awid.ai",
             dns_name=f"_awid.{domain}",
-            ttl_seconds=30,
-            authoritative_ttl_seconds=300,
         )
 
     return _verify_domain

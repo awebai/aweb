@@ -87,33 +87,6 @@ async def reverify_namespace_row(
             rotated=False,
         )
 
-    parent_fence = await db.fetch_one(
-        """
-        SELECT r.rollover_id
-        FROM {{tables.namespace_delegation_heads}} h
-        JOIN {{tables.namespace_controller_rollovers}} r ON r.parent_domain=h.parent_domain
-        WHERE h.child_domain=$1 AND r.state NOT IN ('completed','canceled')
-        LIMIT 1
-        """,
-        domain,
-    )
-    child = await db.fetch_one(
-        """
-        SELECT child_domain FROM {{tables.namespace_delegation_heads}}
-        WHERE parent_domain=$1 AND head_operation <> 'revoke' LIMIT 1
-        """,
-        domain,
-    )
-    if parent_fence is not None or child is not None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "controller_rollover_not_ready",
-                "message": "controller-changing reverify requires the explicit rollover route",
-                "retryable": parent_fence is not None,
-            },
-        )
-
     row = await db.fetch_one(
         """
         UPDATE {{tables.dns_namespaces}}

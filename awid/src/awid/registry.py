@@ -12,7 +12,7 @@ from json import loads as json_loads
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Awaitable, Callable
 from urllib.parse import quote, urlparse
 
 import httpx
@@ -21,7 +21,6 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
 from awid.contract import normalize_identity_scope
-from awid.delegation import parse_delegation_assertion
 from awid.did import did_from_public_key, stable_id_from_did_key
 from awid.log import (
     canonical_server_origin,
@@ -165,53 +164,6 @@ class KeyResolution:
 
 
 @dataclass(frozen=True)
-class NamespaceDelegationAssertion:
-    payload: dict[str, Any]
-    entry_hash: str
-    signatures: tuple[dict[str, str], ...]
-
-
-@dataclass(frozen=True)
-class NamespaceDelegationLogPage:
-    entries: tuple[NamespaceDelegationAssertion, ...]
-    has_more: bool
-    next_sequence: int
-    next_cursor: str | None
-    head_sequence: int
-    head_hash: str
-
-
-@dataclass(frozen=True)
-class NamespaceControllerRolloverChild:
-    child_domain: str
-    head_hash: str
-    payload: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class NamespaceControllerRolloverChildrenPage:
-    children: tuple[NamespaceControllerRolloverChild, ...]
-    has_more: bool
-    next_cursor: str | None
-
-
-@dataclass(frozen=True)
-class NamespaceControllerRollover:
-    rollover_id: str
-    parent_domain: str
-    old_controller_did: str
-    new_controller_did: str
-    recovery_mode: Literal["none", "exact_dns", "delegated"]
-    recovery_assertion: NamespaceDelegationAssertion | None
-    state: str
-    total_children: int
-    signed_children: int
-    started_at: str
-    cutover_at: str | None = None
-    complete_after: str | None = None
-
-
-@dataclass(frozen=True)
 class Namespace:
     namespace_id: str
     domain: str
@@ -220,7 +172,6 @@ class Namespace:
     last_verified_at: str | None
     created_at: str
     default_delivery_origin: str | None = None
-    delegation_chain: tuple[NamespaceDelegationAssertion, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -608,21 +559,15 @@ class RegistryClient:
         controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
         default_delivery_origin: str | None = None,
-        delegation_assertion: dict[str, Any] | None = None,
     ) -> Namespace:
         registry_url = await self._registry_url_for_domain(domain)
         _assert_signing_key_matches(controller_did, controller_signing_key)
         default_delivery_origin = _canonical_optional_origin(default_delivery_origin)
-        extra_payload: dict[str, str] = {}
-        if default_delivery_origin is not None:
-            extra_payload["default_delivery_origin"] = default_delivery_origin
-        if delegation_assertion is not None:
-            extra_payload.update(
-                {
-                    "controller_did": controller_did,
-                    "delegation_entry_hash": delegation_assertion["entry_hash"],
-                }
-            )
+        extra_payload = (
+            {"default_delivery_origin": default_delivery_origin}
+            if default_delivery_origin is not None
+            else None
+        )
         headers = self._signed_namespace_headers(
             domain=domain,
             operation="register",
@@ -635,9 +580,6 @@ class RegistryClient:
                     parent_signing_key=parent_signing_key,
                     child_domain=domain,
                     controller_did=controller_did,
-                    delegation_entry_hash=(
-                        None if delegation_assertion is None else delegation_assertion["entry_hash"]
-                    ),
                 )
             )
         return _namespace_from_json(
@@ -652,11 +594,6 @@ class RegistryClient:
                         {}
                         if default_delivery_origin is None
                         else {"default_delivery_origin": default_delivery_origin}
-                    ),
-                    **(
-                        {}
-                        if delegation_assertion is None
-                        else {"delegation_assertion": delegation_assertion}
                     ),
                 },
                 registry_url=registry_url,
@@ -674,181 +611,6 @@ class RegistryClient:
     async def get_namespace_fresh(self, domain: str) -> Namespace | None:
         """Read current namespace authority without a stale cache result."""
         return await self.get_namespace(domain)
-
-    async def get_namespace_delegation_log(
-        self,
-        domain: str,
-        *,
-        after_sequence: int = 0,
-        limit: int = 100,
-        cursor: str | None = None,
-    ) -> NamespaceDelegationLogPage:
-        query = f"?cursor={quote(cursor, safe='')}" if cursor is not None else f"?after_sequence={after_sequence}&limit={limit}"
-        data = await self._request_json(
-            "GET",
-            f"/v1/namespaces/{domain}/delegation-log{query}",
-            registry_url=await self._registry_url_for_domain(domain),
-        )
-        return NamespaceDelegationLogPage(
-            entries=tuple(_namespace_delegation_from_json(item) for item in data["entries"]),
-            has_more=bool(data["has_more"]),
-            next_sequence=int(data["next_sequence"]),
-            next_cursor=data.get("next_cursor"),
-            head_sequence=int(data["head_sequence"]),
-            head_hash=data["head_hash"],
-        )
-
-    async def collect_namespace_delegation_log(
-        self,
-        domain: str,
-        *,
-        after_sequence: int = 0,
-        limit: int = 100,
-        max_restarts: int = 3,
-    ) -> NamespaceDelegationLogPage:
-        def protocol_failure(message: str) -> RegistryError:
-            return RegistryError(
-                message,
-                status_code=409,
-                detail=f"delegation_log_snapshot_changed: {message}",
-            )
-
-        for attempt in range(max_restarts + 1):
-            entries: list[NamespaceDelegationAssertion] = []
-            cursor = None
-            seen_cursors: set[str] = set()
-            expected_sequence = after_sequence + 1
-            previous_hash: str | None = None
-            snapshot_head: tuple[int, str] | None = None
-            try:
-                while True:
-                    page = await self.get_namespace_delegation_log(
-                        domain,
-                        after_sequence=after_sequence,
-                        limit=limit,
-                        cursor=cursor,
-                    )
-                    if page.has_more != bool(page.next_cursor):
-                        raise protocol_failure("has_more and next_cursor disagree")
-                    if page.has_more and not page.entries:
-                        raise protocol_failure("non-final delegation page is empty")
-                    current_head = (page.head_sequence, page.head_hash)
-                    if snapshot_head is None:
-                        snapshot_head = current_head
-                    elif current_head != snapshot_head:
-                        raise protocol_failure("page head changed during collection")
-                    for entry in page.entries:
-                        sequence = int(entry.payload["sequence"])
-                        if sequence != expected_sequence:
-                            raise protocol_failure("delegation log is not contiguous")
-                        if previous_hash is not None and entry.payload["previous_delegation_hash"] != previous_hash:
-                            raise protocol_failure("delegation log hash chain is disconnected")
-                        entries.append(entry)
-                        previous_hash = entry.entry_hash
-                        expected_sequence += 1
-                    expected_next = expected_sequence - 1
-                    if page.next_sequence != expected_next:
-                        raise protocol_failure("next_sequence does not equal the page boundary")
-                    if not page.has_more:
-                        if entries:
-                            if entries[-1].entry_hash != page.head_hash or int(entries[-1].payload["sequence"]) != page.head_sequence:
-                                raise protocol_failure("delegation final entry does not equal snapshot head")
-                        elif after_sequence != page.head_sequence:
-                            raise protocol_failure("delegation log returned an invalid empty page")
-                        namespace = await self.get_namespace_fresh(domain)
-                        if namespace is not None:
-                            if not namespace.delegation_chain:
-                                raise protocol_failure("active history-backed namespace omitted delegation chain")
-                            if namespace.delegation_chain[-1].entry_hash != page.head_hash:
-                                raise protocol_failure("namespace chain head changed during collection")
-                            if entries and entries[-1].payload["operation"] == "revoke":
-                                raise protocol_failure("active namespace cannot end in revoke")
-                        elif entries and entries[-1].payload["operation"] != "revoke":
-                            raise protocol_failure("deleted delegation log does not end in revoke")
-                        return NamespaceDelegationLogPage(
-                            entries=tuple(entries),
-                            has_more=False,
-                            next_sequence=page.next_sequence,
-                            next_cursor=None,
-                            head_sequence=page.head_sequence,
-                            head_hash=page.head_hash,
-                        )
-                    if not page.next_cursor:
-                        raise protocol_failure("delegation log truncated without continuation cursor")
-                    if page.next_cursor == cursor or page.next_cursor in seen_cursors:
-                        raise protocol_failure("delegation continuation cursor repeated")
-                    seen_cursors.add(page.next_cursor)
-                    cursor = page.next_cursor
-            except RegistryError as exc:
-                if (
-                    exc.status_code != 409
-                    or "delegation_log_snapshot_changed" not in exc.detail
-                    or attempt == max_restarts
-                ):
-                    raise
-        raise AssertionError("unreachable")
-
-    async def backfill_namespace_delegation(
-        self,
-        domain: str,
-        *,
-        controller_signing_key: bytes,
-        parent_signing_key: bytes,
-        delegation_assertion: dict[str, Any],
-    ) -> Namespace:
-        entry_hash = delegation_assertion["entry_hash"]
-        controller_did = _did_key_from_signing_key(controller_signing_key)
-        headers = self._signed_namespace_headers(
-            domain=domain,
-            operation="backfill_namespace_delegation",
-            signing_key=controller_signing_key,
-            extra_payload={"delegation_entry_hash": entry_hash},
-        )
-        headers.update(
-            self._signed_parent_namespace_backfill_headers(
-                parent_signing_key=parent_signing_key,
-                child_domain=domain,
-                controller_did=controller_did,
-                delegation_entry_hash=entry_hash,
-            )
-        )
-        data = await self._request_json(
-            "POST",
-            f"/v1/namespaces/{domain}/delegation/backfill",
-            headers=headers,
-            json={"delegation_assertion": delegation_assertion},
-            registry_url=await self._registry_url_for_domain(domain),
-        )
-        return _namespace_from_json(data)
-
-    async def delete_namespace(
-        self,
-        domain: str,
-        controller_signing_key: bytes,
-        *,
-        reason: str | None = None,
-        delegation_assertion: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        extra = None if delegation_assertion is None else {
-            "delegation_entry_hash": delegation_assertion["entry_hash"]
-        }
-        body: dict[str, Any] = {}
-        if reason is not None:
-            body["reason"] = reason
-        if delegation_assertion is not None:
-            body["delegation_assertion"] = delegation_assertion
-        return await self._request_json(
-            "DELETE",
-            f"/v1/namespaces/{domain}",
-            headers=self._signed_namespace_headers(
-                domain=domain,
-                operation="delete_namespace",
-                signing_key=controller_signing_key,
-                extra_payload=extra,
-            ),
-            json=body or None,
-            registry_url=await self._registry_url_for_domain(domain),
-        )
 
     async def update_namespace_delivery_origin(
         self,
@@ -911,21 +673,14 @@ class RegistryClient:
         new_controller_did: str,
         new_controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
-        delegation_assertion: dict[str, Any] | None = None,
-        rollover_id: str | None = None,
     ) -> Namespace:
         registry_url = await self._registry_url_for_domain(domain)
         _assert_signing_key_matches(new_controller_did, new_controller_signing_key)
-        extra_payload = {"new_controller_did": new_controller_did}
-        if delegation_assertion is not None:
-            extra_payload["delegation_entry_hash"] = delegation_assertion["entry_hash"]
-        if rollover_id is not None:
-            extra_payload["rollover_id"] = rollover_id
         headers = self._signed_namespace_headers(
             domain=domain,
             operation="rotate_controller",
             signing_key=new_controller_signing_key,
-            extra_payload=extra_payload,
+            extra_payload={"new_controller_did": new_controller_did},
         )
         if parent_signing_key is not None:
             headers.update(
@@ -933,10 +688,6 @@ class RegistryClient:
                     parent_signing_key=parent_signing_key,
                     child_domain=domain,
                     new_controller_did=new_controller_did,
-                    delegation_entry_hash=(
-                        None if delegation_assertion is None else delegation_assertion["entry_hash"]
-                    ),
-                    rollover_id=rollover_id,
                 )
             )
         return _namespace_from_json(
@@ -944,126 +695,10 @@ class RegistryClient:
                 "PUT",
                 f"/v1/namespaces/{domain}",
                 headers=headers,
-                json={
-                    "new_controller_did": new_controller_did,
-                    **({} if delegation_assertion is None else {"delegation_assertion": delegation_assertion}),
-                    **({} if rollover_id is None else {"rollover_id": rollover_id}),
-                },
+                json={"new_controller_did": new_controller_did},
                 registry_url=registry_url,
             )
         )
-
-    async def start_namespace_controller_rollover(
-        self,
-        domain: str,
-        *,
-        current_controller_signing_key: bytes,
-        new_controller_did: str,
-        new_controller_signing_key: bytes,
-        recovery_mode: Literal["none", "exact_dns", "delegated"] = "none",
-        recovery_assertion: dict[str, Any] | None = None,
-    ) -> NamespaceControllerRollover:
-        _assert_signing_key_matches(new_controller_did, new_controller_signing_key)
-        operation = "start_controller_rollover" if recovery_mode == "none" else "recover_controller_rollover"
-        admission_key = current_controller_signing_key if recovery_mode == "none" else new_controller_signing_key
-        extra = {"new_controller_did": new_controller_did, "recovery_mode": recovery_mode}
-        if recovery_assertion is not None:
-            extra["recovery_entry_hash"] = recovery_assertion["entry_hash"]
-        headers = self._signed_namespace_headers(
-            domain=domain, operation=operation, signing_key=admission_key, extra_payload=extra
-        )
-        proof = self._signed_namespace_headers(
-            domain=domain, operation="prove_controller_rollover_key",
-            signing_key=new_controller_signing_key, extra_payload=extra,
-        )
-        headers["X-AWEB-New-Controller-Authorization"] = proof["Authorization"]
-        headers["X-AWEB-New-Controller-Timestamp"] = proof["X-AWEB-Timestamp"]
-        data = await self._request_json(
-            "POST", f"/v1/namespaces/{domain}/controller-rollovers", headers=headers,
-            json={
-                "new_controller_did": new_controller_did,
-                "recovery_mode": recovery_mode,
-                **({} if recovery_assertion is None else {"recovery_assertion": recovery_assertion}),
-            },
-            registry_url=await self._registry_url_for_domain(domain),
-        )
-        return _namespace_rollover_from_json(data)
-
-    async def get_namespace_controller_rollover(
-        self, domain: str, rollover_id: str
-    ) -> NamespaceControllerRollover:
-        data = await self._request_json(
-            "GET",
-            f"/v1/namespaces/{domain}/controller-rollovers/{rollover_id}",
-            registry_url=await self._registry_url_for_domain(domain),
-        )
-        return _namespace_rollover_from_json(data)
-
-    async def get_namespace_controller_rollover_children(
-        self, domain: str, rollover_id: str, *, limit: int = 100, cursor: str | None = None,
-    ) -> NamespaceControllerRolloverChildrenPage:
-        query = f"?cursor={quote(cursor, safe='')}" if cursor else f"?limit={limit}"
-        data = await self._request_json(
-            "GET", f"/v1/namespaces/{domain}/controller-rollovers/{rollover_id}/children{query}",
-            registry_url=await self._registry_url_for_domain(domain),
-        )
-        return NamespaceControllerRolloverChildrenPage(
-            children=tuple(
-                NamespaceControllerRolloverChild(
-                    child_domain=item["child_domain"],
-                    head_hash=item["head_hash"],
-                    payload=dict(item["payload"]),
-                )
-                for item in data["children"]
-            ),
-            has_more=bool(data["has_more"]),
-            next_cursor=data.get("next_cursor"),
-        )
-
-    async def attach_namespace_controller_rollover_signatures(
-        self, domain: str, rollover_id: str, *,
-        new_controller_signing_key: bytes, signatures: list[dict[str, str]],
-    ) -> NamespaceControllerRollover:
-        body = {"signatures": signatures}
-        batch_hash = "sha256:" + hashlib.sha256(canonical_json_bytes(body)).hexdigest()
-        data = await self._request_json(
-            "PUT", f"/v1/namespaces/{domain}/controller-rollovers/{rollover_id}/signatures",
-            headers=self._signed_namespace_headers(
-                domain=domain, operation="attach_controller_rollover_signatures",
-                signing_key=new_controller_signing_key,
-                extra_payload={"rollover_id": rollover_id, "batch_hash": batch_hash},
-            ),
-            json=body, registry_url=await self._registry_url_for_domain(domain),
-        )
-        return _namespace_rollover_from_json(data)
-
-    async def complete_namespace_controller_rollover(
-        self, domain: str, rollover_id: str, *, new_controller_signing_key: bytes,
-    ) -> NamespaceControllerRollover:
-        data = await self._request_json(
-            "POST", f"/v1/namespaces/{domain}/controller-rollovers/{rollover_id}/complete",
-            headers=self._signed_namespace_headers(
-                domain=domain, operation="complete_controller_rollover",
-                signing_key=new_controller_signing_key,
-                extra_payload={"rollover_id": rollover_id},
-            ),
-            registry_url=await self._registry_url_for_domain(domain),
-        )
-        return _namespace_rollover_from_json(data)
-
-    async def cancel_namespace_controller_rollover(
-        self, domain: str, rollover_id: str, *, old_controller_signing_key: bytes,
-    ) -> NamespaceControllerRollover:
-        data = await self._request_json(
-            "DELETE", f"/v1/namespaces/{domain}/controller-rollovers/{rollover_id}",
-            headers=self._signed_namespace_headers(
-                domain=domain, operation="cancel_controller_rollover",
-                signing_key=old_controller_signing_key,
-                extra_payload={"rollover_id": rollover_id},
-            ),
-            registry_url=await self._registry_url_for_domain(domain),
-        )
-        return _namespace_rollover_from_json(data)
 
     async def register_address(
         self,
@@ -1510,46 +1145,14 @@ class RegistryClient:
         parent_signing_key: bytes,
         child_domain: str,
         new_controller_did: str,
-        delegation_entry_hash: str | None = None,
-        rollover_id: str | None = None,
-    ) -> dict[str, str]:
-        timestamp = _utc_timestamp()
-        fields = {
-            "domain": child_domain,
-            "child_domain": child_domain,
-            "new_controller_did": new_controller_did,
-            "operation": "authorize_subdomain_rotation",
-            "timestamp": timestamp,
-        }
-        if delegation_entry_hash is not None:
-            fields["delegation_entry_hash"] = delegation_entry_hash
-        if rollover_id is not None:
-            fields["rollover_id"] = rollover_id
-        payload = canonical_json_bytes(fields)
-        return {
-            "X-AWEB-Parent-Authorization": (
-                f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
-                f"{sign_message(parent_signing_key, payload)}"
-            ),
-            "X-AWEB-Parent-Timestamp": timestamp,
-        }
-
-    def _signed_parent_namespace_backfill_headers(
-        self,
-        *,
-        parent_signing_key: bytes,
-        child_domain: str,
-        controller_did: str,
-        delegation_entry_hash: str,
     ) -> dict[str, str]:
         timestamp = _utc_timestamp()
         payload = canonical_json_bytes(
             {
                 "domain": child_domain,
                 "child_domain": child_domain,
-                "controller_did": controller_did,
-                "delegation_entry_hash": delegation_entry_hash,
-                "operation": "authorize_subdomain_backfill",
+                "new_controller_did": new_controller_did,
+                "operation": "authorize_subdomain_rotation",
                 "timestamp": timestamp,
             }
         )
@@ -1567,19 +1170,17 @@ class RegistryClient:
         parent_signing_key: bytes,
         child_domain: str,
         controller_did: str,
-        delegation_entry_hash: str | None = None,
     ) -> dict[str, str]:
         timestamp = _utc_timestamp()
-        fields = {
-            "domain": child_domain,
-            "child_domain": child_domain,
-            "controller_did": controller_did,
-            "operation": "authorize_subdomain_registration",
-            "timestamp": timestamp,
-        }
-        if delegation_entry_hash is not None:
-            fields["delegation_entry_hash"] = delegation_entry_hash
-        payload = canonical_json_bytes(fields)
+        payload = canonical_json_bytes(
+            {
+                "domain": child_domain,
+                "child_domain": child_domain,
+                "controller_did": controller_did,
+                "operation": "authorize_subdomain_registration",
+                "timestamp": timestamp,
+            }
+        )
         return {
             "X-AWEB-Parent-Authorization": (
                 f"DIDKey {_did_key_from_signing_key(parent_signing_key)} "
@@ -1998,7 +1599,6 @@ class CachedRegistryClient(RegistryClient):
         controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
         default_delivery_origin: str | None = None,
-        delegation_assertion: dict[str, Any] | None = None,
     ) -> Namespace:
         await self._invalidate_namespace_cache(domain)
         namespace = await super().register_namespace(
@@ -2007,7 +1607,6 @@ class CachedRegistryClient(RegistryClient):
             controller_signing_key,
             parent_signing_key,
             default_delivery_origin,
-            delegation_assertion,
         )
         await self._invalidate_namespace_cache(domain)
         return namespace
@@ -2061,8 +1660,6 @@ class CachedRegistryClient(RegistryClient):
         new_controller_did: str,
         new_controller_signing_key: bytes,
         parent_signing_key: bytes | None = None,
-        delegation_assertion: dict[str, Any] | None = None,
-        rollover_id: str | None = None,
     ) -> Namespace:
         await self._invalidate_namespace_cache(domain)
         namespace = await super().rotate_namespace_controller(
@@ -2070,8 +1667,6 @@ class CachedRegistryClient(RegistryClient):
             new_controller_did,
             new_controller_signing_key,
             parent_signing_key,
-            delegation_assertion,
-            rollover_id,
         )
         await self._invalidate_namespace_cache(domain)
         return namespace
@@ -2534,36 +2129,6 @@ def _key_resolution_from_json(data: dict[str, Any]) -> KeyResolution:
     )
 
 
-def _namespace_delegation_from_json(data: dict[str, Any]) -> NamespaceDelegationAssertion:
-    parsed = parse_delegation_assertion(data)
-    return NamespaceDelegationAssertion(
-        payload=parsed.payload.model_dump(mode="json"),
-        entry_hash=parsed.entry_hash,
-        signatures=tuple(item.model_dump(mode="json") for item in parsed.signatures),
-    )
-
-
-def _namespace_rollover_from_json(data: dict[str, Any]) -> NamespaceControllerRollover:
-    return NamespaceControllerRollover(
-        rollover_id=data["rollover_id"],
-        parent_domain=data["parent_domain"],
-        old_controller_did=data["old_controller_did"],
-        new_controller_did=data["new_controller_did"],
-        recovery_mode=data["recovery_mode"],
-        recovery_assertion=(
-            None
-            if data.get("recovery_assertion") is None
-            else _namespace_delegation_from_json(data["recovery_assertion"])
-        ),
-        state=data["state"],
-        total_children=int(data["total_children"]),
-        signed_children=int(data["signed_children"]),
-        started_at=data["started_at"],
-        cutover_at=data.get("cutover_at"),
-        complete_after=data.get("complete_after"),
-    )
-
-
 def _namespace_from_json(data: dict[str, Any]) -> Namespace:
     return Namespace(
         namespace_id=data["namespace_id"],
@@ -2573,10 +2138,6 @@ def _namespace_from_json(data: dict[str, Any]) -> Namespace:
         last_verified_at=data.get("last_verified_at"),
         created_at=data["created_at"],
         default_delivery_origin=data.get("default_delivery_origin"),
-        delegation_chain=tuple(
-            _namespace_delegation_from_json(item)
-            for item in data.get("delegation_chain", [])
-        ),
     )
 
 
