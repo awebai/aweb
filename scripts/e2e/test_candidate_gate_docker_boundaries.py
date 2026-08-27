@@ -54,6 +54,17 @@ class DockerBoundaryTests(unittest.TestCase):
             self.image, "stat", "-c", "%g", "/var/run/docker.sock",
         ).stdout.strip()
 
+    def test_go_module_cache_is_fresh_per_candidate_run(self) -> None:
+        source = (
+            Path(__file__).resolve().parents[2] / "scripts/candidate-docker-gate.sh"
+        ).read_text()
+        self.assertIn('go_mod_cache="$work/go-mod"', source)
+        self.assertIn('mkdir -p "$go_mod_cache"', source)
+        self.assertIn('-e GOMODCACHE="$go_mod_cache"', source)
+        self.assertIn('-v "$go_mod_cache:$go_mod_cache"', source)
+        self.assertNotIn("$CACHE_ROOT/go-mod", source)
+        self.assertNotIn("GOMODCACHE=/tmp/go-mod", source)
+
     def test_nonroot_user_has_only_socket_group_and_permission_semantics(self) -> None:
         # A named volume lives on the daemon's native filesystem, so mode
         # bits are real on every platform; a bind-mounted file's chmod does

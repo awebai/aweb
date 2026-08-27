@@ -25,12 +25,11 @@ LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
 IMAGE="aweb-candidate-gate:${SOURCE_SHA:0:12}"
 
 # Persistent caches, shared across gate runs. Determinism is carried by the
-# committed lockfiles (uv.lock, go.sum, package-lock.json), whose hashes are
-# recorded in inputs.tsv; every store here is content-addressed or checksum
-# verified against those locks, so a warm hit yields the same bytes as a cold
-# fetch. The uv and go paths match the ones the Makefile targets already pin.
+# committed uv and npm lockfiles, whose hashes are recorded in inputs.tsv;
+# GOCACHE is content-addressed. The extracted Go module cache is deliberately
+# per-run below because an interrupted process can leave it incomplete.
 CACHE_ROOT="${AWEB_CANDIDATE_CACHE:-/tmp/aweb-candidate-cache}"
-mkdir -p "$CACHE_ROOT/uv" "$CACHE_ROOT/go-build" "$CACHE_ROOT/go-mod" "$CACHE_ROOT/npm"
+mkdir -p "$CACHE_ROOT/uv" "$CACHE_ROOT/go-build" "$CACHE_ROOT/npm"
 
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
@@ -49,6 +48,8 @@ if ! work="$(mktemp -d "/tmp/aweb-candidate-work.XXXXXX")"; then
   refuse "could not allocate the candidate work directory"
 fi
 work="$(cd "$work" && pwd -P)"
+go_mod_cache="$work/go-mod"
+mkdir -p "$go_mod_cache"
 owned_containers=()
 owned_network=""
 # The builder and its layer cache persist across gate runs; the suite bounds
@@ -260,7 +261,7 @@ docker run --rm --init \
   -e UV_CACHE_DIR=/tmp/uv-cache \
   -e UV_LINK_MODE=copy \
   -e GOCACHE=/tmp/go-build \
-  -e GOMODCACHE=/tmp/go-mod \
+  -e GOMODCACHE="$go_mod_cache" \
   -e NPM_CONFIG_CACHE=/tmp/npm-cache \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
   -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \
@@ -289,7 +290,7 @@ docker run --rm --init \
   -v "$buildx_config:$buildx_config" \
   -v "$CACHE_ROOT/uv:/tmp/uv-cache" \
   -v "$CACHE_ROOT/go-build:/tmp/go-build" \
-  -v "$CACHE_ROOT/go-mod:/tmp/go-mod" \
+  -v "$go_mod_cache:$go_mod_cache" \
   -v "$CACHE_ROOT/npm:/tmp/npm-cache" \
   -v "$checkout:$checkout" \
   -v "$LOG_DIR:$LOG_DIR" \
