@@ -24,6 +24,7 @@ class Settings:
     db_schema: str
     rate_limit_backend: str
     service_token: str | None
+    public_origin: str | None
 
 
 def get_settings() -> Settings:
@@ -53,4 +54,5 @@ def get_settings() -> Settings:
         db_schema=schema,
         rate_limit_backend=rate_limit_backend,
         service_token=normalize_service_token(os.getenv("AWID_SERVICE_TOKEN")),
+        public_origin=(os.getenv("AWID_PUBLIC_ORIGIN") or "").strip() or None,
     )

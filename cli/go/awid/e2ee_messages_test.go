@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+var e2eeFixtureTime = time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+
 type e2eeTestIdentity struct {
 	pub       ed25519.PublicKey
 	priv      ed25519.PrivateKey
@@ -35,7 +37,7 @@ func newE2EETestIdentity(t *testing.T, address string) e2eeTestIdentity {
 	}
 	did := ComputeDIDKey(pub)
 	stableID := ComputeStableID(pub)
-	assertion, err := BuildEncryptionKeyAssertion(priv, did, stableID, rawPub, "", time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+	assertion, err := BuildEncryptionKeyAssertion(priv, did, stableID, rawPub, "", e2eeFixtureTime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +63,7 @@ func newE2EETestLocalIdentity(t *testing.T) e2eeTestIdentity {
 		t.Fatal(err)
 	}
 	did := ComputeDIDKey(pub)
-	assertion, err := BuildEncryptionKeyAssertion(priv, did, "", rawPub, "", time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
+	assertion, err := BuildEncryptionKeyAssertion(priv, did, "", rawPub, "", e2eeFixtureTime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +98,7 @@ func TestE2EEMailEncryptDecryptRecipientAndSenderCopy(t *testing.T) {
 		Body:           "secret body",
 		MessageID:      "11111111-1111-4111-8111-111111111111",
 		ConversationID: "22222222-2222-4222-8222-222222222222",
-		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		CreatedAt:      e2eeFixtureTime,
 	})
 	if err != nil {
 		t.Fatalf("EncryptE2EEMail: %v", err)
@@ -160,13 +162,13 @@ func TestE2EERecipientFromEnvelopeSenderRequiresMatchingAssertion(t *testing.T) 
 		Body:           "body",
 		MessageID:      "11111111-1111-4111-8111-111111111112",
 		ConversationID: "22222222-2222-4222-8222-222222222223",
-		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		CreatedAt:      e2eeFixtureTime,
 		DeliveryOrigin: "https://remote.example",
 	})
 	if err != nil {
 		t.Fatalf("EncryptE2EEMail: %v", err)
 	}
-	recipient, err := E2EERecipientFromEnvelopeSender(env, time.Date(2026, 5, 26, 12, 1, 0, 0, time.UTC))
+	recipient, err := E2EERecipientFromEnvelopeSender(env, e2eeFixtureTime.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("E2EERecipientFromEnvelopeSender: %v", err)
 	}
@@ -193,7 +195,7 @@ func TestE2EERecipientFromEnvelopeSenderRequiresMatchingAssertion(t *testing.T) 
 	}
 
 	env.SenderEncryptionKey = bob.assertion
-	_, err = E2EERecipientFromEnvelopeSender(env, time.Date(2026, 5, 26, 12, 1, 0, 0, time.UTC))
+	_, err = E2EERecipientFromEnvelopeSender(env, e2eeFixtureTime.Add(time.Minute))
 	if err == nil || !strings.Contains(err.Error(), "does not match envelope sender key id") {
 		t.Fatalf("err=%v, want sender key mismatch", err)
 	}
@@ -219,7 +221,7 @@ func TestE2EEChatEncryptDecryptGroupAndSenderCopy(t *testing.T) {
 		Body:           "group secret body",
 		MessageID:      "33333333-3333-4333-8333-333333333333",
 		ConversationID: "44444444-4444-4444-8444-444444444444",
-		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		CreatedAt:      e2eeFixtureTime,
 	})
 	if err != nil {
 		t.Fatalf("EncryptE2EEChat: %v", err)
@@ -249,7 +251,7 @@ func TestE2EEChatMembershipChangesAreFutureOnly(t *testing.T) {
 	bob := newE2EETestIdentity(t, "example.com/bob")
 	carol := newE2EETestIdentity(t, "example.com/carol")
 	dave := newE2EETestIdentity(t, "example.com/dave")
-	createdAt := time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC)
+	createdAt := e2eeFixtureTime
 	conversationID := "99999999-9999-4999-8999-999999999999"
 
 	encrypt := func(messageID, body string, recipients ...e2eeTestIdentity) *E2EEMessageEnvelope {
@@ -343,7 +345,7 @@ func TestE2EEMailDecryptRejectsNonRecipientAndTamper(t *testing.T) {
 		Body:           "secret body",
 		MessageID:      "33333333-3333-4333-8333-333333333333",
 		ConversationID: "44444444-4444-4444-8444-444444444444",
-		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		CreatedAt:      e2eeFixtureTime,
 	})
 	if err != nil {
 		t.Fatalf("EncryptE2EEMail: %v", err)
@@ -397,7 +399,7 @@ func TestE2EEMailEncryptRejectsSubstitutedRecipientAssertion(t *testing.T) {
 		Body:           "secret body",
 		MessageID:      "55555555-5555-4555-8555-555555555555",
 		ConversationID: "66666666-6666-4666-8666-666666666666",
-		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		CreatedAt:      e2eeFixtureTime,
 	})
 	if err == nil || !strings.Contains(err.Error(), "recipient encryption key assertion") {
 		t.Fatalf("err=%v, want recipient assertion rejection", err)
@@ -644,7 +646,7 @@ func encryptE2EETestMessage(t *testing.T, alice, bob e2eeTestIdentity, messageID
 		Body:           "secret body",
 		MessageID:      messageID,
 		ConversationID: conversationID,
-		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		CreatedAt:      e2eeFixtureTime,
 	})
 	if err != nil {
 		t.Fatalf("EncryptE2EEMail: %v", err)

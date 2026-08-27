@@ -68,6 +68,14 @@ ROOT_CONSUMERS = {
         },
         '_VECTORS_DIR = _ROOT / "docs" / "vectors"',
     ),
+    PurePosixPath("awid/tests/test_delegation.py"): _consumer(
+        "namespace-delegation-v1.json",
+        'VECTOR_PATH = Path(__file__).parents[2] / "docs" / "vectors" / "namespace-delegation-v1.json"',
+    ),
+    PurePosixPath("awid/tests/test_registry_migration_receipts.py"): _consumer(
+        "registry-migration-receipts-v1.json",
+        'VECTOR = Path(__file__).parents[2] / "docs" / "vectors" / "registry-migration-receipts-v1.json"',
+    ),
     PurePosixPath("awid/tests/test_did.py"): _consumer(
         "identity-log-v1.json",
         '_IDENTITY_VECTOR = _ROOT / "docs" / "vectors" / "identity-log-v1.json"',
@@ -177,6 +185,10 @@ ROOT_CONSUMERS = {
             "atomic-address-claim-v1.json",
         },
         'filepath.Join("..", "..", "..", "docs", "vectors", name)',
+    ),
+    PurePosixPath("cli/go/awid/delegation_test.go"): _consumer(
+        "namespace-delegation-v1.json",
+        'os.ReadFile("../../../docs/vectors/namespace-delegation-v1.json")',
     ),
     PurePosixPath("cli/go/awid/e2ee_cross_language_test.go"): _consumer(
         "e2ee-v2-cross-language.json",

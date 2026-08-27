@@ -868,7 +868,7 @@ func TestMailE2EEConversationReplyLearnsLocalOnlySenderKey(t *testing.T) {
 		Body:           "incoming body",
 		MessageID:      "11111111-1111-4111-8111-111111111131",
 		ConversationID: "22222222-2222-4222-8222-222222222231",
-		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		CreatedAt:      e2eeFixtureTime,
 		DeliveryOrigin: "https://alpha.example",
 	})
 	if err != nil {
@@ -960,7 +960,7 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 		Body:           "incoming chat",
 		MessageID:      "11111111-1111-4111-8111-111111111132",
 		ConversationID: "22222222-2222-4222-8222-222222222232",
-		CreatedAt:      time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC),
+		CreatedAt:      e2eeFixtureTime,
 		DeliveryOrigin: "https://alpha.example",
 	})
 	if err != nil {

@@ -86,7 +86,55 @@ async def test_openapi_only_mounts_registry_routes(client):
     assert "/v1/did/{did_aw}/key" in paths
     assert "/v1/namespaces/{domain}" in paths
     assert "/v1/namespaces/{domain}/addresses/{name}" in paths
+    assert "/v1/namespaces/{domain}/delegation/backfill" in paths
+    assert "/v1/namespaces/{domain}/delegation-log" in paths
+    assert "/v1/namespaces/{domain}/controller-rollovers" in paths
+    assert "/v1/namespaces/{domain}/controller-rollovers/{rollover_id}/children" in paths
+    assert "/v1/namespaces/{domain}/controller-rollovers/{rollover_id}/signatures" in paths
+    assert "/v1/namespaces/{domain}/controller-rollovers/{rollover_id}/complete" in paths
+    schemas = resp.json()["components"]["schemas"]
+    assert "delegation_assertion" in schemas["NamespaceRegisterRequest"]["properties"]
+    assert "delegation_chain" in schemas["NamespaceResponse"]["properties"]
+    assert schemas["ControllerRolloverSignaturesRequest"]["properties"]["signatures"]["maxItems"] == 100
+    assert schemas["ControllerRolloverStartRequest"]["properties"]["recovery_mode"]["enum"] == [
+        "none", "exact_dns", "delegated",
+    ]
+    signature_schema = schemas["ControllerRolloverSignatureItem"]["properties"]
+    assert signature_schema["head_hash"]["pattern"] == "^sha256:[0-9a-f]{64}$"
+    assert signature_schema["signature"]["minLength"] == 86
+    assert signature_schema["signature"]["maxLength"] == 86
+    rollover_schema = schemas["ControllerRolloverResponse"]["properties"]
+    assert rollover_schema["rollover_id"]["format"] == "uuid"
+    assert rollover_schema["state"]["enum"] == [
+        "preparing", "ready", "overlap", "recovery_overlap_unbounded",
+        "overlap_risk_accepted", "completed", "canceled",
+    ]
+    assert rollover_schema["total_children"]["minimum"] == 0
+    assert rollover_schema["started_at"]["format"] == "date-time"
+    log_schema = schemas["NamespaceDelegationLogResponse"]["properties"]
+    assert log_schema["next_sequence"]["minimum"] == 0
+    assert log_schema["head_sequence"]["exclusiveMinimum"] == 0
+    assert log_schema["head_hash"]["pattern"] == "^sha256:[0-9a-f]{64}$"
+    rollover_path = paths["/v1/namespaces/{domain}/controller-rollovers/{rollover_id}"]
+    for method in ("get", "delete"):
+        rollover_parameter = next(
+            item for item in rollover_path[method]["parameters"]
+            if item["name"] == "rollover_id"
+        )
+        assert rollover_parameter["schema"]["format"] == "uuid"
     assert "/v1/status" not in paths
+
+
+@pytest.mark.asyncio
+async def test_malformed_rollover_path_id_is_validation_error(client):
+    get_response = await client.get(
+        "/v1/namespaces/example.com/controller-rollovers/not-a-uuid"
+    )
+    delete_response = await client.delete(
+        "/v1/namespaces/example.com/controller-rollovers/not-a-uuid"
+    )
+    assert get_response.status_code == 422
+    assert delete_response.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -105,11 +153,16 @@ async def test_namespace_and_address_read_routes_use_redis_rate_limiter(client, 
     namespace_resp = await client.get("/v1/namespaces")
     address_list_resp = await client.get("/v1/namespaces/example.com/addresses")
     address_get_resp = await client.get("/v1/namespaces/example.com/addresses/alice")
+    delegation_log_resp = await client.get(
+        "/v1/namespaces/example.com/delegation-log"
+    )
 
     assert namespace_resp.status_code == 200
     assert address_list_resp.status_code == 404
     assert address_get_resp.status_code == 404
-    assert len(fake_redis.eval_calls) >= 3
+    assert delegation_log_resp.status_code == 404
+    assert len(fake_redis.eval_calls) >= 4
+    assert any("namespace_delegation_log" in call[0][2] for call in fake_redis.eval_calls)
 
 
 @pytest.mark.asyncio

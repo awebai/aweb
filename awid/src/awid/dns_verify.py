@@ -14,8 +14,12 @@ from dataclasses import dataclass
 import ipaddress
 import os
 
+import dns.asyncquery
 import dns.asyncresolver
 import dns.exception
+import dns.flags
+import dns.message
+import dns.rdatatype
 import dns.resolver
 
 from awid.did import validate_did
@@ -36,6 +40,8 @@ class DomainAuthority:
     dns_name: str
     inherited: bool = False
     registry_explicit: bool = False
+    ttl_seconds: int | None = None
+    authoritative_ttl_seconds: int | None = None
 
 
 class DnsVerificationError(Exception):
@@ -46,11 +52,19 @@ _AWID_PREFIX = "awid="
 
 
 async def verify_domain(domain: str) -> DomainAuthority:
-    """Verify a domain's awid TXT record, walking up ancestor domains."""
-    authority = await _lookup_domain_authority(domain)
+    """Verify a domain without adding authoritative nameserver round trips."""
+    authority = await _lookup_domain_authority(domain, include_authoritative_ttl=False)
     if authority is None:
         qname = awid_txt_name(domain)
         raise DnsVerificationError(f"No TXT records found for {qname}")
+    return authority
+
+
+async def verify_domain_with_authoritative_ttl(domain: str) -> DomainAuthority:
+    """Verify a domain and independently establish the original RRset TTL."""
+    authority = await _lookup_domain_authority(domain, include_authoritative_ttl=True)
+    if authority is None:
+        raise DnsVerificationError(f"No TXT records found for {awid_txt_name(domain)}")
     return authority
 
 
@@ -85,7 +99,9 @@ def awid_txt_value(controller_did: str, registry_url: str | None = None) -> str:
     return "; ".join(parts) + ";"
 
 
-async def _lookup_domain_authority(domain: str) -> DomainAuthority | None:
+async def _lookup_domain_authority(
+    domain: str, *, include_authoritative_ttl: bool = False
+) -> DomainAuthority | None:
     candidate_domains = _candidate_domains_for_lookup(domain)
     for candidate_domain in candidate_domains:
         qname = awid_txt_name(candidate_domain)
@@ -112,6 +128,13 @@ async def _lookup_domain_authority(domain: str) -> DomainAuthority | None:
             )
 
         authority = _parse_awid_record(awid_records[0], dns_name=qname)
+        rrset = getattr(answers, "rrset", None)
+        ttl_seconds = None if rrset is None else int(rrset.ttl)
+        authoritative_ttl_seconds = None
+        if include_authoritative_ttl and rrset is not None:
+            authoritative_ttl_seconds = await _authoritative_txt_ttl(
+                candidate_domain, qname, awid_records[0]
+            )
         if candidate_domain != _canonicalize_domain(domain):
             return DomainAuthority(
                 controller_did=authority.controller_did,
@@ -119,9 +142,67 @@ async def _lookup_domain_authority(domain: str) -> DomainAuthority | None:
                 dns_name=authority.dns_name,
                 inherited=True,
                 registry_explicit=authority.registry_explicit,
+                ttl_seconds=ttl_seconds,
+                authoritative_ttl_seconds=authoritative_ttl_seconds,
             )
-        return authority
+        return DomainAuthority(
+            controller_did=authority.controller_did,
+            registry_url=authority.registry_url,
+            dns_name=authority.dns_name,
+            inherited=False,
+            registry_explicit=authority.registry_explicit,
+            ttl_seconds=ttl_seconds,
+            authoritative_ttl_seconds=authoritative_ttl_seconds,
+        )
 
+    return None
+
+
+async def _authoritative_txt_ttl(
+    zone_domain: str, qname: str, expected_awid_record: str
+) -> int | None:
+    """Read the original TXT TTL directly from an authoritative nameserver.
+
+    Recursive rrsets expose a cache's remaining TTL, which cannot bound how
+    long another reader may retain the old authority. Failure to establish the
+    authoritative value leaves the stronger field absent so rollover/cutover
+    callers fail closed while ordinary discovery can still use the record.
+    """
+    try:
+        nameservers = None
+        for authority_domain in _candidate_domains_for_lookup(zone_domain):
+            try:
+                nameservers = await dns.asyncresolver.resolve(authority_domain, "NS")
+                break
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                continue
+        if nameservers is None:
+            return None
+        query = dns.message.make_query(qname, dns.rdatatype.TXT)
+        for nameserver in nameservers:
+            host = str(nameserver.target).rstrip(".")
+            for address_type in ("A", "AAAA"):
+                try:
+                    addresses = await dns.asyncresolver.resolve(host, address_type)
+                except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                    continue
+                for address in addresses:
+                    response = await dns.asyncquery.udp(query, str(address), timeout=3.0)
+                    if not (response.flags & dns.flags.AA):
+                        return None
+                    for answer in response.answer:
+                        if answer.rdtype != dns.rdatatype.TXT or str(answer.name).rstrip(".") != qname.rstrip("."):
+                            continue
+                        records = [
+                            b"".join(rdata.strings).decode()
+                            for rdata in answer
+                            if b"".join(rdata.strings).decode().startswith(_AWID_PREFIX)
+                        ]
+                        if records == [expected_awid_record]:
+                            return int(answer.ttl)
+                        return None
+    except Exception:
+        return None
     return None
 
 

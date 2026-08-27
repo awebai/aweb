@@ -68,13 +68,14 @@ type DIDMapping struct {
 }
 
 type RegistryNamespace struct {
-	NamespaceID           string `json:"namespace_id"`
-	Domain                string `json:"domain"`
-	ControllerDID         string `json:"controller_did,omitempty"`
-	VerificationStatus    string `json:"verification_status"`
-	DefaultDeliveryOrigin string `json:"default_delivery_origin,omitempty"`
-	LastVerifiedAt        string `json:"last_verified_at,omitempty"`
-	CreatedAt             string `json:"created_at"`
+	NamespaceID           string                         `json:"namespace_id"`
+	Domain                string                         `json:"domain"`
+	ControllerDID         string                         `json:"controller_did,omitempty"`
+	VerificationStatus    string                         `json:"verification_status"`
+	DefaultDeliveryOrigin string                         `json:"default_delivery_origin,omitempty"`
+	LastVerifiedAt        string                         `json:"last_verified_at,omitempty"`
+	CreatedAt             string                         `json:"created_at"`
+	DelegationChain       []NamespaceDelegationAssertion `json:"delegation_chain"`
 }
 
 type RegistryDelivery struct {

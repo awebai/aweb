@@ -1,15 +1,75 @@
 from __future__ import annotations
 
+import dns.flags
+import dns.message
 import dns.resolver
+import dns.rrset
 import pytest
 
 from awid.did import did_from_public_key, generate_keypair
 from awid.dns_verify import (
+    _authoritative_txt_ttl,
     _candidate_domains_for_lookup,
     awid_txt_value,
     discover_authoritative_registry,
     verify_domain,
 )
+
+
+@pytest.mark.asyncio
+async def test_authoritative_ttl_walks_parent_uses_ipv6_and_rejects_stale_recursive_content(
+    monkeypatch,
+):
+    expected = "awid=v1; controller=did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2;"
+    authoritative = {"record": expected.replace("5G2", "5G3"), "aa": True}
+    queries = []
+
+    async def resolve(name, record_type):
+        queries.append((str(name), record_type))
+        if record_type == "NS":
+            if str(name) == "child.example.com":
+                raise dns.resolver.NoAnswer
+            return dns.rrset.from_text(
+                "example.com.", 600, "IN", "NS", "ns.example.com."
+            )
+        if record_type == "A":
+            raise dns.resolver.NoAnswer
+        if record_type == "AAAA":
+            return dns.rrset.from_text(
+                "ns.example.com.", 600, "IN", "AAAA", "2001:db8::53"
+            )
+        raise AssertionError((name, record_type))
+
+    async def udp(query, where, timeout):
+        assert where == "2001:db8::53"
+        response = dns.message.make_response(query)
+        if authoritative["aa"]:
+            response.flags |= dns.flags.AA
+        response.answer.append(
+            dns.rrset.from_text(
+                "_awid.child.example.com.", 300, "IN", "TXT",
+                f'"{authoritative["record"]}"',
+            )
+        )
+        return response
+
+    monkeypatch.setattr("dns.asyncresolver.resolve", resolve)
+    monkeypatch.setattr("dns.asyncquery.udp", udp)
+    assert await _authoritative_txt_ttl(
+        "child.example.com", "_awid.child.example.com", expected
+    ) is None
+    authoritative["record"] = expected
+    authoritative["aa"] = False
+    assert await _authoritative_txt_ttl(
+        "child.example.com", "_awid.child.example.com", expected
+    ) is None
+    authoritative["aa"] = True
+    assert await _authoritative_txt_ttl(
+        "child.example.com", "_awid.child.example.com", expected
+    ) == 300
+    assert ("child.example.com", "NS") in queries
+    assert ("example.com", "NS") in queries
+    assert ("ns.example.com", "AAAA") in queries
 
 
 class _TxtAnswer:
