@@ -23,6 +23,10 @@ type e2eeTestIdentity struct {
 	assertion *EncryptionKeyAssertion
 }
 
+// These fixtures cover fixed 2026 messages and client paths that validate at
+// wall-clock time, so their signed validity window must span both.
+const e2eeTestAssertionExpiresAt = "2100-05-26T12:00:00Z"
+
 func newE2EETestIdentity(t *testing.T, address string) e2eeTestIdentity {
 	t.Helper()
 	pub, priv, err := GenerateKeypair()
@@ -37,6 +41,10 @@ func newE2EETestIdentity(t *testing.T, address string) e2eeTestIdentity {
 	stableID := ComputeStableID(pub)
 	assertion, err := BuildEncryptionKeyAssertion(priv, did, stableID, rawPub, "", time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
 	if err != nil {
+		t.Fatal(err)
+	}
+	assertion.ExpiresAt = e2eeTestAssertionExpiresAt
+	if err := SignEncryptionKeyAssertion(assertion, priv); err != nil {
 		t.Fatal(err)
 	}
 	return e2eeTestIdentity{
@@ -63,6 +71,10 @@ func newE2EETestLocalIdentity(t *testing.T) e2eeTestIdentity {
 	did := ComputeDIDKey(pub)
 	assertion, err := BuildEncryptionKeyAssertion(priv, did, "", rawPub, "", time.Date(2026, 5, 26, 12, 0, 0, 0, time.UTC))
 	if err != nil {
+		t.Fatal(err)
+	}
+	assertion.ExpiresAt = e2eeTestAssertionExpiresAt
+	if err := SignEncryptionKeyAssertion(assertion, priv); err != nil {
 		t.Fatal(err)
 	}
 	return e2eeTestIdentity{
