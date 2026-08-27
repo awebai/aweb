@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -160,6 +161,39 @@ class SurfaceContractTest(unittest.TestCase):
         self.assertEqual(len(targets), len(set(targets)))
         for target in ("test-e2e", "test-federation-e2e", "cli-e2e"):
             self.assertIn(target, targets)
+
+
+class ReleaseStampContractTest(unittest.TestCase):
+    def test_failed_go_build_is_not_masked_by_binary_inspection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fake_go = Path(directory) / "go"
+            fake_go.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ \"$1 $2\" == \"env GOVERSION\" ]]; then\n"
+                "  printf 'go1.24.13\\n'\n"
+                "  exit 0\n"
+                "fi\n"
+                "printf 'sentinel go build failure\\n' >&2\n"
+                "exit 42\n",
+                encoding="utf-8",
+            )
+            fake_go.chmod(0o755)
+            environment = os.environ.copy()
+            environment["GO_BINARY"] = str(fake_go)
+            result = subprocess.run(
+                ["bash", "scripts/check-cli-release-vcs-stamps.sh"],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("sentinel go build failure", result.stderr)
+        self.assertIn(
+            "FAIL: clean release build failed for darwin/amd64 aw", result.stderr
+        )
+        self.assertNotIn("no such file or directory", result.stderr.lower())
 
 
 if __name__ == "__main__":

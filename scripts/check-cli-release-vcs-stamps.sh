@@ -84,10 +84,13 @@ build_one() {
   mkdir -p "$(dirname "$output")"
   (
     cd "$repo"
+    # An interrupted earlier gate can leave a shared module cache only partly
+    # extracted. Keep this release proof independent of that mutable state.
     CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
       GOCACHE="$tmp/go-build-cache" \
-      "$GO_BINARY" build -buildvcs=true -o "$output" "$package"
-  )
+      GOMODCACHE="$tmp/go-mod-cache" \
+      "$GO_BINARY" build -modcacherw -buildvcs=true -o "$output" "$package"
+  ) || fail "$phase release build failed for $goos/$goarch $name"
   printf '%s\n' "$output"
 }
 
