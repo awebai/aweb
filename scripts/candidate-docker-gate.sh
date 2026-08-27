@@ -24,10 +24,10 @@ LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPR
 LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
 IMAGE="aweb-candidate-gate:${SOURCE_SHA:0:12}"
 
-# Persistent caches, shared across gate runs. Determinism is carried by the
-# committed uv and npm lockfiles, whose hashes are recorded in inputs.tsv;
-# GOCACHE is content-addressed. The extracted Go module cache is deliberately
-# per-run below because an interrupted process can leave it incomplete.
+# Persistent caches, shared across gate runs. The uv lock hash is recorded in
+# inputs.tsv, GOCACHE is content-addressed, and npm retains its existing cache.
+# The extracted Go module cache is deliberately per-run below because an
+# interrupted process can leave it incomplete.
 CACHE_ROOT="${AWEB_CANDIDATE_CACHE:-/tmp/aweb-candidate-cache}"
 mkdir -p "$CACHE_ROOT/uv" "$CACHE_ROOT/go-build" "$CACHE_ROOT/npm"
 
@@ -262,6 +262,7 @@ docker run --rm --init \
   -e UV_LINK_MODE=copy \
   -e GOCACHE=/tmp/go-build \
   -e GOMODCACHE="$go_mod_cache" \
+  -e GOFLAGS=-modcacherw \
   -e NPM_CONFIG_CACHE=/tmp/npm-cache \
   -e AWEB_DOCKER_BIND_ROOT="$docker_bind_root" \
   -e AWEB_DOCKER_PUBLISHED_HOST=aweb-docker.test \

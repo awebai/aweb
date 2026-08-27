@@ -61,6 +61,7 @@ class DockerBoundaryTests(unittest.TestCase):
         self.assertIn('go_mod_cache="$work/go-mod"', source)
         self.assertIn('mkdir -p "$go_mod_cache"', source)
         self.assertIn('-e GOMODCACHE="$go_mod_cache"', source)
+        self.assertIn("-e GOFLAGS=-modcacherw", source)
         self.assertIn('-v "$go_mod_cache:$go_mod_cache"', source)
         self.assertNotIn("$CACHE_ROOT/go-mod", source)
         self.assertNotIn("GOMODCACHE=/tmp/go-mod", source)
