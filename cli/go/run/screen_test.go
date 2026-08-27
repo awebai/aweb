@@ -316,7 +316,7 @@ func TestWrapScreenLineUsesHangingIndentForProviderStderr(t *testing.T) {
 }
 
 func TestWrapScreenLineKeepsIndentedCommBodyLinesAligned(t *testing.T) {
-	lines := wrapScreenLine(screenOutputLine{kind: DisplayKindCommunication, text: `   ownership split we discussed: hosted identity docs use canonical public authority`}, 40)
+	lines := wrapScreenLine(screenOutputLine{kind: DisplayKindCommunication, text: `   ownership split we discussed: docs/id-sot.md is now a hosted pointer to canonical docs`}, 40)
 	if len(lines) < 2 {
 		t.Fatalf("expected wrapped lines, got %#v", lines)
 	}

@@ -204,25 +204,13 @@ sender authority. Federation ingress uses the separate strict external-address
 adapter and never authorizes from `OK_DEGRADED`, TOFU, the receiver's home
 registry fallback, or a key cache indexed by bare `did:aw`.
 
-The approved full-federation strict adapter selects the registry from the
-client-signed sender address. It requires exact DNS controller equality or, for
-an inherited child with a distinct controller, a complete parent-signed
-namespace-delegation chain whose links extend the receiver's durable delegation
-checkpoints. It then requires
-the exact namespace/address/DID/key/origin tuple and accepts only a
-genesis-verified full identity log or an adjacent head extending the exact
-identity checkpoint. Delegation checkpoints are keyed by parent/child link;
-identity checkpoints are keyed by `did:aw`, independent of registry origin.
-All advanced delegation checkpoints, the identity checkpoint, and the complete
-reusable authority cohort are compare-and-swapped in one PostgreSQL transaction.
-A lower sequence, same-sequence fork, history omitting a checkpoint, unavailable
-required evidence, transaction conflict, or persistence failure rolls back the
-whole authorization update and fails closed before delivery.
-
-The shipped adapter currently implements the exact-DNS branch and rejects an
-inherited distinct child controller. The delegation branch and its PostgreSQL
-link checkpoints are the approved pending target, not authority inferred from
-today's namespace row.
+The strict adapter selects the registry from the client-signed sender address,
+requires the exact DNS controller/namespace/address/DID/key/origin tuple, and
+accepts only a genesis-verified full log or an adjacent head extending the exact
+receiver checkpoint. The checkpoint is keyed by `did:aw`, independent of
+registry origin, and is compare-and-swapped in PostgreSQL. A lower sequence,
+same-sequence fork, log omitting the checkpoint, unavailable required evidence,
+or inability to persist the checkpoint fails closed before delivery.
 
 A complete address-authority cohort may be reused for at most 60 seconds and
 then the receiver rereads DNS, namespace, address, key-or-log, and route origin.
@@ -260,8 +248,8 @@ cryptographically valid chain.
     `OK_VERIFIED` is not authority to take over an address pinned to a
     different stable identity. Moving an address between stable identities
     requires a replacement announcement signed by the namespace controller
-    established by exact DNS or a verified parent-delegation chain; absent that
-    proof the existing pin stands and the result is `identity_mismatch`.
+    named in the address's `_awid` DNS TXT record; absent that proof the
+    existing pin stands and the result is `identity_mismatch`.
 - `OK_DEGRADED` means verification could **not** be completed (missing
   `log_head`, or an unanchored `seq>1` head, or a seq gap). It is **not** a
   trusted result: it MUST NOT replace or overwrite a pinned key. It may prompt a

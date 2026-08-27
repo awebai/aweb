@@ -65,11 +65,11 @@ team key rotation within the namespace.
 |--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Algorithm**            | Ed25519                                                                                                                                              |
 | **Private key location** | Self-controlled/BYOT: `~/.awid/controllers/<domain>.key`. Hosted authority: held by the operator                                                         |
-| **Public key location**  | Direct namespace: awid controller row + exact `_awid.<domain>` DNS. Parent-delegated child target: awid controller row + durable parent-signed delegation chain rooted at inherited DNS. |
+| **Public key location**  | awid `dns_namespaces.controller_did` + DNS TXT record (`_awid.<domain>`)                                                                             |
 | **Authorizes**           | Namespace operations, child namespace creation (parent delegation), team creation/deletion, team key rotation, address create/delete/reassign        |
 | **Created by**           | Self-controlled/BYOT: `aw id namespace prepare-controller` or first `aw id create` for a domain. Hosted authority: the operator                       |
-| **Rotation**             | `aw id namespace rotate-controller`; direct namespaces reverify DNS, while delegated children require parent authorization and a durable successor delegation. |
-| **Recovery if lost**     | Direct namespace: DNS reverify. Delegated child: the parent authorizes a replacement controller, which proves possession of its new key.             |
+| **Rotation**             | `aw id namespace rotate-controller` (requires DNS reverify)                                                                                          |
+| **Recovery if lost**     | DNS reverify: DNS is the root of trust.  The `rotate-controller` command proves domain ownership via DNS TXT and re-establishes a new controller key |
 
 For self-controlled namespaces, keep `~/.awid` safe and backed up. It contains
 the namespace controller private key.
@@ -84,21 +84,6 @@ the parent's `controller_did`.
 This is the standard mechanism, not a hosted special case. Any namespace owner
 can delegate child namespaces; a hosted operator uses the same public protocol
 under the base domain it controls.
-
-The write-time parent signature is necessary but not sufficient for federation.
-Under the approved portable-delegation target, AWID also stores and publicly
-serves a canonical, parent-signed, hash-chained
-delegation assertion binding the parent domain, exact child domain, distinct
-child controller, sequence, previous hash, and operation. An
-external verifier walks and verifies that chain from the nearest
-inherited `_awid` controller to the exact namespace controller. A registry's
-`verification_status` or unsigned assertion is never delegation authority. The
-normative payload, controller-rotation overlap, revocation, registry-migration,
-checkpoint, and backfill rules are in
-[awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md#parent-delegated-namespace-authority).
-Until that target lands, strict external verification correctly fails closed
-for an inherited namespace whose distinct child controller does not equal the
-DNS parent controller.
 
 Authority flows downward: a namespace controller can rotate the team
 controller key, but the team controller cannot rotate the namespace
@@ -409,16 +394,11 @@ The full assessment and its adversarial review live in
 [local sender-verification authority assessment](https://github.com/awebai/aweb/blob/main/docs/drafts/local-sender-verification-authority.md)
 and on task `aweb-abfm`.
 
-For cross-registry ingress, the approved receiving-service target's strict external-address
+For cross-registry ingress, the receiving service's strict external-address
 path is stronger and separate from general client TOFU/cache behavior. It
 selects authority from the client-signed address, not the receiver's home
-registry. It requires either exact DNS controller equality or a complete
-parent-signed delegation chain from inherited DNS to the distinct namespace
-controller, followed by exact namespace/address/DID/key/origin,
-genesis-anchored log evidence, and PostgreSQL delegation, identity, and cohort
-checkpoint commits.
-The shipped adapter currently accepts the exact-DNS branch only and rejects an
-inherited distinct child controller until the signed-delegation branch lands.
+registry, and requires DNS controller, exact namespace/address/DID/key/origin,
+genesis-anchored log evidence, and a PostgreSQL checkpoint/cohort commit.
 `OK_DEGRADED`, a general cache hit, or a process-local pin cannot authorize.
 The receiver may reuse a complete cohort for at most 60 seconds, but an
 external authority can suppress an unseen change by continuing to serve old
@@ -490,12 +470,10 @@ holds a pin for an address refuses to move it to a different `did:aw` without
 one, and reports `identity_mismatch` instead. A valid DID log for the incoming
 identity is *never* sufficient on its own: the log proves `did:aw → did:key`,
 not `address → did:aw`, and an attacker who legitimately owns their own `did:aw`
-has a wholly valid log. The controller's authority is anchored either directly
-in the address's exact `_awid` DNS TXT `controller=` field or through the
-verified parent-signed delegation chain rooted at inherited DNS, never in the
-registry response alone. Strict receiving authority also checks that the
-current DNS or delegated namespace controller matches the proof and freshly
-resolves the new
+has a wholly valid log. The controller's authority is anchored in the address's
+`_awid` DNS TXT `controller=` field rather than in the registry response, so a
+registry response alone cannot forge it. Strict receiving authority also checks
+that the current DNS controller matches the proof and freshly resolves the new
 address/DID/key/origin chain.
 
 A controller-signed announcement proves namespace intent; it does not silently

@@ -1,8 +1,7 @@
 # awid — Source of Truth
 
 Status: **canonical normative contract for shipped AWID identity, certificate,
-and trust behavior, plus the explicitly marked approved parent-delegation target
-that must land before inherited children can use strict federation**.
+and trust behavior**.
 
 This is the canonical contract for **awid**, the public identity registry for
 DIDs, namespaces, addresses, teams, and certificate issuance records.
@@ -57,14 +56,6 @@ SOT.
    authorized by the namespace controller. A `did_aw` must already be
    registered before any address can be bound to it. See
    [Identity operations](#identity-operations).
-6. **Approved target — parent delegation is portable authority, not a registry
-   verdict.** A parent controller may authorize a child namespace with a distinct
-   controller. For same-registry mutation the registry verifies that
-   authorization at write time. For cross-registry verification the registry
-   must also publish the exact parent-signed delegation assertion and its
-   append-only history. `verification_status`, row existence, and the
-   registry's own signature or attestation are never substitutes for the
-   controller proof.
 
 ---
 
@@ -85,13 +76,6 @@ reused as another operation. The timestamp bounds replay exposure but does not
 make an envelope nonce-based or replay-proof: an identical request can be
 replayed within the accepted window. Idempotent/conflict behavior at each write
 path determines whether such a retry changes state.
-
-These request-authentication signatures are admission evidence, not durable
-delegation credentials. In particular, the timestamp-bounded
-`authorize_subdomain_registration` and `authorize_subdomain_rotation` headers
-must not be replayed later as public proof. A parent-authorized namespace write
-also carries the versioned durable delegation assertion defined below; AWID
-verifies and persists that assertion atomically with the namespace mutation.
 
 The signing key is the operation's authority: a parent, namespace, or team
 controller for controller-scoped writes, and the identity's current signing key
@@ -149,11 +133,7 @@ private read access, uses those limits, and emits the stable
 
 ## Namespaces
 
-DNS-rooted organizational domains. `acme.com`, `juanre.aweb.ai`. A namespace
-is controlled either directly by the controller in its exact `_awid.<domain>`
-record or by a parent-authorized child registration rooted at the nearest
-inherited `_awid` record. The approved target below makes that existing child
-relationship portable to a strict external verifier.
+DNS-verified organizational domains. `acme.com`, `juanre.aweb.ai`.
 The exact-match reserved namespace `local` is also allowed for local
 development/bootstrap without DNS verification; after creation it behaves
 like any other namespace.
@@ -161,279 +141,9 @@ like any other namespace.
 ```
 POST   /v1/namespaces                  Create (controller auth)
 GET    /v1/namespaces/{domain}          Read (public)
-PUT    /v1/namespaces/{domain}          Rotate controller key
+POST   /v1/namespaces/{domain}/rotate   Rotate controller key
 DELETE /v1/namespaces/{domain}          Delete (controller auth)
 ```
-
-### Parent-delegated namespace authority
-
-Status: **approved target contract; implementation is a release blocker for
-strict federation of parent-delegated namespaces**.
-
-The April parent-authorization model remains canonical: a parent namespace may
-create a child with a distinct controller, and DNS lookup may inherit the
-nearest ancestor `_awid` record. Exact per-child DNS is optional and must not be
-required by a hosted provider. To make that relationship independently
-verifiable, every active inherited child exposes a durable delegation head and
-append-only log.
-
-The canonical `awid.namespace-delegation.v1` payload contains exactly:
-
-```json
-{
-  "version": "awid.namespace-delegation.v1",
-  "operation": "delegate",
-  "parent_domain": "aweb.ai",
-  "child_domain": "juanre.aweb.ai",
-  "child_controller_did": "did:key:z...",
-  "sequence": 1,
-  "previous_delegation_hash": null
-}
-```
-
-Canonical JSON is UTF-8 with lexicographically sorted object keys, compact
-separators, no ASCII escaping, and no fields beyond those listed above: the same
-`canonical_json_bytes` rule used by AWID signed writes. Both domains use
-`canonical_protocol_domain`: lowercase ASCII, no trailing dot, and valid DNS
-labels. `child_controller_did` is a valid Ed25519 `did:key`; `sequence` is a
-positive JSON integer. `previous_delegation_hash` is `null` only at sequence
-one and is the prior entry's hash thereafter. The entry hash is `sha256:` plus
-the lowercase hex SHA-256 digest of the canonical payload.
-
-The assertion carries one or more entries of `{controller_did, signature}`.
-Each signature is unpadded RFC 4648 standard-base64 Ed25519 over the exact
-canonical payload bytes. A `delegate` or `rotate` entry requires a signature matching the current
-controller established for `parent_domain` by DNS or by the immediately
-preceding verified delegation link. A `revoke` entry requires the current
-`child_controller_did` signature. Multiple parent signatures over one active
-`delegate` or `rotate` payload are allowed only to bridge a parent-controller
-rotation; they do not create several parents or weaken the exact-match rule.
-Signature attachments are append-only so a historical entry remains
-reproducible.
-
-Rules:
-
-- `parent_domain` is the immediate namespace authority that issued the link;
-  `child_domain` must be its strict DNS descendant. A deeper target carries an
-  ordered chain of links from the DNS-selected ancestor to the exact target:
-  the first `parent_domain` equals the DNS authority domain, every later
-  `parent_domain` equals the preceding `child_domain`, and the final
-  `child_domain` equals the requested namespace. Missing, extra, reordered, or
-  disconnected links fail closed.
-- `parent_domain` is immutable for the life of a child log, including backfill
-  and every successor. It must be one of the registrable-domain-bounded
-  ancestor candidates used by AWID DNS discovery, and the submitted hierarchy
-  must be rootable at admission from that candidate set. Reparenting is not a
-  v1 operation: if a newly nearer `_awid` record makes the stored chain
-  unreachable from the verifier's DNS root, verification fails closed. The
-  operator may use exact child DNS; changing a delegated child's parent requires
-  a future versioned protocol rather than editing, splicing, or restarting the
-  v1 history.
-- `operation` is exactly `delegate`, `rotate`, or `revoke`.
-  `sequence` starts at one and increases by exactly one for every child
-  controller change, revocation, or post-revocation name reuse. A successor binds the
-  exact previous hash.
-  Same-sequence/different-hash, lower-sequence, gaps that cannot be filled from
-  the complete log, and forks fail closed.
-- `delegate` creates the first active binding. `rotate` changes the child
-  controller. Both also require proof of possession of the named child
-  controller through the normal namespace write authentication. `revoke`
-  preserves the last controller in the payload, is signed by that current
-  child controller rather than silently changing April deletion authority,
-  makes the child inactive, and remains publicly readable after namespace
-  deletion. Reuse under inherited authority requires a parent-signed successor
-  `delegate` that extends the tombstone's sequence and hash; the link never
-  starts a second history. Exact DNS may independently re-register the name
-  while the revoked delegation log remains dormant, but returning to inherited
-  authority still requires that successor.
-- The link state machine is exact: absent → `delegate` at sequence one →
-  active; active → `rotate` → active; active → `revoke` → inactive; inactive →
-  `delegate` at the next sequence → active. Every other transition fails
-  closed. A `revoke` immediately extends the active head, names the same
-  controller as its predecessor and current namespace row, and is signed by
-  that controller.
-- AWID atomically persists the verified assertion/log entry with the matching
-  namespace create, controller rotation, or deletion. Under inherited
-  authority, the namespace row and active delegation head may never disagree.
-- Public namespace reads expose the active head and the ordered chain needed to
-  reach the DNS-selected ancestor. A dedicated complete-log read remains
-  available for checkpoint gaps, deleted children, and audit. Registry-generated
-  or unsigned delegation-shaped fields have no authority.
-- A receiver persists the highest verified `(sequence, hash)` for every
-  parent/child link in PostgreSQL. A new head must equal or extend that
-  checkpoint before it can authorize delivery. Process memory, Redis, TOFU,
-  and the receiver's home registry cannot replace this checkpoint.
-- A registry can suppress an unseen valid successor or revocation by serving
-  an older still-valid signed history. This is the same named source-suppression
-  residual accepted for other registry-served signed state; the protocol makes
-  no global freshness claim. It may not roll back a transition the receiver has
-  already checkpointed.
-- Parent-controller rotation uses the fenced rollover API below. It blocks
-  immediate-child mutations, adds the new parent's signature to every active
-  immediate-child head, and proves the complete frozen set before the parent
-  controller changes. A direct parent then completes its normal DNS plus
-  registry-row rotation; a delegated parent completes its own parent-signed
-  `rotate` entry and registry-row update. Nested parents do not change DNS.
-  Historical signatures remain public evidence; an old signature alone no
-  longer authorizes a child because verification still requires a signature
-  matching the controller selected by current DNS or the preceding delegation
-  link.
-- Registry migration does not change the delegation proof. The operator copies
-  the exact namespace, address, DID, identity-log, delivery-origin, delegation,
-  and tombstone state to the destination, reads it back there, and then changes
-  DNS. The affected subtree uses one committed cutover generation: mutations to
-  every included namespace, address, DID/log, route, and delegation record are
-  fenced during the final snapshot/readback, and DNS cannot change until the
-  destination proves that complete generation. Old-DNS readers use the old
-  registry and new-DNS readers use the new one; both serve the same cutover
-  generation and signed delegation history until the overlap ends. A registry
-  URL supplied by a message or wrapper is never consulted.
-- Existing parent-authorized children are backfilled with a sequence-one
-  `delegate` assertion for their current controller before strict external
-  verification is enabled for them. Backfill changes neither their controller,
-  addresses, teams, nor DNS.
-- A parent namespace with active delegated direct children cannot be deleted.
-  Every direct child log must first reach a child-signed revoked head so
-  deletion cannot orphan an active delegation tree. Detaching a live child from
-  its immutable v1 parent without deleting it is not a v1 operation.
-
-For a fresh receiver, each active link head must have at least one valid
-signature from the parent controller established by live DNS or the preceding
-active link; that current signature attests the head and the history hash it
-commits. Old entries are not required to carry today's parent signature. For a
-receiver with a link checkpoint, the registry must supply a contiguous
-canonical hash suffix from the exact checkpoint to the current head; the
-current established parent must sign the active head, and a revoked head never
-authorizes delivery. Missing checkpoints, forks, or non-contiguous suffixes
-fail closed.
-
-#### Target wire contract
-
-The wire assertion is exactly:
-
-```json
-{
-  "payload": {"version": "awid.namespace-delegation.v1", "...": "..."},
-  "entry_hash": "sha256:...",
-  "signatures": [
-    {"controller_did": "did:key:z...", "signature": "base64..."}
-  ]
-}
-```
-
-`payload` contains exactly the canonical fields above. `entry_hash` is derived,
-not part of the signed payload. Signature entries are sorted by
-`controller_did`; duplicate controller entries and unknown fields fail closed.
-The following target surfaces are normative rather than left to a later
-OpenAPI decision:
-
-- Inherited-child `POST /v1/namespaces`, `PUT /v1/namespaces/{domain}`, and
-  `DELETE /v1/namespaces/{domain}` carry `delegation_assertion` in their JSON
-  body. Create and rotate retain the current new-child-key proof; delete retains
-  current child-controller authentication and carries a child-signed `revoke`
-  assertion. A directly DNS-controlled namespace with no delegation history
-  omits the field.
-- `POST /v1/namespaces/{domain}/delegation/backfill` attaches only a
-  sequence-one `delegate` to an existing active inherited child with no
-  delegation history. It requires both current child-key possession and current
-  parent authorization. It cannot replace a history or change a namespace row.
-- `GET /v1/namespaces/{domain}` adds `delegation_chain`, containing the stored
-  chain whenever one exists and otherwise an empty array. The registry does not
-  infer authority mode from its own DNS view. The external verifier chooses or
-  ignores the returned chain using its live exact-versus-inherited DNS result.
-  Stored assertions are ordered from their stored genesis/root link to the
-  exact target. The verifier requires the first parent to equal its live DNS
-  authority; an unreachable stored chain fails closed. The endpoint remains
-  public and returns only active namespaces.
-- `GET /v1/namespaces/{domain}/delegation-log?after_sequence=N&limit=L` (then
-  `?cursor=C` for continuation) is
-  public for active and deleted children. It returns ascending contiguous
-  entries after `N`, `has_more`, `next_sequence`, `next_cursor`,
-  `head_sequence`, and `head_hash`; the server-enforced page maximum is 100. `N=0` reads from
-  genesis. The first page fixes a snapshot head, and every continuation cursor
-  is opaque and bound to that exact head; continuations use `next_cursor` and
-  do not repeat `after_sequence`. The final returned entry must equal the
-  snapshot head and, for an active log, the head carried by the namespace
-  chain. A deleted log has no namespace GET and instead ends at the signed
-  tombstone identified by the log response's snapshot head. An empty page
-  is valid only when `N == head_sequence` and `has_more` is false; otherwise an
-  empty, repeated, skipped, reordered, changed-head, or non-monotonic page is a
-  truncation/protocol failure. If the live head changes during collection, the
-  verifier discards the partial result and refetches the complete authority
-  cohort. A direct namespace with no delegation history returns 404.
-- A retry is idempotent when canonical payload bytes and entry hash match and
-  every submitted valid signature is present unchanged in the stored
-  append-only signature set; it returns the stored superset. The same sequence
-  with different payload/hash, the same controller with different signature
-  bytes, or any attempt to remove a stored signature returns 409 without
-  mutation. The rollover API is the only route that may append a new-controller
-  signature without changing sequence or hash. AWID persists the exact
-  canonical payload bytes and signatures it verified; reconstructing an
-equivalent object later is not sufficient readback evidence.
-
-[`vectors/namespace-delegation-v1.json`](vectors/namespace-delegation-v1.json)
-is the normative known-seed canonical-bytes, hash, DID, and signature vector.
-Implementations and generated clients must reproduce it byte for byte.
-
-Authority mode is selected only by the verifier's DNS result. A delegated child
-may later acquire exact DNS; its stored delegation history remains public but
-is dormant while exact DNS controls it. Direct controller rotation may then
-omit `delegation_assertion` and change the namespace row without rewriting that
-dormant head. Before exact DNS is removed, a parent-authorized `PUT` must append
-a valid successor whose controller matches the current row and read it back.
-Deleting a namespace that has any delegation history always appends the current
-child-signed `revoke`, even while exact DNS is active, so removing exact DNS
-cannot resurrect an old active head.
-
-Parent-controller rotation uses a resumable fence:
-
-1. `POST /v1/namespaces/{parent_domain}/controller-rollovers` is authorized by
-   the current parent and proves possession of `new_controller_did`. It creates
-   one pending rollover, blocks registration/rotation/deletion/reuse of its
-   immediate children with a retryable 409, and freezes an immutable snapshot
-   of every non-revoked immediate-child head. It refuses to start if an active
-   inherited child lacks a delegation head. The response contains counts and a
-   rollover id, not an unbounded child list.
-2. `GET /v1/namespaces/{parent_domain}/controller-rollovers/{rollover_id}/children`
-   pages that frozen snapshot with an opaque cursor and a server maximum of 100
-   heads. Every page returns exact child domains, head hashes, and canonical
-   payloads; it is stable for the life of the rollover.
-3. `PUT /v1/namespaces/{parent_domain}/controller-rollovers/{rollover_id}/signatures`
-   accepts at most 100 corresponding new-parent signatures. Each bounded batch
-   is atomic and idempotent. Missing or invalid items roll back that batch;
-   duplicate valid submissions return the stored result. AWID marks the
-   rollover ready only after every frozen head is covered and a complete stored
-   readback verifies the expected new signature.
-4. The normal parent controller rotation must name the ready `rollover_id`. For
-   a direct parent the operator first publishes the new exact DNS controller;
-   the normal `PUT /v1/namespaces/{domain}` then reverifies that DNS and new-key
-   proof, atomically rotates the registry row, and marks the rollover in overlap.
-   For a delegated parent the same `PUT` instead carries its valid
-   parent-of-parent-signed `rotate` assertion and atomically updates its own
-   delegation head plus registry row; it changes no DNS. Immediate-child
-   mutations remain fenced for at least the previous DNS TTL for a direct
-   parent or the 60-second strict-authority reuse bound for a delegated parent,
-   so no new child appears with only the new signature while a valid old
-   authority view remains.
-5. `POST /v1/namespaces/{parent_domain}/controller-rollovers/{rollover_id}/complete`
-   is authorized by the new parent and clears the fence only after that overlap.
-   `GET` on the rollover resource exposes resumable state. `DELETE` cancels it
-   under the still-current parent authority only before controller cutover.
-
-Key-loss recovery retains the April authority model. If the current parent key
-is unavailable, rollover preparation may instead prove the replacement through
-live exact DNS for a direct parent or through the parent's own valid
-grandparent-signed successor `rotate` assertion for a delegated parent; new-key
-possession is still required. The recovery authority and prepared assertion are
-stored with the fence and consumed by the normal parent row/delegation update.
-This path may have a fail-closed availability window while DNS changes, but it
-does not strand the parent or silently grant the registry recovery authority.
-
-Public reads continue during a rollover. Signature attachment does not change
-the entry hash or delegation sequence. These endpoint shapes, exact bytes,
-pagination rules, and fence semantics are part of the v1 contract; live
-OpenAPI and generated clients must match them before the target is called
-implemented.
 
 ## Addresses
 
@@ -497,33 +207,19 @@ not grant special address-discovery authority. Abuse controls belong at rate
 limiting, recipient-side delivery policy, and spam/blocklist layers after
 identity/route resolution.
 
-**Cross-registry consumption target.** A receiving aweb service does not ask
-its home registry to resolve an external sender held elsewhere. Its strict
+**Cross-registry consumption.** A receiving aweb service does not ask its home
+registry to resolve an external sender held elsewhere. Its strict
 external-address authority path selects a registry from the client-signed
-sender address and `_awid.<domain>` DNS statement. An exact DNS controller may
-authorize the namespace directly. When DNS authority is inherited and the
-target has a distinct controller, the receiver requires the complete verified
-parent-delegation chain above. It then requires that final controller, the exact
-namespace and address rows, stable `did:aw`, current `did:key`, identity log,
-and delivery origin to agree. No AWID request field or federation wrapper may
-supply a registry URL. Absence of an AWID DNS record selects the canonical
-public registry; malformed, multiple, timed-out, or failed discovery does not
-fall back. `verification_status` without valid controller evidence never
-authorizes delivery.
-
-Until the approved delegation contract is implemented, the shipped strict
-adapter continues to fail closed when inherited DNS names a parent controller
-that differs from the exact child namespace controller. A registry status bit
-or unsigned delegation-shaped response must not bridge that gap.
+sender address and `_awid.<domain>` DNS statement, then requires that registry's
+exact namespace controller, address row, stable `did:aw`, current `did:key`,
+identity log, and delivery origin to agree. No AWID request field or federation
+wrapper may supply a registry URL. Absence of an AWID DNS record selects the
+canonical public registry; malformed, multiple, timed-out, or failed discovery
+does not fall back.
 
 The receiving service may reuse one complete verified authority cohort for no
 more than 60 seconds and then rereads DNS, namespace, address, key-or-log, and
 origin. That is receiver cache policy, not an AWID revocation or freshness SLA.
-A successful verification compare-and-swaps every advanced delegation-link
-checkpoint, the DID checkpoint, and the complete reusable authority cohort in
-one PostgreSQL transaction before any message effect. A conflict or persistence
-failure rolls back all of them and fails delivery; no cohort may become reusable
-without all rollback state committed beside it.
 A DNS controller or selected registry that continues serving an old but
 cryptographically valid state can suppress an unseen transition indefinitely.
 AWID supplies public evidence; the receiver's PostgreSQL checkpoints and
