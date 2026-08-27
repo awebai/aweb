@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """One-time, manifest-bound AWID hosted namespace controller alignment.
 
-This operator script talks directly to PostgreSQL.  It never discovers update
-targets from the database: every target must be present in the reviewed,
-canonical manifest supplied by AC.
+This operator script talks directly to PostgreSQL.  It scans AWID's complete
+active ``*.aweb.ai`` child universe, then requires every row to be present in
+the reviewed, canonical manifest supplied by AC before it may update anything.
 """
 from __future__ import annotations
 
@@ -44,7 +44,9 @@ BACKUP_KEYS = {
     "manifest_sha256",
     "base_domain",
     "expected_count",
+    "expected_present_count",
     "target_controller_did",
+    "absent_domains",
     "rows",
 }
 BACKUP_KIND = "awid_dns_namespaces_controller_before_image"
@@ -71,6 +73,12 @@ class Manifest:
     expected_count: int
     target_controller_did: str
     targets: tuple[Target, ...]
+
+
+@dataclass(frozen=True)
+class DatabaseState:
+    rows: tuple[dict[str, Any], ...]
+    absent_domains: tuple[str, ...]
 
 
 def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -251,13 +259,39 @@ async def _fetch_rows(
     return _decode_rows(records)
 
 
+async def _fetch_active_child_universe(
+    connection: asyncpg.Connection,
+    *,
+    table: str,
+    base_domain: str,
+    lock: bool,
+) -> list[dict[str, Any]]:
+    lock_clause = " FOR UPDATE OF n" if lock else ""
+    records = await connection.fetch(
+        f"""
+        SELECT row_to_json(n)::text AS row_json
+        FROM {table} AS n
+        WHERE n.domain LIKE $1
+          AND n.domain <> $2
+          AND n.deleted_at IS NULL
+        ORDER BY n.domain
+        {lock_clause}
+        """,
+        f"%.{base_domain}",
+        base_domain,
+    )
+    return _decode_rows(records)
+
+
 async def _validate_database_state(
     connection: asyncpg.Connection,
     *,
     table: str,
     manifest: Manifest,
+    expected_present_count: int,
     lock: bool,
-) -> list[dict[str, Any]]:
+    required_controller: str,
+) -> DatabaseState:
     parent_rows = await _fetch_rows(
         connection,
         table=table,
@@ -272,61 +306,97 @@ async def _validate_database_state(
     if parent.get("verification_status") != "verified":
         raise AlignmentError(f"{manifest.base_domain} parent is not verified")
     if parent.get("controller_did") != manifest.target_controller_did:
-        raise AlignmentError(f"{manifest.base_domain} parent controller differs from target DID")
-
-    domains = [target.domain for target in manifest.targets]
-    rows = await _fetch_rows(
-        connection,
-        table=table,
-        domains=domains,
-        lock=lock,
-    )
-    if len(rows) != manifest.expected_count:
-        found = {row.get("domain") for row in rows}
-        missing = sorted(set(domains) - found)
         raise AlignmentError(
-            f"expected {manifest.expected_count} active target rows, got {len(rows)}; missing={missing}"
+            f"{manifest.base_domain} parent controller differs from target DID"
         )
 
+    if (
+        expected_present_count <= 0
+        or expected_present_count > manifest.expected_count
+    ):
+        raise AlignmentError("expected present count must be within the manifest count")
+
+    rows = await _fetch_active_child_universe(
+        connection,
+        table=table,
+        base_domain=manifest.base_domain,
+        lock=lock,
+    )
+    if len(rows) != expected_present_count:
+        raise AlignmentError(
+            "active child universe count mismatch: "
+            f"expected {expected_present_count}, got {len(rows)}"
+        )
+
+    targets_by_domain = {target.domain: target for target in manifest.targets}
     rows_by_domain: dict[str, dict[str, Any]] = {}
     for row in rows:
         domain = row.get("domain")
         if not isinstance(domain, str) or domain in rows_by_domain:
-            raise AlignmentError(f"database returned duplicate/invalid target domain: {domain}")
+            raise AlignmentError(
+                f"database returned duplicate/invalid child domain: {domain}"
+            )
+        _validate_direct_child(domain, manifest.base_domain)
+        if domain not in targets_by_domain:
+            raise AlignmentError(f"active AWID child is absent from manifest: {domain}")
+        if row.get("verification_status") != "verified":
+            raise AlignmentError(f"active AWID child is not verified: {domain}")
         rows_by_domain[domain] = row
 
-    for target in manifest.targets:
-        row = rows_by_domain.get(target.domain)
-        if row is None:
-            raise AlignmentError(f"missing active target row: {target.domain}")
-        if row.get("verification_status") != "verified":
-            raise AlignmentError(f"target is not verified: {target.domain}")
+    for domain, row in rows_by_domain.items():
+        target = targets_by_domain[domain]
         current = row.get("controller_did")
-        if current not in {target.old_controller_did, target.new_controller_did}:
+        expected = (
+            target.old_controller_did
+            if required_controller == "old"
+            else target.new_controller_did
+        )
+        if required_controller == "either":
+            if current not in {target.old_controller_did, target.new_controller_did}:
+                raise AlignmentError(f"unexpected controller for {domain}: {current}")
+        elif current != expected:
             raise AlignmentError(
-                f"unexpected controller for {target.domain}: {current}"
+                f"unexpected {required_controller} controller for {domain}: {current}"
             )
-    return rows
+
+    absent_domains = tuple(sorted(set(targets_by_domain) - set(rows_by_domain)))
+    expected_absent_count = manifest.expected_count - expected_present_count
+    if len(absent_domains) != expected_absent_count:
+        raise AlignmentError(
+            "manifest/AWID partition mismatch: "
+            f"expected {expected_absent_count} absent, got {len(absent_domains)}"
+        )
+    return DatabaseState(rows=tuple(rows), absent_domains=absent_domains)
 
 
-def _result(command: str, manifest: Manifest, rows: list[dict[str, Any]]) -> dict[str, Any]:
+def _result(
+    command: str, manifest: Manifest, state: DatabaseState
+) -> dict[str, Any]:
     by_domain = {target.domain: target for target in manifest.targets}
     aligned = sum(
         row["controller_did"] == by_domain[row["domain"]].new_controller_did
-        for row in rows
+        for row in state.rows
     )
     return {
         "command": command,
         "manifest_sha256": manifest.sha256,
         "expected_count": manifest.expected_count,
+        "present_count": len(state.rows),
+        "absent_count": len(state.absent_domains),
+        "present_domains": [row["domain"] for row in state.rows],
+        "absent_domains": list(state.absent_domains),
         "target_controller_did": manifest.target_controller_did,
         "already_aligned": aligned,
-        "needs_alignment": manifest.expected_count - aligned,
+        "needs_alignment": len(state.rows) - aligned,
     }
 
 
 def _backup_document(
-    *, manifest: Manifest, schema: str, rows: list[dict[str, Any]]
+    *,
+    manifest: Manifest,
+    schema: str,
+    expected_present_count: int,
+    state: DatabaseState,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -335,8 +405,10 @@ def _backup_document(
         "manifest_sha256": manifest.sha256,
         "base_domain": manifest.base_domain,
         "expected_count": manifest.expected_count,
+        "expected_present_count": expected_present_count,
         "target_controller_did": manifest.target_controller_did,
-        "rows": rows,
+        "absent_domains": list(state.absent_domains),
+        "rows": list(state.rows),
     }
 
 
@@ -370,7 +442,8 @@ def _load_backup(
     required_sha256: str,
     manifest: Manifest,
     schema: str,
-) -> list[dict[str, Any]]:
+    expected_present_count: int,
+) -> DatabaseState:
     if SHA256_RE.fullmatch(required_sha256) is None:
         raise AlignmentError("--backup-sha256 must be 64 lowercase hex characters")
     mode = stat.S_IMODE(path.stat().st_mode)
@@ -391,29 +464,61 @@ def _load_backup(
         "manifest_sha256": manifest.sha256,
         "base_domain": manifest.base_domain,
         "expected_count": manifest.expected_count,
+        "expected_present_count": expected_present_count,
         "target_controller_did": manifest.target_controller_did,
     }
     for key, expected in expected_metadata.items():
         if value[key] != expected:
             raise AlignmentError(f"backup {key} mismatch")
     rows = value["rows"]
-    if not isinstance(rows, list) or len(rows) != manifest.expected_count:
+    if not isinstance(rows, list) or len(rows) != expected_present_count:
         raise AlignmentError("backup row count mismatch")
     if not all(isinstance(row, dict) for row in rows):
         raise AlignmentError("backup rows must be objects")
     domains = [row.get("domain") for row in rows]
-    expected_domains = [target.domain for target in manifest.targets]
-    if domains != expected_domains:
-        raise AlignmentError("backup domains do not exactly match sorted manifest targets")
-    for row, target in zip(rows, manifest.targets, strict=True):
-        if row.get("verification_status") != "verified" or row.get("deleted_at") is not None:
-            raise AlignmentError(f"backup row is not active and verified: {target.domain}")
-        if row.get("controller_did") not in {
-            target.old_controller_did,
-            target.new_controller_did,
-        }:
+    if domains != sorted(domains) or len(set(domains)) != len(domains):
+        raise AlignmentError("backup row domains must be sorted and unique")
+    targets_by_domain = {target.domain: target for target in manifest.targets}
+    if not set(domains).issubset(targets_by_domain):
+        raise AlignmentError("backup contains a row absent from the manifest")
+    absent_domains = value["absent_domains"]
+    if (
+        not isinstance(absent_domains, list)
+        or not all(isinstance(domain, str) for domain in absent_domains)
+        or absent_domains != sorted(absent_domains)
+        or len(set(absent_domains)) != len(absent_domains)
+    ):
+        raise AlignmentError("backup absent domains must be a sorted unique list")
+    if len(absent_domains) != manifest.expected_count - expected_present_count:
+        raise AlignmentError("backup absent-domain count mismatch")
+    manifest_domains = set(targets_by_domain)
+    if set(domains).isdisjoint(absent_domains) is False:
+        raise AlignmentError("backup present and absent domains overlap")
+    if set(domains) | set(absent_domains) != manifest_domains:
+        raise AlignmentError("backup partition does not exactly cover the manifest")
+    for row in rows:
+        target = targets_by_domain[row["domain"]]
+        if (
+            row.get("verification_status") != "verified"
+            or row.get("deleted_at") is not None
+        ):
+            raise AlignmentError(
+                f"backup row is not active and verified: {target.domain}"
+            )
+        if row.get("controller_did") != target.old_controller_did:
             raise AlignmentError(f"backup controller mismatch: {target.domain}")
-    return rows
+    return DatabaseState(rows=tuple(rows), absent_domains=tuple(absent_domains))
+
+
+def _assert_partition_unchanged(
+    current: DatabaseState, backup: DatabaseState
+) -> None:
+    if current.absent_domains != backup.absent_domains:
+        raise AlignmentError("AWID/manifest absent-domain partition changed since backup")
+    if [row["domain"] for row in current.rows] != [
+        row["domain"] for row in backup.rows
+    ]:
+        raise AlignmentError("AWID present-domain partition changed since backup")
 
 
 def _assert_only_controller_may_differ(
@@ -424,7 +529,9 @@ def _assert_only_controller_may_differ(
     require_current_target: bool,
 ) -> None:
     current_by_domain = {row["domain"]: row for row in current_rows}
-    for backup, target in zip(backup_rows, manifest.targets, strict=True):
+    targets_by_domain = {target.domain: target for target in manifest.targets}
+    for backup in backup_rows:
+        target = targets_by_domain[backup["domain"]]
         current = current_by_domain.get(target.domain)
         if current is None:
             raise AlignmentError(f"current row missing: {target.domain}")
@@ -441,8 +548,12 @@ def _assert_only_controller_may_differ(
             raise AlignmentError(
                 f"current controller differs from backup/target: {target.domain}"
             )
-        current_other = {key: value for key, value in current.items() if key != "controller_did"}
-        backup_other = {key: value for key, value in backup.items() if key != "controller_did"}
+        current_other = {
+            key: value for key, value in current.items() if key != "controller_did"
+        }
+        backup_other = {
+            key: value for key, value in backup.items() if key != "controller_did"
+        }
         if current_other != backup_other:
             raise AlignmentError(
                 f"non-controller columns changed since backup: {target.domain}"
@@ -483,13 +594,19 @@ async def run_operation(
     database_url: str,
     schema: str,
     manifest: Manifest,
+    expected_present_count: int | None = None,
     backup_path: Path | None = None,
     backup_sha256: str | None = None,
 ) -> dict[str, Any]:
+    if expected_present_count is None:
+        expected_present_count = manifest.expected_count
     table = _table(schema)
-    if command in {"backup", "apply", "restore"} and backup_path is None:
+    if (
+        command in {"backup", "apply", "verify", "restore"}
+        and backup_path is None
+    ):
         raise AlignmentError(f"{command} requires --backup")
-    if command in {"apply", "restore"} and backup_sha256 is None:
+    if command in {"apply", "verify", "restore"} and backup_sha256 is None:
         raise AlignmentError(f"{command} requires --backup-sha256")
     connection = await asyncpg.connect(database_url)
     try:
@@ -498,57 +615,81 @@ async def run_operation(
             isolation="serializable",
             readonly=read_only,
         ):
-            rows = await _validate_database_state(
+            required_controller = {
+                "plan": "old",
+                "backup": "old",
+                "apply": "either",
+                "verify": "new",
+                "restore": "new",
+            }[command]
+            state = await _validate_database_state(
                 connection,
                 table=table,
                 manifest=manifest,
+                expected_present_count=expected_present_count,
                 lock=not read_only,
+                required_controller=required_controller,
             )
             if command == "plan":
-                return _result(command, manifest, rows)
-            if command == "verify":
-                result = _result(command, manifest, rows)
-                if result["needs_alignment"] != 0:
-                    raise AlignmentError(
-                        f"verification failed: {result['needs_alignment']} targets are not aligned"
-                    )
-                return result
+                return _result(command, manifest, state)
             if command == "backup":
                 assert backup_path is not None
                 backup_digest = _write_backup(
                     backup_path,
-                    _backup_document(manifest=manifest, schema=schema, rows=rows),
+                    _backup_document(
+                        manifest=manifest,
+                        schema=schema,
+                        expected_present_count=expected_present_count,
+                        state=state,
+                    ),
                 )
-                result = _result(command, manifest, rows)
+                result = _result(command, manifest, state)
                 result["backup"] = str(backup_path)
                 result["backup_sha256"] = backup_digest
                 return result
 
             assert backup_path is not None
             assert backup_sha256 is not None
-            backup_rows = _load_backup(
+            backup_state = _load_backup(
                 backup_path,
                 required_sha256=backup_sha256,
                 manifest=manifest,
                 schema=schema,
+                expected_present_count=expected_present_count,
             )
+            _assert_partition_unchanged(state, backup_state)
+            if command == "verify":
+                _assert_only_controller_may_differ(
+                    list(state.rows),
+                    list(backup_state.rows),
+                    manifest=manifest,
+                    require_current_target=True,
+                )
+                return _result(command, manifest, state)
             if command == "apply":
                 _assert_only_controller_may_differ(
-                    rows,
-                    backup_rows,
+                    list(state.rows),
+                    list(backup_state.rows),
                     manifest=manifest,
                     require_current_target=False,
                 )
-                current_by_domain = {row["domain"]: row for row in rows}
+                current_by_domain = {row["domain"]: row for row in state.rows}
+                targets_by_domain = {
+                    target.domain: target for target in manifest.targets
+                }
                 changes = [
                     {
-                        "domain": target.domain,
-                        "expected_controller_did": target.old_controller_did,
-                        "new_controller_did": target.new_controller_did,
+                        "domain": domain,
+                        "expected_controller_did": targets_by_domain[
+                            domain
+                        ].old_controller_did,
+                        "new_controller_did": targets_by_domain[
+                            domain
+                        ].new_controller_did,
                     }
-                    for target in manifest.targets
-                    if current_by_domain[target.domain]["controller_did"]
-                    == target.old_controller_did
+                    for domain in sorted(current_by_domain)
+                    if current_by_domain[domain]["controller_did"]
+                    == targets_by_domain[domain].old_controller_did
                 ]
                 changed = await _set_controllers(
                     connection, table=table, changes=changes
@@ -562,35 +703,40 @@ async def run_operation(
                     connection,
                     table=table,
                     manifest=manifest,
+                    expected_present_count=expected_present_count,
                     lock=True,
+                    required_controller="new",
                 )
+                _assert_partition_unchanged(after, backup_state)
                 _assert_only_controller_may_differ(
-                    after,
-                    backup_rows,
+                    list(after.rows),
+                    list(backup_state.rows),
                     manifest=manifest,
                     require_current_target=True,
                 )
                 result = _result(command, manifest, after)
-                if result["needs_alignment"] != 0:
-                    raise AlignmentError("postcondition failed; transaction rolled back")
                 result["updated"] = len(changed)
                 return result
 
             if command == "restore":
                 _assert_only_controller_may_differ(
-                    rows,
-                    backup_rows,
+                    list(state.rows),
+                    list(backup_state.rows),
                     manifest=manifest,
                     require_current_target=True,
                 )
+                targets_by_domain = {
+                    target.domain: target for target in manifest.targets
+                }
                 changes = [
                     {
-                        "domain": target.domain,
-                        "expected_controller_did": target.new_controller_did,
+                        "domain": backup["domain"],
+                        "expected_controller_did": targets_by_domain[
+                            backup["domain"]
+                        ].new_controller_did,
                         "new_controller_did": backup["controller_did"],
                     }
-                    for backup, target in zip(backup_rows, manifest.targets, strict=True)
-                    if backup["controller_did"] != target.new_controller_did
+                    for backup in backup_state.rows
                 ]
                 changed = await _set_controllers(
                     connection, table=table, changes=changes
@@ -603,12 +749,17 @@ async def run_operation(
                 after = await _fetch_rows(
                     connection,
                     table=table,
-                    domains=[target.domain for target in manifest.targets],
+                    domains=[row["domain"] for row in backup_state.rows],
                     lock=True,
                 )
-                if after != backup_rows:
-                    raise AlignmentError("restore postcondition failed; transaction rolled back")
-                result = _result(command, manifest, after)
+                if after != list(backup_state.rows):
+                    raise AlignmentError(
+                        "restore postcondition failed; transaction rolled back"
+                    )
+                restored_state = DatabaseState(
+                    rows=tuple(after), absent_domains=backup_state.absent_domains
+                )
+                result = _result(command, manifest, restored_state)
                 result["restored"] = len(changed)
                 return result
 
@@ -628,6 +779,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--manifest", required=True, type=Path)
     parser.add_argument("--manifest-sha256", required=True)
     parser.add_argument("--expected-count", required=True, type=int)
+    parser.add_argument("--expected-present-count", required=True, type=int)
     parser.add_argument("--expected-parent-controller-did", required=True)
     parser.add_argument("--backup", type=Path)
     parser.add_argument("--backup-sha256")
@@ -657,6 +809,7 @@ def main(argv: list[str] | None = None) -> int:
                 database_url=database_url,
                 schema=args.schema,
                 manifest=manifest,
+                expected_present_count=args.expected_present_count,
                 backup_path=args.backup,
                 backup_sha256=args.backup_sha256,
             )

@@ -191,18 +191,18 @@ def test_manifest_rejects_ambiguous_targets(tmp_path: Path, mutate, message: str
 
 
 @pytest.mark.asyncio
-async def test_170_row_backup_apply_verify_retry_and_restore(
+async def test_223_manifest_201_row_backup_apply_verify_retry_and_restore(
     alignment_database, tmp_path: Path
 ) -> None:
     database_url, connection = alignment_database
-    await _seed(connection, 170)
+    await _seed(connection, 201)
     await connection.execute(
         """
         INSERT INTO awid.dns_namespaces
             (namespace_id, domain, controller_did, verification_status,
              last_verified_at, scope_id, default_delivery_origin)
         VALUES ('00000000-0000-0000-0002-000000000001',
-                'unmanaged.aweb.ai', $1, 'verified',
+                'unmanaged.example', $1, 'verified',
                 '2026-08-27T12:00:00Z', NULL, 'https://elsewhere.example')
         """,
         OLD_DID,
@@ -210,10 +210,10 @@ async def test_170_row_backup_apply_verify_retry_and_restore(
     outside_before = await connection.fetchval(
         """
         SELECT row_to_json(n)::text FROM awid.dns_namespaces AS n
-        WHERE domain = 'unmanaged.aweb.ai'
+        WHERE domain = 'unmanaged.example'
         """
     )
-    manifest, _digest = _write_manifest(tmp_path / "manifest.json", 170)
+    manifest, _digest = _write_manifest(tmp_path / "manifest.json", 223)
     backup = tmp_path / "before.json"
 
     plan = await alignment.run_operation(
@@ -221,24 +221,34 @@ async def test_170_row_backup_apply_verify_retry_and_restore(
         database_url=database_url,
         schema="awid",
         manifest=manifest,
+        expected_present_count=201,
     )
-    assert plan["needs_alignment"] == 170
+    assert plan["needs_alignment"] == 201
+    assert plan["present_count"] == 201
+    assert plan["absent_count"] == 22
+    assert plan["absent_domains"] == [
+        f"tenant-{index:03d}.aweb.ai" for index in range(201, 223)
+    ]
 
     backed_up = await alignment.run_operation(
         command="backup",
         database_url=database_url,
         schema="awid",
         manifest=manifest,
+        expected_present_count=201,
         backup_path=backup,
     )
-    assert backed_up["needs_alignment"] == 170
+    assert backed_up["needs_alignment"] == 201
     backup_sha256 = backed_up["backup_sha256"]
     assert backup_sha256 == hashlib.sha256(backup.read_bytes()).hexdigest()
     assert stat.S_IMODE(backup.stat().st_mode) == 0o600
     before_rows = json.loads(backup.read_text())["rows"]
-    assert len(before_rows) == 170
+    assert len(before_rows) == 201
     assert "namespace_id" in before_rows[0]
     assert "default_delivery_origin" in before_rows[0]
+    assert json.loads(backup.read_text())["absent_domains"] == [
+        f"tenant-{index:03d}.aweb.ai" for index in range(201, 223)
+    ]
 
     with pytest.raises(FileExistsError):
         await alignment.run_operation(
@@ -246,6 +256,7 @@ async def test_170_row_backup_apply_verify_retry_and_restore(
             database_url=database_url,
             schema="awid",
             manifest=manifest,
+            expected_present_count=201,
             backup_path=backup,
         )
 
@@ -255,6 +266,7 @@ async def test_170_row_backup_apply_verify_retry_and_restore(
             database_url=database_url,
             schema="awid",
             manifest=manifest,
+            expected_present_count=201,
             backup_path=backup,
             backup_sha256="0" * 64,
         )
@@ -264,15 +276,16 @@ async def test_170_row_backup_apply_verify_retry_and_restore(
         database_url=database_url,
         schema="awid",
         manifest=manifest,
+        expected_present_count=201,
         backup_path=backup,
         backup_sha256=backup_sha256,
     )
-    assert applied["updated"] == 170
+    assert applied["updated"] == 201
     assert applied["needs_alignment"] == 0
     assert await connection.fetchval(
         """
         SELECT row_to_json(n)::text FROM awid.dns_namespaces AS n
-        WHERE domain = 'unmanaged.aweb.ai'
+        WHERE domain = 'unmanaged.example'
         """
     ) == outside_before
 
@@ -281,6 +294,7 @@ async def test_170_row_backup_apply_verify_retry_and_restore(
         database_url=database_url,
         schema="awid",
         manifest=manifest,
+        expected_present_count=201,
         backup_path=backup,
         backup_sha256=backup_sha256,
     )
@@ -292,18 +306,22 @@ async def test_170_row_backup_apply_verify_retry_and_restore(
         database_url=database_url,
         schema="awid",
         manifest=manifest,
+        expected_present_count=201,
+        backup_path=backup,
+        backup_sha256=backup_sha256,
     )
-    assert verified["already_aligned"] == 170
+    assert verified["already_aligned"] == 201
 
     restored = await alignment.run_operation(
         command="restore",
         database_url=database_url,
         schema="awid",
         manifest=manifest,
+        expected_present_count=201,
         backup_path=backup,
         backup_sha256=backup_sha256,
     )
-    assert restored["restored"] == 170
+    assert restored["restored"] == 201
     rows = await connection.fetch(
         "SELECT controller_did FROM awid.dns_namespaces WHERE domain LIKE '%.aweb.ai'"
     )
@@ -311,19 +329,18 @@ async def test_170_row_backup_apply_verify_retry_and_restore(
     outside_after = await connection.fetchval(
         """
         SELECT row_to_json(n)::text FROM awid.dns_namespaces AS n
-        WHERE domain = 'unmanaged.aweb.ai'
+        WHERE domain = 'unmanaged.example'
         """
     )
     assert outside_after == outside_before
 
-    with pytest.raises(
-        alignment.AlignmentError, match="restore requires current target controller"
-    ):
+    with pytest.raises(alignment.AlignmentError, match="unexpected new controller"):
         await alignment.run_operation(
             command="restore",
             database_url=database_url,
             schema="awid",
             manifest=manifest,
+            expected_present_count=201,
             backup_path=backup,
             backup_sha256=backup_sha256,
         )
@@ -352,7 +369,9 @@ async def test_apply_rejects_mismatch_without_partial_update(
         """
     )
 
-    with pytest.raises(alignment.AlignmentError, match="non-controller columns changed"):
+    with pytest.raises(
+        alignment.AlignmentError, match="non-controller columns changed"
+    ):
         await alignment.run_operation(
             command="apply",
             database_url=database_url,
@@ -369,6 +388,105 @@ async def test_apply_rejects_mismatch_without_partial_update(
         PARENT_DID,
     )
     assert controllers == 0
+
+
+@pytest.mark.asyncio
+async def test_apply_rejects_changed_present_absent_partition_atomically(
+    alignment_database, tmp_path: Path
+) -> None:
+    database_url, connection = alignment_database
+    await _seed(connection, 3)
+    manifest, _digest = _write_manifest(tmp_path / "manifest.json", 4)
+    backup = tmp_path / "before.json"
+    backed_up = await alignment.run_operation(
+        command="backup",
+        database_url=database_url,
+        schema="awid",
+        manifest=manifest,
+        expected_present_count=3,
+        backup_path=backup,
+    )
+    await connection.execute(
+        """
+        UPDATE awid.dns_namespaces SET deleted_at = now()
+        WHERE domain = 'tenant-002.aweb.ai'
+        """
+    )
+    await connection.execute(
+        """
+        INSERT INTO awid.dns_namespaces
+            (namespace_id, domain, controller_did, verification_status,
+             last_verified_at, scope_id, default_delivery_origin)
+        VALUES ('00000000-0000-0000-0002-000000000003',
+                'tenant-003.aweb.ai', $1, 'verified',
+                '2026-08-27T12:00:00Z', NULL, 'https://aweb.ai');
+        """,
+        OLD_DID,
+    )
+
+    with pytest.raises(alignment.AlignmentError, match="partition changed"):
+        await alignment.run_operation(
+            command="apply",
+            database_url=database_url,
+            schema="awid",
+            manifest=manifest,
+            expected_present_count=3,
+            backup_path=backup,
+            backup_sha256=backed_up["backup_sha256"],
+        )
+    assert await connection.fetchval(
+        """
+        SELECT count(*) FROM awid.dns_namespaces
+        WHERE deleted_at IS NULL AND domain LIKE '%.aweb.ai'
+          AND controller_did = $1
+        """,
+        PARENT_DID,
+    ) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (
+            "UPDATE awid.dns_namespaces SET verification_status = 'pending' "
+            "WHERE domain = 'tenant-001.aweb.ai'",
+            "not verified",
+        ),
+        (
+            "UPDATE awid.dns_namespaces SET controller_did = "
+            "'did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAn6rD5m1fk' "
+            "WHERE domain = 'tenant-001.aweb.ai'",
+            "unexpected old controller",
+        ),
+        (
+            "UPDATE awid.dns_namespaces SET domain = 'nested.tenant.aweb.ai' "
+            "WHERE domain = 'tenant-001.aweb.ai'",
+            "canonical direct child",
+        ),
+        (
+            "UPDATE awid.dns_namespaces SET domain = 'rogue.aweb.ai' "
+            "WHERE domain = 'tenant-001.aweb.ai'",
+            "absent from manifest",
+        ),
+    ],
+)
+async def test_plan_rejects_noncanonical_or_unreviewed_universe(
+    alignment_database, tmp_path: Path, mutation: str, message: str
+) -> None:
+    database_url, connection = alignment_database
+    await _seed(connection, 2)
+    manifest, _digest = _write_manifest(tmp_path / "manifest.json", 2)
+    await connection.execute(mutation)
+
+    with pytest.raises(alignment.AlignmentError, match=message):
+        await alignment.run_operation(
+            command="plan",
+            database_url=database_url,
+            schema="awid",
+            manifest=manifest,
+            expected_present_count=2,
+        )
 
 
 @pytest.mark.asyncio
@@ -403,7 +521,9 @@ async def test_failed_postcondition_rolls_back_every_controller(
         """
     )
 
-    with pytest.raises(alignment.AlignmentError, match="non-controller columns changed"):
+    with pytest.raises(
+        alignment.AlignmentError, match="non-controller columns changed"
+    ):
         await alignment.run_operation(
             command="apply",
             database_url=database_url,
@@ -453,6 +573,15 @@ async def test_restore_refuses_unrelated_changes(
     )
     # scope_id was non-NULL in the full before image even though this is not a
     # column the alignment itself ever writes.
+    with pytest.raises(alignment.AlignmentError, match="non-controller columns changed"):
+        await alignment.run_operation(
+            command="verify",
+            database_url=database_url,
+            schema="awid",
+            manifest=manifest,
+            backup_path=backup,
+            backup_sha256=backed_up["backup_sha256"],
+        )
     with pytest.raises(alignment.AlignmentError, match="non-controller columns changed"):
         await alignment.run_operation(
             command="restore",
