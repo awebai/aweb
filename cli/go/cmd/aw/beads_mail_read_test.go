@@ -253,8 +253,9 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("thread failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "Earlier note") || !strings.Contains(out, "Water levels") || !strings.Contains(out, "---") {
-		t.Errorf("thread output:\n%s", out)
+	if !strings.Contains(out, "Earlier note") || !strings.Contains(out, "Water levels") || !strings.Contains(out, "---") ||
+		strings.Index(out, "Earlier note") > strings.Index(out, "Water levels") {
+		t.Errorf("thread output (want oldest first):\n%s", out)
 	}
 
 	// Everything is read now (the fixture reflects the ack): check goes
