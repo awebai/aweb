@@ -156,6 +156,7 @@ cryptographically verified identity.`,
 		if err != nil {
 			return err
 		}
+		beadsMailIdentifyTransport(c)
 		if beadsMailSendSelf {
 			target, err = beadsMailSelfTarget(sel)
 			if err != nil {
@@ -250,6 +251,7 @@ var beadsMailReplyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		beadsMailIdentifyTransport(c)
 		source, err := beadsMailSourceMessage(ctx, c, messageID)
 		if err != nil {
 			return err

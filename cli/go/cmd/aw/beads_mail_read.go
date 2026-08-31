@@ -127,6 +127,7 @@ func beadsMailReadClient(cmd *cobra.Command, ctx context.Context) (*aweb.Client,
 	if err != nil {
 		return nil, nil, beadsMailAddressMap{}, err
 	}
+	beadsMailIdentifyTransport(c)
 	if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
 		return nil, nil, beadsMailAddressMap{}, err
 	}

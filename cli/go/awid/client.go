@@ -212,6 +212,7 @@ type Client struct {
 	resolver                IdentityResolver // optional; resolves recipient DID for to_did binding
 	pinStore                *PinStore        // optional; TOFU pin store for sender identity verification
 	pinStorePath            string           // disk path for persisting pin store
+	userAgent               string           // optional User-Agent for transport identification (e.g. the beads delegate)
 	pinStorePersistMu       sync.Mutex
 	pinStoreBaseline        []byte
 	pinStoreBaselineErr     error
@@ -360,6 +361,11 @@ func (c *Client) Address() string { return c.address }
 // SetAddress sets the client's agent address (namespace/alias) for use in
 // signed message envelopes.
 func (c *Client) SetAddress(address string) { c.address = address }
+
+// SetUserAgent identifies this client's transport on every request (e.g. the
+// beads mail delegate announces itself so operators can count usage without
+// ever marking message content).
+func (c *Client) SetUserAgent(userAgent string) { c.userAgent = strings.TrimSpace(userAgent) }
 
 // SetE2EESenderAddress sets the address to place in E2EE sender metadata.
 // Use an explicit address from identity/certificate state, not a display
@@ -1238,6 +1244,9 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			req.Header.Set("Content-Type", "application/json")
 		}
 		req.Header.Set("Accept", accept)
+		if c.userAgent != "" {
+			req.Header.Set("User-Agent", c.userAgent)
+		}
 		for key, value := range extraHeaders {
 			key = strings.TrimSpace(key)
 			value = strings.TrimSpace(value)

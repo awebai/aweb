@@ -3,6 +3,7 @@ package main
 import (
 	"strings"
 
+	aweb "github.com/awebai/aw"
 	"github.com/spf13/cobra"
 )
 
@@ -41,6 +42,15 @@ Two things to know that differ from 'gt mail':
     output or --json, not the exit code. Nonzero means a real failure.
 
 Optional in-session wake-ups when mail arrives: aw init --setup-channel.`,
+}
+
+// beadsMailIdentifyTransport marks every delegate request with a User-Agent
+// so operators can count delegate usage on the transport — never by marking
+// message content (design record §15). Sender-asserted, and honest about it.
+func beadsMailIdentifyTransport(c *aweb.Client) {
+	if c != nil {
+		c.SetUserAgent("aw-beads-mail/" + version)
+	}
 }
 
 // beadsMailWantsHelp mirrors bd's own delegate-side convention: with flag

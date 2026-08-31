@@ -135,6 +135,9 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 			case r.URL.Path == "/v1/did/did:aw:mayor/key":
 				_ = json.NewEncoder(w).Encode(map[string]any{"did_aw": "did:aw:mayor", "current_did_key": recipientDID})
 			case r.URL.Path == "/v1/messages" && r.Method == http.MethodPost:
+				if ua := r.Header.Get("User-Agent"); !strings.HasPrefix(ua, "aw-beads-mail/") {
+					t.Errorf("delegate send missing transport identification, User-Agent=%q", ua)
+				}
 				var got sentRequest
 				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 					t.Errorf("decode send: %v", err)

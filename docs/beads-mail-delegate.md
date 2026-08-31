@@ -439,3 +439,21 @@ other mail commands, and render what keys allow.
 - No server-side capability additions (mark-unread, archive, delete,
   search); each becomes an explicitly proposed task only if user demand
   shows up.
+
+## 15. Instrumentation: mark the transport, never the content
+
+Decided 2026-09-01 (abhf.10, on oats' review of the alternatives): the
+wedge-usage signal comes from **transport identification** — every
+delegate request carries `User-Agent: aw-beads-mail/<version>`
+(`beadsMailIdentifyTransport`), and the server side counts requests
+bearing it. Rejected: an always-emitted body envelope. Reasons of
+record: a body marker is visible to non-delegate recipients (the
+audience being courted), goes dark under E2EE exactly when adoption is
+worth measuring, requires the server to read message content to
+produce a vendor metric, and would key behavior off the envelope §9
+declares trust-free. The header is exactly as sender-asserted as a
+marker would be — no weaker, and honest about it — counts plain mail,
+and is disclosed in the user docs. If the hosted stack cannot count
+headers cheaply, the fallback is an honestly reported undercount or
+proxy metrics (npm installs, distinct sending identities), never an
+undisclosed content marker.

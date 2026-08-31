@@ -168,6 +168,13 @@ switching a repo over: recipients on other machines and other
 organizations with no shared infrastructure, and sender identity that
 verifies instead of being asserted.
 
+## One transparency note
+
+Requests the delegate makes to your mail server identify themselves
+with a `User-Agent: aw-beads-mail/<version>` header, so server
+operators can count delegate usage. Your message content is never
+marked or read for that purpose.
+
 ## Troubleshooting
 
 - **"no mail delegate configured"** — run the third setup line in the
