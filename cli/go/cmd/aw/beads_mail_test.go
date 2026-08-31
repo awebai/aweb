@@ -27,12 +27,15 @@ var beadsMailVerbExpectations = []struct {
 	args     []string
 	fragment string
 }{
-	{[]string{"send", "someone/", "-s", "hi"}, "not implemented yet"},
+	{[]string{"send", "someone/", "-s", "hi"}, "not mapped to an aweb address"},
+	{[]string{"send", "someone/"}, "subject"},
+	{[]string{"send", "x/", "--from", "spoof"}, "cryptographic"},
+	{[]string{"send", "x/", "--cc", "y/", "-s", "hi"}, "send to each recipient separately"},
 	{[]string{"inbox"}, "not implemented yet"},
 	{[]string{"read", "msg-1"}, "not implemented yet"},
 	{[]string{"show", "msg-1"}, "not implemented yet"},
 	{[]string{"peek"}, "not implemented yet"},
-	{[]string{"reply", "msg-1"}, "not implemented yet"},
+	{[]string{"reply"}, "usage: bd mail reply"},
 	{[]string{"thread", "t-1"}, "not implemented yet"},
 	{[]string{"check"}, "not implemented yet"},
 	{[]string{"mark-read"}, "not implemented yet"},
@@ -112,10 +115,10 @@ func TestBeadsMailVerbRouterProductionBinary(t *testing.T) {
 	// --help in 'bd mail <verb> --help', so 'bd mail help <verb>' (a plain
 	// arg) is the documented path, and -h inside a verb's own args works
 	// because flag parsing is disabled on the verbs.
-	if out, err := run(false, "help", "send"); err != nil || !strings.Contains(out, "Send a message") {
+	if out, err := run(false, "help", "send"); err != nil || !strings.Contains(out, "--subject") {
 		t.Errorf("help send: err=%v output:\n%s", err, out)
 	}
-	if out, err := run(false, "send", "--help"); err != nil || !strings.Contains(out, "Send a message") {
+	if out, err := run(false, "send", "--help"); err != nil || !strings.Contains(out, "--subject") {
 		t.Errorf("send --help: err=%v output:\n%s", err, out)
 	}
 	if out, err := run(false, "help", "no-such-verb"); err == nil || !strings.Contains(out, "unknown beads-mail verb") {

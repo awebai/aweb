@@ -112,11 +112,11 @@ func init() {
 	beadsMailCmd.GroupID = groupNetwork
 
 	beadsMailCmd.AddCommand(
-		beadsMailStub("send <address>", "Send a message"),
+		beadsMailSendCmd,
+		beadsMailReplyCmd,
 		beadsMailStub("inbox", "List unread messages"),
 		beadsMailStub("read <message-id|index>", "Read a message (marks it read)", "show"),
 		beadsMailStub("peek", "Preview the first unread message without marking it read"),
-		beadsMailStub("reply <message-id> [message]", "Reply to a message"),
 		beadsMailStub("thread <thread-id>", "View a message thread"),
 		beadsMailStub("check", "Check for unread mail (for hooks; always exits 0 on a working probe)"),
 		beadsMailStub("mark-read [message-id...]", "Mark messages as read", "ack"),

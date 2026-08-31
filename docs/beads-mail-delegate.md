@@ -317,9 +317,15 @@ mail (the A2A gateway's fenced JSON,
 
 ````
 ```beads-mail
-{"v":1,"type":"task","priority":1,"pinned":false,"wisp":true}
+{"v":1,"type":"task","priority":1,"pinned":true,"ephemeral":false}
 ```
 ````
+
+(Wire-key amendment, 2026-08-31, from the abhf.4 review: the field is
+`ephemeral` — matching §6/§12's vocabulary and the beads message-issue
+shape — not `wisp`; an earlier example here showed `wisp`. Fields are
+emitted only when non-default: `type` ≠ notification, `priority` ≠ 2,
+`pinned` true, `ephemeral` false.)
 
 Rules: the envelope is emitted only when it would carry non-default
 values (plain messages stay plain); it is the **last** fenced
