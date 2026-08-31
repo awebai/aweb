@@ -84,12 +84,20 @@ Obligations that come with a new command
 
 - Every `aw beads-mail <verb>` path is added to the identity-home
   allowlist with the required production-binary regression test.
-- The command gets a `GroupID` (Messaging & Network).
+- The command gets a `GroupID` (Messaging & Network, registered at
+  `root.go:110`).
 - `docs/cli-command-reference.md` is regenerated
   (`scripts/regenerate-cli-reference.sh`).
 - Help text is written for a beads user who has never heard of aweb:
   what this is, the three-line setup, where mail lives, how to get the
   wake path.
+- **`bd mail` swallows `--help`/`-h` anywhere in the args** (its
+  interception scans the whole argv before delegating), so
+  `bd mail send --help` never reaches us. Per-verb help is therefore
+  reachable as `bd mail help [verb]` (a plain arg, delivered — cobra's
+  built-in help command answers it) and as `aw beads-mail <verb>
+  --help` directly; every help surface and doc teaches those two forms
+  instead of `bd mail <verb> --help`.
 
 ## 4. Identity: who mail comes from
 
@@ -142,8 +150,10 @@ validation with a message quoting the two accepted forms.
    answer instead of falling through to alias lookup.
 4. Contains `/` with a dot in the prefix (`acme.com/reviewer`) → already
    an AWID address; passes through, no map needed.
-5. Bare name with no `/` → same-team alias, as `aw mail send --to`
-   treats it (`resolveMailTarget`, `cli/go/cmd/aw/mail.go:683`).
+5. Bare name with no `/` → same-team alias, following the same
+   convention `aw mail send --to` applies (`resolveMailTarget`,
+   `cli/go/cmd/aw/mail.go:683` — the convention, not necessarily the
+   same callable).
 6. Anything else (an unmapped rig-style name like `mayor/`) → error:
 
    ```
@@ -195,16 +205,17 @@ error; **n/i** = not implemented in v1, clear message, nonzero exit.
 | `send --from` | rej | §4 |
 | `send --pinned` | env | no delivery behavior; meaningful to dual-write later |
 | `send --wisp` / `--permanent` | env | gt defaults wisp; drives `ephemeral` when dual-write lands |
-| `send --notify` | impl | bumps priority to high (gt: same) |
+| `send -n/--notify` | impl | bumps priority to high (gt: same); mutually exclusive with `--no-notify`, hard error, as gt |
 | `send --no-notify` | impl | no-op at priority ≤ normal (idle wake anyway); warns if combined with high/urgent, which always wake |
 | `inbox` | impl | `GET /v1/messages/inbox?unread_only=true`, read-only. **Deliberate default flip:** gt's bare `inbox` shows all messages; ours shows unread only, matching mail convention and the `check` story. `--all` restores gt's view. |
 | `inbox -u/--unread` | impl | explicit form of our default |
 | `inbox -a/--all` | impl | includes read (`--show-all` listing) — gt's default view |
 | `inbox --json` | impl | |
+| `inbox [address]` positional | n/i | same reason as `--identity`: one workspace identity per repo |
 | `inbox --identity/--address` | n/i | one workspace identity per repo |
 | `read <id\|index>` (alias `show`) | impl | `GET /v1/messages/{id}`, then ack — **a deliberate break from gt**, whose `read` promises non-mutation; see §7 |
 | `read --json` | impl | |
-| `peek` | impl | first unread, read-only, no ack |
+| `peek` | impl | first unread, read-only, no ack; exit 0 with or without mail, like `check` (§10) — same disclosed divergence from gt |
 | `reply <id> [msg]`, `-s`, `-m/--body` | impl | send into the source message's conversation, then ack source; `-s` omitted → subject `Re: <original>`, as gt |
 | `thread <id>` | impl | conversation view (§8) |
 | `thread --json` | impl | |
@@ -212,10 +223,11 @@ error; **n/i** = not implemented in v1, clear message, nonzero exit.
 | `check --json`, `--inject` | impl | §10 |
 | `check --identity/--address` | n/i | as inbox |
 | `mark-read [ids...]`, `--all` (alias `ack`) | impl | `POST /v1/messages/{id}/ack` |
-| `mark-unread` | n/i | no server capability (`messages.py:1899-1910`); server-side follow-up task if demanded |
+| `mark-unread` | n/i | no server capability (`messages.py:1901-1912`); server-side follow-up task if demanded |
 | `archive`, `--stale`, `--dry-run` | n/i | no server capability; aweb mail expires ~30 days on its own (§11); the beads graph is the archive |
 | `delete` | n/i | no server capability; TTL GC only (`gc.py:29`) |
-| `clear` | n/i | as delete |
+| `clear [target]`, `--all` | n/i | as delete |
+| `help [verb]` | impl | cobra built-in; the reachable per-verb help path (§3) |
 | `search` | n/i | no server endpoint; message points at `bd` search over dual-written beads, or `aw log` |
 | `claim [queue]` / `release <id>` | n/i | per plan §5.2.1a; may later map to aweb tasks/locks |
 | `announces [channel]` | n/i | per plan §5.2.1a |
@@ -338,11 +350,16 @@ priority 0/1.
 
 ## 11. Retention
 
-aweb mail is delivery, not archival storage: the server garbage-collects
-messages after ~30 days (`server/src/aweb/gc.py:29`). The delegate and
-its documentation state this plainly. The durable record is the beads
-graph — via dual-write (§12) when enabled, or the user's own process.
-No surface of the delegate may imply the server keeps mail forever.
+aweb mail is delivery, not archival storage. The retention contract is a
+~30-day TTL: `gc_expired_messages(ttl_days=30)`
+(`server/src/aweb/gc.py:18`) defines it. Verified 2026-08-31: **no
+deployment currently schedules that GC** — it has zero callers in
+aweb-oss and zero references in the hosted repo — so mail persists
+longer in practice today. Neither fact changes the rule: a deployment
+may wire the GC at any time, so 30 days is the floor a client may rely
+on, and no surface of the delegate may imply the server keeps mail
+forever. The durable record is the beads graph — via dual-write (§12)
+when enabled, or the user's own process.
 
 ## 12. Dual-write: deferred, shaped here
 
