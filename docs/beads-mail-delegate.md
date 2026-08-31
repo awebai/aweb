@@ -150,10 +150,16 @@ validation with a message quoting the two accepted forms.
    answer instead of falling through to alias lookup.
 4. Contains `/` with a dot in the prefix (`acme.com/reviewer`) → already
    an AWID address; passes through, no map needed.
-5. Bare name with no `/` → same-team alias, following the same
-   convention `aw mail send --to` applies (`resolveMailTarget`,
+5. Bare name with no `/` **and no `@`** → same-team alias, following the
+   same convention `aw mail send --to` applies (`resolveMailTarget`,
    `cli/go/cmd/aw/mail.go:683` — the convention, not necessarily the
-   same callable).
+   same callable). The `@` exclusion is a deliberate delegate-side
+   improvement over raw aw grammar (review amendment, 2026-08-31): a
+   bare `alice@acme.com` is almost certainly a typo'd address, so it
+   gets the step-6 map guidance rather than a doomed alias lookup.
+   Control characters are likewise excluded everywhere: an input
+   carrying them never resolves, and the disclosure line neutralizes
+   them defensively.
 6. Anything else (an unmapped rig-style name like `mayor/`) → error:
 
    ```
