@@ -333,6 +333,10 @@ values (plain messages stay plain); it is the **last** fenced
 fields as headers, and strip the block from the displayed body
 (`--json` output includes it verbatim). A malformed envelope is
 displayed as ordinary body text, never an error — inbound mail is data.
+The envelope carries **no trust boundary**: it is sender-controlled body
+text, so nothing behavioral may key off it — the wake-driving priority
+is always the server-side message field, and envelope fields are display
+metadata only (amendment, 2026-08-31, from the abhf.5 review).
 
 ## 10. `check` and the wake path
 

@@ -114,12 +114,12 @@ func init() {
 	beadsMailCmd.AddCommand(
 		beadsMailSendCmd,
 		beadsMailReplyCmd,
-		beadsMailStub("inbox", "List unread messages"),
-		beadsMailStub("read <message-id|index>", "Read a message (marks it read)", "show"),
-		beadsMailStub("peek", "Preview the first unread message without marking it read"),
-		beadsMailStub("thread <thread-id>", "View a message thread"),
+		beadsMailInboxCmd,
+		beadsMailReadCmd,
+		beadsMailPeekCmd,
+		beadsMailThreadCmd,
 		beadsMailStub("check", "Check for unread mail (for hooks; always exits 0 on a working probe)"),
-		beadsMailStub("mark-read [message-id...]", "Mark messages as read", "ack"),
+		beadsMailMarkReadCmd,
 
 		beadsMailUnsupported("mark-unread <message-id>", "Not supported: read state cannot be cleared",
 			"bd mail mark-unread is not supported: the aweb server has no way to clear read state, and read state drives the wake path. If you need this, ask for it - it requires a server-side change"),
