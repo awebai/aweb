@@ -381,19 +381,43 @@ on, and no surface of the delegate may imply the server keeps mail
 forever. The durable record is the beads graph — via dual-write (§12)
 when enabled, or the user's own process.
 
-## 12. Dual-write: deferred, shaped here
+## 12. Dual-write: shipped, off by default
 
 The data-plane dual-write (beads stores the message as a `type: message`
-issue with `replies_to` threading, per `engdocs/messaging.md`; aweb does
-delivery) is **not in the v1 core**. It lands behind a config toggle,
-default off, as epic subtask aweb-abhf.7 (P1), which also owns the
-re-entrancy question (a child `bd` writing the DB the parent `bd` may
-hold open) and the hang/failure isolation bounds. v1 ships without it;
-the docs' retention honesty (§11) is what makes that acceptable.
+issue; aweb does delivery) ships behind a config toggle, **default
+off**: `[settings]` `dual-write = "on"` in `.beads/aweb-mail.toml`
+(decided in abhf.7). When on, each delivered send/reply is also
+recorded via `bd create <subject> --type message --stdin --silent
+--metadata {...}` — the description is the user body without the §9
+envelope; the aweb `message_id`/`conversation_id` and any envelope
+values ride bd metadata; replies add a `replies-to` dependency when the
+workspace's local bead map (`.aw/beads-mail/beads.json`) knows the
+source message's bead (all verified live against bd 1.1.2, which
+accepts `--type message` and `--deps "replies-to:<id>"` and defaults
+message beads to ephemeral).
 
-The envelope (§9) already carries the fields dual-write needs (`type`,
-original priority, `wisp`/`ephemeral`, `pinned`), so enabling it later
-changes no wire format.
+Isolation (the abhf.7 re-entrancy scope): the delegate is exec'd BY bd
+and invokes a child bd, so the bead write runs only AFTER delivery
+succeeded, is bounded by a hard timeout (5s on bd plus a 1s pipe-close
+grace, ~6s worst case), and can never fail or hang the send — a failed
+or slow write prints the record-gap note and exits 0.
+
+Load characteristics, measured live against bd 1.1.2 embedded Dolt
+(abhf.7 review, 2026-08-31): concurrent `bd create` calls serialize on
+the database — a 16-way burst pushed the slowest create to ~10s, past
+the timeout — so on a busy shared `.beads` database, dual-write WILL
+drop bead records under bursts and say so; that is the designed
+trade-off (delivery never waits), not a bug, and forced kills mid-write
+were verified to leave the database unharmed. The workspace bead map
+(`beads.json`) is last-writer-wins with no lock: two racing sends can
+each deliver and record beads but lose one map entry, costing only that
+message's future `replies-to` link.
+
+v1 bounds, recorded: receive-side dual-write is deferred (only this
+side's sends become beads, so cross-machine threads link only through
+the local bead map); bd's own message-type ephemeral default stands
+rather than being managed per-message. The docs' retention honesty
+(§11) is what makes default-off acceptable.
 
 ## 13. E2EE
 

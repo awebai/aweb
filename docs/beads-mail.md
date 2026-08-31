@@ -111,7 +111,21 @@ reaches the delegate — bd intercepts `--help` itself).
 mail is delivery, not permanent storage — messages cannot be deleted,
 and a deployment may garbage-collect them starting around 30 days, so
 never treat the mail server as an archive. **The durable record is your
-beads graph.** `search` has no server-side counterpart yet; `claim`, `release`,
+beads graph.**
+
+To have that record kept automatically, turn on dual-write in
+`.beads/aweb-mail.toml`:
+
+```toml
+[settings]
+dual-write = "on"
+```
+
+Every message you send is then also recorded as a `type: message` issue
+in your beads database (the aweb ids ride its metadata, and replies
+thread with `replies-to`). Delivery never waits on it: if the bead
+write fails or bd is busy, the mail still goes out and you get a note
+about the record gap. `search` has no server-side counterpart yet; `claim`, `release`,
 `announces`, and `drain` are orchestrator concepts v1 does not carry.
 Each of these says so when you run it, with what to use instead.
 

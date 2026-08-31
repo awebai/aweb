@@ -2381,12 +2381,12 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 // The comparison is two-part because the two kinds of member carry different
 // evidence:
 //
-//   member_address set    the address is the member's own identity; the typed
-//                         address must be it
-//   member_address empty  a local member has no address at all - local scope
-//                         rejects --address, and awid stores the column nullable -
-//                         so the only namespace that means anything for one is the
-//                         team's own, and that is what the typed domain must be
+//	member_address set    the address is the member's own identity; the typed
+//	                      address must be it
+//	member_address empty  a local member has no address at all - local scope
+//	                      rejects --address, and awid stores the column nullable -
+//	                      so the only namespace that means anything for one is the
+//	                      team's own, and that is what the typed domain must be
 //
 // Both sides are parsed before comparing. parseAddress normalizes what was typed
 // while member_address is a raw stored column that the awid write path does not

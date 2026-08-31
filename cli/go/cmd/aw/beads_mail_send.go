@@ -128,16 +128,18 @@ cryptographically verified identity.`,
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
+		cwd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		// --self never needs the map; a malformed map must not break it
+		// (dual-write just stays off, like reply's tolerant load).
+		addressMap, mapErr := loadBeadsMailAddressMap(cwd)
+		if mapErr != nil && !beadsMailSendSelf {
+			return mapErr
+		}
 		var target beadsMailTarget
 		if !beadsMailSendSelf {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return err
-			}
-			addressMap, err := loadBeadsMailAddressMap(cwd)
-			if err != nil {
-				return err
-			}
 			target, err = resolveBeadsMailRecipient(addressMap, recipient)
 			if err != nil {
 				return err
@@ -208,6 +210,7 @@ cryptographically verified identity.`,
 
 		beadsMailAppendSendLogs(sel, resp, target.Value, beadsMailSendSubject, body)
 		fmt.Printf("sent %s (message_id=%s conversation_id=%s)\n", beadsMailResolutionNote(target), resp.MessageID, resp.ConversationID)
+		beadsMailRecordBead(sel, addressMap, beadsMailSendSubject, body, resp, strings.TrimSpace(beadsMailSendReplyTo), env)
 		return nil
 	},
 }
@@ -282,6 +285,11 @@ var beadsMailReplyCmd = &cobra.Command{
 		}
 		beadsMailAppendSendLogs(sel, resp, conversationID, subject, body)
 		fmt.Printf("replied (message_id=%s conversation_id=%s)\n", resp.MessageID, resp.ConversationID)
+		if cwd, cwdErr := os.Getwd(); cwdErr == nil {
+			if addressMap, mapErr := loadBeadsMailAddressMap(cwd); mapErr == nil {
+				beadsMailRecordBead(sel, addressMap, subject, body, resp, messageID, beadsMailEnvelope{})
+			}
+		}
 		return nil
 	},
 }

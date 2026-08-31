@@ -1827,4 +1827,3 @@ func TestMailAndChatDefaultPlaintextAndE2EEOptInFailsClosed(t *testing.T) {
 		})
 	}
 }
-

@@ -1178,14 +1178,14 @@ type teamHumanAddedAgent struct {
 	Source *teamProfileSource `json:"-"`
 	// ProfileSource states where this agent's profile came from, built from
 	// Source.Describe so the reported line and the resolution cannot drift apart.
-	ProfileSource     string                  `json:"profile_source,omitempty"`
-	Scope             string                  `json:"scope,omitempty"`
-	Alias             string                  `json:"alias,omitempty"`
-	TeamID            string                  `json:"team_id,omitempty"`
-	CertPath          string                  `json:"cert_path,omitempty"`
-	Outcome           string                  `json:"outcome,omitempty"`
-	Reason            string                  `json:"reason,omitempty"`
-	Connected         bool                    `json:"-"`
+	ProfileSource string `json:"profile_source,omitempty"`
+	Scope         string `json:"scope,omitempty"`
+	Alias         string `json:"alias,omitempty"`
+	TeamID        string `json:"team_id,omitempty"`
+	CertPath      string `json:"cert_path,omitempty"`
+	Outcome       string `json:"outcome,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Connected     bool   `json:"-"`
 }
 
 func resolveTeamHumanAddAgentSpecs(wd string, args []string, specs []teamAgentSpec) ([]teamAgentSpec, error) {

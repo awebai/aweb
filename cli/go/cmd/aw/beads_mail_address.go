@@ -33,11 +33,13 @@ type beadsMailTarget struct {
 	Mapped bool
 }
 
-// beadsMailAddressMap is the parsed [addresses] table plus where it came from,
-// so error and disclosure text can name the file.
+// beadsMailAddressMap is the parsed [addresses] table plus the optional
+// [settings] table and where they came from, so error and disclosure text can
+// name the file.
 type beadsMailAddressMap struct {
-	entries map[string]string
-	path    string
+	entries  map[string]string
+	settings map[string]string
+	path     string
 }
 
 // loadBeadsMailAddressMap locates and parses the per-repo map. The .beads
@@ -45,7 +47,7 @@ type beadsMailAddressMap struct {
 // walking up from startDir. A missing directory or missing map file is not an
 // error — only an unmapped rig-style name is, at resolution time.
 func loadBeadsMailAddressMap(startDir string) (beadsMailAddressMap, error) {
-	none := beadsMailAddressMap{entries: map[string]string{}}
+	none := beadsMailAddressMap{entries: map[string]string{}, settings: map[string]string{}}
 	beadsDir := strings.TrimSpace(os.Getenv("BEADS_DIR"))
 	if beadsDir == "" {
 		dir, err := filepath.Abs(startDir)
@@ -73,52 +75,81 @@ func loadBeadsMailAddressMap(startDir string) (beadsMailAddressMap, error) {
 	if err != nil {
 		return none, err
 	}
-	entries, err := parseBeadsMailAddressMap(string(content), path)
+	entries, settings, err := parseBeadsMailAddressMap(string(content), path)
 	if err != nil {
 		return none, err
 	}
-	return beadsMailAddressMap{entries: entries, path: path}, nil
+	return beadsMailAddressMap{entries: entries, settings: settings, path: path}, nil
 }
 
 // parseBeadsMailAddressMap reads the strict subset of TOML the design record
-// fixes for this file: comments, blank lines, one [addresses] table, and
-// quoted (or bare single-word) keys assigned quoted string values. Anything
-// else is rejected loudly with the file named — misparsing a mail-routing map
-// is worse than refusing it.
-func parseBeadsMailAddressMap(content, path string) (map[string]string, error) {
+// fixes for this file: comments, blank lines, one [addresses] table of quoted
+// (or bare single-word) keys assigned quoted string values, and one optional
+// [settings] table of known keys. Anything else is rejected loudly with the
+// file named — misparsing a mail-routing map is worse than refusing it.
+func parseBeadsMailAddressMap(content, path string) (map[string]string, map[string]string, error) {
 	entries := map[string]string{}
-	inAddresses := false
+	settings := map[string]string{}
+	const (
+		sectionNone = iota
+		sectionAddresses
+		sectionSettings
+	)
+	section := sectionNone
+	seenAddresses, seenSettings := false, false
 	for lineNo, raw := range strings.Split(content, "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		if strings.HasPrefix(line, "[") {
-			if line == "[addresses]" {
-				if inAddresses {
-					return nil, fmt.Errorf("%s:%d: duplicate [addresses] table; this file holds one", path, lineNo+1)
+			switch line {
+			case "[addresses]":
+				if seenAddresses {
+					return nil, nil, fmt.Errorf("%s:%d: duplicate [addresses] table; this file holds one", path, lineNo+1)
 				}
-				inAddresses = true
-				continue
+				seenAddresses = true
+				section = sectionAddresses
+			case "[settings]":
+				if seenSettings {
+					return nil, nil, fmt.Errorf("%s:%d: duplicate [settings] table; this file holds one", path, lineNo+1)
+				}
+				seenSettings = true
+				section = sectionSettings
+			default:
+				return nil, nil, fmt.Errorf("%s:%d: unsupported table %s; this file supports the [addresses] table of \"name\" = \"aweb-address\" pairs and an optional [settings] table", path, lineNo+1, line)
 			}
-			return nil, fmt.Errorf("%s:%d: unsupported table %s; this file supports only the [addresses] table of \"name\" = \"aweb-address\" pairs", path, lineNo+1, line)
+			continue
 		}
-		if !inAddresses {
-			return nil, fmt.Errorf("%s:%d: entry before the [addresses] table; start the file with [addresses]", path, lineNo+1)
+		if section == sectionNone {
+			return nil, nil, fmt.Errorf("%s:%d: entry before any table; start the file with [addresses]", path, lineNo+1)
 		}
 		key, value, err := parseBeadsMailMapLine(line)
 		if err != nil {
-			return nil, fmt.Errorf("%s:%d: %v", path, lineNo+1, err)
+			return nil, nil, fmt.Errorf("%s:%d: %v", path, lineNo+1, err)
+		}
+		if section == sectionSettings {
+			if key != "dual-write" {
+				return nil, nil, fmt.Errorf("%s:%d: unknown setting %q; supported: dual-write", path, lineNo+1, key)
+			}
+			if value != "on" && value != "off" {
+				return nil, nil, fmt.Errorf("%s:%d: %s must be \"on\" or \"off\", got %q", path, lineNo+1, key, value)
+			}
+			if _, dup := settings[key]; dup {
+				return nil, nil, fmt.Errorf("%s:%d: duplicate setting %q", path, lineNo+1, key)
+			}
+			settings[key] = value
+			continue
 		}
 		if err := validateBeadsMailAddressValue(value); err != nil {
-			return nil, fmt.Errorf("%s:%d: %q = %q: %v", path, lineNo+1, key, value, err)
+			return nil, nil, fmt.Errorf("%s:%d: %q = %q: %v", path, lineNo+1, key, value, err)
 		}
 		if _, dup := entries[key]; dup {
-			return nil, fmt.Errorf("%s:%d: duplicate entry for %q", path, lineNo+1, key)
+			return nil, nil, fmt.Errorf("%s:%d: duplicate entry for %q", path, lineNo+1, key)
 		}
 		entries[key] = value
 	}
-	return entries, nil
+	return entries, settings, nil
 }
 
 func parseBeadsMailMapLine(line string) (string, string, error) {

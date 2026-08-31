@@ -122,7 +122,9 @@ func TestBeadsMailMapParsingRejectsWhatItCannotHold(t *testing.T) {
 		fragment string
 	}{
 		{"unknown table", "[addresses]\n\"a/\" = \"x.com/a\"\n[routes]\n", "unsupported table"},
-		{"entry before table", "\"a/\" = \"x.com/a\"\n", "before the [addresses] table"},
+		{"entry before table", "\"a/\" = \"x.com/a\"\n", "before any table"},
+		{"unknown settings key", "[settings]\n\"colour\" = \"blue\"\n", "unknown setting"},
+		{"bad dual-write value", "[settings]\ndual-write = \"maybe\"\n", "must be \"on\" or \"off\""},
 		{"unquoted value", "[addresses]\na = x.com/a\n", "quoted string"},
 		{"unterminated quote", "[addresses]\n\"a = \"x.com/a\"\n", "quoted"},
 		{"backslash", "[addresses]\n\"a\\\" = \"x.com/a\"\n", "backslash"},

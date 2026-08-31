@@ -305,6 +305,29 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 		t.Errorf("external-principal send signed as %q, want principal %q (shadow was %q)", got, principalDID, did)
 	}
 
+	// --self sends work, and a malformed address map must not break them:
+	// --self never consults the map (dual-write just stays off).
+	if out, err := run("send", "--self", "-s", "note to self", "-m", "remember"); err != nil {
+		t.Fatalf("--self send failed: %v\n%s", err, out)
+	}
+	mapPath := filepath.Join(tmp, ".beads", beadsMailMapFileName)
+	goodMap, err := os.ReadFile(mapPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mapPath, []byte("this is not the format"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run("send", "--self", "-s", "still works", "-m", "x"); err != nil {
+		t.Fatalf("--self with broken map failed: %v\n%s", err, out)
+	}
+	if out, err := run("send", "mayor/", "-s", "x", "-m", "x"); err == nil {
+		t.Fatalf("mapped send with broken map succeeded:\n%s", out)
+	}
+	if err := os.WriteFile(mapPath, goodMap, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	// The comm log records delegate sends, which is what makes the search
 	// verb's aw log fallback true. Logs live under user state, rooted at the
 	// test HOME.
