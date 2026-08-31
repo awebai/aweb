@@ -1454,22 +1454,22 @@ Optional in-session wake-ups when mail arrives: aw init --setup-channel.
 Subcommands:
 - `announces` Not supported in v1
 - `archive` Not supported: the beads graph is the archive
-- `check` Check for unread mail (for hooks; always exits 0 on a working probe)
+- `check` Check for unread mail (for hooks)
 - `claim` Not supported in v1: no message queues
 - `clear` Not supported: server mail expires on its own
 - `delete` Not supported: server mail expires on its own
 - `drain` Not supported in v1
 - `help` Show help for a beads-mail verb ('bd mail' swallows --help; this reaches us)
-- `inbox` List unread messages
+- `inbox` List unread messages (read-only; reading is what marks read)
 - `mark-read` Mark messages as read
 - `mark-unread` Not supported: read state cannot be cleared
 - `peek` Preview the first unread message without marking it read
-- `read` Read a message (marks it read)
+- `read` Read a message and mark it read
 - `release` Not supported in v1: no message queues
 - `reply` Reply to a message
 - `search` Not supported in v1: no server-side mail search
 - `send` Send a message
-- `thread` View a message thread
+- `thread` View a message thread (oldest first)
 
 Flags:
 - `-h, --help help for beads-mail`
@@ -1496,10 +1496,20 @@ Flags:
 
 ### `beads-mail check`
 
-Check for unread mail (for hooks; always exits 0 on a working probe)
+Probe for unread mail without changing anything. Exit code 0 means the
+probe worked, whether or not mail is waiting — branch on the output or
+--json, not the exit code (gt mail check exits 1 on an empty inbox; this
+deliberately does not, so a real failure is never mistaken for "no
+mail"). Nonzero exits are real errors only.
+
+For Claude Code hooks, --inject emits the PostToolUse hook JSON envelope
+when mail is waiting and nothing otherwise. In-session wake-ups without
+polling: aw init --setup-channel.
 
 Flags:
 - `-h, --help help for check`
+- `--inject Output the Claude Code PostToolUse hook envelope when mail is waiting`
+- `--json Output as JSON: {"unread": N, "has_more": bool}`
 
 ## `beads-mail claim`
 
@@ -1550,10 +1560,14 @@ Flags:
 
 ### `beads-mail inbox`
 
-List unread messages
+List unread messages (read-only; reading is what marks read)
 
 Flags:
+- `-a, --all Show all messages, read and unread (gt's default view)`
+- `--cursor string Continue a previous listing from its printed cursor`
 - `-h, --help help for inbox`
+- `--json Output as JSON`
+- `-u, --unread Show only unread messages (the default)`
 
 ## `beads-mail mark-read`
 
@@ -1562,6 +1576,7 @@ Flags:
 Mark messages as read
 
 Flags:
+- `--all Mark all unread messages as read`
 - `-h, --help help for mark-read`
 
 ## `beads-mail mark-unread`
@@ -1586,10 +1601,14 @@ Flags:
 
 ### `beads-mail read`
 
-Read a message (marks it read)
+Read one message by id, or by its number in the most recent inbox
+listing. Reading marks the message read (unlike gt mail read, which does
+not) because read state drives the wake path here; use peek or thread
+for a look that changes nothing.
 
 Flags:
 - `-h, --help help for read`
+- `--json Output as JSON (raw message, envelope included)`
 
 ## `beads-mail release`
 
@@ -1607,7 +1626,10 @@ Flags:
 Reply to a message
 
 Flags:
+- `--body string Alias for --message`
 - `-h, --help help for reply`
+- `-m, --message string Reply message body`
+- `-s, --subject string Override reply subject (default: Re: <original>)`
 
 ## `beads-mail search`
 
@@ -1622,19 +1644,40 @@ Flags:
 
 ### `beads-mail send`
 
-Send a message
+Send mail to a beads-style name (mapped in .beads/aweb-mail.toml), an
+aweb address like acme.aweb.ai/reviewer, or a did:aw identity. The
+resolved address is always shown: mail goes out under this workspace's
+cryptographically verified identity.
 
 Flags:
+- `--body string Alias for --message`
+- `--cc stringArray Not supported in v1: send to each recipient separately`
+- `--from string Not supported: sender identity is cryptographic here`
 - `-h, --help help for send`
+- `-m, --message string Message body`
+- `--no-notify No-op at priority <= normal (idle wake anyway); cannot silence high/urgent`
+- `-n, --notify Bump priority to high so the recipient wakes`
+- `--permanent Mark not ephemeral; meaningful once dual-write lands`
+- `--pinned Carried in the beads-mail envelope; no delivery behavior`
+- `--priority int Message priority (0=urgent, 1=high, 2=normal, 3=low, 4=backlog); 0-1 wake the recipient (default 2)`
+- `--reply-to string Message ID this replies to; continues that conversation`
+- `--self Send to this workspace's own identity`
+- `--stdin Read message body from stdin`
+- `-s, --subject string Message subject (required)`
+- `--to string Recipient address (alternative to the positional argument)`
+- `--type string Message type (task, scavenge, notification, reply); carried in the beads-mail envelope (default "notification")`
+- `--urgent Set priority=0 (urgent)`
+- `--wisp Mark ephemeral (beads default); meaningful once dual-write lands (default true)`
 
 ## `beads-mail thread`
 
 ### `beads-mail thread`
 
-View a message thread
+View a message thread (oldest first)
 
 Flags:
 - `-h, --help help for thread`
+- `--json Output as JSON`
 
 ## `chat`
 

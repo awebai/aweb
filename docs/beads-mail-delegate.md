@@ -352,7 +352,11 @@ as the mail-present signal makes "no mail" indistinguishable from
 "probe broke" in a hook line. Scripts branch on stdout or `--json`
 (`{"unread": N}`) instead; the divergence is stated in the delegate's
 help text so a `gt mail check &&`-style hook is not silently
-miswired. `--json` always emits `{"unread": N}`. `--inject`
+miswired. `--json` always emits `{"unread": N, "has_more": bool}`, and
+when the 50-message probe page is full with more waiting, the text and
+inject lines render the count as `N+` — an honest floor, never a
+misleading partial (amendment, 2026-08-31, from the abhf.6 review).
+`--inject`
 emits the Claude Code PostToolUse hook JSON envelope (the
 `hookSpecificOutput.additionalContext` shape `aw notify` uses,
 `notify.go:198`) when N > 0, nothing otherwise — cheap and safe to call

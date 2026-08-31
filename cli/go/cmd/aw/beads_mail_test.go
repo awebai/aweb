@@ -37,7 +37,7 @@ var beadsMailVerbExpectations = []struct {
 	{[]string{"thread"}, "usage: bd mail thread"},
 	{[]string{"mark-read"}, "or --all"},
 	{[]string{"reply"}, "usage: bd mail reply"},
-	{[]string{"check"}, "not implemented yet"},
+	{[]string{"check", "other/"}, "one aweb identity"},
 	{[]string{"ack"}, "or --all"},
 	{[]string{"mark-unread", "msg-1"}, "no way to clear read state"},
 	{[]string{"archive"}, "the durable record is your beads graph"},

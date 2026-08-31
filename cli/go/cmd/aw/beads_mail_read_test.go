@@ -119,6 +119,13 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 				return
 			}
 			if q.Get("unread_only") == "true" {
+				unread := []awid.InboxMessage{}
+				for _, a := range ackCalls {
+					if a == msgUnread.MessageID {
+						_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: unread})
+						return
+					}
+				}
 				_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{msgUnread}})
 				return
 			}
@@ -201,6 +208,33 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 		t.Errorf("state file: err=%v content=%s", err, stateContent)
 	}
 
+	// peek: shows the first unread without acking.
+	if out, err := run("peek"); err != nil || !strings.Contains(out, "Water levels") {
+		t.Fatalf("peek: %v\n%s", err, out)
+	}
+	if len(ackCalls) != 0 {
+		t.Errorf("peek acked: %v", ackCalls)
+	}
+
+	// check with unread mail: exit 0 (a disclosed divergence from gt's
+	// exit-1-on-empty convention), read-only, --json machine shape,
+	// --inject the Claude Code hook envelope.
+	out, err = run("check")
+	if err != nil || !strings.Contains(out, "You have 1 unread bd mail message(s)") {
+		t.Errorf("check: err=%v\n%s", err, out)
+	}
+	out, err = run("check", "--json")
+	if err != nil || !strings.Contains(out, `"unread":1`) {
+		t.Errorf("check --json: err=%v\n%s", err, out)
+	}
+	out, err = run("check", "--inject")
+	if err != nil || !strings.Contains(out, "hookSpecificOutput") || !strings.Contains(out, "PostToolUse") {
+		t.Errorf("check --inject: err=%v\n%s", err, out)
+	}
+	if len(ackCalls) != 0 {
+		t.Errorf("check acked: %v", ackCalls)
+	}
+
 	// read by index: envelope stripped into headers, then acked.
 	out, err = run("read", "1")
 	if err != nil {
@@ -214,14 +248,6 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 		t.Errorf("read acks: %v", ackCalls)
 	}
 
-	// peek: shows the first unread without acking.
-	if out, err := run("peek"); err != nil || !strings.Contains(out, "Water levels") {
-		t.Fatalf("peek: %v\n%s", err, out)
-	}
-	if len(ackCalls) != 1 {
-		t.Errorf("peek acked: %v", ackCalls)
-	}
-
 	// thread: oldest-first with both messages.
 	out, err = run("thread", conversationID)
 	if err != nil {
@@ -231,13 +257,26 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 		t.Errorf("thread output:\n%s", out)
 	}
 
-	// mark-read --all acks every unread message.
-	out, err = run("mark-read", "--all")
-	if err != nil {
-		t.Fatalf("mark-read failed: %v\n%s", err, out)
+	// Everything is read now (the fixture reflects the ack): check goes
+	// silent with exit 0 — the divergence that makes hooks safe — peek
+	// says so, and mark-read --all still succeeds with nothing to do.
+	if out, err := run("check"); err != nil || strings.Contains(out, "unread bd mail") {
+		t.Errorf("check after read: err=%v out=%q", err, out)
 	}
-	if !strings.Contains(out, "marked 1 message(s) read") || len(ackCalls) != 2 {
-		t.Errorf("mark-read: %v\n%s", ackCalls, out)
+	if out, err := run("peek"); err != nil || !strings.Contains(out, "No unread mail.") {
+		t.Errorf("peek after read: err=%v\n%s", err, out)
+	}
+	if out, err := run("mark-read", "--all"); err != nil || !strings.Contains(out, "marked 0 message(s) read") {
+		t.Errorf("mark-read --all after read: err=%v\n%s", err, out)
+	}
+
+	// Explicit mark-read by id still acks (server accepts acks for read
+	// messages idempotently in this fixture).
+	if out, err := run("mark-read", msgRead.MessageID); err != nil || !strings.Contains(out, "marked 1 message(s) read") {
+		t.Errorf("mark-read by id: err=%v\n%s", err, out)
+	}
+	if len(ackCalls) != 2 {
+		t.Errorf("acks after explicit mark-read: %v", ackCalls)
 	}
 
 	// Index out of range is a guided error.

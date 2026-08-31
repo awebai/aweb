@@ -118,7 +118,7 @@ func init() {
 		beadsMailReadCmd,
 		beadsMailPeekCmd,
 		beadsMailThreadCmd,
-		beadsMailStub("check", "Check for unread mail (for hooks; always exits 0 on a working probe)"),
+		beadsMailCheckCmd,
 		beadsMailMarkReadCmd,
 
 		beadsMailUnsupported("mark-unread <message-id>", "Not supported: read state cannot be cleared",
