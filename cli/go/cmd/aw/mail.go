@@ -530,10 +530,8 @@ var mailSendCmd = &cobra.Command{
 			printJSON(resp)
 		} else if targetKind == "conversation" {
 			fmt.Printf("Sent mail in conversation %s (message_id=%s)\n", targetValue, resp.MessageID)
-			fmt.Print(mailSendBoundaryNotice())
 		} else {
 			fmt.Printf("Sent mail to %s (message_id=%s)\n", targetValue, resp.MessageID)
-			fmt.Print(mailSendBoundaryNotice())
 		}
 		return nil
 	},
@@ -650,32 +648,9 @@ var mailReplyCmd = &cobra.Command{
 			printJSON(resp)
 		} else {
 			fmt.Printf("Sent mail in conversation %s (message_id=%s)\n", conversationID, resp.MessageID)
-			fmt.Print(mailSendBoundaryNotice())
 		}
 		return nil
 	},
-}
-
-// mailSendBoundaryNotice states what a successful send does and does not
-// establish. Exit 0 means the server accepted the message; a sender reading
-// only the id line reasonably infers more than that.
-//
-// The three things it excludes are excluded for two different reasons, and the
-// distinction is why this is worded as a limit rather than a warning:
-//
-//	delivery, presentation   known somewhere, but never reported back to a sender
-//	the trust verdict        NOT KNOWABLE HERE AT ALL. It is computed per recipient
-//	                         against a pin store on that recipient's machine, so the
-//	                         same message is "verified" for one peer and
-//	                         "identity_mismatch" for another. There is no single
-//	                         status a sender could be told (aweb-aauz).
-//
-// Deliberately carries no alarm word: at send time nothing is known to be wrong,
-// and an alert would imply a detected problem we have not detected.
-func mailSendBoundaryNotice() string {
-	return "  The server accepted this message. Acceptance is not delivery and not presentation\n" +
-		"  to the recipient - neither is reported back to a sender. It is also not a trust\n" +
-		"  verdict: that is computed per recipient, against a pin store on their machine.\n"
 }
 
 // resolveMailBody returns the message body, sourcing it from --body or
