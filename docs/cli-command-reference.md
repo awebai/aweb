@@ -18,7 +18,7 @@ to refresh it.
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `id`, `mcp-config`, `team`, `whoami` |
-| Messaging & Network | `a2a`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
+| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session` |
@@ -1419,6 +1419,222 @@ Fetch an A2A task
 Flags:
 - `-h, --help help for status`
 - `--history int History length to request; -1 uses server default (default -1)`
+
+## `beads-mail`
+
+### `beads-mail`
+
+Mail for beads, no orchestrator required.
+
+beads ships a 'bd mail' command that delegates to an external mail
+provider. This is that provider, backed by aweb: durable delivery,
+offline recipients, and cryptographically verified sender identity.
+
+Setup, once per repo:
+
+  npm i -g @awebai/aw
+  aw init
+  bd config set mail.delegate "aw beads-mail"
+
+Then 'bd mail send', 'bd mail inbox', and friends work. Recipients run
+the same three lines. Map beads-style names to aweb addresses in
+.beads/aweb-mail.toml; addresses containing a domain (acme.com/reviewer)
+need no mapping.
+
+Two things to know that differ from 'gt mail':
+
+  - 'bd mail' swallows --help anywhere in the arguments, so use
+    'bd mail help <verb>' (or 'aw beads-mail <verb> --help') for
+    per-verb help.
+  - 'bd mail check' always exits 0 when the probe worked; branch on its
+    output or --json, not the exit code. Nonzero means a real failure.
+
+Optional in-session wake-ups when mail arrives: aw init --setup-channel.
+
+Subcommands:
+- `announces` Not supported in v1
+- `archive` Not supported: the beads graph is the archive
+- `check` Check for unread mail (for hooks; always exits 0 on a working probe)
+- `claim` Not supported in v1: no message queues
+- `clear` Not supported: server mail expires on its own
+- `delete` Not supported: server mail expires on its own
+- `drain` Not supported in v1
+- `help` Show help for a beads-mail verb ('bd mail' swallows --help; this reaches us)
+- `inbox` List unread messages
+- `mark-read` Mark messages as read
+- `mark-unread` Not supported: read state cannot be cleared
+- `peek` Preview the first unread message without marking it read
+- `read` Read a message (marks it read)
+- `release` Not supported in v1: no message queues
+- `reply` Reply to a message
+- `search` Not supported in v1: no server-side mail search
+- `send` Send a message
+- `thread` View a message thread
+
+Flags:
+- `-h, --help help for beads-mail`
+
+## `beads-mail announces`
+
+### `beads-mail announces`
+
+Not supported in v1
+
+Flags:
+- `-h, --help help for announces`
+
+## `beads-mail archive`
+
+### `beads-mail archive`
+
+Not supported: the beads graph is the archive
+
+Flags:
+- `-h, --help help for archive`
+
+## `beads-mail check`
+
+### `beads-mail check`
+
+Check for unread mail (for hooks; always exits 0 on a working probe)
+
+Flags:
+- `-h, --help help for check`
+
+## `beads-mail claim`
+
+### `beads-mail claim`
+
+Not supported in v1: no message queues
+
+Flags:
+- `-h, --help help for claim`
+
+## `beads-mail clear`
+
+### `beads-mail clear`
+
+Not supported: server mail expires on its own
+
+Flags:
+- `-h, --help help for clear`
+
+## `beads-mail delete`
+
+### `beads-mail delete`
+
+Not supported: server mail expires on its own
+
+Flags:
+- `-h, --help help for delete`
+
+## `beads-mail drain`
+
+### `beads-mail drain`
+
+Not supported in v1
+
+Flags:
+- `-h, --help help for drain`
+
+## `beads-mail help`
+
+### `beads-mail help`
+
+Show help for a beads-mail verb ('bd mail' swallows --help; this reaches us)
+
+Flags:
+- `-h, --help help for help`
+
+## `beads-mail inbox`
+
+### `beads-mail inbox`
+
+List unread messages
+
+Flags:
+- `-h, --help help for inbox`
+
+## `beads-mail mark-read`
+
+### `beads-mail mark-read`
+
+Mark messages as read
+
+Flags:
+- `-h, --help help for mark-read`
+
+## `beads-mail mark-unread`
+
+### `beads-mail mark-unread`
+
+Not supported: read state cannot be cleared
+
+Flags:
+- `-h, --help help for mark-unread`
+
+## `beads-mail peek`
+
+### `beads-mail peek`
+
+Preview the first unread message without marking it read
+
+Flags:
+- `-h, --help help for peek`
+
+## `beads-mail read`
+
+### `beads-mail read`
+
+Read a message (marks it read)
+
+Flags:
+- `-h, --help help for read`
+
+## `beads-mail release`
+
+### `beads-mail release`
+
+Not supported in v1: no message queues
+
+Flags:
+- `-h, --help help for release`
+
+## `beads-mail reply`
+
+### `beads-mail reply`
+
+Reply to a message
+
+Flags:
+- `-h, --help help for reply`
+
+## `beads-mail search`
+
+### `beads-mail search`
+
+Not supported in v1: no server-side mail search
+
+Flags:
+- `-h, --help help for search`
+
+## `beads-mail send`
+
+### `beads-mail send`
+
+Send a message
+
+Flags:
+- `-h, --help help for send`
+
+## `beads-mail thread`
+
+### `beads-mail thread`
+
+View a message thread
+
+Flags:
+- `-h, --help help for thread`
 
 ## `chat`
 
