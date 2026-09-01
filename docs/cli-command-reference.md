@@ -1629,6 +1629,7 @@ Flags:
 - `--body string Alias for --message`
 - `-h, --help help for reply`
 - `-m, --message string Reply message body`
+- `--stdin Read the reply body from stdin (delegate extension; gt reply lacks it, but shell-unsafe bodies need it)`
 - `-s, --subject string Override reply subject (default: Re: <original>)`
 
 ## `beads-mail search`
@@ -1657,7 +1658,7 @@ Flags:
 - `-m, --message string Message body`
 - `--no-notify No-op at priority <= normal (idle wake anyway); cannot silence high/urgent`
 - `-n, --notify Bump priority to high so the recipient wakes`
-- `--permanent Mark not ephemeral; meaningful once dual-write lands`
+- `--permanent Carry ephemeral=false metadata; v1 does not promote the underlying message bead`
 - `--pinned Carried in the beads-mail envelope; no delivery behavior`
 - `--priority int Message priority (0=urgent, 1=high, 2=normal, 3=low, 4=backlog); 0-1 wake the recipient (default 2)`
 - `--reply-to string Message ID this replies to; continues that conversation`
@@ -1667,7 +1668,7 @@ Flags:
 - `--to string Recipient address (alternative to the positional argument)`
 - `--type string Message type (task, scavenge, notification, reply); carried in the beads-mail envelope (default "notification")`
 - `--urgent Set priority=0 (urgent)`
-- `--wisp Mark ephemeral (beads default); meaningful once dual-write lands (default true)`
+- `--wisp Use the beads ephemeral default (default true)`
 
 ## `beads-mail thread`
 

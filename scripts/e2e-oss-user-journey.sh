@@ -2423,8 +2423,10 @@ assert_contains "beads send continuation disclosed" "$beads_send1_out" "continui
 BEADS_MSG1_ID="$(echo "$beads_send1_out" | sed -n 's/.*message_id=\([0-9a-f-]*\).*/\1/p' | head -1)"
 assert_not_empty "beads send message id" "$BEADS_MSG1_ID"
 
-# Live-defect repro 2: --reply-to referencing alice's OWN sent message.
-run_success "beads send --reply-to own sent message" run_aw_in "$ALICE_DIR" beads-mail send bob/ \
+# Live-defect repro 2: --reply-to referencing alice's OWN sent message. Use
+# the primary bare-alias form here so the real server also proves that the
+# named recipient is checked as the counterparty, not merely as any participant.
+run_success "beads send --reply-to own sent message" run_aw_in "$ALICE_DIR" beads-mail send bob \
   --reply-to "$BEADS_MSG1_ID" -s "Re: Beads delegate journey" -m "threading through my own sent mail"
 
 # Bob's side: check counts both, inbox is read-only, read acks exactly one.

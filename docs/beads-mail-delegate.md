@@ -229,8 +229,8 @@ error; **n/i** = not implemented in v1, clear message, nonzero exit.
 | `send --self` | impl | send to own workspace identity |
 | `send --cc` | n/i | aweb mail is one recipient per message; "send separately" |
 | `send --from` | rej | §4 |
-| `send --pinned` | env | no delivery behavior; meaningful to dual-write later |
-| `send --wisp` / `--permanent` | env | gt defaults wisp; drives `ephemeral` when dual-write lands |
+| `send --pinned` | env | no delivery behavior; carried into dual-write metadata but does not pin the underlying message bead |
+| `send --wisp` / `--permanent` | env | gt defaults wisp; `--permanent` carries `ephemeral=false` into mail and dual-write metadata, but v1 does not promote the underlying message bead |
 | `send -n/--notify` | impl | bumps priority to high (gt: same); mutually exclusive with `--no-notify`, hard error, as gt |
 | `send --no-notify` | impl | no-op at priority ≤ normal (idle wake anyway); warns if combined with high/urgent, which always wake |
 | `inbox` | impl | `GET /v1/messages/inbox?unread_only=true`, read-only. **Deliberate default flip:** gt's bare `inbox` shows all messages; ours shows unread only, matching mail convention and the `check` story. `--all` restores gt's view. |
@@ -278,6 +278,11 @@ surface.
   drives the unread count and the wake path; a displayed message that
   stays "unread" would keep re-firing `check` and channel wakes. gt
   users who want a non-mutating look have `peek` and `thread`.
+- If that acknowledgement fails, `read` says the message was displayed but
+  exits nonzero instead of claiming it is read. `mark-read` likewise reports
+  any failed acknowledgements. A successful `reply` whose follow-up
+  acknowledgement fails stays successful (retrying would duplicate the
+  reply), but prints a visible note that the source remains unread.
 - `reply` acknowledges the source message after the reply sends
   (matching `aw mail reply`'s behavior).
 - `mark-read` is the explicit form.
@@ -450,10 +455,11 @@ recorded via `bd create --title <subject> --type message --stdin
 --silent --metadata {...}` (`--title` rather than positional, so a
 flag-shaped subject cannot be swallowed by bd's parser — verified live
 against bd 1.1.2) — the description is the user body without the §9
-envelope; the aweb `message_id`/`conversation_id` and any envelope
-values ride bd metadata; replies add a `replies-to` dependency when the
-workspace's local bead map (`.aw/beads-mail/beads.json`) knows the
-source message's bead (all verified live against bd 1.1.2, which
+envelope; the aweb `message_id`/`conversation_id` and all non-default
+envelope values ride bd metadata; replies add a `replies-to`
+dependency when the workspace's local bead map
+(`.aw/beads-mail/beads.json`) knows the source message's bead (all
+verified live against bd 1.1.2, which
 accepts `--type message` and `--deps "replies-to:<id>"` and defaults
 message beads to ephemeral).
 
@@ -477,8 +483,9 @@ message's future `replies-to` link.
 v1 bounds, recorded: receive-side dual-write is deferred (only this
 side's sends become beads, so cross-machine threads link only through
 the local bead map); bd's own message-type ephemeral default stands
-rather than being managed per-message. The docs' retention honesty
-(§11) is what makes default-off acceptable.
+rather than being managed per-message. `--permanent` preserves
+`ephemeral=false` in metadata but does not promote that bead in v1.
+The docs' retention honesty (§11) is what makes default-off acceptable.
 
 ## 13. E2EE
 

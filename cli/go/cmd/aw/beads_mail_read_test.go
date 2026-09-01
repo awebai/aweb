@@ -104,6 +104,7 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 	}
 
 	var ackCalls []string
+	ackFailure := false
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/messages/inbox":
@@ -137,6 +138,10 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 		case r.URL.Path == "/v1/messages/conversations/"+conversationID:
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{msgRead, msgUnread}})
 		case strings.HasSuffix(r.URL.Path, "/ack") && r.Method == http.MethodPost:
+			if ackFailure {
+				http.Error(w, "ack unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			parts := strings.Split(r.URL.Path, "/")
 			ackCalls = append(ackCalls, parts[len(parts)-2])
 			_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: parts[len(parts)-2], AcknowledgedAt: "2026-08-31T02:00:00Z"})
@@ -287,5 +292,17 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 	// Index out of range is a guided error.
 	if out, err := run("read", "99"); err == nil || !strings.Contains(out, "out of range") {
 		t.Errorf("read 99: err=%v\n%s", err, out)
+	}
+
+	// A failed acknowledgement must be visible. read has already displayed
+	// the message, while mark-read reports that it did not change state.
+	ackFailure = true
+	if out, err := run("read", msgUnread.MessageID); err == nil ||
+		!strings.Contains(out, "the well is low") || !strings.Contains(out, "could not be marked read") {
+		t.Errorf("read with failed ack: err=%v\n%s", err, out)
+	}
+	if out, err := run("mark-read", msgRead.MessageID); err == nil ||
+		!strings.Contains(out, "marked 0 message(s) read") || !strings.Contains(out, "failed to mark 1 message(s) read") {
+		t.Errorf("mark-read with failed ack: err=%v\n%s", err, out)
 	}
 }

@@ -50,7 +50,8 @@ func TestBeadsMailDualWriteRecordsBead(t *testing.T) {
 	m, sel, resp := dualWriteFixtures(t, true)
 
 	p := 1
-	beadsMailRecordBead(sel, m, "Water levels", "the well is low", resp, "", beadsMailEnvelope{Type: "task", Priority: &p})
+	ephemeral := false
+	beadsMailRecordBead(sel, m, "Water levels", "the well is low", resp, "", beadsMailEnvelope{Type: "task", Priority: &p, Ephemeral: &ephemeral})
 
 	args, err := os.ReadFile(filepath.Join(shimDir, "bd-args"))
 	if err != nil {
@@ -61,7 +62,7 @@ func TestBeadsMailDualWriteRecordsBead(t *testing.T) {
 			t.Errorf("bd args missing %q:\n%s", want, args)
 		}
 	}
-	if !strings.Contains(string(args), `"aweb_message_id":"msg-dw-1"`) || !strings.Contains(string(args), `"mail_type":"task"`) {
+	if !strings.Contains(string(args), `"aweb_message_id":"msg-dw-1"`) || !strings.Contains(string(args), `"mail_type":"task"`) || !strings.Contains(string(args), `"ephemeral":false`) {
 		t.Errorf("metadata missing ids/envelope values:\n%s", args)
 	}
 	stdin, _ := os.ReadFile(filepath.Join(shimDir, "bd-stdin"))

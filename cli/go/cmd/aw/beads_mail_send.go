@@ -114,6 +114,10 @@ cryptographically verified identity.`,
 		if strings.TrimSpace(beadsMailSendSubject) == "" {
 			return usageError("-s/--subject is required")
 		}
+		mailType := strings.TrimSpace(beadsMailSendType)
+		if !beadsMailSupportedType(mailType) {
+			return usageError("--type must be one of: task, scavenge, notification, reply")
+		}
 		body, err := beadsMailResolveBody(cmd, beadsMailSendBody, beadsMailSendBodyAlias, beadsMailSendStdin, "")
 		if err != nil {
 			return err
@@ -173,8 +177,8 @@ cryptographically verified identity.`,
 		}
 
 		env := beadsMailEnvelope{}
-		if beadsMailSendType != "" && beadsMailSendType != "notification" {
-			env.Type = beadsMailSendType
+		if mailType != "notification" {
+			env.Type = mailType
 		}
 		if beadsPriority != 2 {
 			p := beadsPriority
@@ -213,8 +217,8 @@ cryptographically verified identity.`,
 			// are all empty (key rotation can blank the derived
 			// address/stable-id) cannot be verified and proceeds — reply is
 			// always the recipient-free escape hatch either way.
-			if participants := beadsMailMessageParticipants(source); len(participants) > 0 && !beadsMailValueAmong(target.Value, participants) {
-				return usageError("--reply-to message %s is a conversation with %s, not with %s; drop --reply-to or name that correspondent", replyTo, sanitizeBeadsMailDisplay(beadsMailCounterpartyLabel(source)), sanitizeBeadsMailDisplay(target.Value))
+			if known, matches := beadsMailReplyToTargetMatches(source, sel, target.Value); known && !matches {
+				return usageError("--reply-to message %s is a conversation with %s, not with %s; drop --reply-to or name that correspondent", replyTo, sanitizeBeadsMailDisplay(beadsMailCounterpartyLabel(source, sel)), sanitizeBeadsMailDisplay(target.Value))
 			}
 			req.ConversationID = conversationID
 		} else {
@@ -236,7 +240,11 @@ cryptographically verified identity.`,
 
 		beadsMailAppendSendLogs(sel, resp, target.Value, beadsMailSendSubject, body)
 		fmt.Printf("sent %s (message_id=%s conversation_id=%s)\n", beadsMailResolutionNote(target), resp.MessageID, resp.ConversationID)
-		beadsMailRecordBead(sel, addressMap, beadsMailSendSubject, body, resp, strings.TrimSpace(beadsMailSendReplyTo), env)
+		if mapErr != nil {
+			beadsMailRecordGap("could not read the beads mail configuration: " + mapErr.Error())
+		} else {
+			beadsMailRecordBead(sel, addressMap, beadsMailSendSubject, body, resp, strings.TrimSpace(beadsMailSendReplyTo), env)
+		}
 		return nil
 	},
 }
@@ -309,14 +317,16 @@ var beadsMailReplyCmd = &cobra.Command{
 			return err
 		}
 		if _, ackErr := c.AckMessage(ctx, messageID); ackErr != nil {
-			debugLog("ack replied beads mail %s: %v", messageID, ackErr)
+			fmt.Fprintf(os.Stderr, "note: reply was sent, but the source message could not be marked read: %s\n", sanitizeBeadsMailDisplay(ackErr.Error()))
 		}
 		beadsMailAppendSendLogs(sel, resp, conversationID, subject, body)
 		fmt.Printf("replied (message_id=%s conversation_id=%s)\n", resp.MessageID, resp.ConversationID)
-		if cwd, cwdErr := os.Getwd(); cwdErr == nil {
-			if addressMap, mapErr := loadBeadsMailAddressMap(cwd); mapErr == nil {
-				beadsMailRecordBead(sel, addressMap, subject, body, resp, messageID, beadsMailEnvelope{})
-			}
+		if cwd, cwdErr := os.Getwd(); cwdErr != nil {
+			beadsMailRecordGap("could not locate the beads repository: " + cwdErr.Error())
+		} else if addressMap, mapErr := loadBeadsMailAddressMap(cwd); mapErr != nil {
+			beadsMailRecordGap("could not read the beads mail configuration: " + mapErr.Error())
+		} else {
+			beadsMailRecordBead(sel, addressMap, subject, body, resp, messageID, beadsMailEnvelope{})
 		}
 		return nil
 	},
@@ -331,19 +341,82 @@ func beadsMailUsesCertSend(kind, conversationID string) bool {
 	return kind == "alias" && strings.TrimSpace(conversationID) == ""
 }
 
-// beadsMailMessageParticipants lists the message's non-empty participant
-// identifiers, either side.
-func beadsMailMessageParticipants(msg *awid.InboxMessage) []string {
-	if msg == nil {
-		return nil
+func beadsMailSupportedType(value string) bool {
+	switch value {
+	case "task", "scavenge", "notification", "reply":
+		return true
+	default:
+		return false
 	}
-	var participants []string
-	for _, candidate := range []string{msg.FromAddress, msg.ToAddress, msg.FromDID, msg.ToDID, msg.FromStableID, msg.ToStableID} {
-		if strings.TrimSpace(candidate) != "" {
-			participants = append(participants, strings.TrimSpace(candidate))
+}
+
+func beadsMailMessageSideIdentifiers(alias, address, did, stableID string) []string {
+	var identifiers []string
+	for _, candidate := range []string{address, alias, did, stableID} {
+		if value := strings.TrimSpace(candidate); value != "" {
+			identifiers = append(identifiers, value)
 		}
 	}
-	return participants
+	return identifiers
+}
+
+func beadsMailSelectionIdentifiers(sel *awconfig.Selection) []string {
+	if sel == nil {
+		return nil
+	}
+	return beadsMailMessageSideIdentifiers(sel.Alias, selectionAddress(sel), sel.DID, sel.StableID)
+}
+
+func beadsMailIdentifiersOverlap(left, right []string) bool {
+	for _, value := range left {
+		if beadsMailValueAmong(value, right) {
+			return true
+		}
+	}
+	return false
+}
+
+// beadsMailCounterpartyIdentifiers identifies the side of the source message
+// that is not this workspace. If old or rotated message data cannot identify
+// the local side, all non-empty participants remain the conservative fallback;
+// an entirely blank legacy row is unverifiable and deliberately fails open.
+func beadsMailCounterpartyIdentifiers(msg *awid.InboxMessage, sel *awconfig.Selection) ([]string, bool) {
+	if msg == nil {
+		return nil, false
+	}
+	from := beadsMailMessageSideIdentifiers(msg.FromAlias, msg.FromAddress, msg.FromDID, msg.FromStableID)
+	to := beadsMailMessageSideIdentifiers(msg.ToAlias, msg.ToAddress, msg.ToDID, msg.ToStableID)
+	all := append(append([]string{}, from...), to...)
+	if len(all) == 0 {
+		return nil, false
+	}
+	self := beadsMailSelectionIdentifiers(sel)
+	fromIsSelf := beadsMailIdentifiersOverlap(from, self)
+	toIsSelf := beadsMailIdentifiersOverlap(to, self)
+	switch {
+	case fromIsSelf && !toIsSelf:
+		return to, true
+	case toIsSelf && !fromIsSelf:
+		return from, true
+	case fromIsSelf && toIsSelf:
+		return nil, true
+	default:
+		return all, true
+	}
+}
+
+func beadsMailReplyToTargetMatches(msg *awid.InboxMessage, sel *awconfig.Selection, target string) (known, matches bool) {
+	participants, known := beadsMailCounterpartyIdentifiers(msg, sel)
+	if !known {
+		return false, true
+	}
+	// A conversation continuation always routes to the other side. Naming
+	// ourselves through an address, alias, or DID would make the disclosure
+	// line lie even though our identity is naturally one of the participants.
+	if beadsMailValueAmong(target, beadsMailSelectionIdentifiers(sel)) {
+		return true, false
+	}
+	return true, beadsMailValueAmong(target, participants)
 }
 
 func beadsMailValueAmong(value string, candidates []string) bool {
@@ -359,10 +432,12 @@ func beadsMailValueAmong(value string, candidates []string) bool {
 	return false
 }
 
-func beadsMailCounterpartyLabel(msg *awid.InboxMessage) string {
-	for _, candidate := range []string{msg.FromAddress, msg.ToAddress, msg.FromDID, msg.ToDID} {
-		if strings.TrimSpace(candidate) != "" {
-			return strings.TrimSpace(candidate)
+func beadsMailCounterpartyLabel(msg *awid.InboxMessage, sel *awconfig.Selection) string {
+	if participants, known := beadsMailCounterpartyIdentifiers(msg, sel); known {
+		for _, candidate := range participants {
+			if strings.TrimSpace(candidate) != "" {
+				return strings.TrimSpace(candidate)
+			}
 		}
 	}
 	return "an unidentified correspondent"
@@ -531,8 +606,8 @@ func init() {
 	flags.BoolVarP(&beadsMailSendNotify, "notify", "n", false, "Bump priority to high so the recipient wakes")
 	flags.BoolVar(&beadsMailSendNoNotify, "no-notify", false, "No-op at priority <= normal (idle wake anyway); cannot silence high/urgent")
 	flags.BoolVar(&beadsMailSendPinned, "pinned", false, "Carried in the beads-mail envelope; no delivery behavior")
-	flags.BoolVar(&beadsMailSendWisp, "wisp", true, "Mark ephemeral (beads default); meaningful once dual-write lands")
-	flags.BoolVar(&beadsMailSendPermanent, "permanent", false, "Mark not ephemeral; meaningful once dual-write lands")
+	flags.BoolVar(&beadsMailSendWisp, "wisp", true, "Use the beads ephemeral default")
+	flags.BoolVar(&beadsMailSendPermanent, "permanent", false, "Carry ephemeral=false metadata; v1 does not promote the underlying message bead")
 	beadsMailSendCmd.MarkFlagsMutuallyExclusive("notify", "no-notify")
 	beadsMailSendCmd.MarkFlagsMutuallyExclusive("wisp", "permanent")
 

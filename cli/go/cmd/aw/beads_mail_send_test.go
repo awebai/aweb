@@ -66,6 +66,68 @@ func TestBeadsMailPriorityMapping(t *testing.T) {
 	}
 }
 
+func TestBeadsMailReplyToChecksTheCounterparty(t *testing.T) {
+	sel := &awconfig.Selection{
+		Alias:    "alice",
+		Address:  "example.test/alice",
+		DID:      "did:key:alice",
+		StableID: "did:aw:alice",
+	}
+	for _, msg := range []*awid.InboxMessage{
+		{
+			FromAlias:    "alice",
+			FromAddress:  "example.test/alice",
+			FromDID:      "did:key:alice",
+			FromStableID: "did:aw:alice",
+			ToAlias:      "bob",
+			ToAddress:    "example.test/bob",
+			ToDID:        "did:key:bob",
+			ToStableID:   "did:aw:bob",
+		},
+		{
+			FromAlias:    "bob",
+			FromAddress:  "example.test/bob",
+			FromDID:      "did:key:bob",
+			FromStableID: "did:aw:bob",
+			ToAlias:      "alice",
+			ToAddress:    "example.test/alice",
+			ToDID:        "did:key:alice",
+			ToStableID:   "did:aw:alice",
+		},
+	} {
+		for _, target := range []string{"bob", "example.test/bob", "did:key:bob", "did:aw:bob"} {
+			known, matches := beadsMailReplyToTargetMatches(msg, sel, target)
+			if !known || !matches {
+				t.Errorf("counterparty target %q: known=%v matches=%v", target, known, matches)
+			}
+		}
+		for _, target := range []string{"alice", "example.test/alice", "did:key:alice", "did:aw:alice", "example.test/carol"} {
+			known, matches := beadsMailReplyToTargetMatches(msg, sel, target)
+			if !known || matches {
+				t.Errorf("non-counterparty target %q: known=%v matches=%v", target, known, matches)
+			}
+		}
+	}
+
+	known, matches := beadsMailReplyToTargetMatches(&awid.InboxMessage{}, sel, "bob")
+	if known || !matches {
+		t.Errorf("blank legacy message should fail open: known=%v matches=%v", known, matches)
+	}
+}
+
+func TestBeadsMailSupportedTypes(t *testing.T) {
+	for _, value := range []string{"task", "scavenge", "notification", "reply"} {
+		if !beadsMailSupportedType(value) {
+			t.Errorf("supported type %q rejected", value)
+		}
+	}
+	for _, value := range []string{"", "custom", "task\x1b]2;unsafe\a"} {
+		if beadsMailSupportedType(value) {
+			t.Errorf("unsupported type %q accepted", value)
+		}
+	}
+}
+
 // beadsMailSendReplyHarness builds the production binary once and stands up a
 // local server capturing what the delegate sends. The identity-home evidence
 // bar (identity_home_policy.go): these verbs consume the workspace identity in
@@ -95,6 +157,7 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 	var sends []sentRequest
 	var sendFromDIDs []string
 	var conversationListCalls, ackCalls int
+	ackFailure := false
 	conflictArmed := false
 	sourceMessage := awid.InboxMessage{
 		MessageID:      "33333333-3333-4333-8333-333333333333",
@@ -170,6 +233,10 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 					DeliveredAt:    "2026-08-31T00:00:00Z",
 				})
 			case strings.HasSuffix(r.URL.Path, "/ack"):
+				if ackFailure {
+					http.Error(w, "ack unavailable", http.StatusServiceUnavailable)
+					return
+				}
 				ackCalls++
 				_ = json.NewEncoder(w).Encode(awid.AckResponse{MessageID: sourceMessage.MessageID, AcknowledgedAt: "2026-08-31T00:00:00Z"})
 			case r.URL.Path == "/v1/agents/heartbeat":
@@ -253,6 +320,13 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 	if body := sends[len(sends)-1].Body; strings.Contains(body, "beads-mail") {
 		t.Errorf("default send grew an envelope:\n%s", body)
 	}
+	sendCount := len(sends)
+	if out, err := run("send", "mayor/", "-s", "bad type", "-m", "x", "--type", "custom"); err == nil || !strings.Contains(out, "--type must be one of") {
+		t.Errorf("unsupported type was not rejected: err=%v\n%s", err, out)
+	}
+	if len(sends) != sendCount {
+		t.Errorf("unsupported type reached the server: sends=%d want %d", len(sends), sendCount)
+	}
 
 	// Envelope flags: --permanent marks ephemeral:false, --pinned rides
 	// along; an explicit --wisp=true (the default restated) emits nothing.
@@ -303,6 +377,16 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 	if ackCalls != 1 {
 		t.Errorf("ack calls=%d", ackCalls)
 	}
+
+	// The reply is already delivered when its follow-up ack runs. Keep the
+	// command successful (so automation does not duplicate the reply), but
+	// disclose that the source remains unread.
+	ackFailure = true
+	if out, err := run("reply", sourceMessage.MessageID, "-m", "ack later"); err != nil ||
+		!strings.Contains(out, "reply was sent") || !strings.Contains(out, "could not be marked read") {
+		t.Errorf("reply with failed ack: err=%v\n%s", err, out)
+	}
+	ackFailure = false
 
 	// Identity-home consumption evidence (the bar stated in
 	// beads_mail_test.go): with an external principal selected, the send is
@@ -371,6 +455,8 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 	}
 	if out, err := run("send", "--self", "-s", "still works", "-m", "x"); err != nil {
 		t.Fatalf("--self with broken map failed: %v\n%s", err, out)
+	} else if !strings.Contains(out, "beads graph may be missing this message") {
+		t.Errorf("--self with broken map omitted the record-gap note:\n%s", out)
 	}
 	if out, err := run("send", "mayor/", "-s", "x", "-m", "x"); err == nil {
 		t.Fatalf("mapped send with broken map succeeded:\n%s", out)
