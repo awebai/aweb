@@ -222,7 +222,7 @@ error; **n/i** = not implemented in v1, clear message, nonzero exit.
 | `read <id\|index>` (alias `show`) | impl | `GET /v1/messages/{id}`, then ack — **a deliberate break from gt**, whose `read` promises non-mutation; see §7 |
 | `read --json` | impl | |
 | `peek` | impl | first unread, read-only, no ack; exit 0 with or without mail, like `check` (§10) — same disclosed divergence from gt |
-| `reply <id> [msg]`, `-s`, `-m/--body` | impl | send into the source message's conversation, then ack source; `-s` omitted → subject `Re: <original>`, as gt |
+| `reply <id> [msg]`, `-s`, `-m/--body`, `--stdin` | impl | send into the source message's conversation, then ack source; `-s` omitted → subject `Re: <original>`, as gt. `--stdin` is a delegate extension gt's reply lacks (shell-unsafe bodies need it; oats' live-exchange finding, 2026-09-01) |
 | `thread <id>` | impl | conversation view (§8) |
 | `thread --json` | impl | |
 | `check` | impl | §10 |
@@ -280,10 +280,36 @@ to run `bd mail inbox` first.
   the client structs is dead — the server never emits it.)
 - The delegate always controls conversations explicitly: a plain `send`
   creates a fresh conversation; `reply` and `send --reply-to` continue
-  the source message's conversation by id. The delegate never relies on
-  `aw mail send`'s opportunistic auto-threading
-  (`cli/go/cmd/aw/mail.go:391-419`) — sending via the client with
-  explicit parameters bypasses it.
+  the source message's conversation by id. The delegate never invokes
+  `aw mail send`'s opportunistic pre-discovery
+  (`cli/go/cmd/aw/mail.go:391-419`). Note precisely what "fresh" means
+  for a signed sender: the shared client MINTS a conversation UUID for
+  every signed send with no explicit conversation
+  (`cli/go/awid/mail.go:95-101`) — this is not an accident to fix but a
+  consequence of signature binding, below.
+- **Server-directed continuation, and why it is the right fix**
+  (amendment 2026-09-01, root cause verified against both ends after
+  the first live exchange): the server keeps one active mail
+  conversation per pair. Its silent-reuse branch fires only when
+  `conversation_id` is absent AND — for signed mail — only when the
+  signed payload already binds the EXISTING conversation id
+  (`server/src/aweb/routes/messages.py:1366-1373`). A signed sender
+  therefore structurally cannot use silent reuse without first
+  discovering the conversation: `conversation_id` is part of the signed
+  envelope, and you cannot sign an id you do not know. So the delegate
+  sends fresh first (zero extra cost on the common first-contact path),
+  and on exactly the HTTP 409 conflict it discovers the pair's unique
+  active conversation, signs a continuation binding it, and resends,
+  noting so on stderr. Removing the client-side minting instead would
+  not help a signed sender and would be a cross-cutting change to the
+  shared mail client; rejected for the record.
+- Source-message lookup for `reply`, `--reply-to`, and `read` uses the
+  exact-read endpoint, which the server scopes to sender OR recipient
+  (`messages.py:1851`, `WHERE from_did OR to_did`) — the
+  recipient-scoped inbox lookup the first release used cannot see your
+  own sent mail, which is what `--reply-to <own-message>` references
+  (same live exchange). No server change is needed; verified against
+  the handler's WHERE clause.
 - `thread <id>` renders the conversation oldest-first. The server view
   has a 500-message ceiling and no paging
   (`cli/go/cmd/aw/mail.go:1007-1022`); when the returned count equals
@@ -387,8 +413,10 @@ The data-plane dual-write (beads stores the message as a `type: message`
 issue; aweb does delivery) ships behind a config toggle, **default
 off**: `[settings]` `dual-write = "on"` in `.beads/aweb-mail.toml`
 (decided in abhf.7). When on, each delivered send/reply is also
-recorded via `bd create <subject> --type message --stdin --silent
---metadata {...}` — the description is the user body without the §9
+recorded via `bd create --title <subject> --type message --stdin
+--silent --metadata {...}` (`--title` rather than positional, so a
+flag-shaped subject cannot be swallowed by bd's parser — verified live
+against bd 1.1.2) — the description is the user body without the §9
 envelope; the aweb `message_id`/`conversation_id` and any envelope
 values ride bd metadata; replies add a `replies-to` dependency when the
 workspace's local bead map (`.aw/beads-mail/beads.json`) knows the

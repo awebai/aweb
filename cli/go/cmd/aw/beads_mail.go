@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 
 	aweb "github.com/awebai/aw"
@@ -42,6 +43,17 @@ Two things to know that differ from 'gt mail':
     output or --json, not the exit code. Nonzero means a real failure.
 
 Optional in-session wake-ups when mail arrives: aw init --setup-channel.`,
+}
+
+// beadsMailClientError wraps a workspace/identity resolution failure with the
+// delegate's own guidance: a beads user meets this inside `bd mail`, where
+// "run aw init here" alone can point at the wrong directory (aw does not
+// resolve identity from parent directories the way bd finds .beads).
+func beadsMailClientError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%w\n(bd mail note: run 'aw init' in this bd repo, or attach an existing identity with AWEB_IDENTITY_HOME=<path-to-.aw>)", err)
 }
 
 // beadsMailIdentifyTransport marks every delegate request with a User-Agent

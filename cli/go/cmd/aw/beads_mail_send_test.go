@@ -95,6 +95,7 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 	var sends []sentRequest
 	var sendFromDIDs []string
 	var conversationListCalls, ackCalls int
+	conflictArmed := false
 	sourceMessage := awid.InboxMessage{
 		MessageID:      "33333333-3333-4333-8333-333333333333",
 		ConversationID: "44444444-4444-4444-8444-444444444444",
@@ -110,7 +111,18 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 			switch {
 			case r.URL.Path == "/v1/conversations":
 				conversationListCalls++
+				if conflictArmed {
+					_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{{
+						ConversationType:     "mail",
+						ConversationID:       sourceMessage.ConversationID,
+						Status:               "active",
+						ParticipantAddresses: []string{"acme.example/mayor"},
+					}}})
+					return
+				}
 				_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
+			case r.URL.Path == "/v1/messages/"+sourceMessage.MessageID && r.Method == http.MethodGet:
+				_ = json.NewEncoder(w).Encode(sourceMessage)
 			case r.URL.Path == "/v1/messages/inbox":
 				if r.URL.Query().Get("message_id") == sourceMessage.MessageID {
 					_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{sourceMessage}})
@@ -141,6 +153,13 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 				var got sentRequest
 				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
 					t.Errorf("decode send: %v", err)
+				}
+				if conflictArmed && got.ConversationID != sourceMessage.ConversationID {
+					// The pair "already has" an active conversation: refuse
+					// the fresh one the way the live server does.
+					w.WriteHeader(http.StatusConflict)
+					_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Existing active conversation found; continue that conversation instead"})
+					return
 				}
 				sends = append(sends, got)
 				sendFromDIDs = append(sendFromDIDs, got.FromDID)
@@ -307,6 +326,22 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 	if got := sendFromDIDs[len(sendFromDIDs)-1]; got != principalDID {
 		t.Errorf("external-principal send signed as %q, want principal %q (shadow was %q)", got, principalDID, did)
 	}
+
+	// The server keeps one active conversation per pair: a fresh send that
+	// gets the live 409 must transparently continue the pair's existing
+	// conversation (design record §8, server-directed continuation).
+	conflictArmed = true
+	out, err = run("send", "mayor/", "-s", "conflict me", "-m", "second message")
+	if err != nil {
+		t.Fatalf("conflict-continuation send failed: %v\n%s", err, out)
+	}
+	if got := sends[len(sends)-1]; got.ConversationID != sourceMessage.ConversationID || got.Subject != "conflict me" {
+		t.Errorf("conflict continuation request %+v", got)
+	}
+	if !strings.Contains(out, "continuing the existing conversation") {
+		t.Errorf("conflict continuation not disclosed:\n%s", out)
+	}
+	conflictArmed = false
 
 	// --self sends work, and a malformed address map must not break them:
 	// --self never consults the map (dual-write just stays off).

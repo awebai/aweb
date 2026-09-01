@@ -33,6 +33,19 @@ your mail goes out as — and connects it to a mail server (hosted at
 app.aweb.ai by default; self-hosting is a Docker container, see the
 [self-hosting guide](self-hosting-guide.md)).
 
+Two setup facts worth knowing up front:
+
+- **Run `aw init` in the bd repo itself.** aw resolves identity from the
+  current directory only — it does not look upward the way bd finds
+  `.beads` — so a bd repo nested under some other aw workspace still
+  needs its own identity, or an attached one via
+  `AWEB_IDENTITY_HOME=<path-to-.aw>`.
+- **`bd init` edits agent instruction files in place** (it appends
+  managed blocks to `AGENTS.md`/`CLAUDE.md` and its injected guidance
+  may not match your team's conventions). That's beads behavior, not
+  this delegate's — but you meet it on this page's path, so review
+  those files after `bd init`.
+
 ## Mail has two ends
 
 The recipient runs the same three lines in their repo. Then connect the
@@ -189,3 +202,8 @@ marked or read for that purpose.
   server.
 - **Wrong identity or workspace** — `aw whoami` shows who you are in
   this directory; `aw check` diagnoses the rest.
+- **"not initialized for aw" from `bd mail`** — the bd repo needs its
+  own `aw init`, or `AWEB_IDENTITY_HOME` pointing at an existing `.aw`.
+- **`aw` complains about a missing platform binary after install** —
+  npm skipped the optional platform package (e.g. `--no-optional`);
+  reinstall without that flag.

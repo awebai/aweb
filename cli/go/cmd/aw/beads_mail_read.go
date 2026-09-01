@@ -125,7 +125,7 @@ func beadsMailSenderLabel(m beadsMailAddressMap, msg *awid.InboxMessage) string 
 func beadsMailReadClient(cmd *cobra.Command, ctx context.Context) (*aweb.Client, *awconfig.Selection, beadsMailAddressMap, error) {
 	c, sel, err := resolveMailMessagingClientSelection()
 	if err != nil {
-		return nil, nil, beadsMailAddressMap{}, err
+		return nil, nil, beadsMailAddressMap{}, beadsMailClientError(err)
 	}
 	beadsMailIdentifyTransport(c)
 	if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {

@@ -130,6 +130,10 @@ func TestBeadsMailReadVerbsAgainstLocalServer(t *testing.T) {
 				return
 			}
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{msgUnread, msgRead}})
+		case r.URL.Path == "/v1/messages/"+msgUnread.MessageID && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(msgUnread)
+		case r.URL.Path == "/v1/messages/"+msgRead.MessageID && r.Method == http.MethodGet:
+			_ = json.NewEncoder(w).Encode(msgRead)
 		case r.URL.Path == "/v1/messages/conversations/"+conversationID:
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{msgRead, msgUnread}})
 		case strings.HasSuffix(r.URL.Path, "/ack") && r.Method == http.MethodPost:

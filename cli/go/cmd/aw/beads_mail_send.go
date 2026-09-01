@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -154,7 +155,7 @@ cryptographically verified identity.`,
 			c, sel, err = resolveMailMessagingClientSelection()
 		}
 		if err != nil {
-			return err
+			return beadsMailClientError(err)
 		}
 		beadsMailIdentifyTransport(c)
 		if beadsMailSendSelf {
@@ -205,6 +206,9 @@ cryptographically verified identity.`,
 		} else {
 			resp, err = c.SendMessageByIdentity(ctx, req)
 		}
+		if err != nil && req.ConversationID == "" {
+			resp, err = beadsMailRetryAsContinuation(ctx, c, target, req, err)
+		}
 		if err != nil {
 			return networkError(err, target.Value)
 		}
@@ -220,6 +224,7 @@ var (
 	beadsMailReplySubject   string
 	beadsMailReplyBody      string
 	beadsMailReplyBodyAlias string
+	beadsMailReplyStdin     bool
 )
 
 var beadsMailReplyCmd = &cobra.Command{
@@ -240,7 +245,7 @@ var beadsMailReplyCmd = &cobra.Command{
 		if len(args) == 2 {
 			positional = args[1]
 		}
-		body, err := beadsMailResolveBody(cmd, beadsMailReplyBody, beadsMailReplyBodyAlias, false, positional)
+		body, err := beadsMailResolveBody(cmd, beadsMailReplyBody, beadsMailReplyBodyAlias, beadsMailReplyStdin, positional)
 		if err != nil {
 			return err
 		}
@@ -249,7 +254,7 @@ var beadsMailReplyCmd = &cobra.Command{
 		defer cancel()
 		c, sel, err := resolveMailMessagingClientSelection()
 		if err != nil {
-			return err
+			return beadsMailClientError(err)
 		}
 		beadsMailIdentifyTransport(c)
 		source, err := beadsMailSourceMessage(ctx, c, messageID)
@@ -373,15 +378,52 @@ func beadsMailResolveBody(cmd *cobra.Command, body, bodyAlias string, fromStdin 
 	return value, nil
 }
 
+// beadsMailSourceMessage fetches one exact message. It uses the exact-read
+// endpoint, which is visible to sender OR recipient — the recipient-scoped
+// inbox lookup cannot see your own sent mail, which broke
+// `send --reply-to <own-message>` in the first live exchange (2026-09-01).
 func beadsMailSourceMessage(ctx context.Context, c *aweb.Client, messageID string) (*awid.InboxMessage, error) {
-	inbox, err := c.Inbox(ctx, awid.InboxParams{UnreadOnly: false, Limit: 1, MessageID: messageID})
+	resp, err := c.Message(ctx, messageID)
 	if err != nil {
 		return nil, networkError(err, messageID)
 	}
-	if len(inbox.Messages) == 0 {
+	if resp == nil || len(resp.Messages) == 0 {
 		return nil, fmt.Errorf("mail message not found: %s", messageID)
 	}
-	return &inbox.Messages[0], nil
+	return &resp.Messages[0], nil
+}
+
+// beadsMailRetryAsContinuation handles the server refusing a fresh
+// conversation because the pair already has an active one (HTTP 409, found
+// live 2026-09-01). Continuation is server-directed, not opportunistic: the
+// delegate still sends fresh first, and only when the server names the
+// conflict does it look up the pair's unique active conversation and resend
+// into it (design record §8 amendment).
+func beadsMailRetryAsContinuation(ctx context.Context, c *aweb.Client, target beadsMailTarget, req *awid.SendMessageRequest, sendErr error) (*awid.SendMessageResponse, error) {
+	if code, ok := awid.HTTPStatusCode(sendErr); !ok || code != http.StatusConflict {
+		return nil, sendErr
+	}
+	var conversation mailConversationTarget
+	var err error
+	switch target.Kind {
+	case "address", "did":
+		conversation, err = findUniqueMailConversationForTarget(ctx, c, target.Kind, target.Value)
+	case "alias":
+		if agent, found, findErr := clientAgentForAlias(ctx, c, target.Value); findErr == nil && found {
+			conversation, err = findUniqueMailConversationForAgent(ctx, c, agent)
+		}
+	}
+	if err != nil || conversation.conversationID == "" {
+		return nil, sendErr
+	}
+	fmt.Fprintf(os.Stderr, "note: continuing the existing conversation with %s (the server keeps one active conversation per pair)\n", sanitizeBeadsMailDisplay(target.Value))
+	continuation := &awid.SendMessageRequest{
+		ConversationID: conversation.conversationID,
+		Subject:        req.Subject,
+		Body:           req.Body,
+		Priority:       req.Priority,
+	}
+	return c.SendMessageByIdentity(ctx, continuation)
 }
 
 func beadsMailAppendSendLogs(sel *awconfig.Selection, resp *awid.SendMessageResponse, to, subject, body string) {
@@ -440,4 +482,5 @@ func init() {
 	replyFlags.StringVarP(&beadsMailReplySubject, "subject", "s", "", "Override reply subject (default: Re: <original>)")
 	replyFlags.StringVarP(&beadsMailReplyBody, "message", "m", "", "Reply message body")
 	replyFlags.StringVar(&beadsMailReplyBodyAlias, "body", "", "Alias for --message")
+	replyFlags.BoolVar(&beadsMailReplyStdin, "stdin", false, "Read the reply body from stdin (delegate extension; gt reply lacks it, but shell-unsafe bodies need it)")
 }
