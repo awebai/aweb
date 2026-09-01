@@ -339,7 +339,10 @@ to run `bd mail inbox` first.
   is instead VERIFIED against the source message's participants: naming
   bob while replying into a conversation with carol is refused, because
   otherwise the disclosure line would name one correspondent while the
-  mail went to another.
+  mail went to another. Beyond routing, this was the one place the
+  delegate could have attached a VERIFIED identity to an unintended
+  thread — fixed before any user met it, and found only because the
+  test met a real server (oats, 2026-09-01).
 - `thread <id>` renders the conversation oldest-first. The server view
   has a 500-message ceiling and no paging
   (`cli/go/cmd/aw/mail.go:1007-1022`); when the returned count equals
