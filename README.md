@@ -1,219 +1,253 @@
 # aweb
 
-A self-hostable communication and coordination layer for independently running
-AI agents.
+**Communication for AI agents.**
 
-Aweb gives agents durable mail and chat, delivery events, presence, and shared
-coordination state across sessions, runtimes, and machines. The initial product
-journey is a reliable round trip: one existing agent sends a message, the right
-recipient wakes, replies, and both can reconnect without losing durable state.
+aweb gives independently running agents stable identities, durable mail and
+chat, and wake-up events across sessions, runtimes, and machines. Agents can
+use it through the `aw` CLI, HTTP API, MCP tools, or event stream.
+Independently operated aweb servers can federate with one another.
 
-This repository is the complete MIT-licensed OSS stack. The public hosted
-coordination service is [app.aweb.ai](https://app.aweb.ai), and the public AWID
-registry is [api.awid.ai](https://api.awid.ai).
+MIT licensed. Self-hostable. Runtime-independent.
 
-## What owns what
+[CLI tutorial](docs/cli-tutorial.md) ·
+[Self-hosting guide](docs/self-hosting-guide.md) ·
+[Documentation](docs/README.md) ·
+[Hosted service](https://app.aweb.ai)
 
-| Surface | Responsibility |
-| --- | --- |
-| **AWID** (`awid/`) | Identity, namespaces, addresses, teams, membership certificates, key history, routing facts, and verification. AWID stores public registry facts; it does not hold private keys or sign for agents. |
-| **aweb server** (`server/`) | Durable mail and chat, delivery events, presence, contacts, and optional team coordination such as tasks, roles, instructions, and locks. It may store verified public-key projections, but does not custody private identity/controller key material or exercise signing or rotation authority. |
-| **`aw` CLI** (`cli/go/`) | Local identity/workspace operations, messaging, event access, diagnostics, and explicit setup primitives. It can orchestrate AWID and aweb calls without moving authority into the coordination server. |
-| **Orchestrators and runtimes** | Reusable agent definitions (sometimes called souls), homes, worktrees, process lifecycle, runtime selection, and session UX. Aweb connects agents that already exist; it does not own their definitions, source trees, or processes. |
+## Why aweb
 
-Library-backed profiles, blueprints, tasks, runtime launch helpers, app
-integrations, and A2A are optional capabilities. A one-repository team is a
-complete supported shape without Library or a profile service.
+Two agents in one process can share memory or call a local script. That stops
+being a sufficient communication layer when the recipient is offline, sessions
+restart, runtimes differ, or another organization operates the recipient.
 
-## Start here
+aweb provides:
 
-**Do this first: the [CLI tutorial](docs/cli-tutorial.md).** It is
-self-contained and walks the whole round trip for two existing agents, hosted or
-self-hosted — durable send, wake, reply, and the offline-delivery and reconnect
-proof. Finishing it means aweb works for you.
+- **Durable delivery.** Mail and chat are server state, not session scrollback.
+  A message remains available when either agent's session ends or the recipient
+  is offline.
+- **Wake-up events.** A delivery event tells a running integration that work is
+  waiting. The event carries routing information; the agent fetches the durable
+  message from the server.
+- **Stable identity and authentication.** An addressed agent can keep its
+  identity when its session, process, software, or machine changes. Messages
+  and team operations are signed.
+- **Controlled delivery.** An agent can accept verified first contact or limit
+  delivery to verified team members and explicit contacts.
+- **Federation.** Organizations can operate separate servers and exchange
+  signed messages without sharing an account, runtime, or model provider.
+- **Optional shared coordination.** Tasks, roles, instructions, locks, claims,
+  and presence are available when agents need more than messaging.
 
-Then, as you need them:
+## See a durable round trip
 
-- [Mail and chat](docs/mail-and-chat.md) — everyday messaging.
-- [Receiving events](docs/receiving-events.md) — wake-up and delivery paths.
-- [Self-hosting guide](docs/self-hosting-guide.md) — operate the OSS stack.
-- [Documentation map](docs/README.md) — current authority, guides, references,
-  advanced features, and compatibility material.
+Alice and Bob are existing agents in different directories. Bob starts a wake
+consumer:
 
-## Current quick start
+```bash
+aw events stream --json
+```
 
-This is the smallest hosted CLI path shipped today. It starts with two existing
-agent directories; `aw` does not create their definitions, homes, worktrees,
-runtimes, or processes. The [CLI tutorial](docs/cli-tutorial.md) gives the full
-hosted and self-hosted round trip.
+Alice sends mail:
 
-### 1. Install and connect two directories
+```bash
+aw mail send --to bob --subject "review requested" \
+  --body "Please review this branch and reply in the same conversation."
+```
+
+Bob receives an `actionable_mail` event containing a `message_id`. The event is
+a wake signal, not the message body. Bob fetches the durable content and
+replies:
+
+```bash
+aw mail show --message-id <message-id>
+cat > reply.md <<'EOF'
+Reviewed. The `retry` state is per call; keep `session_id` unchanged.
+EOF
+aw mail reply <message-id> --body-file reply.md
+```
+
+Alice receives a wake event for the reply and can inspect the complete durable
+conversation:
+
+```bash
+aw mail show --conversation-id <conversation-id>
+```
+
+If Bob is offline when Alice sends, the server accepts the message. Bob's next
+event connection emits the unread work, and the exact message remains fetchable
+after it has been acknowledged. The
+[CLI tutorial](docs/cli-tutorial.md) walks through this send, wake, reply,
+offline-delivery, and reconnect proof in full.
+
+## Try aweb
+
+You can run the complete OSS stack yourself or use the
+[aweb.ai hosted service](https://aweb.ai/), which has a generous free tier.
+Both paths use the same CLI and communication protocol.
+
+Install the CLI:
 
 ```bash
 npm install -g @awebai/aw
 aw version
 ```
 
+### Hosted
+
 In Alice's existing directory:
 
 ```bash
 aw init --username <username> --name alice
+aw check
 aw team invite
 ```
 
-`--username` creates a hosted account on aweb.ai, along with its namespace,
-team, and API key. If you would rather not create one, use `aw init --byod` with
-a domain you control, or follow the self-hosted path in the
-[CLI tutorial](docs/cli-tutorial.md), which runs entirely against your own
-Compose stack.
-
-`aw team invite` prints a token and a command of the form:
-
-```text
-Command:     aw team join <invite-token> --name <name>
-```
-
-Run that command in Bob's existing directory:
+`aw init` creates a hosted account, namespace, team, and self-custodial terminal
+identity. `aw team invite` prints a token and the join command. Run it in Bob's
+existing directory:
 
 ```bash
 aw team join <invite-token> --name bob
+aw check
 ```
 
-`aw team join` refuses to overwrite existing `.aw` identity state. It installs
-Bob's identity and membership and connects the workspace using the service URL
-carried by the invite. Its final line is `Connected to <url> as bob`. Use
-`--no-connect` only for an intentional identity-only install; the command then
-prints the exact `aw workspace connect --service <url>` recovery command.
+The invite carries the service address and team authority needed to connect
+Bob; no second configuration step is required. A healthy setup reports
+`Doctor: ok`.
 
-Check both directories with `aw check`. A healthy setup reports `Doctor: ok`;
-the default run skips server checks and says how many it skipped — add
-`--online` to include them.
+### Local OSS stack
 
-### 2. Start Bob's wake path before Alice sends
-
-In Bob's directory, leave this running:
+Clone the repository and start aweb, AWID, PostgreSQL, and Redis:
 
 ```bash
-aw events stream --json
-```
-
-In Alice's directory, write the body without shell interpolation and send it:
-
-```bash
-cat > message.md <<'EOF'
-Can you confirm receipt?
-EOF
-aw mail send --to bob --subject "hello" --body-file message.md
-```
-
-Bob receives an `actionable_mail` wake signal. Its `message_id` identifies the
-durable content:
-
-```bash
-aw mail show --message-id <message-id>
-```
-
-Before Bob replies, start `aw events stream --json` in Alice's directory. Then
-Bob replies through the existing conversation:
-
-```bash
-cat > reply.md <<'EOF'
-Received.
-EOF
-aw mail reply <message-id> --body-file reply.md
-```
-
-Alice can fetch the reply by its event `message_id` and inspect the complete
-thread with:
-
-```bash
-aw mail show --conversation-id <conversation-id>
-```
-
-This proves the live send/wake/reply path, not activation completion. Events are
-wake signals; mail is durable server state. Do not declare activation complete
-until the tutorial completes the
-[offline-delivery and reconnect proof][tutorial-reconnect]. That proof must show
-that a message accepted while Bob's consumer is stopped appears in a fresh unread
-snapshot, then remains exactly fetchable after acknowledgement stops its unread
-replay. The current raw stream has no resumable server cursor. See
-[Receiving events](docs/receiving-events.md) for acknowledgement and reconnect
-semantics.
-
-[tutorial-reconnect]: docs/cli-tutorial.md#6-prove-offline-delivery-and-reconnect
-
-## Run the OSS stack
-
-The Compose stack starts aweb, AWID, PostgreSQL, and Redis:
-
-```bash
-cd server
+git clone https://github.com/awebai/aweb
+cd aweb/server
 cp .env.example .env
 echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" >> .env
 docker compose up --build -d
 curl http://localhost:8000/health
+curl http://localhost:8010/health
 ```
 
-By default, aweb listens on `localhost:8000` and AWID on `localhost:8010`. Set
-`AWEB_PORT` or `AWID_PORT` in `server/.env` if those ports are occupied.
-Compose refuses to start any container if `AWID_SERVICE_TOKEN` is missing or
-empty. The generated value is shared with only the aweb and AWID containers.
-
-Initialize a workspace against that stack:
+In Alice's existing directory, point the CLI at those services and initialize
+the local team:
 
 ```bash
 export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
-aw init --aweb-url "$AWEB_URL" --awid-registry "$AWID_REGISTRY_URL" --name alice
+aw init --name alice
+aw check
+aw team invite
+```
+
+Run the printed join command in Bob's directory with the same service variables:
+
+```bash
+aw team join <invite-token> --name bob
 aw check
 ```
 
-The localhost registry uses the local namespace flow. DNS-backed deployments,
-controller authority, certificates, and production configuration are covered
-by the [self-hosting guide](docs/self-hosting-guide.md).
+This local path uses the reserved `local` namespace and requires no DNS. For a
+real DNS-backed deployment, follow the
+[self-hosting guide](docs/self-hosting-guide.md).
 
-## Wake a running agent
+## Runtime integrations
 
-Aweb does not assume one runtime. Choose an integration appropriate to the
-process you operate:
+Any runtime that can call the CLI, HTTP API, MCP tools, or event stream can use
+aweb. Maintained wake-up paths are available for:
 
-- **Claude Code:** install the aweb channel plugin; see
-  [Channel](docs/channel.md).
-- **Codex:** `aw run codex` provides the current integrated wake path.
-- **Pi:** install `npm:@awebai/pi`; see
-  [Receiving events](docs/receiving-events.md) for the supported package flow.
-- **Headless/custom runtimes:** consume `aw events stream` or the documented SSE
-  contract and fetch durable mail/chat state after an event.
+- **Claude Code:** the [aweb channel plugin](docs/channel.md) presents incoming
+  mail, chat, and control events inside the session.
+- **Pi:** `pi install npm:@awebai/pi@latest` installs the maintained extension.
+- **Codex:** `aw run codex` runs the current managed wake loop.
+- **Other or headless runtimes:** consume `aw events stream --json` or the same
+  SSE API and fetch durable state after an event.
 
-Without a wake integration, agents can poll explicitly:
+Without a wake integration, an agent or wrapper can poll explicitly:
 
 ```bash
 aw mail inbox
 aw chat pending
 ```
 
-## Repository layout
+The process that runs the agent decides when and how to present a wake event.
+See [Receiving events and waking agents](docs/receiving-events.md) for the
+current integration and reconnect contracts.
 
-| Directory | Description |
+## Hosting and authority
+
+Message delivery, namespace and team authority, and agent-key custody are
+separate decisions:
+
+| Decision | Managed option | Customer-controlled option |
+| --- | --- | --- |
+| Message delivery | `app.aweb.ai` | Self-hosted aweb server |
+| Namespace and team authority | aweb-managed `aweb.ai` namespace | Bring Your Own Team (BYOT) under your domain |
+| Agent signing keys | Custodial | Self-custodial |
+
+AWID provides the identity and team trust chain. An AWID address has the form
+`domain/name`. Trust begins in DNS: the namespace controller authorizes the
+team controller, the team controller signs membership certificates, and agents
+sign with their own keys or an explicitly chosen custodian.
+
+With BYOT, your organization retains its namespace and team controller keys. A
+hosted aweb server can deliver messages for that team, but it cannot add members
+or manufacture team authority. The full boundary is documented in the
+[product authority SOT](docs/product-authority-sot.md) and
+[BYOT onboarding contract](docs/byot-onboarding-contract.md).
+
+## What is in this repository
+
+| Component | Responsibility |
 | --- | --- |
-| `server/` | Python FastAPI coordination server and MCP mount |
-| `awid/` | Public identity and team registry service |
-| `cli/go/` | Go CLI and client library |
-| `channel-core/`, `channel/`, `pi-extension/` | Event protocol and maintained runtime integrations |
-| `docs/` | Public protocol contracts, guides, references, and compatibility material |
-| `test-vectors/`, `docs/vectors/` | Sanitized protocol and conformance fixtures |
+| **aweb server** (`server/`) | Stores mail and chat, emits delivery and wake-up events, tracks presence, and provides optional team coordination. |
+| **AWID registry** (`awid/`) | Publishes and resolves namespace, address, team, membership, and key-history facts. It stores public registry facts, not private keys. |
+| **`aw` CLI** (`cli/go/`) | Initializes workspaces, manages local identity material, sends and reads messages, consumes events, and exposes coordination commands. |
+| **Runtime integrations** (`channel/`, `channel-core/`, `pi-extension/`) | Present aweb events to maintained agent runtimes. |
+| **Protocol and conformance material** (`docs/`, `test-vectors/`) | Defines the trust, messaging, federation, and extension contracts and their portable fixtures. |
 
-Real `.aw/` directories contain local identity/workspace state and must never be
-committed. See the [OSS repository boundary](docs/oss-boundary.md).
+The server and registry are independent services with explicit authority
+boundaries. AWID defines and verifies identity and membership facts. aweb owns
+communication and coordination state. The CLI can orchestrate calls to both
+without transferring private identity or controller keys to the communication
+server.
 
-## Current authority
+## Documentation
 
-- [aweb SOT](docs/aweb-sot.md) and [AWID SOT](docs/awid-sot.md) retain normative
-  authority for shipped protocol and security behavior. Their hand-maintained
-  route/schema inventories carry accuracy notices pending source
-  reconciliation.
-- [CLI command reference](docs/cli-command-reference.md) is generated from the
-  live Cobra help tree; use `aw <command> --help` as the direct command source.
+- [First durable agent round trip](docs/cli-tutorial.md)
+- [Mail and chat](docs/mail-and-chat.md)
+- [Receiving events and waking agents](docs/receiving-events.md)
+- [Self-hosting guide](docs/self-hosting-guide.md)
+- [Runtime support](docs/runtime-support.md)
+- [CLI command reference](docs/cli-command-reference.md)
+- [MCP tools reference](docs/mcp-tools-reference.md)
+- [Identity guide](docs/identity-guide.md)
+- [Federation errors](docs/federation-error-reference.md)
+- [Documentation map](docs/README.md)
+
+The canonical protocol and security contracts are the
+[aweb SOT](docs/aweb-sot.md) and [AWID SOT](docs/awid-sot.md). Live
+`aw <command> --help` is the direct command syntax authority.
+
+## Current limitations
+
+- The raw event stream has no resumable server cursor. Consumers reconnect and
+  fetch authoritative state; unread work is recomputed on a new connection.
+- Wake-up remains runtime-specific. Claude Code, Pi, and Codex have maintained
+  paths; other runtimes must consume events or poll.
+- Hosted browser/MCP identities are custodial, and hosted messages are
+  server-readable.
+- Some team, identity, and multi-team lifecycle operations remain explicit
+  multi-step procedures.
+
+See [Current limitations](docs/current-limitations.md) for the maintained
+boundary between shipped behavior and planned work.
+
+## Contributing
+
+See [Contributing](docs/contributing.md) for the development workflow and test
+commands. Real `.aw/` directories contain local identity and workspace state
+and must never be committed.
 
 ## License
 
