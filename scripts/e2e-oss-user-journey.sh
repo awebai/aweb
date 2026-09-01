@@ -2378,6 +2378,93 @@ assert_eq "6 active certificates (alice, bob, erin, eve, gsk, and nokey)" "6" "$
 echo ""
 
 # ---------------------------------------------------------------------------
+# Phase 16b: Beads mail delegate against the real server
+#
+# The bd mail seam: bd execs "aw beads-mail <verb> ..." with raw args, so
+# driving the verbs directly exercises exactly what bd delivers. This phase
+# exists because the delegate's first live exchange caught two defects the
+# fake-server tests could not (docs/beads-mail-delegate.md §8): a fresh send
+# between agents who already correspond must continue the pair's existing
+# conversation (the server refuses a second active one), and --reply-to must
+# be able to reference the sender's own sent mail. Both repros run here
+# against the real server.
+# ---------------------------------------------------------------------------
+echo "=== Phase 16b: Beads mail delegate ==="
+
+mkdir -p "$ALICE_DIR/.beads"
+cat > "$ALICE_DIR/.beads/aweb-mail.toml" <<'BEADSMAP'
+[addresses]
+"bob/" = "test.local/bob"
+BEADSMAP
+
+beads_json_line() {
+  # The delegate may print warnings before JSON; keep the JSON line only.
+  grep '^{' | head -1
+}
+
+capture_success bob_beads_check0 "bob beads check before" run_aw_in "$BOB_DIR" beads-mail check --json
+bob_unread0="$(echo "$bob_beads_check0" | beads_json_line | python3 -c "import sys,json; print(json.load(sys.stdin).get('unread',-1))" 2>/dev/null || echo "-1")"
+assert_not_empty "bob beads unread baseline" "$bob_unread0"
+
+# Live-defect repro 1: alice and bob already correspond, so this fresh send
+# must transparently continue the existing conversation and say so.
+if beads_send1_out="$(run_aw_in "$ALICE_DIR" beads-mail send bob/ \
+  -s "Beads delegate journey" -m "hello through the bd seam" 2>&1)"; then
+  beads_send1_exit=0
+else
+  beads_send1_exit=$?
+fi
+assert_eq "beads send to corresponding pair exit" "0" "$beads_send1_exit"
+if [[ "$beads_send1_exit" != "0" ]]; then
+  echo "$beads_send1_out"
+fi
+assert_contains "beads send disclosure" "$beads_send1_out" "sent to bob/ -> test.local/bob"
+assert_contains "beads send continuation disclosed" "$beads_send1_out" "continuing the existing conversation"
+BEADS_MSG1_ID="$(echo "$beads_send1_out" | sed -n 's/.*message_id=\([0-9a-f-]*\).*/\1/p' | head -1)"
+assert_not_empty "beads send message id" "$BEADS_MSG1_ID"
+
+# Live-defect repro 2: --reply-to referencing alice's OWN sent message.
+run_success "beads send --reply-to own sent message" run_aw_in "$ALICE_DIR" beads-mail send bob/ \
+  --reply-to "$BEADS_MSG1_ID" -s "Re: Beads delegate journey" -m "threading through my own sent mail"
+
+# Bob's side: check counts both, inbox is read-only, read acks exactly one.
+capture_success bob_beads_check1 "bob beads check after sends" run_aw_in "$BOB_DIR" beads-mail check --json
+bob_unread1="$(echo "$bob_beads_check1" | beads_json_line | python3 -c "import sys,json; print(json.load(sys.stdin).get('unread',-1))" 2>/dev/null || echo "-1")"
+assert_eq "bob beads unread grew by 2" "$((bob_unread0 + 2))" "$bob_unread1"
+
+capture_success bob_beads_inbox "bob beads inbox" run_aw_in "$BOB_DIR" beads-mail inbox
+assert_contains "bob beads inbox lists the journey mail" "$bob_beads_inbox" "Beads delegate journey"
+
+capture_success bob_beads_check2 "bob beads check after inbox" run_aw_in "$BOB_DIR" beads-mail check --json
+bob_unread2="$(echo "$bob_beads_check2" | beads_json_line | python3 -c "import sys,json; print(json.load(sys.stdin).get('unread',-1))" 2>/dev/null || echo "-1")"
+assert_eq "beads inbox is read-only" "$bob_unread1" "$bob_unread2"
+
+# The inbox lists newest first, so index 1 is the --reply-to follow-up.
+capture_success bob_beads_read "bob beads read 1" run_aw_in "$BOB_DIR" beads-mail read 1
+assert_contains "bob beads read shows body" "$bob_beads_read" "threading through my own sent mail"
+
+capture_success bob_beads_check3 "bob beads check after read" run_aw_in "$BOB_DIR" beads-mail check --json
+bob_unread3="$(echo "$bob_beads_check3" | beads_json_line | python3 -c "import sys,json; print(json.load(sys.stdin).get('unread',-1))" 2>/dev/null || echo "-1")"
+assert_eq "beads read acks exactly one" "$((bob_unread2 - 1))" "$bob_unread3"
+
+BOB_BEADS_READ_ID="$(echo "$bob_beads_read" | sed -n 's/^Message-Id: \([0-9a-f-]*\).*/\1/p' | head -1)"
+assert_not_empty "bob beads read message id" "$BOB_BEADS_READ_ID"
+run_success "bob beads reply" run_aw_in "$BOB_DIR" beads-mail reply "$BOB_BEADS_READ_ID" -m "reply through the bd seam"
+
+capture_success alice_beads_inbox "alice beads inbox sees reply" run_aw_in "$ALICE_DIR" beads-mail inbox --all
+assert_contains "alice sees bob's beads reply" "$alice_beads_inbox" "Re: Beads delegate journey"
+
+# The decided not-supported surface answers honestly against the real binary.
+if beads_search_out="$(run_aw_in "$BOB_DIR" beads-mail search anything 2>&1)"; then
+  beads_search_exit=0
+else
+  beads_search_exit=$?
+fi
+assert_eq "beads search refuses in v1" "2" "$beads_search_exit"
+assert_contains "beads search names the alternative" "$beads_search_out" "no mail search"
+echo ""
+
+# ---------------------------------------------------------------------------
 # Phase 17: Revoke bob's membership
 # ---------------------------------------------------------------------------
 echo "=== Phase 17: Revoke bob's membership ==="

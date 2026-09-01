@@ -104,6 +104,13 @@ cryptographically verified identity.`,
 		if err != nil {
 			return err
 		}
+		if beadsMailSendSelf && strings.TrimSpace(beadsMailSendReplyTo) != "" {
+			// A continuation delivers to the conversation's counterparty; a
+			// self-named continuation would make the disclosure line lie
+			// (the involves-check cannot catch it: the sender is always a
+			// participant of any message they can read).
+			return usageError("--self and --reply-to cannot be combined: a continuation goes to the conversation's counterparty, not to yourself")
+		}
 		if strings.TrimSpace(beadsMailSendSubject) == "" {
 			return usageError("-s/--subject is required")
 		}
@@ -196,9 +203,23 @@ cryptographically verified identity.`,
 			if conversationID == "" {
 				return fmt.Errorf("--reply-to message %s is legacy mail without a conversation", replyTo)
 			}
+			// The recipient argument stays a CHECK, not a routing input: a
+			// continuation routes by conversation (the server requires the
+			// signed recipient to match the conversation's, so the client's
+			// rediscovery must fill it — found live 2026-09-01), and the
+			// named recipient must actually be that conversation's
+			// counterparty or the disclosure line would lie. The check only
+			// refuses an actual mismatch: a message whose identity fields
+			// are all empty (key rotation can blank the derived
+			// address/stable-id) cannot be verified and proceeds — reply is
+			// always the recipient-free escape hatch either way.
+			if participants := beadsMailMessageParticipants(source); len(participants) > 0 && !beadsMailValueAmong(target.Value, participants) {
+				return usageError("--reply-to message %s is a conversation with %s, not with %s; drop --reply-to or name that correspondent", replyTo, sanitizeBeadsMailDisplay(beadsMailCounterpartyLabel(source)), sanitizeBeadsMailDisplay(target.Value))
+			}
 			req.ConversationID = conversationID
+		} else {
+			applyMailRecipientTarget(req, target.Kind, target.Value)
 		}
-		applyMailRecipientTarget(req, target.Kind, target.Value)
 
 		var resp *awid.SendMessageResponse
 		if beadsMailUsesCertSend(target.Kind, req.ConversationID) {
@@ -308,6 +329,43 @@ var beadsMailReplyCmd = &cobra.Command{
 // team-local alias.
 func beadsMailUsesCertSend(kind, conversationID string) bool {
 	return kind == "alias" && strings.TrimSpace(conversationID) == ""
+}
+
+// beadsMailMessageParticipants lists the message's non-empty participant
+// identifiers, either side.
+func beadsMailMessageParticipants(msg *awid.InboxMessage) []string {
+	if msg == nil {
+		return nil
+	}
+	var participants []string
+	for _, candidate := range []string{msg.FromAddress, msg.ToAddress, msg.FromDID, msg.ToDID, msg.FromStableID, msg.ToStableID} {
+		if strings.TrimSpace(candidate) != "" {
+			participants = append(participants, strings.TrimSpace(candidate))
+		}
+	}
+	return participants
+}
+
+func beadsMailValueAmong(value string, candidates []string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, candidate := range candidates {
+		if strings.EqualFold(candidate, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func beadsMailCounterpartyLabel(msg *awid.InboxMessage) string {
+	for _, candidate := range []string{msg.FromAddress, msg.ToAddress, msg.FromDID, msg.ToDID} {
+		if strings.TrimSpace(candidate) != "" {
+			return strings.TrimSpace(candidate)
+		}
+	}
+	return "an unidentified correspondent"
 }
 
 func beadsMailSendRecipientArg(args []string) (string, error) {

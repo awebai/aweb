@@ -269,12 +269,25 @@ func TestBeadsMailSendAndReplyAgainstLocalServer(t *testing.T) {
 		t.Errorf("explicit default --wisp=true grew an envelope:\n%s", body)
 	}
 
-	// send --reply-to continues the source's conversation exactly.
+	// send --reply-to continues the source's conversation exactly, routing by
+	// conversation only (the server requires the signed recipient to match
+	// the conversation's; the client rediscovers it).
 	if out, err := run("send", "mayor/", "-s", "follow-up", "-m", "more", "--reply-to", sourceMessage.MessageID); err != nil {
 		t.Fatalf("reply-to send failed: %v\n%s", err, out)
 	}
 	if got := sends[len(sends)-1]; got.ConversationID != sourceMessage.ConversationID {
 		t.Errorf("--reply-to conversation=%q want %q", got.ConversationID, sourceMessage.ConversationID)
+	}
+
+	// Naming a correspondent who is not in the source conversation is
+	// refused: the disclosure line must never name one recipient while the
+	// continuation delivers to another.
+	if err := os.WriteFile(filepath.Join(tmp, ".beads", beadsMailMapFileName),
+		[]byte("[addresses]\n\"mayor/\" = \"acme.example/mayor\"\n\"carol/\" = \"acme.example/carol\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := run("send", "carol/", "-s", "x", "-m", "x", "--reply-to", sourceMessage.MessageID); err == nil || !strings.Contains(out, "not with acme.example/carol") {
+		t.Errorf("mismatched --reply-to recipient not refused: err=%v\n%s", err, out)
 	}
 
 	// Reply: continues the source conversation, subject defaults to

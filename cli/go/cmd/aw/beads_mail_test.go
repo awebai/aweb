@@ -31,6 +31,7 @@ var beadsMailVerbExpectations = []struct {
 	{[]string{"send", "someone/"}, "subject"},
 	{[]string{"send", "x/", "--from", "spoof"}, "cryptographic"},
 	{[]string{"send", "x/", "--cc", "y/", "-s", "hi"}, "send to each recipient separately"},
+	{[]string{"send", "--self", "--reply-to", "m-1", "-s", "hi"}, "cannot be combined"},
 	{[]string{"inbox", "other/"}, "one aweb identity"},
 	{[]string{"read"}, "usage: bd mail read"},
 	{[]string{"show"}, "usage: bd mail read"},

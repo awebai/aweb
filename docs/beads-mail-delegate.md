@@ -179,6 +179,26 @@ Dispatch onto the client follows the same split the mail commands use
 conversation continuation (including all of `reply`) send through
 `c.SendMessageByIdentity`.
 
+### The map's standing: optional convenience, under review
+
+Recorded 2026-09-01 (Juan's question, relayed and argued by oats): the
+map's only unique job is rig-style Gas Town names — the plain-beads
+wedge audience addresses teammates by bare alias (step 5) and everyone
+else by full address (step 4), touching no map. Against that stand a
+per-repo file, a bespoke parser, its own error class, and a security
+surface whose disclosure mitigation exists because of the feature.
+Decision procedure: the map ships as an **optional convenience,
+documented after the two primary forms, never as a setup step**; when
+delegate traffic shows up in the usage counter and nobody authors
+`.beads/aweb-mail.toml`, remove it in the next version and let the
+step-6 error point straight at addresses and aliases.
+
+**This file must never grow into the plan's task 1.4** (bd-actor →
+AWID binding): 1.4's entire point is VERIFIED identity binding, and
+this map is unverified repo-writable data — the opposite property, and
+a weaker version of the very gap §5.2.2 proposes to close upstream.
+Actor binding gets built on identity, not on a config file.
+
 ### Disclosure
 
 **Every send prints the resolved address** (`sent to mayor/ →
@@ -310,6 +330,16 @@ to run `bd mail inbox` first.
   own sent mail, which is what `--reply-to <own-message>` references
   (same live exchange). No server change is needed; verified against
   the handler's WHERE clause.
+- **A continuation routes by conversation only** (amendment 2026-09-01,
+  caught by the real-server journey): the server requires the signed
+  recipient of a continuation to match the conversation's recipient
+  (422 `signed_payload recipient must match the mail recipient`), so
+  `send --reply-to` must not apply the named recipient to the request —
+  the client's conversation rediscovery fills it. The named recipient
+  is instead VERIFIED against the source message's participants: naming
+  bob while replying into a conversation with carol is refused, because
+  otherwise the disclosure line would name one correspondent while the
+  mail went to another.
 - `thread <id>` renders the conversation oldest-first. The server view
   has a 500-message ceiling and no paging
   (`cli/go/cmd/aw/mail.go:1007-1022`); when the returned count equals

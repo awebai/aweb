@@ -60,11 +60,21 @@ two ends, either way:
   receiving side against the AWID registry (aweb's public identity
   directory).
 
-## Beads-style names: the address map
+## Addressing mail
 
-If your repo uses rig-style local names (`mayor/`, `worker/`), map them
-once in `.beads/aweb-mail.toml`, committed alongside the beads database
-so the whole repo shares it:
+Two forms cover almost everyone, no configuration needed:
+
+- **A teammate**: the bare member name (`bd mail send reviewer -s "hi"`)
+  — anyone on your aweb team.
+- **Anyone else**: the full address (`bd mail send acme.aweb.ai/reviewer
+  -s "hi"`) — works across organizations and servers.
+
+### Optional: mapping rig-style names
+
+Only if your repo already uses Gas Town rig-style local names
+(`mayor/`, `worker/`) and you want to keep typing them: map them once in
+`.beads/aweb-mail.toml`, committed alongside the beads database so the
+whole repo shares it:
 
 ```toml
 [addresses]
