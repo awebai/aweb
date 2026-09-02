@@ -2029,7 +2029,7 @@ Flags:
 
 Counts this workspace's mail. "Total" counts what the inbox holds inside
 the server's retention window — aweb mail is delivery, not an archive, so
-it is not a lifetime total. Counting stops after 4000 messages; a larger
+it is not a cumulative all-time total. Counting stops after 4000 messages; a larger
 inbox reports that ceiling rather than a wrong number.
 
 Flags:
@@ -2048,7 +2048,7 @@ Flags:
 
 ### `gc-mail ensure-running`
 
-gc calls this once per provider lifetime before the first operation and
+gc calls this once, before the first operation of a provider instance, and
 throws away both its output and its exit status. There is nothing useful
 to report through a channel nobody reads, so this succeeds immediately.
 Run 'aw doctor' or 'aw gc-mail inbox' to check the setup for real.
