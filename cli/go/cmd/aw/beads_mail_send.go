@@ -350,99 +350,6 @@ func beadsMailSupportedType(value string) bool {
 	}
 }
 
-func beadsMailMessageSideIdentifiers(alias, address, did, stableID string) []string {
-	var identifiers []string
-	for _, candidate := range []string{address, alias, did, stableID} {
-		if value := strings.TrimSpace(candidate); value != "" {
-			identifiers = append(identifiers, value)
-		}
-	}
-	return identifiers
-}
-
-func beadsMailSelectionIdentifiers(sel *awconfig.Selection) []string {
-	if sel == nil {
-		return nil
-	}
-	return beadsMailMessageSideIdentifiers(sel.Alias, selectionAddress(sel), sel.DID, sel.StableID)
-}
-
-func beadsMailIdentifiersOverlap(left, right []string) bool {
-	for _, value := range left {
-		if beadsMailValueAmong(value, right) {
-			return true
-		}
-	}
-	return false
-}
-
-// beadsMailCounterpartyIdentifiers identifies the side of the source message
-// that is not this workspace. If old or rotated message data cannot identify
-// the local side, all non-empty participants remain the conservative fallback;
-// an entirely blank legacy row is unverifiable and deliberately fails open.
-func beadsMailCounterpartyIdentifiers(msg *awid.InboxMessage, sel *awconfig.Selection) ([]string, bool) {
-	if msg == nil {
-		return nil, false
-	}
-	from := beadsMailMessageSideIdentifiers(msg.FromAlias, msg.FromAddress, msg.FromDID, msg.FromStableID)
-	to := beadsMailMessageSideIdentifiers(msg.ToAlias, msg.ToAddress, msg.ToDID, msg.ToStableID)
-	all := append(append([]string{}, from...), to...)
-	if len(all) == 0 {
-		return nil, false
-	}
-	self := beadsMailSelectionIdentifiers(sel)
-	fromIsSelf := beadsMailIdentifiersOverlap(from, self)
-	toIsSelf := beadsMailIdentifiersOverlap(to, self)
-	switch {
-	case fromIsSelf && !toIsSelf:
-		return to, true
-	case toIsSelf && !fromIsSelf:
-		return from, true
-	case fromIsSelf && toIsSelf:
-		return nil, true
-	default:
-		return all, true
-	}
-}
-
-func beadsMailReplyToTargetMatches(msg *awid.InboxMessage, sel *awconfig.Selection, target string) (known, matches bool) {
-	participants, known := beadsMailCounterpartyIdentifiers(msg, sel)
-	if !known {
-		return false, true
-	}
-	// A conversation continuation always routes to the other side. Naming
-	// ourselves through an address, alias, or DID would make the disclosure
-	// line lie even though our identity is naturally one of the participants.
-	if beadsMailValueAmong(target, beadsMailSelectionIdentifiers(sel)) {
-		return true, false
-	}
-	return true, beadsMailValueAmong(target, participants)
-}
-
-func beadsMailValueAmong(value string, candidates []string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
-	}
-	for _, candidate := range candidates {
-		if strings.EqualFold(candidate, value) {
-			return true
-		}
-	}
-	return false
-}
-
-func beadsMailCounterpartyLabel(msg *awid.InboxMessage, sel *awconfig.Selection) string {
-	if participants, known := beadsMailCounterpartyIdentifiers(msg, sel); known {
-		for _, candidate := range participants {
-			if strings.TrimSpace(candidate) != "" {
-				return strings.TrimSpace(candidate)
-			}
-		}
-	}
-	return "an unidentified correspondent"
-}
-
 func beadsMailSendRecipientArg(args []string) (string, error) {
 	positional := ""
 	if len(args) > 1 {
@@ -559,36 +466,6 @@ func beadsMailRetryAsContinuation(ctx context.Context, c *aweb.Client, target be
 	return c.SendMessageByIdentity(ctx, continuation)
 }
 
-func beadsMailAppendSendLogs(sel *awconfig.Selection, resp *awid.SendMessageResponse, to, subject, body string) {
-	from := preferredIdentityDisplayLabel(
-		"",
-		selectionAddress(sel),
-		strings.TrimSpace(sel.StableID),
-		strings.TrimSpace(sel.DID),
-		"",
-	)
-	appendCommLog(defaultLogsDir(), commLogNameForSelection(sel), &CommLogEntry{
-		Timestamp:      time.Now().UTC().Format(time.RFC3339),
-		Dir:            "send",
-		Channel:        "mail",
-		MessageID:      resp.MessageID,
-		ConversationID: resp.ConversationID,
-		From:           from,
-		To:             to,
-		Subject:        subject,
-		Body:           body,
-	})
-	appendInteractionLogForCWD(&InteractionEntry{
-		Timestamp:      time.Now().UTC().Format(time.RFC3339),
-		Kind:           interactionKindMailOut,
-		MessageID:      resp.MessageID,
-		ConversationID: resp.ConversationID,
-		To:             to,
-		Subject:        subject,
-		Text:           body,
-	})
-}
-
 func init() {
 	flags := beadsMailSendCmd.Flags()
 	flags.StringVarP(&beadsMailSendSubject, "subject", "s", "", "Message subject (required)")
@@ -616,4 +493,20 @@ func init() {
 	replyFlags.StringVarP(&beadsMailReplyBody, "message", "m", "", "Reply message body")
 	replyFlags.StringVar(&beadsMailReplyBodyAlias, "body", "", "Alias for --message")
 	replyFlags.BoolVar(&beadsMailReplyStdin, "stdin", false, "Read the reply body from stdin (delegate extension; gt reply lacks it, but shell-unsafe bodies need it)")
+}
+
+// The participant-identification helpers below live in
+// mail_delegate_participants.go, shared with `aw gc-mail`. These names are the
+// beads delegate's bindings of them.
+
+func beadsMailReplyToTargetMatches(msg *awid.InboxMessage, sel *awconfig.Selection, target string) (known, matches bool) {
+	return delegateMailReplyToTargetMatches(msg, sel, target)
+}
+
+func beadsMailCounterpartyLabel(msg *awid.InboxMessage, sel *awconfig.Selection) string {
+	return delegateMailCounterpartyLabel(msg, sel)
+}
+
+func beadsMailAppendSendLogs(sel *awconfig.Selection, resp *awid.SendMessageResponse, to, subject, body string) {
+	delegateMailAppendSendLogs(sel, resp, to, subject, body)
 }

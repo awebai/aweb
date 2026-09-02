@@ -1,0 +1,51 @@
+#!/usr/bin/env node
+"use strict";
+// Launcher for Gas City's exec mail provider: `GC_MAIL=exec:aw-gc-mail`.
+//
+// Gas City's exec: value is ONE command with no arguments — it is passed
+// straight to exec.Command with the operation as argv[1] and nothing is split
+// on whitespace (gascity internal/mail/exec/exec.go, cmd/gc/providers.go). So
+// `exec:aw gc-mail` would look for a program literally named "aw gc-mail".
+// This launcher is that single command; it runs `aw gc-mail <args...>` against
+// the exact binary shipped in this package, so the provider can never skew
+// from the CLI that installed it.
+//
+// stdio is inherited because the protocol is JSON on stdin/stdout and gc reads
+// our exit code: 1 is a real failure, and 2 means "unknown operation" to gc,
+// so the child's status must reach gc unchanged.
+const { execFileSync } = require("child_process");
+const os = require("os");
+
+const PLATFORMS = {
+  "linux x64":    { pkg: "@awebai/aw-linux-x64",      bin: "bin/aw" },
+  "linux arm64":  { pkg: "@awebai/aw-linux-arm64",    bin: "bin/aw" },
+  "darwin x64":   { pkg: "@awebai/aw-darwin-x64",     bin: "bin/aw" },
+  "darwin arm64": { pkg: "@awebai/aw-darwin-arm64",   bin: "bin/aw" },
+  "win32 x64":    { pkg: "@awebai/aw-windows-x64",    bin: "bin/aw.exe" },
+  "win32 arm64":  { pkg: "@awebai/aw-windows-arm64",  bin: "bin/aw.exe" },
+};
+
+const key = `${process.platform} ${os.arch()}`;
+const platform = PLATFORMS[key];
+if (!platform) {
+  console.error(`Error: Unsupported platform: ${key}`);
+  console.error("Visit https://github.com/awebai/aw for installation alternatives.");
+  process.exit(1);
+}
+
+let binPath;
+try {
+  binPath = require.resolve(`${platform.pkg}/${platform.bin}`);
+} catch {
+  console.error(`Error: Could not find the aw binary for ${key}.`);
+  console.error("The platform-specific package may not have been installed.");
+  console.error("Try: npm install @awebai/aw --force");
+  process.exit(1);
+}
+
+try {
+  execFileSync(binPath, ["gc-mail", ...process.argv.slice(2)], { stdio: "inherit" });
+} catch (e) {
+  if (e.status !== null && e.status !== undefined) process.exit(e.status);
+  throw e;
+}

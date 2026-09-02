@@ -18,7 +18,7 @@ to refresh it.
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `id`, `mcp-config`, `team`, `whoami` |
-| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `heartbeat`, `inbound-mode`, `log`, `mail` |
+| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail` |
 | Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session` |
@@ -1941,6 +1941,232 @@ Listen to real-time agent events via SSE
 Flags:
 - `-h, --help help for stream`
 - `--timeout int Stop after N seconds (0 = indefinite)`
+
+## `gc-mail`
+
+### `gc-mail`
+
+Mail for Gas City, across machines and organizations.
+
+Gas City's mail is pluggable: GC_MAIL=exec:<command> makes gc delegate
+every mail operation to a command. This is that command, backed by aweb —
+durable delivery, recipients who can be offline, and messages signed by a
+cryptographically verifiable identity.
+
+Setup, once per city:
+
+  npm i -g @awebai/aw
+  aw init
+  export GC_MAIL=exec:aw-gc-mail
+
+'aw-gc-mail' is installed by the same npm package and runs this command.
+GC_MAIL names a single command with no arguments, which is why the
+launcher exists; 'exec:aw gc-mail' would look for a program literally
+named "aw gc-mail".
+
+This command speaks gc's JSON protocol on stdin/stdout. It is meant to be
+run by gc, not by hand — but every operation is a plain subcommand, so
+'aw gc-mail inbox' works for a look, and 'aw gc-mail resolve <name>'
+shows where a recipient name would actually go.
+
+Optional in-session wake-ups when mail arrives: aw init --setup-channel.
+
+Subcommands:
+- `all` List all messages, read and unread, as JSON
+- `archive` Not supported: aweb mail is delivery, not storage
+- `check` List unread messages as JSON without marking anything read
+- `count` Report {"total":N,"unread":N} for this workspace
+- `delete` Not supported: aweb mail is delivery, not storage
+- `ensure-running` Readiness probe (no-op: gc discards this operation's result)
+- `get` Fetch one message as JSON without marking it read
+- `inbox` List unread messages as JSON (read-only)
+- `mark-read` Mark one message read
+- `mark-unread` Not supported: read state cannot be cleared
+- `read` Fetch one message as JSON and mark it read
+- `reply` Reply into a message's conversation (JSON on stdin, JSON message on stdout)
+- `resolve` Show the aweb address a recipient name resolves to
+- `send` Send a message (JSON on stdin, JSON message on stdout)
+- `thread` List a conversation's messages as JSON, oldest first
+
+Flags:
+- `-h, --help help for gc-mail`
+
+## `gc-mail all`
+
+### `gc-mail all`
+
+Lists one page of this workspace's mail, read and unread. gc's Provider
+documents this as "all open messages"; aweb has no open/closed state, so
+it is every message the inbox still holds within the server's retention
+window.
+
+Flags:
+- `-h, --help help for all`
+
+## `gc-mail archive`
+
+### `gc-mail archive`
+
+Not supported: aweb mail is delivery, not storage
+
+Flags:
+- `-h, --help help for archive`
+
+## `gc-mail check`
+
+### `gc-mail check`
+
+Identical to 'inbox' here: both are read-only unread listings. gc keeps the
+two operations apart because a backend's inbox may mark messages read;
+this one never does.
+
+Flags:
+- `-h, --help help for check`
+
+## `gc-mail count`
+
+### `gc-mail count`
+
+Counts this workspace's mail. "Total" counts what the inbox holds inside
+the server's retention window — aweb mail is delivery, not an archive, so
+it is not a lifetime total. Counting stops after 4000 messages; a larger
+inbox reports that ceiling rather than a wrong number.
+
+Flags:
+- `-h, --help help for count`
+
+## `gc-mail delete`
+
+### `gc-mail delete`
+
+Not supported: aweb mail is delivery, not storage
+
+Flags:
+- `-h, --help help for delete`
+
+## `gc-mail ensure-running`
+
+### `gc-mail ensure-running`
+
+gc calls this once per provider lifetime before the first operation and
+throws away both its output and its exit status. There is nothing useful
+to report through a channel nobody reads, so this succeeds immediately.
+Run 'aw doctor' or 'aw gc-mail inbox' to check the setup for real.
+
+Flags:
+- `-h, --help help for ensure-running`
+
+## `gc-mail get`
+
+### `gc-mail get`
+
+Fetches one message by id and leaves its read state alone. Visible for
+messages this workspace sent as well as received.
+
+Flags:
+- `-h, --help help for get`
+
+## `gc-mail inbox`
+
+### `gc-mail inbox`
+
+Lists this workspace's unread mail as a JSON array. Read-only: nothing is
+marked read here.
+
+gc passes the mailbox it wants ($GC_SESSION_ID, $GC_ALIAS, $GC_AGENT, or
+"human"). This workspace has exactly one aweb identity, so the argument is
+accepted and ignored — every gc session in this city shares one inbox.
+That is the design record's §5 limitation, not a bug.
+
+Flags:
+- `-h, --help help for inbox`
+
+## `gc-mail mark-read`
+
+### `gc-mail mark-read`
+
+Marks one message read without displaying it. Emits nothing on success;
+gc's protocol expects no output from this operation.
+
+Flags:
+- `-h, --help help for mark-read`
+
+## `gc-mail mark-unread`
+
+### `gc-mail mark-unread`
+
+Not supported: read state cannot be cleared
+
+Flags:
+- `-h, --help help for mark-unread`
+
+## `gc-mail read`
+
+### `gc-mail read`
+
+Fetches one message by id and marks it read. Reading is what marks read
+here, because aweb's read state drives the unread count and the wake path:
+a displayed message that stayed unread would keep re-firing.
+
+If the acknowledgement fails, this exits nonzero rather than reporting a
+message as read that is not.
+
+Flags:
+- `-h, --help help for read`
+
+## `gc-mail reply`
+
+### `gc-mail reply`
+
+Reads {"from":...,"subject":...,"body":...} on stdin and sends the body into
+the conversation that <message-id> belongs to, then marks that message
+read. An empty subject becomes "Re: <original subject>".
+
+The reply goes to the conversation's counterparty by construction; there
+is no recipient argument to get wrong.
+
+Flags:
+- `-h, --help help for reply`
+
+## `gc-mail resolve`
+
+### `gc-mail resolve`
+
+Prints where a gc recipient name would actually deliver, without sending
+anything. This is the disclosure surface for the optional per-city map in
+.gc/aweb-mail.toml: gc's exec protocol gives a provider no way to print a
+"sent to X -> Y" line during 'gc mail send', so the resolution is
+inspectable here instead.
+
+Flags:
+- `-h, --help help for resolve`
+
+## `gc-mail send`
+
+### `gc-mail send`
+
+Reads {"from":...,"subject":...,"body":...} on stdin and sends the body to
+<to> under this workspace's verified aweb identity. The "from" field is
+gc's local mailbox name; it is recorded nowhere as sender identity,
+because sender identity here is cryptographic rather than asserted.
+
+The message returned on stdout carries the RESOLVED aweb address in its
+"to" field, which is how 'gc mail send --json' and 'gc mail read' disclose
+where a mapped name actually delivered.
+
+Flags:
+- `-h, --help help for send`
+
+## `gc-mail thread`
+
+### `gc-mail thread`
+
+Renders one conversation as a JSON array, oldest first. The argument may be
+an aweb conversation id (what this provider reports as thread_id) or any
+message id inside it.
+
+Flags:
+- `-h, --help help for thread`
 
 ## `heartbeat`
 

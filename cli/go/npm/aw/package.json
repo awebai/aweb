@@ -9,7 +9,8 @@
   "license": "MIT",
   "bin": {
     "aw": "bin/aw",
-    "aweb-a2a-gw": "bin/aweb-a2a-gw"
+    "aweb-a2a-gw": "bin/aweb-a2a-gw",
+    "aw-gc-mail": "bin/aw-gc-mail"
   },
   "scripts": {
     "postinstall": "node install.js"

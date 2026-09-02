@@ -163,41 +163,6 @@ func beadsMailPrintMessage(m beadsMailAddressMap, msg *awid.InboxMessage) {
 	fmt.Printf("\n%s\n", sanitizeBeadsMailBody(body))
 }
 
-// sanitizeBeadsMailBody neutralizes terminal-driving control characters in an
-// inbound body while keeping the text readable: newlines and tabs survive,
-// everything else in C0 plus DEL (notably ESC, which drives ANSI/OSC escape
-// sequences) becomes '?'. Senders are verified, not trusted.
-func sanitizeBeadsMailBody(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' {
-			return r
-		}
-		if r < 0x20 || r == 0x7f {
-			return '?'
-		}
-		return r
-	}, s)
-}
-
-func beadsMailLogReceived(sel *awconfig.Selection, msg *awid.InboxMessage) {
-	if msg.ReadAt != nil {
-		return
-	}
-	from := preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")
-	to := preferredIdentityDisplayLabel(msg.ToAlias, msg.ToAddress, msg.ToStableID, msg.ToDID, "")
-	appendCommLog(defaultLogsDir(), commLogNameForSelection(sel), &CommLogEntry{
-		Timestamp:      msg.CreatedAt,
-		Dir:            "recv",
-		Channel:        "mail",
-		MessageID:      msg.MessageID,
-		ConversationID: msg.ConversationID,
-		From:           from,
-		To:             to,
-		Subject:        msg.Subject,
-		Body:           msg.Body,
-	})
-}
-
 var (
 	beadsMailInboxUnread bool
 	beadsMailInboxAll    bool
@@ -446,4 +411,8 @@ func init() {
 	beadsMailReadCmd.Flags().BoolVar(&beadsMailReadJSON, "json", false, "Output as JSON (raw message, envelope included)")
 	beadsMailThreadCmd.Flags().BoolVar(&beadsMailThreadJSON, "json", false, "Output as JSON")
 	beadsMailMarkReadCmd.Flags().BoolVar(&beadsMailMarkReadAll, "all", false, "Mark all unread messages as read")
+}
+
+func beadsMailLogReceived(sel *awconfig.Selection, msg *awid.InboxMessage) {
+	delegateMailLogReceived(sel, msg)
 }
