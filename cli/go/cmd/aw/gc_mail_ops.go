@@ -178,6 +178,14 @@ is no recipient argument to get wrong.`,
 		if _, ackErr := c.AckMessage(ctx, messageID); ackErr != nil {
 			fmt.Fprintf(os.Stderr, "note: reply was sent, but the source message could not be marked read: %s\n", sanitizeDelegateMailDisplay(ackErr.Error()))
 		}
+		// The label below is DISPLAY, not routing. Routing is done by the
+		// shared client, which resolves the conversation's live participant
+		// list at send time (cli/go/awid/mail.go's targetForMailConversation)
+		// and signs THAT target into the envelope. This label is inferred
+		// from the pre-send source message instead, because the send response
+		// carries no recipient field to read back. aweb mail conversations
+		// are 1:1, so the two agree; if they ever could not, the routed
+		// target is the truthful one and this line is the one to fix.
 		counterparty := delegateMailCounterpartyLabel(source, sel)
 		delegateMailAppendSendLogs(sel, resp, counterparty, subject, input.Body)
 		return gcMailEmit(gcMailWireMessage{

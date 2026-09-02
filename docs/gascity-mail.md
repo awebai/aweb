@@ -148,7 +148,8 @@ times, since a mapped name hides its destination.
 - **A thread id is an aweb conversation id.** `gc mail thread` accepts
   either that or any message id inside the conversation.
 - **`gc mail count`'s "total"** is what the server still holds, not a
-  lifetime total — aweb mail is delivery, not an archive (see below).
+  cumulative all-time total — aweb mail is delivery, not an archive (see
+  below).
 - **No priority, no `--type`, no `--cc`.** gc's exec protocol carries
   only sender, subject and body across the boundary, so there is nothing
   for those to ride on. `--notify` still works: gc handles the nudge
