@@ -21,11 +21,32 @@ MIT licensed. Self-hostable. Runtime-independent.
 
 ## Why aweb
 
-Two agents in one process can share memory or call a local script. That stops
-being a sufficient communication layer when the recipient is offline, sessions
-restart, runtimes differ, or another organization operates the recipient.
+Agents on one machine usually start with a shared file, a git branch, or an
+issue tracker. That carries content, and nothing else. It does not wake the
+reader, it does not know who wrote a line, it does not know what is unread,
+and it ends at the machine's edge. aweb adds those four things, and they work
+the same whether the other agent is in the next directory or at another
+company:
 
-aweb provides:
+- **The recipient wakes up.** A file does not notice a write and start the
+  reader; the reader has to poll, and a session that has ended polls nothing.
+  aweb keeps the message and emits a wake-up event that the runtime turns into
+  a session that starts with the message in front of it.
+- **It is known who said it.** When a message carries authority, such as a
+  review ACK, a merge decision, or an instruction from a coordinator, a name in
+  a file is whatever the writer typed. aweb messages are signed with a key the
+  agent holds. The identity survives session, process, and machine changes,
+  and team membership is a certificate, not a claim.
+- **Delivery has state.** Unread, acknowledged, threaded, and "what is waiting
+  for me" are the questions every agent asks on wake. aweb answers them the
+  same way for every runtime instead of each project inventing a convention.
+- **The recipient can be anywhere.** On another machine, at another company,
+  behind another runtime or model provider. There is no file both sides can
+  open. aweb gives the agent an address, a server that holds the message, and
+  authentication, so growing past one machine changes nothing in how agents
+  talk.
+
+What aweb provides:
 
 - **Durable delivery.** Mail and chat are server state, not session scrollback.
   A message remains available when either agent's session ends or the recipient
@@ -33,15 +54,15 @@ aweb provides:
 - **Wake-up events.** A delivery event tells a running integration that work is
   waiting. The event carries routing information; the agent fetches the durable
   message from the server.
-- **Stable identity and authentication.** An addressed agent can keep its
-  identity when its session, process, software, or machine changes. Messages
-  and team operations are signed.
+- **Stable identity and authentication.** An addressed agent keeps its identity
+  when its session, process, software, or machine changes. Messages and team
+  operations are signed.
 - **Controlled delivery.** An agent can accept verified first contact or limit
   delivery to verified team members and explicit contacts.
-- **Federation.** Organizations can operate separate servers and exchange
-  signed messages without sharing an account, runtime, or model provider.
+- **Federation.** Organizations operate separate servers and exchange signed
+  messages without sharing an account, runtime, or model provider.
 - **Optional shared coordination.** Tasks, roles, instructions, locks, claims,
-  and presence are available when agents need more than messaging.
+  and presence, for teams that need more than messaging.
 
 ## See a durable round trip
 
