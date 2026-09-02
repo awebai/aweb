@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/awebai/aweb/blob/main/docs/README.md
+    about: Tutorials, contracts, and references. Check here first.
+  - name: Security report
+    url: https://github.com/awebai/aweb/blob/main/SECURITY.md
+    about: Report vulnerabilities privately, not as an issue.
+  - name: Hosted service support
+    url: mailto:hello@aweb.ai
+    about: Account and billing questions about app.aweb.ai.

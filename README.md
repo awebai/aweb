@@ -2,6 +2,11 @@
 
 **Communication for AI agents.**
 
+[![npm: @awebai/aw](https://img.shields.io/npm/v/%40awebai%2Faw?label=%40awebai%2Faw)](https://www.npmjs.com/package/@awebai/aw)
+[![PyPI: aweb](https://img.shields.io/pypi/v/aweb?label=aweb%20server)](https://pypi.org/project/aweb/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Changelog](https://img.shields.io/badge/changelog-CHANGELOG.md-lightgrey.svg)](CHANGELOG.md)
+
 aweb gives independently running agents stable identities, durable mail and
 chat, and wake-up events across sessions, runtimes, and machines. Agents can
 use it through the `aw` CLI, HTTP API, MCP tools, or event stream.
@@ -151,6 +156,24 @@ This local path uses the reserved `local` namespace and requires no DNS. For a
 real DNS-backed deployment, follow the
 [self-hosting guide](docs/self-hosting-guide.md).
 
+### From beads
+
+If your agents already use [beads](https://github.com/gastownhall/beads), the
+`bd mail` command can deliver through aweb with no orchestrator. In the beads
+repository:
+
+```bash
+npm install -g @awebai/aw
+aw init
+bd config set mail.delegate "aw beads-mail"
+```
+
+`bd mail send`, `inbox`, `read`, and `reply` then work across machines and
+organizations, with sender identity that verifies instead of being asserted.
+[Mail for beads](docs/beads-mail.md) covers addressing, wake-ups, and what
+differs on purpose. The next `aw` release adds the same provider for Gas City's
+`GC_MAIL=exec:` seam ([guide](docs/gascity-mail.md)).
+
 ## Runtime integrations
 
 Any runtime that can call the CLI, HTTP API, MCP tools, or event stream can use
@@ -173,6 +196,25 @@ aw chat pending
 The process that runs the agent decides when and how to present a wake event.
 See [Receiving events and waking agents](docs/receiving-events.md) for the
 current integration and reconnect contracts.
+
+## How aweb relates to other tools
+
+- **Orchestrators** (Gas City, Gas Town, Oh-My-ClaudeCode, and similar) run a
+  supervisor that spawns agents and assigns their work. aweb has no supervisor:
+  each agent keeps an identity and mailbox of its own, so agents under
+  different orchestrators, or none, can still reach each other. An orchestrator
+  can use aweb as its delivery layer; the beads delegate above is one example.
+- **A2A** defines task delegation between agent endpoints and leaves durable
+  messaging, offline delivery, identity custody, and presence out of scope.
+  aweb provides those, and ships an [A2A gateway](docs/a2a.md) so A2A clients
+  can reach aweb agents.
+- **MCP** connects a model to tools. aweb exposes its mail, chat, and
+  coordination as [MCP tools](docs/mcp-tools-reference.md); MCP itself does not
+  carry messages between agents.
+- **Shared files and issue trackers** (git, beads, a shared database) are a
+  durable record. They do not deliver to an offline recipient, wake a session,
+  or cross an organization boundary. aweb does delivery and leaves the record
+  where it is.
 
 ## Hosting and authority
 
@@ -205,6 +247,9 @@ or manufacture team authority. The full boundary is documented in the
 | **`aw` CLI** (`cli/go/`) | Initializes workspaces, manages local identity material, sends and reads messages, consumes events, and exposes coordination commands. |
 | **Runtime integrations** (`channel/`, `channel-core/`, `pi-extension/`) | Present aweb events to maintained agent runtimes. |
 | **Protocol and conformance material** (`docs/`, `test-vectors/`) | Defines the trust, messaging, federation, and extension contracts and their portable fixtures. |
+| **Published skills and plugin packages** (`skills/`, `packages/`) | The agent skills and the Claude, Codex, and Hermes plugin packages that teach a runtime to use aweb. |
+| **Native agentic apps** (`naapp/`, `naapp-lib/`) | Applications built on aweb and the shared library they use. |
+| **Maintainer operating material** (`agents/`, `oats/`, `resource-packs/`, `artifacts/`, `candidate-gate/`, `AGENTS.md`, `CLAUDE.md`) | How this repository's own agent team runs on aweb, plus the release gate image. Not part of the shipped product. |
 
 The server and registry are independent services with explicit authority
 boundaries. AWID defines and verifies identity and membership facts. aweb owns
@@ -245,9 +290,11 @@ boundary between shipped behavior and planned work.
 
 ## Contributing
 
-See [Contributing](docs/contributing.md) for the development workflow and test
-commands. Real `.aw/` directories contain local identity and workspace state
-and must never be committed.
+Issues and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has
+the development workflow and test commands, [SECURITY.md](SECURITY.md) says how
+to report a vulnerability privately, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+applies to every project space. Real `.aw/` directories contain local identity
+and workspace state and must never be committed.
 
 ## License
 

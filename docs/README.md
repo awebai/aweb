@@ -11,8 +11,8 @@ The [repository README](../README.md) has install and server-start commands.
 Use this page to find the document you need, and to see which documents carry
 authority over shipped behavior.
 
-The baseline contains 65 tracked Markdown documents. This front door does not
-self-link. The remaining 64 public Markdown paths appear below exactly once.
+The baseline contains 71 tracked Markdown documents. This front door does not
+self-link. The remaining 70 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -104,8 +104,13 @@ authority.
   safe support handoff.
 - [Troubleshoot a workspace](troubleshoot-workspace.md) — separate identity,
   membership, durable mailbox, event transport, and runtime wake failures.
+- [Mail for beads](beads-mail.md) — turn on `bd mail` with aweb as the
+  delegate: three-line setup, addressing, wake-ups, and what differs on purpose.
 
 ## Advanced and optional
+
+- [Mail for Gas City](gascity-mail.md) — the same aweb-backed provider for Gas
+  City's `GC_MAIL=exec:` seam; one aweb identity per city.
 
 These are working capabilities outside the first communication journey.
 Current optional and advanced helpers remain supported under their documented
@@ -222,3 +227,14 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   cross-repository maintainer harness; unrelated to encrypted messaging.
 - [Per-team agent tmux cutover](agent-tmux-cutover.md) — specialized reviewed
   runtime migration procedure.
+- [Beads mail delegate design record](beads-mail-delegate.md) — the decided
+  verb surface, identity, threading, retention, and instrumentation choices
+  behind `aw beads-mail`.
+- [Gas City mail provider design record](gascity-mail-provider.md) — the exec
+  contract verified against pinned Gas City source and the operation mapping
+  behind `aw gc-mail`.
+- [Hosted certificate anchoring draft](drafts/hosted-certificate-anchoring.md) —
+  authorized contract for hosted roster read-back; a draft until it lands.
+- [Local-sender verification authority draft](drafts/local-sender-verification-authority.md) —
+  record of the 2026-08-17 threat-model rulings; the normative text lives in
+  the trust model.
