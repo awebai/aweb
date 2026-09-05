@@ -1,5 +1,8 @@
 # Canonical soul (body template). Instances are created from this soul, each with
 # its own aweb identity, symlinked back here for their operating doc.
-role: coordinator
-work: main        # main = instance points at the main checkout; worktree = own git worktree/branch
+name: consultant
+kind: persistent
+repo: .
+role: consultant
+work: checkout        # main = instance points at the main checkout; worktree = own git worktree/branch
 runtime: claude
