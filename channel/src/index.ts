@@ -23,6 +23,8 @@ import {
   resolveConfig,
   resolveRegistryFallbackURL,
   type SelfIdentity,
+  selectDeliveryMode,
+  type DeliveryMode,
   SenderTrustManager,
   startChannelLoop,
 } from "@awebai/channel-core";
@@ -33,6 +35,43 @@ export { resolveRegistryFallbackURL, CHANNEL_CORE_SECURITY_CONTRACT };
 
 export function loadChannelConfig(workdir: string) {
   return resolveConfig(workdir);
+}
+
+/**
+ * The single line this plugin prints at startup when AWEB_DELIVERY=session.
+ * Delivery belongs to something else on the host, so the plugin registers no
+ * channel and opens no event stream.
+ */
+export const CHANNEL_EXTERNAL_DELIVERY_NOTICE =
+  "[aw-channel] AWEB_DELIVERY=session — delivery is external. This plugin will not open the aweb event stream or deliver channel notifications; identity, the bundled aweb skills, and the aw CLI stay available.";
+
+const CHANNEL_EXTERNAL_DELIVERY_INSTRUCTIONS =
+  "aweb delivery is external for this session (AWEB_DELIVERY=session). This plugin delivers nothing: mail, chat, control signals, work and claim updates reach you through the host's own wake path. Use the aw CLI to read and respond: aw mail inbox, aw chat pending, aw workspace status.";
+
+export interface ChannelDeliveryDecision {
+  mode: DeliveryMode;
+  /** Reported once when AWEB_DELIVERY held a value this build does not know. */
+  warning?: string;
+  /** The one startup line; set only when delivery is external. */
+  notice?: string;
+}
+
+/**
+ * Decide, from the environment, whether this plugin delivers aweb events
+ * itself. main() consumes this before it registers the channel.
+ */
+export function resolveChannelDelivery(env: NodeJS.ProcessEnv = process.env): ChannelDeliveryDecision {
+  const selection = selectDeliveryMode(env);
+  if (selection.mode === "session") {
+    return { mode: "session", notice: CHANNEL_EXTERNAL_DELIVERY_NOTICE };
+  }
+  return selection.warning ? { mode: "channel", warning: selection.warning } : { mode: "channel" };
+}
+
+type ChannelServerOptions = NonNullable<ConstructorParameters<typeof Server>[1]>;
+
+function createChannelMCPServer(options: ChannelServerOptions): Server {
+  return new Server({ name: "aweb-channel", version: "0.1.0" }, options);
 }
 
 export function createChannelRegistryResolver(
@@ -83,6 +122,24 @@ async function main() {
   const workdir = process.cwd();
   const config = await loadChannelConfig(workdir);
 
+  // An external wake path and this channel would both consume the same
+  // per-identity event stream, including control signals, so they are mutually
+  // exclusive. When delivery is external we stay a healthy but silent MCP
+  // server: no claude/channel capability is registered, no stream is opened,
+  // and no notification is ever sent. Identity, the bundled aweb skills and the
+  // aw CLI are untouched.
+  const delivery = resolveChannelDelivery();
+  if (delivery.warning) console.error(delivery.warning);
+  if (delivery.mode === "session") {
+    console.error(CHANNEL_EXTERNAL_DELIVERY_NOTICE);
+    const external = createChannelMCPServer({
+      capabilities: {},
+      instructions: CHANNEL_EXTERNAL_DELIVERY_INSTRUCTIONS,
+    });
+    await external.connect(new StdioServerTransport());
+    return;
+  }
+
   const client = createChannelClient(config);
   // Fail closed: a corrupt/unreadable trust store must abort startup, never
   // silently start with a discarded (empty) store.
@@ -100,8 +157,7 @@ async function main() {
     config.stableID,
   );
 
-  const mcp = new Server(
-    { name: "aweb-channel", version: "0.1.0" },
+  const mcp = createChannelMCPServer(
     {
       capabilities: {
         experimental: { "claude/channel": {} },

@@ -24,10 +24,80 @@ repeated, delayed, or missed during a disconnect.
 | Pi | bundled `npm:@awebai/pi` extension | Extension/runtime process |
 | Codex | `aw run codex` | Managed `aw run` event bus |
 | Other/headless | `aw events stream --json` or the same SSE API | Your consumer/orchestrator |
+| Claude Code or Pi behind a host wake service | `AWEB_DELIVERY=session` plus your own `aw events stream --json` | Your wake service |
 | Any runtime fallback | poll `aw mail inbox` and `aw chat pending` | Your polling loop |
 
 Aweb does not launch an arbitrary runtime merely because an event exists. The
 orchestrator that owns the process decides when and how to surface the wake.
+
+### Hand delivery to a host wake service: `AWEB_DELIVERY`
+
+There is one event stream per identity, and it carries control signals as well
+as mail and chat. A host-side wake service and a runtime's own channel would
+both consume that same stream, so they are mutually exclusive per instance.
+`AWEB_DELIVERY` says which one delivers:
+
+| `AWEB_DELIVERY` | Meaning |
+| --- | --- |
+| unset or `channel` | The runtime adapter delivers. This is the current behaviour and the default. |
+| `session` | Delivery is external. The adapter opens no stream and delivers nothing; a wake service beside it consumes `aw events stream --json` and nudges the running session. |
+
+Any other value is a typo rather than a third mode: the adapter reports it once
+and behaves as `channel`, so a misspelling can never leave an agent with neither
+path.
+
+With `AWEB_DELIVERY=session`:
+
+- the Pi extension and the Claude Code channel plugin open no SSE stream and
+  deliver no notifications or awakenings;
+- everything else they provide is unchanged — identity resolution, the installed
+  aweb skills, the welcome and status text, and the `aw` CLI path. Each prints
+  one line at startup saying delivery is external, and the Pi status line reads
+  `aweb delivery external`;
+- acknowledgement moves with delivery. The channel marks nothing read, so the
+  external path owns presentation and acknowledgement.
+
+Set it wherever the runtime is launched, for example
+`AWEB_DELIVERY=session pi` or `AWEB_DELIVERY=session claude …`.
+
+### What the native channel does
+
+An external wake path replaces this behaviour, so this is the list it has to
+reproduce for the runtime it wakes. It is what `channel-core` dispatches today.
+
+| Event type | Delivery intent | Presented content |
+| --- | --- | --- |
+| `mail_message` | `wake` | the exact message fetched by `message_id`, with sender, subject, priority, and verification status |
+| `chat_message` | `steer` when `sender_waiting`, otherwise `wake` | the chat message, with session, conversation, `sender_waiting`/`sender_leaving`, and verification status |
+| `control_pause`, `control_resume`, `control_interrupt` | `steer` | the signal only |
+| `work_available` | `ambient` | the task title and `task_id` |
+| `claim_update` | `ambient` | `task_id`, title, status |
+| `claim_removed` | `ambient` | `task_id` |
+| `app_event` | the producer's `delivery_intent`, defaulting to `ambient` | app id, app event type, resource reference, and a bounded payload summary |
+
+The three delivery intents are the runtime contract: `wake` interrupts an idle
+session with content to read and answer, `steer` redirects the turn already in
+progress, and `ambient` waits for the next natural turn so it informs without
+breaking focus. `connected` and `error` frames are stream lifecycle, not
+awakenings.
+
+Beyond dispatch, the channel also:
+
+- **acknowledges on presentation.** Mail is acknowledged once the host accepts
+  the presentation, and every chat message presented in a fetch is marked read
+  at the end of it. Presented means read; nothing is acknowledged on receipt of
+  the signal alone.
+- **decrypts encrypted content locally.** Encrypted-v2 mail and chat carry no
+  server-readable plaintext, so the channel shells out to the local `aw` in the
+  workspace to decrypt before presenting. When local decryption fails it still
+  wakes the agent, with metadata only and the failure recorded on the
+  notification (`encrypted`, `decrypted`, `decrypt_error`).
+- **verifies senders and pins them** (trust-on-first-use, shared with the CLI),
+  presents the verification status with every message, and never presents a
+  message whose signature verification errored — it records that in an
+  undelivered log instead.
+- **suppresses duplicates** through a per-workspace delivery-id store, and
+  reports stream health once on disconnect and once on recovery.
 
 ## Raw event stream
 
@@ -129,6 +199,7 @@ surface presents content or an explicit command acknowledges it.
 | `aw mail ack <message-id>` | Explicitly marks one mail message read. |
 | Claude channel | Channel notification is the presentation point. |
 | Pi extension | After `pi.sendMessage` accepts the injection. |
+| Either, with `AWEB_DELIVERY=session` | None; the runtime delivers nothing, so the external wake path owns presentation and acknowledgement. |
 | Native `aw run` | After a successful provider run presents the communication. |
 
 If transport fails before presentation acknowledgement, mail stays unread and a

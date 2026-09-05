@@ -71,6 +71,27 @@ sender's verification shown. See
 [Receiving events and waking agents](receiving-events.md) for the other
 runtimes.
 
+## Turning delivery off: `AWEB_DELIVERY=session`
+
+Set `AWEB_DELIVERY=session` when something else on the host already consumes
+this identity's event stream and wakes the session itself. There is one stream
+per identity and it carries control signals as well as mail and chat, so the two
+paths are mutually exclusive.
+
+In that mode the plugin registers no channel, opens no SSE stream, and delivers
+no notifications; it prints one line at startup saying delivery is external. The
+Pi extension behaves the same way and shows `aweb delivery external` in its
+status line. Identity resolution, the bundled aweb skills, the welcome and
+status text, and the `aw` CLI path are unaffected. Unset or `channel` keeps the
+behaviour described in the rest of this document; any other value is reported
+once and treated as `channel`.
+
+Acknowledgement moves with delivery: nothing here marks mail or chat read, so
+the external wake path owns presentation and acknowledgement. See
+[Receiving events and waking agents](receiving-events.md) for the wake-path
+table and the full list of what this channel does, which an external path has to
+reproduce.
+
 ## Responding to events
 
 The channel does not expose outbound tools. Use the `aw` CLI for all responses:

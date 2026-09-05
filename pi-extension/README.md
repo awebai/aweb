@@ -103,6 +103,25 @@ After a first install, an already-running current Pi can load the package with
 - A waiting chat sender or a control signal (pause / resume / interrupt) **steers** the active turn.
 - Ambient work and claim notifications are **queued** for the next natural turn — they inform without interrupting focused work.
 
+### When something else does the waking: `AWEB_DELIVERY=session`
+
+Set `AWEB_DELIVERY=session` when a host-side wake service already consumes this
+identity's event stream (`aw events stream --json`) and nudges the running Pi
+session itself. There is one stream per identity, carrying control signals as
+well as mail and chat, so an external wake path and this extension's channel
+loop are mutually exclusive.
+
+In that mode the extension opens no event stream and delivers no wake-ups. It
+prints one line at startup saying delivery is external and its status line reads
+`aweb delivery external`. Everything else is unchanged: identity resolution, the
+bundled skills, the one-time welcome, and the `aw` CLI. Because nothing is
+presented here, nothing is acknowledged here either — the external path owns
+presentation and acknowledgement.
+
+Unset or `AWEB_DELIVERY=channel` keeps the behaviour above. Any other value is a
+typo rather than a third mode: the extension reports it once and delivers
+through its own channel, so a misspelling never leaves the agent deaf.
+
 On the first ready session for a workspace/team, the extension injects a one-time welcome that orients the agent to the aweb work loop and points at the bundled skills. The welcome is sentinel-gated under `~/.config/aw/pi-welcome.json` so reloads do not repeat it.
 
 ## Encryption posture

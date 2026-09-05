@@ -72,6 +72,56 @@ function selectIdentityHome(workdir: string): IdentityHomeSelection {
   return { root, external: true };
 }
 
+/**
+ * Who delivers this instance's aweb events.
+ *
+ * `channel` — the default — means the host adapter owns delivery: it opens the
+ * per-identity SSE event stream and turns events into awakenings.
+ *
+ * `session` means delivery is external: something else beside this process (for
+ * example a host-side wake service running `aw events stream --json` that
+ * nudges the live harness) already consumes that stream and wakes the agent.
+ * There is exactly one such stream per identity and it carries control signals
+ * as well as mail and chat, so an external wake path and the native channel are
+ * mutually exclusive per instance. In `session` the adapter must not open the
+ * stream and must not deliver notifications or awakenings; everything else
+ * — identity resolution, the installed aweb skills, the welcome and status
+ * text, and the aw CLI path — is unaffected.
+ */
+export type DeliveryMode = "channel" | "session";
+
+export const DELIVERY_MODE_ENV = "AWEB_DELIVERY";
+
+export interface DeliveryModeSelection {
+  mode: DeliveryMode;
+  /**
+   * Set only when AWEB_DELIVERY carried a value this build does not understand.
+   * The caller reports it once at startup and behaves as `channel`; an unknown
+   * value must never silently turn delivery off.
+   */
+  warning?: string;
+}
+
+/**
+ * Read AWEB_DELIVERY. Unset, empty, or `channel` selects the native channel;
+ * `session` selects external delivery; anything else warns and falls back to
+ * the native channel. Value comparison trims surrounding whitespace and is
+ * case-insensitive.
+ *
+ * Adapters call this exactly once per process at startup, so the warning is
+ * emitted once by construction.
+ */
+export function selectDeliveryMode(env: NodeJS.ProcessEnv = process.env): DeliveryModeSelection {
+  const raw = (env[DELIVERY_MODE_ENV] || "").trim();
+  const configured = raw.toLowerCase();
+  if (!configured || configured === "channel") return { mode: "channel" };
+  if (configured === "session") return { mode: "session" };
+  return {
+    mode: "channel",
+    warning: `aweb: ignoring ${DELIVERY_MODE_ENV}=${JSON.stringify(raw)}; expected "channel" or "session". Delivering through the native channel.`,
+  };
+}
+
 export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   const identityHome = selectIdentityHome(workdir);
   const workspacePath = join(identityHome.root, "workspace.yaml");

@@ -1,6 +1,6 @@
 {
   "name": "@awebai/channel-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared aweb channel core for agent host adapters such as Claude Code and pi.",
   "type": "module",
   "main": "./dist/index.js",

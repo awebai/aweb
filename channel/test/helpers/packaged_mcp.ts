@@ -2,10 +2,17 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
+export interface MCPInitializeResult {
+  capabilities?: { experimental?: Record<string, unknown> };
+  instructions?: string;
+  serverInfo?: { name?: string };
+}
+
 export interface PackagedMCPChild {
   args: string[];
   child: ChildProcessWithoutNullStreams;
   declarationName: string;
+  initialize: MCPInitializeResult;
   runtimeName: string;
   stderr: () => string;
 }
@@ -33,9 +40,9 @@ export async function launchPackagedMCPChild(channelRoot: string, cwd: string): 
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk) => { stderr += chunk; });
 
-  let runtimeName: string;
+  let initialize: MCPInitializeResult;
   try {
-    runtimeName = await withTimeout(
+    initialize = await withTimeout(
       initializeMCP(child, () => stderr),
       5_000,
       () => `packaged MCP child did not initialize\n${stderr}`,
@@ -44,10 +51,17 @@ export async function launchPackagedMCPChild(channelRoot: string, cwd: string): 
     child.kill("SIGTERM");
     throw error;
   }
-  return { args, child, declarationName, runtimeName, stderr: () => stderr };
+  return {
+    args,
+    child,
+    declarationName,
+    initialize,
+    runtimeName: initialize.serverInfo?.name || "",
+    stderr: () => stderr,
+  };
 }
 
-function initializeMCP(process: ChildProcessWithoutNullStreams, stderr: () => string): Promise<string> {
+function initializeMCP(process: ChildProcessWithoutNullStreams, stderr: () => string): Promise<MCPInitializeResult> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     process.once("error", reject);
@@ -64,15 +78,15 @@ function initializeMCP(process: ChildProcessWithoutNullStreams, stderr: () => st
         const message = JSON.parse(line) as {
           id?: number;
           error?: unknown;
-          result?: { serverInfo?: { name?: string } };
+          result?: MCPInitializeResult;
         };
         if (message.id !== 1) continue;
         if (message.error) {
           reject(new Error(`MCP initialize failed: ${JSON.stringify(message.error)}`));
           return;
         }
-        const runtimeName = message.result?.serverInfo?.name;
-        if (!runtimeName) {
+        const result = message.result;
+        if (!result?.serverInfo?.name) {
           reject(new Error(`MCP initialize response omitted serverInfo.name: ${line}`));
           return;
         }
@@ -80,7 +94,7 @@ function initializeMCP(process: ChildProcessWithoutNullStreams, stderr: () => st
           jsonrpc: "2.0",
           method: "notifications/initialized",
         })}\n`);
-        resolve(runtimeName);
+        resolve(result);
       }
     });
     process.stdin.write(`${JSON.stringify({

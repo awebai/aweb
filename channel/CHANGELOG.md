@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.7.9
+
+- Adds `AWEB_DELIVERY`. With `AWEB_DELIVERY=session` the plugin registers no
+  channel, opens no event stream, and delivers no notifications, so a host-side
+  wake service can own this identity's single event stream without competing
+  with the plugin for it. Identity resolution, the bundled aweb skills, and the
+  `aw` CLI path are unaffected, and one startup line says delivery is external.
+  Unset or `channel` is the existing behaviour; any other value is reported once
+  and treated as `channel`.
+
 ## 1.7.6
 
 - Retries a trust pin commit when a concurrent writer wins the compare-and-set,

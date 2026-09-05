@@ -7,6 +7,8 @@ import {
   type RegistryIdentityConfig,
   type ResolveTxt,
   resolveConfig,
+  selectDeliveryMode,
+  type DeliveryMode,
   SenderTrustManager,
   startChannelLoop,
 } from "@awebai/channel-core";
@@ -47,6 +49,43 @@ export function createPiRegistryResolver(
   resolveTxt?: ResolveTxt,
 ) {
   return createRegistryResolver(config, resolveTxt);
+}
+
+/**
+ * The single line this extension prints at startup when AWEB_DELIVERY=session.
+ * Delivery belongs to something else on the host, so the extension keeps
+ * identity, skills, welcome and the aw CLI, and opens no event stream.
+ */
+export const PI_EXTERNAL_DELIVERY_NOTICE =
+  "aweb: AWEB_DELIVERY=session — delivery is external. This extension will not open the aweb event stream or deliver awakenings; identity, the bundled aweb skills, and the aw CLI stay available.";
+
+/** Pi status-line text while delivery is external. */
+export const PI_EXTERNAL_DELIVERY_STATUS = "aweb delivery external";
+
+export interface PiDeliveryDecision {
+  mode: DeliveryMode;
+  /** Reported once when AWEB_DELIVERY held a value this build does not know. */
+  warning?: string;
+  /** The one startup line; set only when delivery is external. */
+  notice?: string;
+  /** Status-line text; set only when delivery is external. */
+  status?: string;
+}
+
+/**
+ * Decide, from the environment, whether this Pi session delivers aweb events
+ * itself. The extension consumes this before it starts the channel loop.
+ */
+export function resolvePiDelivery(env: NodeJS.ProcessEnv = process.env): PiDeliveryDecision {
+  const selection = selectDeliveryMode(env);
+  if (selection.mode === "session") {
+    return {
+      mode: "session",
+      notice: PI_EXTERNAL_DELIVERY_NOTICE,
+      status: PI_EXTERNAL_DELIVERY_STATUS,
+    };
+  }
+  return selection.warning ? { mode: "channel", warning: selection.warning } : { mode: "channel" };
 }
 
 export function tmuxCommandGuardReason(command: string): string | undefined {
@@ -264,6 +303,40 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       });
       return;
     }
+
+    const announceWelcome = () => {
+      void sendFirstSessionWelcome(pi, ctx.cwd, config.teamID, config.alias).catch((error) => {
+        if (ctx.hasUI) ctx.ui.notify(`aweb welcome skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
+      });
+    };
+
+    // An external wake path and this channel would both consume the same
+    // per-identity event stream, so they are mutually exclusive. When delivery
+    // is external we keep identity, skills, welcome and the aw CLI, and open no
+    // stream.
+    const delivery = resolvePiDelivery();
+    if (delivery.warning) {
+      pi.sendMessage({
+        customType: "aweb-channel-status",
+        content: delivery.warning,
+        display: true,
+      });
+    }
+    if (delivery.mode === "session") {
+      if (ctx.hasUI) {
+        const theme = ctx.ui.theme;
+        ctx.ui.setStatus("aweb-channel", `${theme.fg("dim", "○")} ${theme.fg("dim", PI_EXTERNAL_DELIVERY_STATUS)}`);
+      }
+      pi.sendMessage({
+        customType: "aweb-channel-status",
+        content: PI_EXTERNAL_DELIVERY_NOTICE,
+        display: true,
+        details: { delivery_mode: delivery.mode },
+      });
+      announceWelcome();
+      return;
+    }
+
     // Fail closed: never start the channel with a discarded (empty) trust store.
     const pinStore = await loadSessionPinStore((message) => {
       pi.sendMessage({
@@ -287,9 +360,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       ctx.ui.setStatus("aweb-channel", `${theme.fg("warning", "…")} ${theme.fg("dim", "aweb connecting")}`);
     }
 
-    void sendFirstSessionWelcome(pi, ctx.cwd, config.teamID, config.alias).catch((error) => {
-      if (ctx.hasUI) ctx.ui.notify(`aweb welcome skipped: ${error instanceof Error ? error.message : String(error)}`, "warning");
-    });
+    announceWelcome();
 
     const signal = abortController.signal;
     wakeDispatcher = createWakeDispatcher(pi, wakeLog);

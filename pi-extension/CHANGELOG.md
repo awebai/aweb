@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.10
+
+- Adds `AWEB_DELIVERY`. With `AWEB_DELIVERY=session` the extension opens no
+  event stream and delivers no wake-ups, so a host-side wake service can own
+  this identity's single event stream without competing with the extension for
+  it. Identity resolution, the bundled skills, the welcome, and the `aw` CLI
+  path are unaffected; one startup line says delivery is external and the status
+  line reads `aweb delivery external`. Unset or `channel` is the existing
+  behaviour; any other value is reported once and treated as `channel`.
+
 ## 0.3.6
 
 - Includes the Channel Core trust-path changes above: compare-and-set retry on
