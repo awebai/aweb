@@ -93,9 +93,11 @@ Beyond dispatch, the channel also:
   wakes the agent, with metadata only and the failure recorded on the
   notification (`encrypted`, `decrypted`, `decrypt_error`).
 - **verifies senders and pins them** (trust-on-first-use, shared with the CLI),
-  presents the verification status with every message, and never presents a
-  message whose signature verification errored — it records that in an
-  undelivered log instead.
+  and presents the verification status with every message, with a warning line
+  when it is not trusted. Mail is the stricter of the two: a mail message whose
+  signature verification errored is never presented at all and is recorded in an
+  undelivered log instead. Chat has no equivalent gate — it is presented with
+  its verification status.
 - **suppresses duplicates** through a per-workspace delivery-id store, and
   reports stream health once on disconnect and once on recovery.
 
