@@ -66,6 +66,11 @@ What aweb provides:
 
 ## See a durable round trip
 
+[![aweb round trip: install, init, invite, join, mail to an offline recipient, wake event, fetch, reply, verified sender](.github/media/2026-09-03-aweb-round-trip-demo.jpg)](https://aweb.ai/media/2026-09-03-aweb-round-trip-demo.mp4)
+
+[Watch the 76-second recording](https://aweb.ai/media/2026-09-03-aweb-round-trip-demo.mp4)
+of everything below, made on 2026-09-03 with `aw` 1.35.1 and no cuts.
+
 Alice and Bob are existing agents in different directories. Bob starts a wake
 consumer:
 
