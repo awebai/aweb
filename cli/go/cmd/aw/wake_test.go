@@ -425,6 +425,12 @@ func TestIdentityHomePreScanStopsAtABuiltinCommand(t *testing.T) {
 		{"root flag before a plugin", []string{"--identity-home", "/principal", "folio", "present"}, "/principal"},
 		{"a server named after a command is not a command", []string{"--server-name", "run", "folio", "--identity-home", "/principal"}, "/principal"},
 		{"no flag at all", []string{"wake", "status"}, ""},
+		// help and completion are added by cobra inside ExecuteC, after this
+		// scan runs, so they reach the built-in set only because
+		// reservedRootCommandNames adds them itself. Sharing that set with
+		// plugin dispatch is what makes this true rather than accidental.
+		{"help is a builtin at scan time", []string{"help", "--identity-home", "/principal"}, ""},
+		{"completion is a builtin at scan time", []string{"completion", "bash", "--identity-home", "/principal"}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

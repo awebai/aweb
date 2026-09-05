@@ -594,7 +594,10 @@ learned something the note did not know:
   nothing to do with. The scan now stops at the first bare token naming a
   built-in command: from there cobra parses the root flag itself and no plugin
   will be dispatched, while a plugin name is not a built-in, so a plugin's own
-  trailing `--identity-home` keeps the behaviour it has always had.
+  trailing `--identity-home` keeps the behaviour it has always had. The
+  built-in set is the one plugin dispatch already refuses to let a plugin
+  shadow, shared rather than re-derived so two argv scanners cannot disagree
+  about what counts as a command.
 
 ## 12. Running the daemon as a service
 

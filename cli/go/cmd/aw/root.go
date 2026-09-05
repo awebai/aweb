@@ -307,12 +307,26 @@ func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
 // symlinked parent and exits non-zero before the command runs at all. The OATS
 // spawn hook reads that exit as a failed spawn.
 //
-// Stopping at a built-in loses nothing: from there on cobra parses the root
-// persistent flag itself, and no plugin will be dispatched. A plugin name is
-// not a built-in, so scanning continues past it and a plugin's trailing
-// --identity-home keeps the behaviour it has always had.
+// Stopping at a built-in loses nothing, with one exception worth naming.
+// Normally cobra parses the root persistent flag itself once it owns the leaf
+// command's flag set, in either position, so the scan is redundant there. A
+// command with DisableFlagParsing never has its persistent flags parsed by
+// cobra at all, in either position, so for those the scan was the only
+// mechanism and a trailing --identity-home now reaches nothing. Today that set
+// is only the beads-mail stub verbs, whose RunE returns a static usage error
+// without touching identity, so the exception has no live consequence — but it
+// is an exception, not an absence of one.
+//
+// A plugin name is not a built-in, so scanning continues past it and a
+// plugin's trailing --identity-home keeps the behaviour it has always had.
+//
+// The built-in set is reservedRootCommandNames() — the same set plugin dispatch
+// refuses to let a plugin shadow, and the same set the reserved-app-ids
+// artifact publishes. Sharing it is deliberate: two textual argv scanners over
+// one flag set would otherwise be free to disagree about what counts as a
+// command, and only one of them would get updated.
 func identityHomeForPluginDispatch(args []string) string {
-	builtins := builtinRootCommandNames()
+	builtins := reservedRootCommandNames()
 	explicit := ""
 	for i := 0; i < len(args); i++ {
 		arg := strings.TrimSpace(args[i])
@@ -332,22 +346,11 @@ func identityHomeForPluginDispatch(args []string) string {
 		case strings.HasPrefix(arg, "-"):
 			continue
 		}
-		if _, builtin := builtins[arg]; builtin {
+		if builtins[arg] {
 			break
 		}
 	}
 	return explicit
-}
-
-func builtinRootCommandNames() map[string]struct{} {
-	names := make(map[string]struct{})
-	for _, cmd := range rootCmd.Commands() {
-		names[cmd.Name()] = struct{}{}
-		for _, alias := range cmd.Aliases {
-			names[alias] = struct{}{}
-		}
-	}
-	return names
 }
 
 func argsContainTraceFlag(args []string) bool {
