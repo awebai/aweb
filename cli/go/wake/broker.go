@@ -117,6 +117,15 @@ func (c *Config) applyDefaults() {
 type Broker struct {
 	cfg Config
 
+	// reconcileMu serialises the whole reconcile step. Register, Deregister,
+	// the reconcile ticker and the expiry path can all reach it at once, and
+	// the step is a check-then-act on two maps: without this, two concurrent
+	// reconciles could each see one home as "not running" and start two
+	// runners for it, or each pass the stream bound and open one stream too
+	// many. It is held across the per-runner start/stop calls, which never
+	// take it themselves.
+	reconcileMu sync.Mutex
+
 	mu        sync.Mutex
 	streams   map[string]*streamRunner
 	instances map[string]*instanceRunner
@@ -194,6 +203,12 @@ func (b *Broker) shutdown() {
 // Reconcile brings the running set in line with registry.d. It is called on
 // start, on a timer, and immediately after a socket register or deregister.
 func (b *Broker) Reconcile() {
+	b.reconcileMu.Lock()
+	defer b.reconcileMu.Unlock()
+	b.reconcileLocked()
+}
+
+func (b *Broker) reconcileLocked() {
 	registrations, err := b.cfg.Store.ListRegistrations()
 	if err != nil {
 		b.cfg.Log("reconcile failed err=%v", err)
@@ -240,7 +255,7 @@ func (b *Broker) Reconcile() {
 		b.cfg.Log("deregistered home=%s", runner.reg.Home)
 		runner.stop()
 	}
-	b.pruneStreams()
+	b.pruneStreamsLocked()
 }
 
 func (b *Broker) startInstance(reg Registration) {
@@ -327,6 +342,12 @@ func (b *Broker) ensureStream(identityHome string) bool {
 
 // pruneStreams stops streams no registration needs any more.
 func (b *Broker) pruneStreams() {
+	b.reconcileMu.Lock()
+	defer b.reconcileMu.Unlock()
+	b.pruneStreamsLocked()
+}
+
+func (b *Broker) pruneStreamsLocked() {
 	needed := map[string]struct{}{}
 	b.mu.Lock()
 	for _, runner := range b.instances {
