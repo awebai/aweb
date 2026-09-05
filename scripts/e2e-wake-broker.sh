@@ -23,8 +23,9 @@
 #      re-raises the still-unread item rather than a presented mark suppressing
 #      it;
 #   5. pause is durable and suppresses typing; resume restores it;
-#   6. a GUI close (stopped, after a confirmed live observation) marks the
-#      registration inactive and leaves it for the retire hook;
+#   6. a harness stop (stopped, after a confirmed live observation) marks the
+#      registration inactive and leaves it for the retire hook; closing a GUI
+#      viewer is not a stop and is covered only by the by-hand runbook;
 #   7. deregister is idempotent, because the retire hook may run twice.
 #
 # What it cannot assert is a real harness reading real typed text. That is the
@@ -248,7 +249,7 @@ wait_until 30 "the held hint after resume" \
 grep -q 'mail from bob' "$INPUT_LOG" || fail "the hint held across the pause was lost"
 echo "ok: pause durable, resume delivers what was held"
 
-step "8. GUI close: stopped after a confirmed live observation marks it inactive"
+step "8. Harness stop: stopped after a confirmed live observation marks it inactive"
 echo stopped > "$STATE_FILE"
 wait_until 40 "the instance to be marked inactive" \
   bash -c "env HOME='$HOME_DIR' AW_NO_UPDATE_CHECK=1 '$AW_BIN' wake status --json --state-dir '$STATE_DIR' | grep -q '\"phase\": \"inactive\"'"

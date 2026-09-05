@@ -441,9 +441,12 @@ instances in `AWEB_DELIVERY=session` mode across all three runtimes — Claude
 Code and Codex (both tmux, `unknown`, the same generic terminal mechanism) and
 Pi. Mail each one and assert a single wake in the correct terminal, that the
 broker marked nothing read, and that the instance's own `aw` fetched and
-cleared it. Then the three qualification cases: **GUI close** — close the
-terminal GUI and assert the broker reports the instance inactive only after a
-confirmed live observation preceded it, never from a pending error; **broker
+cleared it. Then the qualification cases: **GUI close** — close the terminal
+window or viewer and assert the home stays active and a later mail still
+wakes it, because a closed viewer is not a stopped harness; **harness stop**
+— exit a session for real and assert the broker reports it inactive only
+after a confirmed live observation preceded it, never from a pending error;
+**broker
 restart while the agents stay alive** — kill and restart the daemon mid-cycle
 and assert the agents keep running, no wake is lost, and unread items are
 re-raised from the snapshot rather than suppressed; and **pending
@@ -660,8 +663,8 @@ mid-cycle loses no wake.
 
 Section 7's scripted end-to-end runs against a fake `oats` and a stand-in
 server: `scripts/e2e-wake-broker.sh`, one machine, no Docker. It covers the
-wake path, the pending registration, the broker restart, the GUI close, and
-the assertion that the broker acknowledged nothing.
+wake path, the pending registration, the broker restart, the harness stop,
+and the assertion that the broker acknowledged nothing.
 
 What it cannot cover is a real harness reading real typed text. Run that by
 hand, once, with real runtimes:
@@ -676,18 +679,23 @@ hand, once, with real runtimes:
    correct terminal; the typed text names the sender and the count and carries
    no subject; `aw mail inbox` inside the instance still shows the message
    unread until the instance itself reads it.
-4. **GUI close.** Close one terminal's window. Assert `aw wake status` moves
+4. **GUI close.** Close one terminal's window or viewer (a tmux detach, a
+   Herdr viewer closed). The harness stays alive: assert `aw wake status`
+   keeps that home active, that `oats session inspect` still reports
+   `present:true`, and that a mail sent after the close still wakes it.
+   Closing a viewer is never a stop.
+5. **Harness stop.** Exit one session for real. Assert `aw wake status` moves
    that home to `inactive` — and that it did so from a `stopped` observation
    after a confirmed live one, never from a pending error. The registration
    stays until the retire hook removes it.
-5. **Broker restart while the agents stay alive.** Mail an instance, then
+6. **Broker restart while the agents stay alive.** Mail an instance, then
    restart the daemon mid-cycle. Assert the agents keep running, the daemon
    comes back without a cursor, and the unread item is re-raised from the
    reconnect snapshot rather than suppressed.
-6. **Pending registration.** Register a home before its runtime receipt
+7. **Pending registration.** Register a home before its runtime receipt
    exists, mail it, and assert nothing is typed until the first confirmed live
    inspect — and that `aw wake status` reports it pending with its hints kept.
-7. **Pause.** `aw wake pause --home <home>`, mail it, assert nothing is typed
+8. **Pause.** `aw wake pause --home <home>`, mail it, assert nothing is typed
    and the hint stays pending; restart the daemon and assert it is still
    paused; `aw wake resume --home <home>` and assert the held hint arrives.
 
