@@ -8,6 +8,12 @@ FROM python:3.12-slim AS builder
 
 COPY --from=uv /uv /usr/local/bin/uv
 
+# Build-time network resilience: on a slow link, uv's default of many
+# concurrent wheel downloads starves small requests (build-backend metadata)
+# past its 30 s per-request timeout. Fewer streams and a longer timeout make
+# the build slow instead of failed. Builder stage only; nothing at runtime.
+ENV UV_HTTP_TIMEOUT=300 UV_CONCURRENT_DOWNLOADS=4
+
 WORKDIR /app
 
 COPY awid/pyproject.toml awid/uv.lock awid/README.md ./awid/
