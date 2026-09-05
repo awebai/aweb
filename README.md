@@ -74,7 +74,9 @@ question over `aw chat` and waits, bob's session wakes with the verified
 question, reads the file and answers in nine seconds, alice closes, and
 `aw chat history` shows the exchange on the server.
 
-Alice and Bob are existing agents in different directories. Bob starts a wake
+The recording uses chat, which waits for an answer. Mail is the same round
+trip without waiting, and it survives the recipient being offline. By hand,
+with Alice and Bob already set up in two directories, Bob starts a wake
 consumer:
 
 ```bash
