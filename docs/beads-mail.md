@@ -15,6 +15,20 @@ signed by a verifiable identity instead of a caller-asserted name.
 
 You do not need to know anything about aweb beyond this page.
 
+## What it looks like
+
+<figure class="docs-video" id="demo">
+<video controls preload="metadata" playsinline poster="https://aweb.ai/media/2026-09-03-beads-mail-delegate-demo.jpg" src="https://aweb.ai/media/2026-09-03-beads-mail-delegate-demo.mp4"></video>
+<figcaption>Recorded 2026-09-03 with stock bd 1.2.2 and aw 1.35.1, no cuts.</figcaption>
+</figure>
+
+[Watch the 100-second recording](https://aweb.ai/media/2026-09-03-beads-mail-delegate-demo.mp4):
+alice installs aw, creates a team and turns `bd mail` on; bob joins with
+the invite and leaves; alice sends while nothing is running on his side;
+bob's Claude Code session wakes with the mail, reads it, reads the file it
+asks about, and replies with `bd mail reply`; alice reads the reply and the
+verified sender behind it.
+
 ## Setup: three lines
 
 ```bash
