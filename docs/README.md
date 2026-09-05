@@ -11,8 +11,8 @@ The [repository README](../README.md) has install and server-start commands.
 Use this page to find the document you need, and to see which documents carry
 authority over shipped behavior.
 
-The baseline contains 71 tracked Markdown documents. This front door does not
-self-link. The remaining 70 public Markdown paths appear below exactly once.
+The baseline contains 72 tracked Markdown documents. This front door does not
+self-link. The remaining 71 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -230,6 +230,10 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
 - [Beads mail delegate design record](beads-mail-delegate.md) — the decided
   verb surface, identity, threading, retention, and instrumentation choices
   behind `aw beads-mail`.
+- [Terminal wake broker design note](terminal-wake-broker.md) — one event
+  stream per identity on a host, coalesced wakes typed into the original
+  terminal through the OATS input operation; decided process model, state,
+  registration, ack point, and the interface contract (aweb-abil).
 - [Gas City mail provider design record](gascity-mail-provider.md) — the exec
   contract verified against pinned Gas City source and the operation mapping
   behind `aw gc-mail`.
