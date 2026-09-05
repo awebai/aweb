@@ -25,10 +25,30 @@ repeated, delayed, or missed during a disconnect.
 | Codex | `aw run codex` | Managed `aw run` event bus |
 | Other/headless | `aw events stream --json` or the same SSE API | Your consumer/orchestrator |
 | Claude Code or Pi behind a host wake service | `AWEB_DELIVERY=session` plus your own `aw events stream --json` | Your wake service |
+| Any runtime OATS launched, in a terminal | `AWEB_DELIVERY=session` plus `aw wake run`, the terminal wake broker | The broker daemon |
 | Any runtime fallback | poll `aw mail inbox` and `aw chat pending` | Your polling loop |
 
 Aweb does not launch an arbitrary runtime merely because an event exists. The
 orchestrator that owns the process decides when and how to surface the wake.
+
+### The terminal wake broker: `aw wake`
+
+`aw wake run` is aweb's own implementation of the host wake service row above,
+and it is the only wake path for an instance whose runtime has no channel at
+all. One daemon per host holds a reconnecting stream per registered identity,
+coalesces the resulting hints per instance, and types a short message into that
+instance's original terminal through the OATS input operation.
+
+What it types is a fixed instruction to fetch plus a hint summary — how many
+items of what kind, with senders and ids where the event carried them. Never a
+subject, never a body. The broker does not fetch, decrypt, present, or
+acknowledge anything: the instance's own `aw` does all of that, which is why
+the row above still says the external path owns acknowledgement. Registration
+comes from the OATS spawn hook and is refused without `AWEB_DELIVERY=session`,
+so the broker and a live native channel never run on one identity.
+
+The design, the state-to-action table, the failure modes and the service unit
+examples are in [the terminal wake broker note](terminal-wake-broker.md).
 
 ### Hand delivery to a host wake service: `AWEB_DELIVERY`
 
@@ -202,6 +222,7 @@ surface presents content or an explicit command acknowledges it.
 | Claude channel | Channel notification is the presentation point. |
 | Pi extension | After `pi.sendMessage` accepts the injection. |
 | Either, with `AWEB_DELIVERY=session` | None; the runtime delivers nothing, so the external wake path owns presentation and acknowledgement. |
+| `aw wake` terminal broker | None, on any path, ever. It types a hint; the instance's own `aw` presents and acknowledges. |
 | Native `aw run` | After a successful provider run presents the communication. |
 
 If transport fails before presentation acknowledgement, mail stays unread and a

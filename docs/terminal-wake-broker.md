@@ -531,3 +531,153 @@ carried for lead are answered above: the ack belongs to the harness and no
 Herdr transition supplies a consumption ack; the control gap is stated honestly
 rather than blocked on a new endpoint; and grant-home E2E custody is
 deployment-specific and not a blocker for the first broker.
+
+## 11. As implemented, 2026-09-05
+
+The broker landed as `cli/go/wake` (daemon, hints, policy, composer, state,
+control socket) and `cli/go/wake/session` (the OATS adapter), with
+`cli/go/cmd/aw/wake.go` as the command surface. `aw run` was not touched.
+
+Where the implementation had to decide something the note left open, or
+learned something the note did not know:
+
+- **`shell` is its own state that defers.** The OATS lead's samples added it:
+  startup can briefly report `shell` before the exec begins. Section 4 would
+  have sent it to the `unknown` column, which submits; section 5 already has
+  `input` refuse a fallback shell left by an exited harness, so deferring is
+  the same verdict reached one step earlier. `generic shell` maps here too.
+  Everything else unrecognised still degrades to `unknown`.
+- **Inspect envelopes are decoded leniently.** Real results carry
+  backend-specific extras — `paneId` on tmux, `terminalId` on Herdr — so an
+  unnamed field is ignored rather than fatal. The captured samples are the
+  fixture at `cli/go/wake/session/testdata/broker-inspect-samples.json`.
+- **The rate limit is a floor between submission *attempts*, per instance,
+  defaulting to 30 s** (`--rate-limit`). The note fixes no number and requires
+  only that reminders be bounded. It is measured from the last attempt, not
+  the last success, so a target that keeps refusing is retried on the same
+  floor rather than on every poll. The coalescing window defaults to 2 s
+  (`--coalesce`) and the inspect poll is 2 s, as section 4 says.
+- **An instance with nothing pending is inspected every 30 s, not every 2 s.**
+  A hundred idle instances polled every two seconds would exec `oats` fifty
+  times a second for no decision. Anything with pending hints, and anything
+  not yet confirmed live, is still evaluated on every poll.
+- **`present:false` from a successful inspect is not a verdict.** Only a
+  `stopped` or `not-launched` state marks a registration inactive, and only
+  after a confirmed live observation. Everything else holds and re-evaluates,
+  because an unanswerable backend must never mark a live agent inactive.
+- **The stream loop is copied, not reused.** `cli/go/run/eventbus.go` could
+  not be used as is: its TTL is a 10-minute local deadline and its 250 ms→2 s
+  backoff has no jitter. The stream *source* is reused unchanged through
+  `run.EventStreamOpener`; the loop implements this note's four-minute planned
+  close and 1 s→15 s jittered backoff, and handles `connected` and `error`,
+  which the bus drops.
+- **State directory**, under `~/.config/aw/wake` by default (`--state-dir`, or
+  `AW_WAKE_STATE_DIR`): `registry.d/<sha256-of-canonical-home>.json`,
+  `instances.d/<same key>.json`, `status.json`, `lock/` holding the owner pid,
+  and `control.sock`. A unix socket path is bounded by `sun_path`, so a state
+  directory whose socket path would exceed it is refused by name rather than
+  by the kernel's "invalid argument".
+- **Exit codes are the hook contract** (oats.aweb 1.10.0): `aw wake register`
+  exits 0 whenever the registration was written durably — over the socket, or
+  straight to `registry.d` when the daemon is down — and non-zero only when
+  refused, because a non-zero exit fails the spawn. `aw wake deregister` on an
+  unknown or already-retired home exits 0 with a note.
+- **`aw wake register --identity-home` names the instance's identity home**
+  and shadows the root persistent flag of the same name for that one command.
+  The value is still validated the way any identity home is, so a path reached
+  through a symlinked parent is refused there exactly as `aw init` refuses it.
+
+## 12. Running the daemon as a service
+
+One daemon per host, foreground, restartable at any time. Both units below run
+it under the invoking user; neither needs root.
+
+**launchd** (`~/Library/LaunchAgents/ai.aweb.wake.plist`), then
+`launchctl load -w ~/Library/LaunchAgents/ai.aweb.wake.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>            <string>ai.aweb.wake</string>
+  <key>ProgramArguments</key> <array>
+    <string>/usr/local/bin/aw</string>
+    <string>wake</string>
+    <string>run</string>
+  </array>
+  <key>EnvironmentVariables</key> <dict>
+    <key>PATH</key> <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>        <true/>
+  <key>KeepAlive</key>        <true/>
+  <key>StandardOutPath</key>  <string>/tmp/aweb-wake.log</string>
+  <key>StandardErrorPath</key><string>/tmp/aweb-wake.log</string>
+</dict>
+</plist>
+```
+
+`PATH` matters: the broker execs `oats` from it. `AW_WAKE_OATS_BIN` names the
+executable explicitly instead, and `--oats-bin` does the same on the command
+line.
+
+**systemd user unit** (`~/.config/systemd/user/aweb-wake.service`), then
+`systemctl --user enable --now aweb-wake.service`:
+
+```ini
+[Unit]
+Description=aweb terminal wake broker
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/aw wake run
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+```
+
+Restarting is safe and cheap: state is on disk, there is no cursor, and the
+reconnect snapshot re-raises anything still unread. `systemctl --user restart`
+mid-cycle loses no wake.
+
+## 13. Qualification runbook
+
+Section 7's scripted end-to-end runs against a fake `oats` and a stand-in
+server: `scripts/e2e-wake-broker.sh`, one machine, no Docker. It covers the
+wake path, the pending registration, the broker restart, the GUI close, and
+the assertion that the broker acknowledged nothing.
+
+What it cannot cover is a real harness reading real typed text. Run that by
+hand, once, with real runtimes:
+
+1. **Set delivery external everywhere.** Launch each instance with
+   `AWEB_DELIVERY=session`. Confirm the Claude channel plugin and the Pi
+   extension each print their one line saying delivery is external, and that
+   `aw wake status` shows the instance registered.
+2. **One Claude Code (tmux), one Pi (Herdr), one Codex (tmux).** Codex has no
+   channel at all, so the broker is its only wake path.
+3. **Mail each one** from another identity. Assert: exactly one wake in the
+   correct terminal; the typed text names the sender and the count and carries
+   no subject; `aw mail inbox` inside the instance still shows the message
+   unread until the instance itself reads it.
+4. **GUI close.** Close one terminal's window. Assert `aw wake status` moves
+   that home to `inactive` — and that it did so from a `stopped` observation
+   after a confirmed live one, never from a pending error. The registration
+   stays until the retire hook removes it.
+5. **Broker restart while the agents stay alive.** Mail an instance, then
+   restart the daemon mid-cycle. Assert the agents keep running, the daemon
+   comes back without a cursor, and the unread item is re-raised from the
+   reconnect snapshot rather than suppressed.
+6. **Pending registration.** Register a home before its runtime receipt
+   exists, mail it, and assert nothing is typed until the first confirmed live
+   inspect — and that `aw wake status` reports it pending with its hints kept.
+7. **Pause.** `aw wake pause --home <home>`, mail it, assert nothing is typed
+   and the hint stays pending; restart the daemon and assert it is still
+   paused; `aw wake resume --home <home>` and assert the held hint arrives.
+
+Record what the terminals actually showed. The one failure this design treats
+as serious is a missed wake; a duplicate reminder is designed behaviour.
