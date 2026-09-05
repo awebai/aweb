@@ -201,7 +201,8 @@ makes a rejoin under the same name fail. alias_released_reason says why:
   not_own_workspace        the target is not the workspace you are running as
   team_not_hosted          self-hosted or BYOT; no cloud-held controller to revoke
   global_identity          global identities are retired by team-authorized removal
-  no_workspace_credential  no workspace-bound key in local config to authenticate with
+  no_workspace_credential  no workspace-bound key and no team certificate in local
+                           config to authenticate with
 
 When this command can retire you, it does not fall back to a plain delete: a
 failure is reported as a failure, because a success report for a retirement that
