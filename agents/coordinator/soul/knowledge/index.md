@@ -1,7 +1,13 @@
-# coordinator knowledge
+---
+okf_version: "0.1"
+---
 
-This bundle is not yet converted to OKF: the soul's historical decisions, documents, and memory are preserved beside the soul, unchanged, and linked here so a fresh instance finds them.
+# Coordinator knowledge
 
-* [decisions/](../../decisions/) - preserved as written.
-* [docs/](../../docs/) - preserved as written.
-* [memory/](../../memory/) - preserved as written.
+* [operating-continuity.md](operating-continuity.md) — Find current decisions and preserve the historical coordinator record.
+
+Historical record, preserved beside the soul as written and not converted to OKF:
+
+* [decisions/](../../decisions/)
+* [docs/](../../docs/)
+* [memory/](../../memory/)

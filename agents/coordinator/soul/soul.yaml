@@ -1,8 +1,8 @@
-# Canonical soul (body template). Instances are created from this soul, each with
-# its own aweb identity, symlinked back here for their operating doc.
 name: coordinator
 kind: persistent
-repo: .
 role: coordinator
-work: checkout        # main = instance points at the main checkout; worktree = own git worktree/branch
+description: Coordinates aweb work and reviewed integration across the deployment workspace.
+repo: .
+work: workspace
 runtime: claude
+yolo: true
