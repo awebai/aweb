@@ -12,20 +12,27 @@ weight: 59
 The broker is an aweb-owned host daemon. For every identity registered on the
 host it holds one bounded, reconnecting `aw events stream` connection,
 coalesces the resulting hints per instance, and — when an instance is due a
-wake — fetches the durable item by exact id and hands the text to the OATS
-input operation, which types it into that instance's original terminal target
-as if the operator had. It is the wake loop `aw run` already runs, generalised
-from one identity to many and from a provider process aweb launched to a
-terminal aweb does not own.
+wake — types a short message into that instance's original terminal through the
+OATS input operation, as if the operator had.
+
+**What it types is a fixed instruction to fetch, plus a hint summary.** Not the
+message. The broker never fetches, decrypts, or types a sender's content as a
+prerequisite for waking anybody: the harness already has `aw` inside the
+instance, with native verification, decryption and presentation, and running
+that machinery a second time in a daemon buys nothing and costs the instance's
+private keys. This is the terminal wake model, and it is the single decision
+the rest of the note follows from.
 
 The boundary:
 
 - **aweb owns** the broker: identity and authentication, the event streams,
-  reconnect, dedupe, coalescing, pending state, and the decision that an
+  reconnect, coalescing, rate limiting, pending state, and the decision that an
   instance is due a wake.
 - **OATS owns** instance launch and lifecycle, session receipts, the terminal
   target, and the backend-neutral `oats session inspect|input` contract over
   tmux windows and Herdr terminals (section 5).
+- **The instance's own `aw` owns** fetching, decrypting, presenting and
+  acknowledging. The broker touches none of it.
 
 It is not a scheduler, a runtime, or a supervisor. It never starts, restarts,
 or stops an instance. It is also, for a growing set of instances, the only wake
@@ -36,7 +43,11 @@ coordination until the broker registers it.
 ## 2. What the native channel does today
 
 Verified against `aweb-oss/channel-core/src/`, which is the surface the broker
-replaces per instance.
+replaces per instance. Read this section as the contract the broker must not
+break, not as a design to copy: channel-core fetches, decrypts, presents and
+acknowledges because it *is* the presentation surface. The broker is not. Every
+mechanism below stays where it is — inside the instance's `aw` — and the
+broker's job reduces to telling the instance there is something to fetch.
 
 Events consumed (`channel-core/src/api/events.ts:3`): `connected`,
 `mail_message`, `chat_message`, `control_pause`, `control_resume`,
@@ -127,163 +138,154 @@ Per-identity processes would multiply reconnect storms, give no single place to
 enforce the connection bound or the `AWEB_DELIVERY=session` exclusivity check
 (aweb-abik, landed 2026-09-05: the variable exists in channel-core, the Pi
 extension and the Claude channel; the broker-side refusal does not yet), and
-add N processes for OATS to supervise. Connections are capped at 128 — chosen,
-not measured, matching the archived draft
-(`Archive/aweb-wake-draft-2026-09-05/wake-service.mjs`); registrations beyond
-it are reported in status, not silently dropped. On a remote host the broker
+add N processes for OATS to supervise. Streams are capped at 128, an accepted
+configurable initial bound rather than a measured one, matching the archived
+draft (`Archive/aweb-wake-draft-2026-09-05/wake-service.mjs`); registrations
+beyond it are reported in status, not silently dropped. On a remote host the
+broker
 runs there, next to the instances, and calls the same host-local `oats session`
 commands.
 
-**Authentication is never re-implemented.** Each identity's client is built in
-Go from its identity home through `awconfig.ResolveWorkspace` with
-`ExternalIdentityHome: true`; the one new export is a small constructor turning
-an identity home into a configured client, extracted from the private helper at
-`cli/go/cmd/aw/helpers.go:310`. Decryption needs no second extraction, because
-the broker does not decrypt in-process (see the E2E policy below).
+**Authentication is never re-implemented, and credentials stay explicit per
+client.** Each identity's client is built in Go from its identity home through
+`awconfig.ResolveWorkspace` with `ExternalIdentityHome: true`, reusing or
+extracting alongside the private helper at `cli/go/cmd/aw/helpers.go:310`. The
+broker needs stream-read authority and nothing else: it never opens a message,
+so it never needs decryption material for any identity.
 
-**Pending state lives on disk, per instance, and only in the broker.**
+**Pending state lives on disk, per instance, and holds no presented marks.**
 `~/.config/aw/wake/` holds `instances.d/<sha256-of-canonical-home>.json`
-(pending hints, presented marks, last attempt), `registry.d/`, `status.json`,
-and `lock/`. Two separate bounded stores, and they must not be confused: the
-**presented-mark store** (30 days, 5000 marks per instance — longer and
-per-instance rather than channel-core's 24 hours and store-wide, because an
-unacked item here is re-announced indefinitely and the mark is the only thing
-suppressing it) and the **pending-hint store** (512 hints per instance). The
-eviction consequences differ: evicting a mark causes a re-presentation,
-evicting a hint loses a wake, so hint eviction is reported in status and mark
-eviction is not. Whichever bound binds first wins — an instance taking more
-than 5000 items in 30 days will re-present the oldest. In-memory state alone is
-wrong: a broker restart is an ordinary event and must not re-present messages
-already typed into a terminal. OATS holds no pending state, no coalescing and
-no stream; that division is part of the agreed contract.
+(pending hints, last attempt, rate-limit state), `registry.d/`, `status.json`,
+and `lock/`. The hint store is bounded at 512 per instance and eviction is
+reported in status.
 
-**Registration is capability-owned, through the `oats.aweb` hooks**, with no
-aweb-specific kernel phase, and happens only when the capability's delivery
-setting is `session`. The spawn hook runs *before* the runtime is allocated, so
-it registers the canonical home in a **pending** state together with the
-identity home and an explicit `AWEB_DELIVERY=session` field — the same value
-the instance gets in its launch environment. Explicit, so the broker's
-exclusivity check reads the field rather than inferring it; a registration
-without it is refused. The broker opens that identity's stream immediately but
-polls `oats session inspect` and makes no submission until `present:true`. The
-retire hook runs after quiescence and deregisters, so a spawn that never
-launched and was then retired does not linger. `aw wake
-register|deregister|status` are the commands the hooks call; neither side needs
-the other running.
+There is deliberately **no durable "presented" mark keyed on `submitted:true`,
+and no suppression of a future wake for an item that is still unread.** A TTY
+write is not evidence of processing. If a prompt is dropped — a harness
+restarting, a pane replaced between inspect and input, a paste that lands
+somewhere unintended — a mark taken on the strength of that write would strand
+real unread work with no path back, because the broker is not the surface that
+would notice. So the broker persists what it has *tried*, not what it believes
+*arrived*: hints coalesce, retries are rate-limited, and the reconnect
+snapshot's unread state drives later reminders until the authoritative unread
+state clears.
 
-**Reconciliation reads `present:false` narrowly.** A pending home necessarily
-reports `present:false`, so that alone must not deactivate anything. On
-`present:false` *with state `stopped`* — section 5's "the target is missing" —
-the broker marks the registration inactive and closes its stream. Inactive is
-not removed: removal stays with the retire hook, and `aw wake status` keeps
-showing a stopped home until it runs.
+**At-least-once bounded hints are the honest contract.** Exactly-once
+presentation is not available on this transport and the note should not imply
+it. A busy instance may be told twice that mail is waiting; it will not be told
+zero times because a write silently failed. OATS holds no pending state, no
+coalescing and no stream.
 
-**A pending home is patient, then dropped.** A registration stays pending for
-24 hours before the broker drops it with one log line naming the home and the
-elapsed time. The generous bound is deliberate: a first launch can sit at a
-folder-trust or channel prompt for as long as the operator is away, and a wake
-lost to a 30-minute timer would be lost for exactly the reason the broker
-exists. Hints for a pending home are not dropped with it — they accumulate and
-coalesce inside the ordinary 512-hint store and are delivered as one batch when
-inspect first reports `present:true`. Hints expire only under the 30-day mark
-rule.
+**Registration goes through the official `oats.aweb` capability**, with the
+home and the identity home both supplied explicitly, and happens only when the
+capability's delivery setting is `session`. This monorepo's older
+`aweb.identity` grant deployment is one deployment, not the interface: nothing
+in the broker may hardwire it, and initial direct identities and Merlin's
+authority transfer are not grant homes at all. OATS owns the `delivery:session`
+hook glue and the narrow retained-authority binding. The spawn hook records
+`AWEB_DELIVERY=session` in the registration alongside the home, the same value
+the instance gets in its launch environment; the field is explicit so the
+broker's exclusivity check reads it rather than infers it, and a registration
+without it is refused. The retire hook deregisters after quiescence. `aw wake
+register|deregister|status` are the commands the hooks call.
 
-**`aw run`'s behaviour does not change**, though its internals do. It remains
-the compatibility launcher aweb *starts* — `docs/aw-run.md` is explicit that
-aweb does not own the launched runtime, process lifecycle, or session UX, and
-the broker does not change that either. The refactor is extraction: stream
-ownership, dedupe, and coalescing move into a reusable `cli/go/wake` package
-that both `aw run` and the broker consume. A user who wants aweb to start the
-process still runs `aw run`; a user whose terminal is owned by OATS gets the
-broker. Neither runs beside the native channel for the same instance.
+**Before the first confirmed `present`, tolerate everything.** The hook
+registers after the home exists but before the runtime receipt does, so a
+pending home does not merely report `present:false` — it reports
+`E_RUNTIME_ENDPOINT_UNKNOWN`, a typed error. Until the broker has seen one
+confirmed live inspect, every pending state and every error is tolerated and
+retried, and nothing is concluded from either. *After* a confirmed live
+observation, `stopped` means inactive: the broker closes the stream and marks
+the registration inactive, leaving removal to the retire hook.
 
-**Dedupe and coalescing.** The dedupe key is `kind:conversation_id:message_id`,
-a compatible superset of `channel.ts:1001` rather than a match — channel-core's
-first component is a closed `mail | chat | app`, the broker's `kind` must also
-span control, work and claim — held in the durable per-instance store. Control
-signals key on `signal_id` and app events on `event_id`; work and claim events
-have no stable replay key and are deduped only within a coalescing window,
-never durably, because dropping them risks hiding a real coordination change
-(`cli/go/run/eventbus.go:422` records the same reasoning). Coalescing is per
-instance: one submission in flight at a time, hints accumulate while an
-instance is not idle, and the next submission presents them as one batch
-ordered interrupt, communication, coordination.
+**Pending registrations expire at 30 minutes.** The bound is operational
+visibility, not data safety — it deletes no server messages. Hints are durable
+server state, so a home that expires and later comes up is re-raised by the
+reconnect snapshot's unread set; nothing is lost by dropping a stalled
+registration, and a launch that never completed should not sit in `aw wake
+status` indefinitely pretending to be a wake path. Expiry writes one log line
+naming the home and the elapsed time.
 
-**Intent to inspect state, including `unknown`.** `inspect` normalises the
-backend state to exactly `idle | busy | blocked | unknown | stopped`: Herdr
-supplies the first three, tmux always says `unknown`, and `present:false` says
-`stopped`. Any other string the broker treats as `unknown`, so a vocabulary
-extension degrades to the conservative path rather than to a crash. Lead still
-pins the vocabulary. The `unknown` policy is the broker's, and this is it:
+**`aw run` is not refactored.** Earlier drafts moved stream ownership, dedupe
+and coalescing into a shared package that both would consume; that is a
+prerequisite the broker does not need and a way to break a working command for
+a design idea. Reuse or extract only the narrow Go pieces the broker actually
+needs, and keep `aw run` green. Working self-use over complexity.
 
-| Intent | idle | busy | blocked | unknown | `stopped` |
+**Coalescing and rate limiting, not dedupe.** With no presented marks there is
+nothing to deduplicate against durably. Within a coalescing window the broker
+collapses hints per instance — keyed on `kind` plus `message_id`, `signal_id`,
+`event_id` or `session_id` — so a burst becomes one message; across windows, a
+still-unread item may legitimately produce another reminder, rate-limited per
+instance. One submission is in flight at a time, and a batch is ordered
+interrupt, communication, coordination.
+
+**Intent to inspect state, as implemented.** Herdr reports `idle`, `done`,
+`working`, `blocked` or `unknown`; `generic shell`, `stopped` and
+`not-launched` also occur. The broker maps `done` to idle and `working` to
+busy, and treats any string it does not recognise as `unknown`, so a vocabulary
+extension degrades to the conservative path rather than to a crash.
+
+| Intent | idle / done | working | blocked | unknown | stopped / not-launched |
 | --- | --- | --- | --- | --- | --- |
-| `wake` | present now | defer | defer | present after quiet period | close stream |
-| `steer` | present now | defer | defer | present after quiet period | close stream |
-| `ambient` | present now | defer, coalesce | defer, coalesce | present after quiet period | close stream |
+| `wake` | type now | defer | defer | coalesce, rate-limited | inactive after first confirmed live |
+| `steer` | type now | defer | defer | coalesce, rate-limited | inactive after first confirmed live |
+| `ambient` | type now | defer, coalesce | defer, coalesce | coalesce, rate-limited | inactive after first confirmed live |
 
-The quiet period (default 45 s, configurable) runs from the broker's own last
-submission to that target — the only thing it knows about a tmux window. It is
-a rate limit, not an idle detector, and this note should not pretend otherwise:
-on tmux the broker can type into a running turn and occasionally will. What
-that costs is bounded, and this is why 45 s is safe to ship unmeasured — Claude
-Code queues input arriving mid-turn and processes it after the turn, so a
-too-short period costs a queued message, not a lost one. Bracketed paste plus
-Enter is what makes it a queued prompt rather than scrambled input. On Herdr
-the state is known and the period never applies. Revisit the default against
-measured turn lengths; the setting exists so nobody has to wait for that.
+**`unknown` gets a coalescing and rate-limit policy, not a delay.** tmux always
+says `unknown` and carries no readiness promise, and no amount of waiting turns
+that into one — an initial fixed delay would only make the instance feel deaf
+without making the write safer. So the broker sends, and bounds how often it
+sends. Typing while the harness is running may simply enqueue as a user
+message, which is the behaviour that makes this acceptable; there is no
+readiness framework here and the note should not invent one. Retry policy lives
+in the broker, nowhere else.
 
-Where the state is known, the broker never types into busy or blocked. That
-makes the mapping two behaviours, not three — wake when idle, inform otherwise
-— and that is the accepted scope: OATS has no interrupt primitive and none is
-planned, so `steer` differs from `wake` only in ordering and text template. An
-operator-visible interrupt would be a separate, explicitly requested feature,
-not something the broker improvises by typing into a live turn. Deferred hints
-are re-evaluated on each inspect poll (two seconds, chosen) with an unbounded
-wait; an instance that never goes idle fills its pending-hint store and reports
-the backlog and every eviction in status.
+A **known** `blocked` defers an ordinary wake — that is a real signal and worth
+honouring. Deferred hints are re-evaluated on each inspect poll (two seconds)
+with an unbounded wait; an instance that never leaves `working` fills its hint
+store and reports the backlog and every eviction in status.
 
-**Presentation, and the acknowledgement the broker does not make.** For each
-new mail hint the broker fetches by exact id (`awid.InboxParams{MessageID:
-...}`, `cli/go/awid/mail.go:609`), skips self-sent messages, composes the text,
-calls `oats session input`, and on `submitted:true` writes the durable
-presented mark. Chat is the same shape against the session: fetch the exact
-message through `aw chat history --session-id <id> --message-id <id>`, which
-does not mark anything read (`cli/go/cmd/aw/chat.go:307`), and present it with
-`sender_waiting` carried into the text. A message the broker declines to
-present — verification threw, as at `channel-core/src/channel.ts:589` — is
-written to an append-only undelivered log and left untouched on the server,
-because a message dropped before presentation otherwise leaves no trace
-anywhere.
+**What the broker types.** One short message, in two parts: the fixed
+instruction — check pending mail and chat with `aw` from inside this instance,
+and handle what is there — and a hint summary saying how many items of what
+kind are waiting, with senders and ids where the event carried them. Metadata
+and counts only. No subjects for encrypted mail, no bodies ever, and nothing
+that requires the broker to have opened a message. The instance's own `aw`
+verifies, decrypts, presents and acknowledges; the broker's text exists to make
+it run.
 
-Then it stops. `submitted:true` means the bytes reached the terminal, not that
-the harness read them, so **the broker does not acknowledge mail or chat at
-all.** The ack point stays with the harness: the instance's own `aw mail reply`
-(best-effort acks its source) or an explicit `aw mail ack`
-(`docs/receiving-events.md`).
+**No broker acknowledgement, ever.** `submitted:true` means bytes reached the
+terminal, and nothing in this design converts that into a read. The ack belongs
+to the harness: the instance's own `aw mail reply` best-effort acks its source,
+or `aw mail ack` does it explicitly (`docs/receiving-events.md`). No Herdr
+state transition supplies a consumption ack either — `working` after a
+submission means the agent is doing something, not that it did *this*.
 
-Two rules stated sections apart combine here, so state the combination: every
-presented item stays unread, reappears in every reconnect snapshot for as long
-as the instance ignores it, and is suppressed each time by the durable mark. An
-ignored message is presented exactly once and then absorbed for the 30-day mark
-retention, while the identity's unread backlog grows. That backlog is the
-operator's signal, so the broker reports each identity's `unread_count`
-(`cli/go/awid/events.go:55`) in `status.json`. The trade against channel-core's
-"presented equals read" (`channel-core/src/channel.ts:667-670`) is deliberate:
-the unread list no longer clears itself, and no message is ever marked read
-because bytes were written to a terminal.
+The consequence is the honest one: an item the instance ignores stays unread,
+the reconnect snapshot keeps surfacing it, and the broker keeps producing
+rate-limited reminders until the authoritative unread state clears. The
+identity's `unread_count` (`cli/go/awid/events.go:55`) is reported in
+`status.json` so a backlog is visible rather than silent.
 
-**E2E policy: decrypt by exec, never in-process.** The broker runs `aw mail
-show --message-id <id> --json` with `AWEB_IDENTITY_HOME` set to that instance's
-identity home — the variable the OATS spawn hook already contributes
-(`oats/docs/oats-aweb-seam.md`) — which is channel-core's path
-(`channel-core/src/local_aw.ts:67`). Decrypting in-process would need the
-key-load path at `cli/go/cmd/aw/mail.go:790-794` lifted out of `package main`
-and would collect every instance's private key material in one long-lived
-daemon. When the exec fails or returns no plaintext, the broker presents
-metadata only and lets the harness fetch, as channel-core does
-(`channel-core/src/channel.ts:625`). Plaintext reaches the instance's own
-terminal and nowhere else; pending state holds ids and kinds, never bodies.
+**E2E is not in the first broker's path at all.** Because the broker sends
+hints rather than content, there is nothing for it to decrypt: no `aw mail
+show` exec, no key material, no `AWEB_IDENTITY_HOME` handling for decryption
+purposes, and no granted-identity decryption problem to solve. The instance's
+`aw` decrypts under whatever identity it was launched with. Grant TTLs and E2E
+key custody remain real questions, but they are deployment-specific and belong
+to the deployment, not to this daemon.
+
+**Controls.** Pause and resume are durable broker state, held per instance and
+applied to whether the broker types at all — that part is authoritative and
+survives restarts. Transient interrupts are best-effort. There is no
+authoritative GET for control state and the broker does not need one as a
+prerequisite: a control signal consumed during an SSE gap is lost, which is
+existing aweb protocol behaviour (`docs/receiving-events.md` calls control
+signals at-most-once), and the note states it plainly rather than designing
+around it. If a real interrupt is wanted, lead adds a neutral `oats session
+interrupt` that sends Ctrl-C to the original terminal; the logical pause and
+resume policy stays in aweb. **Queued text is never called an interrupt.**
 
 **Reconnect bounds.** The broker reconnects at four minutes, adopting
 channel-core's planned-close margin (`channel-core/src/api/events.ts:49`)
@@ -295,8 +297,8 @@ required at a hundred connections and neither existing implementation has it,
 and a ceiling above 15 s would spend a visible fraction of every five-minute
 cycle deaf. A 4xx quarantines one identity and reports it; it never stops the
 daemon. There is no resumable cursor and the broker must not invent one — the
-reconnect snapshot is the recovery mechanism, and durable dedupe is what makes
-a repeated snapshot harmless.
+reconnect snapshot is both the recovery mechanism and the reminder mechanism,
+which is exactly why nothing durable may suppress what it re-raises.
 
 ## 5. Interface to the OATS input/inspect operation
 
@@ -318,15 +320,16 @@ What the broker reads out of it:
 
 - **`submitted:true` is delivery, not consumption** — the bytes reached the
   target, nothing more. That is why the ack point is not here (section 4).
-- **`state` is normalised to `idle | busy | blocked | unknown | stopped`** and
-  is truthful about what the backend knows: Herdr supplies the first three,
-  tmux always says `unknown` because it cannot promise harness readiness, and
-  `present:false` says `stopped`. The caller owns the `unknown` policy; the
-  broker's is the quiet period in section 4.
-- **`present:false` with state `stopped` means the target is missing**, while
-  an inaccessible backend is a typed error. The broker separates "this instance
-  is gone" from "OATS could not answer", and only the first marks the
-  registration inactive; removing it stays with the retire hook (section 4).
+- **`state` is what the backend actually reports.** Herdr: `idle`, `done`,
+  `working`, `blocked`, `unknown`. Also occurring: `generic shell`, `stopped`,
+  `not-launched`. tmux always says `unknown` and promises no readiness. The
+  caller owns the `unknown` policy; the broker's is coalescing plus a rate
+  limit (section 4), not a delay.
+- **A pending home reports `E_RUNTIME_ENDPOINT_UNKNOWN`, not `present:false`.**
+  The hook registers after the home exists and before the runtime receipt does,
+  so the absence of a receipt is a typed error rather than an absent target.
+  Only after one confirmed live inspect does `stopped` mean inactive; removing
+  the registration stays with the retire hook (section 4).
 - **`input` validates the lifecycle receipt before typing**, refusing a missing
   or replaced target (new Herdr terminal id, different tmux window identity)
   and a fallback shell left by an exited harness. The broker never has to prove
@@ -335,14 +338,22 @@ What the broker reads out of it:
   bracketed paste plus Enter, Herdr uses the pane run.
 - **Host-local only.** OATS carries no SSE, idle detection, coalescing, pending
   state, or instance credentials — the ownership split in section 1.
+- **Not in the contract, and not needed yet:** an interrupt. If one becomes
+  necessary, lead adds a neutral `oats session interrupt` that sends Ctrl-C to
+  the original terminal. Until then the broker has no way to interrupt anything
+  and must not describe queued text as if it did.
 
 ## 6. Failure modes, and what the broker must never do
 
-- **Never run `aw mail inbox`**, and never fetch unread without a message-id
-  filter. The CLI acknowledges what it displays (`cli/go/cmd/aw/mail.go:856`),
-  marking messages read that no instance ever saw.
-- **Never treat `submitted:true` as consumption.** It is the strongest signal
-  the interface offers and it is still only delivery.
+- **Never fetch, decrypt, or type a sender's content.** The instruction to
+  fetch is the payload. This is also what keeps `aw mail inbox` out of the
+  broker: the CLI acknowledges what it displays (`cli/go/cmd/aw/mail.go:856`),
+  and inside the instance that is correct, while in the daemon it would mark
+  messages read that no agent ever saw.
+- **Never treat `submitted:true` as consumption**, and never let it suppress a
+  later wake for an item that is still unread. A TTY write is not processing
+  evidence.
+- **Never acknowledge anything**, on any path, for any reason.
 - **Never run beside a live native channel for the same instance.**
   Registration requires `AWEB_DELIVERY=session`, recorded as an explicit field
   by the spawn hook. The variable exists since aweb-abik landed
@@ -351,125 +362,172 @@ What the broker reads out of it:
   registration without the field is refused with the conflict named, and the
   check reads the field rather than inferring the mode. Two presentation
   surfaces on one identity double every wake.
-- **Never present the same message twice** within the mark-retention window,
-  across reconnects or restarts. Past 30 days the mark is gone and a
-  still-unread item can be presented again; that is the bound, not an
-  exception.
-- **Never type into a known-busy or known-blocked instance**, and never write
-  plaintext into broker state, logs, or status.
-- **Never submit to a home that is not yet `present`.** The spawn hook
-  registers before the runtime exists; typing then lands in whatever the
-  terminal is at that moment.
+- **Never call queued text an interrupt**, in the code, the logs, or the text
+  typed into the terminal.
+- **Never type into a known `working` or `blocked` instance**, and never write
+  message content into broker state, logs, or status.
+- **Never submit before the first confirmed live inspect.** A pending home's
+  `E_RUNTIME_ENDPOINT_UNKNOWN` is not an invitation to try anyway.
+- **Never promise exactly-once.** Duplicate reminders are the designed
+  behaviour; a missed wake is the failure.
 - Stream deaf for one identity: reported in `status.json` and retried; on
   recovery the snapshot supplies what was missed and the synthesized
-  `channel_reconnected` produces one catch-up presentation, not one per
-  message.
+  `channel_reconnected` produces one catch-up hint, not one per message.
 - Broker crash: instances keep running, wakes stop, nothing was acknowledged
-  anyway; restart re-reads registrations and durable marks.
-- `oats session input` refuses a replaced target: nothing was presented, no
-  mark is written, the item stays unread, and the registration is reconciled on
-  the next inspect.
-- OATS unreachable (a typed error, not `present:false`): retry with backoff and
-  report. An unanswerable backend is never treated as an absent instance,
-  because that would mark a live agent inactive and stop its wakes.
+  anyway; restart re-reads registrations and pending hints, and the reconnect
+  snapshot re-raises anything still unread. This is the case the no-marks rule
+  protects.
+- `oats session input` refuses a replaced target: nothing was typed, the hint
+  stays pending, and the registration is reconciled on the next inspect.
+- OATS unreachable (a typed error): retry with backoff and report. An
+  unanswerable backend is never treated as an absent instance, because that
+  would mark a live agent inactive and stop its wakes.
 
 ## 7. Implementation plan
 
-Go, in aweb-oss.
+Go, in aweb-oss. Narrow additions; no restructuring of anything that works
+today.
 
-- `cli/go/wake/` — the reusable core: per-identity stream ownership
-  (generalised from `cli/go/run/eventbus.go`), durable delivery store,
-  coalescer, dedupe, intent/state policy. No terminal knowledge.
+- `cli/go/wake/` — the broker: per-identity streams, the hint coalescer, the
+  rate limiter, the state policy, and the message composer. Reuses
+  `cli/go/run/eventbus.go` where it can be used as-is and copies the small
+  parts it cannot; `aw run` is not touched and stays green.
 - `cli/go/wake/session/` — the `oats session inspect|input` adapter: envelope
-  parsing, the typed-error/`present:false` split, and a fake for tests. The
-  only package that knows OATS exists.
+  parsing, the state mapping, the typed-error handling including
+  `E_RUNTIME_ENDPOINT_UNKNOWN`, and a fake for tests. The only package that
+  knows OATS exists.
 - `cli/go/cmd/aw/wake.go` — `aw wake run|status|register|deregister`.
-- Client construction extracted from `cli/go/cmd/aw/helpers.go:310` into an
-  exported per-identity-home constructor.
+- A per-identity-home client constructor, reused from or extracted alongside
+  `cli/go/cmd/aw/helpers.go:310`, whichever keeps the existing callers intact.
+
+**What it types**, fixed instruction plus hint summary, e.g.:
+
+```
+aweb: 2 items waiting. Check them from this instance with `aw mail inbox`
+and `aw chat pending`, then handle what is there.
+  mail from alice (2 unread)
+  chat from bob — sender waiting
+```
+
+**What it persists**, per instance: pending hints (bounded at 512), last
+attempt, rate-limit state, and whether the instance is paused. No presented
+marks, no message content.
 
 Unit tests, all against a fake `oats session`, no network:
 
-- coalescing: hints arriving while busy collapse into one submission at idle;
-  ordering is interrupt, communication, coordination; the per-instance cap
-  holds.
-- dedupe: the same `message_id` across a reconnect and across a process restart
-  presents once; work and claim events are not durably deduped.
-- deferral: `busy` and `blocked` never produce an `input` call; a transition to
-  idle flushes; `unknown` submits only after the quiet period and then respects
-  it again.
-- registration: a pending home is polled and never submitted to before
-  `present:true`, and hints accumulated while it was pending are delivered as
-  one batch when it becomes present; a registration still pending at 24 hours
-  is dropped with one log line; a registration without `AWEB_DELIVERY=session`
-  is refused; `present:false` with `stopped` marks the registration inactive
-  without removing it, while a typed error does neither.
-- acknowledgement: no ack is ever sent, on any path; a failed durable mark is
-  retried rather than skipped; a refused `input` leaves no mark.
+- composition: the typed text carries the fetch instruction and counts only — a
+  test asserts no subject or body from a hint ever reaches the composed
+  message.
+- coalescing and rate limiting: a burst becomes one submission; a still-unread
+  item produces a later reminder no sooner than the rate limit; the hint cap
+  holds and eviction is reported.
+- state mapping: `done` maps to idle, `working` to busy, an unrecognised string
+  to `unknown`; `working` and `blocked` never produce an `input` call;
+  `unknown` submits under the rate limit with no initial delay.
+- registration: nothing is submitted before the first confirmed live inspect;
+  `E_RUNTIME_ENDPOINT_UNKNOWN` and other errors are tolerated until expiry; a
+  registration still pending at 30 minutes is dropped with one log line; a
+  registration without `AWEB_DELIVERY=session` is refused; after a confirmed
+  live observation `stopped` marks it inactive without removing it.
+- no acknowledgement: no ack on any path; a restart with pending hints
+  re-raises from the reconnect snapshot rather than suppressing.
+- controls: pause survives a restart and suppresses typing; resume restores it;
+  a transient interrupt lost across a stream gap is reported, not retried.
 - reconnect: 4xx quarantines one identity and leaves others streaming; the
-  five-minute close is not reported as an outage.
+  planned close is not reported as an outage.
 
-Scripted end-to-end on one machine: two instances in `AWEB_DELIVERY=session`
-mode, one Claude Code (tmux, `state: "unknown"`) and one Pi, each with its own
-identity home, native channel disabled for both. Send mail to each and assert
-one presentation in the correct terminal, that the broker marked nothing read,
-and that the instance's own reply clears it; send during the quiet period and
-assert the deferral then the flush; kill the broker mid-cycle and assert no
-duplicate on restart; register a home before its runtime exists, mail it while
-it is still pending, and assert the first submission waits for `present:true`
-and then carries the hint that arrived before it; finish with an E2E message,
-proving decryption under the instance's own identity home and metadata-only
-delivery when the key is unreadable.
+Scripted end-to-end on one machine, native channel disabled throughout, with
+instances in `AWEB_DELIVERY=session` mode across all three runtimes — Claude
+Code and Codex (both tmux, `unknown`, the same generic terminal mechanism) and
+Pi. Mail each one and assert a single wake in the correct terminal, that the
+broker marked nothing read, and that the instance's own `aw` fetched and
+cleared it. Then the three qualification cases: **GUI close** — close the
+terminal GUI and assert the broker reports the instance inactive only after a
+confirmed live observation preceded it, never from a pending error; **broker
+restart while the agents stay alive** — kill and restart the daemon mid-cycle
+and assert the agents keep running, no wake is lost, and unread items are
+re-raised from the snapshot rather than suppressed; and **pending
+registration** — register a home before its runtime receipt exists, mail it,
+and assert nothing is typed until the first confirmed live inspect.
 
-## 8. Resolved with oats, 2026-09-05
+## 8. Resolved with lead, 2026-09-05
 
-These were open questions in the first draft. The answers are folded into
-sections 4 to 7 as decisions; they are recorded here so a reader can see what
-was settled and by whom rather than inferring it.
+Lead's design review. Where it differs from the oats answers below, it
+supersedes them and oats concurs. Folded into sections 1 to 7 as decisions;
+kept here so a reader can see what was settled rather than infer it.
+
+- **Delivery is metadata and hints plus a fixed instruction to fetch** with
+  `aw` inside the instance — Juan's terminal wake model. The broker does not
+  fetch, decrypt or type sender messages as a prerequisite; the harness already
+  has native `aw` verification, decryption and presentation. This also removes
+  granted-identity decryption from the first broker's path entirely.
+- **No presented marks and no suppression of future wakes.** A TTY write is not
+  processing evidence, and a dropped prompt would strand unread work. Persist
+  pending hints and last attempt, coalesce and rate-limit retries, and let the
+  reconnect snapshot drive reminders until authoritative unread state clears.
+  At-least-once bounded hints is the contract; exactly-once presentation is not
+  available on this transport. No broker ACK, ever.
+- **Inspect vocabulary as implemented:** Herdr `idle`, `done`, `working`,
+  `blocked`, `unknown`; `generic shell`, `stopped` and `not-launched` also
+  occur. `done` maps to idle, `working` to busy. tmux `unknown` carries no
+  readiness promise, so the policy is short coalescing plus a rate limit, not
+  an initial delay; typing while running may enqueue as a user message, and
+  there is no readiness framework. A known `blocked` defers an ordinary wake.
+  Retry policy lives in the broker.
+- **Pending registrations see `E_RUNTIME_ENDPOINT_UNKNOWN`**, not necessarily
+  `present:false`, because the hook registers after home creation and before
+  the runtime receipt. Tolerate pending states and errors until expiry; after a
+  confirmed live observation, `stopped` means inactive. The 30-minute expiry
+  stands as a visible operational bound — it deletes no server messages, and
+  hints survive as durable server state that the reconnect snapshot re-raises.
+- **Registration works through the official `oats.aweb` capability** with home
+  and identity home supplied explicitly. Do not hardwire the monorepo's older
+  `aweb.identity` grant deployment. OATS owns the `delivery:session` hook glue
+  and the narrow retained-authority binding. Grant TTL and E2E questions are
+  deployment-specific: initial direct identities and Merlin's authority
+  transfer are not 8-hour grant homes.
+- **Controls:** persistent broker pause state and best-effort transient
+  interrupt semantics, with no authoritative GET control endpoint as a
+  prerequisite. Control lost across an SSE gap is existing aweb protocol
+  behaviour, stated honestly. A real interrupt would be a neutral `oats session
+  interrupt` (Ctrl-C to the original terminal) added by lead; logical pause and
+  resume stays in aweb. Never call queued text an interrupt.
+- **No wholesale `aw run` refactor as a prerequisite.** Extract or reuse the
+  narrow Go pieces the broker needs and keep `aw run` green. Working self-use
+  over complexity.
+
+Also settled: 128 streams is an acceptable configurable initial bound; one
+broker per host; `AWEB_DELIVERY=session` from the hook; explicit credentials
+per client. Qualification adds Codex, GUI close, and broker restart while
+agents remain alive (section 7).
+
+## 9. Resolved with oats, 2026-09-05
+
+Superseded in two places by section 8 — the 45-second quiet period and the
+24-hour pending expiry are withdrawn — and recorded because the rest stands.
 
 - **Registration and the exclusivity field.** Registration happens only from
   the `oats.aweb` hooks and only when the capability's delivery setting is
   `session`. The spawn hook records `AWEB_DELIVERY=session` in the registration
   alongside the home, the same value the instance gets in its launch
-  environment. The field is explicit so the broker's check reads it instead of
-  inferring it, and a registration without it is refused.
-- **Pending expiry: 24 hours, not 30 minutes.** A first launch can sit at a
-  folder-trust or channel prompt while the operator is away. Hints for a
-  pending home are kept and coalesced inside the existing 512 cap and delivered
-  once when inspect first reports present; they expire only under the 30-day
-  rule. The retire hook deregisters, so a spawn that never launched and was
-  retired never lingers.
-- **The state vocabulary.** `inspect` normalises to exactly `idle | busy |
-  blocked | unknown | stopped` — Herdr supplies the first three, tmux always
-  says `unknown`, `present:false` says `stopped` — and any other string is
-  treated as `unknown`. Lead still pins the vocabulary.
-- **The quiet period stays 45 s, configurable.** On tmux, input sent during a
-  running Claude Code turn is queued by the harness and processed after it, so
-  too short costs a queued message rather than a lost one; on Herdr the state
-  is known and the period does not apply. Revisit against measured turn
-  lengths.
+  environment. Explicit, so the broker's check reads it instead of inferring
+  it; a registration without it is refused.
+- **Hints for a pending home are kept, coalesced and delivered once the
+  instance is present** rather than dropped with the registration.
+- ~~Pending expiry of 24 hours~~ — withdrawn; 30 minutes stands (section 8).
+- ~~A 45-second quiet period before the first submission on tmux~~ — withdrawn;
+  coalescing and a rate limit replace it (section 8). What survives is the
+  observation behind it: input arriving mid-turn is queued by the harness
+  rather than lost, which is what makes sending without a readiness signal
+  acceptable.
 - **Two behaviours, not three, is the accepted scope.** OATS has no interrupt
-  primitive and none is planned. Wake when idle, inform otherwise; an
-  operator-visible interrupt would be a separate, explicitly requested feature.
+  primitive and none is planned.
 
-## 9. Open questions for lead
+## 10. Status
 
-1. The broker acknowledges nothing, because `submitted:true` is not consumption
-   and no other evidence exists, so unread items sit on the server until the
-   instance handles them. Confirm that is the intended end state, or name the
-   signal that closes the loop — a Herdr state transition is the only
-   candidate, and it exists on one backend of two.
-2. This is a knowing deviation, not an open choice. `docs/receiving-events.md`
-   instructs consumers to "re-fetch authoritative state after reconnect rather
-   than depending on control-frame replay"; the broker cannot, because the only
-   control surface is `POST /agents/{alias}/control`
-   (`server/src/aweb/routes/agents.py:1003`) and there is no GET. So the broker
-   presents control signals when seen and loses any consumed before a dropped
-   frame. Accept the gap, or the endpoint has to exist first.
-3. **Does a grant home carry E2E decryption material at all?**
-   `oats/docs/oats-aweb-seam.md` says the worker's grant home "contains only
-   `grant.yaml` and the session key", while the decrypt path resolves an
-   assertion plus an X25519 private key inside the identity home
-   (`cli/go/cmd/aw/mail.go:790-794`). If it does not, every E2E message to a
-   granted instance silently takes the metadata-only path, which the broker
-   would report as normal. The 8-hour grant TTL against a long-lived broker is
-   the same question a second time.
+Settled. Lead reviews the corrected note without another approval gate, and
+implementation proceeds on the agreed design. The three questions this note
+carried for lead are answered above: the ack belongs to the harness and no
+Herdr transition supplies a consumption ack; the control gap is stated honestly
+rather than blocked on a new endpoint; and grant-home E2E custody is
+deployment-specific and not a blocker for the first broker.
