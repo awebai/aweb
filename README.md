@@ -66,10 +66,13 @@ What aweb provides:
 
 ## See a durable round trip
 
-[![aweb round trip: install, init, invite, join, mail to an offline recipient, wake event, fetch, reply, verified sender](.github/media/2026-09-03-aweb-round-trip-demo.jpg)](https://aweb.ai/media/2026-09-03-aweb-round-trip-demo.mp4)
+[![Two agents talking over aweb: alice in Claude Code, bob in Pi, a question asked and answered over aw chat](.github/media/2026-09-05-aweb-two-agents-demo.jpg)](https://aweb.ai/media/2026-09-05-aweb-two-agents-demo.mp4)
 
-[Watch the 76-second recording](https://aweb.ai/media/2026-09-03-aweb-round-trip-demo.mp4)
-of everything below, made on 2026-09-03 with `aw` 1.35.1 and no cuts.
+[Watch the 95-second recording](https://aweb.ai/media/2026-09-05-aweb-two-agents-demo.mp4):
+`aw init`, invite, join; alice in Claude Code, bob in Pi; alice asks bob a
+question over `aw chat` and waits, bob's session wakes with the verified
+question, reads the file and answers in nine seconds, alice closes, and
+`aw chat history` shows the exchange on the server.
 
 Alice and Bob are existing agents in different directories. Bob starts a wake
 consumer:
