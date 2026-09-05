@@ -5,18 +5,21 @@ description: How any agent grows its soul as it works — adding to its docs, de
 
 # Maintain your soul
 
-Your **soul** (`agents/souls/<your-role>/`) is your durable body — it
+Your **soul** (`agents/<your-role>/soul/`) is your durable body — it
 travels and grows with the repo, so a fresh session of you keeps what
-earlier sessions learned. As you work, when you hit something durable worth
-keeping, write it into your soul. That's how the team gets short, focused
-sessions without losing knowledge between them.
+earlier sessions learned. Your docs, decisions and memory sit beside it
+under `agents/<your-role>/`. As you work, when you hit something durable
+worth keeping, write it into your soul. That's how the team gets short,
+focused sessions without losing knowledge between them.
 
 ## What you grow
 
-- **Docs** (`docs/`) — reference notes on how things actually work.
-- **Decisions** (`decisions/`) — durable choices/stances you commit to.
-- **Memory** (`memory/<slug>.md`, indexed in `MEMORY.md`) — single durable
-  facts.
+- **Docs** (`agents/<your-role>/docs/`) — reference notes on how things
+  actually work.
+- **Decisions** (`agents/<your-role>/decisions/`) — durable
+  choices/stances you commit to.
+- **Memory** (`agents/<your-role>/memory/<slug>.md`, indexed in
+  `MEMORY.md`) — single durable facts.
 - **Skills** (`.agents/skills/<name>/SKILL.md`) — reusable procedures you'll
   need again; create or change them when a real, recurring procedure
   appears.

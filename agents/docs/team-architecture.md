@@ -5,9 +5,11 @@ every agent — and every human — understands the system they're running.
 
 ## Souls and instances
 
-- A **soul** (`agents/souls/<role>/`, committed) is an agent's durable
-  body: its `AGENTS.md`, `soul.yaml`, and accumulated docs/decisions/
-  memory. Souls hold no identity and grow with the repo.
+- A **soul** (`agents/<role>/soul/`, committed) is an agent's durable
+  body: its `AGENTS.md` and `soul.yaml`. The docs/decisions/memory it
+  accumulates sit beside it under `agents/<role>/`. Souls hold no identity
+  and grow with the repo. `agents/souls/<role>/` remains as a symlink to
+  `agents/<role>/soul/` so existing instance homes keep resolving.
 - An **instance** (`agents/instances/<name>/`, gitignored) is a runnable
   copy of a soul with its **own aweb identity**: a home (body symlinked to
   the soul + `.aw`) and a `work` location. One soul can back many
@@ -57,7 +59,11 @@ help" on your own initiative.
 ## Layout
 
 ```text
-agents/souls/<role>/        committed bodies
+agents/<role>/soul/         committed bodies: AGENTS.md + soul.yaml
+agents/<role>/docs/         what that soul accumulates: docs, decisions,
+agents/<role>/decisions/    memory — siblings of soul/, not inside it
+agents/<role>/memory/
+agents/souls/<role>/        compatibility symlink -> ../<role>/soul
 agents/roles/<role>.md      role playbooks published to aweb
 agents/instructions.md      shared instructions published to aweb
 agents/docs/                this doc
