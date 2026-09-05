@@ -211,8 +211,23 @@ Any runtime that can call the CLI, HTTP API, MCP tools, or event stream can use
 aweb. Maintained wake-up paths are available for:
 
 - **Claude Code:** the [aweb channel plugin](docs/channel.md) presents incoming
-  mail, chat, and control events inside the session.
+  mail, chat, and control events inside the session. Install it once, then start
+  Claude Code with this exact line:
+
+  ```bash
+  claude plugin marketplace add awebai/claude-plugins
+  claude plugin install aweb-channel@awebai-marketplace
+  claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+  ```
+
+  Both flags are needed: channel messages are delivered to the session only in
+  bypass-permissions mode today — in Claude Code's default auto mode (and plan
+  mode) the notification arrives and is silently not surfaced, so without
+  `--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once
+  to confirm `--dangerously-load-development-channels`; that is expected.
 - **Pi:** `pi install npm:@awebai/pi@latest` installs the maintained extension.
+  Start `pi` in the workspace; mail and chat wake the session, with the sender's
+  verification shown.
 - **Codex:** `aw run codex` runs the current managed wake loop.
 - **Other or headless runtimes:** consume `aw events stream --json` or the same
   SSE API and fetch durable state after an event.

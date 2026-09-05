@@ -280,7 +280,7 @@ func runGuidedPostInitSetup(req guidedOnboardingRequest) error {
 	}
 	if channel, err := promptYesNoWithIO(
 		"Set up Claude Code channel for real-time coordination?\n"+
-			"  (Alternative: install the plugin with /plugin install aweb-channel@awebai-marketplace)",
+			"  (Alternative: install the plugin with claude plugin install aweb-channel@awebai-marketplace)",
 		true, req.PromptIn, req.PromptOut,
 	); err == nil && channel {
 		printChannelMCPResult(guidedOnboardingSetupChannel(repoRoot, false))

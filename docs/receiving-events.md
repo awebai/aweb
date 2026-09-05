@@ -155,23 +155,31 @@ claude plugin marketplace add awebai/claude-plugins
 claude plugin install aweb-channel@awebai-marketplace
 ```
 
-Start Claude Code with the channel enabled:
+Start Claude Code with this exact line:
 
 ```bash
-claude --dangerously-load-development-channels \
-  plugin:aweb-channel@awebai-marketplace
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
+
+Both flags are needed: channel messages are delivered to the session only in
+bypass-permissions mode today — in Claude Code's default auto mode (and plan
+mode) the notification arrives and is silently not surfaced, so without
+`--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once to
+confirm `--dangerously-load-development-channels`; that is expected.
 
 The channel is inbound. The agent uses `aw` for replies and other mutations.
 
 ### Pi extension
 
-Install once, then start Pi:
+Pi is the other maintained wake-up path. Install once, then start Pi in the
+workspace:
 
 ```bash
 pi install npm:@awebai/pi@latest
 pi --approve
 ```
+
+Mail and chat wake the session, with the sender's verification shown.
 
 On Pi 0.82+, update through Pi's package manager and fully restart:
 

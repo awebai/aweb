@@ -483,16 +483,39 @@ func printGuidedOnboardingReadyMessage(result *guidedOnboardingResult) {
 }
 
 func printChannelLaunchInstructions(out io.Writer) {
-	fmt.Fprintln(out, "To use the channel directly inside Claude Code (real-time coordination):")
-	fmt.Fprintln(out, "  /plugin marketplace add awebai/claude-plugins")
-	fmt.Fprintln(out, "  /plugin install aweb-channel@awebai-marketplace")
+	fmt.Fprintln(out, "To use the channel directly inside Claude Code (real-time coordination),")
+	fmt.Fprintln(out, "install the plugin once:")
+	fmt.Fprintln(out, "  claude plugin marketplace add awebai/claude-plugins")
+	fmt.Fprintln(out, "  claude plugin install aweb-channel@awebai-marketplace")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Then start Claude Code with the channel enabled:")
-	fmt.Fprintln(out, "  claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	fmt.Fprintln(out, "Then start Claude Code with this exact line:")
+	fmt.Fprintln(out, "  claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Note: Claude Code will warn that --dangerously-load-development-channels is a")
-	fmt.Fprintln(out, "security risk and ask you to confirm. That warning is expected — channels are")
-	fmt.Fprintln(out, "still in beta. Confirm to enable.")
+	for _, line := range channelLaunchWhyLines {
+		fmt.Fprintln(out, line)
+	}
+	fmt.Fprintln(out)
+	for _, line := range channelPiPathLines {
+		fmt.Fprintln(out, line)
+	}
+}
+
+// channelLaunchWhyLines explains why both flags are on the launch line. Channel
+// messages are delivered to the session only in bypass-permissions mode today.
+var channelLaunchWhyLines = []string{
+	"Both flags are needed: channel messages are delivered to the session only in",
+	"bypass-permissions mode today. In Claude Code's default auto mode (and plan",
+	"mode) the notification arrives and is silently not surfaced, so without",
+	"--dangerously-skip-permissions there are no wake-ups. Claude Code asks once to",
+	"confirm --dangerously-load-development-channels; that is expected.",
+}
+
+// channelPiPathLines name Pi as the other maintained wake-up path.
+var channelPiPathLines = []string{
+	"Pi is the other maintained wake-up path:",
+	"  pi install npm:@awebai/pi@latest",
+	"Then start pi in the workspace. Mail and chat wake the session, with the",
+	"sender's verification shown.",
 }
 
 func resolveHumanName() string {
@@ -690,12 +713,20 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, "  Install the channel directly inside Claude Code (real-time coordination):")
-	lines = append(lines, "    /plugin marketplace add awebai/claude-plugins")
-	lines = append(lines, "    /plugin install aweb-channel@awebai-marketplace")
+	lines = append(lines, "  Install the channel plugin once (real-time coordination in Claude Code):")
+	lines = append(lines, "    claude plugin marketplace add awebai/claude-plugins")
+	lines = append(lines, "    claude plugin install aweb-channel@awebai-marketplace")
 	lines = append(lines, "")
-	lines = append(lines, "  Then start Claude Code with the channel enabled:")
-	lines = append(lines, "    claude --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	lines = append(lines, "  Then start Claude Code with this exact line:")
+	lines = append(lines, "    claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace")
+	lines = append(lines, "")
+	for _, line := range channelLaunchWhyLines {
+		lines = append(lines, "  "+line)
+	}
+	lines = append(lines, "")
+	for _, line := range channelPiPathLines {
+		lines = append(lines, "  "+line)
+	}
 	lines = append(lines, "")
 	lines = append(lines, "  Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md")
 	return lines

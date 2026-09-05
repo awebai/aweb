@@ -615,27 +615,36 @@ Then run an agent. **Two runtimes work — Claude Code or pi.** Materialize the
 agent for the runtime you will run (`=claude-code` or `=pi`), then launch it
 directly in the agent home.
 
-**Claude Code** — install the channel plugin once, inside Claude Code:
+**Claude Code** — install the channel plugin once:
 
-```
-/plugin marketplace add awebai/claude-plugins
-/plugin install aweb-channel@awebai-marketplace
+```bash
+claude plugin marketplace add awebai/claude-plugins
+claude plugin install aweb-channel@awebai-marketplace
 ```
 
-then launch it in the agent home:
+then launch it in the agent home with this exact line:
 
 ```bash
 cd agents/instances/alice
 claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
 ```
 
-**pi** — install the extension once, then launch it in the agent home:
+Both flags are needed: channel messages are delivered to the session only in
+bypass-permissions mode today — in Claude Code's default auto mode (and plan
+mode) the notification arrives and is silently not surfaced, so without
+`--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once to
+confirm `--dangerously-load-development-channels`; that is expected.
+
+**pi** — the other maintained wake-up path. Install the extension once, then
+launch it in the agent home:
 
 ```bash
 pi install npm:@awebai/pi@latest
 cd agents/instances/alice
 pi
 ```
+
+Mail and chat wake the session, with the sender's verification shown.
 
 Add an agent to an existing hosted team with a team API key (no dashboard
 session; the key is the whole credential):

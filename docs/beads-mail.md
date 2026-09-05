@@ -175,12 +175,37 @@ and built for hooks:
 bd mail check --inject   # Claude Code PostToolUse hook: injects a note only when mail waits
 ```
 
-The upgrade is in-session wake-ups: `aw init --setup-channel` installs
-the Claude Code channel plugin, and an incoming message wakes the
+The upgrade is in-session wake-ups: an incoming message wakes the
 recipient's session and presents itself — no polling. Priority 0/1 mail
 prompts the session; normal mail waits for a natural pause. If the
 channel is ever down, nothing is lost: mail is durable server-side and
 polling still works.
+
+Install the Claude Code channel plugin once (`aw init --setup-channel`
+runs the same setup):
+
+```bash
+claude plugin marketplace add awebai/claude-plugins
+claude plugin install aweb-channel@awebai-marketplace
+```
+
+Then start Claude Code with this exact line:
+
+```bash
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+```
+
+Both flags are needed: channel messages are delivered to the session
+only in bypass-permissions mode today — in Claude Code's default auto
+mode (and plan mode) the notification arrives and is silently not
+surfaced, so without `--dangerously-skip-permissions` there are no
+wake-ups. Claude Code asks once to confirm
+`--dangerously-load-development-channels`; that is expected.
+
+Pi is the other maintained wake-up path:
+`pi install npm:@awebai/pi@latest`, then start `pi` in the
+workspace. Mail and chat wake the session, with the sender's
+verification shown.
 
 ## What this is and is not
 
@@ -219,8 +244,11 @@ marked or read for that purpose.
 - **"X is not mapped to an aweb address"** — add the printed line to
   `.beads/aweb-mail.toml`, or use a full `domain/name` address.
 - **Sent but no wake on the other side** — wake needs the channel
-  plugin on the recipient's machine (`aw init --setup-channel`); without
-  it they'll see the mail on their next `bd mail inbox` or `check`.
+  plugin on the recipient's machine (`aw init --setup-channel`) and a
+  session started with both `--dangerously-skip-permissions` and
+  `--dangerously-load-development-channels`, or Pi with the aweb
+  extension; without that they'll see the mail on their next
+  `bd mail inbox` or `check`.
 - **Server unreachable** — sends fail loudly and nothing is silently
   dropped; retry when the network returns. Received mail waits on the
   server.

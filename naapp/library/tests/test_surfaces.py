@@ -48,10 +48,12 @@ def test_llms_txt_is_complete_operator_guide() -> None:
     assert "aw init" in text
     assert "aw team admin add alice@aweb.team/developer=claude-code" in text
     assert "aw team admin add bob@aweb.team/reviewer=claude-code" in text
-    assert "/plugin marketplace add awebai/claude-plugins" in text
-    assert "/plugin install aweb-channel@awebai-marketplace" in text
+    assert "claude plugin marketplace add awebai/claude-plugins" in text
+    assert "claude plugin install aweb-channel@awebai-marketplace" in text
     assert "cd agents/instances/alice" in text
     assert "claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace" in text
+    # Both launch flags are required, and the reason must travel with the line.
+    assert "bypass-permissions mode today" in text
     assert "pi install npm:@awebai/pi@latest" in text
     assert "\npi\n" in text
     assert "aw agent start" not in text

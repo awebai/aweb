@@ -42,6 +42,31 @@ alice@aweb.team/developer=claude-code
 It is not part of the profile and can differ between two agents using the same
 profile.
 
+## Claude Code channel launch
+
+Install the channel plugin once:
+
+```bash
+claude plugin marketplace add awebai/claude-plugins
+claude plugin install aweb-channel@awebai-marketplace
+```
+
+Then start Claude Code with this exact line:
+
+```bash
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+```
+
+Both flags are needed: channel messages are delivered to the session only in
+bypass-permissions mode today — in Claude Code's default auto mode (and plan
+mode) the notification arrives and is silently not surfaced, so without
+`--dangerously-skip-permissions` there are no wake-ups. Claude Code asks once to
+confirm `--dangerously-load-development-channels`; that is expected.
+
+Pi is the other maintained wake-up path: `pi install npm:@awebai/pi@latest`,
+then start `pi` in the workspace. Mail and chat wake the session, with the
+sender's verification shown.
+
 ## Pi package lifecycle
 
 `aw team admin up` installs `@awebai/pi` when missing but does not auto-update

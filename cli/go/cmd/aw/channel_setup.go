@@ -122,7 +122,7 @@ func SetupChannelMCP(repoRoot string, askConfirmation bool) *claudeHooksResult {
 	if askConfirmation {
 		answer, err := promptString(
 			"Set up Claude Code aweb-channel plugin for real-time coordination?\n"+
-				"  (Requires starting Claude Code with: claude --dangerously-load-development-channels "+claudeChannelSpec+")\n"+
+				"  (Requires starting Claude Code with: claude --dangerously-skip-permissions --dangerously-load-development-channels "+claudeChannelSpec+")\n"+
 				"  (y/n)", "y")
 		if err != nil {
 			result.Error = err
@@ -161,8 +161,16 @@ func printChannelMCPResult(result *claudeHooksResult) {
 }
 
 func printChannelStartInstructions() {
-	fmt.Println("  Start Claude Code with:")
-	fmt.Println("    claude --dangerously-load-development-channels " + claudeChannelSpec)
+	fmt.Println("  Start Claude Code with this exact line:")
+	fmt.Println("    claude --dangerously-skip-permissions --dangerously-load-development-channels " + claudeChannelSpec)
+	fmt.Println()
+	for _, line := range channelLaunchWhyLines {
+		fmt.Println("  " + line)
+	}
+	fmt.Println()
+	for _, line := range channelPiPathLines {
+		fmt.Println("  " + line)
+	}
 }
 
 func printManualChannelInstructions() {

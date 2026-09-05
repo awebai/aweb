@@ -175,10 +175,35 @@ could.
 Without anything extra, mail works by polling — `gc mail check` is cheap
 and built for hooks.
 
-The upgrade is in-session wake-ups: `aw init --setup-channel` installs
-the Claude Code channel plugin, and an incoming message wakes the
+The upgrade is in-session wake-ups: an incoming message wakes the
 recipient's session and presents itself. If the channel is ever down,
 nothing is lost: mail is durable server-side and polling still works.
+
+Install the Claude Code channel plugin once (`aw init --setup-channel`
+runs the same setup):
+
+```bash
+claude plugin marketplace add awebai/claude-plugins
+claude plugin install aweb-channel@awebai-marketplace
+```
+
+Then start Claude Code with this exact line:
+
+```bash
+claude --dangerously-skip-permissions --dangerously-load-development-channels plugin:aweb-channel@awebai-marketplace
+```
+
+Both flags are needed: channel messages are delivered to the session
+only in bypass-permissions mode today — in Claude Code's default auto
+mode (and plan mode) the notification arrives and is silently not
+surfaced, so without `--dangerously-skip-permissions` there are no
+wake-ups. Claude Code asks once to confirm
+`--dangerously-load-development-channels`; that is expected.
+
+Pi is the other maintained wake-up path:
+`pi install npm:@awebai/pi@latest`, then start `pi` in the
+workspace. Mail and chat wake the session, with the sender's
+verification shown.
 
 ## What this is and is not
 
@@ -213,8 +238,11 @@ purpose.
   `<city>/.gc/aweb-mail.toml`, or use a full `domain/name` address.
 - **Not sure where a name goes** — `aw gc-mail resolve <name>`.
 - **Sent but no wake on the other side** — wake needs the channel plugin
-  on the recipient's machine (`aw init --setup-channel`); without it
-  they'll see the mail on their next `gc mail inbox`.
+  on the recipient's machine (`aw init --setup-channel`) and a session
+  started with both `--dangerously-skip-permissions` and
+  `--dangerously-load-development-channels`, or Pi with the aweb
+  extension; without that they'll see the mail on their next
+  `gc mail inbox`.
 - **Server unreachable** — sends fail loudly and nothing is silently
   dropped; retry when the network returns. Received mail waits on the
   server.
