@@ -126,9 +126,9 @@ registered identity, under a lock directory so a second start is a no-op.
 Per-identity processes would multiply reconnect storms, give no single place to
 enforce the connection bound or the `AWEB_DELIVERY=session` exclusivity check
 (aweb-abik, landed 2026-09-05: the variable exists in channel-core, the Pi
-extension and the Claude channel; the broker-side refusal does not yet), and add N processes
-for OATS to supervise. Connections are capped at 128 — chosen, not measured,
-matching the archived draft
+extension and the Claude channel; the broker-side refusal does not yet), and
+add N processes for OATS to supervise. Connections are capped at 128 — chosen,
+not measured, matching the archived draft
 (`Archive/aweb-wake-draft-2026-09-05/wake-service.mjs`); registrations beyond
 it are reported in status, not silently dropped. On a remote host the broker
 runs there, next to the instances, and calls the same host-local `oats session`
@@ -157,33 +157,36 @@ wrong: a broker restart is an ordinary event and must not re-present messages
 already typed into a terminal. OATS holds no pending state, no coalescing and
 no stream; that division is part of the agreed contract.
 
-**Registration is capability-owned, through the `aweb.identity` hooks** — this
-deployment's owned `messaging` capability, deliberately not upstream's
-`oats.aweb` (`oats/oats-config.yaml:17-26`) — with no aweb-specific kernel
-phase. The spawn hook runs *before* the runtime is allocated (stated by oats;
-not in the seam doc), so it registers the canonical home in a **pending** state
-along with the identity home and the delivery mode; the broker opens that
-identity's stream immediately but polls `oats session inspect` and makes no
-submission until `present:true`. The retire hook runs after quiescence and
-deregisters. `aw wake register|deregister|status` are the commands the hooks
-call; neither side needs the other running.
+**Registration is capability-owned, through the `oats.aweb` hooks**, with no
+aweb-specific kernel phase, and happens only when the capability's delivery
+setting is `session`. The spawn hook runs *before* the runtime is allocated, so
+it registers the canonical home in a **pending** state together with the
+identity home and an explicit `AWEB_DELIVERY=session` field — the same value
+the instance gets in its launch environment. Explicit, so the broker's
+exclusivity check reads the field rather than inferring it; a registration
+without it is refused. The broker opens that identity's stream immediately but
+polls `oats session inspect` and makes no submission until `present:true`. The
+retire hook runs after quiescence and deregisters, so a spawn that never
+launched and was then retired does not linger. `aw wake
+register|deregister|status` are the commands the hooks call; neither side needs
+the other running.
 
 **Reconciliation reads `present:false` narrowly.** A pending home necessarily
-reports `present:false`, so that alone must not deactivate anything. The broker
-closes a stream only on `present:false` *with state `stopped`* — section 5's
-"the target is missing" — or when the registration or identity home is gone.
-Closing a stream is not deregistration: the registration is the hook's to
-remove, and `aw wake status` keeps showing a stopped home until it does. The
-`idle | busy | blocked` vocabulary the next table keys on is the broker's
-reading of "the Herdr agent state"; section 5 enumerates only `stopped` and
-`"unknown"`, so the exact set needs confirming (question 7).
+reports `present:false`, so that alone must not deactivate anything. On
+`present:false` *with state `stopped`* — section 5's "the target is missing" —
+the broker marks the registration inactive and closes its stream. Inactive is
+not removed: removal stays with the retire hook, and `aw wake status` keeps
+showing a stopped home until it runs.
 
-**A pending home does not accumulate hints forever.** If a registration never
-reaches `present:true` within a configurable expiry (default 30 minutes), the
-broker drops its pending hints and its stream and writes one line naming the
-home, the elapsed time, and the count dropped. Nothing was presented, so
-nothing was acknowledged and the durable items remain on the server — but a
-launch that never completed must be visible rather than absorbed.
+**A pending home is patient, then dropped.** A registration stays pending for
+24 hours before the broker drops it with one log line naming the home and the
+elapsed time. The generous bound is deliberate: a first launch can sit at a
+folder-trust or channel prompt for as long as the operator is away, and a wake
+lost to a 30-minute timer would be lost for exactly the reason the broker
+exists. Hints for a pending home are not dropped with it — they accumulate and
+coalesce inside the ordinary 512-hint store and are delivered as one batch when
+inspect first reports `present:true`. Hints expire only under the 30-day mark
+rule.
 
 **`aw run`'s behaviour does not change**, though its internals do. It remains
 the compatibility launcher aweb *starts* — `docs/aw-run.md` is explicit that
@@ -206,9 +209,12 @@ instance: one submission in flight at a time, hints accumulate while an
 instance is not idle, and the next submission presents them as one batch
 ordered interrupt, communication, coordination.
 
-**Intent to inspect state, including `unknown`.** Herdr reports the agent
-state; tmux reports `"unknown"` by design, because it cannot promise harness
-readiness. The `unknown` policy is the broker's, and this is it:
+**Intent to inspect state, including `unknown`.** `inspect` normalises the
+backend state to exactly `idle | busy | blocked | unknown | stopped`: Herdr
+supplies the first three, tmux always says `unknown`, and `present:false` says
+`stopped`. Any other string the broker treats as `unknown`, so a vocabulary
+extension degrades to the conservative path rather than to a crash. Lead still
+pins the vocabulary. The `unknown` policy is the broker's, and this is it:
 
 | Intent | idle | busy | blocked | unknown | `stopped` |
 | --- | --- | --- | --- | --- | --- |
@@ -216,20 +222,26 @@ readiness. The `unknown` policy is the broker's, and this is it:
 | `steer` | present now | defer | defer | present after quiet period | close stream |
 | `ambient` | present now | defer, coalesce | defer, coalesce | present after quiet period | close stream |
 
-The quiet period (default 45 s, chosen not measured) runs from the broker's own
-last submission to that target — the only thing it knows about a tmux window.
-It is a rate limit, not an idle detector, and this note should not pretend
-otherwise: on tmux the broker can type into a running turn and occasionally
-will. That is why bracketed paste plus Enter matters — a mistimed submission
-lands as a queued prompt rather than as scrambled input.
+The quiet period (default 45 s, configurable) runs from the broker's own last
+submission to that target — the only thing it knows about a tmux window. It is
+a rate limit, not an idle detector, and this note should not pretend otherwise:
+on tmux the broker can type into a running turn and occasionally will. What
+that costs is bounded, and this is why 45 s is safe to ship unmeasured — Claude
+Code queues input arriving mid-turn and processes it after the turn, so a
+too-short period costs a queued message, not a lost one. Bracketed paste plus
+Enter is what makes it a queued prompt rather than scrambled input. On Herdr
+the state is known and the period never applies. Revisit the default against
+measured turn lengths; the setting exists so nobody has to wait for that.
 
-Where the state is known, the broker never types into busy or blocked. `steer`
-therefore differs from `wake` only in ordering and text template, not in
-whether it may interrupt: there is no interrupt primitive, and typing into a
-live turn must not become one. Deferred hints are re-evaluated on each inspect
-poll (two seconds, chosen) with an unbounded wait; an instance that never goes
-idle fills its pending-hint store and reports the backlog and every eviction in
-status.
+Where the state is known, the broker never types into busy or blocked. That
+makes the mapping two behaviours, not three — wake when idle, inform otherwise
+— and that is the accepted scope: OATS has no interrupt primitive and none is
+planned, so `steer` differs from `wake` only in ordering and text template. An
+operator-visible interrupt would be a separate, explicitly requested feature,
+not something the broker improvises by typing into a live turn. Deferred hints
+are re-evaluated on each inspect poll (two seconds, chosen) with an unbounded
+wait; an instance that never goes idle fills its pending-hint store and reports
+the backlog and every eviction in status.
 
 **Presentation, and the acknowledgement the broker does not make.** For each
 new mail hint the broker fetches by exact id (`awid.InboxParams{MessageID:
@@ -306,10 +318,11 @@ What the broker reads out of it:
 
 - **`submitted:true` is delivery, not consumption** — the bytes reached the
   target, nothing more. That is why the ack point is not here (section 4).
-- **`state` is truthful about what the backend knows.** Herdr supplies the
-  agent state; tmux supplies `"unknown"`, deliberately, because it cannot
-  promise harness readiness. The caller owns the `unknown` policy; the broker's
-  is the quiet period in section 4.
+- **`state` is normalised to `idle | busy | blocked | unknown | stopped`** and
+  is truthful about what the backend knows: Herdr supplies the first three,
+  tmux always says `unknown` because it cannot promise harness readiness, and
+  `present:false` says `stopped`. The caller owns the `unknown` policy; the
+  broker's is the quiet period in section 4.
 - **`present:false` with state `stopped` means the target is missing**, while
   an inaccessible backend is a typed error. The broker separates "this instance
   is gone" from "OATS could not answer", and only the first marks the
@@ -331,12 +344,13 @@ What the broker reads out of it:
 - **Never treat `submitted:true` as consumption.** It is the strongest signal
   the interface offers and it is still only delivery.
 - **Never run beside a live native channel for the same instance.**
-  Registration requires `AWEB_DELIVERY=session`. The variable exists since
-  aweb-abik landed (`selectDeliveryMode` in channel-core, honoured by the Pi
-  extension and the Claude channel); what does not exist yet is the
-  broker-side check, and a registration without the variable is refused with
-  the conflict named. Two presentation surfaces on one
-  identity double every wake.
+  Registration requires `AWEB_DELIVERY=session`, recorded as an explicit field
+  by the spawn hook. The variable exists since aweb-abik landed
+  (`selectDeliveryMode` in channel-core, honoured by the Pi extension and the
+  Claude channel); what does not exist yet is the broker-side check. A
+  registration without the field is refused with the conflict named, and the
+  check reads the field rather than inferring the mode. Two presentation
+  surfaces on one identity double every wake.
 - **Never present the same message twice** within the mark-retention window,
   across reconnects or restarts. Past 30 days the mark is gone and a
   still-unread item can be presented again; that is the bound, not an
@@ -357,7 +371,7 @@ What the broker reads out of it:
   the next inspect.
 - OATS unreachable (a typed error, not `present:false`): retry with backoff and
   report. An unanswerable backend is never treated as an absent instance,
-  because that would deregister a live agent.
+  because that would mark a live agent inactive and stop its wakes.
 
 ## 7. Implementation plan
 
@@ -384,8 +398,11 @@ Unit tests, all against a fake `oats session`, no network:
   idle flushes; `unknown` submits only after the quiet period and then respects
   it again.
 - registration: a pending home is polled and never submitted to before
-  `present:true`; hints expire at the configured limit with one log line;
-  `present:false` marks the registration inactive while a typed error does not.
+  `present:true`, and hints accumulated while it was pending are delivered as
+  one batch when it becomes present; a registration still pending at 24 hours
+  is dropped with one log line; a registration without `AWEB_DELIVERY=session`
+  is refused; `present:false` with `stopped` marks the registration inactive
+  without removing it, while a typed error does neither.
 - acknowledgement: no ack is ever sent, on any path; a failed durable mark is
   retried rather than skipped; a refused `input` leaves no mark.
 - reconnect: 4xx quarantines one identity and leaves others streaming; the
@@ -397,44 +414,58 @@ identity home, native channel disabled for both. Send mail to each and assert
 one presentation in the correct terminal, that the broker marked nothing read,
 and that the instance's own reply clears it; send during the quiet period and
 assert the deferral then the flush; kill the broker mid-cycle and assert no
-duplicate on restart; register a home before its runtime exists and assert the
-first submission waits for `present:true`; finish with an E2E message, proving
-decryption under the instance's own identity home and metadata-only delivery
-when the key is unreadable.
+duplicate on restart; register a home before its runtime exists, mail it while
+it is still pending, and assert the first submission waits for `present:true`
+and then carries the hint that arrived before it; finish with an E2E message,
+proving decryption under the instance's own identity home and metadata-only
+delivery when the key is unreadable.
 
-## 8. Open questions
+## 8. Resolved with oats, 2026-09-05
 
-1. For lead: the broker acknowledges nothing, because `submitted:true` is not
-   consumption and no other evidence exists, so unread items sit on the server
-   until the instance handles them. Confirm that is the intended end state, or
-   name the signal that closes the loop — a Herdr state transition is the only
+These were open questions in the first draft. The answers are folded into
+sections 4 to 7 as decisions; they are recorded here so a reader can see what
+was settled and by whom rather than inferring it.
+
+- **Registration and the exclusivity field.** Registration happens only from
+  the `oats.aweb` hooks and only when the capability's delivery setting is
+  `session`. The spawn hook records `AWEB_DELIVERY=session` in the registration
+  alongside the home, the same value the instance gets in its launch
+  environment. The field is explicit so the broker's check reads it instead of
+  inferring it, and a registration without it is refused.
+- **Pending expiry: 24 hours, not 30 minutes.** A first launch can sit at a
+  folder-trust or channel prompt while the operator is away. Hints for a
+  pending home are kept and coalesced inside the existing 512 cap and delivered
+  once when inspect first reports present; they expire only under the 30-day
+  rule. The retire hook deregisters, so a spawn that never launched and was
+  retired never lingers.
+- **The state vocabulary.** `inspect` normalises to exactly `idle | busy |
+  blocked | unknown | stopped` — Herdr supplies the first three, tmux always
+  says `unknown`, `present:false` says `stopped` — and any other string is
+  treated as `unknown`. Lead still pins the vocabulary.
+- **The quiet period stays 45 s, configurable.** On tmux, input sent during a
+  running Claude Code turn is queued by the harness and processed after it, so
+  too short costs a queued message rather than a lost one; on Herdr the state
+  is known and the period does not apply. Revisit against measured turn
+  lengths.
+- **Two behaviours, not three, is the accepted scope.** OATS has no interrupt
+  primitive and none is planned. Wake when idle, inform otherwise; an
+  operator-visible interrupt would be a separate, explicitly requested feature.
+
+## 9. Open questions for lead
+
+1. The broker acknowledges nothing, because `submitted:true` is not consumption
+   and no other evidence exists, so unread items sit on the server until the
+   instance handles them. Confirm that is the intended end state, or name the
+   signal that closes the loop — a Herdr state transition is the only
    candidate, and it exists on one backend of two.
-2. For lead and oats: 45 s for the tmux quiet period is a guess. What is the
-   real distribution of turn lengths here? Too short types into running turns;
-   too long makes a Claude Code instance feel deaf.
-3. For oats: this note assumes the spawn hook writes `AWEB_DELIVERY=session`
-   (aweb-abik) into the registration alongside the home, because the inspect
-   envelope carries no delivery mode and the broker has nowhere else to read it.
-   Confirm, since it is the exclusivity check and cannot be optional.
-4. For oats: is 30 minutes right for the pending-registration expiry, given the
-   spawn hook fires before runtime allocation? A slow first launch that
-   silently loses its wakes is worse than a noisy one.
-5. For both: `steer` cannot preempt a running turn, so the requirement's
-   three-intent mapping collapses to two behaviours. An operator-visible
-   interrupt would need an OATS primitive (Ctrl-C plus a submission) — a scope
-   decision, not an implementation detail.
-6. For lead: this is a knowing deviation, not an open choice.
-   `docs/receiving-events.md` instructs consumers to "re-fetch authoritative
-   state after reconnect rather than depending on control-frame replay"; the
-   broker cannot, because the only control surface is `POST
-   /agents/{alias}/control` (`server/src/aweb/routes/agents.py:1003`) and there
-   is no GET. So the broker presents control signals when seen and loses any
-   consumed before a dropped frame. Accept the gap, or the endpoint has to
-   exist first.
-7. For oats: does `inspect` on Herdr report exactly `idle | busy | blocked`?
-   Section 5 enumerates only `stopped` and `"unknown"`, so the intent table in
-   section 4 keys on a vocabulary the contract has not fixed.
-8. For lead: **does a grant home carry E2E decryption material at all?**
+2. This is a knowing deviation, not an open choice. `docs/receiving-events.md`
+   instructs consumers to "re-fetch authoritative state after reconnect rather
+   than depending on control-frame replay"; the broker cannot, because the only
+   control surface is `POST /agents/{alias}/control`
+   (`server/src/aweb/routes/agents.py:1003`) and there is no GET. So the broker
+   presents control signals when seen and loses any consumed before a dropped
+   frame. Accept the gap, or the endpoint has to exist first.
+3. **Does a grant home carry E2E decryption material at all?**
    `oats/docs/oats-aweb-seam.md` says the worker's grant home "contains only
    `grant.yaml` and the session key", while the decrypt path resolves an
    assertion plus an X25519 private key inside the identity home
