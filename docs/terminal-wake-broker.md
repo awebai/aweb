@@ -607,6 +607,11 @@ learned something the note did not know:
 One daemon per host, foreground, restartable at any time. Both units below run
 it under the invoking user; neither needs root.
 
+Both units set `LC_ALL=en_US.UTF-8`: under a service manager's minimal
+locale, `tmux` replaces its tab delimiters with underscores and `oats session
+inspect` cannot read any tmux home (OATS kernels before a0b0e14 need it; later
+kernels pass `tmux -u` themselves and the setting is harmless).
+
 **launchd** (`~/Library/LaunchAgents/ai.aweb.wake.plist`), then
 `launchctl load -w ~/Library/LaunchAgents/ai.aweb.wake.plist`:
 
@@ -623,6 +628,7 @@ it under the invoking user; neither needs root.
   </array>
   <key>EnvironmentVariables</key> <dict>
     <key>PATH</key> <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>LC_ALL</key> <string>en_US.UTF-8</string>
   </dict>
   <key>RunAtLoad</key>        <true/>
   <key>KeepAlive</key>        <true/>
@@ -648,6 +654,7 @@ After=default.target
 Type=simple
 ExecStart=/usr/local/bin/aw wake run
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=LC_ALL=en_US.UTF-8
 Restart=always
 RestartSec=2
 
