@@ -47,6 +47,7 @@ pi-extension/skills/
 # Agent instance homes are disposable runtime state; souls and the deployment
 # config are not.
 /agents/instances/
+/agents/*/instances/
 /cli/agents/instances/
 /oats/agents/*/instances/
 .release-runs/
