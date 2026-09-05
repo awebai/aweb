@@ -276,6 +276,19 @@ Do not collapse these different trust stories:
   announcement; a valid DID log for the new identity is not sufficient.
 - **Workspace deletion**: removes local runtime state. It is not evidence that a
   global identity or public address should be deleted.
+- **Local self-retirement**: a local member ends its own membership and releases
+  its own name. `aw workspace delete <your-own-workspace>` does this when the
+  team is hosted and the identity is local: the cloud revokes the membership
+  certificate through the team controller it holds, so a later `aw team join`
+  can reuse the name. It only ever retires the caller, and the server refuses a
+  name that is not the caller's own. Read `alias_released` in the output, not
+  `identity_deleted`: deleting local state says nothing about the certificate,
+  and an active certificate is what makes a rejoin under the same name fail.
+  A local member on a self-hosted or BYOT team cannot self-retire, because no
+  cloud-held controller can revoke for it; the command says so rather than
+  reporting a retirement it did not perform. Retiring a **global** identity is a
+  different story: global identities outlive workspaces, and their names are
+  released by team-authorized removal (`aw team admin remove-agent`) only.
 
 Self-custodial global rotation requires the old signing key. If it is lost and
 no separately authorized recovery path exists, there is no CLI-only continuity
