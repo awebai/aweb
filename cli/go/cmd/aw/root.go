@@ -308,9 +308,9 @@ func activateIdentityHomeForPluginDispatch(args []string) (func(), error) {
 // spawn hook reads that exit as a failed spawn.
 //
 // Stopping at a built-in loses nothing, with one exception worth naming.
-// Normally cobra parses the root persistent flag itself once it owns the leaf
+// Normally cobra parses the root-level flag itself once it owns the leaf
 // command's flag set, in either position, so the scan is redundant there. A
-// command with DisableFlagParsing never has its persistent flags parsed by
+// command with DisableFlagParsing never has its inherited flags parsed by
 // cobra at all, in either position, so for those the scan was the only
 // mechanism and a trailing --identity-home now reaches nothing. Today that set
 // is only the beads-mail stub verbs, whose RunE returns a static usage error
