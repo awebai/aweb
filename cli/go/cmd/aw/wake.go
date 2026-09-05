@@ -125,8 +125,9 @@ var wakeRegisterCmd = &cobra.Command{
 		"never fails because the broker is restarting. A non-zero exit means refused —\n" +
 		"a missing --delivery session, a relative path, or an unreadable identity home.\n\n" +
 		"--identity-home here names the instance's own identity home, and shadows the\n" +
-		"root flag of the same name for this command. It is still validated the way any\n" +
-		"identity home is, so a path reached through a symlinked parent is refused.",
+		"root flag of the same name for this command. Give the principal's home before\n" +
+		"the subcommand (aw --identity-home <principal> wake register ...) when you need\n" +
+		"both.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		reg := wake.Registration{
 			Home:         strings.TrimSpace(wakeRegisterHome),

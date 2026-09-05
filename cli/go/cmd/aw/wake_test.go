@@ -347,3 +347,90 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 		t.Fatal("deregister via the fallback path left the registration behind")
 	}
 }
+
+// TestWakeRegisterAcceptsAHomeUnderASymlinkedParent is the regression for the
+// collision the reviewer found in the ACK of 6efe8c49.
+//
+// `aw` reads the root --identity-home out of argv textually, before cobra, so
+// that a plugin runs under the attached principal. That scan used to run to the
+// end of argv, which meant `aw wake register --identity-home <the instance's
+// own identity home>` had the *instance's* path put through the principal path
+// preflight — and that preflight refuses a home reached through a symlinked
+// parent. The process exited non-zero before register ran at all, and the OATS
+// spawn hook reads a non-zero exit as a failed spawn.
+//
+// A symlinked ancestor is not exotic: on macOS /tmp is one.
+func TestWakeRegisterAcceptsAHomeUnderASymlinkedParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not the same contract on windows")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	real := filepath.Join(root, "real")
+	if err := os.MkdirAll(filepath.Join(real, "agent", ".aw"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	// The home the hook would pass: its parent component is a symlink.
+	instanceHome := filepath.Join(root, "link", "agent")
+	stateDir := filepath.Join(root, "state")
+
+	cmd := exec.CommandContext(ctx, bin, "wake", "register",
+		"--home", instanceHome,
+		"--identity-home", filepath.Join(instanceHome, ".aw"),
+		"--delivery", "session", "--state-dir", stateDir)
+	cmd.Dir = root
+	cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home")), "AW_NO_UPDATE_CHECK=1", awconfig.IdentityHomeEnv+"=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("registering a home under a symlinked parent failed the spawn: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "must not be a symlink") {
+		t.Fatalf("the instance identity home was put through the principal preflight:\n%s", out)
+	}
+
+	store, err := wake.NewStore(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := store.LoadRegistration(instanceHome); err != nil || !ok {
+		t.Fatalf("the registration was not written: ok=%t err=%v", ok, err)
+	}
+}
+
+// TestIdentityHomePreScanStopsAtABuiltinCommand pins the scan itself, including
+// the two shapes that must keep working: the root flag before a built-in, and a
+// plugin's own trailing flag.
+func TestIdentityHomePreScanStopsAtABuiltinCommand(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"root flag before a builtin", []string{"--identity-home", "/principal", "wake", "register", "--home", "/h"}, "/principal"},
+		{"builtin subcommand flag is not the principal", []string{"wake", "register", "--home", "/h", "--identity-home", "/h/.aw"}, ""},
+		{"builtin subcommand flag does not override the root one", []string{"--identity-home", "/principal", "wake", "register", "--identity-home", "/h/.aw"}, "/principal"},
+		{"equals form before a builtin", []string{"--identity-home=/principal", "mail", "inbox"}, "/principal"},
+		{"a plugin keeps its trailing flag", []string{"folio", "present", "--identity-home", "/principal"}, "/principal"},
+		{"root flag before a plugin", []string{"--identity-home", "/principal", "folio", "present"}, "/principal"},
+		{"a server named after a command is not a command", []string{"--server-name", "run", "folio", "--identity-home", "/principal"}, "/principal"},
+		{"no flag at all", []string{"wake", "status"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := identityHomeForPluginDispatch(tc.args); got != tc.want {
+				t.Errorf("identityHomeForPluginDispatch(%v)=%q want %q", tc.args, got, tc.want)
+			}
+		})
+	}
+}

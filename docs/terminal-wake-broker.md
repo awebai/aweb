@@ -584,8 +584,17 @@ learned something the note did not know:
   unknown or already-retired home exits 0 with a note.
 - **`aw wake register --identity-home` names the instance's identity home**
   and shadows the root persistent flag of the same name for that one command.
-  The value is still validated the way any identity home is, so a path reached
-  through a symlinked parent is refused there exactly as `aw init` refuses it.
+  That collision reached further than it looked: `aw` reads the root
+  `--identity-home` out of argv textually, before cobra, so a plugin runs under
+  the attached principal — and that scan used to run to the end of argv, so the
+  *instance's* path went through the principal path preflight, which refuses a
+  home reached through a symlinked parent (on macOS, `/tmp` is one) and exits
+  non-zero before the command runs. The OATS spawn hook reads a non-zero exit
+  as a failed spawn, so this could fail a spawn for a reason register has
+  nothing to do with. The scan now stops at the first bare token naming a
+  built-in command: from there cobra parses the root flag itself and no plugin
+  will be dispatched, while a plugin name is not a built-in, so a plugin's own
+  trailing `--identity-home` keeps the behaviour it has always had.
 
 ## 12. Running the daemon as a service
 

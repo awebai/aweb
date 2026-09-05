@@ -2387,8 +2387,9 @@ never fails because the broker is restarting. A non-zero exit means refused —
 a missing --delivery session, a relative path, or an unreadable identity home.
 
 --identity-home here names the instance's own identity home, and shadows the
-root flag of the same name for this command. It is still validated the way any
-identity home is, so a path reached through a symlinked parent is refused.
+root flag of the same name for this command. Give the principal's home before
+the subcommand (aw --identity-home <principal> wake register ...) when you need
+both.
 
 Flags:
 - `--backend string Terminal backend hint: tmux or herdr`
