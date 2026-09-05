@@ -1,0 +1,17 @@
+{
+  "pending": {
+    "exit": 1,
+    "stdout": "{\"schemaVersion\":1,\"ok\":false,\"error\":{\"code\":\"E_RUNTIME_ENDPOINT_UNKNOWN\",\"message\":\"cannot read session receipt for /private/tmp/oats-broker-samples-I8aAxP/pending: ENOENT: no such file or directory, open '/private/tmp/oats-broker-samples-I8aAxP/.oats-retirement/baselines/4a637731138a969a471a3df7c40566f50f21c3a8e6549114ec287cb5bb2c93e8.json'\"}}\n",
+    "stderr": ""
+  },
+  "tmux": {
+    "exit": 0,
+    "stdout": "{\"schemaVersion\":1,\"ok\":true,\"result\":{\"home\":\"/private/tmp/oats-broker-samples-I8aAxP/agents/probe/instances/probe-tmux\",\"backend\":\"tmux\",\"present\":true,\"state\":\"unknown\",\"paneId\":\"%625\"}}\n",
+    "stderr": ""
+  },
+  "herdr": {
+    "exit": 0,
+    "stdout": "{\"schemaVersion\":1,\"ok\":true,\"result\":{\"home\":\"/private/tmp/oats-broker-samples-I8aAxP/agents/probe/instances/probe-herdr\",\"backend\":\"herdr\",\"present\":true,\"state\":\"unknown\",\"terminalId\":\"term_65abc69bddd23e\"}}\n",
+    "stderr": ""
+  }
+}
