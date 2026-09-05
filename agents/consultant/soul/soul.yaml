@@ -4,5 +4,5 @@ name: consultant
 kind: persistent
 repo: .
 role: consultant
-work: main        # main = instance points at the main checkout; worktree = own git worktree/branch
+work: checkout        # main = instance points at the main checkout; worktree = own git worktree/branch
 runtime: claude

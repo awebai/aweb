@@ -4,5 +4,5 @@ name: coordinator
 kind: persistent
 repo: .
 role: coordinator
-work: main        # main = instance points at the main checkout; worktree = own git worktree/branch
+work: checkout        # main = instance points at the main checkout; worktree = own git worktree/branch
 runtime: claude
