@@ -18,7 +18,7 @@ to refresh it.
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `id`, `mcp-config`, `team`, `whoami` |
-| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail` |
+| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
 | Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session` |
@@ -2312,6 +2312,132 @@ Flags:
 - `-h, --help help for show`
 - `--limit int For --conversation-id, max messages from the OLDEST end; exact --message-id reads are not windowed (default 200)`
 - `--message-id string Legacy mail message to inspect`
+
+## `wake`
+
+### `wake`
+
+Terminal wake broker.
+
+One daemon per host holds a reconnecting event stream per registered identity,
+coalesces the resulting hints per instance, and types a short fetch instruction
+plus a hint summary into each instance's original terminal through OATS.
+
+It never fetches, decrypts or types a sender's message, and it never
+acknowledges anything: the instance's own `aw` does all of that.
+
+Subcommands:
+- `deregister` Remove an instance home from the wake broker
+- `pause` Stop the broker typing into one instance, durably
+- `register` Register an instance home with the wake broker
+- `resume` Let the broker type into one instance again
+- `run` Run the host wake broker in the foreground
+- `status` Report per-home broker state, last attempt, and pending hints
+
+Flags:
+- `-h, --help help for wake`
+
+## `wake deregister`
+
+### `wake deregister`
+
+Remove an instance home from the wake broker.
+
+Called by the OATS retire hook after quiescence. The broker never stops an
+instance and never removes a registration on its own; an instance it observed
+stopped is marked inactive and waits here.
+
+An unknown or already-retired home exits 0 with a note: the hook may run twice,
+or after the pending expiry already dropped the registration, and neither is a
+failed retirement.
+
+Flags:
+- `-h, --help help for deregister`
+- `--home string Absolute instance home path`
+- `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
+
+## `wake pause`
+
+### `wake pause`
+
+Stop the broker typing into one instance.
+
+Pause is durable broker state and survives a restart. It suppresses typing;
+it does not stop the stream, drop hints, or acknowledge anything.
+
+Flags:
+- `-h, --help help for pause`
+- `--home string Absolute instance home path`
+- `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
+
+## `wake register`
+
+### `wake register`
+
+Register an instance home with the wake broker.
+
+Called by the OATS spawn hook. --delivery must be session: the broker and a
+live native channel are two presentation surfaces on one identity, and running
+both doubles every wake. A registration stays pending until an inspect reports
+the instance present; pending errors are tolerated until the 30-minute expiry.
+
+Exit 0 means the registration was written durably: over the daemon's socket
+when it is up, and straight to the state directory when it is not, so a hook
+never fails because the broker is restarting. A non-zero exit means refused —
+a missing --delivery session, a relative path, or an unreadable identity home.
+
+--identity-home here names the instance's own identity home, and shadows the
+root flag of the same name for this command. It is still validated the way any
+identity home is, so a path reached through a symlinked parent is refused.
+
+Flags:
+- `--backend string Terminal backend hint: tmux or herdr`
+- `--delivery string Delivery mode recorded by the spawn hook; must be session`
+- `-h, --help help for register`
+- `--home string Absolute instance home path`
+- `--identity-home string Absolute identity home the instance streams under`
+- `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
+
+## `wake resume`
+
+### `wake resume`
+
+Let the broker type into one instance again
+
+Flags:
+- `-h, --help help for resume`
+- `--home string Absolute instance home path`
+- `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
+
+## `wake run`
+
+### `wake run`
+
+Run the host wake broker in the foreground.
+
+One daemon per host. All state is on disk and there is no cursor, so the
+daemon is safe to restart at any time: it re-reads its registrations and
+pending hints, and the reconnect snapshot re-raises anything still unread.
+A second start exits 0 reporting the running daemon.
+
+Flags:
+- `--coalesce int Coalescing window in milliseconds (default 2000)`
+- `-h, --help help for run`
+- `--max-streams int Maximum concurrent identity event streams (default 128)`
+- `--oats-bin oats OATS executable to run (default $AW_WAKE_OATS_BIN, else oats from PATH)`
+- `--rate-limit int Minimum milliseconds between submission attempts per instance (default 30000)`
+- `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
+
+## `wake status`
+
+### `wake status`
+
+Report per-home broker state, last attempt, and pending hints
+
+Flags:
+- `-h, --help help for status`
+- `--max-streams int Stream bound reported when the daemon is down (default 128)`
+- `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
 
 ## `agent`
 

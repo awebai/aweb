@@ -101,8 +101,18 @@ func (r Registration) Validate() error {
 	if strings.TrimSpace(r.Home) == "" || !filepath.IsAbs(strings.TrimSpace(r.Home)) {
 		return fmt.Errorf("--home must be an absolute instance home path")
 	}
-	if strings.TrimSpace(r.IdentityHome) == "" || !filepath.IsAbs(strings.TrimSpace(r.IdentityHome)) {
+	identityHome := strings.TrimSpace(r.IdentityHome)
+	if identityHome == "" || !filepath.IsAbs(identityHome) {
 		return fmt.Errorf("--identity-home must be an absolute identity home path")
+	}
+	// An identity home the broker cannot read is a refusal, not a pending
+	// registration: the daemon would build this identity's client from it, and
+	// a registration it can never serve should fail the hook now rather than
+	// sit in status pretending to be a wake path.
+	if info, err := os.Stat(identityHome); err != nil {
+		return fmt.Errorf("--identity-home %s is not readable: %w", identityHome, err)
+	} else if !info.IsDir() {
+		return fmt.Errorf("--identity-home %s is not a directory", identityHome)
 	}
 	if !strings.EqualFold(strings.TrimSpace(r.Delivery), DeliverySession) {
 		return fmt.Errorf(
