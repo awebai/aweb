@@ -148,7 +148,7 @@ Manage repo-local coordination workspaces
 Subcommands:
 - `add-worktree` Legacy convenience: create a sibling git worktree and coordination workspace
 - `connect` Connect this workspace to a service using an existing team certificate
-- `delete` Delete a local workspace and its local identity
+- `delete` Delete a local workspace and its local identity, retiring yourself when it is your own
 - `migrate-multi-team` Rewrite a legacy single-team workspace into the canonical multi-team shape
 - `status` Show coordination status for the current workspace/identity and team
 
@@ -187,7 +187,25 @@ Flags:
 
 ### `workspace delete`
 
-Delete a local workspace and its local identity
+Delete a local workspace and its local identity.
+
+Deleting YOUR OWN workspace on a hosted team, with a local identity, retires you:
+the hosted team controller revokes your membership certificate, so your name
+becomes reusable by a later "aw team join". Any other target is a local delete
+only, and does not release the name.
+
+Read alias_released in the output, not identity_deleted. Deleting local state
+says nothing about the membership certificate, and an active certificate is what
+makes a rejoin under the same name fail. alias_released_reason says why:
+
+  not_own_workspace        the target is not the workspace you are running as
+  team_not_hosted          self-hosted or BYOT; no cloud-held controller to revoke
+  global_identity          global identities are retired by team-authorized removal
+  no_workspace_credential  no workspace-bound key in local config to authenticate with
+
+When this command can retire you, it does not fall back to a plain delete: a
+failure is reported as a failure, because a success report for a retirement that
+did not happen is what leaks names.
 
 Flags:
 - `-h, --help help for delete`

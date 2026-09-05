@@ -2604,7 +2604,11 @@ func resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, explicitAwebURL,
 		return "", "", usageError("hosted remove for %s requires --aweb-url or a workspace with aweb_url", teamID)
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		return "", "", usageError("hosted remove for %s requires --api-key or %s with a team-scoped owner/admin API key; workspace-bound API keys cannot remove hosted team members", teamID, initAPIKeyEnvVar)
+		// This is the error a member hits when it tries to retire ITSELF with
+		// remove-agent: it holds only its workspace-bound key, which cannot carry
+		// team authority. Name the command that does work, because "you need an
+		// admin key" reads as "ask a human" when self-retirement needs nobody.
+		return "", "", usageError("hosted remove for %s requires --api-key or %s with a team-scoped owner/admin API key; workspace-bound API keys cannot remove hosted team members. To retire YOURSELF, run `aw workspace delete <your-own-workspace>` instead: it uses your own workspace-bound key, revokes your certificate through the hosted team controller, and releases your alias", teamID, initAPIKeyEnvVar)
 	}
 	return awebURL, strings.TrimSpace(apiKey), nil
 }

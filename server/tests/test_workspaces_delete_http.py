@@ -823,13 +823,133 @@ async def test_delete_workspace_unknown_identity_scope_fails_closed(aweb_cloud_d
     assert claims_row["count"] == 1
 
 
+async def _seed_local_member(aweb_cloud_db, *, team_id, team_did_key, agent_did_key, alias, last_seen_at):
+    """One live local member: agent row plus its workspace, seen at last_seen_at."""
+    agent_id = uuid4()
+    workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}}
+            (agent_id, team_id, did_key, alias, identity_scope, role)
+        VALUES ($1, $2, $3, $4, 'local', 'developer')
+        """,
+        agent_id,
+        team_id,
+        agent_did_key,
+        alias,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}}
+            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        """,
+        workspace_id,
+        team_id,
+        agent_id,
+        alias,
+        f"/tmp/{alias}-worktree",
+        last_seen_at,
+    )
+    return agent_id, workspace_id
+
+
 @pytest.mark.asyncio
-async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db):
+async def test_delete_workspace_rejects_recent_ephemeral_workspace_of_another_agent(aweb_cloud_db):
+    """A live teammate cannot be removed out from under its session.
+
+    This test previously used ONE agent for both the caller and the workspace,
+    so it was a self-delete and it asserted a self-delete was refused. That is no
+    longer the contract (see the self-delete test below), but the protection it
+    was really about - not deleting somebody ELSE's live workspace - still holds
+    and is what this now exercises. The scenario is corrected rather than the
+    test deleted: dropping it would remove the only coverage of that protection.
+    """
+    team_sk, _, team_did_key = _make_keypair()
+    caller_sk, _, caller_did_key = _make_keypair()
+    _, _, victim_did_key = _make_keypair()
+    team_id = "backend:acme.com"
+
+    cert = _make_certificate(
+        team_sk,
+        team_did_key,
+        caller_did_key,
+        team_id=team_id,
+        alias="caller",
+        identity_scope="local",
+    )
+    headers = _signed_request(caller_sk, caller_did_key, team_id)
+    headers["X-AWID-Team-Certificate"] = _encode_certificate(cert)
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, $2, $3, $4)
+        """,
+        team_id,
+        "acme.com",
+        "backend",
+        team_did_key,
+    )
+    await _seed_local_member(
+        aweb_cloud_db,
+        team_id=team_id,
+        team_did_key=team_did_key,
+        agent_did_key=caller_did_key,
+        alias="caller",
+        last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    victim_agent_id, victim_workspace_id = await _seed_local_member(
+        aweb_cloud_db,
+        team_id=team_id,
+        team_did_key=team_did_key,
+        agent_did_key=victim_did_key,
+        alias="bot",
+        last_seen_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        resp = await client.delete(f"/v1/workspaces/{victim_workspace_id}", headers=headers)
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["code"] == "local_workspace_still_active"
+
+    workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT deleted_at FROM {{tables.workspaces}}
+        WHERE workspace_id = $1
+        """,
+        victim_workspace_id,
+    )
+    agent_row = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT deleted_at FROM {{tables.agents}}
+        WHERE agent_id = $1
+        """,
+        victim_agent_id,
+    )
+    assert workspace_row["deleted_at"] is None
+    assert agent_row["deleted_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_delete_workspace_allows_agent_to_delete_its_own_recent_workspace(aweb_cloud_db):
+    """A member retiring itself deletes promptly (aweb-aaqg).
+
+    The presence TTL exists so a live teammate is not removed out from under its
+    session. An agent deleting its OWN workspace learns nothing from waiting: its
+    session is over because it says so. Before this, an instance-lifetime member
+    retiring itself was refused `local_workspace_still_active` for the full
+    1,800-second TTL, which is not prompt retirement. The hosted cloud overlay
+    already made this distinction; this brings self-hosted to the same rule.
+    """
     team_sk, _, team_did_key = _make_keypair()
     agent_sk, _, agent_did_key = _make_keypair()
     team_id = "backend:acme.com"
-    workspace_id = uuid4()
-    agent_id = uuid4()
 
     cert = _make_certificate(
         team_sk,
@@ -852,29 +972,15 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
         "backend",
         team_did_key,
     )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.agents}}
-            (agent_id, team_id, did_key, alias, identity_scope, role)
-        VALUES ($1, $2, $3, $4, 'local', 'developer')
-        """,
-        agent_id,
-        team_id,
-        agent_did_key,
-        "bot",
-    )
-    await aweb_cloud_db.aweb_db.execute(
-        """
-        INSERT INTO {{tables.workspaces}}
-            (workspace_id, team_id, agent_id, alias, workspace_path, last_seen_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        """,
-        workspace_id,
-        team_id,
-        agent_id,
-        "bot",
-        "/tmp/recent-worktree",
-        datetime.now(timezone.utc) - timedelta(minutes=5),
+    # Heartbeating seconds ago: firmly inside the TTL, so this fails without the
+    # self-delete exemption rather than passing because the row looked stale.
+    agent_id, workspace_id = await _seed_local_member(
+        aweb_cloud_db,
+        team_id=team_id,
+        team_did_key=team_did_key,
+        agent_did_key=agent_did_key,
+        alias="bot",
+        last_seen_at=datetime.now(timezone.utc) - timedelta(seconds=5),
     )
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
@@ -884,8 +990,10 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
     ) as client:
         resp = await client.delete(f"/v1/workspaces/{workspace_id}", headers=headers)
 
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["code"] == "local_workspace_still_active"
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["workspace_id"] == str(workspace_id)
+    assert body["identity_deleted"] is True
 
     workspace_row = await aweb_cloud_db.aweb_db.fetch_one(
         """
@@ -901,8 +1009,8 @@ async def test_delete_workspace_rejects_recent_ephemeral_workspace(aweb_cloud_db
         """,
         agent_id,
     )
-    assert workspace_row["deleted_at"] is None
-    assert agent_row["deleted_at"] is None
+    assert workspace_row["deleted_at"] is not None
+    assert agent_row["deleted_at"] is not None
 
 
 @pytest.mark.asyncio

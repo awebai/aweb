@@ -55,9 +55,28 @@ var workspaceMigrateMultiTeamCmd = &cobra.Command{
 
 var workspaceDeleteCmd = &cobra.Command{
 	Use:   "delete <workspace-id-or-name>",
-	Short: "Delete a local workspace and its local identity",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runWorkspaceDelete,
+	Short: "Delete a local workspace and its local identity, retiring yourself when it is your own",
+	Long: `Delete a local workspace and its local identity.
+
+Deleting YOUR OWN workspace on a hosted team, with a local identity, retires you:
+the hosted team controller revokes your membership certificate, so your name
+becomes reusable by a later "aw team join". Any other target is a local delete
+only, and does not release the name.
+
+Read alias_released in the output, not identity_deleted. Deleting local state
+says nothing about the membership certificate, and an active certificate is what
+makes a rejoin under the same name fail. alias_released_reason says why:
+
+  not_own_workspace        the target is not the workspace you are running as
+  team_not_hosted          self-hosted or BYOT; no cloud-held controller to revoke
+  global_identity          global identities are retired by team-authorized removal
+  no_workspace_credential  no workspace-bound key in local config to authenticate with
+
+When this command can retire you, it does not fall back to a plain delete: a
+failure is reported as a failure, because a success report for a retirement that
+did not happen is what leaks names.`,
+	Args: cobra.ExactArgs(1),
+	RunE: runWorkspaceDelete,
 }
 
 var (
@@ -108,6 +127,15 @@ type workspaceDeleteOutput struct {
 	Alias           string `json:"alias"`
 	DeletedAt       string `json:"deleted_at"`
 	IdentityDeleted bool   `json:"identity_deleted"`
+	// Whether the alias can be joined again. This is the field a retirement hook
+	// must read, and it is NOT identity_deleted: deleting the local identity says
+	// nothing about the membership certificate at AWID, and an active certificate
+	// is what makes `aw team join` under the same alias fail. Always present, so
+	// an old hook reading only identity_deleted is visibly reading the wrong
+	// field rather than silently reading a missing one.
+	AliasReleased bool `json:"alias_released"`
+	// Why. Empty only when nothing was attempted.
+	AliasReleasedReason string `json:"alias_released_reason,omitempty"`
 }
 
 var saveWorktreeWorkspaceTo = awconfig.SaveWorktreeWorkspaceTo
@@ -274,7 +302,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	if err := refuseExternalIdentityCleanup(workingDir, "aw workspace delete"); err != nil {
 		return err
 	}
-	client, _, err := resolveClientSelectionForDir(workingDir)
+	client, selection, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return err
 	}
@@ -314,6 +342,47 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// A hosted local member deleting its OWN workspace retires itself: the cloud
+	// revokes its membership certificate through the team controller it holds and
+	// runs the same coordination cascade, so this path does NOT also call
+	// WorkspaceDelete. Doing both would be two cascades for one retirement, and
+	// the plain delete would 404 on the already-deleted workspace.
+	//
+	// Deliberately NOT a best-effort attempt with a fallback: once we have
+	// established this IS a self-retirement, a failure means the alias is still
+	// held, and falling back to the plain delete would reproduce the exact defect
+	// this change exists to fix - a success report for a retirement that did not
+	// happen.
+	plan := planSelfRetire(workingDir, selection, workspaceID)
+	if plan.eligible {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		retired, retireErr := postSelfRetire(ctx, plan)
+		cancel()
+		if retireErr != nil {
+			return fmt.Errorf("workspace not retired: %w", retireErr)
+		}
+		if !retired.AliasReleased {
+			return fmt.Errorf(
+				"workspace not retired: alias %s was not released (%s)",
+				retired.Alias,
+				retired.AliasReleasedReason,
+			)
+		}
+		printOutput(workspaceDeleteOutput{
+			WorkspaceID: retired.WorkspaceID,
+			Alias:       retired.Alias,
+			// Empty on purpose: the retirement response does not carry the
+			// workspace's deletion timestamp, and inventing one - now(), say -
+			// would put a number in the field that is not the recorded time.
+			// The human formatter omits an empty value rather than printing it.
+			DeletedAt:           "",
+			IdentityDeleted:     true,
+			AliasReleased:       true,
+			AliasReleasedReason: retired.AliasReleasedReason,
+		}, formatWorkspaceDelete)
+		return nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	deleteResp, err := client.WorkspaceDelete(ctx, workspaceID)
 	cancel()
@@ -327,10 +396,15 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("workspace %s not found or already deleted", workspaceID)
 	}
 	printOutput(workspaceDeleteOutput{
-		WorkspaceID:     deleteResp.WorkspaceID,
-		Alias:           deleteResp.Alias,
-		DeletedAt:       deleteResp.DeletedAt,
-		IdentityDeleted: deleteResp.IdentityDeleted,
+		WorkspaceID: deleteResp.WorkspaceID,
+		Alias:       deleteResp.Alias,
+		DeletedAt:   deleteResp.DeletedAt,
+		// The identity is deleted locally; the alias is a different question, and
+		// on this path the answer is always no. Saying so is the point: a caller
+		// that treated identity_deleted as retirement is what leaked five aliases.
+		IdentityDeleted:     deleteResp.IdentityDeleted,
+		AliasReleased:       false,
+		AliasReleasedReason: plan.reason,
 	}, formatWorkspaceDelete)
 	return nil
 }
@@ -822,6 +896,11 @@ func formatWorkspaceDelete(v any) string {
 		sb.WriteString("Deleted local identity: true\n")
 	} else {
 		sb.WriteString("Deleted local identity: false\n")
+	}
+	if out.AliasReleased {
+		sb.WriteString(fmt.Sprintf("Released alias for reuse: true (%s)\n", out.AliasReleasedReason))
+	} else {
+		sb.WriteString(fmt.Sprintf("Released alias for reuse: false (%s)\n", out.AliasReleasedReason))
 	}
 	if strings.TrimSpace(out.DeletedAt) != "" {
 		sb.WriteString(fmt.Sprintf("Deleted at: %s\n", out.DeletedAt))

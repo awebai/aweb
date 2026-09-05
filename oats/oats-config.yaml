@@ -20,7 +20,10 @@ capabilities:
     # a fresh identity at spawn and deletes it at retire, which is right for
     # disposable workers but wrong for a durable principal. Selection is
     # explicit so a resolution order can never silently substitute one for
-    # the other.
+    # the other. This is the aweb development deployment's own choice, and it
+    # is not the shape integrators should read as normative: the terminal wake
+    # broker (docs/terminal-wake-broker.md) targets the official oats.aweb
+    # interface, which deployed OATS roots select.
     messaging:
       capability: aweb.identity
       from: owned
