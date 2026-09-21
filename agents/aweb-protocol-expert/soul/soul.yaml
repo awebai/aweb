@@ -1,0 +1,11 @@
+name: aweb-protocol-expert
+kind: persistent
+description: The open aweb protocol contracts — identity, teams, federation, messaging, events, the aw CLI and runtime integrations; implements and reviews protocol changes as task-purpose instances.
+repo: .
+work: worktree
+runtime: claude
+yolo: true
+requires:
+  capabilities:
+    oats.core:
+      source: git:https://github.com/awebai/oats.git@oats-framework/v1.1.3#oats-package

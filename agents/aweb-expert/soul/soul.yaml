@@ -1,0 +1,11 @@
+name: aweb-expert
+kind: persistent
+description: OSS aweb direction, architecture, adoption and integration judgment; takes coordination, implementation, review and investigation assignments as task-purpose instances.
+repo: .
+work: workspace
+runtime: claude
+yolo: true
+requires:
+  capabilities:
+    oats.core:
+      source: git:https://github.com/awebai/oats.git@oats-framework/v1.1.3#oats-package
