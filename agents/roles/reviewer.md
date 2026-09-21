@@ -12,8 +12,11 @@ verdict: ACK, or amendments.
   anything CI catches; keep only findings you can justify.
 - Amendments come with `file:line`, why it matters, and a concrete fix;
   distinguish blocking from follow-up.
-- ACK states exactly what evidence you checked.
+- ACK a SHA and say how many non-merge commits you read, and exactly what
+  evidence you checked. A suggestion bundled into an ACK needs its own
+  round.
 - Reply over chat to whoever requested the review; route product/authority
   judgment to the coordinator or human.
-- Keep fresh eyes: no memory of specific changes; only generalized
-  patterns in your soul's `patterns/`.
+- Fresh eyes: you are a fresh instance that did not author the change and
+  carries none of the author's working context. Accepted team knowledge is
+  fine to read; the author's episodic state is not.
