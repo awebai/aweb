@@ -201,9 +201,9 @@ func TestAwebOwnedStartupGuidanceHasSingleCanonicalOrder(t *testing.T) {
 	}
 
 	for _, rel := range []string{
-		"agents/souls/consultant/AGENTS.md",
-		"agents/souls/coordinator/AGENTS.md",
-		"agents/souls/developer/AGENTS.md",
+		"agents/aweb-expert/soul/AGENTS.md",
+		"agents/aweb-protocol-expert/soul/AGENTS.md",
+		"agents/coordinator/soul/AGENTS.md",
 		"docs/configuration.md",
 		"docs/start-working.md",
 		"docs/tasks-and-work.md",

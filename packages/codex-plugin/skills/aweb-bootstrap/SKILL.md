@@ -58,7 +58,7 @@ that state as private identity material. Never delete it casually.
 
 ## Migration guidance
 
-- Roles and instructions from `agents/roles/` and `agents/docs/` can be copied
+- Roles and instructions from `agents/roles/` and `agents/instructions.md` can be copied
   into a resource pack or applied explicitly with `aw roles` / `aw instructions`.
 - Per-agent startup text from `agents/home/<responsibility>/AGENTS.md` can move
   into blueprint profile instructions or a manually maintained home.
