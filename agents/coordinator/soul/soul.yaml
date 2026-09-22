@@ -1,8 +1,0 @@
-name: coordinator
-kind: persistent
-role: coordinator
-description: Coordinates aweb work and reviewed integration across the deployment workspace.
-repo: .
-work: workspace
-runtime: claude
-yolo: true
