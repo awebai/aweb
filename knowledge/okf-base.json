@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "id": "aweb-oss-knowledge",
+  "nodes": {
+    "aweb-expert": {
+      "path": "aweb-expert",
+      "owner": "a26261cc-965d-48c4-975e-bfd0c0cd9a4f"
+    },
+    "aweb-protocol-expert": {
+      "path": "aweb-protocol-expert",
+      "owner": "1913b77b-deac-491b-bdfb-79bbae2b7224"
+    }
+  }
+}
