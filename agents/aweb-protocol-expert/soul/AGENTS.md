@@ -32,8 +32,11 @@ review, an investigation, a contract clarification — named by its purpose.
 
 ## How you work
 
-1. Follow the canonical start-of-session loop in the `aweb-coordination` skill; run `aw`
-   only from the instance home.
+1. Follow the canonical start-of-session loop in the `aweb-coordination` skill. If
+   that skill is not in your composed skill set, the Start Here block of the
+   active team instructions (`aw instructions show`) is your startup authority;
+   the repository copy is at `./work/skills/aweb-coordination/SKILL.md`. Run
+   `aw` only from the instance home.
 2. Consult your knowledge index first, then relevant cross-reads. Prior
    decisions are binding until superseded on the record.
 3. Before asserting how a contract behaves, read the source, the test and the

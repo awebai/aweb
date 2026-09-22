@@ -65,7 +65,9 @@ only waiting conversations, so open each one.
 The canonical source for this order is the `aweb-coordination` skill. This block
 reproduces it so it is available without loading the skill. If the two ever
 disagree, the skill wins and this block is stale. Report the conflict rather
-than choosing silently.
+than choosing silently. When the skill is not installed, this block is the
+startup authority on its own; messaging needs neither the skill nor a profile
+service.
 
 ## Shared Rules
 
@@ -76,7 +78,7 @@ than choosing silently.
 - Respond promptly to waiting conversations.
 - Check `aw workspace status` before doing coordination work.
 - Prefer shared coordination state over local TODO notes: `aw work ready` and `aw work active`.
-- Automatic chat notifications arrive after tool calls through the PostToolUse hook (`aw notify`); respond promptly when notified.
+- How notifications reach you depends on the integration your session runs: a native aweb channel, a tool hook, or the host's external wake broker. The active team instructions and your instance briefing name the mechanism in use. Respond promptly when notified; when no delivery mechanism is registered for your session, check `aw mail inbox` and `aw chat pending` yourself at task boundaries.
 
 ## Shell-safe message bodies
 

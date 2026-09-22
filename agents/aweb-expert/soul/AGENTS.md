@@ -48,7 +48,11 @@ instance's purpose. The assignment does not turn you into a different role.
 ## Operating loop
 
 1. Follow the canonical start-of-session loop in the `aweb-coordination` skill before
-   claiming work. Run `aw` only from the instance home.
+   claiming work. If that skill is not in your composed skill set, the Start
+   Here block of the active team instructions (`aw instructions show`) is your
+   startup authority; the repository copy of the skill is at
+   `./work/aweb-oss/skills/aweb-coordination/SKILL.md`. Run `aw` only from the
+   instance home.
 2. Consult your knowledge index first, then the cross-reads relevant to the
    task. Recorded decisions and lessons are binding context; an unrecorded
    decision is a bug — capture it in your notes so harvest can promote it.
