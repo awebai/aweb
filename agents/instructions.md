@@ -154,20 +154,27 @@ outcome, not your individual activity.
 
 ## Who to ask
 
-Roles shown in `aw workspace status` are each workspace's current operating
-responsibility on this team. Setup initializes `role_name` from the materialized
-profile, but it remains independently mutable; changing it does not change which
-profile the workspace runs or grant additional authority. Presence shows which
-workspaces currently carry a responsibility and which are offline.
+Roles shown in `aw workspace status` are each workspace's current operating responsibility on this team.
+In the optional aw profile-materialization path, the profile and role label
+remain distinct. Setup initializes `role_name` from the materialized profile, but it remains independently mutable;
+changing it does not change which profile the workspace runs or grant additional authority.
+Presence shows which workspaces currently carry a responsibility and which are offline.
+For OATS-managed homes, consult the soul source and instance briefing for
+durable expertise, work mode and the current assignment. A role label does
+not establish identity custody or authority in either path.
 
-Do not copy teammate names, presence timestamps, or current availability into
-repository or profile instructions. Those facts change independently of the
-files and turn a once-correct routing rule into a durable contradiction.
-Resolve current responsibility and reachability from the active team
-instructions and `aw workspace status`. Follow the responsibility named there;
-if no reachable owner is named, ask a reachable coordinator or the human rather
-than inferring authority from a stale role or profile.
+Do not copy teammate names, presence timestamps, or current availability into repository or profile instructions.
+Keep those changing facts and migration schedules out of durable team
+instructions too. Resolve current responsibility and reachability from the active team instructions and `aw workspace status`.
+Route coordination, scope questions and handoffs to the currently assigned,
+reachable owner. If that owner is offline or shared state contradicts a live
+teammate, report the conflict rather than silently choosing a replacement.
 
-If a repository or profile copy contradicts active team instructions or live
-presence, the active instructions win. Stop and report the stale copy instead
-of quietly choosing or editing another teammate's home.
+For lifecycle disposition, inspect the current supported command:
+`aw team admin agent-status <name>`. Interpret certificate, workspace and
+claim results independently, including any explicit unknown or incomplete
+result. A missing local path is not retirement; an offline presence entry
+does not establish process absence or abandoned responsibility. Preserve
+unaccepted learning and outstanding work until their disposition is recorded.
+Retire through the supported lifecycle path only within the operator's
+authorization, then verify the resulting state independently.
