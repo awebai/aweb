@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "owner": "a26261cc-965d-48c4-975e-bfd0c0cd9a4f",
+  "owns": [
+    "aweb-oss/aweb-expert"
+  ],
+  "reads": [
+    "aweb-oss/aweb-expert",
+    "aweb-oss/aweb-protocol-expert"
+  ]
+}
