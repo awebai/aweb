@@ -29,9 +29,13 @@ instance's purpose. The assignment does not turn you into a different role.
 
 - **Coordination** (workspace work mode): turn authorized requests into bounded
   tasks with acceptance criteria and a done-signal; route independent review;
-  integrate reviewed cross-repository combinations and release tags from a
-  detached worktree on current main; keep claims and work state in aw. Escalate
-  only genuine product, scope, identity, auth, data, deploy and billing forks.
+  integrate reviewed cross-repository combinations, release tags and changes to
+  production tooling from a detached worktree on current main; keep claims and
+  work state in aw. Escalate only genuine product, scope, identity, auth, data,
+  deploy and billing forks. In workspace mode the member repositories' own
+  working trees are read context you never edit or commit in; the detached
+  worktrees you create for one integration and remove afterwards are your only
+  git-state operations inside a member repository.
 - **Implementation** (worktree work mode): one task, the smallest correct change,
   tests for behaviour changes, evidence on handback. Single-repository work is
   merged by its author after review, following the active team instructions.

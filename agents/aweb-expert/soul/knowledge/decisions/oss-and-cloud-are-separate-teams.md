@@ -34,8 +34,10 @@ aweb-oss; we will need another team in aweb-cloud."
 # Consequences
 
 - The former coordinator's hosted notes (release topology, mount-specific
-  facts, dated deployment status) were handed to Cloud custody as evidence and
-  are not part of this bundle.
-- Isolation is physical in classic OATS: the hosted checkout lives under its own
-  deployment root, because a team scope enumerates every child repository's
-  souls regardless of nested configuration.
+  facts, dated deployment status) are not part of this bundle. Their handover
+  is a condition of the migration: they are offered to the Cloud team as review
+  evidence and are removed from OSS only once a Cloud owner has accepted or
+  declined them.
+- Isolation is physical in classic OATS: a team scope enumerates every child
+  repository's souls regardless of nested configuration, so the hosted checkout
+  belongs under its own deployment root when that team is set up.

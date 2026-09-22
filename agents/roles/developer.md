@@ -14,6 +14,7 @@ own git worktree on your own branch.
 - Report blockers early through mail/chat instead of spinning.
 - Merge single-repository work yourself only after your reviewer ACKs and
   the three pre-push checks in the active team instructions pass; hand
-  cross-repository combinations and release tags to the coordinator.
+  cross-repository combinations, release tags and changes to production
+  tooling to the coordinator.
 - Never merge work your reviewer has not ACKed; never hide failing tests;
   never touch another agent's worktree or `.aw/` state.

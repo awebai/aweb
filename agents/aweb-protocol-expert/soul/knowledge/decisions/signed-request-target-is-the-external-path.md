@@ -21,10 +21,11 @@ the mechanism.
 
 - The signed path is the external request target as the client sent it. Behind
   a mount that is the mounted path; unmounted it is the bare route.
-- The conformance vector for app-emit signs the unmounted route and is a
-  byte-parity fixture for the unmounted case, not a mandate for every
-  deployment. Confirm the fixture's current location under `test-vectors/`
-  before citing it; the file was renamed after this decision was recorded.
+- The conformance vector `app-emit-credential-v1.json` under
+  `cli/go/internal/conformance/vectors/`, read by that package's conformance
+  test, signs the unmounted route `/v1/events/app`; it is a byte-parity fixture
+  for the unmounted case, not a mandate for every deployment. Consumers keep
+  digest-pinned snapshots of it.
 - Neither the verifier nor the emitters are changed to strip or add a prefix.
 
 # Rejected
