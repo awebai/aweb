@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import Any
 
 DEFAULT_GRANT_LIVENESS_TTL_SECONDS = 1800
@@ -36,7 +35,6 @@ async def valid_grant_liveness_by_workspace(
     """
     if not workspace_ids:
         return {}
-    await cleanup_expired_grant_liveness(db, ttl_seconds=ttl_seconds)
     rows = await db.fetch_all(
         """
         SELECT DISTINCT ON (l.workspace_id)

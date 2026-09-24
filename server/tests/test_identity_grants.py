@@ -747,6 +747,16 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
             "/v1/agents",
             headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
         )
+        stale_exists_after_read = await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT EXISTS (SELECT 1 FROM {{tables.identity_grant_liveness}} WHERE grant_id = $1::UUID)",
+            stale_grant,
+        )
+        cleanup_key, cleanup_did = _session_keypair()
+        cleanup_grant = (await _mint(client, grant_did_key=cleanup_did, scopes=["presence.write"])).json()["grant_id"]
+        cleanup_heartbeat = await client.post(
+            "/v1/agents/heartbeat",
+            headers=_grant_headers(signing_key=cleanup_key, did_key=cleanup_did, grant_id=cleanup_grant, method="POST", path="/v1/agents/heartbeat"),
+        )
         revoked_grant = (await _mint(client, grant_did_key=revoked_did, scopes=["presence.write"])).json()["grant_id"]
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
@@ -794,11 +804,12 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         """
     )
     assert root_presence_calls == []
-    assert {row["grant_id"] for row in liveness_rows} == {presence_grant, other_presence_grant}
-    assert {row["subject_agent_id"] for row in liveness_rows} == {str(alice_id)}
-    assert {row["workspace_id"] for row in liveness_rows} == {app.state.alice_workspace_id}
-    assert {row["session_did_key"] for row in liveness_rows} == {presence_did, other_presence_did}
-    assert all(row["expires_at"] >= row["last_seen_at"] for row in liveness_rows)
+    initial_liveness_rows = [row for row in liveness_rows if row["grant_id"] in {presence_grant, other_presence_grant}]
+    assert {row["grant_id"] for row in initial_liveness_rows} == {presence_grant, other_presence_grant}
+    assert {row["subject_agent_id"] for row in initial_liveness_rows} == {str(alice_id)}
+    assert {row["workspace_id"] for row in initial_liveness_rows} == {app.state.alice_workspace_id}
+    assert {row["session_did_key"] for row in initial_liveness_rows} == {presence_did, other_presence_did}
+    assert all(row["expires_at"] >= row["last_seen_at"] for row in initial_liveness_rows)
     online_agents = {agent["agent_id"]: agent for agent in grant_online_roster.json()["agents"]}
     assert online_agents[str(alice_id)]["online"] is True
     status_agents = {agent["workspace_id"]: agent for agent in grant_online_status.json()["agents"]}
@@ -810,6 +821,8 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
     assert stale_heartbeat.status_code == 200, stale_heartbeat.text
     stale_agents = {agent["agent_id"]: agent for agent in stale_roster.json()["agents"]}
     assert stale_agents[str(alice_id)]["online"] is False
+    assert stale_exists_after_read is True
+    assert cleanup_heartbeat.status_code == 200, cleanup_heartbeat.text
     assert not await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT EXISTS (SELECT 1 FROM {{tables.identity_grant_liveness}} WHERE grant_id = $1::UUID)",
         stale_grant,
