@@ -23,6 +23,7 @@ from aweb.routes.chat import router as chat_router
 from aweb.routes.agents import router as agents_router
 from aweb.routes.identity_grants import router as identity_grants_router
 from aweb.routes.messages import router as messages_router
+from aweb.routes.status import router as status_router
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 TEAM_ID = "backend:acme.com"
@@ -607,6 +608,7 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.include_router(messages_router)
     app.include_router(chat_router)
     app.include_router(agents_router)
+    app.include_router(status_router)
     app.dependency_overrides[get_team_identity] = _identity
     app.state.db = _DbShim(aweb_db)
     app.state.public_origin = "http://test"
@@ -662,8 +664,11 @@ async def _real_messaging_fixture(aweb_db):
 async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monkeypatch):
     app, alice_id, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
 
-    async def _presence(_redis, **_kwargs):
-        raise AssertionError("grant heartbeat must not update shared Redis workspace presence")
+    root_presence_calls = []
+
+    async def _presence(_redis, **kwargs):
+        root_presence_calls.append(kwargs)
+        return "2026-09-24T00:00:00+00:00"
 
     monkeypatch.setattr(agents_routes, "update_agent_presence", _presence)
     old_last_seen = await aweb_cloud_db.aweb_db.fetch_value(
@@ -700,7 +705,48 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
             "/v1/agents/heartbeat",
             headers=_grant_headers(signing_key=other_presence_key, did_key=other_presence_did, grant_id=other_presence_grant, method="POST", path="/v1/agents/heartbeat"),
         )
-
+        grant_online_roster = await client.get(
+            "/v1/agents",
+            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+        )
+        grant_online_status = await client.get(
+            "/v1/status",
+            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/status"),
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
+            presence_grant,
+        )
+        one_grant_roster = await client.get(
+            "/v1/agents",
+            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
+            other_presence_grant,
+        )
+        grant_offline_roster = await client.get(
+            "/v1/agents",
+            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+        )
+        stale_key, stale_did = _session_keypair()
+        stale_grant = (await _mint(client, grant_did_key=stale_did, scopes=["presence.write"])).json()["grant_id"]
+        stale_heartbeat = await client.post(
+            "/v1/agents/heartbeat",
+            headers=_grant_headers(signing_key=stale_key, did_key=stale_did, grant_id=stale_grant, method="POST", path="/v1/agents/heartbeat"),
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            UPDATE {{tables.identity_grant_liveness}}
+            SET last_seen_at = NOW() - INTERVAL '31 minutes'
+            WHERE grant_id = $1::UUID
+            """,
+            stale_grant,
+        )
+        stale_roster = await client.get(
+            "/v1/agents",
+            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+        )
         revoked_grant = (await _mint(client, grant_did_key=revoked_did, scopes=["presence.write"])).json()["grant_id"]
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
@@ -747,11 +793,27 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         ORDER BY grant_id
         """
     )
+    assert root_presence_calls == []
     assert {row["grant_id"] for row in liveness_rows} == {presence_grant, other_presence_grant}
     assert {row["subject_agent_id"] for row in liveness_rows} == {str(alice_id)}
     assert {row["workspace_id"] for row in liveness_rows} == {app.state.alice_workspace_id}
     assert {row["session_did_key"] for row in liveness_rows} == {presence_did, other_presence_did}
     assert all(row["expires_at"] >= row["last_seen_at"] for row in liveness_rows)
+    online_agents = {agent["agent_id"]: agent for agent in grant_online_roster.json()["agents"]}
+    assert online_agents[str(alice_id)]["online"] is True
+    status_agents = {agent["workspace_id"]: agent for agent in grant_online_status.json()["agents"]}
+    assert status_agents[app.state.alice_workspace_id]["status"] == "active"
+    one_grant_agents = {agent["agent_id"]: agent for agent in one_grant_roster.json()["agents"]}
+    assert one_grant_agents[str(alice_id)]["online"] is True
+    offline_agents = {agent["agent_id"]: agent for agent in grant_offline_roster.json()["agents"]}
+    assert offline_agents[str(alice_id)]["online"] is False
+    assert stale_heartbeat.status_code == 200, stale_heartbeat.text
+    stale_agents = {agent["agent_id"]: agent for agent in stale_roster.json()["agents"]}
+    assert stale_agents[str(alice_id)]["online"] is False
+    assert not await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT EXISTS (SELECT 1 FROM {{tables.identity_grant_liveness}} WHERE grant_id = $1::UUID)",
+        stale_grant,
+    )
     assert revoked.status_code == 403
     assert revoked.json()["detail"] == "grant revoked"
     assert expired.status_code == 403

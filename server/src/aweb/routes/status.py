@@ -16,6 +16,7 @@ from aweb.team_auth_deps import TeamIdentity, get_team_identity
 from ..db import DatabaseInfra, get_db_infra
 from ..events import EventCategory, stream_events_multi
 from ._reservation_utils import reservation_metadata
+from ..grant_liveness import valid_grant_liveness_by_workspace
 from ..presence import (
     list_agent_presences_by_workspace_ids,
 )
@@ -337,11 +338,12 @@ async def status(
 
     # Agent presences from Redis (filtered by workspace_ids from database).
     all_presences: List[Dict[str, str]] = []
-    if workspace_ids:
+    if redis and workspace_ids:
         all_presences = await list_agent_presences_by_workspace_ids(redis, workspace_ids)
     presence_by_workspace = {
         p.get("workspace_id", ""): p for p in all_presences if p.get("workspace_id")
     }
+    grant_liveness_by_workspace = await valid_grant_liveness_by_workspace(aweb_db, workspace_ids)
 
     workspace_rows = await aweb_db.fetch_all(
         f"""
@@ -482,6 +484,7 @@ async def status(
         if row is None:
             continue
         presence = presence_by_workspace.get(ws_id, {})
+        grant_liveness = {} if presence else grant_liveness_by_workspace.get(ws_id, {})
         agent_role = presence.get("role") or row["role"] or None
         agent = {
             "workspace_id": ws_id,
@@ -489,7 +492,7 @@ async def status(
             "human_name": presence.get("human_name") or row["human_name"] or None,
             "role": agent_role,
             "role_name": agent_role,
-            "status": presence.get("status") or "offline",
+            "status": presence.get("status") or ("active" if grant_liveness else "offline"),
             "canonical_origin": presence.get("canonical_origin") or row["repo"] or None,
             "hostname": row["hostname"] or None,
             "workspace_path": row["workspace_path"] or None,
@@ -504,7 +507,11 @@ async def status(
             "claims": claims_by_workspace.get(ws_id, []),
             "reservations": reservations_by_workspace.get(ws_id, []),
             "last_seen": presence.get("last_seen")
-            or (row["last_seen_at"].isoformat() if row["last_seen_at"] else None),
+            or (
+                grant_liveness["last_seen_at"].astimezone(timezone.utc).isoformat()
+                if grant_liveness
+                else (row["last_seen_at"].isoformat() if row["last_seen_at"] else None)
+            ),
         }
         agents.append(agent)
 

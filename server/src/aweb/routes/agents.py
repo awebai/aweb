@@ -18,6 +18,7 @@ from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db, get_redis
+from aweb.grant_liveness import valid_grant_liveness_by_workspace
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
@@ -444,6 +445,7 @@ async def list_agents(
         else []
     )
     presence_by_id = {str(p.get("workspace_id")): p for p in presences if p.get("workspace_id")}
+    grant_liveness_by_id = await valid_grant_liveness_by_workspace(aweb_db, workspace_ids)
 
     agents: list[AgentView] = []
     for r in rows:
@@ -461,6 +463,12 @@ async def list_agents(
             status = presence.get("status") or "active"
             last_seen = presence.get("last_seen") or None
             role = presence.get("role") or role
+        elif ctx:
+            grant_liveness = grant_liveness_by_id.get(str(ctx["workspace_id"]))
+            if grant_liveness:
+                online = True
+                status = "active"
+                last_seen = grant_liveness["last_seen_at"].astimezone(timezone.utc).isoformat()
 
         agents.append(
             AgentView(
