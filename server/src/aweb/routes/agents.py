@@ -519,7 +519,60 @@ async def heartbeat(
     """Update workspace last_seen_at and Redis presence."""
     aweb_db = db.get_manager("aweb")
 
-    # Update and return the workspace identifier used by the presence store.
+    if identity.grant is not None:
+        workspace = await aweb_db.fetch_one(
+            """
+            SELECT w.workspace_id
+            FROM {{tables.workspaces}} w
+            JOIN {{tables.agents}} a
+              ON a.team_id = w.team_id
+             AND a.agent_id = w.agent_id
+             AND a.deleted_at IS NULL
+            WHERE w.team_id = $1
+              AND w.agent_id = $2::UUID
+              AND w.alias = $3
+              AND w.deleted_at IS NULL
+            """,
+            identity.team_id,
+            identity.agent_id,
+            identity.alias,
+        )
+        if workspace is None:
+            raise HTTPException(status_code=409, detail="Agent has no active workspace")
+        row = await aweb_db.fetch_one(
+            """
+            INSERT INTO {{tables.identity_grant_liveness}} (
+                grant_id, team_id, subject_agent_id, workspace_id, alias,
+                session_did_key, last_seen_at, expires_at
+            )
+            VALUES ($1::UUID, $2, $3::UUID, $4::UUID, $5, $6, NOW(), $7)
+            ON CONFLICT (grant_id) DO UPDATE
+            SET team_id = EXCLUDED.team_id,
+                subject_agent_id = EXCLUDED.subject_agent_id,
+                workspace_id = EXCLUDED.workspace_id,
+                alias = EXCLUDED.alias,
+                session_did_key = EXCLUDED.session_did_key,
+                last_seen_at = EXCLUDED.last_seen_at,
+                expires_at = EXCLUDED.expires_at
+            RETURNING last_seen_at
+            """,
+            identity.grant.grant_id,
+            identity.team_id,
+            identity.agent_id,
+            workspace["workspace_id"],
+            identity.alias,
+            identity.grant.session_did_key,
+            identity.grant.expires_at,
+        )
+        return HeartbeatResponse(
+            agent_id=identity.agent_id,
+            alias=identity.alias,
+            last_seen_at=row["last_seen_at"].astimezone(timezone.utc).isoformat(),
+        )
+
+    # Root/team-certificate heartbeat keeps today's workspace/Redis presence
+    # semantics. Grant heartbeat intentionally does not write these shared
+    # coordinates; it records grant-keyed ephemeral liveness above.
     workspace = await aweb_db.fetch_one(
         """
         UPDATE {{tables.workspaces}} w

@@ -663,7 +663,7 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
     app, alice_id, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
 
     async def _presence(_redis, **_kwargs):
-        return "2026-09-24T00:00:00+00:00"
+        raise AssertionError("grant heartbeat must not update shared Redis workspace presence")
 
     monkeypatch.setattr(agents_routes, "update_agent_presence", _presence)
     old_last_seen = await aweb_cloud_db.aweb_db.fetch_value(
@@ -672,6 +672,7 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
     )
     signing_key, grant_did = _session_keypair()
     presence_key, presence_did = _session_keypair()
+    other_presence_key, other_presence_did = _session_keypair()
     revoked_key, revoked_did = _session_keypair()
     expired_key, expired_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -693,6 +694,11 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         heartbeat = await client.post(
             "/v1/agents/heartbeat",
             headers=_grant_headers(signing_key=presence_key, did_key=presence_did, grant_id=presence_grant, method="POST", path="/v1/agents/heartbeat"),
+        )
+        other_presence_grant = (await _mint(client, grant_did_key=other_presence_did, scopes=["presence.write"])).json()["grant_id"]
+        other_heartbeat = await client.post(
+            "/v1/agents/heartbeat",
+            headers=_grant_headers(signing_key=other_presence_key, did_key=other_presence_did, grant_id=other_presence_grant, method="POST", path="/v1/agents/heartbeat"),
         )
 
         revoked_grant = (await _mint(client, grant_did_key=revoked_did, scopes=["presence.write"])).json()["grant_id"]
@@ -727,11 +733,25 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
     assert heartbeat_denied.json()["detail"] == "outside grant scope"
     assert heartbeat.status_code == 200, heartbeat.text
     assert heartbeat.json()["agent_id"] == str(alice_id)
+    assert other_heartbeat.status_code == 200, other_heartbeat.text
     new_last_seen = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1::UUID",
         app.state.alice_workspace_id,
     )
-    assert new_last_seen > old_last_seen
+    assert new_last_seen == old_last_seen
+    liveness_rows = await aweb_cloud_db.aweb_db.fetch_all(
+        """
+        SELECT grant_id::text AS grant_id, subject_agent_id::text AS subject_agent_id,
+               workspace_id::text AS workspace_id, session_did_key, last_seen_at, expires_at
+        FROM {{tables.identity_grant_liveness}}
+        ORDER BY grant_id
+        """
+    )
+    assert {row["grant_id"] for row in liveness_rows} == {presence_grant, other_presence_grant}
+    assert {row["subject_agent_id"] for row in liveness_rows} == {str(alice_id)}
+    assert {row["workspace_id"] for row in liveness_rows} == {app.state.alice_workspace_id}
+    assert {row["session_did_key"] for row in liveness_rows} == {presence_did, other_presence_did}
+    assert all(row["expires_at"] >= row["last_seen_at"] for row in liveness_rows)
     assert revoked.status_code == 403
     assert revoked.json()["detail"] == "grant revoked"
     assert expired.status_code == 403
