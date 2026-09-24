@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -193,14 +192,8 @@ func (s *custodyService) serve(ctx context.Context) error {
 			return fmt.Errorf("remove stale custody socket: %w", err)
 		}
 	}
-	oldUmask := syscall.Umask(0o077)
-	ln, err := net.Listen("unix", s.socketPath)
-	syscall.Umask(oldUmask)
+	ln, err := listenCustodySocket(s.socketPath)
 	if err != nil {
-		return err
-	}
-	if err := os.Chmod(s.socketPath, 0o600); err != nil {
-		_ = ln.Close()
 		return err
 	}
 	mux := http.NewServeMux()
@@ -604,10 +597,6 @@ func custodySocketPathLimit() int {
 	default:
 		return 0
 	}
-}
-
-func isStaleCustodySocketError(err error) bool {
-	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOTSOCK)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
