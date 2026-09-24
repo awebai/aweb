@@ -74,6 +74,7 @@ echo "script:   $SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
 # Short root: Unix socket paths are limited to ~104-108 bytes.
 WORK="$(mktemp -d /tmp/awga.XXXXXX)"
+WORK="$(cd "$WORK" && pwd -P)"
 RESIDENT="$WORK/r"
 GRANT="$WORK/g"
 INSTANCE="$WORK/i"
