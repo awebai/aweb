@@ -554,3 +554,27 @@ func TestRunGrantMintSnapshotsNamedAppToolsIntoResidentHome(t *testing.T) {
 		t.Fatalf("app tool policy leaked into the worker grant home: %v", err)
 	}
 }
+
+// OATS hooks select the grant home explicitly via AWEB_IDENTITY_HOME from an
+// otherwise empty instance directory; app verbs dispatch before cobra, so the
+// environment (not --identity-home) is the supported selector here.
+func TestGrantAppToolWithExplicitIdentityHomeEnv(t *testing.T) {
+	f := setupAppCustodyFixture(t, []string{"get-thing"})
+	instance := t.TempDir()
+	t.Chdir(instance)
+	t.Setenv(awconfig.IdentityHomeEnv, f.grantHome)
+	res, err := runAppTool(t, "get-thing", "--thing_id", "t1")
+	if err != nil || res.Status != http.StatusOK {
+		t.Fatalf("status=%v err=%v body=%s", statusOf(res), err, bodyOf(res))
+	}
+	if _, verified := f.app.requests(); len(verified) != 1 || !strings.HasSuffix(verified[0], "as "+f.residentDID) {
+		t.Fatalf("verified=%v", verified)
+	}
+	entries, err := os.ReadDir(instance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("grant app call wrote into the instance directory: %v", entries)
+	}
+}

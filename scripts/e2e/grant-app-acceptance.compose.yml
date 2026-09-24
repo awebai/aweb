@@ -1,0 +1,38 @@
+# Test-only overlay for scripts/e2e-grant-app-tools.sh, layered over
+# docker-compose.e2e.yml. It bounds every service at container creation and
+# lets the disposable AWID accept a loopback http delivery origin. It changes no
+# production defaults or validation.
+services:
+  postgres:
+    cpus: "1"
+    mem_limit: "1g"
+    pids_limit: 512
+    labels:
+      aweb.acceptance: grant-app-tools
+  redis:
+    cpus: "0.5"
+    mem_limit: "256m"
+    pids_limit: 256
+    labels:
+      aweb.acceptance: grant-app-tools
+  awid:
+    cpus: "1"
+    mem_limit: "1g"
+    pids_limit: 512
+    labels:
+      aweb.acceptance: grant-app-tools
+    environment:
+      APP_ENV: test
+      AWID_ALLOW_INSECURE_DELIVERY_ORIGIN: "true"
+  aweb:
+    cpus: "1"
+    mem_limit: "1g"
+    pids_limit: 512
+    labels:
+      aweb.acceptance: grant-app-tools
+  library:
+    cpus: "1"
+    mem_limit: "1g"
+    pids_limit: 512
+    labels:
+      aweb.acceptance: grant-app-tools
