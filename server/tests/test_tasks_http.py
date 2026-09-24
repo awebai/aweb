@@ -15,7 +15,7 @@ from aweb.coordination.tasks_service import (
     list_blocked_tasks,
     list_ready_tasks,
 )
-from aweb.team_auth_deps import TeamIdentity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 
 TEAM_ID = "backend:acme.com"
@@ -34,10 +34,23 @@ def _build_tasks_app(aweb_db) -> FastAPI:
     app.include_router(tasks_router)
     app.state.db = _DbShim(aweb_db)
     app.state.on_mutation = None
+
+    async def _fake_dependency() -> TeamIdentity:
+        return await _fake_team_identity()
+
+    app.dependency_overrides[get_team_identity] = _fake_dependency
+    for route in app.routes:
+        dependant = getattr(route, "dependant", None)
+        if dependant is None:
+            continue
+        for dependency in getattr(dependant, "dependencies", []):
+            call = getattr(dependency, "call", None)
+            if getattr(call, "_aweb_grant_scope", None) in {"coord.read", "coord.write"}:
+                app.dependency_overrides[call] = _fake_dependency
     return app
 
 
-async def _fake_team_identity(request, db_infra) -> TeamIdentity:
+async def _fake_team_identity(request=None, db_infra=None) -> TeamIdentity:
     return TeamIdentity(
         team_id=TEAM_ID,
         alias="alice",
@@ -102,7 +115,6 @@ async def _insert_task(
 
 @pytest.mark.asyncio
 async def test_task_routes_filter_reparent_and_unassign(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(tasks_routes, "get_team_identity", _fake_team_identity)
     app = _build_tasks_app(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
 
@@ -158,7 +170,6 @@ async def test_task_routes_filter_reparent_and_unassign(aweb_cloud_db, monkeypat
 
 @pytest.mark.asyncio
 async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(tasks_routes, "get_team_identity", _fake_team_identity)
     app = _build_tasks_app(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
 
@@ -242,7 +253,6 @@ async def test_combined_reparent_and_claim_uses_new_hierarchy_apex(aweb_cloud_db
 
 @pytest.mark.asyncio
 async def test_add_dependency_route_uses_service_result_keys(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(tasks_routes, "get_team_identity", _fake_team_identity)
     app = _build_tasks_app(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
 
@@ -280,7 +290,6 @@ async def test_add_dependency_route_uses_service_result_keys(aweb_cloud_db, monk
 
 @pytest.mark.asyncio
 async def test_remove_dependency_route_uses_service_result_keys(aweb_cloud_db, monkeypatch):
-    monkeypatch.setattr(tasks_routes, "get_team_identity", _fake_team_identity)
     app = _build_tasks_app(aweb_cloud_db.aweb_db)
     await _seed_team(aweb_cloud_db.aweb_db)
 
@@ -330,7 +339,6 @@ async def test_create_task_mutation_context_includes_actor_did_aw(aweb_cloud_db,
         captured["event_type"] = event_type
         captured["context"] = dict(context)
 
-    monkeypatch.setattr(tasks_routes, "get_team_identity", _fake_team_identity)
     app = _build_tasks_app(aweb_cloud_db.aweb_db)
     app.state.on_mutation = _capture
     await _seed_team(aweb_cloud_db.aweb_db)

@@ -9,6 +9,7 @@ from aweb.coordination.routes import workspaces as workspace_routes
 from aweb.mcp.tools import _common as common_tools
 from aweb.mcp.tools import agents as mcp_agents
 from aweb.routes import agents as agent_routes
+from aweb.team_auth_deps import TeamIdentity
 
 
 class _FakeAwebDB:
@@ -106,10 +107,16 @@ async def test_route_heartbeat_passes_team_id(monkeypatch):
 
     monkeypatch.setattr(agent_routes, "update_agent_presence", _capture_presence)
 
-    identity = SimpleNamespace(
+    identity = TeamIdentity(
         team_id="default:acme.com",
         agent_id="agent-1",
         alias="ivy",
+        did_key="did:key:z6MkIvy",
+        did_aw="did:aw:ivy",
+        address="acme.com/ivy",
+        identity_scope="global",
+        certificate_id="cert-001",
+        grant=None,
     )
 
     response = await agent_routes.heartbeat(
@@ -127,9 +134,6 @@ async def test_route_heartbeat_passes_team_id(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_list_online_workspaces_filters_by_team_id(monkeypatch):
-    async def _identity(_request, _db_infra):
-        return SimpleNamespace(team_id="default:acme.com")
-
     async def _presences(_redis):
         return [
             {
@@ -146,7 +150,6 @@ async def test_list_online_workspaces_filters_by_team_id(monkeypatch):
             },
         ]
 
-    monkeypatch.setattr(workspace_routes, "get_team_identity", _identity)
     monkeypatch.setattr(workspace_routes, "list_agent_presences", _presences)
 
     response = await workspace_routes.list_online_workspaces(
@@ -154,6 +157,17 @@ async def test_list_online_workspaces_filters_by_team_id(monkeypatch):
         human_name=None,
         redis=object(),
         db_infra=object(),
+        identity=TeamIdentity(
+            team_id="default:acme.com",
+            agent_id="agent-1",
+            alias="ivy",
+            did_key="did:key:z6MkIvy",
+            did_aw="did:aw:ivy",
+            address="acme.com/ivy",
+            identity_scope="global",
+            certificate_id="cert-001",
+            grant=None,
+        ),
     )
 
     assert [workspace.alias for workspace in response.workspaces] == ["ivy"]
