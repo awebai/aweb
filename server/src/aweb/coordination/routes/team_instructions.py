@@ -14,7 +14,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, field_validator
 
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...db import DatabaseInfra, get_db_infra
 from ..defaults import get_default_team_instructions
@@ -339,8 +339,8 @@ async def get_active_team_instructions_endpoint(
     response: Response,
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ActiveTeamInstructionsResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     version = await get_active_team_instructions(aweb_db, identity.team_id)
@@ -367,8 +367,8 @@ async def list_team_instructions_history(
     request: Request,
     limit: int = Query(20, ge=1, le=100, description="Max number of versions to return"),
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> TeamInstructionsHistoryResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     await get_active_team_instructions(aweb_db, identity.team_id, bootstrap_if_missing=True)
@@ -404,8 +404,8 @@ async def create_team_instructions_endpoint(
     request: Request,
     payload: CreateTeamInstructionsRequest,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> CreateTeamInstructionsResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     version = await create_team_instructions_version(
@@ -435,8 +435,8 @@ async def get_team_instructions_by_id_endpoint(
     request: Request,
     team_instructions_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ActiveTeamInstructionsResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     result = await aweb_db.fetch_one(
@@ -474,8 +474,8 @@ async def activate_team_instructions_endpoint(
     request: Request,
     team_instructions_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ActivateTeamInstructionsResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     previous_active = await aweb_db.fetch_one(
@@ -510,8 +510,8 @@ async def activate_team_instructions_endpoint(
 async def reset_team_instructions_to_default_endpoint(
     request: Request,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ResetTeamInstructionsResponse:
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     previous_active = await aweb_db.fetch_one(

@@ -13,12 +13,13 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
 
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...config import get_settings
 from ...db import DatabaseInfra, get_db_infra
 from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_valid_human_name
 from awid.pagination import encode_cursor, validate_pagination_params
+from ...grant_liveness import cleanup_expired_grant_liveness
 from ...presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
     clear_workspace_presence,
@@ -115,6 +116,7 @@ async def heartbeat(
     request: Request,
     redis: Redis = Depends(get_redis),
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("presence.write")),
 ) -> WorkspaceHeartbeatResponse:
     """
     Refresh workspace presence, enforcing "presence is a cache of SQL".
@@ -126,16 +128,14 @@ async def heartbeat(
     Note: If Redis is unavailable, SQL is still authoritative; presence updates
     are best-effort and will converge once the client retries.
     """
-    identity = await get_team_identity(request, db)
     team_id = identity.team_id
-    settings = get_settings()
 
     aweb_db = db.get_manager("aweb")
 
     # Pre-check: workspace must exist and belong to this team.
     existing = await aweb_db.fetch_one(
         """
-        SELECT workspace_id, team_id, alias, repo_id, deleted_at
+        SELECT workspace_id, team_id, agent_id, alias, repo_id, deleted_at
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1
         """,
@@ -167,7 +167,44 @@ async def heartbeat(
             detail=f"Workspace {payload.workspace_id} not found. Run 'aw connect' to register.",
         )
 
-    # Update mutable workspace fields.
+    if identity.grant is not None:
+        if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
+            raise HTTPException(status_code=403, detail="grant workspace mismatch")
+        if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name:
+            raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
+        await cleanup_expired_grant_liveness(aweb_db)
+        row = await aweb_db.fetch_one(
+            """
+            INSERT INTO {{tables.identity_grant_liveness}} (
+                grant_id, team_id, subject_agent_id, workspace_id, alias,
+                session_did_key, last_seen_at, expires_at
+            )
+            VALUES ($1::UUID, $2, $3::UUID, $4::UUID, $5, $6, NOW(), $7)
+            ON CONFLICT (grant_id) DO UPDATE
+            SET team_id = EXCLUDED.team_id,
+                subject_agent_id = EXCLUDED.subject_agent_id,
+                workspace_id = EXCLUDED.workspace_id,
+                alias = EXCLUDED.alias,
+                session_did_key = EXCLUDED.session_did_key,
+                last_seen_at = EXCLUDED.last_seen_at,
+                expires_at = EXCLUDED.expires_at
+            RETURNING last_seen_at
+            """,
+            identity.grant.grant_id,
+            identity.team_id,
+            identity.agent_id,
+            UUID(payload.workspace_id),
+            identity.alias,
+            identity.grant.session_did_key,
+            identity.grant.expires_at,
+        )
+        return WorkspaceHeartbeatResponse(ok=True, workspace_id=payload.workspace_id)
+
+    # Root/team-certificate workspace heartbeat keeps today's shared workspace
+    # and Redis presence semantics. Grant workspace heartbeat intentionally does
+    # not write these shared coordinates; it records grant-keyed ephemeral
+    # liveness above, matching /v1/agents/heartbeat.
+    settings = get_settings()
     await aweb_db.execute(
         """
         UPDATE {{tables.workspaces}}
@@ -279,6 +316,7 @@ async def update_workspace(
     workspace_id: str = Path(..., description="Workspace ID to update"),
     payload: UpdateWorkspaceRequest = None,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("presence.write")),
 ) -> UpdateWorkspaceResponse:
     """Update mutable workspace fields."""
     try:
@@ -286,14 +324,13 @@ async def update_workspace(
     except ValueError:
         raise HTTPException(status_code=422, detail="workspace_id must be a valid UUID")
 
-    identity = await get_team_identity(request, db)
     team_id = identity.team_id
 
     aweb_db = db.get_manager("aweb")
 
     existing = await aweb_db.fetch_one(
         """
-        SELECT workspace_id, alias, team_id, deleted_at
+        SELECT workspace_id, agent_id, alias, team_id, deleted_at
         FROM {{tables.workspaces}}
         WHERE workspace_id = $1 AND team_id = $2
         """,
@@ -311,25 +348,31 @@ async def update_workspace(
     params: list = [UUID(validated_id)]
     idx = 2
 
-    if payload.role is not None:
-        set_clauses.append(f"role = ${idx}")
-        params.append(payload.role)
-        idx += 1
+    if identity.grant is not None:
+        if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
+            raise HTTPException(status_code=403, detail="grant workspace mismatch")
+        if payload.role is not None or payload.hostname is not None or payload.workspace_path is not None or payload.human_name is not None:
+            raise HTTPException(status_code=403, detail="grant workspace metadata is not shared presence")
+    else:
+        if payload.role is not None:
+            set_clauses.append(f"role = ${idx}")
+            params.append(payload.role)
+            idx += 1
 
-    if payload.hostname is not None:
-        set_clauses.append(f"hostname = ${idx}")
-        params.append(payload.hostname)
-        idx += 1
+        if payload.hostname is not None:
+            set_clauses.append(f"hostname = ${idx}")
+            params.append(payload.hostname)
+            idx += 1
 
-    if payload.workspace_path is not None:
-        set_clauses.append(f"workspace_path = ${idx}")
-        params.append(payload.workspace_path)
-        idx += 1
+        if payload.workspace_path is not None:
+            set_clauses.append(f"workspace_path = ${idx}")
+            params.append(payload.workspace_path)
+            idx += 1
 
-    if payload.human_name is not None:
-        set_clauses.append(f"human_name = ${idx}")
-        params.append(payload.human_name)
-        idx += 1
+        if payload.human_name is not None:
+            set_clauses.append(f"human_name = ${idx}")
+            params.append(payload.human_name)
+            idx += 1
 
     if payload.focus_task_ref is not None:
         set_clauses.append(f"focus_task_ref = ${idx}")
@@ -396,6 +439,7 @@ async def delete_workspace(
     request: Request = None,
     db: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> DeleteWorkspaceResponse:
     """Soft-delete a local workspace and its bound identity.
 
@@ -408,7 +452,6 @@ async def delete_workspace(
     except ValueError:
         raise HTTPException(status_code=422, detail="workspace_id must be a valid UUID")
 
-    identity = await get_team_identity(request, db)
     team_id = identity.team_id
 
     aweb_db = db.get_manager("aweb")
@@ -963,6 +1006,7 @@ async def list_workspaces(
     cursor: Optional[str] = Query(None, description="Pagination cursor from previous response"),
     db_infra: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ListWorkspacesResponse:
     """
     List all registered workspaces from database with cursor-based pagination.
@@ -981,7 +1025,6 @@ async def list_workspaces(
 
     Use /v1/workspaces/online for only currently active workspaces.
     """
-    identity = await get_team_identity(request, db_infra)
     team_id = identity.team_id
 
     try:
@@ -1152,6 +1195,7 @@ async def list_team_workspaces(
     ),
     db_infra: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ListWorkspacesResponse:
     """
     List a bounded team-status view of workspaces for coordination.
@@ -1159,7 +1203,6 @@ async def list_team_workspaces(
     This endpoint is optimized for CLI usage and always returns a limited,
     prioritized set of workspaces.
     """
-    identity = await get_team_identity(request, db_infra)
     team_id = identity.team_id
 
     aweb_db = db_infra.get_manager("aweb")
@@ -1317,6 +1360,7 @@ async def list_online_workspaces(
     human_name: Optional[str] = Query(None, description="Filter by workspace owner", max_length=64),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ListWorkspacesResponse:
     """
     List only currently online workspaces (active presence in Redis).
@@ -1326,7 +1370,6 @@ async def list_online_workspaces(
 
     For all registered workspaces (including offline), use GET /v1/workspaces.
     """
-    identity = await get_team_identity(request, db_infra)
     team_id = identity.team_id
 
     presences = await list_agent_presences(redis)

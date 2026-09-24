@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 import json
+from pathlib import Path
 from dataclasses import asdict
 from unittest.mock import AsyncMock
 from datetime import datetime, timedelta, timezone
@@ -20,6 +22,11 @@ from aweb.api import create_app
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 from aweb.grant_streams import agent_event_allowed, allowed_status_categories, grant_terminal_reason
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.coordination.routes.repos import router as repos_router
+from aweb.coordination.routes.tasks import router as tasks_router
+from aweb.coordination.routes.team_instructions import router as instructions_router
+from aweb.coordination.routes.team_roles import router as roles_router
+from aweb.coordination.routes.workspaces import router as workspaces_router
 from aweb.routes import agents as agents_routes
 from aweb.routes.chat import router as chat_router, stream as chat_stream_route
 from aweb.routes.claims import router as claims_router
@@ -31,6 +38,8 @@ from aweb.routes.messages import router as messages_router
 from aweb.routes.reservations import router as reservations_router
 from aweb.routes.status import router as status_router, status_stream as status_stream_route
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 TEAM_ID = "backend:acme.com"
 SUBJECT_DID_KEY = "did:key:z6MkSubjectAlice"
@@ -645,6 +654,11 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.include_router(status_router)
     app.include_router(claims_router)
     app.include_router(reservations_router)
+    app.include_router(tasks_router)
+    app.include_router(workspaces_router)
+    app.include_router(roles_router)
+    app.include_router(instructions_router)
+    app.include_router(repos_router)
     app.dependency_overrides[get_team_identity] = _identity
     app.state.db = _DbShim(aweb_db)
     app.state.public_origin = "http://test"
@@ -1087,24 +1101,89 @@ def _route_grant_scope_table(app: FastAPI) -> list[tuple[str, str, str]]:
     return sorted(set(rows))
 
 
+def _direct_team_identity_calls() -> list[tuple[str, str, int]]:
+    paths = [
+        REPO_ROOT / "server/src/aweb/coordination/routes/tasks.py",
+        REPO_ROOT / "server/src/aweb/coordination/routes/workspaces.py",
+        REPO_ROOT / "server/src/aweb/coordination/routes/team_roles.py",
+        REPO_ROOT / "server/src/aweb/coordination/routes/team_instructions.py",
+        REPO_ROOT / "server/src/aweb/coordination/routes/repos.py",
+        REPO_ROOT / "server/src/aweb/routes/apps.py",
+        REPO_ROOT / "server/src/aweb/routes/connect.py",
+        REPO_ROOT / "server/src/aweb/routes/events.py",
+    ]
+    rows: list[tuple[str, str, int]] = []
+    for path in paths:
+        tree = ast.parse(path.read_text())
+        parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                parents[child] = parent
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not isinstance(node.func, ast.Name) or node.func.id != "get_team_identity":
+                continue
+            parent = parents.get(node)
+            while parent is not None and not isinstance(parent, (ast.AsyncFunctionDef, ast.FunctionDef)):
+                parent = parents.get(parent)
+            rows.append((str(path.relative_to(REPO_ROOT)), getattr(parent, "name", "<module>"), node.lineno))
+    return sorted(rows)
+
+
 def test_route_grant_scope_declarations_are_known_and_reviewable():
     app = create_app()
     table = _route_grant_scope_table(app)
     known = set(GRANT_SCOPES) | {GRANT_SCOPE_ANY}
     expected = [
+        ("DELETE", "/v1/tasks/{ref}/deps/{dep_ref}", "coord.write"),
         ("GET", "/v1/agents", GRANT_SCOPE_ANY),
         ("GET", "/v1/claims", "coord.read"),
         ("GET", "/v1/events/stream", "events.read"),
+        ("GET", "/v1/instructions/active", "coord.read"),
+        ("GET", "/v1/instructions/history", "coord.read"),
+        ("GET", "/v1/instructions/{team_instructions_id}", "coord.read"),
+        ("GET", "/v1/repos", "coord.read"),
         ("GET", "/v1/reservations", "coord.read"),
+        ("GET", "/v1/roles/active", "coord.read"),
+        ("GET", "/v1/roles/history", "coord.read"),
+        ("GET", "/v1/roles/{team_roles_id}", "coord.read"),
         ("GET", "/v1/status", "coord.read"),
         ("GET", "/v1/status/stream", "events.read"),
+        ("GET", "/v1/tasks", "coord.read"),
+        ("GET", "/v1/tasks/active", "coord.read"),
+        ("GET", "/v1/tasks/blocked", "coord.read"),
+        ("GET", "/v1/tasks/ready", "coord.read"),
+        ("GET", "/v1/tasks/{ref}", "coord.read"),
+        ("GET", "/v1/tasks/{ref}/comments", "coord.read"),
+        ("GET", "/v1/workspaces", "coord.read"),
+        ("GET", "/v1/workspaces/online", "coord.read"),
+        ("GET", "/v1/workspaces/team", "coord.read"),
+        ("PATCH", "/v1/tasks/{ref}", "coord.write"),
+        ("PATCH", "/v1/workspaces/{workspace_id}", "presence.write"),
         ("POST", "/v1/agents/heartbeat", "presence.write"),
+        ("POST", "/v1/repos/lookup", "coord.read"),
         ("POST", "/v1/reservations", "coord.write"),
         ("POST", "/v1/reservations/release", "coord.write"),
         ("POST", "/v1/reservations/renew", "coord.write"),
+        ("POST", "/v1/tasks", "coord.write"),
+        ("POST", "/v1/tasks/{ref}/comments", "coord.write"),
+        ("POST", "/v1/tasks/{ref}/deps", "coord.write"),
+        ("POST", "/v1/workspaces/heartbeat", "presence.write"),
     ]
     assert all(scope in known for _, _, scope in table)
     assert table == expected
+
+
+def test_direct_team_identity_calls_are_reviewed_root_only_sites():
+    assert _direct_team_identity_calls() == [
+        ("server/src/aweb/routes/apps.py", "_authorized_team_id", 79),
+        ("server/src/aweb/routes/apps.py", "install_app_route", 111),
+        ("server/src/aweb/routes/connect.py", "get_team_info", 483),
+        ("server/src/aweb/routes/events.py", "_subscription_read_identity", 140),
+        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 593),
+        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route", 558),
+    ]
 
 @pytest.mark.asyncio
 async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_db):
@@ -1544,3 +1623,255 @@ async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
     assert contacts_denied.status_code == 403
     assert contacts_denied.json()["detail"] == "outside grant scope"
     assert deleted.status_code == 200, deleted.text
+
+@pytest.mark.asyncio
+async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud_db):
+    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    read_key, read_did = _session_keypair()
+    write_key, write_did = _session_keypair()
+    presence_key, presence_did = _session_keypair()
+    other_presence_key, other_presence_did = _session_keypair()
+    expired_presence_key, expired_presence_did = _session_keypair()
+    revoked_presence_key, revoked_presence_did = _session_keypair()
+    mail_key, mail_did = _session_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ('other:acme.com', 'acme.com', 'other', 'did:key:zOtherTeam')"
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.tasks}} (team_id, task_number, root_task_seq, task_ref_suffix, title, description, notes, priority, task_type, labels, created_by_alias)
+        VALUES ('other:acme.com', 1, 1, 'a', 'other task', '', '', 2, 'task', '{}'::text[], 'other')
+        """
+    )
+    bob_workspace_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_id, agent_id, alias, human_name, role,
+            workspace_type, last_seen_at
+        )
+        VALUES ($1, $2, $3, 'bob', 'Bob', 'developer', 'manual', NOW() - INTERVAL '1 hour')
+        """,
+        bob_workspace_id,
+        TEAM_ID,
+        bob_id,
+    )
+    old_last_seen = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1::UUID",
+        app.state.alice_workspace_id,
+    )
+    repo_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.repos}} (id, team_id, origin_url, canonical_origin, name)
+        VALUES ($1, $2, 'git@github.com:awebai/aweb.git', 'github.com/awebai/aweb', 'aweb')
+        """,
+        repo_id,
+        TEAM_ID,
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        read_grant = (await _mint(client, grant_did_key=read_did, scopes=["coord.read"])).json()["grant_id"]
+        write_grant = (await _mint(client, grant_did_key=write_did, scopes=["coord.write", "coord.read"])).json()["grant_id"]
+        presence_grant = (await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])).json()["grant_id"]
+        other_presence_grant = (await _mint(client, grant_did_key=other_presence_did, scopes=["presence.write"])).json()["grant_id"]
+        expired_presence_grant = (await _mint(client, grant_did_key=expired_presence_did, scopes=["presence.write"])).json()["grant_id"]
+        revoked_presence_grant = (await _mint(client, grant_did_key=revoked_presence_did, scopes=["presence.write"])).json()["grant_id"]
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            UPDATE {{tables.identity_session_grants}}
+            SET issued_at = NOW() - INTERVAL '120 seconds', expires_at = NOW() - INTERVAL '1 second'
+            WHERE grant_id = $1::UUID
+            """,
+            expired_presence_grant,
+        )
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
+            revoked_presence_grant,
+        )
+        mail_grant = (await _mint(client, grant_did_key=mail_did, scopes=["mail.read"])).json()["grant_id"]
+
+        def h(key, did, grant_id, method, path, body=b""):
+            return _grant_headers(signing_key=key, did_key=did, grant_id=grant_id, method=method, path=path, body=body)
+
+        create_body = json.dumps({"title": "grant task", "description": "from grant"}, separators=(",", ":")).encode()
+        created = await client.post(
+            "/v1/tasks",
+            content=create_body,
+            headers=h(write_key, write_did, write_grant, "POST", "/v1/tasks", create_body),
+        )
+        task_ref = created.json().get("task_ref")
+        tasks = await client.get("/v1/tasks", headers=h(read_key, read_did, read_grant, "GET", "/v1/tasks"))
+        ready = await client.get("/v1/tasks/ready", headers=h(read_key, read_did, read_grant, "GET", "/v1/tasks/ready"))
+        task = await client.get(f"/v1/tasks/{task_ref}", headers=h(read_key, read_did, read_grant, "GET", f"/v1/tasks/{task_ref}"))
+        wrong_scope_task = await client.get("/v1/tasks", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/tasks"))
+        patch_body = json.dumps({"status": "in_progress", "notes": "claimed"}, separators=(",", ":")).encode()
+        patched = await client.patch(
+            f"/v1/tasks/{task_ref}",
+            content=patch_body,
+            headers=h(write_key, write_did, write_grant, "PATCH", f"/v1/tasks/{task_ref}", patch_body),
+        )
+        comments_body = json.dumps({"body": "grant comment"}, separators=(",", ":")).encode()
+        comment = await client.post(
+            f"/v1/tasks/{task_ref}/comments",
+            content=comments_body,
+            headers=h(write_key, write_did, write_grant, "POST", f"/v1/tasks/{task_ref}/comments", comments_body),
+        )
+        comments = await client.get(f"/v1/tasks/{task_ref}/comments", headers=h(read_key, read_did, read_grant, "GET", f"/v1/tasks/{task_ref}/comments"))
+        workspaces_path = "/v1/workspaces?include_presence=false"
+        workspaces = await client.get(workspaces_path, headers=h(read_key, read_did, read_grant, "GET", workspaces_path))
+        team_workspaces_path = "/v1/workspaces/team?include_presence=false"
+        team_workspaces = await client.get(team_workspaces_path, headers=h(read_key, read_did, read_grant, "GET", team_workspaces_path))
+        heartbeat_body = json.dumps({"workspace_id": app.state.alice_workspace_id, "alias": "alice"}, separators=(",", ":")).encode()
+        workspace_heartbeat = await client.post(
+            "/v1/workspaces/heartbeat",
+            content=heartbeat_body,
+            headers=h(presence_key, presence_did, presence_grant, "POST", "/v1/workspaces/heartbeat", heartbeat_body),
+        )
+        other_workspace_heartbeat = await client.post(
+            "/v1/workspaces/heartbeat",
+            content=heartbeat_body,
+            headers=h(other_presence_key, other_presence_did, other_presence_grant, "POST", "/v1/workspaces/heartbeat", heartbeat_body),
+        )
+        bob_heartbeat_body = json.dumps({"workspace_id": str(bob_workspace_id), "alias": "bob"}, separators=(",", ":")).encode()
+        wrong_workspace_heartbeat = await client.post(
+            "/v1/workspaces/heartbeat",
+            content=bob_heartbeat_body,
+            headers=h(presence_key, presence_did, presence_grant, "POST", "/v1/workspaces/heartbeat", bob_heartbeat_body),
+        )
+        metadata_heartbeat_body = json.dumps({"workspace_id": app.state.alice_workspace_id, "alias": "alice", "hostname": "grant-host"}, separators=(",", ":")).encode()
+        metadata_heartbeat = await client.post(
+            "/v1/workspaces/heartbeat",
+            content=metadata_heartbeat_body,
+            headers=h(presence_key, presence_did, presence_grant, "POST", "/v1/workspaces/heartbeat", metadata_heartbeat_body),
+        )
+        expired_heartbeat = await client.post(
+            "/v1/workspaces/heartbeat",
+            content=heartbeat_body,
+            headers=h(expired_presence_key, expired_presence_did, expired_presence_grant, "POST", "/v1/workspaces/heartbeat", heartbeat_body),
+        )
+        revoked_heartbeat = await client.post(
+            "/v1/workspaces/heartbeat",
+            content=heartbeat_body,
+            headers=h(revoked_presence_key, revoked_presence_did, revoked_presence_grant, "POST", "/v1/workspaces/heartbeat", heartbeat_body),
+        )
+        workspace_patch_body = json.dumps({"focus_task_ref": task_ref}, separators=(",", ":")).encode()
+        workspace_patch = await client.patch(
+            f"/v1/workspaces/{app.state.alice_workspace_id}",
+            content=workspace_patch_body,
+            headers=h(presence_key, presence_did, presence_grant, "PATCH", f"/v1/workspaces/{app.state.alice_workspace_id}", workspace_patch_body),
+        )
+        workspace_wrong_scope = await client.patch(
+            f"/v1/workspaces/{app.state.alice_workspace_id}",
+            content=workspace_patch_body,
+            headers=h(read_key, read_did, read_grant, "PATCH", f"/v1/workspaces/{app.state.alice_workspace_id}", workspace_patch_body),
+        )
+        workspace_wrong_subject = await client.patch(
+            f"/v1/workspaces/{bob_workspace_id}",
+            content=workspace_patch_body,
+            headers=h(presence_key, presence_did, presence_grant, "PATCH", f"/v1/workspaces/{bob_workspace_id}", workspace_patch_body),
+        )
+        workspace_metadata_body = json.dumps({"hostname": "grant-host"}, separators=(",", ":")).encode()
+        workspace_metadata = await client.patch(
+            f"/v1/workspaces/{app.state.alice_workspace_id}",
+            content=workspace_metadata_body,
+            headers=h(presence_key, presence_did, presence_grant, "PATCH", f"/v1/workspaces/{app.state.alice_workspace_id}", workspace_metadata_body),
+        )
+        repo_lookup_body = json.dumps({"origin_url": "git@github.com:awebai/aweb.git"}, separators=(",", ":")).encode()
+        repo_lookup = await client.post(
+            "/v1/repos/lookup",
+            content=repo_lookup_body,
+            headers=h(read_key, read_did, read_grant, "POST", "/v1/repos/lookup", repo_lookup_body),
+        )
+        repos = await client.get("/v1/repos", headers=h(read_key, read_did, read_grant, "GET", "/v1/repos"))
+        roles = await client.get("/v1/roles/active", headers=h(read_key, read_did, read_grant, "GET", "/v1/roles/active"))
+        instructions = await client.get("/v1/instructions/active", headers=h(read_key, read_did, read_grant, "GET", "/v1/instructions/active"))
+
+    deny_app = FastAPI()
+    for router in (tasks_router, repos_router, roles_router, instructions_router, workspaces_router):
+        deny_app.include_router(router)
+    deny_app.state.db = _DbShim(aweb_cloud_db.aweb_db)
+    deny_app.state.public_origin = "http://test"
+    deny_app.state.redis = None
+    deny_registry = AsyncMock()
+    deny_registry.get_team_revocations = AsyncMock(return_value=set())
+    deny_app.state.awid_registry_client = deny_registry
+
+    @deny_app.middleware("http")
+    async def cache_body_middleware(request, call_next):
+        body = await request.body()
+        request.state.cached_body = body
+        request.state.body_sha256 = hashlib.sha256(body).hexdigest()
+        request._receive = _cached_body_receive(body)
+        return await call_next(request)
+
+    async with AsyncClient(transport=ASGITransport(app=deny_app), base_url="http://test") as deny_client:
+        delete_task = await deny_client.delete(f"/v1/tasks/{task_ref}", headers=h(write_key, write_did, write_grant, "DELETE", f"/v1/tasks/{task_ref}"))
+        ensure_body = json.dumps({"origin_url": "git@github.com:awebai/aweb.git"}, separators=(",", ":")).encode()
+        ensure_repo = await deny_client.post("/v1/repos/ensure", content=ensure_body, headers=h(write_key, write_did, write_grant, "POST", "/v1/repos/ensure", ensure_body))
+        reset_roles = await deny_client.post("/v1/roles/reset", headers=h(write_key, write_did, write_grant, "POST", "/v1/roles/reset"))
+        reset_instructions = await deny_client.post("/v1/instructions/reset", headers=h(write_key, write_did, write_grant, "POST", "/v1/instructions/reset"))
+        delete_workspace = await deny_client.delete(f"/v1/workspaces/{app.state.alice_workspace_id}", headers=h(presence_key, presence_did, presence_grant, "DELETE", f"/v1/workspaces/{app.state.alice_workspace_id}"))
+
+    assert created.status_code == 200, created.text
+    assert task_ref
+    assert tasks.status_code == 200, tasks.text
+    task_refs = {item["task_ref"] for item in tasks.json()["tasks"]}
+    assert task_ref in task_refs
+    assert "other-a" not in task_refs
+    assert ready.status_code == 200, ready.text
+    assert task.status_code == 200, task.text
+    assert wrong_scope_task.status_code == 403
+    assert wrong_scope_task.json()["detail"] == "outside grant scope"
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["assignee_alias"] == "alice"
+    owner = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT workspace_id, alias FROM {{tables.task_claims}} WHERE team_id = $1 AND task_ref = $2",
+        TEAM_ID,
+        task_ref,
+    )
+    assert str(owner["workspace_id"]) == app.state.alice_workspace_id
+    assert owner["alias"] == "alice"
+    assert comment.status_code == 200, comment.text
+    assert comments.status_code == 200, comments.text
+    assert comments.json()["comments"][0]["body"] == "grant comment"
+    assert workspaces.status_code == 200, workspaces.text
+    assert all(item["team_id"] == TEAM_ID for item in workspaces.json()["workspaces"])
+    assert team_workspaces.status_code == 200, team_workspaces.text
+    assert workspace_heartbeat.status_code == 200, workspace_heartbeat.text
+    assert other_workspace_heartbeat.status_code == 200, other_workspace_heartbeat.text
+    liveness_rows = await aweb_cloud_db.aweb_db.fetch_all(
+        "SELECT grant_id::text, workspace_id::text, subject_agent_id::text FROM {{tables.identity_grant_liveness}} WHERE grant_id = ANY($1::uuid[]) ORDER BY grant_id::text",
+        [presence_grant, other_presence_grant],
+    )
+    assert {row["grant_id"] for row in liveness_rows} == {presence_grant, other_presence_grant}
+    assert {row["workspace_id"] for row in liveness_rows} == {app.state.alice_workspace_id}
+    assert {row["subject_agent_id"] for row in liveness_rows} == {str(alice_id)}
+    assert await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1::UUID",
+        app.state.alice_workspace_id,
+    ) == old_last_seen
+    assert wrong_workspace_heartbeat.status_code == 403
+    assert wrong_workspace_heartbeat.json()["detail"] == "grant workspace mismatch"
+    assert metadata_heartbeat.status_code == 403
+    assert metadata_heartbeat.json()["detail"] == "grant workspace metadata is not shared presence"
+    assert expired_heartbeat.status_code == 403
+    assert expired_heartbeat.json()["detail"] == "grant expired"
+    assert revoked_heartbeat.status_code == 403
+    assert revoked_heartbeat.json()["detail"] == "grant revoked"
+    assert workspace_patch.status_code == 200, workspace_patch.text
+    assert workspace_wrong_scope.status_code == 403
+    assert workspace_wrong_scope.json()["detail"] == "outside grant scope"
+    assert workspace_wrong_subject.status_code == 403
+    assert workspace_wrong_subject.json()["detail"] == "grant workspace mismatch"
+    assert workspace_metadata.status_code == 403
+    assert workspace_metadata.json()["detail"] == "grant workspace metadata is not shared presence"
+    assert repo_lookup.status_code == 200, repo_lookup.text
+    assert repo_lookup.json()["repo_id"] == str(repo_id)
+    assert repos.status_code == 200, repos.text
+    assert repos.json()["repos"][0]["canonical_origin"] == "github.com/awebai/aweb"
+    assert roles.status_code == 200, roles.text
+    assert instructions.status_code == 200, instructions.text
+    for response in (delete_task, ensure_repo, reset_roles, reset_instructions, delete_workspace):
+        assert response.status_code == 403
+        assert response.json()["detail"] == "outside grant scope"

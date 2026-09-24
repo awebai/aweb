@@ -22,7 +22,7 @@ from ...db import DatabaseInfra, get_db_infra
 from awid.pagination import encode_cursor, validate_pagination_params
 from ...presence import clear_workspace_presence
 from ...redis_client import get_redis
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +129,9 @@ async def lookup_repo(
     request: Request,
     payload: RepoLookupRequest,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> RepoLookupResponse:
     """Look up a repo by origin URL. Returns the repo and its team if found."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     canonical_origin = canonicalize_git_url(payload.origin_url)
@@ -205,9 +205,9 @@ async def ensure_repo(
     request: Request,
     payload: RepoEnsureRequest,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> RepoEnsureResponse:
     """Get or create a repo by origin URL within the authenticated team."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     canonical_origin = canonicalize_git_url(payload.origin_url)
@@ -265,9 +265,9 @@ async def list_repos(
     limit: Optional[int] = Query(default=None, ge=1, le=200),
     cursor: Optional[str] = Query(default=None),
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> RepoListResponse:
     """List repos for the authenticated team with cursor-based pagination."""
-    identity = await get_team_identity(request, db)
 
     try:
         validated_limit, cursor_data = validate_pagination_params(limit, cursor)
@@ -355,9 +355,9 @@ async def delete_repo(
     repo_id: UUID,
     db: DatabaseInfra = Depends(get_db_infra),
     redis: Redis = Depends(get_redis),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> RepoDeleteResponse:
     """Soft-delete a repo and cascade to workspaces."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     repo = await aweb_db.fetch_one(

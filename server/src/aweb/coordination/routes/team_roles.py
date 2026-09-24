@@ -14,7 +14,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, model_validator
 
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...db import DatabaseInfra, get_db_infra
 from ...role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
@@ -391,9 +391,9 @@ async def get_active_team_roles_endpoint(
     ),
     if_none_match: Optional[str] = Header(None, alias="If-None-Match"),
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ActiveTeamRolesResponse:
     """Get the active team roles bundle for the team."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     team_roles_version = await get_active_team_roles(aweb_db, identity.team_id)
@@ -469,9 +469,9 @@ async def list_team_roles_history(
     request: Request,
     limit: int = Query(20, ge=1, le=100, description="Max number of versions to return"),
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> TeamRolesHistoryResponse:
     """List team roles version history for the team."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     await get_active_team_roles(aweb_db, identity.team_id, bootstrap_if_missing=True)
@@ -507,9 +507,9 @@ async def create_team_roles_endpoint(
     request: Request,
     payload: CreateTeamRolesRequest,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> CreateTeamRolesResponse:
     """Create a versioned team roles record for the team."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     bundle_dict = payload.bundle.model_dump()
@@ -541,9 +541,9 @@ async def get_team_roles_by_id_endpoint(
     request: Request,
     team_roles_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ActiveTeamRolesResponse:
     """Get a specific team roles version by ID."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     result = await aweb_db.fetch_one(
@@ -594,9 +594,9 @@ async def activate_team_roles_endpoint(
     request: Request,
     team_roles_id: str,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ActivateTeamRolesResponse:
     """Set a team roles version as the active bundle for the team."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     previous_active = await aweb_db.fetch_one(
@@ -631,9 +631,9 @@ async def activate_team_roles_endpoint(
 async def reset_team_roles_to_default_endpoint(
     request: Request,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> ResetTeamRolesResponse:
     """Reset the team's active team roles to the current default bundle."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     previous_active = await aweb_db.fetch_one(
@@ -686,9 +686,9 @@ async def reset_team_roles_to_default_endpoint(
 async def deactivate_team_roles_endpoint(
     request: Request,
     db: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> DeactivateTeamRolesResponse:
     """Deactivate team roles by replacing the active bundle with an empty bundle."""
-    identity = await get_team_identity(request, db)
     aweb_db = db.get_manager("aweb")
 
     previous_active = await aweb_db.fetch_one(

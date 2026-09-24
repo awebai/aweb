@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from aweb.team_auth_deps import get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 from aweb.hooks import fire_mutation_hook
 from aweb.service_errors import NotFoundError
 from aweb.coordination.tasks_service import (
@@ -97,10 +97,11 @@ class ActiveWorkResponse(BaseModel):
 
 @router.post("")
 async def create_task_route(
-    request: Request, payload: CreateTaskRequest, db_infra: DatabaseInfra = Depends(get_db_infra)
+    request: Request,
+    payload: CreateTaskRequest,
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
-
     result = await create_task(
         db_infra,
         team_id=identity.team_id,
@@ -143,8 +144,8 @@ async def list_tasks_unified(
     q: Optional[str] = Query(None),
     parent_task_id: Optional[str] = Query(None),
     db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
     label_list = [s.strip() for s in labels.split(",") if s.strip()] if labels else None
 
     tasks = await list_tasks(
@@ -164,9 +165,10 @@ async def list_tasks_unified(
 
 @router.get("/ready")
 async def list_ready_tasks_route(
-    request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
+    request: Request,
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
     tasks = await list_ready_tasks(db_infra, team_id=identity.team_id)
     unclaimed = [t for t in tasks if t.get("assignee_alias") is None]
     return {"tasks": unclaimed}
@@ -174,28 +176,31 @@ async def list_ready_tasks_route(
 
 @router.get("/blocked")
 async def list_blocked_tasks_route(
-    request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
+    request: Request,
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
     tasks = await list_blocked_tasks(db_infra, team_id=identity.team_id)
     return {"tasks": tasks}
 
 
 @router.get("/active")
 async def list_active_work_route(
-    request: Request, db_infra: DatabaseInfra = Depends(get_db_infra)
+    request: Request,
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ActiveWorkResponse:
-    identity = await get_team_identity(request, db_infra)
     tasks = await list_active_work(db_infra, team_id=identity.team_id)
     return ActiveWorkResponse(tasks=tasks)
 
 
 @router.get("/{ref}")
 async def get_task_unified(
-    request: Request, ref: str, db_infra: DatabaseInfra = Depends(get_db_infra)
+    request: Request,
+    ref: str,
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
-
     try:
         return await get_task(db_infra, team_id=identity.team_id, ref=ref)
     except NotFoundError:
@@ -208,9 +213,8 @@ async def update_task_route(
     ref: str,
     payload: UpdateTaskRequest,
     db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
-
     kwargs: dict[str, Any] = {}
     if payload.title is not None:
         kwargs["title"] = payload.title
@@ -275,9 +279,11 @@ async def update_task_route(
 
 @router.delete("/{ref}")
 async def delete_task_route(
-    request: Request, ref: str, db_infra: DatabaseInfra = Depends(get_db_infra)
+    request: Request,
+    ref: str,
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(get_team_identity),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
     result = await soft_delete_task(db_infra, team_id=identity.team_id, ref=ref)
     await fire_mutation_hook(
         request,
@@ -298,8 +304,8 @@ async def add_dependency_route(
     ref: str,
     payload: AddDependencyRequest,
     db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
     result = await add_dependency(
         db_infra, team_id=identity.team_id, task_ref=ref, depends_on_ref=payload.depends_on
     )
@@ -322,8 +328,8 @@ async def remove_dependency_route(
     ref: str,
     dep_ref: str,
     db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
     result = await remove_dependency(db_infra, team_id=identity.team_id, task_ref=ref, dep_ref=dep_ref)
     await fire_mutation_hook(
         request,
@@ -344,9 +350,8 @@ async def add_comment_route(
     ref: str,
     payload: AddCommentRequest,
     db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
-
     result = await add_comment(db_infra, team_id=identity.team_id, ref=ref, author_alias=identity.alias, body=payload.body)
     await fire_mutation_hook(
         request,
@@ -363,8 +368,10 @@ async def add_comment_route(
 
 @router.get("/{ref}/comments")
 async def list_comments_route(
-    request: Request, ref: str, db_infra: DatabaseInfra = Depends(get_db_infra)
+    request: Request,
+    ref: str,
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> dict[str, Any]:
-    identity = await get_team_identity(request, db_infra)
     comments = await list_comments(db_infra, team_id=identity.team_id, ref=ref)
     return {"comments": comments}
