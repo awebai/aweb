@@ -141,6 +141,58 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+func TestRegisterBeforeRunStartsReconciledRunners(t *testing.T) {
+	server := newRecordingServer(t, sseEvent("actionable_mail", `{"message_id":"m1","from_alias":"alice"}`))
+	store := tempStore(t)
+	home := tempHome(t, "instance")
+	oats := session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateIdle, RawState: "idle"})
+	logs := &logCapture{}
+
+	broker, err := NewBroker(Config{
+		Store:        store,
+		Session:      oats,
+		Log:          logs.log,
+		Coalesce:     20 * time.Millisecond,
+		RateLimit:    50 * time.Millisecond,
+		PollInterval: 10 * time.Millisecond,
+		Reconcile:    20 * time.Millisecond,
+		OpenStream: func(string) (run.EventStreamOpener, error) {
+			return openerFor(t, server.URL), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	if len(oats.Submissions()) != 0 {
+		t.Fatalf("registration before Run submitted early: %v", oats.Submissions())
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = broker.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("broker did not shut down")
+		}
+	})
+
+	waitFor(t, "pre-Run registration to stream and submit after Run starts", func() bool {
+		return len(oats.Submissions()) > 0
+	})
+	if !strings.Contains(oats.Submissions()[0].Text, "mail from alice") {
+		t.Fatalf("wake did not summarize pre-Run registration event:\n%s", oats.Submissions()[0].Text)
+	}
+}
+
 // TestBrokerNeverAcknowledgesAnything is the §6 prohibition proved at the wire.
 //
 // A real client streams from a stand-in server which records every request path

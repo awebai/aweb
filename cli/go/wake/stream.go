@@ -60,9 +60,10 @@ type streamRunner struct {
 	randMu sync.Mutex
 	rng    *rand.Rand
 
-	cancel   context.CancelFunc
-	done     chan struct{}
-	stopOnce sync.Once
+	cancel    context.CancelFunc
+	done      chan struct{}
+	startOnce sync.Once
+	stopOnce  sync.Once
 }
 
 func newStreamRunner(identityHome string, open run.EventStreamOpener, onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, ttl, backoffMin, backoffMax time.Duration) *streamRunner {
@@ -91,8 +92,10 @@ func newStreamRunner(identityHome string, open run.EventStreamOpener, onEvent fu
 }
 
 func (s *streamRunner) start(ctx context.Context) {
-	ctx, s.cancel = context.WithCancel(ctx)
-	go s.run(ctx)
+	s.startOnce.Do(func() {
+		ctx, s.cancel = context.WithCancel(ctx)
+		go s.run(ctx)
+	})
 }
 
 // stop is safe on a runner that was never started, which is how a broker

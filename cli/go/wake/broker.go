@@ -155,8 +155,11 @@ func NewBroker(cfg Config) (*Broker, error) {
 // Run reconciles the registration files and serves until ctx is cancelled.
 // It is safe to start at any time: all state is on disk and there is no cursor.
 func (b *Broker) Run(ctx context.Context) error {
+	b.mu.Lock()
 	b.ctx = ctx
+	b.mu.Unlock()
 	b.Reconcile()
+	b.startReconciledRunners(ctx)
 	b.writeStatus()
 
 	reconcile := time.NewTicker(b.cfg.Reconcile)
@@ -174,6 +177,31 @@ func (b *Broker) Run(ctx context.Context) error {
 		case <-status.C:
 			b.writeStatus()
 		}
+	}
+}
+
+func (b *Broker) runningContext() context.Context {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.ctx
+}
+
+func (b *Broker) startReconciledRunners(ctx context.Context) {
+	b.mu.Lock()
+	streams := make([]*streamRunner, 0, len(b.streams))
+	for _, s := range b.streams {
+		streams = append(streams, s)
+	}
+	instances := make([]*instanceRunner, 0, len(b.instances))
+	for _, r := range b.instances {
+		instances = append(instances, r)
+	}
+	b.mu.Unlock()
+	for _, s := range streams {
+		s.start(ctx)
+	}
+	for _, r := range instances {
+		r.start(ctx)
 	}
 }
 
@@ -275,8 +303,8 @@ func (b *Broker) startInstance(reg Registration) {
 	runner.setStreamAdmitted(admitted)
 	b.cfg.Log("registered home=%s identity_home=%s backend=%s delivery=%s pending_hints=%d stream=%s",
 		reg.Home, reg.IdentityHome, orDash(reg.Backend), reg.Delivery, len(state.Pending), admittedLabel(admitted))
-	if b.ctx != nil {
-		runner.start(b.ctx)
+	if ctx := b.runningContext(); ctx != nil {
+		runner.start(ctx)
 	}
 }
 
@@ -334,8 +362,8 @@ func (b *Broker) ensureStream(identityHome string) bool {
 	b.streams[identityHome] = runner
 	delete(b.overBound, identityHome)
 	b.mu.Unlock()
-	if b.ctx != nil {
-		runner.start(b.ctx)
+	if ctx := b.runningContext(); ctx != nil {
+		runner.start(ctx)
 	}
 	return true
 }

@@ -26,6 +26,9 @@ type instanceRunner struct {
 	hints  chan hintOffer
 	cancel context.CancelFunc
 	done   chan struct{}
+	// startOnce keeps a registration reconciled before Broker.Run from being
+	// launched twice once the daemon context becomes available.
+	startOnce sync.Once
 	// stopOnce keeps stop() safe to call from the reconcile path and the
 	// expiry path at the same time.
 	stopOnce sync.Once
@@ -47,8 +50,10 @@ func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instan
 }
 
 func (r *instanceRunner) start(ctx context.Context) {
-	ctx, r.cancel = context.WithCancel(ctx)
-	go r.run(ctx)
+	r.startOnce.Do(func() {
+		ctx, r.cancel = context.WithCancel(ctx)
+		go r.run(ctx)
+	})
 }
 
 // stop is safe to call more than once, and safe to call on a runner that was
