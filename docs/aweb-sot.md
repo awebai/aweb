@@ -562,6 +562,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `message_ingress_receipts`
 - `federation_mutation_outbox`
 - `identity_session_grants`
+- `identity_grant_liveness`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
