@@ -162,6 +162,124 @@ class SurfaceContractTest(unittest.TestCase):
         for target in ("test-e2e", "test-federation-e2e", "cli-e2e"):
             self.assertIn(target, targets)
 
+    def test_candidate_gate_has_bounded_host_daemon_controls(self):
+        gate = (ROOT / "scripts/candidate-docker-gate.sh").read_text(encoding="utf-8")
+        wrapper = (ROOT / "candidate-gate/bin/docker").read_text(encoding="utf-8")
+
+        # Operator defaults requested for shared-machine runs.
+        self.assertIn('runner_cpus="${AWEB_CANDIDATE_RUNNER_CPUS:-2}"', gate)
+        self.assertIn('runner_memory="${AWEB_CANDIDATE_RUNNER_MEMORY:-8g}"', gate)
+        self.assertIn('builder_cpus="${AWEB_CANDIDATE_BUILDER_CPUS:-2}"', gate)
+        self.assertIn('builder_memory="${AWEB_CANDIDATE_BUILDER_MEMORY:-6g}"', gate)
+
+        # The outer runner and direct database services are named/labeled and bounded.
+        for needle in (
+            '--name "$runner_name"',
+            '--label "aweb.candidate-gate=$resource_label"',
+            '--cpus "$runner_cpus"',
+            '--memory "$runner_memory"',
+            '--pids-limit "$runner_pids"',
+            '--cpus "$service_cpus" --memory "$service_memory" --pids-limit "$service_pids"',
+            '--cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids"',
+        ):
+            self.assertIn(needle, gate)
+
+        # The initial tool image is built by the bounded persistent BuildKit, and the
+        # same builder is exported to nested release-image builds.
+        self.assertIn('docker update --cpus "$builder_cpus" --memory "$builder_memory" --pids-limit "$builder_pids"', gate)
+        self.assertIn('docker buildx build --builder "$builder_name" --load --pull', gate)
+        self.assertIn('-e BUILDX_BUILDER="$builder_name"', gate)
+        self.assertNotIn('\ndocker build --pull -f "$checkout/candidate-gate/Dockerfile"', gate)
+
+        # Docker-socket siblings inside the runner go through a PATH wrapper that
+        # labels/limits direct `docker run` and routes plain `docker build` through BuildKit.
+        self.assertIn('-e PATH="$checkout/candidate-gate/bin:', gate)
+        self.assertIn('--label "aweb.candidate-gate=$label"', wrapper)
+        self.assertIn('--cpus "$sibling_cpus"', wrapper)
+        self.assertIn('buildx build --builder "$BUILDX_BUILDER" --load', wrapper)
+        self.assertIn('compose_with_limits()', wrapper)
+        self.assertIn('config --services', wrapper)
+        self.assertIn('compose_prefix+=("-f" "$search_dir/$default_file")', wrapper)
+        self.assertIn('compose_prefix=("${prefix[@]}")', wrapper)
+        self.assertIn('aweb.candidate-gate: %s', wrapper)
+        self.assertIn('mem_limit: "%s"', wrapper)
+        self.assertIn('pids_limit: %s', wrapper)
+
+        # Cleanup removes and verifies all containers carrying the run label, including
+        # signal-triggered cleanup, without sweeping unrelated Docker resources.
+        self.assertIn("trap 'cleanup 130' INT", gate)
+        self.assertIn("trap 'cleanup 143' TERM", gate)
+        self.assertIn('docker ps -aq --filter "label=aweb.candidate-gate=$resource_label"', gate)
+        self.assertIn('resource-limits.tsv', gate)
+
+    def test_candidate_docker_wrapper_preserves_compose_base_files(self):
+        wrapper = ROOT / "candidate-gate/bin/docker"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fake = root / "fake-docker.py"
+            fake.write_text(
+                "#!/usr/bin/env python3\n"
+                "import pathlib, sys\n"
+                "args = sys.argv[1:]\n"
+                "if args[:1] == ['compose'] and args[-2:] == ['config', '--services']:\n"
+                "    print('web')\n"
+                "    raise SystemExit(0)\n"
+                "if args[:1] == ['compose']:\n"
+                "    files = []\n"
+                "    it = iter(range(len(args)))\n"
+                "    for i in it:\n"
+                "        if args[i] == '-f' and i + 1 < len(args):\n"
+                "            files.append(args[i + 1])\n"
+                "    for path in files:\n"
+                "        print(f'--- {path}')\n"
+                "        print(pathlib.Path(path).read_text())\n"
+                "    raise SystemExit(0)\n"
+                "raise SystemExit(0)\n",
+                encoding="utf-8",
+            )
+            fake.chmod(0o755)
+            env = os.environ.copy()
+            env.update(
+                {
+                    "AWEB_CANDIDATE_REAL_DOCKER": str(fake),
+                    "AWEB_CANDIDATE_RESOURCE_LABEL": "test-run",
+                    "AWEB_CANDIDATE_SIBLING_CPUS": "2",
+                    "AWEB_CANDIDATE_SIBLING_MEMORY": "4g",
+                    "AWEB_CANDIDATE_SIBLING_PIDS": "1024",
+                }
+            )
+
+            implicit = root / "implicit"
+            implicit.mkdir()
+            (implicit / "compose.yml").write_text(
+                "services:\n  web:\n    image: nginx:alpine\n", encoding="utf-8"
+            )
+            (implicit / ".env.e2e").write_text("X=1\n", encoding="utf-8")
+            out = subprocess.check_output(
+                [str(wrapper), "compose", "-p", "proj", "--env-file", ".env.e2e", "config"],
+                cwd=implicit,
+                env=env,
+                text=True,
+            )
+            self.assertIn("image: nginx:alpine", out)
+            self.assertIn("aweb.candidate-gate: test-run", out)
+            self.assertIn('mem_limit: "4g"', out)
+
+            explicit = root / "explicit"
+            explicit.mkdir()
+            (explicit / "base.yml").write_text(
+                "services:\n  web:\n    build:\n      context: .\n", encoding="utf-8"
+            )
+            out = subprocess.check_output(
+                [str(wrapper), "compose", "-p", "proj", "-f", "base.yml", "config"],
+                cwd=explicit,
+                env=env,
+                text=True,
+            )
+            self.assertIn("build:", out)
+            self.assertIn("context: .", out)
+            self.assertIn("aweb.candidate-gate: test-run", out)
+
 
 class ReleaseStampContractTest(unittest.TestCase):
     def test_failed_go_build_is_not_masked_by_binary_inspection(self):

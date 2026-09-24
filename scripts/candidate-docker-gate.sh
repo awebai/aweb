@@ -58,6 +58,23 @@ builder_name="aweb-candidate-gate"
 buildx_config="${AWEB_CANDIDATE_BUILDX:-/tmp/aweb-candidate-buildx}"
 docker_bind_root=""
 gate_run_id="aweb-candidate-suite-${SOURCE_SHA:0:12}-$$"
+resource_label="$gate_run_id"
+runner_name="$gate_run_id-runner"
+runner_cpus="${AWEB_CANDIDATE_RUNNER_CPUS:-2}"
+runner_memory="${AWEB_CANDIDATE_RUNNER_MEMORY:-8g}"
+runner_pids="${AWEB_CANDIDATE_RUNNER_PIDS:-2048}"
+builder_cpus="${AWEB_CANDIDATE_BUILDER_CPUS:-2}"
+builder_memory="${AWEB_CANDIDATE_BUILDER_MEMORY:-6g}"
+builder_pids="${AWEB_CANDIDATE_BUILDER_PIDS:-2048}"
+service_cpus="${AWEB_CANDIDATE_SERVICE_CPUS:-1}"
+service_memory="${AWEB_CANDIDATE_SERVICE_MEMORY:-1g}"
+service_pids="${AWEB_CANDIDATE_SERVICE_PIDS:-512}"
+redis_cpus="${AWEB_CANDIDATE_REDIS_CPUS:-0.5}"
+redis_memory="${AWEB_CANDIDATE_REDIS_MEMORY:-256m}"
+redis_pids="${AWEB_CANDIDATE_REDIS_PIDS:-256}"
+sibling_cpus="${AWEB_CANDIDATE_SIBLING_CPUS:-2}"
+sibling_memory="${AWEB_CANDIDATE_SIBLING_MEMORY:-4g}"
+sibling_pids="${AWEB_CANDIDATE_SIBLING_PIDS:-1024}"
 suite_projects=(
   "$gate_run_id-channel"
   "$gate_run_id-user"
@@ -66,7 +83,7 @@ suite_projects=(
   "$gate_run_id-library"
 )
 cleanup() {
-  local original_status=$? cleanup_status=0 project resource ids
+  local original_status="${1:-$?}" cleanup_status=0 project resource ids label_ids
   local -a list remove
   trap - EXIT
   set +e
@@ -89,6 +106,9 @@ cleanup() {
       fi
     done
   done
+  label_ids="$(docker ps -aq --filter "label=aweb.candidate-gate=$resource_label")" \
+    || cleanup_status=1
+  [[ -z "$label_ids" ]] || docker rm -f $label_ids >/dev/null 2>&1 || cleanup_status=1
   [[ "${#owned_containers[@]}" -eq 0 ]] \
     || docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 \
     || cleanup_status=1
@@ -100,6 +120,8 @@ cleanup() {
     --keep-storage=10GB --builder "$builder_name" >/dev/null 2>&1 \
     || printf 'candidate gate: builder cache prune skipped\n' >&2
   docker image rm "$IMAGE" >/dev/null 2>&1 || true
+  [[ -z "$(docker ps -aq --filter "label=aweb.candidate-gate=$resource_label")" ]] \
+    || cleanup_status=1
   for ids in "${owned_containers[@]}"; do
     ! docker container inspect "$ids" >/dev/null 2>&1 || cleanup_status=1
   done
@@ -119,7 +141,9 @@ cleanup() {
   [[ "$original_status" -ne 0 ]] && exit "$original_status"
   exit "$cleanup_status"
 }
-trap cleanup EXIT
+trap 'cleanup "$?"' EXIT
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
 checkout="$work/aweb"
 git clone --local --no-hardlinks "$ROOT" "$checkout" >/dev/null
 git -C "$checkout" checkout --detach "$SOURCE_SHA" >/dev/null
@@ -150,7 +174,26 @@ printf '%s\n' "$SOURCE_SHA" > "$LOG_DIR/source-sha"
 printf 'NOT RELEVANT: OSS packages do not bundle Library; this input is used only by its activation journey.\n' \
   > "$LOG_DIR/compatibility.txt"
 
-docker build --pull -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout/candidate-gate" \
+mkdir -p "$buildx_config"
+# Reuse the persistent builder when it is healthy; recreate it when its
+# container or state has been removed since the last run. All gate builds,
+# including this initial tool image and nested Docker-socket sibling builds,
+# use this builder so the builder container has explicit CPU/memory/PID bounds.
+if ! BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null 2>&1; then
+  BUILDX_CONFIG="$buildx_config" docker buildx rm "$builder_name" >/dev/null 2>&1 || true
+  BUILDX_CONFIG="$buildx_config" docker buildx create \
+    --name "$builder_name" --driver docker-container \
+    "unix:///var/run/docker.sock" --bootstrap >/dev/null 2>&1 || true
+  BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null \
+    || refuse "could not provision the persistent release builder"
+fi
+builder_container="buildx_buildkit_${builder_name}0"
+docker update --cpus "$builder_cpus" --memory "$builder_memory" --pids-limit "$builder_pids" \
+  "$builder_container" >/dev/null \
+  || refuse "could not apply candidate builder resource limits"
+
+BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
+  -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout/candidate-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
 
 # Record the run's mutable inputs in the evidence (adoption compares them):
@@ -160,16 +203,26 @@ base_ref="$(awk '/^FROM /{print $2; exit}' "$checkout/candidate-gate/Dockerfile"
 base_digest="$(docker image inspect "$base_ref" --format '{{join .RepoDigests ","}}' 2>/dev/null || echo unresolved)"
 locks_digest="$(git -C "$checkout" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
 printf 'base\t%s\t%s\nlocks\t%s\n' "$base_ref" "$base_digest" "$locks_digest" > "$LOG_DIR/inputs.tsv"
+printf 'runner\tcpus=%s\tmemory=%s\tpids=%s\nbuilder\tcpus=%s\tmemory=%s\tpids=%s\nservice\tcpus=%s\tmemory=%s\tpids=%s\nredis\tcpus=%s\tmemory=%s\tpids=%s\nsibling\tcpus=%s\tmemory=%s\tpids=%s\n' \
+  "$runner_cpus" "$runner_memory" "$runner_pids" \
+  "$builder_cpus" "$builder_memory" "$builder_pids" \
+  "$service_cpus" "$service_memory" "$service_pids" \
+  "$redis_cpus" "$redis_memory" "$redis_pids" \
+  "$sibling_cpus" "$sibling_memory" "$sibling_pids" > "$LOG_DIR/resource-limits.tsv"
 owned_network="aweb-candidate-gate-${SOURCE_SHA:0:12}-$$"
 docker network create "$owned_network" >/dev/null
 pg_name="${owned_network}-postgres"
 redis_name="${owned_network}-redis"
 pg_id="$(docker run --detach --network "$owned_network" --name "$pg_name" \
+  --label "aweb.candidate-gate=$resource_label" \
+  --cpus "$service_cpus" --memory "$service_memory" --pids-limit "$service_pids" \
   --env POSTGRES_USER=postgres --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres \
   --health-cmd 'pg_isready -U postgres -d postgres' \
   --health-interval 2s --health-timeout 5s --health-retries 45 postgres:17)"
 owned_containers+=("$pg_id")
 redis_id="$(docker run --detach --network "$owned_network" --name "$redis_name" \
+  --label "aweb.candidate-gate=$resource_label" \
+  --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
   --health-cmd 'redis-cli ping' --health-interval 2s --health-timeout 5s --health-retries 45 redis:7)"
 owned_containers+=("$redis_id")
 for container in "$pg_id" "$redis_id"; do
@@ -210,21 +263,11 @@ for db in postgres template1; do
     || refuse "pgcrypto pre-provision did not land in public for $db: '$ext_schema'"
 done
 docker_bind_root="$checkout/.candidate-docker-bind"
-mkdir -p "$buildx_config" "$docker_bind_root" "$checkout/.candidate-home"
-# Reuse the persistent builder when it is healthy; recreate it when its
-# container or state has been removed since the last run. Gate invocations are
-# expected not to overlap on one host (they share this builder and the cache
-# root); a lost creation race is tolerated below, and the final inspect is the
-# authority either way.
-if ! BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null 2>&1; then
-  BUILDX_CONFIG="$buildx_config" docker buildx rm "$builder_name" >/dev/null 2>&1 || true
-  BUILDX_CONFIG="$buildx_config" docker buildx create \
-    --name "$builder_name" --driver docker-container \
-    "unix:///var/run/docker.sock" --bootstrap >/dev/null 2>&1 || true
-  BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null \
-    || refuse "could not provision the persistent release builder"
-fi
-socket_gid="$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+mkdir -p "$docker_bind_root" "$checkout/.candidate-home"
+socket_gid="$(docker run --rm \
+  --label "aweb.candidate-gate=$resource_label" \
+  --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
 read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port < <(
   python3 - <<'PY'
@@ -244,11 +287,25 @@ PY
 
 set +e
 docker run --rm --init \
+  --name "$runner_name" \
+  --label "aweb.candidate-gate=$resource_label" \
+  --cpus "$runner_cpus" \
+  --memory "$runner_memory" \
+  --pids-limit "$runner_pids" \
   --network "$owned_network" \
   --user "$(id -u):$(id -g)" \
   --group-add "$socket_gid" \
   --add-host aweb-docker.test:host-gateway \
   -e HOME="$checkout/.candidate-home" \
+  -e PATH="$checkout/candidate-gate/bin:/usr/local/go/bin:/opt/uv:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  -e AWEB_CANDIDATE_REAL_DOCKER=/usr/bin/docker \
+  -e AWEB_CANDIDATE_RESOURCE_LABEL="$resource_label" \
+  -e AWEB_CANDIDATE_SIBLING_CPUS="$sibling_cpus" \
+  -e AWEB_CANDIDATE_SIBLING_MEMORY="$sibling_memory" \
+  -e AWEB_CANDIDATE_SIBLING_PIDS="$sibling_pids" \
+  -e DOCKER_BUILDKIT=1 \
+  -e COMPOSE_DOCKER_CLI_BUILD=1 \
+  -e COMPOSE_BAKE=true \
   -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
   -e CANDIDATE_CHECKOUT_ROOT="$checkout" \
   -e CLI_VERSION="${CLI_VERSION:-}" \

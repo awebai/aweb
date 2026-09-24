@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Candidate-gate docker wrapper. Inside the gate runner the Docker CLI talks to
+# the host daemon, so sibling containers and plain `docker build` calls are not
+# constrained by the runner cgroup. Add the run's ownership label/resource bounds
+# to direct siblings and route plain builds through the bounded BuildKit builder.
+set -euo pipefail
+
+real="${AWEB_CANDIDATE_REAL_DOCKER:-/usr/bin/docker}"
+cmd="${1:-}"
+if [[ -z "$cmd" ]]; then
+  exec "$real"
+fi
+shift || true
+
+label="${AWEB_CANDIDATE_RESOURCE_LABEL:-}"
+sibling_cpus="${AWEB_CANDIDATE_SIBLING_CPUS:-2}"
+sibling_memory="${AWEB_CANDIDATE_SIBLING_MEMORY:-4g}"
+sibling_pids="${AWEB_CANDIDATE_SIBLING_PIDS:-1024}"
+
+compose_with_limits() {
+  local -a prefix rest services compose_prefix
+  local has_file=0 project_directory="${PWD}"
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      -f|--file)
+        prefix+=("$1" "${2:-}")
+        has_file=1
+        shift 2
+        ;;
+      --file=*)
+        prefix+=("$1")
+        has_file=1
+        shift
+        ;;
+      -p|--project-name|--env-file|--profile)
+        prefix+=("$1" "${2:-}")
+        shift 2
+        ;;
+      --project-directory)
+        prefix+=("$1" "${2:-}")
+        project_directory="${2:-$project_directory}"
+        shift 2
+        ;;
+      --project-directory=*)
+        prefix+=("$1")
+        project_directory="${1#--project-directory=}"
+        shift
+        ;;
+      --env-file=*|--profile=*|--project-name=*)
+        prefix+=("$1")
+        shift
+        ;;
+      --ansi|--progress|--parallel)
+        prefix+=("$1" "${2:-}")
+        shift 2
+        ;;
+      --compatibility|--verbose|--dry-run)
+        prefix+=("$1")
+        shift
+        ;;
+      --*)
+        prefix+=("$1")
+        shift
+        ;;
+      -*)
+        prefix+=("$1")
+        shift
+        ;;
+      *)
+        break
+        ;;
+    esac
+  done
+  rest=("$@")
+  if [[ -z "$label" || "${#rest[@]}" -eq 0 ]]; then
+    exec "$real" compose "${prefix[@]}" "${rest[@]}"
+  fi
+
+  compose_prefix=("${prefix[@]}")
+  if [[ "$has_file" -eq 0 ]]; then
+    if [[ -n "${COMPOSE_FILE:-}" ]]; then
+      local old_ifs="$IFS" file
+      IFS=':'
+      for file in $COMPOSE_FILE; do
+        [[ -n "$file" ]] && compose_prefix+=("-f" "$file")
+      done
+      IFS="$old_ifs"
+    else
+      local search_dir default_file override_file
+      search_dir="$project_directory"
+      if [[ ! "$search_dir" = /* ]]; then
+        search_dir="$PWD/$search_dir"
+      fi
+      for default_file in compose.yaml compose.yml docker-compose.yaml docker-compose.yml; do
+        if [[ -f "$search_dir/$default_file" ]]; then
+          compose_prefix+=("-f" "$search_dir/$default_file")
+          case "$default_file" in
+            compose.yaml|compose.yml)
+              for override_file in compose.override.yaml compose.override.yml; do
+                [[ -f "$search_dir/$override_file" ]] && compose_prefix+=("-f" "$search_dir/$override_file")
+              done
+              ;;
+            docker-compose.yaml|docker-compose.yml)
+              for override_file in docker-compose.override.yaml docker-compose.override.yml; do
+                [[ -f "$search_dir/$override_file" ]] && compose_prefix+=("-f" "$search_dir/$override_file")
+              done
+              ;;
+          esac
+          break
+        fi
+      done
+    fi
+  fi
+
+  mapfile -t services < <("$real" compose "${compose_prefix[@]}" config --services 2>/dev/null || true)
+  if [[ "${#services[@]}" -eq 0 ]]; then
+    exec "$real" compose "${prefix[@]}" "${rest[@]}"
+  fi
+  local override
+  override="$(mktemp "${TMPDIR:-/tmp}/aweb-candidate-compose-limits.XXXXXX")"
+  {
+    printf 'services:\n'
+    local service
+    for service in "${services[@]}"; do
+      printf '  %s:\n' "$service"
+      printf '    labels:\n'
+      printf '      aweb.candidate-gate: %s\n' "$label"
+      printf '    cpus: "%s"\n' "$sibling_cpus"
+      printf '    mem_limit: "%s"\n' "$sibling_memory"
+      printf '    pids_limit: %s\n' "$sibling_pids"
+    done
+  } > "$override"
+  exec "$real" compose "${compose_prefix[@]}" -f "$override" "${rest[@]}"
+}
+
+case "$cmd" in
+  run)
+    if [[ -n "$label" ]]; then
+      exec "$real" run \
+        --label "aweb.candidate-gate=$label" \
+        --cpus "$sibling_cpus" \
+        --memory "$sibling_memory" \
+        --pids-limit "$sibling_pids" \
+        "$@"
+    fi
+    exec "$real" run "$@"
+    ;;
+  build)
+    if [[ -n "${BUILDX_BUILDER:-}" ]]; then
+      exec "$real" buildx build --builder "$BUILDX_BUILDER" --load "$@"
+    fi
+    exec "$real" build "$@"
+    ;;
+  compose)
+    compose_with_limits "$@"
+    ;;
+  *)
+    exec "$real" "$cmd" "$@"
+    ;;
+esac
