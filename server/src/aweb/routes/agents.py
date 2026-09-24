@@ -19,7 +19,8 @@ from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db, get_redis
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.auth_context import GRANT_SCOPE_ANY
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ..presence import list_agent_presences_by_workspace_ids, update_agent_presence
 
@@ -368,7 +369,7 @@ async def list_agents(
     request: Request,
     db=Depends(get_db),
     redis=Depends(get_redis),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope(GRANT_SCOPE_ANY)),
 ) -> ListAgentsResponse:
     """List agents in the current team."""
     aweb_db = db.get_manager("aweb")
@@ -513,7 +514,7 @@ async def heartbeat(
     request: Request,
     db=Depends(get_db),
     redis=Depends(get_redis),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("presence.write")),
 ) -> HeartbeatResponse:
     """Update workspace last_seen_at and Redis presence."""
     aweb_db = db.get_manager("aweb")

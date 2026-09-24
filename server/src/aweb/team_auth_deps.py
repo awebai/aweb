@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
 
+from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
+
 from aweb.deps import get_db
 from pgdbm import AsyncDatabaseManager
 
@@ -59,6 +61,7 @@ class TeamIdentity:
     agent_id: str
     identity_scope: str
     certificate_id: str
+    grant: GrantContext | None = None
 
     @property
     def lifetime(self) -> str:
@@ -258,20 +261,19 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     return cert_info
 
 
-async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentity:
-    """FastAPI dependency: authenticate request via team certificate.
+async def _get_team_identity_with_grant_scope(
+    request: Request,
+    db,
+    *,
+    grant_scope: str | None,
+) -> TeamIdentity:
+    if (request.headers.get("Authorization") or "").lstrip().startswith("AWEB-Grant "):
+        if grant_scope is None:
+            raise HTTPException(status_code=403, detail="outside grant scope")
+        from aweb.identity_grant_auth import verify_identity_grant_team_identity
 
-    Full auth pipeline (steps 1-6): verifies the certificate and
-    resolves the agent from the local DB. For routes where the agent
-    must already exist.
+        return await verify_identity_grant_team_identity(request, db, required_scope=grant_scope)
 
-    IMPORTANT: this must be used as Depends(get_team_identity) so FastAPI
-    evaluates it before body parameter injection. Calling it directly
-    inside a route handler deadlocks on POST requests because
-    request.body() blocks after FastAPI has already consumed the stream.
-
-    Returns a TeamIdentity or raises HTTPException(401/403).
-    """
     cert_info = await verify_request_certificate(request, db)
 
     aweb_db = _aweb_db(db)
@@ -279,6 +281,28 @@ async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentit
         return await resolve_team_identity(aweb_db, cert_info)
     except ValueError as e:
         raise HTTPException(status_code=403, detail=str(e))
+
+
+async def get_team_identity(request: Request, db=Depends(get_db)) -> TeamIdentity:
+    """FastAPI dependency: authenticate request via team certificate.
+
+    Full auth pipeline (steps 1-6): verifies the certificate and resolves the
+    agent from the local DB. Grant principals are denied here unless a route
+    opts in through team_identity_with_grant_scope(...); undeclared routes fail
+    closed for grants.
+    """
+    return await _get_team_identity_with_grant_scope(request, db, grant_scope=None)
+
+
+def team_identity_with_grant_scope(scope: str):
+    """Return a dependency that accepts either root team auth or a scoped grant."""
+    if scope != GRANT_SCOPE_ANY and scope not in GRANT_SCOPES:
+        raise AssertionError(f"unknown grant scope declaration: {scope}")
+
+    async def dependency(request: Request, db=Depends(get_db)) -> TeamIdentity:
+        return await _get_team_identity_with_grant_scope(request, db, grant_scope=scope)
+
+    return dependency
 
 
 # ---------------------------------------------------------------------------

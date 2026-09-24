@@ -13,6 +13,7 @@ from aweb.awid_error_handling import (
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
+from aweb.auth_context import GrantContext
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
 from aweb.team_auth_deps import (
@@ -46,6 +47,7 @@ class MessagingAuth:
     identity_scope: str | None = None
     certificate_id: str | None = None
     verified_team_id: str | None = None
+    grant: GrantContext | None = None
 
 
 def auth_dids(identity: IdentityAuth | MessagingAuth) -> list[str]:

@@ -19,17 +19,16 @@ from awid.dns_auth import enforce_timestamp_skew, require_timestamp
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
+from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 from aweb.config import get_settings, require_registered_certificates
 from aweb.identity_auth_deps import MessagingAuth
-from aweb.team_auth_deps import _aweb_db, _get_registered_certificates, _get_revoked_certificates
+from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_registered_certificates, _get_revoked_certificates
 from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
 GRANT_AUTH_SCHEME = "AWEB-Grant "
 GRANT_AUTH_PREFIX = "AWEB-Grant DIDKey "
 GRANT_AUTH_VERSION = 1
 GRANT_AUTH_KIND = "identity-grant"
-
-GRANT_SCOPES = ("mail.read", "mail.send", "chat.read", "chat.send")
 
 _GENERIC_DETAIL = "identity grant rejected"
 _OUT_OF_SCOPE_DETAIL = "outside grant scope"
@@ -68,7 +67,10 @@ def required_grant_scope(method: str, path: str) -> str | None:
     raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
 
 
-async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
+_USE_PATH_SCOPE = object()
+
+
+async def _verify_identity_grant_row(request: Request, db, *, required_scope=_USE_PATH_SCOPE) -> tuple[dict, GrantContext]:
     auth = (request.headers.get("Authorization") or "").strip()
     if not auth.startswith(GRANT_AUTH_PREFIX):
         raise HTTPException(status_code=401, detail="Missing identity grant Authorization header")
@@ -176,10 +178,27 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
                     status_code=403, detail="grant issuing certificate not registered"
                 )
 
-    required = required_grant_scope(request.method, _app_relative_path(request))
-    if required is not None and required not in list(row["scopes"] or []):
+    required = (
+        required_grant_scope(request.method, _app_relative_path(request))
+        if required_scope is _USE_PATH_SCOPE
+        else required_scope
+    )
+    scopes = tuple(str(scope).strip() for scope in (row["scopes"] or []) if str(scope).strip())
+    if required != GRANT_SCOPE_ANY and required is not None and required not in scopes:
         raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
 
+    grant = GrantContext(
+        grant_id=grant_id,
+        session_did_key=did_key,
+        issuing_certificate_id=issuing_certificate_id or None,
+        scopes=scopes,
+        expires_at=row["expires_at"],
+    )
+    return dict(row), grant
+
+
+async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
+    row, grant = await _verify_identity_grant_row(request, db)
     return MessagingAuth(
         did_key=row["subject_did_key"],
         did_aw=row.get("did_aw") or None,
@@ -188,6 +207,22 @@ async def verify_identity_grant_auth(request: Request, db) -> MessagingAuth:
         alias=row["alias"],
         agent_id=str(row["agent_id"]),
         identity_scope=row["identity_scope"],
-        certificate_id=f"grant:{grant_id}",
+        certificate_id=None,
         verified_team_id=row["team_id"],
+        grant=grant,
+    )
+
+
+async def verify_identity_grant_team_identity(request: Request, db, *, required_scope: str) -> TeamIdentity:
+    row, grant = await _verify_identity_grant_row(request, db, required_scope=required_scope)
+    return TeamIdentity(
+        team_id=row["team_id"],
+        alias=row["alias"],
+        did_key=row["subject_did_key"],
+        did_aw=row.get("did_aw") or "",
+        address=row.get("address") or "",
+        agent_id=str(row["agent_id"]),
+        identity_scope=row["identity_scope"],
+        certificate_id="",
+        grant=grant,
     )

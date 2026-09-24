@@ -81,6 +81,9 @@ func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) 
 	if err != nil {
 		return nil, nil, err
 	}
+	if requestedTeam := strings.TrimSpace(teamFlag); requestedTeam != "" && requestedTeam != strings.TrimSpace(grant.TeamID) {
+		return nil, nil, usageError("grant home is bound to team %s; --team %s conflicts", strings.TrimSpace(grant.TeamID), requestedTeam)
+	}
 	if expires, ok := parseTimeBestEffort(grant.ExpiresAt); ok && time.Now().After(expires) {
 		return nil, nil, fmt.Errorf("identity grant %s expired at %s; mint a new grant from the identity's own .aw home", grant.GrantID, grant.ExpiresAt)
 	}
@@ -403,6 +406,7 @@ func init() {
 		Args:  cobra.ExactArgs(1),
 		RunE:  runGrantShow,
 	}
+	bindTeamSelector(grantCmd)
 	grantCmd.AddCommand(mintCmd, listCmd, revokeCmd, showCmd)
 	identityCmd.AddCommand(grantCmd)
 }

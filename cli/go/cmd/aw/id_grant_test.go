@@ -376,6 +376,15 @@ func TestGrantCommandsUseExternalIdentityHomeWithRealBinary(t *testing.T) {
 			if !strings.Contains(out, "grant-9") {
 				t.Fatalf("list output missing grant: %s", out)
 			}
+			for _, command := range [][]string{
+				{"id", "grant", "--team", "runtime:aweb.test", "list", "--json"},
+				{"id", "grant", "list", "--team", "runtime:aweb.test", "--json"},
+			} {
+				out := run(t, source, instance, command...)
+				if !strings.Contains(out, "grant-9") {
+					t.Fatalf("team-selected grant list output missing grant for %v: %s", command, out)
+				}
+			}
 			if _, err := os.Lstat(filepath.Join(instance, ".aw")); !os.IsNotExist(err) {
 				t.Fatalf("grant list touched empty instance identity state: %v", err)
 			}
@@ -405,6 +414,33 @@ func TestGrantCommandsUseExternalIdentityHomeWithRealBinary(t *testing.T) {
 	requests := append([]messagingSignedRequest(nil), signedRequests...)
 	requestMu.Unlock()
 	verifyMessagingRequestsForTest(t, requests, principalPub, shadowPub, principalDID, shadowDID)
+}
+
+func TestGrantHomeConflictingTeamFailsExplicitlyInRealBinary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	grantHome := filepath.Join(root, "grant-home")
+	writeGrantHomeForTest(t, grantHome, "https://app.aweb.ai")
+	instance := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instance, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.CommandContext(ctx, bin, "--identity-home", grantHome, "--team", "ops:acme.com", "mail", "inbox")
+	cmd.Dir = instance
+	cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home")), awconfig.IdentityHomeEnv+"=", "AW_NO_UPDATE_CHECK=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "grant home is bound to team backend:acme.com; --team ops:acme.com conflicts") {
+		t.Fatalf("grant-home conflicting --team error=%v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "https://app.aweb.ai") {
+		t.Fatalf("conflicting --team should fail before using grant server URL:\n%s", out)
+	}
 }
 
 func TestGrantCommandsWithGrantIdentityHomeRefuseRootAuthorityInRealBinary(t *testing.T) {

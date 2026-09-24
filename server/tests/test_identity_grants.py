@@ -5,7 +5,7 @@ import hashlib
 import json
 from dataclasses import asdict
 from unittest.mock import AsyncMock
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -16,11 +16,14 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.api import create_app
+from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.routes import agents as agents_routes
 from aweb.routes.chat import router as chat_router
+from aweb.routes.agents import router as agents_router
 from aweb.routes.identity_grants import router as identity_grants_router
 from aweb.routes.messages import router as messages_router
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 TEAM_ID = "backend:acme.com"
 SUBJECT_DID_KEY = "did:key:z6MkSubjectAlice"
@@ -75,6 +78,14 @@ def _build_app(aweb_db) -> FastAPI:
     @app.get("/v1/agents")
     async def _roster(auth: MessagingAuth = Depends(get_messaging_auth)):
         return _auth_view(auth)
+
+    @app.get("/v1/team-agents")
+    async def _team_roster(identity: TeamIdentity = Depends(team_identity_with_grant_scope(GRANT_SCOPE_ANY))):
+        return asdict(identity)
+
+    @app.post("/v1/heartbeat")
+    async def _heartbeat(identity: TeamIdentity = Depends(team_identity_with_grant_scope("presence.write"))):
+        return asdict(identity)
 
     @app.get("/v1/chat/{session_id}/messages")
     async def _chat_read(session_id: str, auth: MessagingAuth = Depends(get_messaging_auth)):
@@ -214,7 +225,9 @@ async def test_mint_and_grant_send_resolves_subject_attribution(aweb_cloud_db):
     assert auth["team_id"] == TEAM_ID
     assert auth["verified_team_id"] == TEAM_ID
     assert auth["identity_scope"] == "global"
-    assert auth["certificate_id"] == f"grant:{grant['grant_id']}"
+    assert auth["certificate_id"] is None
+    assert auth["grant"]["grant_id"] == grant["grant_id"]
+    assert auth["grant"]["session_did_key"] == did_key
 
 
 @pytest.mark.asyncio
@@ -306,17 +319,29 @@ async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
         inbox_denied = await client.get("/v1/messages", headers=send_headers("GET", "/v1/messages"))
         send_allowed = await client.post("/v1/messages", headers=send_headers("POST", "/v1/messages"))
         roster_allowed = await client.get("/v1/agents", headers=send_headers("GET", "/v1/agents"))
+        team_roster_allowed = await client.get("/v1/team-agents", headers=send_headers("GET", "/v1/team-agents"))
+        presence_denied = await client.post("/v1/heartbeat", headers=send_headers("POST", "/v1/heartbeat"))
         lease_denied = await client.post("/v1/session-leases", headers=send_headers("POST", "/v1/session-leases"))
 
         chat_read_allowed = await client.get("/v1/chat/s1/messages", headers=chat_headers("GET", "/v1/chat/s1/messages"))
         mark_read_allowed = await client.post("/v1/chat/s1/read", headers=chat_headers("POST", "/v1/chat/s1/read"))
         chat_send_denied = await client.post("/v1/chat/s1/messages", headers=chat_headers("POST", "/v1/chat/s1/messages"))
         chat_roster_allowed = await client.get("/v1/agents", headers=chat_headers("GET", "/v1/agents"))
+        presence_key, presence_did = _session_keypair()
+        presence_grant = (await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])).json()["grant_id"]
+        presence_allowed = await client.post(
+            "/v1/heartbeat",
+            headers=_grant_headers(signing_key=presence_key, did_key=presence_did, grant_id=presence_grant, method="POST", path="/v1/heartbeat"),
+        )
 
     assert inbox_denied.status_code == 403
     assert inbox_denied.json()["detail"] == "outside grant scope"
     assert send_allowed.status_code == 200
     assert roster_allowed.status_code == 200
+    assert team_roster_allowed.status_code == 200
+    assert team_roster_allowed.json()["grant"]["grant_id"] == send_grant
+    assert presence_denied.status_code == 403
+    assert presence_denied.json()["detail"] == "outside grant scope"
     assert lease_denied.status_code == 403
     assert lease_denied.json()["detail"] == "outside grant scope"
     assert chat_read_allowed.status_code == 200
@@ -324,6 +349,8 @@ async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
     assert chat_send_denied.status_code == 403
     assert chat_send_denied.json()["detail"] == "outside grant scope"
     assert chat_roster_allowed.status_code == 200
+    assert presence_allowed.status_code == 200
+    assert presence_allowed.json()["grant"]["grant_id"] == presence_grant
 
 
 @pytest.mark.asyncio
@@ -579,6 +606,7 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.include_router(identity_grants_router)
     app.include_router(messages_router)
     app.include_router(chat_router)
+    app.include_router(agents_router)
     app.dependency_overrides[get_team_identity] = _identity
     app.state.db = _DbShim(aweb_db)
     app.state.public_origin = "http://test"
@@ -604,6 +632,21 @@ async def _real_messaging_fixture(aweb_db):
     app = _build_real_messaging_app(aweb_db)
     app.state.agent_id = str(alice_id)
     app.state.alias = "alice"
+    workspace_id = uuid4()
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (
+            workspace_id, team_id, agent_id, alias, human_name, role,
+            workspace_type, last_seen_at
+        )
+        VALUES ($1, $2, $3, 'alice', 'Alice', 'developer', 'manual', $4)
+        """,
+        workspace_id,
+        TEAM_ID,
+        alice_id,
+        datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    app.state.alice_workspace_id = str(workspace_id)
     bob_id = uuid4()
     await aweb_db.execute(
         """
@@ -613,6 +656,86 @@ async def _real_messaging_fixture(aweb_db):
         bob_id, TEAM_ID,
     )
     return app, alice_id, bob_id
+
+
+@pytest.mark.asyncio
+async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monkeypatch):
+    app, alice_id, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+
+    async def _presence(_redis, **_kwargs):
+        return "2026-09-24T00:00:00+00:00"
+
+    monkeypatch.setattr(agents_routes, "update_agent_presence", _presence)
+    old_last_seen = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1::UUID",
+        app.state.alice_workspace_id,
+    )
+    signing_key, grant_did = _session_keypair()
+    presence_key, presence_did = _session_keypair()
+    revoked_key, revoked_did = _session_keypair()
+    expired_key, expired_did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        old_scope_grant = (await _mint(
+            client,
+            grant_did_key=grant_did,
+            scopes=["mail.read", "mail.send", "chat.read", "chat.send"],
+        )).json()["grant_id"]
+        roster = await client.get(
+            "/v1/agents",
+            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
+        )
+        heartbeat_denied = await client.post(
+            "/v1/agents/heartbeat",
+            headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="POST", path="/v1/agents/heartbeat"),
+        )
+
+        presence_grant = (await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])).json()["grant_id"]
+        heartbeat = await client.post(
+            "/v1/agents/heartbeat",
+            headers=_grant_headers(signing_key=presence_key, did_key=presence_did, grant_id=presence_grant, method="POST", path="/v1/agents/heartbeat"),
+        )
+
+        revoked_grant = (await _mint(client, grant_did_key=revoked_did, scopes=["presence.write"])).json()["grant_id"]
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
+            revoked_grant,
+        )
+        revoked = await client.post(
+            "/v1/agents/heartbeat",
+            headers=_grant_headers(signing_key=revoked_key, did_key=revoked_did, grant_id=revoked_grant, method="POST", path="/v1/agents/heartbeat"),
+        )
+
+        expired_grant = (await _mint(client, grant_did_key=expired_did, scopes=["presence.write"])).json()["grant_id"]
+        await aweb_cloud_db.aweb_db.execute(
+            """
+            UPDATE {{tables.identity_session_grants}}
+            SET issued_at = NOW() - INTERVAL '2 seconds', expires_at = NOW() - INTERVAL '1 second'
+            WHERE grant_id = $1::UUID
+            """,
+            expired_grant,
+        )
+        expired = await client.post(
+            "/v1/agents/heartbeat",
+            headers=_grant_headers(signing_key=expired_key, did_key=expired_did, grant_id=expired_grant, method="POST", path="/v1/agents/heartbeat"),
+        )
+
+    assert roster.status_code == 200, roster.text
+    roster_body = roster.json()
+    assert roster_body["team_id"] == TEAM_ID
+    assert any(agent["agent_id"] == str(alice_id) for agent in roster_body["agents"])
+    assert heartbeat_denied.status_code == 403
+    assert heartbeat_denied.json()["detail"] == "outside grant scope"
+    assert heartbeat.status_code == 200, heartbeat.text
+    assert heartbeat.json()["agent_id"] == str(alice_id)
+    new_last_seen = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1::UUID",
+        app.state.alice_workspace_id,
+    )
+    assert new_last_seen > old_last_seen
+    assert revoked.status_code == 403
+    assert revoked.json()["detail"] == "grant revoked"
+    assert expired.status_code == 403
+    assert expired.json()["detail"] == "grant expired"
 
 
 @pytest.mark.asyncio
