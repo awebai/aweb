@@ -494,3 +494,137 @@ func VerifyE2EEUnwrapCustodyProof(req *E2EEUnwrapRequest) error {
 	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
 	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
 }
+
+// AppRequestSignRequest asks the local resident custody service to sign one
+// installed-app manifest tool call. The worker supplies only the app, verb and
+// structured tool input; custody re-interprets the call against its own
+// mint-time snapshot of the tool and chooses origin, method, path and body.
+type AppRequestSignRequest struct {
+	Version       int            `json:"v"`
+	Operation     string         `json:"op"`
+	GrantID       string         `json:"grant_id"`
+	SessionDIDKey string         `json:"session_did_key"`
+	TeamID        string         `json:"team_id"`
+	SubjectDIDAW  string         `json:"subject_did_aw,omitempty"`
+	SubjectDIDKey string         `json:"subject_did_key"`
+	Audience      string         `json:"aud"`
+	Nonce         string         `json:"nonce"`
+	Timestamp     string         `json:"timestamp"`
+	RequestDigest string         `json:"request_digest"`
+	Signature     string         `json:"signature"`
+	AppID         string         `json:"app_id"`
+	Verb          string         `json:"verb"`
+	Args          map[string]any `json:"args"`
+	RawBody       string         `json:"raw_body,omitempty"`
+}
+
+// AppRequestSignResponse is the exact request the worker must send: custody
+// output is authoritative and must not be merged with local manifest data.
+type AppRequestSignResponse struct {
+	Method  string            `json:"method"`
+	URL     string            `json:"url"`
+	Body    string            `json:"body"`
+	Headers map[string]string `json:"headers"`
+}
+
+type AppRequestCustodyClient interface {
+	SignAppRequest(ctx context.Context, req *AppRequestSignRequest) (*AppRequestSignResponse, error)
+}
+
+func (c *UnixCustodyClient) SignAppRequest(ctx context.Context, req *AppRequestSignRequest) (*AppRequestSignResponse, error) {
+	var out AppRequestSignResponse
+	if err := c.do(ctx, http.MethodPost, "/sign_app_request", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func appRequestDigestPayload(req *AppRequestSignRequest) map[string]any {
+	args := req.Args
+	if args == nil {
+		args = map[string]any{}
+	}
+	return map[string]any{"v": req.Version, "grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience, "app_id": req.AppID, "verb": req.Verb, "args": args, "raw_body": req.RawBody}
+}
+
+func SignAppRequestCustodyProof(key ed25519.PrivateKey, req *AppRequestSignRequest) error {
+	if req == nil {
+		return fmt.Errorf("request is required")
+	}
+	if req.Version == 0 {
+		req.Version = 1
+	}
+	if req.Operation == "" {
+		req.Operation = "sign_app_request"
+	}
+	if strings.TrimSpace(req.SessionDIDKey) == "" {
+		req.SessionDIDKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	}
+	d, err := custodyDigestValue(req.Operation, appRequestDigestPayload(req))
+	if err != nil {
+		return err
+	}
+	req.RequestDigest = d
+	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
+	if err := signCustodyProofFields(key, req.Version, req.Operation, fields, &req.RequestDigest, &req.Nonce, &req.Timestamp, &req.Signature); err != nil {
+		return err
+	}
+	req.SessionDIDKey = fields["session_did_key"]
+	return nil
+}
+
+func VerifyAppRequestCustodyProof(req *AppRequestSignRequest) error {
+	if req == nil {
+		return fmt.Errorf("bad_request")
+	}
+	d, err := custodyDigestValue(req.Operation, appRequestDigestPayload(req))
+	if err != nil {
+		return err
+	}
+	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
+	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+}
+
+// SignAppRequestViaCustody asks the grant's local custody service to sign one
+// installed-app tool call. It fails with custody_unavailable when the grant has
+// no custody service; it never signs with the session key.
+func (c *Client) SignAppRequestViaCustody(ctx context.Context, appID, verb string, args map[string]any, rawBody []byte) (*AppRequestSignResponse, error) {
+	if c == nil || strings.TrimSpace(c.grantID) == "" {
+		return nil, fmt.Errorf("app request custody signing requires a grant client")
+	}
+	custody, _ := c.plainMessageSigner.(AppRequestCustodyClient)
+	if custody == nil {
+		return nil, fmt.Errorf("custody_unavailable")
+	}
+	audience, err := c.custodyAudience(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req := &AppRequestSignRequest{
+		Version:       1,
+		Operation:     "sign_app_request",
+		GrantID:       strings.TrimSpace(c.grantID),
+		SessionDIDKey: strings.TrimSpace(c.did),
+		TeamID:        firstNonEmptyString(c.custodySubject.TeamID, c.teamID),
+		SubjectDIDAW:  firstNonEmptyString(c.custodySubject.DIDAW, c.stableID),
+		SubjectDIDKey: strings.TrimSpace(c.custodySubject.DIDKey),
+		Audience:      audience,
+		AppID:         strings.TrimSpace(appID),
+		Verb:          strings.TrimSpace(verb),
+		Args:          args,
+	}
+	if len(rawBody) > 0 {
+		req.RawBody = base64.StdEncoding.EncodeToString(rawBody)
+	}
+	if err := SignAppRequestCustodyProof(c.signingKey, req); err != nil {
+		return nil, err
+	}
+	out, err := custody.SignAppRequest(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil || strings.TrimSpace(out.Method) == "" || strings.TrimSpace(out.URL) == "" || len(out.Headers) == 0 {
+		return nil, fmt.Errorf("custody returned an incomplete app request")
+	}
+	return out, nil
+}

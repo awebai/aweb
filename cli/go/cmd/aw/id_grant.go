@@ -21,11 +21,12 @@ var grantCmd = &cobra.Command{
 }
 
 var (
-	grantMintScopes  []string
-	grantMintBundles []string
-	grantMintTTL     time.Duration
-	grantMintLabel   string
-	grantMintOut     string
+	grantMintScopes   []string
+	grantMintBundles  []string
+	grantMintAppTools []string
+	grantMintTTL      time.Duration
+	grantMintLabel    string
+	grantMintOut      string
 )
 
 const (
@@ -240,6 +241,22 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	appSpecs, err := parseGrantAppToolSpecs(grantMintAppTools)
+	if err != nil {
+		return err
+	}
+	appSnapshots, err := buildGrantAppSnapshots(appSpecs, grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL))
+	if err != nil {
+		return err
+	}
+	residentHome := ""
+	if len(appSnapshots) > 0 {
+		home, err := identityHomeForDir(mustGetwd())
+		if err != nil {
+			return err
+		}
+		residentHome = home.Root
+	}
 
 	pub, sessionKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -257,6 +274,23 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	if len(appSnapshots) > 0 {
+		snap := &grantAppToolsSnapshot{
+			Version: grantAppToolsSnapshotVersion,
+			GrantID: strings.TrimSpace(view.GrantID),
+			TeamID:  firstNonEmpty(strings.TrimSpace(view.TeamID), strings.TrimSpace(sel.TeamID)),
+			Apps:    appSnapshots,
+		}
+		if err := saveGrantAppToolsSnapshot(residentHome, snap); err != nil {
+			revokeCtx, revokeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer revokeCancel()
+			if revokeErr := client.RevokeIdentityGrant(revokeCtx, snap.GrantID); revokeErr != nil {
+				return fmt.Errorf("record app tool policy for grant %s: %w (revoking the grant also failed: %v; revoke it manually)", snap.GrantID, err, revokeErr)
+			}
+			return fmt.Errorf("record app tool policy for grant %s: %w (grant revoked)", snap.GrantID, err)
+		}
 	}
 
 	grantedScopes := view.Scopes
@@ -423,6 +457,7 @@ func init() {
 	}
 	mintCmd.Flags().StringArrayVar(&grantMintScopes, "scope", nil, "Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)")
 	mintCmd.Flags().StringArrayVar(&grantMintBundles, "bundle", nil, "Grant scope bundle, repeatable or comma-separated (normal-agent)")
+	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Installed app tool the grant may call, as app:verb; repeatable or comma-separated. Each signed tool must be named; the definition is snapshotted at mint")
 	mintCmd.Flags().DurationVar(&grantMintTTL, "ttl", 8*time.Hour, "Grant duration before expiry (60s to 720h)")
 	mintCmd.Flags().StringVar(&grantMintLabel, "label", "", "Optional label for the grant")
 	mintCmd.Flags().StringVar(&grantMintOut, "out", "", "Directory to write the grant home (created fresh; a non-empty directory is refused)")

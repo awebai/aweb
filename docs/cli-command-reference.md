@@ -439,6 +439,7 @@ Flags:
 Mint a session grant and write a self-contained grant home
 
 Flags:
+- `--app-tool stringArray Installed app tool the grant may call, as app:verb; repeatable or comma-separated. Each signed tool must be named; the definition is snapshotted at mint`
 - `--bundle stringArray Grant scope bundle, repeatable or comma-separated (normal-agent)`
 - `-h, --help help for mint`
 - `--label string Optional label for the grant`

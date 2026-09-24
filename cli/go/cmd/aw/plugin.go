@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -1093,21 +1094,60 @@ func executeInstalledManifestTool(name string, args []string) (*installedManifes
 		}
 		return result, true, nil
 	}
-	identity, err := resolveLocalSigningIdentity()
-	if err != nil {
-		return nil, true, err
+	var installedResult *installedManifestToolResult
+	if _, isGrant := activeGrantHome(); isGrant {
+		// Grant path: custody re-interprets the call against the resident's
+		// mint-time tool snapshot and returns the exact signed request. Nothing
+		// from the local manifest is merged into it.
+		installedResult, err = executeGrantManifestTool(name, verb, parsedArgs, rawBody)
+		if err != nil {
+			return nil, true, err
+		}
+	} else {
+		identity, err := resolveLocalSigningIdentity()
+		if err != nil {
+			return nil, true, err
+		}
+		result, err := executeSignedIDRequest(spec.Method, parsedURL, identity, spec.Body, headers, map[string]any{}, true)
+		if err != nil {
+			return nil, true, err
+		}
+		installedResult = &installedManifestToolResult{Status: result.Status, Body: result.Body}
 	}
-	result, err := executeSignedIDRequest(spec.Method, parsedURL, identity, spec.Body, headers, map[string]any{}, true)
-	if err != nil {
-		return nil, true, err
-	}
-	installedResult := &installedManifestToolResult{Status: result.Status, Body: result.Body}
 	if installedResult.Status >= http.StatusOK && installedResult.Status < http.StatusMultipleChoices {
 		if err := applyLibraryManifestLocalMaterialize(name, verb, effectiveArgs, installedResult.Body); err != nil {
 			return nil, true, err
 		}
 	}
 	return installedResult, true, nil
+}
+
+func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []byte) (*installedManifestToolResult, error) {
+	client, _, err := resolveClientSelection()
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	signed, err := client.SignAppRequestViaCustody(ctx, name, verb, args, rawBody)
+	if err != nil {
+		return nil, err
+	}
+	target, err := url.Parse(signed.URL)
+	if err != nil {
+		return nil, err
+	}
+	body, err := base64.StdEncoding.DecodeString(signed.Body)
+	if err != nil {
+		return nil, err
+	}
+	headers := make(http.Header)
+	for key, value := range signed.Headers {
+		headers.Set(key, value)
+	}
+	// Same no-redirect sender as unsigned tools: a signed request is never
+	// replayed to a redirect target.
+	return executeUnsignedManifestRequest(signed.Method, target, body, headers)
 }
 
 func executeUnsignedManifestRequest(method string, parsedURL *url.URL, bodyBytes []byte, headers http.Header) (*installedManifestToolResult, error) {

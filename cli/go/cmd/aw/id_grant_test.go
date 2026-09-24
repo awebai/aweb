@@ -26,6 +26,7 @@ func resetGrantCommandGlobals(t *testing.T) {
 	reset := func() {
 		grantMintScopes = nil
 		grantMintBundles = nil
+		grantMintAppTools = nil
 		grantMintTTL = 8 * time.Hour
 		grantMintLabel = ""
 		grantMintOut = ""

@@ -96,6 +96,7 @@ type custodyService struct {
 	resolveRecipient   func(context.Context, string) (*awid.ResolvedIdentity, error)
 	e2eeKeyError       string
 	selectedTeam       string
+	appDeniedOrigins   []string
 	serviceID          string
 	now                func() time.Time
 	mu                 sync.Mutex
@@ -131,6 +132,7 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 	svc := &custodyService{residentHome: home.Root, socketPath: awconfig.CustodySocketPath(home.Root), identity: identity, signingKey: key, e2eeAssertion: e2eeAssertion, e2eePrivateKey: e2eePrivateKey, e2eeKeyError: e2eeKeyError, serviceID: serviceID, now: time.Now, replay: map[string]string{}, replayAt: map[string]time.Time{}, results: map[string]any{}}
 	if sel != nil {
 		svc.selectedTeam = strings.TrimSpace(sel.TeamID)
+		svc.appDeniedOrigins = grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL)
 	}
 	if clientErr == nil && client != nil {
 		svc.client = client
@@ -202,6 +204,7 @@ func (s *custodyService) serve(ctx context.Context) error {
 	mux.HandleFunc("/sign_plain_message", s.handleSignPlainMessage)
 	mux.HandleFunc("/create_e2ee_envelope", s.handleCreateE2EEEnvelope)
 	mux.HandleFunc("/unwrap_e2ee_message", s.handleUnwrapE2EEMessage)
+	mux.HandleFunc("/sign_app_request", s.handleSignAppRequest)
 	mux.HandleFunc("/stop", s.handleStop)
 	s.server = &http.Server{Handler: mux}
 	go func() { <-ctx.Done(); _ = s.server.Close() }()
@@ -254,7 +257,7 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 		errs = append(errs, strings.TrimSpace(s.e2eeKeyError))
 	}
 	out.Keys = map[string]any{"signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": s.e2eeAssertion != nil && s.e2eePrivateKey != nil && grantStatusReady, "encryption_key_id": encryptionKeyID}
-	out.Ops = []string{"status.v1", "sign_plain_message.v1"}
+	out.Ops = []string{"status.v1", "sign_plain_message.v1", "sign_app_request.v1"}
 	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
 		out.Ops = append(out.Ops, "create_e2ee_envelope.v1", "unwrap_e2ee_message.v1")
 	}
@@ -482,6 +485,10 @@ func (s *custodyService) reserveCustodyReplay(grantID, sessionDIDKey, nonce, dig
 				}
 			case *awid.PlainMessageSignResponse:
 				if _, ok := res.(*awid.PlainMessageSignResponse); ok {
+					return key, res, nil
+				}
+			case *awid.AppRequestSignResponse:
+				if _, ok := res.(*awid.AppRequestSignResponse); ok {
 					return key, res, nil
 				}
 			}
@@ -758,14 +765,18 @@ func (s *custodyService) validateE2EECommon(ctx context.Context, op string, reqF
 	if strings.TrimSpace(st.TeamID) != strings.TrimSpace(reqFields["team_id"]) {
 		return st, fmt.Errorf("grant_team_mismatch")
 	}
-	ok := false
-	for _, sc := range st.Scopes {
-		if strings.TrimSpace(sc) == requiredScope {
-			ok = true
+	// An empty requiredScope means authority comes from the resident's
+	// mint-time app tool snapshot rather than a server grant scope.
+	if requiredScope != "" {
+		ok := false
+		for _, sc := range st.Scopes {
+			if strings.TrimSpace(sc) == requiredScope {
+				ok = true
+			}
 		}
-	}
-	if !ok {
-		return st, fmt.Errorf("grant_scope_denied")
+		if !ok {
+			return st, fmt.Errorf("grant_scope_denied")
+		}
 	}
 	return st, nil
 }
