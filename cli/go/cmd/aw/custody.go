@@ -827,7 +827,15 @@ func (s *custodyService) verifyE2EERecipients(ctx context.Context, recipients []
 		if stableID == "" || !strings.HasPrefix(stableID, "did:aw:") {
 			continue
 		}
-		resolved, err := s.resolveRecipient(ctx, stableID)
+		// The registry resolver refuses bare did:aw first contact, so resolve
+		// through the recipient's routable address, as the root client's
+		// e2eeGlobalRecipientFromAgent does, and bind the result back to the
+		// claimed stable id. A global recipient without an address fails closed.
+		address := strings.TrimSpace(recipient.Address)
+		if address == "" {
+			return fmt.Errorf("recipient_binding_unavailable")
+		}
+		resolved, err := s.resolveRecipient(ctx, address)
 		if err != nil || resolved == nil {
 			return fmt.Errorf("recipient_binding_unavailable")
 		}

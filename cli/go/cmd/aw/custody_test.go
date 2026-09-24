@@ -783,6 +783,119 @@ func TestCustodyCreateE2EEVerifiesRecipientCurrentBinding(t *testing.T) {
 	}
 }
 
+// newCustodyE2EERegistryIdentity uses a real key-derived stable id so the
+// identity can be served by a fake AWID registry to a real RegistryResolver.
+func newCustodyE2EERegistryIdentity(t *testing.T, address string) custodyE2EETestIdentity {
+	t.Helper()
+	pub, signKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	xPriv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := awid.BuildEncryptionKeyAssertion(signKey, did, stableID, xPriv.PublicKey().Bytes(), "", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return custodyE2EETestIdentity{did: did, stableID: stableID, address: address, signKey: signKey, xPriv: xPriv, assertion: assertion}
+}
+
+// TestCustodyCreateE2EEResolvesRecipientThroughRealRegistryResolver pins the
+// contract of the resolver custody is wired to in production
+// (client.ResolveIdentity -> RegistryResolver): bare did:aw first contact is
+// refused, so custody must resolve the recipient's routable address and bind
+// the result to the claimed stable id, DID and encryption key id.
+func TestCustodyCreateE2EEResolvesRecipientThroughRealRegistryResolver(t *testing.T) {
+	alice := newCustodyE2EERegistryIdentity(t, "acme.com/alice")
+	bob := newCustodyE2EERegistryIdentity(t, "acme.com/bob")
+	mallory := newCustodyE2EERegistryIdentity(t, "acme.com/mallory")
+
+	identities := map[string]custodyE2EETestIdentity{"bob": bob, "mallory": mallory}
+	registry := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if name, ok := strings.CutPrefix(r.URL.Path, "/v1/namespaces/acme.com/addresses/"); ok {
+			id, found := identities[name]
+			if !found {
+				http.NotFound(w, r)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id": "addr-" + name, "domain": "acme.com", "name": name,
+				"did_aw": id.stableID, "current_did_key": id.did, "created_at": "2026-09-24T00:00:00Z",
+			})
+			return
+		}
+		for _, id := range identities {
+			if r.URL.Path == "/v1/did/"+id.stableID+"/key" {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"did_aw": id.stableID, "current_did_key": id.did, "encryption_key": id.assertion,
+				})
+				return
+			}
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(registry.Close)
+
+	resolver := awid.NewRegistryResolver(registry.Client(), nil)
+	if err := resolver.SetFallbackRegistryURL(registry.URL); err != nil {
+		t.Fatal(err)
+	}
+	// The production resolver refuses bare did:aw first contact. This is the
+	// call the previous custody code made, and the reason acceptance failed.
+	if _, err := resolver.Resolve(context.Background(), bob.stableID); err == nil {
+		t.Fatal("bare did:aw resolution unexpectedly succeeded; custody must not depend on it")
+	}
+
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyE2EEService(t, alice, bob, sessionKey)
+	svc.resolveRecipient = resolver.Resolve
+
+	req := signedE2EECreateRequest(t, sessionKey, alice, bob)
+	out, err := svc.createE2EEEnvelope(context.Background(), req)
+	if err != nil {
+		t.Fatalf("create through real resolver: %v", err)
+	}
+	if out.EncryptedEnvelope == nil {
+		t.Fatal("missing envelope")
+	}
+
+	// A global recipient without a routable address fails closed.
+	noAddress := signedE2EECreateRequest(t, sessionKey, alice, bob)
+	noAddress.Recipients[0].Address = ""
+	if err := awid.SignE2EECreateCustodyProof(sessionKey, noAddress); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.createE2EEEnvelope(context.Background(), noAddress); err == nil || err.Error() != "recipient_binding_unavailable" {
+		t.Fatalf("err=%v, want recipient_binding_unavailable", err)
+	}
+
+	// An address that resolves to a different identity than the claimed
+	// stable id, DID and key is a binding mismatch, not a silent reroute.
+	wrongAddress := signedE2EECreateRequest(t, sessionKey, alice, bob)
+	wrongAddress.Recipients[0].Address = mallory.address
+	if err := awid.SignE2EECreateCustodyProof(sessionKey, wrongAddress); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.createE2EEEnvelope(context.Background(), wrongAddress); err == nil || err.Error() != "recipient_binding_mismatch" {
+		t.Fatalf("err=%v, want recipient_binding_mismatch", err)
+	}
+
+	// Claiming bob's address and stable id with an attacker key is refused.
+	substituted := signedE2EECreateRequest(t, sessionKey, alice, bob)
+	substituted.Recipients[0].DID = mallory.did
+	substituted.Recipients[0].EncryptionKey = mallory.assertion
+	if err := awid.SignE2EECreateCustodyProof(sessionKey, substituted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.createE2EEEnvelope(context.Background(), substituted); err == nil || err.Error() != "recipient_binding_mismatch" {
+		t.Fatalf("err=%v, want recipient_binding_mismatch", err)
+	}
+}
+
 func TestCustodyE2EEHandlersRejectUnknownFields(t *testing.T) {
 	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
 	bob := newCustodyE2EETestIdentity(t, "acme.com/bob")
