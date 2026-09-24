@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 
 from aweb.deps import get_db
 from aweb.hooks import fire_mutation_hook
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ._reservation_utils import reservation_metadata, reservation_prefix_like
 
@@ -138,7 +138,7 @@ async def list_reservations(
     request: Request,
     prefix: Optional[str] = Query(None, description="Optional resource key prefix filter"),
     db=Depends(get_db),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ReservationListResponse:
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
@@ -177,7 +177,7 @@ async def acquire_reservation(
     request: Request,
     payload: ReservationAcquireRequest,
     db=Depends(get_db),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> ReservationAcquireResponse | JSONResponse:
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
@@ -273,7 +273,7 @@ async def renew_reservation(
     request: Request,
     payload: ReservationRenewRequest,
     db=Depends(get_db),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> ReservationRenewResponse | JSONResponse:
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)
@@ -338,7 +338,7 @@ async def release_reservation(
     request: Request,
     payload: ReservationReleaseRequest,
     db=Depends(get_db),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.write")),
 ) -> ReservationReleaseResponse | JSONResponse:
     aweb_db = db.get_manager("aweb")
     now = datetime.now(timezone.utc)

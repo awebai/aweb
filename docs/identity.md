@@ -328,7 +328,7 @@ without holding the identity's root keys. The identity mints the grant from
 its own `.aw` home:
 
 ```
-aw id grant mint --scope mail.read,mail.send,chat.read,chat.send \
+aw id grant mint --bundle normal-agent \
     --ttl 8h --out /path/to/grant-home
 ```
 
@@ -340,9 +340,13 @@ identity's `signing.key`). A process pointed at that directory (via
 normally; requests are signed per-request with the session key and the server
 attributes the results to the identity.
 
-Scopes are `mail.read`, `mail.send`, `chat.read`, and `chat.send`; grant
-requests outside them, and every non-messaging surface (team lifecycle,
-leases, reservations, minting further grants), are refused server-side. A
+Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
+`events.read`, `coord.read`, `coord.write`, `presence.write`,
+`contacts.read`, and `contacts.write`. The `normal-agent` bundle expands to
+all of those scopes for ordinary worker operation; old grants keep exactly the
+scopes they were minted with. Grant requests outside their scopes, and root or
+admin surfaces such as team lifecycle, session leases, reservation revoke, and
+minting further grants, are refused server-side. A
 grant expires at its TTL and can be revoked early and idempotently with
 `aw id grant revoke <grant-id>`; `aw id grant list` shows each grant as
 active, revoked, or expired. Root-authority commands refuse to run from a

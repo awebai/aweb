@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 from uuid import UUID
 
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, team_identity_with_grant_scope
 
 from ..db import DatabaseInfra, get_db_infra
 from ..claims import list_active_claims
@@ -43,7 +43,7 @@ async def list_claims(
     limit: Optional[int] = Query(None, description="Maximum items per page", ge=1, le=200),
     cursor: Optional[str] = Query(None, description="Pagination cursor from previous response"),
     db_infra: DatabaseInfra = Depends(get_db_infra),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> ClaimsResponse:
     """
     List active task claims for a team.

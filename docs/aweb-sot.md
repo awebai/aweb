@@ -284,12 +284,14 @@ aweb has three authentication classes:
   requires the grant row (`identity_session_grants`) to be unrevoked and
   unexpired, the session `did:key` to match the registered
   `grant_did_key`, and the request to fall inside the grant's scopes
-  (`mail.read`, `mail.send`, `chat.read`, `chat.send`; `GET /v1/agents`
-  is allowed for recipient resolution). Everything else — including
-  minting or revoking grants — is refused. Actions resolve to the subject
-  identity for attribution; `certificate_id` carries `grant:<grant_id>`
-  provenance. Grants are minted and revoked only under team-certificate
-  auth via `/v1/identity-grants`.
+  (`mail.read`, `mail.send`, `chat.read`, `chat.send`, `events.read`,
+  `coord.read`, `coord.write`, `presence.write`, `contacts.read`,
+  `contacts.write`; `GET /v1/agents` is allowed for recipient resolution).
+  Everything else — including minting or revoking grants, session leases,
+  team lifecycle, and admin reservation revoke — is refused. Actions resolve
+  to the subject identity for attribution and carry typed grant provenance;
+  `certificate_id` is not overloaded with grant ids. Grants are minted and
+  revoked only under team-certificate auth via `/v1/identity-grants`.
 
 ```
 Authorization: DIDKey <did:key:z6Mk...> <base64-signature>

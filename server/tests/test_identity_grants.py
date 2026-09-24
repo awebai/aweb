@@ -22,10 +22,13 @@ from aweb.grant_streams import agent_event_allowed, allowed_status_categories, g
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.routes import agents as agents_routes
 from aweb.routes.chat import router as chat_router, stream as chat_stream_route
+from aweb.routes.claims import router as claims_router
+from aweb.routes.contacts import router as contacts_router
 from aweb.routes.events import event_stream as events_stream_route, router as events_router
 from aweb.routes.agents import router as agents_router
 from aweb.routes.identity_grants import router as identity_grants_router
 from aweb.routes.messages import router as messages_router
+from aweb.routes.reservations import router as reservations_router
 from aweb.routes.status import router as status_router, status_stream as status_stream_route
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
@@ -101,6 +104,18 @@ def _build_app(aweb_db) -> FastAPI:
 
     @app.post("/v1/chat/{session_id}/read")
     async def _chat_mark_read(session_id: str, auth: MessagingAuth = Depends(get_messaging_auth)):
+        return _auth_view(auth)
+
+    @app.get("/v1/contacts")
+    async def _contacts_read(auth: MessagingAuth = Depends(get_messaging_auth)):
+        return _auth_view(auth)
+
+    @app.post("/v1/contacts")
+    async def _contacts_write(auth: MessagingAuth = Depends(get_messaging_auth)):
+        return _auth_view(auth)
+
+    @app.delete("/v1/contacts/{contact_id}")
+    async def _contacts_delete(contact_id: str, auth: MessagingAuth = Depends(get_messaging_auth)):
         return _auth_view(auth)
 
     # Hypothetical wiring: even if a privileged route resolved messaging auth,
@@ -310,15 +325,20 @@ async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
     app, _ = await _fixture(aweb_cloud_db.aweb_db)
     send_key, send_did = _session_keypair()
     chat_key, chat_did = _session_keypair()
+    contacts_key, contacts_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         send_grant = (await _mint(client, grant_did_key=send_did, scopes=["mail.send"])).json()["grant_id"]
         chat_grant = (await _mint(client, grant_did_key=chat_did, scopes=["chat.read"])).json()["grant_id"]
+        contacts_grant = (await _mint(client, grant_did_key=contacts_did, scopes=["contacts.read", "contacts.write"])).json()["grant_id"]
 
         def send_headers(method, path):
             return _grant_headers(signing_key=send_key, did_key=send_did, grant_id=send_grant, method=method, path=path)
 
         def chat_headers(method, path):
             return _grant_headers(signing_key=chat_key, did_key=chat_did, grant_id=chat_grant, method=method, path=path)
+
+        def contacts_headers(method, path):
+            return _grant_headers(signing_key=contacts_key, did_key=contacts_did, grant_id=contacts_grant, method=method, path=path)
 
         inbox_denied = await client.get("/v1/messages", headers=send_headers("GET", "/v1/messages"))
         send_allowed = await client.post("/v1/messages", headers=send_headers("POST", "/v1/messages"))
@@ -331,6 +351,10 @@ async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
         mark_read_allowed = await client.post("/v1/chat/s1/read", headers=chat_headers("POST", "/v1/chat/s1/read"))
         chat_send_denied = await client.post("/v1/chat/s1/messages", headers=chat_headers("POST", "/v1/chat/s1/messages"))
         chat_roster_allowed = await client.get("/v1/agents", headers=chat_headers("GET", "/v1/agents"))
+        contacts_read_allowed = await client.get("/v1/contacts", headers=contacts_headers("GET", "/v1/contacts"))
+        contacts_write_allowed = await client.post("/v1/contacts", headers=contacts_headers("POST", "/v1/contacts"))
+        contacts_delete_allowed = await client.delete("/v1/contacts/contact-1", headers=contacts_headers("DELETE", "/v1/contacts/contact-1"))
+        contacts_wrong_scope = await client.get("/v1/contacts", headers=send_headers("GET", "/v1/contacts"))
         presence_key, presence_did = _session_keypair()
         presence_grant = (await _mint(client, grant_did_key=presence_did, scopes=["presence.write"])).json()["grant_id"]
         presence_allowed = await client.post(
@@ -353,6 +377,11 @@ async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
     assert chat_send_denied.status_code == 403
     assert chat_send_denied.json()["detail"] == "outside grant scope"
     assert chat_roster_allowed.status_code == 200
+    assert contacts_read_allowed.status_code == 200
+    assert contacts_write_allowed.status_code == 200
+    assert contacts_delete_allowed.status_code == 200
+    assert contacts_wrong_scope.status_code == 403
+    assert contacts_wrong_scope.json()["detail"] == "outside grant scope"
     assert presence_allowed.status_code == 200
     assert presence_allowed.json()["grant"]["grant_id"] == presence_grant
 
@@ -610,9 +639,12 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.include_router(identity_grants_router)
     app.include_router(messages_router)
     app.include_router(chat_router)
+    app.include_router(contacts_router)
     app.include_router(events_router)
     app.include_router(agents_router)
     app.include_router(status_router)
+    app.include_router(claims_router)
+    app.include_router(reservations_router)
     app.dependency_overrides[get_team_identity] = _identity
     app.state.db = _DbShim(aweb_db)
     app.state.public_origin = "http://test"
@@ -1061,10 +1093,15 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
     known = set(GRANT_SCOPES) | {GRANT_SCOPE_ANY}
     expected = [
         ("GET", "/v1/agents", GRANT_SCOPE_ANY),
+        ("GET", "/v1/claims", "coord.read"),
         ("GET", "/v1/events/stream", "events.read"),
+        ("GET", "/v1/reservations", "coord.read"),
         ("GET", "/v1/status", "coord.read"),
         ("GET", "/v1/status/stream", "events.read"),
         ("POST", "/v1/agents/heartbeat", "presence.write"),
+        ("POST", "/v1/reservations", "coord.write"),
+        ("POST", "/v1/reservations/release", "coord.write"),
+        ("POST", "/v1/reservations/renew", "coord.write"),
     ]
     assert all(scope in known for _, _, scope in table)
     assert table == expected
@@ -1364,3 +1401,146 @@ async def test_status_stream_real_handler_drops_coord_categories_without_coord_s
         body += chunk.decode() if isinstance(chunk, bytes) else str(chunk)
     assert "task.status_changed" not in body
     assert "aweb-x" not in body
+
+@pytest.mark.asyncio
+async def test_grant_real_coord_and_contacts_routes(aweb_cloud_db):
+    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    read_key, read_did = _session_keypair()
+    write_key, write_did = _session_keypair()
+    contacts_key, contacts_did = _session_keypair()
+    mail_key, mail_did = _session_keypair()
+    other_workspace = uuid4()
+    other_agent = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ('other:acme.com', 'acme.com', 'other', 'did:key:zOtherTeam')"
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, status, identity_scope)
+        VALUES ($1, 'other:acme.com', 'other', 'did:key:zOtherAgent', 'active', 'global')
+        """,
+        other_agent,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias, human_name, workspace_type)
+        VALUES ($1, 'other:acme.com', $2, 'other', 'Other', 'manual')
+        """,
+        other_workspace,
+        other_agent,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.task_claims}} (team_id, workspace_id, alias, human_name, task_ref, claimed_at)
+        VALUES ($1, $2, 'alice', 'Alice', 'aweb-abjf', NOW()),
+               ('other:acme.com', $3, 'other', 'Other', 'other-task', NOW())
+        """,
+        TEAM_ID,
+        app.state.alice_workspace_id,
+        other_workspace,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.reservations}} (team_id, resource_key, holder_alias, holder_agent_id, acquired_at, expires_at, metadata_json)
+        VALUES ('other:acme.com', 'other-resource', 'other', $1, NOW(), NOW() + INTERVAL '1 hour', '{}'::jsonb),
+               ($2, 'bob-resource', 'bob', $3, NOW(), NOW() + INTERVAL '1 hour', '{}'::jsonb)
+        """,
+        other_agent,
+        TEAM_ID,
+        bob_id,
+    )
+    contact_id = await aweb_cloud_db.aweb_db.fetch_value(
+        """
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label, status)
+        VALUES ('did:aw:alice', 'acme.com/bob', 'Bob', 'active')
+        RETURNING contact_id::text
+        """
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        coord_read = (await _mint(client, grant_did_key=read_did, scopes=["coord.read"])).json()["grant_id"]
+        coord_write = (await _mint(client, grant_did_key=write_did, scopes=["coord.write", "coord.read"])).json()["grant_id"]
+        contacts_grant = (await _mint(client, grant_did_key=contacts_did, scopes=["contacts.read", "contacts.write"])).json()["grant_id"]
+        mail_grant = (await _mint(client, grant_did_key=mail_did, scopes=["mail.read"])).json()["grant_id"]
+
+        def h(key, did, grant_id, method, path, body=b""):
+            return _grant_headers(signing_key=key, did_key=did, grant_id=grant_id, method=method, path=path, body=body)
+
+        claims = await client.get("/v1/claims", headers=h(read_key, read_did, coord_read, "GET", "/v1/claims"))
+        claims_denied = await client.get("/v1/claims", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/claims"))
+        reservations = await client.get("/v1/reservations", headers=h(read_key, read_did, coord_read, "GET", "/v1/reservations"))
+        reservations_denied = await client.get("/v1/reservations", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/reservations"))
+        acquire_body = json.dumps({"resource_key": "alice-resource", "ttl_seconds": 120}, separators=(",", ":")).encode()
+        acquired = await client.post(
+            "/v1/reservations",
+            content=acquire_body,
+            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations", acquire_body),
+        )
+        renew_body = json.dumps({"resource_key": "alice-resource", "ttl_seconds": 180}, separators=(",", ":")).encode()
+        renewed = await client.post(
+            "/v1/reservations/renew",
+            content=renew_body,
+            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations/renew", renew_body),
+        )
+        release_bob_body = json.dumps({"resource_key": "bob-resource"}, separators=(",", ":")).encode()
+        release_bob = await client.post(
+            "/v1/reservations/release",
+            content=release_bob_body,
+            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations/release", release_bob_body),
+        )
+        release_body = json.dumps({"resource_key": "alice-resource"}, separators=(",", ":")).encode()
+        released = await client.post(
+            "/v1/reservations/release",
+            content=release_body,
+            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations/release", release_body),
+        )
+        contacts = await client.get("/v1/contacts", headers=h(contacts_key, contacts_did, contacts_grant, "GET", "/v1/contacts"))
+        contacts_denied = await client.get("/v1/contacts", headers=h(mail_key, mail_did, mail_grant, "GET", "/v1/contacts"))
+        deleted = await client.delete(f"/v1/contacts/{contact_id}", headers=h(contacts_key, contacts_did, contacts_grant, "DELETE", f"/v1/contacts/{contact_id}"))
+
+    deny_app = FastAPI()
+    deny_app.include_router(reservations_router)
+    deny_app.state.db = _DbShim(aweb_cloud_db.aweb_db)
+    deny_app.state.public_origin = "http://test"
+    deny_registry = AsyncMock()
+    deny_registry.get_team_revocations = AsyncMock(return_value=set())
+    deny_app.state.awid_registry_client = deny_registry
+
+    @deny_app.middleware("http")
+    async def cache_body_middleware(request, call_next):
+        body = await request.body()
+        request.state.cached_body = body
+        request.state.body_sha256 = hashlib.sha256(body).hexdigest()
+        request._receive = _cached_body_receive(body)
+        return await call_next(request)
+
+    async with AsyncClient(transport=ASGITransport(app=deny_app), base_url="http://test") as deny_client:
+        revoke_denied = await deny_client.post(
+            "/v1/reservations/revoke",
+            content=b'{"prefix":""}',
+            headers=h(write_key, write_did, coord_write, "POST", "/v1/reservations/revoke", b'{"prefix":""}'),
+        )
+
+    assert claims.status_code == 200, claims.text
+    claim_refs = {claim["task_ref"] for claim in claims.json()["claims"]}
+    assert "aweb-abjf" in claim_refs
+    assert "other-task" not in claim_refs
+    assert claims_denied.status_code == 403
+    assert claims_denied.json()["detail"] == "outside grant scope"
+    assert reservations.status_code == 200, reservations.text
+    reservation_keys = {reservation["resource_key"] for reservation in reservations.json()["reservations"]}
+    assert "bob-resource" in reservation_keys
+    assert "other-resource" not in reservation_keys
+    assert reservations_denied.status_code == 403
+    assert acquired.status_code == 200, acquired.text
+    assert acquired.json()["holder_agent_id"] == str(alice_id)
+    assert renewed.status_code == 200, renewed.text
+    assert release_bob.status_code == 409
+    assert released.status_code == 200, released.text
+    assert revoke_denied.status_code == 403
+    assert revoke_denied.json()["detail"] == "outside grant scope"
+    assert contacts.status_code == 200, contacts.text
+    assert contacts.json()["contacts"][0]["contact_address"] == "acme.com/bob"
+    assert contacts_denied.status_code == 403
+    assert contacts_denied.json()["detail"] == "outside grant scope"
+    assert deleted.status_code == 200, deleted.text

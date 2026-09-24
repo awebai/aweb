@@ -25,6 +25,7 @@ func resetGrantCommandGlobals(t *testing.T) {
 	t.Helper()
 	reset := func() {
 		grantMintScopes = nil
+		grantMintBundles = nil
 		grantMintTTL = 8 * time.Hour
 		grantMintLabel = ""
 		grantMintOut = ""
@@ -73,6 +74,25 @@ func writeGrantHomeForTest(t *testing.T, root, awebURL string) (ed25519.PublicKe
 		t.Fatal(err)
 	}
 	return pub, state
+}
+
+func TestParseGrantScopesExpandsNormalAgentBundle(t *testing.T) {
+	scopes, err := parseGrantScopesWithBundles([]string{"mail.read", "contacts.read"}, []string{"normal-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"mail.read", "mail.send", "chat.read", "chat.send", "events.read", "coord.read", "coord.write", "presence.write", "contacts.read", "contacts.write"}
+	if len(scopes) != len(want) {
+		t.Fatalf("scopes=%v, want %v", scopes, want)
+	}
+	for i := range want {
+		if scopes[i] != want[i] {
+			t.Fatalf("scopes=%v, want %v", scopes, want)
+		}
+	}
+	if _, err := parseGrantScopesWithBundles(nil, []string{"unknown"}); err == nil || !strings.Contains(err.Error(), "unknown grant scope bundle") {
+		t.Fatalf("unknown bundle err=%v", err)
+	}
 }
 
 func TestRunGrantMintWritesGrantHome(t *testing.T) {

@@ -64,6 +64,10 @@ def required_grant_scope(method: str, path: str) -> str | None:
         if method == "POST" and path.endswith("/read"):
             return "chat.read"
         return "chat.send"
+    if path == "/v1/contacts" or path.startswith("/v1/contacts/"):
+        if method in _READ_METHODS:
+            return "contacts.read"
+        return "contacts.write"
     raise HTTPException(status_code=403, detail=_OUT_OF_SCOPE_DETAIL)
 
 

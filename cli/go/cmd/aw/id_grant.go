@@ -21,16 +21,26 @@ var grantCmd = &cobra.Command{
 }
 
 var (
-	grantMintScopes []string
-	grantMintTTL    time.Duration
-	grantMintLabel  string
-	grantMintOut    string
+	grantMintScopes  []string
+	grantMintBundles []string
+	grantMintTTL     time.Duration
+	grantMintLabel   string
+	grantMintOut     string
 )
 
 const (
 	identityGrantMinTTL = 60 * time.Second
 	identityGrantMaxTTL = 2592000 * time.Second
 )
+
+var grantScopeBundles = map[string][]string{
+	"normal-agent": {
+		"mail.read", "mail.send",
+		"chat.read", "chat.send",
+		"events.read", "coord.read", "coord.write", "presence.write",
+		"contacts.read", "contacts.write",
+	},
+}
 
 // errGrantHomeRootAuthority is returned when a command that needs the
 // identity's root authority runs against a grant home.
@@ -130,23 +140,45 @@ func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) 
 }
 
 func parseGrantScopes(values []string) ([]string, error) {
-	scopes := make([]string, 0, len(values))
-	seen := make(map[string]struct{}, len(values))
+	return parseGrantScopesWithBundles(values, nil)
+}
+
+func parseGrantScopesWithBundles(values []string, bundles []string) ([]string, error) {
+	scopes := make([]string, 0, len(values)+len(bundles))
+	seen := make(map[string]struct{}, len(values)+len(bundles))
+	add := func(scope string) {
+		scope = strings.TrimSpace(scope)
+		if scope == "" {
+			return
+		}
+		if _, ok := seen[scope]; ok {
+			return
+		}
+		seen[scope] = struct{}{}
+		scopes = append(scopes, scope)
+	}
+	for _, bundleValue := range bundles {
+		for _, bundle := range strings.Split(bundleValue, ",") {
+			bundle = strings.TrimSpace(bundle)
+			if bundle == "" {
+				continue
+			}
+			bundleScopes, ok := grantScopeBundles[bundle]
+			if !ok {
+				return nil, usageError("unknown grant scope bundle %q (known: normal-agent)", bundle)
+			}
+			for _, scope := range bundleScopes {
+				add(scope)
+			}
+		}
+	}
 	for _, value := range values {
 		for _, scope := range strings.Split(value, ",") {
-			scope = strings.TrimSpace(scope)
-			if scope == "" {
-				continue
-			}
-			if _, ok := seen[scope]; ok {
-				continue
-			}
-			seen[scope] = struct{}{}
-			scopes = append(scopes, scope)
+			add(scope)
 		}
 	}
 	if len(scopes) == 0 {
-		return nil, usageError("--scope is required (e.g. --scope mail.read,mail.send)")
+		return nil, usageError("--scope or --bundle is required (e.g. --bundle normal-agent or --scope mail.read,mail.send)")
 	}
 	return scopes, nil
 }
@@ -189,7 +221,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if err := requireGrantAuthorityHome(); err != nil {
 		return err
 	}
-	scopes, err := parseGrantScopes(grantMintScopes)
+	scopes, err := parseGrantScopesWithBundles(grantMintScopes, grantMintBundles)
 	if err != nil {
 		return err
 	}
@@ -385,7 +417,8 @@ func init() {
 		Short: "Mint a session grant and write a self-contained grant home",
 		RunE:  runGrantMint,
 	}
-	mintCmd.Flags().StringArrayVar(&grantMintScopes, "scope", nil, "Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send)")
+	mintCmd.Flags().StringArrayVar(&grantMintScopes, "scope", nil, "Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)")
+	mintCmd.Flags().StringArrayVar(&grantMintBundles, "bundle", nil, "Grant scope bundle, repeatable or comma-separated (normal-agent)")
 	mintCmd.Flags().DurationVar(&grantMintTTL, "ttl", 8*time.Hour, "Grant duration before expiry (60s to 720h)")
 	mintCmd.Flags().StringVar(&grantMintLabel, "label", "", "Optional label for the grant")
 	mintCmd.Flags().StringVar(&grantMintOut, "out", "", "Directory to write the grant home (created fresh; a non-empty directory is refused)")

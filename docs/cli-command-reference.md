@@ -400,7 +400,8 @@ Flags:
 - `-h, --help help for mint`
 - `--label string Optional label for the grant`
 - `--out string Directory to write the grant home (created fresh; a non-empty directory is refused)`
-- `--scope stringArray Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send)`
+- `--bundle stringArray Grant scope bundle, repeatable or comma-separated (normal-agent)`
+- `--scope stringArray Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)`
 - `--ttl duration Grant duration before expiry (60s to 720h) (default 8h0m0s)`
 
 ## `id grant revoke`
