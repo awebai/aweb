@@ -10,20 +10,23 @@ from uuid import uuid4
 
 import pytest
 from fastapi import Depends, FastAPI, Request
+from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.api import create_app
-from aweb.auth_context import GRANT_SCOPE_ANY
+from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
+from aweb.grant_streams import agent_event_allowed, allowed_status_categories, grant_terminal_reason
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
 from aweb.routes import agents as agents_routes
-from aweb.routes.chat import router as chat_router
+from aweb.routes.chat import router as chat_router, stream as chat_stream_route
+from aweb.routes.events import event_stream as events_stream_route, router as events_router
 from aweb.routes.agents import router as agents_router
 from aweb.routes.identity_grants import router as identity_grants_router
 from aweb.routes.messages import router as messages_router
-from aweb.routes.status import router as status_router
+from aweb.routes.status import router as status_router, status_stream as status_stream_route
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 TEAM_ID = "backend:acme.com"
@@ -607,6 +610,7 @@ def _build_real_messaging_app(aweb_db) -> FastAPI:
     app.include_router(identity_grants_router)
     app.include_router(messages_router)
     app.include_router(chat_router)
+    app.include_router(events_router)
     app.include_router(agents_router)
     app.include_router(status_router)
     app.dependency_overrides[get_team_identity] = _identity
@@ -676,6 +680,7 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
         app.state.alice_workspace_id,
     )
     signing_key, grant_did = _session_keypair()
+    status_key, status_did = _session_keypair()
     presence_key, presence_did = _session_keypair()
     other_presence_key, other_presence_did = _session_keypair()
     revoked_key, revoked_did = _session_keypair()
@@ -686,6 +691,7 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
             grant_did_key=grant_did,
             scopes=["mail.read", "mail.send", "chat.read", "chat.send"],
         )).json()["grant_id"]
+        status_grant = (await _mint(client, grant_did_key=status_did, scopes=["coord.read"])).json()["grant_id"]
         roster = await client.get(
             "/v1/agents",
             headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
@@ -709,9 +715,13 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
             "/v1/agents",
             headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/agents"),
         )
-        grant_online_status = await client.get(
+        status_wrong_scope = await client.get(
             "/v1/status",
             headers=_grant_headers(signing_key=signing_key, did_key=grant_did, grant_id=old_scope_grant, method="GET", path="/v1/status"),
+        )
+        grant_online_status = await client.get(
+            "/v1/status",
+            headers=_grant_headers(signing_key=status_key, did_key=status_did, grant_id=status_grant, method="GET", path="/v1/status"),
         )
         await aweb_cloud_db.aweb_db.execute(
             "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
@@ -812,6 +822,9 @@ async def test_grant_agents_real_handlers_scope_and_liveness(aweb_cloud_db, monk
     assert all(row["expires_at"] >= row["last_seen_at"] for row in initial_liveness_rows)
     online_agents = {agent["agent_id"]: agent for agent in grant_online_roster.json()["agents"]}
     assert online_agents[str(alice_id)]["online"] is True
+    assert status_wrong_scope.status_code == 403
+    assert status_wrong_scope.json()["detail"] == "outside grant scope"
+    assert grant_online_status.status_code == 200, grant_online_status.text
     status_agents = {agent["workspace_id"]: agent for agent in grant_online_status.json()["agents"]}
     assert status_agents[app.state.alice_workspace_id]["status"] == "active"
     one_grant_agents = {agent["agent_id"]: agent for agent in one_grant_roster.json()["agents"]}
@@ -937,3 +950,417 @@ async def test_grant_real_send_handlers_reject_session_did_as_root_signed_sender
     assert mail.json()["detail"] == "from_did must match the authenticated sender"
     assert chat.status_code == 422
     assert chat.json()["detail"] == "from_did must match the authenticated sender"
+
+
+def _grant_identity(scopes: list[str]) -> TeamIdentity:
+    return TeamIdentity(
+        team_id=TEAM_ID,
+        alias="alice",
+        did_key=SUBJECT_DID_KEY,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+        agent_id="agent-1",
+        identity_scope="global",
+        certificate_id=None,
+        grant=GrantContext(
+            grant_id="11111111-1111-4111-8111-111111111111",
+            session_did_key="did:key:zGrant",
+            issuing_certificate_id=None,
+            scopes=tuple(scopes),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+        ),
+    )
+
+
+def test_grant_stream_event_filters_require_underlying_data_scope():
+    events_only = _grant_identity(["events.read"])
+    assert agent_event_allowed(events_only, {"type": "control_pause"}) is True
+    assert agent_event_allowed(events_only, {"type": "grant_revoked"}) is True
+    assert agent_event_allowed(events_only, {"type": "actionable_mail"}) is False
+    assert agent_event_allowed(events_only, {"type": "actionable_chat"}) is False
+    assert agent_event_allowed(events_only, {"type": "app_event"}) is False
+
+    assert agent_event_allowed(_grant_identity(["events.read", "mail.read"]), {"type": "actionable_mail"}) is True
+    assert agent_event_allowed(_grant_identity(["events.read", "chat.read"]), {"type": "actionable_chat"}) is True
+    assert agent_event_allowed(_grant_identity(["events.read", "coord.read"]), {"type": "app_event"}) is True
+
+
+def test_status_stream_grant_categories_are_scope_limited():
+    assert allowed_status_categories(_grant_identity(["events.read"])) == set()
+    assert allowed_status_categories(_grant_identity(["events.read", "mail.read"])) == {"message"}
+    assert allowed_status_categories(_grant_identity(["events.read", "chat.read"])) == {"chat"}
+    assert allowed_status_categories(_grant_identity(["events.read", "coord.read"])) == {"reservation", "task"}
+
+
+@pytest.mark.asyncio
+async def test_grant_terminal_reason_distinguishes_normal_deadline_from_actual_expiry(aweb_cloud_db):
+    app, agent_id = await _fixture(aweb_cloud_db.aweb_db)
+    signing_key, did_key = _session_keypair()
+    del signing_key
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["events.read"], ttl_seconds=600)).json()["grant_id"]
+    expires_at = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT expires_at FROM {{tables.identity_session_grants}} WHERE grant_id = $1::UUID",
+        grant_id,
+    )
+    identity = TeamIdentity(
+        team_id=TEAM_ID,
+        alias="alice",
+        did_key=SUBJECT_DID_KEY,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+        agent_id=str(agent_id),
+        identity_scope="global",
+        certificate_id=None,
+        grant=GrantContext(
+            grant_id=grant_id,
+            session_did_key=did_key,
+            issuing_certificate_id="cert-1",
+            scopes=("events.read",),
+            expires_at=expires_at,
+        ),
+    )
+    # A caller-supplied stream deadline may be sooner than grant expiry; that
+    # must close normally, not as grant_expired.
+    assert await grant_terminal_reason(type("Req", (), {"app": app})(), _DbShim(aweb_cloud_db.aweb_db), identity) is None
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.identity_session_grants}}
+        SET issued_at = NOW() - INTERVAL '2 seconds', expires_at = NOW() - INTERVAL '1 second'
+        WHERE grant_id = $1::UUID
+        """,
+        grant_id,
+    )
+    expired = await grant_terminal_reason(type("Req", (), {"app": app})(), _DbShim(aweb_cloud_db.aweb_db), identity)
+    assert expired == "grant_expired"
+
+
+def _route_grant_scope_table(app: FastAPI) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+
+    def walk(dependant):
+        for dep in dependant.dependencies:
+            scope = getattr(dep.call, "_aweb_grant_scope", None)
+            if scope is not None:
+                yield scope
+            yield from walk(dep)
+
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        for scope in walk(route.dependant):
+            for method in sorted(route.methods or []):
+                rows.append((method, route.path, scope))
+    return sorted(set(rows))
+
+
+def test_route_grant_scope_declarations_are_known_and_reviewable():
+    app = create_app()
+    table = _route_grant_scope_table(app)
+    known = set(GRANT_SCOPES) | {GRANT_SCOPE_ANY}
+    expected = [
+        ("GET", "/v1/agents", GRANT_SCOPE_ANY),
+        ("GET", "/v1/events/stream", "events.read"),
+        ("GET", "/v1/status", "coord.read"),
+        ("GET", "/v1/status/stream", "events.read"),
+        ("POST", "/v1/agents/heartbeat", "presence.write"),
+    ]
+    assert all(scope in known for _, _, scope in table)
+    assert table == expected
+
+@pytest.mark.asyncio
+async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_db):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    events_key, events_did = _session_keypair()
+    mail_events_key, mail_events_did = _session_keypair()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, from_did, to_did, from_alias, to_alias,
+            subject, body, priority, created_at
+        )
+        VALUES ($1, 'did:aw:bob', 'did:aw:alice', 'bob', 'alice',
+                'grant stream subject', 'wake', 'normal', NOW())
+        """,
+        uuid4(),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", timeout=5.0) as client:
+        events_grant = (await _mint(client, grant_did_key=events_did, scopes=["events.read"])).json()["grant_id"]
+        mail_events_grant = (await _mint(client, grant_did_key=mail_events_did, scopes=["events.read", "mail.read"])).json()["grant_id"]
+
+    stream_app = FastAPI()
+    stream_app.include_router(events_router)
+    stream_app.state.db = _DbShim(aweb_cloud_db.aweb_db)
+    stream_app.state.public_origin = "http://test"
+    stream_app.state.redis = None
+    stream_registry = AsyncMock()
+    stream_registry.get_team_revocations = AsyncMock(return_value=set())
+    stream_app.state.awid_registry_client = stream_registry
+
+    async with AsyncClient(transport=ASGITransport(app=stream_app), base_url="http://test", timeout=5.0) as stream_client:
+        deadline = (datetime.now(timezone.utc) + timedelta(milliseconds=100)).isoformat().replace("+00:00", "Z")
+        path = f"/v1/events/stream?deadline={deadline}"
+        events_only = await stream_client.get(
+            path,
+            headers=_grant_headers(signing_key=events_key, did_key=events_did, grant_id=events_grant, method="GET", path=path),
+        )
+        mail_allowed = await stream_client.get(
+            path,
+            headers=_grant_headers(signing_key=mail_events_key, did_key=mail_events_did, grant_id=mail_events_grant, method="GET", path=path),
+        )
+
+    assert events_only.status_code == 200, events_only.text
+    assert "actionable_mail" not in events_only.text
+    assert "grant stream subject" not in events_only.text
+    assert mail_allowed.status_code == 200, mail_allowed.text
+    assert "actionable_mail" in mail_allowed.text
+    assert "grant stream subject" in mail_allowed.text
+
+
+def _stream_request(app: FastAPI, path: str = "/v1/events/stream") -> Request:
+    async def _receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "server": ("test", 80),
+            "scheme": "http",
+            "client": ("test", 1234),
+            "app": app,
+        },
+        _receive,
+    )
+
+
+async def _grant_identity_from_db(aweb_db, *, grant_id: str, did_key: str, scopes: tuple[str, ...]) -> TeamIdentity:
+    expires_at = await aweb_db.fetch_value(
+        "SELECT expires_at FROM {{tables.identity_session_grants}} WHERE grant_id = $1::UUID",
+        grant_id,
+    )
+    agent_id = await aweb_db.fetch_value(
+        "SELECT agent_id FROM {{tables.agents}} WHERE alias = 'alice' AND team_id = $1",
+        TEAM_ID,
+    )
+    return TeamIdentity(
+        team_id=TEAM_ID,
+        alias="alice",
+        did_key=SUBJECT_DID_KEY,
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+        agent_id=str(agent_id),
+        identity_scope="global",
+        certificate_id=None,
+        grant=GrantContext(
+            grant_id=grant_id,
+            session_did_key=did_key,
+            issuing_certificate_id="cert-1",
+            scopes=scopes,
+            expires_at=expires_at,
+        ),
+    )
+
+
+def _messaging_auth_from_identity(identity: TeamIdentity) -> MessagingAuth:
+    assert identity.grant is not None
+    return MessagingAuth(
+        did_key=identity.did_key,
+        did_aw=identity.did_aw,
+        address=identity.address,
+        team_id=identity.team_id,
+        alias=identity.alias,
+        agent_id=identity.agent_id,
+        identity_scope=identity.identity_scope,
+        certificate_id=None,
+        verified_team_id=identity.team_id,
+        grant=identity.grant,
+    )
+
+
+async def _next_text(aiter) -> str:
+    item = await anext(aiter)
+    if isinstance(item, bytes):
+        return item.decode()
+    return str(item)
+
+
+@pytest.mark.asyncio
+async def test_events_stream_real_handler_emits_grant_revoked_terminal(aweb_cloud_db):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    key, did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did, scopes=["events.read"])).json()["grant_id"]
+    identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=grant_id, did_key=did, scopes=("events.read",))
+    del key
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+    response = await events_stream_route(
+        _stream_request(app),
+        deadline=deadline,
+        db=_DbShim(aweb_cloud_db.aweb_db),
+        redis=None,
+        identity=identity,
+    )
+    stream = response.body_iterator
+    assert "keepalive" in await _next_text(stream)
+    assert "connected" in await _next_text(stream)
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
+        grant_id,
+    )
+    terminal = await _next_text(stream)
+    assert "event: grant_revoked" in terminal
+
+
+@pytest.mark.asyncio
+async def test_events_stream_real_handler_short_client_deadline_has_no_grant_terminal(aweb_cloud_db):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    _, did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did, scopes=["events.read"], ttl_seconds=600)).json()["grant_id"]
+    identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=grant_id, did_key=did, scopes=("events.read",))
+    deadline = (datetime.now(timezone.utc) + timedelta(milliseconds=100)).isoformat().replace("+00:00", "Z")
+    response = await events_stream_route(
+        _stream_request(app),
+        deadline=deadline,
+        db=_DbShim(aweb_cloud_db.aweb_db),
+        redis=None,
+        identity=identity,
+    )
+    body = ""
+    async for chunk in response.body_iterator:
+        body += chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+    assert "grant_expired" not in body
+    assert "grant_revoked" not in body
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal(aweb_cloud_db):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    key, did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did, scopes=["chat.send", "chat.read"])).json()["grant_id"]
+        body = json.dumps({"to_aliases": ["bob"], "message": "hello stream"}, separators=(",", ":")).encode()
+        sent = await client.post(
+            "/v1/chat/sessions",
+            content=body,
+            headers=_grant_headers(signing_key=key, did_key=did, grant_id=grant_id, method="POST", path="/v1/chat/sessions", body=body),
+        )
+        assert sent.status_code == 200, sent.text
+        session_id = sent.json()["session_id"]
+
+    identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=grant_id, did_key=did, scopes=("chat.send", "chat.read"))
+    auth = _messaging_auth_from_identity(identity)
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z")
+    response = await chat_stream_route(
+        _stream_request(app, f"/v1/chat/sessions/{session_id}/stream"),
+        session_id=session_id,
+        deadline=deadline,
+        after=None,
+        db=_DbShim(aweb_cloud_db.aweb_db),
+        redis=None,
+        auth=auth,
+    )
+    stream = response.body_iterator
+    assert "keepalive" in await _next_text(stream)
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
+        grant_id,
+    )
+    assert "event: grant_revoked" in await _next_text(stream)
+
+    expire_key, expire_did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        expire_grant = (await _mint(client, grant_did_key=expire_did, scopes=["chat.read"])).json()["grant_id"]
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.identity_session_grants}}
+        SET expires_at = NOW() + INTERVAL '100 milliseconds'
+        WHERE grant_id = $1::UUID
+        """,
+        expire_grant,
+    )
+    expire_identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=expire_grant, did_key=expire_did, scopes=("chat.read",))
+    expire_response = await chat_stream_route(
+        _stream_request(app, f"/v1/chat/sessions/{session_id}/stream"),
+        session_id=session_id,
+        deadline=(datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat().replace("+00:00", "Z"),
+        after=None,
+        db=_DbShim(aweb_cloud_db.aweb_db),
+        redis=None,
+        auth=_messaging_auth_from_identity(expire_identity),
+    )
+    expire_body = ""
+    async for chunk in expire_response.body_iterator:
+        expire_body += chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+    assert "event: grant_expired" in expire_body
+    del expire_key
+
+
+class _OneMessagePubSub:
+    def __init__(self, payload: dict):
+        self.payload = payload
+        self.sent = False
+
+    async def subscribe(self, *_channels):
+        return None
+
+    async def unsubscribe(self, *_channels):
+        return None
+
+    async def aclose(self):
+        return None
+
+    async def ping(self):
+        return None
+
+    async def get_message(self, *, ignore_subscribe_messages=True, timeout=1.0):
+        if not self.sent:
+            self.sent = True
+            return {"type": "message", "data": json.dumps(self.payload)}
+        return None
+
+
+class _OneMessageRedis:
+    def __init__(self, payload: dict):
+        self.payload = payload
+
+    def pubsub(self):
+        return _OneMessagePubSub(self.payload)
+
+
+@pytest.mark.asyncio
+async def test_status_stream_real_handler_drops_coord_categories_without_coord_scope(aweb_cloud_db):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    _, did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did, scopes=["events.read"])).json()["grant_id"]
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.identity_session_grants}}
+        SET expires_at = NOW() + INTERVAL '100 milliseconds'
+        WHERE grant_id = $1::UUID
+        """,
+        grant_id,
+    )
+    identity = await _grant_identity_from_db(aweb_cloud_db.aweb_db, grant_id=grant_id, did_key=did, scopes=("events.read",))
+    response = await status_stream_route(
+        _stream_request(app, "/v1/status/stream"),
+        workspace_id=app.state.alice_workspace_id,
+        repo=None,
+        human_name=None,
+        limit=200,
+        event_types="task,reservation",
+        redis=_OneMessageRedis({"type": "task.status_changed", "workspace_id": app.state.alice_workspace_id, "task_ref": "aweb-x"}),
+        db_infra=_DbShim(aweb_cloud_db.aweb_db),
+        identity=identity,
+    )
+    body = ""
+    async for chunk in response.body_iterator:
+        body += chunk.decode() if isinstance(chunk, bytes) else str(chunk)
+    assert "task.status_changed" not in body
+    assert "aweb-x" not in body

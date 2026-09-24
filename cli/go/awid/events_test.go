@@ -408,3 +408,13 @@ func TestEventStreamReturnsEOFOnCleanClose(t *testing.T) {
 		t.Fatalf("expected io.EOF, got %v", err)
 	}
 }
+
+func TestAgentEventStreamGrantTerminalEventIsDistinctError(t *testing.T) {
+	_, ok, err := parseAgentEvent("grant_revoked", `{"type":"grant_revoked","detail":"identity grant revoked"}`)
+	if err == nil || !strings.Contains(err.Error(), "identity grant revoked") {
+		t.Fatalf("err=%v, want distinct grant revoked stream error", err)
+	}
+	if ok {
+		t.Fatal("terminal grant event must not be returned as a normal event")
+	}
+}

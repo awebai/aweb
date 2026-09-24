@@ -108,6 +108,15 @@ func streamToChannel(ctx context.Context, stream *awid.SSEStream) (<-chan sseRes
 }
 
 // parseSSEEvent converts an SSE event to a chat Event.
+func isGrantTerminalEvent(eventType string) bool {
+	switch strings.TrimSpace(eventType) {
+	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked":
+		return true
+	default:
+		return false
+	}
+}
+
 func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	ev := Event{
 		Type: sseEvent.Event,
@@ -162,6 +171,11 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 	}
 	if v, ok := data["reason"].(string); ok {
 		ev.Reason = v
+	}
+	if ev.Reason == "" {
+		if v, ok := data["detail"].(string); ok {
+			ev.Reason = v
+		}
 	}
 	if v, ok := data["timestamp"].(string); ok {
 		ev.Timestamp = v
@@ -1097,6 +1111,16 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 			}
 
 			chatEvent := parseSSEEvent(sr.event)
+			if isGrantTerminalEvent(chatEvent.Type) {
+				detail := strings.TrimSpace(chatEvent.Reason)
+				if detail == "" {
+					detail = strings.TrimSpace(chatEvent.Body)
+				}
+				if detail == "" {
+					detail = chatEvent.Type
+				}
+				return nil, fmt.Errorf("chat stream closed: %s", detail)
+			}
 			if err := decryptChatEvent(client, &chatEvent); err != nil {
 				return nil, err
 			}

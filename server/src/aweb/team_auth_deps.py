@@ -302,6 +302,7 @@ def team_identity_with_grant_scope(scope: str):
     async def dependency(request: Request, db=Depends(get_db)) -> TeamIdentity:
         return await _get_team_identity_with_grant_scope(request, db, grant_scope=scope)
 
+    dependency._aweb_grant_scope = scope  # type: ignore[attr-defined]
     return dependency
 
 

@@ -371,6 +371,7 @@ async def stream_events_multi(
     event_types: Optional[set[str]] = None,
     keepalive_seconds: int = 30,
     check_disconnected: Optional[Callable[[], Awaitable[bool]]] = None,
+    event_filter: Optional[Callable[[dict[str, Any]], bool]] = None,
 ) -> AsyncIterator[str]:
     """Stream events for multiple workspaces as SSE-formatted strings.
 
@@ -382,6 +383,8 @@ async def stream_events_multi(
         keepalive_seconds: Seconds between keepalive comments
         check_disconnected: Optional async callback to check if client has disconnected.
                            When provided and returns True, the stream ends cleanly.
+        event_filter: Optional predicate for parsed event payloads that already
+                      passed the category filter.
 
     Yields:
         SSE-formatted event strings (e.g., "data: {...}\\n\\n")
@@ -519,8 +522,9 @@ async def stream_events_multi(
 
                     # Apply filter if specified
                     if event_types is None or event_category in event_types:
-                        yield f"data: {data}\n\n"
-                        last_keepalive = current_time
+                        if event_filter is None or event_filter(event_data):
+                            yield f"data: {data}\n\n"
+                            last_keepalive = current_time
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON in event: {data}")
                     continue

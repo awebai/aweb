@@ -30,8 +30,14 @@ from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_cha
 from aweb.messaging.chat import get_pending_conversations
 from aweb.messaging.waiting import get_waiting_agents
 from aweb.internal_auth import parse_internal_auth_context
+from aweb.grant_streams import (
+    agent_event_allowed,
+    clamp_deadline_to_grant,
+    grant_terminal_reason,
+    grant_terminal_sse,
+)
 from aweb.service_errors import ServiceError
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +416,11 @@ async def _sse_agent_events(
 
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
 
+    reason = await grant_terminal_reason(request, db, identity)
+    if reason:
+        yield grant_terminal_sse(reason)
+        return
+
     # Initial snapshot
     mail_events = await _current_actionable_mail(aweb_db, inbox_dids=viewer_dids)
     chat_events = await _current_actionable_chat(
@@ -426,13 +437,17 @@ async def _sse_agent_events(
     previous_app = _index_events(app_events, key_field="event_id")
 
     for evt in mail_events:
-        yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        if agent_event_allowed(identity, evt):
+            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
     for evt in chat_events:
-        yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        if agent_event_allowed(identity, evt):
+            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
     for evt in control_events:
-        yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        if agent_event_allowed(identity, evt):
+            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
     for evt in app_events:
-        yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+        if agent_event_allowed(identity, evt):
+            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
     while datetime.now(timezone.utc) < deadline:
         await asyncio.sleep(EVENTS_POLL_INTERVAL)
@@ -443,6 +458,11 @@ async def _sse_agent_events(
         # Guard against sleep or is_disconnected taking longer than remaining time.
         if datetime.now(timezone.utc) >= deadline:
             break
+
+        reason = await grant_terminal_reason(request, db, identity)
+        if reason:
+            yield grant_terminal_sse(reason)
+            return
 
         try:
             current_mail = await _current_actionable_mail(aweb_db, inbox_dids=viewer_dids)
@@ -472,14 +492,23 @@ async def _sse_agent_events(
             key_field="event_id",
         )
 
+        reason = await grant_terminal_reason(request, db, identity)
+        if reason:
+            yield grant_terminal_sse(reason)
+            return
+
         for evt in mail_events:
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+            if agent_event_allowed(identity, evt):
+                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
         for evt in chat_events:
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+            if agent_event_allowed(identity, evt):
+                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
         for evt in control_events:
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+            if agent_event_allowed(identity, evt):
+                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
         for evt in app_events:
-            yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
+            if agent_event_allowed(identity, evt):
+                yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
         if mail_events or chat_events or control_events or app_events:
             last_heartbeat_at = datetime.now(timezone.utc)
@@ -492,6 +521,10 @@ async def _sse_agent_events(
         previous_mail = _index_events(current_mail, key_field="message_id")
         previous_chat = _index_events(current_chat, key_field="session_id")
         previous_app = _index_events(current_app, key_field="event_id")
+
+    reason = await grant_terminal_reason(request, db, identity)
+    if reason:
+        yield grant_terminal_sse(reason)
 
 
 @router.post("/app", response_model=AppEventEmitResponse)
@@ -576,7 +609,7 @@ async def event_stream(
     deadline: str = Query(..., min_length=1),
     db=Depends(get_db),
     redis=Depends(get_redis),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("events.read")),
 ):
     """Per-agent SSE event stream. Emits lightweight wake events when the agent
     has new mail, chat messages, or available work."""
@@ -590,6 +623,7 @@ async def event_stream(
     max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_STREAM_DURATION)
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
+    deadline_dt = clamp_deadline_to_grant(deadline_dt, identity)
 
     return StreamingResponse(
         _sse_agent_events(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -11,12 +11,19 @@ from fastapi.responses import StreamingResponse
 from redis.asyncio import Redis
 
 from aweb.auth import validate_workspace_id
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, team_identity_with_grant_scope
 
 from ..db import DatabaseInfra, get_db_infra
 from ..events import EventCategory, stream_events_multi
 from ._reservation_utils import reservation_metadata
 from ..grant_liveness import valid_grant_liveness_by_workspace
+from ..grant_streams import (
+    allowed_status_categories,
+    clamp_deadline_to_grant,
+    grant_terminal_reason,
+    grant_terminal_sse,
+    status_event_allowed,
+)
 from ..presence import (
     list_agent_presences_by_workspace_ids,
 )
@@ -263,7 +270,7 @@ async def status(
     repo_id: Optional[str] = Query(None, min_length=36, max_length=36),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("coord.read")),
 ) -> Dict[str, Any]:
     """
     Aggregate workspace status: agent presence, claims, and conflicts.
@@ -573,7 +580,7 @@ async def status_stream(
     ),
     redis: Redis = Depends(get_redis),
     db_infra: DatabaseInfra = Depends(get_db_infra),
-    identity: TeamIdentity = Depends(get_team_identity),
+    identity: TeamIdentity = Depends(team_identity_with_grant_scope("events.read")),
 ) -> StreamingResponse:
     """
     Server-Sent Events (SSE) stream for real-time updates.
@@ -677,13 +684,62 @@ async def status_stream(
                 detail=f"Invalid event types: {invalid}. Valid types: {sorted(VALID_SSE_EVENT_TYPES)}",
             )
 
-    return StreamingResponse(
-        stream_events_multi(
+    if identity.grant is None:
+        return StreamingResponse(
+            stream_events_multi(
+                redis,
+                workspace_ids,
+                event_type_set,
+                check_disconnected=request.is_disconnected,
+            ),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            },
+        )
+
+    allowed_grant_categories = allowed_status_categories(identity)
+    if allowed_grant_categories is not None:
+        event_type_set = (event_type_set or set(VALID_SSE_EVENT_TYPES)) & allowed_grant_categories
+
+    async def _grant_guarded_status_stream():
+        deadline = clamp_deadline_to_grant(
+            datetime.now(timezone.utc) + timedelta(minutes=5), identity
+        )
+
+        terminal_reason: str | None = None
+
+        async def _disconnected_or_deadline():
+            nonlocal terminal_reason
+            if await request.is_disconnected():
+                return True
+            terminal_reason = await grant_terminal_reason(request, db_infra, identity)
+            return terminal_reason is not None or datetime.now(timezone.utc) >= deadline
+
+        reason = await grant_terminal_reason(request, db_infra, identity)
+        if reason:
+            yield grant_terminal_sse(reason)
+            return
+        async for item in stream_events_multi(
             redis,
             workspace_ids,
             event_type_set,
-            check_disconnected=request.is_disconnected,
-        ),
+            check_disconnected=_disconnected_or_deadline,
+            event_filter=(lambda event: status_event_allowed(identity, event)),
+        ):
+            reason = await grant_terminal_reason(request, db_infra, identity)
+            if reason:
+                yield grant_terminal_sse(reason)
+                return
+            yield item
+        reason = terminal_reason or await grant_terminal_reason(request, db_infra, identity)
+        if reason:
+            yield grant_terminal_sse(reason)
+
+    return StreamingResponse(
+        _grant_guarded_status_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

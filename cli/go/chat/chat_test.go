@@ -6520,3 +6520,13 @@ func TestBuildMessagesIncludesReplyTo(t *testing.T) {
 		t.Fatalf("reply_to_message_id=%q, want %q", events[0].ReplyToMessageID, "m1")
 	}
 }
+
+func TestParseSSEEventGrantTerminalDetail(t *testing.T) {
+	ev := parseSSEEvent(&awid.SSEEvent{Event: "grant_expired", Data: `{"type":"grant_expired","detail":"identity grant expired"}`})
+	if ev.Type != "grant_expired" || ev.Reason != "identity grant expired" {
+		t.Fatalf("terminal event=%+v", ev)
+	}
+	if !isGrantTerminalEvent(ev.Type) {
+		t.Fatalf("%q should be a grant terminal event", ev.Type)
+	}
+}

@@ -181,6 +181,18 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 		return AgentEvent{}, false, nil
 	}
 
+	if isGrantTerminalAgentEvent(eventName) {
+		var payload struct {
+			Detail string `json:"detail"`
+		}
+		_ = json.Unmarshal([]byte(data), &payload)
+		detail := strings.TrimSpace(payload.Detail)
+		if detail == "" {
+			detail = eventName
+		}
+		return AgentEvent{}, false, fmt.Errorf("agent event stream closed: %s", detail)
+	}
+
 	raw := json.RawMessage(data)
 
 	switch AgentEventType(eventName) {
@@ -365,6 +377,15 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 
 	default:
 		return AgentEvent{}, false, nil
+	}
+}
+
+func isGrantTerminalAgentEvent(eventName string) bool {
+	switch strings.TrimSpace(eventName) {
+	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked":
+		return true
+	default:
+		return false
 	}
 }
 

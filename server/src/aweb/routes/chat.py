@@ -90,6 +90,7 @@ from aweb.messaging.waiting import (
     register_waiting,
     unregister_waiting,
 )
+from aweb.grant_streams import clamp_deadline_to_grant, grant_terminal_reason, grant_terminal_sse
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -2043,6 +2044,7 @@ async def _close_session_pubsub(pubsub: PubSub | None, channel: str) -> None:
 
 async def _sse_events(
     *,
+    request: Request,
     db,
     redis,
     session_id: UUID,
@@ -2050,6 +2052,7 @@ async def _sse_events(
     viewer_team_id: str | None,
     contact_owner_dids: list[str],
     deadline: datetime,
+    auth: MessagingAuth,
     after: datetime | None = None,
 ) -> AsyncIterator[str]:
     aweb_db = db.get_manager("aweb")
@@ -2091,16 +2094,22 @@ async def _sse_events(
             await ps.subscribe(channel)
             return ps
 
-        try:
-            pubsub = await _connect_pubsub()
-            last_pubsub_ping = time.monotonic()
-        except RedisError:
-            logger.info("Chat session pubsub subscribe failed; using DB fallback polling", exc_info=True)
-            next_reconnect_at = time.monotonic() + reconnect_delay_seconds
-            reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+        if redis is not None:
+            try:
+                pubsub = await _connect_pubsub()
+                last_pubsub_ping = time.monotonic()
+            except RedisError:
+                logger.info("Chat session pubsub subscribe failed; using DB fallback polling", exc_info=True)
+                next_reconnect_at = time.monotonic() + reconnect_delay_seconds
+                reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
 
         yield ": keepalive\n\n"
         last_keepalive = time.monotonic()
+
+        reason = await grant_terminal_reason(request, db, auth)
+        if reason:
+            yield grant_terminal_sse(reason)
+            return
 
         if after is not None:
             recent = await aweb_db.fetch_all(
@@ -2161,12 +2170,17 @@ async def _sse_events(
         last_db_poll = time.monotonic()
 
         while datetime.now(timezone.utc) < deadline:
+            reason = await grant_terminal_reason(request, db, auth)
+            if reason:
+                yield grant_terminal_sse(reason)
+                return
+
             now_mono = time.monotonic()
             if now_mono - last_refresh >= 30:
                 await register_waiting(redis, session_id_str, viewer_did)
                 last_refresh = now_mono
 
-            if pubsub is None and (next_reconnect_at is None or now_mono >= next_reconnect_at):
+            if redis is not None and pubsub is None and (next_reconnect_at is None or now_mono >= next_reconnect_at):
                 try:
                     pubsub = await _connect_pubsub()
                     reconnect_delay_seconds = 0.1
@@ -2203,6 +2217,10 @@ async def _sse_events(
                     await asyncio.sleep(wait_timeout)
 
             if should_poll:
+                reason = await grant_terminal_reason(request, db, auth)
+                if reason:
+                    yield grant_terminal_sse(reason)
+                    return
                 new_msgs = await aweb_db.fetch_all(
                     """
                     SELECT message_id, from_agent_id, from_alias, from_address,
@@ -2220,6 +2238,10 @@ async def _sse_events(
                 sender_dids = list({str(row["from_did"]) for row in new_msgs if row.get("from_did")})
                 sender_waiting = set(await get_waiting_agents(redis, session_id_str, sender_dids)) if sender_dids else set()
                 identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
+                reason = await grant_terminal_reason(request, db, auth)
+                if reason:
+                    yield grant_terminal_sse(reason)
+                    return
                 for row in new_msgs:
                     last_message_at = max(last_message_at, row["created_at"])
                     is_hang_on = bool(row["hang_on"])
@@ -2300,6 +2322,9 @@ async def _sse_events(
                         reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
                 yield ": keepalive\n\n"
                 last_keepalive = current_time
+        reason = await grant_terminal_reason(request, db, auth)
+        if reason:
+            yield grant_terminal_sse(reason)
     finally:
         await _close_session_pubsub(pubsub, channel)
         await unregister_waiting(redis, session_id_str, viewer_did)
@@ -2315,7 +2340,6 @@ async def stream(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
-    del request
     actor_dids = _actor_dids(auth)
     owner_dids = _actor_dids(auth)
     if not owner_dids:
@@ -2339,12 +2363,14 @@ async def stream(
     max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_CHAT_STREAM_DURATION)
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
+    deadline_dt = clamp_deadline_to_grant(deadline_dt, auth)
 
     after_dt = _parse_timestamp(after, "after") if after is not None else None
     await register_waiting(redis, str(session_uuid), actor_did)
 
     return StreamingResponse(
         _sse_events(
+            request=request,
             db=db,
             redis=redis,
             session_id=session_uuid,
@@ -2352,6 +2378,7 @@ async def stream(
             viewer_team_id=auth.team_id,
             contact_owner_dids=owner_dids,
             deadline=deadline_dt,
+            auth=auth,
             after=after_dt,
         ),
         media_type="text/event-stream",
