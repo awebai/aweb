@@ -266,3 +266,231 @@ func VerifyCustodyProof(req *PlainMessageSignRequest) error {
 	}
 	return nil
 }
+
+// E2EEEnvelopeCreateRequest is the structured local-custody request for
+// building and signing an encrypted-v2 mail/chat envelope. The service builds
+// the envelope itself; callers never supply encrypted envelope bytes to sign.
+type E2EEEnvelopeCreateRequest struct {
+	Version             int                `json:"v"`
+	Operation           string             `json:"op"`
+	GrantID             string             `json:"grant_id"`
+	SessionDIDKey       string             `json:"session_did_key"`
+	TeamID              string             `json:"team_id"`
+	SubjectDIDAW        string             `json:"subject_did_aw,omitempty"`
+	SubjectDIDKey       string             `json:"subject_did_key"`
+	Audience            string             `json:"aud"`
+	Nonce               string             `json:"nonce"`
+	Timestamp           string             `json:"timestamp"`
+	RequestDigest       string             `json:"request_digest"`
+	Signature           string             `json:"signature"`
+	Kind                string             `json:"kind"`
+	Subject             string             `json:"subject,omitempty"`
+	Body                string             `json:"body"`
+	MessageID           string             `json:"message_id"`
+	ConversationID      string             `json:"conversation_id"`
+	ReplyToMessageID    string             `json:"reply_to_message_id,omitempty"`
+	Recipients          []E2EERecipientKey `json:"recipients"`
+	DeliveryOrigin      string             `json:"delivery_origin,omitempty"`
+	ObservedInboundMode string             `json:"sender_observed_inbound_mode,omitempty"`
+}
+
+type E2EEEnvelopeCreateResponse struct {
+	ContentMode       string               `json:"content_mode"`
+	MessageVersion    int                  `json:"message_version"`
+	EncryptedEnvelope *E2EEMessageEnvelope `json:"encrypted_envelope"`
+}
+
+type E2EEUnwrapRequest struct {
+	Version        int                  `json:"v"`
+	Operation      string               `json:"op"`
+	GrantID        string               `json:"grant_id"`
+	SessionDIDKey  string               `json:"session_did_key"`
+	TeamID         string               `json:"team_id"`
+	SubjectDIDAW   string               `json:"subject_did_aw,omitempty"`
+	SubjectDIDKey  string               `json:"subject_did_key"`
+	Audience       string               `json:"aud"`
+	Nonce          string               `json:"nonce"`
+	Timestamp      string               `json:"timestamp"`
+	RequestDigest  string               `json:"request_digest"`
+	Signature      string               `json:"signature"`
+	Kind           string               `json:"kind"`
+	MessageID      string               `json:"message_id"`
+	ConversationID string               `json:"conversation_id"`
+	OutputMode     string               `json:"output_mode"`
+	Envelope       *E2EEMessageEnvelope `json:"encrypted_envelope"`
+}
+
+type E2EEUnwrapResponse struct {
+	Kind           string `json:"kind"`
+	MessageID      string `json:"message_id"`
+	ConversationID string `json:"conversation_id"`
+	Subject        string `json:"subject,omitempty"`
+	Body           string `json:"body"`
+	ContentNotice  string `json:"content_notice,omitempty"`
+}
+
+type E2EECustodyClient interface {
+	CreateE2EEEnvelope(ctx context.Context, req *E2EEEnvelopeCreateRequest) (*E2EEEnvelopeCreateResponse, error)
+	UnwrapE2EEMessage(ctx context.Context, req *E2EEUnwrapRequest) (*E2EEUnwrapResponse, error)
+}
+
+func (c *UnixCustodyClient) CreateE2EEEnvelope(ctx context.Context, req *E2EEEnvelopeCreateRequest) (*E2EEEnvelopeCreateResponse, error) {
+	var out E2EEEnvelopeCreateResponse
+	if err := c.do(ctx, http.MethodPost, "/create_e2ee_envelope", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *UnixCustodyClient) UnwrapE2EEMessage(ctx context.Context, req *E2EEUnwrapRequest) (*E2EEUnwrapResponse, error) {
+	var out E2EEUnwrapResponse
+	if err := c.do(ctx, http.MethodPost, "/unwrap_e2ee_message", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func custodyDigestValue(operation string, payload map[string]any) (string, error) {
+	payload["op"] = operation
+	canonical, err := CanonicalJSONValue(payload)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func signCustodyProofFields(key ed25519.PrivateKey, version int, operation string, fields map[string]string, requestDigest *string, nonce *string, timestamp *string, signature *string) error {
+	if key == nil {
+		return fmt.Errorf("signing key is required")
+	}
+	if version == 0 {
+		version = 1
+	}
+	if strings.TrimSpace(fields["session_did_key"]) == "" {
+		fields["session_did_key"] = ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	}
+	if strings.TrimSpace(*timestamp) == "" {
+		*timestamp = time.Now().UTC().Format(time.RFC3339)
+	}
+	if strings.TrimSpace(*nonce) == "" {
+		n, err := GenerateUUID4()
+		if err != nil {
+			return err
+		}
+		*nonce = n
+	}
+	proof := map[string]any{"v": version, "op": operation, "grant_id": fields["grant_id"], "session_did_key": fields["session_did_key"], "team_id": fields["team_id"], "subject_did_aw": fields["subject_did_aw"], "subject_did_key": fields["subject_did_key"], "aud": fields["aud"], "nonce": *nonce, "timestamp": *timestamp, "request_digest": *requestDigest}
+	canonical, err := CanonicalJSONValue(proof)
+	if err != nil {
+		return err
+	}
+	*signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, []byte(canonical)))
+	return nil
+}
+
+func verifyCustodyProofFields(version int, operation string, fields map[string]string, nonce, timestamp, requestDigest, signature string, expectedDigest string) error {
+	if version != 1 || operation == "" {
+		return fmt.Errorf("unsupported_operation")
+	}
+	if strings.TrimSpace(requestDigest) != strings.TrimSpace(expectedDigest) {
+		return fmt.Errorf("message_digest_mismatch")
+	}
+	pub, err := ExtractPublicKey(strings.TrimSpace(fields["session_did_key"]))
+	if err != nil {
+		return fmt.Errorf("bad_signature")
+	}
+	proof := map[string]any{"v": version, "op": operation, "grant_id": fields["grant_id"], "session_did_key": fields["session_did_key"], "team_id": fields["team_id"], "subject_did_aw": fields["subject_did_aw"], "subject_did_key": fields["subject_did_key"], "aud": fields["aud"], "nonce": nonce, "timestamp": timestamp, "request_digest": requestDigest}
+	canonical, err := CanonicalJSONValue(proof)
+	if err != nil {
+		return err
+	}
+	sig, err := base64.RawStdEncoding.DecodeString(strings.TrimSpace(signature))
+	if err != nil {
+		return fmt.Errorf("bad_signature")
+	}
+	if !ed25519.Verify(pub, []byte(canonical), sig) {
+		return fmt.Errorf("bad_signature")
+	}
+	return nil
+}
+
+func SignE2EECreateCustodyProof(key ed25519.PrivateKey, req *E2EEEnvelopeCreateRequest) error {
+	if req == nil {
+		return fmt.Errorf("request is required")
+	}
+	if req.Version == 0 {
+		req.Version = 1
+	}
+	if req.Operation == "" {
+		req.Operation = "create_e2ee_envelope"
+	}
+	if strings.TrimSpace(req.SessionDIDKey) == "" {
+		req.SessionDIDKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	}
+	payload := map[string]any{"v": req.Version, "grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience, "kind": req.Kind, "subject": req.Subject, "body": req.Body, "message_id": req.MessageID, "conversation_id": req.ConversationID, "reply_to_message_id": req.ReplyToMessageID, "recipients": req.Recipients, "delivery_origin": req.DeliveryOrigin, "sender_observed_inbound_mode": req.ObservedInboundMode}
+	d, err := custodyDigestValue(req.Operation, payload)
+	if err != nil {
+		return err
+	}
+	req.RequestDigest = d
+	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
+	if err := signCustodyProofFields(key, req.Version, req.Operation, fields, &req.RequestDigest, &req.Nonce, &req.Timestamp, &req.Signature); err != nil {
+		return err
+	}
+	req.SessionDIDKey = fields["session_did_key"]
+	return nil
+}
+
+func VerifyE2EECreateCustodyProof(req *E2EEEnvelopeCreateRequest) error {
+	if req == nil {
+		return fmt.Errorf("bad_request")
+	}
+	payload := map[string]any{"v": req.Version, "grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience, "kind": req.Kind, "subject": req.Subject, "body": req.Body, "message_id": req.MessageID, "conversation_id": req.ConversationID, "reply_to_message_id": req.ReplyToMessageID, "recipients": req.Recipients, "delivery_origin": req.DeliveryOrigin, "sender_observed_inbound_mode": req.ObservedInboundMode}
+	d, err := custodyDigestValue(req.Operation, payload)
+	if err != nil {
+		return err
+	}
+	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
+	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+}
+
+func SignE2EEUnwrapCustodyProof(key ed25519.PrivateKey, req *E2EEUnwrapRequest) error {
+	if req == nil {
+		return fmt.Errorf("request is required")
+	}
+	if req.Version == 0 {
+		req.Version = 1
+	}
+	if req.Operation == "" {
+		req.Operation = "unwrap_e2ee_message"
+	}
+	if strings.TrimSpace(req.SessionDIDKey) == "" {
+		req.SessionDIDKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	}
+	payload := map[string]any{"v": req.Version, "grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience, "kind": req.Kind, "message_id": req.MessageID, "conversation_id": req.ConversationID, "output_mode": req.OutputMode, "encrypted_envelope": req.Envelope}
+	d, err := custodyDigestValue(req.Operation, payload)
+	if err != nil {
+		return err
+	}
+	req.RequestDigest = d
+	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
+	if err := signCustodyProofFields(key, req.Version, req.Operation, fields, &req.RequestDigest, &req.Nonce, &req.Timestamp, &req.Signature); err != nil {
+		return err
+	}
+	req.SessionDIDKey = fields["session_did_key"]
+	return nil
+}
+
+func VerifyE2EEUnwrapCustodyProof(req *E2EEUnwrapRequest) error {
+	if req == nil {
+		return fmt.Errorf("bad_request")
+	}
+	payload := map[string]any{"v": req.Version, "grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience, "kind": req.Kind, "message_id": req.MessageID, "conversation_id": req.ConversationID, "output_mode": req.OutputMode, "encrypted_envelope": req.Envelope}
+	d, err := custodyDigestValue(req.Operation, payload)
+	if err != nil {
+		return err
+	}
+	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
+	return verifyCustodyProofFields(req.Version, req.Operation, fields, req.Nonce, req.Timestamp, req.RequestDigest, req.Signature, d)
+}

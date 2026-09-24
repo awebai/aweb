@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -742,6 +743,16 @@ func configureClientE2EEForRead(cmd *cobra.Command, ctx context.Context, c *aweb
 func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Selection, required bool) error {
 	if c == nil || c.Client == nil || sel == nil {
 		return usageError("E2E messaging requires an initialized self-custodial workspace")
+	}
+	if awconfig.IsGrantHome(sel.IdentityHome) {
+		grant, err := awconfig.LoadGrantHome(sel.IdentityHome)
+		if err == nil && strings.TrimSpace(grant.Custody.SocketPath) != "" {
+			return nil
+		}
+		if required {
+			return usageError("E2E messaging under an identity grant requires a local custody socket; ask the resident host to run `aw custody serve`, or pass --plaintext only for explicit server-readable messaging")
+		}
+		return &e2eeDecryptionUnavailableError{statePath: filepath.Join(sel.IdentityHome, "encryption.yaml"), reason: "grant home has no custody socket"}
 	}
 	if required {
 		if err := ensureE2EEKeyReadyForSend(ctx, sel.WorkingDir); err != nil {

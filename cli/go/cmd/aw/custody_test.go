@@ -3,8 +3,12 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -31,9 +35,9 @@ func testCustodyService(t *testing.T, residentKey, sessionKey ed25519.PrivateKey
 		now:        time.Now,
 		replay:     map[string]string{},
 		replayAt:   map[string]time.Time{},
-		results:    map[string]*awid.PlainMessageSignResponse{},
+		results:    map[string]any{},
 		grantStatus: func(ctx context.Context, grantID string) (custodyGrantStatus, error) {
-			return custodyGrantStatus{Active: true, Scopes: []string{"mail.send", "chat.send"}, GrantDIDKey: sessionDID, TeamID: "backend:acme.com", Status: "active", EffectiveStatus: "active", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, nil
+			return custodyGrantStatus{Active: true, Scopes: []string{"mail.read", "mail.send", "chat.read", "chat.send"}, GrantDIDKey: sessionDID, TeamID: "backend:acme.com", Status: "active", EffectiveStatus: "active", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, nil
 		},
 	}
 }
@@ -249,7 +253,7 @@ func TestCustodyGrantValidationFailsClosedOnEffectiveStatusExpiryBindingAndFresh
 		t.Run(tc.name, func(t *testing.T) {
 			svc.replay = map[string]string{}
 			svc.replayAt = map[string]time.Time{}
-			svc.results = map[string]*awid.PlainMessageSignResponse{}
+			svc.results = map[string]any{}
 			svc.grantStatus = func(context.Context, string) (custodyGrantStatus, error) { return tc.st, nil }
 			if _, err := svc.signPlainMessage(context.Background(), req); err == nil || err.Error() != tc.want {
 				t.Fatalf("err=%v, want %s", err, tc.want)
@@ -352,6 +356,21 @@ func TestCustodyStatusUnavailableUsesStableErrorCode(t *testing.T) {
 	}
 }
 
+func TestCustodySocketPathLengthDiagnostic(t *testing.T) {
+	limit := custodySocketPathLimit()
+	if limit <= 0 {
+		t.Skip("platform has no custody socket path preflight limit")
+	}
+	tooLong := "/tmp/" + strings.Repeat("x", limit)
+	if err := validateCustodySocketPathLength(tooLong); err == nil || !strings.Contains(err.Error(), "custody_socket_path_too_long") || !strings.Contains(err.Error(), "/private/tmp/idtest-custody") {
+		t.Fatalf("err=%v, want stable too-long diagnostic with short path guidance", err)
+	}
+	short := "/tmp/" + strings.Repeat("x", limit-10)
+	if err := validateCustodySocketPathLength(short); err != nil {
+		t.Fatalf("short path rejected: %v", err)
+	}
+}
+
 func TestCustodyServeRefusesLiveSocketAndRemovesStaleSocket(t *testing.T) {
 	_, residentKey, _ := ed25519.GenerateKey(nil)
 	_, sessionKey, _ := ed25519.GenerateKey(nil)
@@ -444,5 +463,380 @@ func TestCustodyServeRefusesLiveSocketAndRemovesStaleSocket(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("stale replacement service did not stop")
+	}
+}
+
+type custodyE2EETestIdentity struct {
+	did       string
+	stableID  string
+	address   string
+	signKey   ed25519.PrivateKey
+	xPriv     *ecdh.PrivateKey
+	assertion *awid.EncryptionKeyAssertion
+}
+
+func newCustodyE2EETestIdentity(t *testing.T, address string) custodyE2EETestIdentity {
+	t.Helper()
+	_, signKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(signKey.Public().(ed25519.PublicKey))
+	stableID := "did:aw:" + strings.ReplaceAll(address, "/", "-")
+	xPriv, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := awid.BuildEncryptionKeyAssertion(signKey, did, stableID, xPriv.PublicKey().Bytes(), "", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return custodyE2EETestIdentity{did: did, stableID: stableID, address: address, signKey: signKey, xPriv: xPriv, assertion: assertion}
+}
+
+func TestCustodyCreateAndUnwrapE2EEEnvelope(t *testing.T) {
+	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
+	bob := newCustodyE2EETestIdentity(t, "acme.com/bob")
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyService(t, alice.signKey, sessionKey)
+	svc.identity.DID = alice.did
+	svc.identity.StableID = alice.stableID
+	svc.identity.Address = alice.address
+	svc.e2eeAssertion = alice.assertion
+	svc.e2eePrivateKey = alice.xPriv
+	svc.resolveRecipient = func(ctx context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+		return &awid.ResolvedIdentity{DID: bob.did, StableID: bob.stableID, Address: bob.address, EncryptionKey: bob.assertion}, nil
+	}
+
+	createReq := &awid.E2EEEnvelopeCreateRequest{Version: 1, Operation: "create_e2ee_envelope", GrantID: "11111111-1111-4111-8111-111111111111", SessionDIDKey: awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey)), TeamID: "backend:acme.com", SubjectDIDAW: alice.stableID, SubjectDIDKey: alice.did, Audience: "local-resident-custody:test-service", Kind: "mail", Subject: "secret", Body: "body", MessageID: "22222222-2222-4222-8222-222222222222", ConversationID: "33333333-3333-4333-8333-333333333333", Recipients: []awid.E2EERecipientKey{{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion}}}
+	if err := awid.SignE2EECreateCustodyProof(sessionKey, createReq); err != nil {
+		t.Fatal(err)
+	}
+	created, err := svc.createE2EEEnvelope(context.Background(), createReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.EncryptedEnvelope == nil || created.EncryptedEnvelope.From.DID != alice.did || created.EncryptedEnvelope.SigningKeyID != alice.did {
+		t.Fatalf("bad custody e2ee envelope: %#v", created.EncryptedEnvelope)
+	}
+	bobPlain, err := awid.DecryptE2EEMessage(created.EncryptedEnvelope, awid.E2EEDecryptIdentity{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKeyID: bob.assertion.EncryptionKeyID, PrivateKey: bob.xPriv})
+	if err != nil || bobPlain.Body != "body" || bobPlain.Subject != "secret" {
+		t.Fatalf("bob decrypt=%#v err=%v", bobPlain, err)
+	}
+
+	incoming, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{Sender: awid.E2EESenderKey{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion, SigningKey: bob.signKey}, Recipients: []awid.E2EERecipientKey{{Address: alice.address, DID: alice.did, StableID: alice.stableID, EncryptionKey: alice.assertion}}, Subject: "for alice", Body: "resident secret", MessageID: "44444444-4444-4444-8444-444444444444", ConversationID: "55555555-5555-4555-8555-555555555555", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.readStoredEnvelope = func(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
+		if kind != "mail" || messageID != incoming.MessageID || conversationID != incoming.ConversationID {
+			t.Fatalf("unexpected stored lookup kind=%q message=%q conversation=%q", kind, messageID, conversationID)
+		}
+		return incoming, nil
+	}
+	unwrapReq := &awid.E2EEUnwrapRequest{Version: 1, Operation: "unwrap_e2ee_message", GrantID: "11111111-1111-4111-8111-111111111111", SessionDIDKey: awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey)), TeamID: "backend:acme.com", SubjectDIDAW: alice.stableID, SubjectDIDKey: alice.did, Audience: "local-resident-custody:test-service", Kind: "mail", MessageID: incoming.MessageID, ConversationID: incoming.ConversationID, OutputMode: "plaintext", Envelope: incoming}
+	if err := awid.SignE2EEUnwrapCustodyProof(sessionKey, unwrapReq); err != nil {
+		t.Fatal(err)
+	}
+	unwrapped, err := svc.unwrapE2EEMessage(context.Background(), unwrapReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unwrapped.Subject != "for alice" || unwrapped.Body != "resident secret" {
+		t.Fatalf("unexpected unwrap: %#v", unwrapped)
+	}
+}
+
+func signedE2EEUnwrapRequest(t *testing.T, sessionKey ed25519.PrivateKey, alice custodyE2EETestIdentity, envelope *awid.E2EEMessageEnvelope) *awid.E2EEUnwrapRequest {
+	t.Helper()
+	req := &awid.E2EEUnwrapRequest{Version: 1, Operation: "unwrap_e2ee_message", GrantID: "11111111-1111-4111-8111-111111111111", SessionDIDKey: awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey)), TeamID: "backend:acme.com", SubjectDIDAW: alice.stableID, SubjectDIDKey: alice.did, Audience: "local-resident-custody:test-service", Kind: strings.TrimSpace(envelope.Kind), MessageID: envelope.MessageID, ConversationID: envelope.ConversationID, OutputMode: "plaintext", Envelope: envelope}
+	if err := awid.SignE2EEUnwrapCustodyProof(sessionKey, req); err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
+func TestCustodyUnwrapRequiresReadableStoredE2EEMessage(t *testing.T) {
+	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
+	bob := newCustodyE2EETestIdentity(t, "beta.com/bob")
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyService(t, alice.signKey, sessionKey)
+	svc.identity.DID = alice.did
+	svc.identity.StableID = alice.stableID
+	svc.identity.Address = alice.address
+	svc.e2eeAssertion = alice.assertion
+	svc.e2eePrivateKey = alice.xPriv
+	incoming, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{Sender: awid.E2EESenderKey{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion, SigningKey: bob.signKey}, Recipients: []awid.E2EERecipientKey{{Address: alice.address, DID: alice.did, StableID: alice.stableID, EncryptionKey: alice.assertion}}, Subject: "cross team", Body: "readable", MessageID: "66666666-6666-4666-8666-666666666666", ConversationID: "77777777-7777-4777-8777-777777777777", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unreadable := signedE2EEUnwrapRequest(t, sessionKey, alice, incoming)
+	svc.readStoredEnvelope = func(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
+		return nil, errors.New("stored_message_unavailable")
+	}
+	if _, err := svc.unwrapE2EEMessage(context.Background(), unreadable); err == nil || err.Error() != "stored_message_unavailable" {
+		t.Fatalf("err=%v, want stored_message_unavailable", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages/"+incoming.MessageID {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(awid.InboxMessage{MessageID: incoming.MessageID, ConversationID: incoming.ConversationID, FromAddress: bob.address, ToAddress: alice.address, ContentMode: awid.ContentModeEncryptedV2, MessageVersion: awid.E2EEMessageVersion, Encrypted: incoming})
+	}))
+	defer server.Close()
+	client, err := aweb.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.client = client
+	svc.readStoredEnvelope = svc.storedE2EEEnvelopeViaClient
+	readable := signedE2EEUnwrapRequest(t, sessionKey, alice, incoming)
+	out, err := svc.unwrapE2EEMessage(context.Background(), readable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Subject != "cross team" || out.Body != "readable" {
+		t.Fatalf("unexpected unwrap: %#v", out)
+	}
+}
+
+func saveCustodyArchivedKey(t *testing.T, home string, keyID string, priv *ecdh.PrivateKey) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home, "encryption-keys"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	privateRel := filepath.ToSlash(filepath.Join("encryption-keys", "old.x25519.key"))
+	privatePath := filepath.Join(home, filepath.FromSlash(privateRel))
+	if err := awid.SaveX25519PrivateKey(privatePath, priv); err != nil {
+		t.Fatal(err)
+	}
+	publicKey := base64.RawStdEncoding.EncodeToString(priv.PublicKey().Bytes())
+	state := &awconfig.EncryptionKeyState{Keys: []awconfig.EncryptionKeyRecord{{KeyID: keyID, PublicKey: publicKey, PrivateKeyPath: privateRel, CreatedAt: time.Now().UTC().Format(time.RFC3339), NotBefore: time.Now().UTC().Format(time.RFC3339), ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}}}
+	if err := awconfig.SaveEncryptionKeyStateTo(filepath.Join(home, "encryption.yaml"), state); err != nil {
+		t.Fatal(err)
+	}
+	return privatePath
+}
+
+func TestCustodyUnwrapUsesArchivedE2EEKeyForHistory(t *testing.T) {
+	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
+	oldPriv, _, err := awid.GenerateX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAssertion, err := awid.BuildEncryptionKeyAssertion(alice.signKey, alice.did, alice.stableID, oldPriv.PublicKey().Bytes(), "", time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := newCustodyE2EETestIdentity(t, "beta.com/bob")
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyService(t, alice.signKey, sessionKey)
+	svc.residentHome = t.TempDir()
+	svc.identity.DID = alice.did
+	svc.identity.StableID = alice.stableID
+	svc.identity.Address = alice.address
+	svc.e2eeAssertion = alice.assertion
+	svc.e2eePrivateKey = alice.xPriv
+	oldMessage, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{Sender: awid.E2EESenderKey{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion, SigningKey: bob.signKey}, Recipients: []awid.E2EERecipientKey{{Address: alice.address, DID: alice.did, StableID: alice.stableID, EncryptionKey: oldAssertion}}, Subject: "old", Body: "historical secret", MessageID: "88888888-8888-4888-8888-888888888888", ConversationID: "99999999-9999-4999-8999-999999999999", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.readStoredEnvelope = func(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
+		return oldMessage, nil
+	}
+	missing := signedE2EEUnwrapRequest(t, sessionKey, alice, oldMessage)
+	if _, err := svc.unwrapE2EEMessage(context.Background(), missing); err == nil || err.Error() != "archived_key_unavailable" {
+		t.Fatalf("err=%v, want archived_key_unavailable", err)
+	}
+	saveCustodyArchivedKey(t, svc.residentHome, oldAssertion.EncryptionKeyID, oldPriv)
+	ok := signedE2EEUnwrapRequest(t, sessionKey, alice, oldMessage)
+	out, err := svc.unwrapE2EEMessage(context.Background(), ok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Body != "historical secret" || out.Subject != "old" {
+		t.Fatalf("unexpected archived unwrap: %#v", out)
+	}
+}
+
+func signedE2EECreateRequest(t *testing.T, sessionKey ed25519.PrivateKey, alice, bob custodyE2EETestIdentity) *awid.E2EEEnvelopeCreateRequest {
+	t.Helper()
+	req := &awid.E2EEEnvelopeCreateRequest{Version: 1, Operation: "create_e2ee_envelope", GrantID: "11111111-1111-4111-8111-111111111111", SessionDIDKey: awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey)), TeamID: "backend:acme.com", SubjectDIDAW: alice.stableID, SubjectDIDKey: alice.did, Audience: "local-resident-custody:test-service", Kind: "mail", Subject: "secret", Body: "body", MessageID: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", ConversationID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", Recipients: []awid.E2EERecipientKey{{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion}}}
+	if err := awid.SignE2EECreateCustodyProof(sessionKey, req); err != nil {
+		t.Fatal(err)
+	}
+	return req
+}
+
+func testCustodyE2EEService(t *testing.T, alice, bob custodyE2EETestIdentity, sessionKey ed25519.PrivateKey) *custodyService {
+	t.Helper()
+	svc := testCustodyService(t, alice.signKey, sessionKey)
+	svc.identity.DID = alice.did
+	svc.identity.StableID = alice.stableID
+	svc.identity.Address = alice.address
+	svc.e2eeAssertion = alice.assertion
+	svc.e2eePrivateKey = alice.xPriv
+	svc.resolveRecipient = func(ctx context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+		return &awid.ResolvedIdentity{DID: bob.did, StableID: bob.stableID, Address: bob.address, EncryptionKey: bob.assertion}, nil
+	}
+	return svc
+}
+
+func TestCustodyCreateE2EEReplayAndOperationBinding(t *testing.T) {
+	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
+	bob := newCustodyE2EETestIdentity(t, "acme.com/bob")
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyE2EEService(t, alice, bob, sessionKey)
+	req := signedE2EECreateRequest(t, sessionKey, alice, bob)
+	first, err := svc.createE2EEEnvelope(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := svc.createE2EEEnvelope(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.EncryptedEnvelope == nil || replay.EncryptedEnvelope == nil || first.EncryptedEnvelope.Signature != replay.EncryptedEnvelope.Signature || first.EncryptedEnvelope.CreatedAt != replay.EncryptedEnvelope.CreatedAt {
+		t.Fatalf("create replay was not cached: first=%#v replay=%#v", first.EncryptedEnvelope, replay.EncryptedEnvelope)
+	}
+	changed := *req
+	changed.Body = "changed"
+	if err := awid.SignE2EECreateCustodyProof(sessionKey, &changed); err != nil {
+		t.Fatal(err)
+	}
+	changed.Nonce = req.Nonce
+	if _, err := svc.createE2EEEnvelope(context.Background(), &changed); err == nil || err.Error() != "replay_detected" {
+		t.Fatalf("err=%v, want replay_detected", err)
+	}
+	wrongOp := signedE2EECreateRequest(t, sessionKey, alice, bob)
+	wrongOp.Operation = "unwrap_e2ee_message"
+	if err := awid.SignE2EECreateCustodyProof(sessionKey, wrongOp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.createE2EEEnvelope(context.Background(), wrongOp); err == nil || err.Error() != "unsupported_operation" {
+		t.Fatalf("err=%v, want unsupported_operation", err)
+	}
+}
+
+func TestCustodyUnwrapE2EEReplayAndOperationBinding(t *testing.T) {
+	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
+	bob := newCustodyE2EETestIdentity(t, "acme.com/bob")
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyE2EEService(t, alice, bob, sessionKey)
+	incoming, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{Sender: awid.E2EESenderKey{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion, SigningKey: bob.signKey}, Recipients: []awid.E2EERecipientKey{{Address: alice.address, DID: alice.did, StableID: alice.stableID, EncryptionKey: alice.assertion}}, Subject: "replay", Body: "secret", MessageID: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", ConversationID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.readStoredEnvelope = func(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
+		return incoming, nil
+	}
+	req := signedE2EEUnwrapRequest(t, sessionKey, alice, incoming)
+	first, err := svc.unwrapE2EEMessage(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := svc.unwrapE2EEMessage(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Body != replay.Body || first.Subject != replay.Subject {
+		t.Fatalf("unwrap replay was not cached: first=%#v replay=%#v", first, replay)
+	}
+	changed := *req
+	changed.OutputMode = "plaintext "
+	if err := awid.SignE2EEUnwrapCustodyProof(sessionKey, &changed); err != nil {
+		t.Fatal(err)
+	}
+	changed.Nonce = req.Nonce
+	if _, err := svc.unwrapE2EEMessage(context.Background(), &changed); err == nil || err.Error() != "replay_detected" {
+		t.Fatalf("err=%v, want replay_detected", err)
+	}
+	wrongOp := signedE2EEUnwrapRequest(t, sessionKey, alice, incoming)
+	wrongOp.Operation = "create_e2ee_envelope"
+	if err := awid.SignE2EEUnwrapCustodyProof(sessionKey, wrongOp); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.unwrapE2EEMessage(context.Background(), wrongOp); err == nil || err.Error() != "unsupported_operation" {
+		t.Fatalf("err=%v, want unsupported_operation", err)
+	}
+}
+
+func TestCustodyCreateE2EEVerifiesRecipientCurrentBinding(t *testing.T) {
+	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
+	bob := newCustodyE2EETestIdentity(t, "acme.com/bob")
+	attacker := newCustodyE2EETestIdentity(t, "acme.com/attacker")
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyE2EEService(t, alice, bob, sessionKey)
+	svc.resolveRecipient = func(ctx context.Context, identifier string) (*awid.ResolvedIdentity, error) {
+		return &awid.ResolvedIdentity{DID: bob.did, StableID: bob.stableID, Address: bob.address, EncryptionKey: bob.assertion}, nil
+	}
+	req := signedE2EECreateRequest(t, sessionKey, alice, bob)
+	req.Recipients[0].DID = attacker.did
+	req.Recipients[0].EncryptionKey = attacker.assertion
+	if err := awid.SignE2EECreateCustodyProof(sessionKey, req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.createE2EEEnvelope(context.Background(), req); err == nil || err.Error() != "recipient_binding_mismatch" {
+		t.Fatalf("err=%v, want recipient_binding_mismatch", err)
+	}
+}
+
+func TestCustodyE2EEHandlersRejectUnknownFields(t *testing.T) {
+	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
+	bob := newCustodyE2EETestIdentity(t, "acme.com/bob")
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyE2EEService(t, alice, bob, sessionKey)
+	createReq := signedE2EECreateRequest(t, sessionKey, alice, bob)
+	data, _ := json.Marshal(createReq)
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["unexpected"] = "x"
+	data, _ = json.Marshal(raw)
+	rr := httptest.NewRecorder()
+	svc.handleCreateE2EEEnvelope(rr, httptest.NewRequest(http.MethodPost, "/create_e2ee_envelope", bytes.NewReader(data)))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "bad_request") {
+		t.Fatalf("create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	incoming, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{Sender: awid.E2EESenderKey{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion, SigningKey: bob.signKey}, Recipients: []awid.E2EERecipientKey{{Address: alice.address, DID: alice.did, StableID: alice.stableID, EncryptionKey: alice.assertion}}, Subject: "unknown", Body: "field", MessageID: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", ConversationID: "ffffffff-ffff-4fff-8fff-ffffffffffff", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unwrapReq := signedE2EEUnwrapRequest(t, sessionKey, alice, incoming)
+	data, _ = json.Marshal(unwrapReq)
+	raw = map[string]any{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	raw["unexpected"] = "x"
+	data, _ = json.Marshal(raw)
+	rr = httptest.NewRecorder()
+	svc.handleUnwrapE2EEMessage(rr, httptest.NewRequest(http.MethodPost, "/unwrap_e2ee_message", bytes.NewReader(data)))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "bad_request") {
+		t.Fatalf("unwrap status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCustodyStatusReportsEncryptionKeyUnavailable(t *testing.T) {
+	_, residentKey, _ := ed25519.GenerateKey(rand.Reader)
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyService(t, residentKey, sessionKey)
+	svc.e2eeKeyError = "encryption_key_unavailable"
+	status := svc.status(context.Background(), "running", nil)
+	found := false
+	for _, code := range status.Errors {
+		if code == "encryption_key_unavailable" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("status errors=%v, want encryption_key_unavailable", status.Errors)
+	}
+	if ready, _ := status.Keys["encryption_ready"].(bool); ready {
+		t.Fatalf("encryption_ready=true with key error: %#v", status.Keys)
 	}
 }

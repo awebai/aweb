@@ -2,6 +2,7 @@ package awid
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
@@ -159,10 +160,32 @@ type E2EEDecryptIdentity struct {
 }
 
 func (c *Client) DecryptE2EEEnvelope(envelope *E2EEMessageEnvelope) (*E2EEInnerPayload, error) {
+	return c.DecryptE2EEEnvelopeWithContext(context.Background(), envelope)
+}
+
+func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E2EEMessageEnvelope) (*E2EEInnerPayload, error) {
 	if c == nil {
 		return nil, fmt.Errorf("missing client")
 	}
 	if c.e2eePrivateKey == nil {
+		if custody := c.e2eeCustody(); custody != nil {
+			audience, err := c.custodyAudience(ctx)
+			if err != nil {
+				return nil, err
+			}
+			req := &E2EEUnwrapRequest{Version: 1, Operation: "unwrap_e2ee_message", GrantID: strings.TrimSpace(c.grantID), SessionDIDKey: strings.TrimSpace(c.did), TeamID: firstNonEmptyString(c.custodySubject.TeamID, c.teamID), SubjectDIDAW: firstNonEmptyString(c.custodySubject.DIDAW, c.stableID), SubjectDIDKey: strings.TrimSpace(c.custodySubject.DIDKey), Audience: audience, Kind: strings.TrimSpace(envelope.Kind), MessageID: strings.TrimSpace(envelope.MessageID), ConversationID: strings.TrimSpace(envelope.ConversationID), OutputMode: "plaintext", Envelope: envelope}
+			if err := SignE2EEUnwrapCustodyProof(c.signingKey, req); err != nil {
+				return nil, err
+			}
+			out, err := custody.UnwrapE2EEMessage(ctx, req)
+			if err != nil {
+				return nil, err
+			}
+			if out == nil {
+				return nil, fmt.Errorf("custody returned no plaintext")
+			}
+			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, Subject: out.Subject, Body: out.Body}, nil
+		}
 		return nil, fmt.Errorf("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")
 	}
 	stableID := c.stableID

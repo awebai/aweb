@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -81,20 +84,26 @@ type custodyGrantStatus struct {
 }
 
 type custodyService struct {
-	residentHome   string
-	socketPath     string
-	identity       *awconfig.ResolvedIdentity
-	signingKey     ed25519.PrivateKey
-	grantStatus    func(context.Context, string) (custodyGrantStatus, error)
-	readinessCheck func(context.Context) (string, error)
-	selectedTeam   string
-	serviceID      string
-	now            func() time.Time
-	mu             sync.Mutex
-	replay         map[string]string
-	replayAt       map[string]time.Time
-	results        map[string]*awid.PlainMessageSignResponse
-	server         *http.Server
+	residentHome       string
+	socketPath         string
+	identity           *awconfig.ResolvedIdentity
+	signingKey         ed25519.PrivateKey
+	e2eeAssertion      *awid.EncryptionKeyAssertion
+	e2eePrivateKey     *ecdh.PrivateKey
+	client             *aweb.Client
+	grantStatus        func(context.Context, string) (custodyGrantStatus, error)
+	readinessCheck     func(context.Context) (string, error)
+	readStoredEnvelope func(context.Context, string, string, string) (*awid.E2EEMessageEnvelope, error)
+	resolveRecipient   func(context.Context, string) (*awid.ResolvedIdentity, error)
+	e2eeKeyError       string
+	selectedTeam       string
+	serviceID          string
+	now                func() time.Time
+	mu                 sync.Mutex
+	replay             map[string]string
+	replayAt           map[string]time.Time
+	results            map[string]any
+	server             *http.Server
 }
 
 func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
@@ -113,14 +122,22 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 	if err != nil {
 		return nil, err
 	}
+	e2eeAssertion, e2eePrivateKey, e2eeKeyErr := loadCustodyE2EEKey(home.Root, identity)
+	e2eeKeyError := ""
+	if e2eeKeyErr != nil {
+		e2eeKeyError = "encryption_key_unavailable"
+	}
 	client, sel, clientErr := resolveClientSelectionAtIdentityHome(wd, home)
 	serviceID, _ := awid.GenerateUUID4()
-	svc := &custodyService{residentHome: home.Root, socketPath: awconfig.CustodySocketPath(home.Root), identity: identity, signingKey: key, serviceID: serviceID, now: time.Now, replay: map[string]string{}, replayAt: map[string]time.Time{}, results: map[string]*awid.PlainMessageSignResponse{}}
+	svc := &custodyService{residentHome: home.Root, socketPath: awconfig.CustodySocketPath(home.Root), identity: identity, signingKey: key, e2eeAssertion: e2eeAssertion, e2eePrivateKey: e2eePrivateKey, e2eeKeyError: e2eeKeyError, serviceID: serviceID, now: time.Now, replay: map[string]string{}, replayAt: map[string]time.Time{}, results: map[string]any{}}
 	if sel != nil {
 		svc.selectedTeam = strings.TrimSpace(sel.TeamID)
 	}
 	if clientErr == nil && client != nil {
+		svc.client = client
 		svc.grantStatus = grantStatusViaClient(client)
+		svc.readStoredEnvelope = svc.storedE2EEEnvelopeViaClient
+		svc.resolveRecipient = client.ResolveIdentity
 		svc.readinessCheck = func(ctx context.Context) (string, error) {
 			return client.ProbeIdentityGrantStatus(ctx)
 		}
@@ -152,6 +169,9 @@ func runCustodyServe(ctx context.Context) error {
 }
 
 func (s *custodyService) serve(ctx context.Context) error {
+	if err := validateCustodySocketPathLength(s.socketPath); err != nil {
+		return err
+	}
 	if strings.TrimSpace(s.serviceID) == "" {
 		id, _ := awid.GenerateUUID4()
 		s.serviceID = id
@@ -187,6 +207,8 @@ func (s *custodyService) serve(ctx context.Context) error {
 	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/sign_plain_message", s.handleSignPlainMessage)
+	mux.HandleFunc("/create_e2ee_envelope", s.handleCreateE2EEEnvelope)
+	mux.HandleFunc("/unwrap_e2ee_message", s.handleUnwrapE2EEMessage)
 	mux.HandleFunc("/stop", s.handleStop)
 	s.server = &http.Server{Handler: mux}
 	go func() { <-ctx.Done(); _ = s.server.Close() }()
@@ -231,8 +253,18 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 	if len(teamErrs) > 0 {
 		errs = append(errs, teamErrs...)
 	}
-	out.Keys = map[string]any{"signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": false, "encryption_key_id": ""}
+	encryptionKeyID := ""
+	if s.e2eeAssertion != nil {
+		encryptionKeyID = strings.TrimSpace(s.e2eeAssertion.EncryptionKeyID)
+	}
+	if strings.TrimSpace(s.e2eeKeyError) != "" {
+		errs = append(errs, strings.TrimSpace(s.e2eeKeyError))
+	}
+	out.Keys = map[string]any{"signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": s.e2eeAssertion != nil && s.e2eePrivateKey != nil && grantStatusReady, "encryption_key_id": encryptionKeyID}
 	out.Ops = []string{"status.v1", "sign_plain_message.v1"}
+	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
+		out.Ops = append(out.Ops, "create_e2ee_envelope.v1", "unwrap_e2ee_message.v1")
+	}
 	out.Freshness = map[string]any{"source": "identity-grants", "last_checked_at": lastCheckedAt, "max_cache_age_seconds": 30}
 	out.Errors = errs
 	return out
@@ -389,33 +421,13 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if !ok {
 		return nil, fmt.Errorf("grant_scope_denied")
 	}
-	key := strings.TrimSpace(req.GrantID) + "|" + strings.TrimSpace(req.SessionDIDKey) + "|" + strings.TrimSpace(req.Nonce)
-	s.mu.Lock()
-	if s.replay == nil {
-		s.replay = map[string]string{}
+	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.PlainMessageSignResponse{})
+	if err != nil {
+		return nil, err
 	}
-	if s.replayAt == nil {
-		s.replayAt = map[string]time.Time{}
+	if res, _ := cached.(*awid.PlainMessageSignResponse); res != nil {
+		return res, nil
 	}
-	if s.results == nil {
-		s.results = map[string]*awid.PlainMessageSignResponse{}
-	}
-	s.evictReplayLocked(s.now().Add(-2 * time.Minute))
-	if old, exists := s.replay[key]; exists {
-		if old != req.RequestDigest {
-			s.mu.Unlock()
-			return nil, fmt.Errorf("replay_detected")
-		}
-		if res := s.results[key]; res != nil {
-			s.mu.Unlock()
-			return res, nil
-		}
-		s.mu.Unlock()
-		return nil, fmt.Errorf("replay_detected")
-	}
-	s.replay[key] = req.RequestDigest
-	s.replayAt[key] = s.now()
-	s.mu.Unlock()
 	env := req.Envelope
 	env.FromDID = s.identity.DID
 	env.FromStableID = s.identity.StableID
@@ -433,9 +445,7 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 		return nil, err
 	}
 	out := &awid.PlainMessageSignResponse{FromDID: s.identity.DID, SigningKeyID: s.identity.DID, FromStableID: s.identity.StableID, ToDID: env.ToDID, ToStableID: env.ToStableID, MessageID: env.MessageID, Timestamp: env.Timestamp, Signature: sig, SignedPayload: awid.CanonicalJSON(&env)}
-	s.mu.Lock()
-	s.results[key] = out
-	s.mu.Unlock()
+	s.cacheCustodyReplayResult(key, out)
 	return out, nil
 }
 
@@ -447,6 +457,59 @@ func (s *custodyService) evictReplayLocked(cutoff time.Time) {
 			delete(s.results, key)
 		}
 	}
+}
+
+func (s *custodyService) reserveCustodyReplay(grantID, sessionDIDKey, nonce, digest string, resultType any) (string, any, error) {
+	key := strings.TrimSpace(grantID) + "|" + strings.TrimSpace(sessionDIDKey) + "|" + strings.TrimSpace(nonce)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.replay == nil {
+		s.replay = map[string]string{}
+	}
+	if s.replayAt == nil {
+		s.replayAt = map[string]time.Time{}
+	}
+	if s.results == nil {
+		s.results = map[string]any{}
+	}
+	s.evictReplayLocked(s.now().Add(-2 * time.Minute))
+	if old, exists := s.replay[key]; exists {
+		if old != strings.TrimSpace(digest) {
+			return "", nil, fmt.Errorf("replay_detected")
+		}
+		if res := s.results[key]; res != nil {
+			switch resultType.(type) {
+			case *awid.E2EEEnvelopeCreateResponse:
+				if _, ok := res.(*awid.E2EEEnvelopeCreateResponse); ok {
+					return key, res, nil
+				}
+			case *awid.E2EEUnwrapResponse:
+				if _, ok := res.(*awid.E2EEUnwrapResponse); ok {
+					return key, res, nil
+				}
+			case *awid.PlainMessageSignResponse:
+				if _, ok := res.(*awid.PlainMessageSignResponse); ok {
+					return key, res, nil
+				}
+			}
+		}
+		return "", nil, fmt.Errorf("replay_detected")
+	}
+	s.replay[key] = strings.TrimSpace(digest)
+	s.replayAt[key] = s.now()
+	return key, nil, nil
+}
+
+func (s *custodyService) cacheCustodyReplayResult(key string, result any) {
+	if strings.TrimSpace(key) == "" || result == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.results == nil {
+		s.results = map[string]any{}
+	}
+	s.results[key] = result
+	s.mu.Unlock()
 }
 
 func runCustodyStatus(ctx context.Context) (custodyStatusReport, error) {
@@ -524,6 +587,25 @@ func custodyHTTPTimeout(ctx context.Context, socket, method, path string, in any
 	return nil
 }
 
+func validateCustodySocketPathLength(path string) error {
+	limit := custodySocketPathLimit()
+	if limit <= 0 || len(path) < limit {
+		return nil
+	}
+	return usageError("custody_socket_path_too_long: custody socket path is %d bytes, platform limit is %d; use a shorter resident identity home path such as /private/tmp/idtest-custody for local rehearsal", len(path), limit-1)
+}
+
+func custodySocketPathLimit() int {
+	switch runtime.GOOS {
+	case "darwin":
+		return 104
+	case "linux", "freebsd", "openbsd", "netbsd":
+		return 108
+	default:
+		return 0
+	}
+}
+
 func isStaleCustodySocketError(err error) bool {
 	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOTSOCK)
 }
@@ -538,3 +620,418 @@ func writeCustodyError(w http.ResponseWriter, code int, e string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": e})
 }
 func mustGetwd() string { wd, _ := os.Getwd(); return wd }
+
+func (s *custodyService) reloadActiveE2EEKey() error {
+	if strings.TrimSpace(s.residentHome) == "" {
+		if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
+			return nil
+		}
+		s.e2eeKeyError = "encryption_key_unavailable"
+		return fmt.Errorf("sender_key_unavailable")
+	}
+	assertion, privateKey, err := loadCustodyE2EEKey(s.residentHome, s.identity)
+	if err != nil {
+		s.e2eeKeyError = "encryption_key_unavailable"
+		return fmt.Errorf("sender_key_unavailable")
+	}
+	s.e2eeAssertion = assertion
+	s.e2eePrivateKey = privateKey
+	s.e2eeKeyError = ""
+	return nil
+}
+
+func loadCustodyE2EEKey(identityHome string, identity *awconfig.ResolvedIdentity) (*awid.EncryptionKeyAssertion, *ecdh.PrivateKey, error) {
+	statePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "encryption.yaml")
+	if err != nil {
+		return nil, nil, err
+	}
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	record := state.ActiveRecord()
+	if record == nil {
+		return nil, nil, fmt.Errorf("no active encryption key")
+	}
+	material, err := validateEncryptionRecordPrivateKeyAt("", identityHome, record)
+	if err != nil {
+		return nil, nil, err
+	}
+	assertion, err := loadEncryptionAssertionAt("", identityHome, record.AssertionPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateEncryptionRecordAssertion(identity, record, assertion, material); err != nil {
+		return nil, nil, err
+	}
+	privatePath, err := resolveIdentityStoredPath("", identityHome, record.PrivateKeyPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	privateKey, err := awid.LoadX25519PrivateKey(privatePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return assertion, privateKey, nil
+}
+
+func (s *custodyService) handleCreateE2EEEnvelope(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "unsupported_operation", 405)
+		return
+	}
+	var req awid.E2EEEnvelopeCreateRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeCustodyError(w, 400, "bad_request")
+		return
+	}
+	out, err := s.createE2EEEnvelope(r.Context(), &req)
+	if err != nil {
+		writeCustodyError(w, 403, err.Error())
+		return
+	}
+	writeJSON(w, out)
+}
+
+func (s *custodyService) handleUnwrapE2EEMessage(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "unsupported_operation", 405)
+		return
+	}
+	var req awid.E2EEUnwrapRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeCustodyError(w, 400, "bad_request")
+		return
+	}
+	out, err := s.unwrapE2EEMessage(r.Context(), &req)
+	if err != nil {
+		writeCustodyError(w, 403, err.Error())
+		return
+	}
+	writeJSON(w, out)
+}
+
+func (s *custodyService) validateE2EECommon(ctx context.Context, op string, reqFields map[string]string, nonce, timestamp string, requiredScope string) (custodyGrantStatus, error) {
+	ts, err := time.Parse(time.RFC3339, strings.TrimSpace(timestamp))
+	if err != nil {
+		return custodyGrantStatus{}, fmt.Errorf("bad_timestamp")
+	}
+	if s.now().Sub(ts) > 60*time.Second || ts.Sub(s.now()) > 60*time.Second {
+		return custodyGrantStatus{}, fmt.Errorf("bad_timestamp")
+	}
+	if strings.TrimSpace(reqFields["aud"]) != "local-resident-custody:"+strings.TrimSpace(s.serviceID) {
+		return custodyGrantStatus{}, fmt.Errorf("bad_audience")
+	}
+	if reqFields["subject_did_key"] != s.identity.DID || (reqFields["subject_did_aw"] != "" && reqFields["subject_did_aw"] != s.identity.StableID) {
+		return custodyGrantStatus{}, fmt.Errorf("grant_subject_mismatch")
+	}
+	if s.grantStatus == nil {
+		return custodyGrantStatus{}, fmt.Errorf("grant_freshness_unavailable")
+	}
+	freshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	st, err := s.grantStatus(freshCtx, reqFields["grant_id"])
+	if err != nil {
+		return custodyGrantStatus{}, fmt.Errorf("grant_freshness_unavailable")
+	}
+	if !st.Active {
+		switch firstNonEmpty(strings.TrimSpace(st.EffectiveStatus), strings.TrimSpace(st.Status)) {
+		case "expired":
+			return st, fmt.Errorf("grant_expired")
+		case "revoked":
+			return st, fmt.Errorf("grant_revoked")
+		case "issuer_revoked":
+			return st, fmt.Errorf("grant_issuer_revoked")
+		case "issuer_not_registered":
+			return st, fmt.Errorf("grant_issuer_not_registered")
+		case "subject_inactive":
+			return st, fmt.Errorf("grant_subject_inactive")
+		}
+		return st, fmt.Errorf("grant_scope_denied")
+	}
+	if strings.TrimSpace(st.ExpiresAt) == "" {
+		return st, fmt.Errorf("grant_freshness_unavailable")
+	}
+	expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(st.ExpiresAt))
+	if err != nil {
+		return st, fmt.Errorf("grant_freshness_unavailable")
+	}
+	if !s.now().Before(expiresAt) {
+		return st, fmt.Errorf("grant_expired")
+	}
+	if strings.TrimSpace(st.GrantDIDKey) != strings.TrimSpace(reqFields["session_did_key"]) {
+		return st, fmt.Errorf("grant_session_mismatch")
+	}
+	if strings.TrimSpace(st.TeamID) != strings.TrimSpace(reqFields["team_id"]) {
+		return st, fmt.Errorf("grant_team_mismatch")
+	}
+	ok := false
+	for _, sc := range st.Scopes {
+		if strings.TrimSpace(sc) == requiredScope {
+			ok = true
+		}
+	}
+	if !ok {
+		return st, fmt.Errorf("grant_scope_denied")
+	}
+	return st, nil
+}
+
+func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEEnvelopeCreateRequest) (*awid.E2EEEnvelopeCreateResponse, error) {
+	if err := awid.VerifyE2EECreateCustodyProof(req); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.Operation) != "create_e2ee_envelope" {
+		return nil, fmt.Errorf("unsupported_operation")
+	}
+	kind := strings.TrimSpace(req.Kind)
+	if kind != "mail" && kind != "chat" {
+		return nil, fmt.Errorf("message_not_allowed")
+	}
+	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
+	if _, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".send"); err != nil {
+		return nil, err
+	}
+	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.E2EEEnvelopeCreateResponse{})
+	if err != nil {
+		return nil, err
+	}
+	if out, _ := cached.(*awid.E2EEEnvelopeCreateResponse); out != nil {
+		return out, nil
+	}
+	if err := s.reloadActiveE2EEKey(); err != nil {
+		return nil, err
+	}
+	if err := s.verifyE2EERecipients(ctx, req.Recipients); err != nil {
+		return nil, err
+	}
+	now := s.now().UTC().Truncate(time.Second)
+	params := awid.E2EEEncryptMessageParams{Kind: kind, Sender: awid.E2EESenderKey{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID, TeamID: req.TeamID, EncryptionKey: s.e2eeAssertion, SigningKey: s.signingKey}, Recipients: req.Recipients, Subject: req.Subject, Body: req.Body, MessageID: req.MessageID, ConversationID: req.ConversationID, ReplyToMessageID: req.ReplyToMessageID, CreatedAt: now, DeliveryOrigin: req.DeliveryOrigin, ObservedInboundMode: req.ObservedInboundMode}
+	var env *awid.E2EEMessageEnvelope
+	var encryptErr error
+	if kind == "mail" {
+		env, encryptErr = awid.EncryptE2EEMail(params)
+	} else {
+		env, encryptErr = awid.EncryptE2EEChat(params)
+	}
+	if encryptErr != nil {
+		return nil, fmt.Errorf("envelope_build_failed")
+	}
+	out := &awid.E2EEEnvelopeCreateResponse{ContentMode: awid.ContentModeEncryptedV2, MessageVersion: awid.E2EEMessageVersion, EncryptedEnvelope: env}
+	s.cacheCustodyReplayResult(key, out)
+	return out, nil
+}
+
+func (s *custodyService) verifyE2EERecipients(ctx context.Context, recipients []awid.E2EERecipientKey) error {
+	if len(recipients) == 0 {
+		return fmt.Errorf("recipient_binding_unavailable")
+	}
+	if s.resolveRecipient == nil {
+		return fmt.Errorf("recipient_binding_unavailable")
+	}
+	for _, recipient := range recipients {
+		stableID := strings.TrimSpace(recipient.StableID)
+		if stableID == "" || !strings.HasPrefix(stableID, "did:aw:") {
+			continue
+		}
+		resolved, err := s.resolveRecipient(ctx, stableID)
+		if err != nil || resolved == nil {
+			return fmt.Errorf("recipient_binding_unavailable")
+		}
+		if strings.TrimSpace(resolved.DID) != strings.TrimSpace(recipient.DID) || strings.TrimSpace(resolved.StableID) != stableID {
+			return fmt.Errorf("recipient_binding_mismatch")
+		}
+		if resolved.EncryptionKey == nil || strings.TrimSpace(resolved.EncryptionKey.EncryptionKeyID) != strings.TrimSpace(recipient.EncryptionKey.EncryptionKeyID) {
+			return fmt.Errorf("recipient_binding_mismatch")
+		}
+	}
+	return nil
+}
+
+func (s *custodyService) storedE2EEEnvelopeViaClient(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("stored_message_unavailable")
+	}
+	kind = strings.TrimSpace(kind)
+	messageID = strings.TrimSpace(messageID)
+	conversationID = strings.TrimSpace(conversationID)
+	if messageID == "" {
+		return nil, fmt.Errorf("bad_request")
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	switch kind {
+	case "mail":
+		var msg awid.InboxMessage
+		if err := s.client.Get(readCtx, "/v1/messages/"+url.PathEscape(messageID), &msg); err != nil {
+			return nil, fmt.Errorf("stored_message_unavailable")
+		}
+		if strings.TrimSpace(msg.MessageID) != messageID || (conversationID != "" && strings.TrimSpace(msg.ConversationID) != conversationID) {
+			return nil, fmt.Errorf("stored_message_mismatch")
+		}
+		if msg.Encrypted == nil || (msg.ContentMode != "" && msg.ContentMode != awid.ContentModeEncryptedV2) || (msg.MessageVersion != 0 && msg.MessageVersion != awid.E2EEMessageVersion) {
+			return nil, fmt.Errorf("stored_message_mismatch")
+		}
+		return msg.Encrypted, nil
+	case "chat":
+		if conversationID == "" {
+			return nil, fmt.Errorf("bad_request")
+		}
+		var out awid.ChatHistoryResponse
+		path := "/v1/chat/sessions/" + url.PathEscape(conversationID) + "/messages?message_id=" + url.QueryEscape(messageID)
+		if err := s.client.Get(readCtx, path, &out); err != nil {
+			return nil, fmt.Errorf("stored_message_unavailable")
+		}
+		if len(out.Messages) != 1 {
+			return nil, fmt.Errorf("stored_message_unavailable")
+		}
+		msg := out.Messages[0]
+		if strings.TrimSpace(msg.MessageID) != messageID || strings.TrimSpace(msg.ConversationID) != conversationID {
+			return nil, fmt.Errorf("stored_message_mismatch")
+		}
+		if msg.Encrypted == nil || (msg.ContentMode != "" && msg.ContentMode != awid.ContentModeEncryptedV2) || (msg.MessageVersion != 0 && msg.MessageVersion != awid.E2EEMessageVersion) {
+			return nil, fmt.Errorf("stored_message_mismatch")
+		}
+		return msg.Encrypted, nil
+	default:
+		return nil, fmt.Errorf("message_not_allowed")
+	}
+}
+
+func e2eeEnvelopesEqual(a, b *awid.E2EEMessageEnvelope) bool {
+	left, err := awid.CanonicalJSONValue(a)
+	if err != nil {
+		return false
+	}
+	right, err := awid.CanonicalJSONValue(b)
+	if err != nil {
+		return false
+	}
+	return left == right
+}
+
+func custodyIdentityFieldMatches(wrapValue, localValue string) bool {
+	wrapValue = strings.TrimSpace(wrapValue)
+	localValue = strings.TrimSpace(localValue)
+	return wrapValue == "" || (localValue != "" && wrapValue == localValue)
+}
+
+func (s *custodyService) requiredE2EERecipientKeyID(envelope *awid.E2EEMessageEnvelope) (string, error) {
+	if envelope == nil {
+		return "", fmt.Errorf("bad_request")
+	}
+	for i := range envelope.KeyWraps {
+		wrap := envelope.KeyWraps[i]
+		if !custodyIdentityFieldMatches(wrap.RecipientDID, s.identity.DID) {
+			continue
+		}
+		if !custodyIdentityFieldMatches(wrap.RecipientStableID, s.identity.StableID) {
+			continue
+		}
+		if !custodyIdentityFieldMatches(wrap.RecipientAddress, s.identity.Address) {
+			continue
+		}
+		keyID := strings.TrimSpace(wrap.RecipientEncryptionKeyID)
+		if keyID == "" {
+			return "", fmt.Errorf("recipient_key_unavailable")
+		}
+		return keyID, nil
+	}
+	return "", fmt.Errorf("not_a_recipient")
+}
+
+func (s *custodyService) decryptIdentityForE2EEEnvelope(envelope *awid.E2EEMessageEnvelope) (awid.E2EEDecryptIdentity, error) {
+	keyID, err := s.requiredE2EERecipientKeyID(envelope)
+	if err != nil {
+		return awid.E2EEDecryptIdentity{}, err
+	}
+	activeKeyID := ""
+	if s.e2eeAssertion != nil {
+		activeKeyID = strings.TrimSpace(s.e2eeAssertion.EncryptionKeyID)
+	}
+	if keyID == activeKeyID && s.e2eePrivateKey != nil {
+		return awid.E2EEDecryptIdentity{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID, EncryptionKeyID: keyID, PrivateKey: s.e2eePrivateKey}, nil
+	}
+	statePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: s.residentHome}, "encryption.yaml")
+	if err != nil {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
+	}
+	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
+	if err != nil {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
+	}
+	record := state.RecordForKeyID(keyID)
+	if record == nil {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
+	}
+	if _, err := validateEncryptionRecordPrivateKeyAt("", s.residentHome, record); err != nil {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
+	}
+	privatePath, err := resolveIdentityStoredPath("", s.residentHome, record.PrivateKeyPath)
+	if err != nil {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
+	}
+	privateKey, err := awid.LoadX25519PrivateKey(privatePath)
+	if err != nil {
+		return awid.E2EEDecryptIdentity{}, fmt.Errorf("archived_key_unavailable")
+	}
+	return awid.E2EEDecryptIdentity{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID, EncryptionKeyID: keyID, PrivateKey: privateKey}, nil
+}
+
+func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUnwrapRequest) (*awid.E2EEUnwrapResponse, error) {
+	if err := awid.VerifyE2EEUnwrapCustodyProof(req); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.Operation) != "unwrap_e2ee_message" {
+		return nil, fmt.Errorf("unsupported_operation")
+	}
+	kind := strings.TrimSpace(req.Kind)
+	if kind != "mail" && kind != "chat" {
+		return nil, fmt.Errorf("message_not_allowed")
+	}
+	if strings.TrimSpace(req.OutputMode) != "" && strings.TrimSpace(req.OutputMode) != "plaintext" {
+		return nil, fmt.Errorf("output_mode_unsupported")
+	}
+	if req.Envelope == nil {
+		return nil, fmt.Errorf("bad_request")
+	}
+	if req.Envelope.Kind != kind || req.Envelope.MessageID != strings.TrimSpace(req.MessageID) || req.Envelope.ConversationID != strings.TrimSpace(req.ConversationID) {
+		return nil, fmt.Errorf("message_binding_mismatch")
+	}
+	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
+	if _, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".read"); err != nil {
+		return nil, err
+	}
+	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.E2EEUnwrapResponse{})
+	if err != nil {
+		return nil, err
+	}
+	if out, _ := cached.(*awid.E2EEUnwrapResponse); out != nil {
+		return out, nil
+	}
+	if s.readStoredEnvelope == nil {
+		return nil, fmt.Errorf("stored_message_unavailable")
+	}
+	storedEnvelope, err := s.readStoredEnvelope(ctx, kind, strings.TrimSpace(req.MessageID), strings.TrimSpace(req.ConversationID))
+	if err != nil {
+		return nil, err
+	}
+	if !e2eeEnvelopesEqual(storedEnvelope, req.Envelope) {
+		return nil, fmt.Errorf("stored_message_mismatch")
+	}
+	decryptIdentity, err := s.decryptIdentityForE2EEEnvelope(storedEnvelope)
+	if err != nil {
+		return nil, err
+	}
+	plain, err := awid.DecryptE2EEMessage(storedEnvelope, decryptIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt_failed")
+	}
+	out := &awid.E2EEUnwrapResponse{Kind: plain.Kind, MessageID: plain.MessageID, ConversationID: plain.ConversationID, Subject: plain.Subject, Body: plain.Body}
+	s.cacheCustodyReplayResult(key, out)
+	return out, nil
+}

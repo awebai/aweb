@@ -514,6 +514,70 @@ func (c *Client) HasTeamCertificateAuth() bool {
 	return c != nil && strings.TrimSpace(c.teamCertHeader) != "" && len(c.signingKey) != 0
 }
 
+func (c *Client) custodyAudience(ctx context.Context) (string, error) {
+	audience := "local-resident-custody"
+	if c != nil && c.plainMessageSigner != nil {
+		if provider, ok := c.plainMessageSigner.(interface {
+			ServiceAudience(context.Context) (string, error)
+		}); ok {
+			got, err := provider.ServiceAudience(ctx)
+			if err != nil {
+				return "", err
+			}
+			audience = got
+		}
+	}
+	return audience, nil
+}
+
+func (c *Client) e2eeCustody() E2EECustodyClient {
+	if c == nil || c.plainMessageSigner == nil || strings.TrimSpace(c.grantID) == "" {
+		return nil
+	}
+	custody, _ := c.plainMessageSigner.(E2EECustodyClient)
+	return custody
+}
+
+func (c *Client) createCustodyE2EEEnvelope(ctx context.Context, custody E2EECustodyClient, kind, subject, body, messageID, conversationID, replyTo string, recipients []E2EERecipientKey, deliveryOrigin, observedInboundMode string) (*E2EEMessageEnvelope, error) {
+	if c == nil || custody == nil {
+		return nil, errors.New("custody_unavailable")
+	}
+	audience, err := c.custodyAudience(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req := &E2EEEnvelopeCreateRequest{
+		Version:             1,
+		Operation:           "create_e2ee_envelope",
+		GrantID:             strings.TrimSpace(c.grantID),
+		SessionDIDKey:       strings.TrimSpace(c.did),
+		TeamID:              firstNonEmptyString(c.custodySubject.TeamID, c.teamID),
+		SubjectDIDAW:        firstNonEmptyString(c.custodySubject.DIDAW, c.stableID),
+		SubjectDIDKey:       strings.TrimSpace(c.custodySubject.DIDKey),
+		Audience:            audience,
+		Kind:                kind,
+		Subject:             subject,
+		Body:                body,
+		MessageID:           messageID,
+		ConversationID:      conversationID,
+		ReplyToMessageID:    replyTo,
+		Recipients:          recipients,
+		DeliveryOrigin:      deliveryOrigin,
+		ObservedInboundMode: observedInboundMode,
+	}
+	if err := SignE2EECreateCustodyProof(c.signingKey, req); err != nil {
+		return nil, err
+	}
+	out, err := custody.CreateE2EEEnvelope(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil || out.EncryptedEnvelope == nil {
+		return nil, errors.New("custody returned no encrypted envelope")
+	}
+	return out.EncryptedEnvelope, nil
+}
+
 func (c *Client) SetE2EEKey(assertion *EncryptionKeyAssertion, privateKey *ecdh.PrivateKey) {
 	if c == nil {
 		return

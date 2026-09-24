@@ -7390,3 +7390,100 @@ func TestGrantClientE2EEFailsClosedBeforeSessionEnvelopeSignature(t *testing.T) 
 		t.Fatalf("grant E2EE chat error=%v, want explicit fail-closed grant envelope refusal", err)
 	}
 }
+
+type fakeE2EECustody struct {
+	createReq *E2EEEnvelopeCreateRequest
+	unwrapReq *E2EEUnwrapRequest
+	envelope  *E2EEMessageEnvelope
+}
+
+func (f *fakeE2EECustody) ServiceAudience(context.Context) (string, error) {
+	return "local-resident-custody:test", nil
+}
+func (f *fakeE2EECustody) SignPlainMessage(context.Context, *PlainMessageSignRequest) (*PlainMessageSignResponse, error) {
+	return nil, errors.New("unexpected plaintext signing")
+}
+func (f *fakeE2EECustody) CreateE2EEEnvelope(ctx context.Context, req *E2EEEnvelopeCreateRequest) (*E2EEEnvelopeCreateResponse, error) {
+	f.createReq = req
+	if f.envelope == nil {
+		f.envelope = &E2EEMessageEnvelope{MessageVersion: E2EEMessageVersion, EnvelopeType: E2EEEnvelopeType, Kind: req.Kind, MessageID: req.MessageID, ConversationID: req.ConversationID, CreatedAt: time.Now().UTC().Format(time.RFC3339), From: E2EEIdentityRef{DID: req.SubjectDIDKey, StableID: req.SubjectDIDAW}, Routing: E2EERouting{To: "bob", ToDID: "did:key:zBob"}, Policy: E2EEPolicy{RequiresE2EE: true}}
+	}
+	return &E2EEEnvelopeCreateResponse{ContentMode: ContentModeEncryptedV2, MessageVersion: E2EEMessageVersion, EncryptedEnvelope: f.envelope}, nil
+}
+func (f *fakeE2EECustody) UnwrapE2EEMessage(ctx context.Context, req *E2EEUnwrapRequest) (*E2EEUnwrapResponse, error) {
+	f.unwrapReq = req
+	return &E2EEUnwrapResponse{Kind: req.Kind, MessageID: req.MessageID, ConversationID: req.ConversationID, Subject: "decrypted subject", Body: "decrypted body"}, nil
+}
+
+func TestGrantClientE2EESendUsesCustodyEnvelope(t *testing.T) {
+	resident := newE2EETestIdentity(t, "acme.com/alice")
+	bob := newE2EETestIdentity(t, "acme.com/bob")
+	_, sessionKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var posted SendMessageRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/messages" {
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+			_ = json.NewEncoder(w).Encode(SendMessageResponse{MessageID: posted.MessageID, ConversationID: posted.ConversationID})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	client, err := NewWithGrant(srv.URL, sessionKey, "11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetGrantSubject("backend:acme.com", resident.stableID, resident.did, resident.address, "alice")
+	custody := &fakeE2EECustody{}
+	client.SetPlainMessageSigner(custody)
+	client.SetResolver(stubIdentityResolver{resolve: func(_ context.Context, identifier string) (*ResolvedIdentity, error) {
+		return &ResolvedIdentity{DID: bob.did, StableID: bob.stableID, Address: bob.address, EncryptionKey: bob.assertion}, nil
+	}})
+	_, err = client.SendMessage(context.Background(), &SendMessageRequest{ToAddress: bob.address, Subject: "secret subject", Body: "secret body", EncryptE2EE: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custody.createReq == nil || custody.createReq.Operation != "create_e2ee_envelope" || custody.createReq.SubjectDIDKey != resident.did || custody.createReq.Body != "secret body" {
+		t.Fatalf("bad custody create request: %#v", custody.createReq)
+	}
+	if posted.ContentMode != ContentModeEncryptedV2 || posted.MessageVersion != E2EEMessageVersion || posted.Encrypted == nil || posted.Body != "" || posted.Subject != "" {
+		t.Fatalf("posted plaintext or missing encrypted envelope: %#v", posted)
+	}
+}
+
+func TestGrantClientE2EEInboxUsesCustodyUnwrap(t *testing.T) {
+	resident := newE2EETestIdentity(t, "acme.com/alice")
+	_, sessionKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &E2EEMessageEnvelope{MessageVersion: E2EEMessageVersion, EnvelopeType: E2EEEnvelopeType, Kind: "mail", MessageID: "msg-1", ConversationID: "conv-1", From: E2EEIdentityRef{DID: "did:key:zSender"}, Policy: E2EEPolicy{RequiresE2EE: true}}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/messages/inbox" {
+			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{{MessageID: "msg-1", ConversationID: "conv-1", ContentMode: ContentModeEncryptedV2, MessageVersion: E2EEMessageVersion, Encrypted: env}}})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	client, err := NewWithGrant(srv.URL, sessionKey, "11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetGrantSubject("backend:acme.com", resident.stableID, resident.did, resident.address, "alice")
+	custody := &fakeE2EECustody{}
+	client.SetPlainMessageSigner(custody)
+	out, err := client.Inbox(context.Background(), InboxParams{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if custody.unwrapReq == nil || custody.unwrapReq.Operation != "unwrap_e2ee_message" || custody.unwrapReq.MessageID != "msg-1" {
+		t.Fatalf("bad unwrap request: %#v", custody.unwrapReq)
+	}
+	if len(out.Messages) != 1 || out.Messages[0].Body != "decrypted body" || out.Messages[0].Subject != "decrypted subject" {
+		t.Fatalf("message not decrypted through custody: %#v", out.Messages)
+	}
+}

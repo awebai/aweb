@@ -279,7 +279,7 @@ func TestGrantHomeCustodySocketSignsPlainMail(t *testing.T) {
 		now:        time.Now,
 		replay:     map[string]string{},
 		replayAt:   map[string]time.Time{},
-		results:    map[string]*awid.PlainMessageSignResponse{},
+		results:    map[string]any{},
 		grantStatus: func(ctx context.Context, grantID string) (custodyGrantStatus, error) {
 			return custodyGrantStatus{Active: true, Status: "active", EffectiveStatus: "active", TeamID: grant.TeamID, GrantDIDKey: sessionDID, Scopes: grant.Scopes, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, nil
 		},
