@@ -171,6 +171,7 @@ class SurfaceContractTest(unittest.TestCase):
         self.assertIn('runner_memory="${AWEB_CANDIDATE_RUNNER_MEMORY:-8g}"', gate)
         self.assertIn('builder_cpus="${AWEB_CANDIDATE_BUILDER_CPUS:-2}"', gate)
         self.assertIn('builder_memory="${AWEB_CANDIDATE_BUILDER_MEMORY:-6g}"', gate)
+        self.assertIn('builder_memory_swap="${AWEB_CANDIDATE_BUILDER_MEMORY_SWAP:-$builder_memory}"', gate)
 
         # The outer runner and direct database services are named/labeled and bounded.
         for needle in (
@@ -186,7 +187,7 @@ class SurfaceContractTest(unittest.TestCase):
 
         # The initial tool image is built by the bounded persistent BuildKit, and the
         # same builder is exported to nested release-image builds.
-        self.assertIn('docker update --cpus "$builder_cpus" --memory "$builder_memory" --pids-limit "$builder_pids"', gate)
+        self.assertIn('docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids"', gate)
         self.assertIn('docker buildx build --builder "$builder_name" --load --pull', gate)
         self.assertIn('-e BUILDX_BUILDER="$builder_name"', gate)
         self.assertNotIn('\ndocker build --pull -f "$checkout/candidate-gate/Dockerfile"', gate)
@@ -210,6 +211,7 @@ class SurfaceContractTest(unittest.TestCase):
         self.assertIn("trap 'cleanup 130' INT", gate)
         self.assertIn("trap 'cleanup 143' TERM", gate)
         self.assertIn('docker ps -aq --filter "label=aweb.candidate-gate=$resource_label"', gate)
+        self.assertIn('memory_swap=%s', gate)
         self.assertIn('resource-limits.tsv', gate)
 
     def test_candidate_docker_wrapper_preserves_compose_base_files(self):

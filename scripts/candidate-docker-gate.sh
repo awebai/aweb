@@ -65,6 +65,7 @@ runner_memory="${AWEB_CANDIDATE_RUNNER_MEMORY:-8g}"
 runner_pids="${AWEB_CANDIDATE_RUNNER_PIDS:-2048}"
 builder_cpus="${AWEB_CANDIDATE_BUILDER_CPUS:-2}"
 builder_memory="${AWEB_CANDIDATE_BUILDER_MEMORY:-6g}"
+builder_memory_swap="${AWEB_CANDIDATE_BUILDER_MEMORY_SWAP:-$builder_memory}"
 builder_pids="${AWEB_CANDIDATE_BUILDER_PIDS:-2048}"
 service_cpus="${AWEB_CANDIDATE_SERVICE_CPUS:-1}"
 service_memory="${AWEB_CANDIDATE_SERVICE_MEMORY:-1g}"
@@ -188,7 +189,7 @@ if ! BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_
     || refuse "could not provision the persistent release builder"
 fi
 builder_container="buildx_buildkit_${builder_name}0"
-docker update --cpus "$builder_cpus" --memory "$builder_memory" --pids-limit "$builder_pids" \
+docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids" \
   "$builder_container" >/dev/null \
   || refuse "could not apply candidate builder resource limits"
 
@@ -203,9 +204,9 @@ base_ref="$(awk '/^FROM /{print $2; exit}' "$checkout/candidate-gate/Dockerfile"
 base_digest="$(docker image inspect "$base_ref" --format '{{join .RepoDigests ","}}' 2>/dev/null || echo unresolved)"
 locks_digest="$(git -C "$checkout" ls-files -s -- '*uv.lock' | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.read().encode()).hexdigest())')"
 printf 'base\t%s\t%s\nlocks\t%s\n' "$base_ref" "$base_digest" "$locks_digest" > "$LOG_DIR/inputs.tsv"
-printf 'runner\tcpus=%s\tmemory=%s\tpids=%s\nbuilder\tcpus=%s\tmemory=%s\tpids=%s\nservice\tcpus=%s\tmemory=%s\tpids=%s\nredis\tcpus=%s\tmemory=%s\tpids=%s\nsibling\tcpus=%s\tmemory=%s\tpids=%s\n' \
+printf 'runner\tcpus=%s\tmemory=%s\tpids=%s\nbuilder\tcpus=%s\tmemory=%s\tmemory_swap=%s\tpids=%s\nservice\tcpus=%s\tmemory=%s\tpids=%s\nredis\tcpus=%s\tmemory=%s\tpids=%s\nsibling\tcpus=%s\tmemory=%s\tpids=%s\n' \
   "$runner_cpus" "$runner_memory" "$runner_pids" \
-  "$builder_cpus" "$builder_memory" "$builder_pids" \
+  "$builder_cpus" "$builder_memory" "$builder_memory_swap" "$builder_pids" \
   "$service_cpus" "$service_memory" "$service_pids" \
   "$redis_cpus" "$redis_memory" "$redis_pids" \
   "$sibling_cpus" "$sibling_memory" "$sibling_pids" > "$LOG_DIR/resource-limits.tsv"
