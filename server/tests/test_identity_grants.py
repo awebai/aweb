@@ -509,7 +509,29 @@ async def test_tampered_signed_payload_path_is_rejected(aweb_cloud_db):
 
 def test_identity_grant_routes_are_registered_on_production_app():
     paths = {route.path for route in create_app().routes}
-    assert {"/v1/identity-grants", "/v1/identity-grants/{grant_id}/revoke"} <= paths
+    assert {"/v1/identity-grants", "/v1/identity-grants/{grant_id}/status", "/v1/identity-grants/{grant_id}/revoke"} <= paths
+
+
+@pytest.mark.asyncio
+async def test_identity_grant_status_reports_effective_issuer_revocation(aweb_cloud_db):
+    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    _, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        before = await client.get(f"/v1/identity-grants/{grant_id}/status")
+        missing = await client.get("/v1/identity-grants/00000000-0000-0000-0000-000000000000/status")
+        app.state.awid_registry_client.get_team_revocations = AsyncMock(return_value={"cert-1"})
+        after = await client.get(f"/v1/identity-grants/{grant_id}/status")
+    assert before.status_code == 200, before.text
+    assert before.json()["status"] == "active"
+    assert before.json()["effective_status"] == "active"
+    assert before.json()["last_checked_at"]
+    assert missing.status_code == 404
+    assert missing.json() == {"code": "grant_not_found", "contract": "identity-grant-status.v1"}
+    assert after.status_code == 200, after.text
+    assert after.json()["status"] == "active"
+    assert after.json()["effective_status"] == "issuer_revoked"
+    assert after.json()["status_detail"] == "grant issuing certificate revoked"
 
 
 @pytest.mark.asyncio

@@ -228,6 +228,84 @@ func TestRunGrantMintRefusesNonEmptyOut(t *testing.T) {
 	}
 }
 
+func TestGrantHomeCustodySocketSignsPlainMail(t *testing.T) {
+	resetGrantCommandGlobals(t)
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	setGrantTestEnv(t, tmp)
+
+	_, residentKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	residentDID := awid.ComputeDIDKey(residentKey.Public().(ed25519.PublicKey))
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"message_id": got["message_id"], "status": "delivered", "delivered_at": "2026-09-24T00:00:00Z"})
+	}))
+	t.Cleanup(server.Close)
+
+	grantHome := filepath.Join(tmp, ".aw")
+	_, grant := writeGrantHomeForTest(t, grantHome, server.URL)
+	grant.Subject.DIDKey = residentDID
+	socketID, err := awid.GenerateUUID4()
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant.Custody.SocketPath = filepath.Join(os.TempDir(), "aw-custody-"+socketID[:8]+".sock")
+	t.Cleanup(func() { _ = os.Remove(grant.Custody.SocketPath) })
+	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), grant); err != nil {
+		t.Fatal(err)
+	}
+	sessionKey, err := awid.LoadSigningKey(awconfig.GrantHomeSigningKeyPath(grantHome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionDID := awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey))
+	svc := &custodyService{
+		socketPath: grant.Custody.SocketPath,
+		identity:   &awconfig.ResolvedIdentity{DID: residentDID, StableID: grant.Subject.DIDAW, Address: grant.Subject.Address, Handle: grant.Subject.Alias},
+		signingKey: residentKey,
+		now:        time.Now,
+		replay:     map[string]string{},
+		results:    map[string]*awid.PlainMessageSignResponse{},
+		grantStatus: func(ctx context.Context, grantID string) (custodyGrantStatus, error) {
+			return custodyGrantStatus{Active: true, Status: "active", TeamID: grant.TeamID, GrantDIDKey: sessionDID, Scopes: grant.Scopes}, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = svc.serve(ctx) }()
+	for i := 0; i < 50; i++ {
+		if _, err := os.Stat(grant.Custody.SocketPath); err == nil {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	client, _, err := resolveClientSelectionForDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SendMessage(context.Background(), &awid.SendMessageRequest{ToAlias: "bob", Subject: "hi", Body: "body"}); err != nil {
+		t.Fatal(err)
+	}
+	if got["from_did"] != residentDID {
+		t.Fatalf("from_did=%v want resident %s", got["from_did"], residentDID)
+	}
+	if got["signature"] == "" || got["signed_payload"] == "" {
+		t.Fatalf("message not signed through custody: %#v", got)
+	}
+}
+
 func TestGrantHomeResolvesToGrantClient(t *testing.T) {
 	resetGrantCommandGlobals(t)
 	tmp := t.TempDir()

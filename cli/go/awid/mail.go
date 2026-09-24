@@ -93,7 +93,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 			strings.TrimSpace(payload.ToAddress) != ""
 	}
 	initialConversationID := strings.TrimSpace(payload.ConversationID)
-	if c.canSignMessages() && initialConversationID == "" && hasRecipient {
+	if c.canAttachPlainMessageSignature() && initialConversationID == "" && hasRecipient {
 		conversationID, err := GenerateUUID4()
 		if err != nil {
 			return nil, err
@@ -126,7 +126,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		return &out, nil
 	}
 	from := c.address
-	if c.canSignMessages() {
+	if c.canAttachPlainMessageSignature() {
 		from = c.signedPayloadFrom(identityTarget, payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/"))
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
@@ -145,7 +145,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if err != nil {
 		return nil, err
 	}
-	if c.canSignMessages() {
+	if c.canAttachPlainMessageSignature() {
 		payload.FromDID = sf.FromDID
 		payload.ToDID = sf.ToDID
 		payload.ToStableID = sf.ToStableID

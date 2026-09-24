@@ -15,11 +15,13 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.deps import get_db
+from aweb.config import require_registered_certificates
 from aweb.identity_grant_auth import GRANT_AUTH_SCHEME, GRANT_SCOPES
-from aweb.team_auth_deps import TeamIdentity, get_team_identity
+from aweb.team_auth_deps import TeamIdentity, _get_registered_certificates, _get_revoked_certificates, get_team_identity
 
 router = APIRouter(prefix="/v1/identity-grants", tags=["identity-grants"])
 
@@ -72,6 +74,12 @@ class GrantListItem(GrantView):
     revoked_at: Optional[str]
 
 
+class GrantStatusView(GrantListItem):
+    effective_status: str
+    status_detail: Optional[str] = None
+    last_checked_at: str
+
+
 def reject_grant_scheme(request: Request) -> None:
     if (request.headers.get("Authorization") or "").lstrip().startswith(GRANT_AUTH_SCHEME):
         raise HTTPException(status_code=403, detail="grants cannot mint or revoke grants")
@@ -83,6 +91,24 @@ def _status(row, now: datetime) -> str:
     if row["expires_at"] <= now:
         return "expired"
     return "active"
+
+
+async def _effective_status(request: Request, row, now: datetime) -> tuple[str, Optional[str]]:
+    status = _status(row, now)
+    if status != "active":
+        return status, None
+    if row.get("subject_status") is not None and (row.get("subject_status") != "active" or row.get("subject_deleted_at") is not None):
+        return "subject_inactive", "grant subject identity is not active"
+    issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
+    if issuing_certificate_id:
+        revoked_certs = await _get_revoked_certificates(request, row["team_id"])
+        if issuing_certificate_id in revoked_certs:
+            return "issuer_revoked", "grant issuing certificate revoked"
+        if require_registered_certificates():
+            registered_certs = await _get_registered_certificates(request, row["team_id"])
+            if issuing_certificate_id not in registered_certs:
+                return "issuer_not_registered", "grant issuing certificate not registered"
+    return "active", None
 
 
 @router.post("")
@@ -202,6 +228,60 @@ async def list_identity_grants(
             for row in rows
         ]
     }
+
+
+def _grant_status_not_found() -> JSONResponse:
+    return JSONResponse(
+        status_code=404,
+        content={"code": "grant_not_found", "contract": "identity-grant-status.v1"},
+    )
+
+
+@router.get("/{grant_id}/status", response_model=None)
+async def identity_grant_status(
+    grant_id: str,
+    request: Request,
+    db=Depends(get_db),
+    _scheme_guard: None = Depends(reject_grant_scheme),
+    identity: TeamIdentity = Depends(get_team_identity),
+) -> GrantStatusView | JSONResponse:
+    try:
+        grant_id = str(UUID(grant_id))
+    except ValueError:
+        return _grant_status_not_found()
+    row = await db.get_manager("aweb").fetch_one(
+        """
+        SELECT g.grant_id, g.team_id, g.subject_did_aw, g.grant_did_key, g.scopes, g.label,
+               g.issued_at, g.expires_at, g.revoked_at, g.issued_by_certificate_id,
+               a.status AS subject_status, a.deleted_at AS subject_deleted_at
+        FROM {{tables.identity_session_grants}} AS g
+        JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
+        WHERE g.grant_id = $1::UUID AND g.team_id = $2 AND g.subject_agent_id = $3::UUID
+        """,
+        grant_id,
+        identity.team_id,
+        identity.agent_id,
+    )
+    if not row:
+        return _grant_status_not_found()
+    now = datetime.now(timezone.utc)
+    effective, detail = await _effective_status(request, row, now)
+    return GrantStatusView(
+        grant_id=str(row["grant_id"]),
+        team_id=row["team_id"],
+        subject_alias=identity.alias,
+        subject_did_aw=row.get("subject_did_aw") or None,
+        grant_did_key=row["grant_did_key"],
+        scopes=list(row["scopes"] or []),
+        label=row.get("label") or None,
+        status=_status(row, now),
+        effective_status=effective,
+        status_detail=detail,
+        issued_at=row["issued_at"].isoformat(),
+        expires_at=row["expires_at"].isoformat(),
+        revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
+        last_checked_at=now.isoformat(),
+    )
 
 
 @router.post("/{grant_id}/revoke")

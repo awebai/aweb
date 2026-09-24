@@ -24,6 +24,12 @@ type GrantSubject struct {
 // expiring, revocable session credential derived from a durable identity. A
 // grant home carries only the session key; the subject's root keys never
 // enter it.
+type GrantCustody struct {
+	SocketPath string `yaml:"socket_path,omitempty"`
+	ServiceID  string `yaml:"service_id,omitempty"`
+	Version    string `yaml:"version,omitempty"`
+}
+
 type GrantHome struct {
 	Version   int          `yaml:"version"`
 	GrantID   string       `yaml:"grant_id"`
@@ -33,6 +39,7 @@ type GrantHome struct {
 	ExpiresAt string       `yaml:"expires_at"`
 	AwebURL   string       `yaml:"aweb_url"`
 	MintedAt  string       `yaml:"minted_at,omitempty"`
+	Custody   GrantCustody `yaml:"custody,omitempty"`
 }
 
 func GrantHomeStatePath(root string) string {
@@ -41,6 +48,14 @@ func GrantHomeStatePath(root string) string {
 
 func GrantHomeSigningKeyPath(root string) string {
 	return filepath.Join(filepath.Clean(root), "grant-signing.key")
+}
+
+func CustodyRunDir(root string) string {
+	return filepath.Join(filepath.Clean(root), "run")
+}
+
+func CustodySocketPath(root string) string {
+	return filepath.Join(CustodyRunDir(root), "custody.sock")
 }
 
 // IsGrantHome reports whether root is a grant home. Presence of grant.yaml is

@@ -131,6 +131,10 @@ func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) 
 	if err != nil {
 		return nil, nil, err
 	}
+	c.SetGrantSubject(sel.TeamID, sel.StableID, sel.DID, sel.Address, sel.Alias)
+	if socketPath := strings.TrimSpace(grant.Custody.SocketPath); socketPath != "" {
+		c.SetPlainMessageSigner(&awid.UnixCustodyClient{SocketPath: socketPath})
+	}
 	if err := configureResolvedClient(c, sel, baseURL); err != nil {
 		return nil, nil, err
 	}

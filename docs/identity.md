@@ -340,6 +340,17 @@ identity's `signing.key`). A process pointed at that directory (via
 normally; requests are signed per-request with the session key and the server
 attributes the results to the identity.
 
+When a grant-backed worker also needs plaintext mail/chat messages to carry the
+resident identity's ordinary message signature, run local resident custody from
+the resident home with `aw custody serve`. The grant home records the custody
+socket as locator metadata only; each signing request is structured
+(`sign_plain_message`) and the service derives the resident sender fields and
+constructs the canonical mail/chat envelope itself. It never signs
+caller-supplied bytes, digests, identity-auth payloads, certificate-auth
+payloads, identity operations, or grant/delegation payloads. `aw custody status
+--json` reports safe readiness (signing, unsupported encryption=false, selected
+team, and freshness), and `aw custody stop` asks the local service to exit.
+
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,
 `contacts.read`, and `contacts.write`. The `normal-agent` bundle expands to

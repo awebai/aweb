@@ -41,6 +41,10 @@ func (c *Client) canSignMessages() bool {
 	return c != nil && c.signingKey != nil && !c.disableMessageSigning
 }
 
+func (c *Client) canAttachPlainMessageSignature() bool {
+	return c.canSignMessages() || (c != nil && c.plainMessageSigner != nil && strings.TrimSpace(c.grantID) != "")
+}
+
 // RecipientResolutionError means a signed message could not bind its direct
 // recipient to a current did:key, so sending must stop before posting.
 type RecipientResolutionError struct {
@@ -83,14 +87,12 @@ func isRegistryAddressNotFound(err error) bool {
 // returns a zero signedFields. Callers stamp the returned fields onto
 // the request struct before posting.
 func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signedFields, error) {
-	if !c.canSignMessages() {
+	if c == nil || (!c.canSignMessages() && c.plainMessageSigner == nil) {
 		return signedFields{}, nil
 	}
 	if strings.TrimSpace(env.From) == "" {
 		env.From = c.address
 	}
-	env.FromDID = c.did
-	env.FromStableID = c.stableID
 	env.Timestamp = time.Now().UTC().Format(time.RFC3339)
 	msgID, err := GenerateUUID4()
 	if err != nil {
@@ -146,20 +148,73 @@ func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signed
 		return signedFields{}, &RecipientResolutionError{Target: bindingTarget, MessageType: env.Type, Err: errors.New("missing current did:key")}
 	}
 
-	sig, err := SignMessage(c.signingKey, env)
+	if c.canSignMessages() {
+		env.FromDID = c.did
+		env.FromStableID = c.stableID
+		sig, err := SignMessage(c.signingKey, env)
+		if err != nil {
+			return signedFields{}, fmt.Errorf("sign message: %w", err)
+		}
+		return signedFields{
+			FromDID:       c.did,
+			ToDID:         env.ToDID,
+			ToStableID:    env.ToStableID,
+			FromStableID:  c.stableID,
+			Signature:     sig,
+			SigningKeyID:  c.did,
+			Timestamp:     env.Timestamp,
+			MessageID:     env.MessageID,
+			SignedPayload: CanonicalJSON(env),
+		}, nil
+	}
+	if c.plainMessageSigner == nil || strings.TrimSpace(c.grantID) == "" {
+		return signedFields{}, nil
+	}
+	// Grant session keys are request-auth keys only.  A local custody signer may
+	// build and sign an ordinary message envelope with the resident subject key.
+	audience := "local-resident-custody"
+	if provider, ok := c.plainMessageSigner.(interface {
+		ServiceAudience(context.Context) (string, error)
+	}); ok {
+		got, err := provider.ServiceAudience(ctx)
+		if err != nil {
+			return signedFields{}, err
+		}
+		audience = got
+	}
+	custodyEnvelope := *env
+	custodyEnvelope.FromDID = ""
+	custodyEnvelope.FromStableID = ""
+	custodyEnvelope.Signature = ""
+	custodyEnvelope.SigningKeyID = ""
+	req := &PlainMessageSignRequest{
+		Version:       1,
+		Operation:     "sign_plain_message",
+		GrantID:       strings.TrimSpace(c.grantID),
+		SessionDIDKey: strings.TrimSpace(c.did),
+		TeamID:        firstNonEmptyString(c.custodySubject.TeamID, c.teamID),
+		SubjectDIDAW:  firstNonEmptyString(c.custodySubject.DIDAW, c.stableID),
+		SubjectDIDKey: strings.TrimSpace(c.custodySubject.DIDKey),
+		Audience:      audience,
+		Envelope:      custodyEnvelope,
+	}
+	if err := SignCustodyProof(c.signingKey, req); err != nil {
+		return signedFields{}, err
+	}
+	out, err := c.plainMessageSigner.SignPlainMessage(ctx, req)
 	if err != nil {
-		return signedFields{}, fmt.Errorf("sign message: %w", err)
+		return signedFields{}, err
 	}
 	return signedFields{
-		FromDID:       c.did,
-		ToDID:         env.ToDID,
-		ToStableID:    env.ToStableID,
-		FromStableID:  c.stableID,
-		Signature:     sig,
-		SigningKeyID:  c.did,
-		Timestamp:     env.Timestamp,
-		MessageID:     env.MessageID,
-		SignedPayload: CanonicalJSON(env),
+		FromDID:       strings.TrimSpace(out.FromDID),
+		ToDID:         strings.TrimSpace(out.ToDID),
+		ToStableID:    strings.TrimSpace(out.ToStableID),
+		FromStableID:  strings.TrimSpace(out.FromStableID),
+		Signature:     strings.TrimSpace(out.Signature),
+		SigningKeyID:  strings.TrimSpace(out.SigningKeyID),
+		Timestamp:     strings.TrimSpace(out.Timestamp),
+		MessageID:     strings.TrimSpace(out.MessageID),
+		SignedPayload: strings.TrimSpace(out.SignedPayload),
 	}, nil
 }
 
@@ -206,6 +261,8 @@ type Client struct {
 	teamID                  string             // team identifier from certificate, used in auth signature
 	grantID                 string             // identity-grant id; non-empty selects grant auth with the session signing key
 	disableMessageSigning   bool               // true for grant auth: the session key may sign requests, never root message envelopes
+	plainMessageSigner      PlainMessageSigner // optional local custody signer for grant-backed plaintext mail/chat
+	custodySubject          custodySubject     // durable subject metadata for custody proof construction
 	certAlias               string             // certificate alias, used for signed payloads in cert-auth mode
 	address                 string             // namespace/alias, used in signed envelopes
 	e2eeSenderAddress       string             // explicit address for E2EE envelopes; empty for addressless local/team identities

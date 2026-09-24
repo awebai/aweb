@@ -139,6 +139,7 @@ func init() {
 	notifyCmd.GroupID = groupCoordination
 	instructionsCmd.GroupID = groupCoordination
 	rolesCmd.GroupID = groupCoordination
+	custodyCmd.GroupID = groupIdentity
 
 	versionCmd.GroupID = groupUtility
 	upgradeCmd.GroupID = groupUtility

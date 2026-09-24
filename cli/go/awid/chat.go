@@ -228,7 +228,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		return nil, errors.New("aweb: request is required")
 	}
 	payload := *req
-	if c.canSignMessages() && strings.TrimSpace(payload.SessionID) == "" {
+	if c.canAttachPlainMessageSignature() && strings.TrimSpace(payload.SessionID) == "" {
 		sessionID, err := GenerateUUID4()
 		if err != nil {
 			return nil, err
@@ -258,7 +258,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		to = strings.Join(targets, ",")
 	}
 	from := c.address
-	if c.canSignMessages() {
+	if c.canAttachPlainMessageSignature() {
 		if len(payload.ToAddresses) > 0 {
 			targets := append([]string(nil), payload.ToAddresses...)
 			sort.Strings(targets)
@@ -286,7 +286,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 	if err != nil {
 		return nil, err
 	}
-	if c.canSignMessages() {
+	if c.canAttachPlainMessageSignature() {
 		payload.FromDID = sf.FromDID
 		payload.Signature = sf.Signature
 		payload.Timestamp = sf.Timestamp
@@ -957,7 +957,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 	to := ""
 	from := c.address
 	targetIsAddress := false
-	if c.canSignMessages() {
+	if c.canAttachPlainMessageSignature() {
 		if toAddr, err := c.toAddressForSession(ctx, sessionID, false); err == nil {
 			to = toAddr
 		}
@@ -984,7 +984,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 	if err != nil {
 		return nil, err
 	}
-	if c.canSignMessages() {
+	if c.canAttachPlainMessageSignature() {
 		payload.FromDID = sf.FromDID
 		payload.Signature = sf.Signature
 		payload.Timestamp = sf.Timestamp

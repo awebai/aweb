@@ -17,8 +17,7 @@ to refresh it.
 | Family | Commands |
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
-| Identity | `id`, `mcp-config`, `team`, `whoami` |
-| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
+| Identity | `custody`, `id`, `mcp-config`, `team`, `whoami` || Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
 | Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session` |
@@ -31,6 +30,47 @@ to refresh it.
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
 - `--trace Trace redacted HTTP requests and responses to stderr`
+
+## `custody`
+
+### `custody`
+
+Local resident custody service
+
+Subcommands:
+- `serve` Serve local resident custody operations
+- `status` Probe local resident custody service
+- `stop` Stop local resident custody service
+
+Flags:
+- `-h, --help help for custody`
+
+## `custody serve`
+
+### `custody serve`
+
+Serve local resident custody operations
+
+Flags:
+- `-h, --help help for serve`
+
+## `custody status`
+
+### `custody status`
+
+Probe local resident custody service
+
+Flags:
+- `-h, --help help for status`
+
+## `custody stop`
+
+### `custody stop`
+
+Stop local resident custody service
+
+Flags:
+- `-h, --help help for stop`
 
 ## `check`
 
