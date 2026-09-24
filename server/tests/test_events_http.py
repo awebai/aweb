@@ -5,7 +5,6 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,6 +16,7 @@ from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 import aweb.routes.events as events_module
 from aweb.routes.events import router as events_router
+from aweb.team_auth_deps import TeamIdentity
 
 
 def _make_keypair():
@@ -151,7 +151,17 @@ async def _open_test_event_stream(aweb_db, agent_id, monkeypatch):
         redis=None,
         team_id="backend:acme.com",
         agent_id=str(agent_id),
-        identity=SimpleNamespace(did_aw="did:aw:bob", did_key="did:key:z6MkBob"),
+        identity=TeamIdentity(
+            team_id="backend:acme.com",
+            alias="bob",
+            did_key="did:key:z6MkBob",
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            agent_id=str(agent_id),
+            identity_scope="global",
+            certificate_id="cert-001",
+            grant=None,
+        ),
         deadline=datetime.now(timezone.utc) + timedelta(seconds=1),
     )
     assert await anext(stream) == ": keepalive\n\n"
