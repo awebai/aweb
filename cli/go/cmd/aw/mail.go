@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -752,7 +751,7 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 		if required {
 			return usageError("E2E messaging under an identity grant requires a local custody socket; ask the resident host to run `aw custody serve`, or pass --plaintext only for explicit server-readable messaging")
 		}
-		return &e2eeDecryptionUnavailableError{statePath: filepath.Join(sel.IdentityHome, "encryption.yaml"), reason: "grant home has no custody socket"}
+		return &e2eeDecryptionUnavailableError{statePath: awconfig.GrantHomeStatePath(sel.IdentityHome), reason: "grant home has no custody.socket_path; ask the resident host to run `aw custody serve` and mint or attach the grant custody socket"}
 	}
 	if required {
 		if err := ensureE2EEKeyReadyForSend(ctx, sel.WorkingDir); err != nil {

@@ -21,12 +21,13 @@ var grantCmd = &cobra.Command{
 }
 
 var (
-	grantMintScopes   []string
-	grantMintBundles  []string
-	grantMintAppTools []string
-	grantMintTTL      time.Duration
-	grantMintLabel    string
-	grantMintOut      string
+	grantMintScopes        []string
+	grantMintBundles       []string
+	grantMintAppTools      []string
+	grantMintCustodySocket string
+	grantMintTTL           time.Duration
+	grantMintLabel         string
+	grantMintOut           string
 )
 
 const (
@@ -48,12 +49,13 @@ var grantScopeBundles = map[string][]string{
 var errGrantHomeRootAuthority = usageError("this is a grant home; run from the identity's own .aw home")
 
 type grantMintOutput struct {
-	GrantID   string `json:"grant_id"`
-	ExpiresAt string `json:"expires_at"`
-	TeamID    string `json:"team_id"`
-	Alias     string `json:"alias,omitempty"`
-	Address   string `json:"address,omitempty"`
-	Out       string `json:"out"`
+	GrantID           string `json:"grant_id"`
+	ExpiresAt         string `json:"expires_at"`
+	TeamID            string `json:"team_id"`
+	Alias             string `json:"alias,omitempty"`
+	Address           string `json:"address,omitempty"`
+	Out               string `json:"out"`
+	CustodySocketPath string `json:"custody_socket_path,omitempty"`
 }
 
 // activeGrantHome loads the grant home the current identity-home resolution
@@ -222,6 +224,29 @@ func prepareGrantHomeDir(out string) (string, error) {
 	return abs, nil
 }
 
+func resolveGrantMintCustodySocket(identityHome awconfig.IdentityHome) (string, error) {
+	value := strings.TrimSpace(grantMintCustodySocket)
+	if value == "" {
+		return "", nil
+	}
+	var path string
+	if strings.EqualFold(value, "auto") {
+		if strings.TrimSpace(identityHome.Root) == "" {
+			return "", usageError("--custody-socket auto requires a resident identity home")
+		}
+		path = awconfig.CustodySocketPath(identityHome.Root)
+	} else {
+		if !filepath.IsAbs(value) {
+			return "", usageError("--custody-socket must be an absolute Unix socket path or auto")
+		}
+		path = filepath.Clean(value)
+	}
+	if err := validateCustodySocketPathLength(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
 func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if err := requireGrantAuthorityHome(); err != nil {
 		return err
@@ -241,6 +266,14 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	residentIdentityHome, err := identityHomeForDir(mustGetwd())
+	if err != nil {
+		return err
+	}
+	custodySocketPath, err := resolveGrantMintCustodySocket(residentIdentityHome)
+	if err != nil {
+		return err
+	}
 	appSpecs, err := parseGrantAppToolSpecs(grantMintAppTools)
 	if err != nil {
 		return err
@@ -251,11 +284,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	}
 	residentHome := ""
 	if len(appSnapshots) > 0 {
-		home, err := identityHomeForDir(mustGetwd())
-		if err != nil {
-			return err
-		}
-		residentHome = home.Root
+		residentHome = residentIdentityHome.Root
 	}
 
 	pub, sessionKey, err := awid.GenerateKeypair()
@@ -312,6 +341,9 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		AwebURL:   sel.BaseURL,
 		MintedAt:  firstNonEmpty(strings.TrimSpace(view.IssuedAt), time.Now().UTC().Format(time.RFC3339)),
 	}
+	if custodySocketPath != "" {
+		state.Custody.SocketPath = custodySocketPath
+	}
 	// The session key lands first: a directory only becomes a detectable grant
 	// home (grant.yaml present) once its credential is already on disk.
 	if err := awid.SaveSigningKeyExclusive(awconfig.GrantHomeSigningKeyPath(outDir), sessionKey); err != nil {
@@ -322,16 +354,21 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := grantMintOutput{
-		GrantID:   state.GrantID,
-		ExpiresAt: state.ExpiresAt,
-		TeamID:    state.TeamID,
-		Alias:     state.Subject.Alias,
-		Address:   state.Subject.Address,
-		Out:       outDir,
+		GrantID:           state.GrantID,
+		ExpiresAt:         state.ExpiresAt,
+		TeamID:            state.TeamID,
+		Alias:             state.Subject.Alias,
+		Address:           state.Subject.Address,
+		Out:               outDir,
+		CustodySocketPath: state.Custody.SocketPath,
 	}
 	printOutput(out, func(any) string {
-		return fmt.Sprintf("Minted grant %s for %s (team %s), expires %s.\nGrant home: %s\n",
+		text := fmt.Sprintf("Minted grant %s for %s (team %s), expires %s.\nGrant home: %s\n",
 			out.GrantID, firstNonEmpty(out.Address, out.Alias), out.TeamID, out.ExpiresAt, out.Out)
+		if out.CustodySocketPath != "" {
+			text += fmt.Sprintf("Custody socket: %s\n", out.CustodySocketPath)
+		}
+		return text
 	})
 	return nil
 }
@@ -458,6 +495,7 @@ func init() {
 	mintCmd.Flags().StringArrayVar(&grantMintScopes, "scope", nil, "Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)")
 	mintCmd.Flags().StringArrayVar(&grantMintBundles, "bundle", nil, "Grant scope bundle, repeatable or comma-separated (normal-agent)")
 	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Installed app tool the grant may call, as app:verb; repeatable or comma-separated. Each signed tool must be named; the definition is snapshotted at mint")
+	mintCmd.Flags().StringVar(&grantMintCustodySocket, "custody-socket", "", "Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket")
 	mintCmd.Flags().DurationVar(&grantMintTTL, "ttl", 8*time.Hour, "Grant duration before expiry (60s to 720h)")
 	mintCmd.Flags().StringVar(&grantMintLabel, "label", "", "Optional label for the grant")
 	mintCmd.Flags().StringVar(&grantMintOut, "out", "", "Directory to write the grant home (created fresh; a non-empty directory is refused)")

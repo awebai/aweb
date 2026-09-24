@@ -441,6 +441,7 @@ Mint a session grant and write a self-contained grant home
 Flags:
 - `--app-tool stringArray Installed app tool the grant may call, as app:verb; repeatable or comma-separated. Each signed tool must be named; the definition is snapshotted at mint`
 - `--bundle stringArray Grant scope bundle, repeatable or comma-separated (normal-agent)`
+- `--custody-socket string Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket`
 - `-h, --help help for mint`
 - `--label string Optional label for the grant`
 - `--out string Directory to write the grant home (created fresh; a non-empty directory is refused)`

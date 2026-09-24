@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -27,6 +29,7 @@ func resetGrantCommandGlobals(t *testing.T) {
 		grantMintScopes = nil
 		grantMintBundles = nil
 		grantMintAppTools = nil
+		grantMintCustodySocket = ""
 		grantMintTTL = 8 * time.Hour
 		grantMintLabel = ""
 		grantMintOut = ""
@@ -204,6 +207,162 @@ func TestRunGrantMintWritesGrantHome(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "grant-9") || !strings.Contains(stdout, outDir) {
 		t.Fatalf("stdout missing grant id or out dir:\n%s", stdout)
+	}
+}
+
+func TestRunGrantMintAutoCustodySocketSupportsGrantSignedSend(t *testing.T) {
+	if custodySocketPathLimit() <= 0 {
+		t.Skip("platform has no local custody Unix socket")
+	}
+	resetGrantCommandGlobals(t)
+	root, err := os.MkdirTemp("/tmp", "aw-grant-custody-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	t.Chdir(root)
+	setGrantTestEnv(t, root)
+
+	var gotMint map[string]any
+	var gotMessage map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/identity-grants":
+			if err := json.NewDecoder(r.Body).Decode(&gotMint); err != nil {
+				t.Errorf("decode mint body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"grant_id":       "grant-custody-1",
+				"team_id":        "backend:demo",
+				"subject_alias":  "alice",
+				"subject_did_aw": "did:aw:alice",
+				"grant_did_key":  gotMint["grant_did_key"],
+				"scopes":         gotMint["scopes"],
+				"issued_at":      "2026-08-12T00:00:00Z",
+				"expires_at":     "2026-08-12T08:00:00Z",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
+			if err := json.NewDecoder(r.Body).Decode(&gotMessage); err != nil {
+				t.Errorf("decode message body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"message_id": gotMessage["message_id"], "status": "delivered", "delivered_at": "2026-08-12T00:00:01Z"})
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	writeDefaultWorkspaceBindingForTest(t, root, server.URL)
+	residentKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	residentDID := awid.ComputeDIDKey(residentKey.Public().(ed25519.PublicKey))
+	outDir := filepath.Join(root, "worker-grant")
+	grantMintScopes = []string{"mail.send"}
+	grantMintOut = outDir
+	grantMintCustodySocket = "auto"
+
+	var runErr error
+	stdout := captureIDCommandStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
+	if runErr != nil {
+		t.Fatalf("runGrantMint: %v", runErr)
+	}
+	grant, err := awconfig.LoadGrantHome(outDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSocket := awconfig.CustodySocketPath(filepath.Join(realRoot, ".aw"))
+	if grant.Custody.SocketPath != wantSocket {
+		t.Fatalf("custody socket=%q want %q", grant.Custody.SocketPath, wantSocket)
+	}
+	if !strings.Contains(stdout, wantSocket) {
+		t.Fatalf("mint output did not name custody socket %q:\n%s", wantSocket, stdout)
+	}
+	clientForE2EE, err := aweb.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := configureClientE2EE(context.Background(), clientForE2EE, &awconfig.Selection{IdentityHome: outDir}, true); err != nil {
+		t.Fatalf("E2EE config did not use minted custody socket: %v", err)
+	}
+
+	sessionKey, err := awid.LoadSigningKey(awconfig.GrantHomeSigningKeyPath(outDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionDID := awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey))
+	svc := &custodyService{
+		residentHome: filepath.Join(root, ".aw"),
+		socketPath:   grant.Custody.SocketPath,
+		identity:     &awconfig.ResolvedIdentity{DID: residentDID, StableID: grant.Subject.DIDAW, Address: grant.Subject.Address, Handle: grant.Subject.Alias},
+		signingKey:   residentKey,
+		now:          time.Now,
+		replay:       map[string]string{},
+		replayAt:     map[string]time.Time{},
+		results:      map[string]any{},
+		grantStatus: func(ctx context.Context, grantID string) (custodyGrantStatus, error) {
+			return custodyGrantStatus{Active: true, Status: "active", EffectiveStatus: "active", TeamID: grant.TeamID, GrantDIDKey: sessionDID, Scopes: grant.Scopes, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), LastCheckedAt: time.Now().UTC().Format(time.RFC3339)}, nil
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errc := make(chan error, 1)
+	go func() { errc <- svc.serve(ctx) }()
+	for i := 0; i < 100; i++ {
+		if _, err := os.Stat(grant.Custody.SocketPath); err == nil {
+			break
+		}
+		select {
+		case err := <-errc:
+			t.Fatalf("custody service exited before creating socket: %v", err)
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	client, _, err := resolveClientSelectionForDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SendMessage(context.Background(), &awid.SendMessageRequest{ToAlias: "bob", Subject: "hi", Body: "body"}); err != nil {
+		t.Fatal(err)
+	}
+	if gotMessage["signature"] == "" || gotMessage["signed_payload"] == "" {
+		t.Fatalf("custody-backed grant send missing resident signature fields: %#v", gotMessage)
+	}
+	if gotMessage["from_did"] != residentDID {
+		t.Fatalf("message signed by %v, want resident %s", gotMessage["from_did"], residentDID)
+	}
+}
+
+func TestConfigureGrantE2EEReadMissingCustodyPointsAtGrantYAML(t *testing.T) {
+	tmp := t.TempDir()
+	grantDir := filepath.Join(tmp, "grant-home")
+	_, _ = writeGrantHomeForTest(t, grantDir, "http://127.0.0.1")
+	client, err := aweb.New("http://127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = configureClientE2EE(context.Background(), client, &awconfig.Selection{IdentityHome: grantDir}, false)
+	var unavailable *e2eeDecryptionUnavailableError
+	if !errors.As(err, &unavailable) {
+		t.Fatalf("err=%T %[1]v, want e2eeDecryptionUnavailableError", err)
+	}
+	if unavailable.statePath != awconfig.GrantHomeStatePath(grantDir) {
+		t.Fatalf("statePath=%q want grant.yaml path %q", unavailable.statePath, awconfig.GrantHomeStatePath(grantDir))
+	}
+	if !strings.Contains(unavailable.reason, "custody.socket_path") {
+		t.Fatalf("reason=%q, want custody.socket_path remediation", unavailable.reason)
+	}
+	if strings.Contains(unavailable.Error(), "encryption.yaml") {
+		t.Fatalf("diagnostic still points at encryption.yaml: %v", unavailable)
 	}
 }
 

@@ -332,6 +332,12 @@ aw id grant mint --bundle normal-agent \
     --ttl 8h --out /path/to/grant-home
 ```
 
+When the grant should use local resident custody for signed plaintext or E2EE
+operations, pass the preflighted socket explicitly with `--custody-socket
+/path/to/custody.sock`, or `--custody-socket auto` for the resident identity
+home's default `aw custody serve` socket. This writes only the locator at
+`grant.yaml` `custody.socket_path`; it does not copy resident keys.
+
 Minting generates a fresh session Ed25519 keypair, registers its `did:key`
 with the server together with the scopes and expiry, and writes a
 self-contained grant home (`grant.yaml` plus the session key — never the
