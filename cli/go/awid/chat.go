@@ -228,7 +228,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		return nil, errors.New("aweb: request is required")
 	}
 	payload := *req
-	if c.signingKey != nil && strings.TrimSpace(payload.SessionID) == "" {
+	if c.canSignMessages() && strings.TrimSpace(payload.SessionID) == "" {
 		sessionID, err := GenerateUUID4()
 		if err != nil {
 			return nil, err
@@ -258,7 +258,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		to = strings.Join(targets, ",")
 	}
 	from := c.address
-	if c.signingKey != nil {
+	if c.canSignMessages() {
 		if len(payload.ToAddresses) > 0 {
 			targets := append([]string(nil), payload.ToAddresses...)
 			sort.Strings(targets)
@@ -286,7 +286,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 	if err != nil {
 		return nil, err
 	}
-	if c.signingKey != nil {
+	if c.canSignMessages() {
 		payload.FromDID = sf.FromDID
 		payload.Signature = sf.Signature
 		payload.Timestamp = sf.Timestamp
@@ -307,6 +307,9 @@ func (c *Client) prepareE2EEChatCreate(ctx context.Context, payload *ChatCreateS
 	}
 	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
 		return errors.New("E2E messaging requires a local self-custodial signing key")
+	}
+	if !c.canSignMessages() {
+		return errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
 	}
 	if c.e2eeEncryptionKey == nil {
 		return errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
@@ -368,6 +371,9 @@ func (c *Client) prepareE2EEChatSend(ctx context.Context, sessionID string, payl
 	}
 	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
 		return errors.New("E2E messaging requires a local self-custodial signing key")
+	}
+	if !c.canSignMessages() {
+		return errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
 	}
 	if c.e2eeEncryptionKey == nil {
 		return errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
@@ -942,7 +948,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 	to := ""
 	from := c.address
 	targetIsAddress := false
-	if c.signingKey != nil {
+	if c.canSignMessages() {
 		if toAddr, err := c.toAddressForSession(ctx, sessionID, false); err == nil {
 			to = toAddr
 		}
@@ -969,7 +975,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 	if err != nil {
 		return nil, err
 	}
-	if c.signingKey != nil {
+	if c.canSignMessages() {
 		payload.FromDID = sf.FromDID
 		payload.Signature = sf.Signature
 		payload.Timestamp = sf.Timestamp

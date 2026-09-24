@@ -7261,3 +7261,78 @@ func TestSignEnvelopeStoredRouteChatGlobalTargetOmitsToDIDWithoutResolver(t *tes
 		t.Fatalf("stored-route signed payload should leave unresolved to_did empty, got %+v", payload)
 	}
 }
+
+func TestGrantClientUsesSessionKeyOnlyForRequestAuthNotMessageEnvelope(t *testing.T) {
+	pub, sessionKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionDID := ComputeDIDKey(pub)
+	grantID := "11111111-1111-4111-8111-111111111111"
+	var gotMail map[string]any
+	var gotChat map[string]any
+	var mailAuth, chatAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
+			mailAuth = r.Header.Get("Authorization")
+			if err := json.NewDecoder(r.Body).Decode(&gotMail); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(SendMessageResponse{MessageID: "mail-1", ConversationID: "conv-1", Status: "delivered"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/sessions":
+			chatAuth = r.Header.Get("Authorization")
+			if err := json.NewDecoder(r.Body).Decode(&gotChat); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(ChatCreateSessionResponse{SessionID: "chat-1", MessageID: "chat-msg-1"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewWithGrant(server.URL, sessionKey, grantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.SendMessage(context.Background(), &SendMessageRequest{ToAlias: "bob", Body: "hello"}); err != nil {
+		t.Fatalf("grant mail send: %v", err)
+	}
+	if _, err := client.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{ToAliases: []string{"bob"}, Message: "hello"}); err != nil {
+		t.Fatalf("grant chat send: %v", err)
+	}
+
+	for name, auth := range map[string]string{"mail": mailAuth, "chat": chatAuth} {
+		parts := strings.Fields(auth)
+		if len(parts) != 4 || parts[0] != "AWEB-Grant" || parts[1] != "DIDKey" || parts[2] != sessionDID {
+			t.Fatalf("%s Authorization=%q, want grant auth with session DID %s", name, auth, sessionDID)
+		}
+	}
+	for name, body := range map[string]map[string]any{"mail": gotMail, "chat": gotChat} {
+		for _, field := range []string{"from_did", "signature", "signed_payload"} {
+			if value, ok := body[field]; ok && strings.TrimSpace(value.(string)) != "" {
+				t.Fatalf("%s grant request labeled session key as message signature field %s=%v", name, field, value)
+			}
+		}
+	}
+}
+
+func TestGrantClientE2EEFailsClosedBeforeSessionEnvelopeSignature(t *testing.T) {
+	_, sessionKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewWithGrant("https://aweb.example", sessionKey, "11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.SendMessage(context.Background(), &SendMessageRequest{ToAlias: "bob", Body: "secret", EncryptE2EE: true})
+	if err == nil || !strings.Contains(err.Error(), "identity grants cannot sign encrypted message envelopes") {
+		t.Fatalf("grant E2EE mail error=%v, want explicit fail-closed grant envelope refusal", err)
+	}
+	_, err = client.ChatCreateSession(context.Background(), &ChatCreateSessionRequest{ToAliases: []string{"bob"}, Message: "secret", EncryptE2EE: true})
+	if err == nil || !strings.Contains(err.Error(), "identity grants cannot sign encrypted message envelopes") {
+		t.Fatalf("grant E2EE chat error=%v, want explicit fail-closed grant envelope refusal", err)
+	}
+}

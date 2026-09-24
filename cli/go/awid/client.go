@@ -37,6 +37,10 @@ type signedFields struct {
 	SignedPayload string
 }
 
+func (c *Client) canSignMessages() bool {
+	return c != nil && c.signingKey != nil && !c.disableMessageSigning
+}
+
 // RecipientResolutionError means a signed message could not bind its direct
 // recipient to a current did:key, so sending must stop before posting.
 type RecipientResolutionError struct {
@@ -79,7 +83,7 @@ func isRegistryAddressNotFound(err error) bool {
 // returns a zero signedFields. Callers stamp the returned fields onto
 // the request struct before posting.
 func (c *Client) signEnvelope(ctx context.Context, env *MessageEnvelope) (signedFields, error) {
-	if c.signingKey == nil {
+	if !c.canSignMessages() {
 		return signedFields{}, nil
 	}
 	if strings.TrimSpace(env.From) == "" {
@@ -201,6 +205,7 @@ type Client struct {
 	teamCertHeader          string             // base64-encoded team certificate for X-AWID-Team-Certificate
 	teamID                  string             // team identifier from certificate, used in auth signature
 	grantID                 string             // identity-grant id; non-empty selects grant auth with the session signing key
+	disableMessageSigning   bool               // true for grant auth: the session key may sign requests, never root message envelopes
 	certAlias               string             // certificate alias, used for signed payloads in cert-auth mode
 	address                 string             // namespace/alias, used in signed envelopes
 	e2eeSenderAddress       string             // explicit address for E2EE envelopes; empty for addressless local/team identities
@@ -307,6 +312,7 @@ func NewWithGrant(baseURL string, sessionKey ed25519.PrivateKey, grantID string)
 	c.signingKey = sessionKey
 	c.did = ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey))
 	c.grantID = grantID
+	c.disableMessageSigning = true
 	return c, nil
 }
 

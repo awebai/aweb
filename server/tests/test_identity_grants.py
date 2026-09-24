@@ -17,7 +17,9 @@ from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.api import create_app
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.routes.chat import router as chat_router
 from aweb.routes.identity_grants import router as identity_grants_router
+from aweb.routes.messages import router as messages_router
 from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 TEAM_ID = "backend:acme.com"
@@ -570,3 +572,150 @@ async def test_legacy_grant_without_issuing_certificate_still_works(aweb_cloud_d
             ),
         )
     assert resp.status_code == 200, resp.text
+
+
+def _build_real_messaging_app(aweb_db) -> FastAPI:
+    app = FastAPI()
+    app.include_router(identity_grants_router)
+    app.include_router(messages_router)
+    app.include_router(chat_router)
+    app.dependency_overrides[get_team_identity] = _identity
+    app.state.db = _DbShim(aweb_db)
+    app.state.public_origin = "http://test"
+    app.state.redis = None
+    app.state.rate_limiter = None
+    registry = AsyncMock()
+    registry.get_team_revocations = AsyncMock(return_value=set())
+    app.state.awid_registry_client = registry
+
+    @app.middleware("http")
+    async def cache_body_middleware(request, call_next):
+        body = await request.body()
+        request.state.cached_body = body
+        request.state.body_sha256 = hashlib.sha256(body).hexdigest()
+        request._receive = _cached_body_receive(body)
+        return await call_next(request)
+
+    return app
+
+
+async def _real_messaging_fixture(aweb_db):
+    app, alice_id = await _fixture(aweb_db)
+    app = _build_real_messaging_app(aweb_db)
+    app.state.agent_id = str(alice_id)
+    app.state.alias = "alice"
+    bob_id = uuid4()
+    await aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, alias, did_key, did_aw, address, status, identity_scope, inbound_mode)
+        VALUES ($1, $2, 'bob', 'did:key:z6MkSubjectBob', 'did:aw:bob', 'acme.com/bob', 'active', 'global', 'open')
+        """,
+        bob_id, TEAM_ID,
+    )
+    return app, alice_id, bob_id
+
+
+@pytest.mark.asyncio
+async def test_grant_mail_send_real_handler_attributes_subject_without_session_signature(aweb_cloud_db):
+    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    signing_key, grant_did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=grant_did, scopes=["mail.send", "mail.read"])).json()["grant_id"]
+        body = json.dumps({"to_alias": "bob", "body": "hello"}, separators=(",", ":")).encode()
+        sent = await client.post(
+            "/v1/messages",
+            content=body,
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=grant_did, grant_id=grant_id,
+                method="POST", path="/v1/messages", body=body,
+            ),
+        )
+    assert sent.status_code == 200, sent.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT from_agent_id, from_did, to_agent_id, signature, signed_payload FROM {{tables.messages}} WHERE body = 'hello'"
+    )
+    assert str(row["from_agent_id"]) == str(alice_id)
+    assert row["from_did"] == "did:aw:alice"
+    assert str(row["to_agent_id"]) == str(bob_id)
+    assert row["signature"] is None
+    assert row["signed_payload"] is None
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key="did:key:z6MkSubjectBob", did_aw="did:aw:bob", address="acme.com/bob",
+            team_id=TEAM_ID, alias="bob", agent_id=str(bob_id), identity_scope="global",
+            certificate_id="cert-bob", verified_team_id=TEAM_ID,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        inbox = await client.get("/v1/messages/inbox")
+    assert inbox.status_code == 200, inbox.text
+    message = inbox.json()["messages"][0]
+    assert message["from_did"] == "did:aw:alice"
+    assert message["verification_status"] == "unverified"
+
+
+@pytest.mark.asyncio
+async def test_grant_chat_send_real_handler_attributes_subject_without_session_signature(aweb_cloud_db):
+    app, alice_id, bob_id = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    signing_key, grant_did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=grant_did, scopes=["chat.send", "chat.read"])).json()["grant_id"]
+        body = json.dumps({"to_aliases": ["bob"], "message": "hello chat"}, separators=(",", ":")).encode()
+        sent = await client.post(
+            "/v1/chat/sessions",
+            content=body,
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=grant_did, grant_id=grant_id,
+                method="POST", path="/v1/chat/sessions", body=body,
+            ),
+        )
+    assert sent.status_code == 200, sent.text
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT from_agent_id, from_did, signature, signed_payload FROM {{tables.chat_messages}} WHERE body = 'hello chat'"
+    )
+    assert str(row["from_agent_id"]) == str(alice_id)
+    assert row["from_did"] == "did:aw:alice"
+    assert row["signature"] is None
+    assert row["signed_payload"] is None
+    participant = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT agent_id FROM {{tables.chat_participants}} WHERE alias = 'bob'"
+    )
+    assert str(participant["agent_id"]) == str(bob_id)
+
+
+@pytest.mark.asyncio
+async def test_grant_real_send_handlers_reject_session_did_as_root_signed_sender(aweb_cloud_db):
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    signing_key, grant_did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=grant_did, scopes=["mail.send", "chat.send"])).json()["grant_id"]
+        mail_body = json.dumps(
+            {"to_alias": "bob", "body": "bad", "from_did": grant_did, "signature": "not-a-root-signature"},
+            separators=(",", ":"),
+        ).encode()
+        mail = await client.post(
+            "/v1/messages",
+            content=mail_body,
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=grant_did, grant_id=grant_id,
+                method="POST", path="/v1/messages", body=mail_body,
+            ),
+        )
+        chat_body = json.dumps(
+            {"to_aliases": ["bob"], "message": "bad", "from_did": grant_did, "signature": "not-a-root-signature"},
+            separators=(",", ":"),
+        ).encode()
+        chat = await client.post(
+            "/v1/chat/sessions",
+            content=chat_body,
+            headers=_grant_headers(
+                signing_key=signing_key, did_key=grant_did, grant_id=grant_id,
+                method="POST", path="/v1/chat/sessions", body=chat_body,
+            ),
+        )
+    assert mail.status_code == 422
+    assert mail.json()["detail"] == "from_did must match the authenticated sender"
+    assert chat.status_code == 422
+    assert chat.json()["detail"] == "from_did must match the authenticated sender"

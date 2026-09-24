@@ -93,7 +93,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 			strings.TrimSpace(payload.ToAddress) != ""
 	}
 	initialConversationID := strings.TrimSpace(payload.ConversationID)
-	if c.signingKey != nil && initialConversationID == "" && hasRecipient {
+	if c.canSignMessages() && initialConversationID == "" && hasRecipient {
 		conversationID, err := GenerateUUID4()
 		if err != nil {
 			return nil, err
@@ -126,7 +126,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		return &out, nil
 	}
 	from := c.address
-	if c.signingKey != nil {
+	if c.canSignMessages() {
 		from = c.signedPayloadFrom(identityTarget, payload.ToAlias != "" && !strings.Contains(payload.ToAlias, "/"))
 	}
 	sf, err := c.signEnvelope(ctx, &MessageEnvelope{
@@ -145,7 +145,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if err != nil {
 		return nil, err
 	}
-	if c.signingKey != nil {
+	if c.canSignMessages() {
 		payload.FromDID = sf.FromDID
 		payload.ToDID = sf.ToDID
 		payload.ToStableID = sf.ToStableID
@@ -168,6 +168,9 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 	}
 	if c.signingKey == nil || strings.TrimSpace(c.did) == "" {
 		return errors.New("E2E messaging requires a local self-custodial signing key")
+	}
+	if !c.canSignMessages() {
+		return errors.New("E2E messaging requires the subject identity signing key; identity grants cannot sign encrypted message envelopes")
 	}
 	if c.e2eeEncryptionKey == nil {
 		return errors.New("E2E messaging requires a local encryption key; upgrade aw and run `aw id encryption-key setup`, or pass --plaintext only for explicit server-readable messaging")
