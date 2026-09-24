@@ -870,7 +870,16 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
-	if c.teamCertHeader != "" && c.signingKey != nil {
+	if c.grantID != "" && c.signingKey != nil {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		credential, err := SignIdentityGrantCredential(c.signingKey, http.MethodGet, req.URL, c.grantID, nil, timestamp)
+		if err != nil {
+			return nil, err
+		}
+		for key := range credential.Headers {
+			req.Header.Set(key, credential.Headers.Get(key))
+		}
+	} else if c.teamCertHeader != "" && c.signingKey != nil {
 		// Certificate auth: same DIDKey + cert headers as regular requests.
 		timestamp := time.Now().UTC().Format(time.RFC3339)
 		signPayload := certAuthSignPayload(c.teamID, timestamp, nil)

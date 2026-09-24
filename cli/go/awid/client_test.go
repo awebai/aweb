@@ -7318,6 +7318,60 @@ func TestGrantClientUsesSessionKeyOnlyForRequestAuthNotMessageEnvelope(t *testin
 	}
 }
 
+func TestGrantClientUsesGrantAuthForStreams(t *testing.T) {
+	_, sessionKey, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionDID := ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey))
+	grantID := "11111111-1111-4111-8111-111111111111"
+	seen := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/events/stream":
+			seen["events"] = r.Header.Get("Authorization")
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions/sess/stream":
+			seen["chat"] = r.Header.Get("Authorization")
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("X-AWEB-Grant-ID"); got != grantID {
+			t.Fatalf("X-AWEB-Grant-ID=%q, want %q", got, grantID)
+		}
+		if strings.TrimSpace(r.Header.Get("X-AWEB-Signed-Payload")) == "" {
+			t.Fatal("missing signed payload header")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte(": ok\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := NewWithGrant(server.URL, sessionKey, grantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := client.EventStream(context.Background(), time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatalf("grant event stream: %v", err)
+	}
+	_ = events.Close()
+	chat, err := client.ChatStream(context.Background(), "sess", time.Now().Add(time.Minute), nil)
+	if err != nil {
+		t.Fatalf("grant chat stream: %v", err)
+	}
+	_ = chat.Close()
+
+	for name, auth := range seen {
+		parts := strings.Fields(auth)
+		if len(parts) != 4 || parts[0] != "AWEB-Grant" || parts[1] != "DIDKey" || parts[2] != sessionDID {
+			t.Fatalf("%s Authorization=%q, want grant auth with session DID %s", name, auth, sessionDID)
+		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("stream requests seen=%v, want both events and chat", seen)
+	}
+}
+
 func TestGrantClientE2EEFailsClosedBeforeSessionEnvelopeSignature(t *testing.T) {
 	_, sessionKey, err := GenerateKeypair()
 	if err != nil {

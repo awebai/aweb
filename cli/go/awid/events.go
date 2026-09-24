@@ -132,7 +132,16 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
-	if c.teamCertHeader != "" && c.signingKey != nil {
+	if c.grantID != "" && c.signingKey != nil {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		credential, err := SignIdentityGrantCredential(c.signingKey, http.MethodGet, req.URL, c.grantID, nil, timestamp)
+		if err != nil {
+			return nil, err
+		}
+		for key := range credential.Headers {
+			req.Header.Set(key, credential.Headers.Get(key))
+		}
+	} else if c.teamCertHeader != "" && c.signingKey != nil {
 		timestamp := time.Now().UTC().Format(time.RFC3339)
 		sigPayload := certAuthSignPayload(c.teamID, timestamp, nil)
 		sig := ed25519.Sign(c.signingKey, sigPayload)
