@@ -535,6 +535,23 @@ async def test_identity_grant_status_reports_effective_issuer_revocation(aweb_cl
 
 
 @pytest.mark.asyncio
+async def test_identity_grant_status_reports_subject_inactive(aweb_cloud_db):
+    app, agent_id = await _fixture(aweb_cloud_db.aweb_db)
+    _, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        grant_id = (await _mint(client, grant_did_key=did_key, scopes=["mail.send"])).json()["grant_id"]
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.agents}} SET status = 'retired' WHERE agent_id = $1::UUID",
+            str(agent_id),
+        )
+        resp = await client.get(f"/v1/identity-grants/{grant_id}/status")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "active"
+    assert resp.json()["effective_status"] == "subject_inactive"
+    assert resp.json()["status_detail"] == "grant subject identity is not active"
+
+
+@pytest.mark.asyncio
 async def test_grant_with_revoked_issuing_certificate_is_rejected(aweb_cloud_db):
     """aweb-abfn: revoking the membership certificate that minted a grant ends
     the delegation, even though the grant row itself is unrevoked and unexpired."""

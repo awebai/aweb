@@ -97,7 +97,7 @@ async def _effective_status(request: Request, row, now: datetime) -> tuple[str, 
     status = _status(row, now)
     if status != "active":
         return status, None
-    if row.get("subject_status") is not None and (row.get("subject_status") != "active" or row.get("subject_deleted_at") is not None):
+    if row.get("subject_status") != "active" or row.get("subject_deleted_at") is not None:
         return "subject_inactive", "grant subject identity is not active"
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:

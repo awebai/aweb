@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	aweb "github.com/awebai/aw"
@@ -91,6 +92,7 @@ type custodyService struct {
 	now            func() time.Time
 	mu             sync.Mutex
 	replay         map[string]string
+	replayAt       map[string]time.Time
 	results        map[string]*awid.PlainMessageSignResponse
 	server         *http.Server
 }
@@ -113,7 +115,7 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 	}
 	client, sel, clientErr := resolveClientSelectionAtIdentityHome(wd, home)
 	serviceID, _ := awid.GenerateUUID4()
-	svc := &custodyService{residentHome: home.Root, socketPath: awconfig.CustodySocketPath(home.Root), identity: identity, signingKey: key, serviceID: serviceID, now: time.Now, replay: map[string]string{}, results: map[string]*awid.PlainMessageSignResponse{}}
+	svc := &custodyService{residentHome: home.Root, socketPath: awconfig.CustodySocketPath(home.Root), identity: identity, signingKey: key, serviceID: serviceID, now: time.Now, replay: map[string]string{}, replayAt: map[string]time.Time{}, results: map[string]*awid.PlainMessageSignResponse{}}
 	if sel != nil {
 		svc.selectedTeam = strings.TrimSpace(sel.TeamID)
 	}
@@ -133,9 +135,6 @@ func grantStatusViaClient(client *aweb.Client) func(context.Context, string) (cu
 			return custodyGrantStatus{}, err
 		}
 		effective := strings.TrimSpace(g.EffectiveStatus)
-		if effective == "" {
-			effective = strings.TrimSpace(g.Status)
-		}
 		return custodyGrantStatus{Active: effective == "active", Scopes: g.Scopes, GrantDIDKey: g.GrantDIDKey, TeamID: g.TeamID, Status: g.Status, EffectiveStatus: effective, ExpiresAt: g.ExpiresAt, LastCheckedAt: g.LastCheckedAt}, nil
 	}
 }
@@ -157,18 +156,26 @@ func (s *custodyService) serve(ctx context.Context) error {
 		id, _ := awid.GenerateUUID4()
 		s.serviceID = id
 	}
-	if err := os.MkdirAll(filepath.Dir(s.socketPath), 0o700); err != nil {
+	runDir := filepath.Dir(s.socketPath)
+	if err := os.MkdirAll(runDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(runDir, 0o700); err != nil {
 		return err
 	}
 	if _, err := os.Stat(s.socketPath); err == nil {
-		if err := custodyHTTP(ctx, s.socketPath, http.MethodGet, "/status", nil, &custodyStatusReport{}); err == nil {
+		if err := custodyHTTPTimeout(ctx, s.socketPath, http.MethodGet, "/ping", nil, nil, 500*time.Millisecond); err == nil {
 			return usageError("custody service already running at %s", s.socketPath)
+		} else if !isStaleCustodySocketError(err) {
+			return usageError("custody service already running or not safely stale at %s: %v", s.socketPath, err)
 		}
 		if err := os.Remove(s.socketPath); err != nil {
 			return fmt.Errorf("remove stale custody socket: %w", err)
 		}
 	}
+	oldUmask := syscall.Umask(0o077)
 	ln, err := net.Listen("unix", s.socketPath)
+	syscall.Umask(oldUmask)
 	if err != nil {
 		return err
 	}
@@ -177,6 +184,7 @@ func (s *custodyService) serve(ctx context.Context) error {
 		return err
 	}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", s.handlePing)
 	mux.HandleFunc("/status", s.handleStatus)
 	mux.HandleFunc("/sign_plain_message", s.handleSignPlainMessage)
 	mux.HandleFunc("/stop", s.handleStop)
@@ -187,6 +195,10 @@ func (s *custodyService) serve(ctx context.Context) error {
 		return nil
 	}
 	return err
+}
+
+func (s *custodyService) handlePing(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{"status": "ok", "service_id": strings.TrimSpace(s.serviceID)})
 }
 
 func (s *custodyService) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -214,17 +226,43 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 			lastCheckedAt = strings.TrimSpace(checkedAt)
 		}
 	}
-	teamID := strings.TrimSpace(s.selectedTeam)
-	if teamID == "" {
-		teamID = "unknown"
+	teams, teamErrs := s.teamReadiness(grantStatusReady)
+	out.Teams = teams
+	if len(teamErrs) > 0 {
+		errs = append(errs, teamErrs...)
 	}
-	out.Teams = []map[string]any{{"team_id": teamID, "ready": s.signingKey != nil && grantStatusReady, "certificate_present": grantStatusReady, "grant_status_endpoint_ready": grantStatusReady}}
 	out.Keys = map[string]any{"signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": false, "encryption_key_id": ""}
 	out.Ops = []string{"status.v1", "sign_plain_message.v1"}
 	out.Freshness = map[string]any{"source": "identity-grants", "last_checked_at": lastCheckedAt, "max_cache_age_seconds": 30}
 	out.Errors = errs
 	return out
 }
+func (s *custodyService) teamReadiness(grantStatusReady bool) ([]map[string]any, []string) {
+	if strings.TrimSpace(s.residentHome) == "" {
+		return nil, nil
+	}
+	certs, err := awconfig.ListTeamCertificatesFromIdentityHome(s.residentHome)
+	if err != nil {
+		return nil, []string{"team_certificates_unavailable"}
+	}
+	teams := make([]map[string]any, 0, len(certs))
+	for _, cert := range certs {
+		teamID := strings.TrimSpace(cert.TeamID)
+		if teamID == "" {
+			continue
+		}
+		certificatePresent := cert.Certificate != nil
+		teams = append(teams, map[string]any{
+			"team_id":                     teamID,
+			"ready":                       s.signingKey != nil && certificatePresent && grantStatusReady,
+			"certificate_present":         certificatePresent,
+			"certificate_loadable":        certificatePresent,
+			"grant_status_endpoint_ready": grantStatusReady,
+		})
+	}
+	return teams, nil
+}
+
 func (s *custodyService) handleStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"status": "stopping"})
 	go func() { time.Sleep(50 * time.Millisecond); _ = s.server.Close() }()
@@ -310,11 +348,6 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if err != nil {
 		return nil, fmt.Errorf("grant_freshness_unavailable")
 	}
-	if strings.TrimSpace(st.ExpiresAt) != "" {
-		if expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(st.ExpiresAt)); err == nil && !s.now().Before(expiresAt) {
-			return nil, fmt.Errorf("grant_expired")
-		}
-	}
 	if !st.Active {
 		switch firstNonEmpty(strings.TrimSpace(st.EffectiveStatus), strings.TrimSpace(st.Status)) {
 		case "expired":
@@ -329,6 +362,16 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 			return nil, fmt.Errorf("grant_subject_inactive")
 		}
 		return nil, fmt.Errorf("grant_scope_denied")
+	}
+	if strings.TrimSpace(st.ExpiresAt) == "" {
+		return nil, fmt.Errorf("grant_freshness_unavailable")
+	}
+	expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(st.ExpiresAt))
+	if err != nil {
+		return nil, fmt.Errorf("grant_freshness_unavailable")
+	}
+	if !s.now().Before(expiresAt) {
+		return nil, fmt.Errorf("grant_expired")
 	}
 	if strings.TrimSpace(st.GrantDIDKey) != strings.TrimSpace(req.SessionDIDKey) {
 		return nil, fmt.Errorf("grant_session_mismatch")
@@ -348,6 +391,16 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	}
 	key := strings.TrimSpace(req.GrantID) + "|" + strings.TrimSpace(req.SessionDIDKey) + "|" + strings.TrimSpace(req.Nonce)
 	s.mu.Lock()
+	if s.replay == nil {
+		s.replay = map[string]string{}
+	}
+	if s.replayAt == nil {
+		s.replayAt = map[string]time.Time{}
+	}
+	if s.results == nil {
+		s.results = map[string]*awid.PlainMessageSignResponse{}
+	}
+	s.evictReplayLocked(s.now().Add(-2 * time.Minute))
 	if old, exists := s.replay[key]; exists {
 		if old != req.RequestDigest {
 			s.mu.Unlock()
@@ -361,6 +414,7 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 		return nil, fmt.Errorf("replay_detected")
 	}
 	s.replay[key] = req.RequestDigest
+	s.replayAt[key] = s.now()
 	s.mu.Unlock()
 	env := req.Envelope
 	env.FromDID = s.identity.DID
@@ -385,6 +439,16 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	return out, nil
 }
 
+func (s *custodyService) evictReplayLocked(cutoff time.Time) {
+	for key, at := range s.replayAt {
+		if at.Before(cutoff) {
+			delete(s.replayAt, key)
+			delete(s.replay, key)
+			delete(s.results, key)
+		}
+	}
+}
+
 func runCustodyStatus(ctx context.Context) (custodyStatusReport, error) {
 	socket, err := activeCustodySocketPath()
 	if err != nil {
@@ -392,12 +456,17 @@ func runCustodyStatus(ctx context.Context) (custodyStatusReport, error) {
 	}
 	var out custodyStatusReport
 	if err := custodyHTTP(ctx, socket, http.MethodGet, "/status", nil, &out); err != nil {
-		out.Status = "not_running"
-		out.SocketPath = socket
-		out.Errors = []string{err.Error()}
-		return out, nil
+		return custodyUnavailableStatus(socket), nil
 	}
 	return out, nil
+}
+
+func custodyUnavailableStatus(socket string) custodyStatusReport {
+	var out custodyStatusReport
+	out.Status = "not_running"
+	out.SocketPath = socket
+	out.Errors = []string{"custody_unavailable"}
+	return out
 }
 func runCustodyStop(ctx context.Context) error {
 	socket, err := activeCustodySocketPath()
@@ -425,12 +494,16 @@ func activeCustodySocketPath() (string, error) {
 	return awconfig.CustodySocketPath(home.Root), nil
 }
 func custodyHTTP(ctx context.Context, socket, method, path string, in any, out any) error {
+	return custodyHTTPTimeout(ctx, socket, method, path, in, out, 5*time.Second)
+}
+
+func custodyHTTPTimeout(ctx context.Context, socket, method, path string, in any, out any, timeout time.Duration) error {
 	var body strings.Reader
 	if in != nil {
 		b, _ := json.Marshal(in)
 		body = *strings.NewReader(string(b))
 	}
-	hc := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	hc := &http.Client{Timeout: timeout, Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", socket)
 	}}}
 	req, err := http.NewRequestWithContext(ctx, method, "http://local"+path, &body)
@@ -450,6 +523,11 @@ func custodyHTTP(ctx context.Context, socket, method, path string, in any, out a
 	}
 	return nil
 }
+
+func isStaleCustodySocketError(err error) bool {
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ENOTSOCK)
+}
+
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)

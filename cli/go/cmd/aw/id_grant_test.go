@@ -260,8 +260,10 @@ func TestGrantHomeCustodySocketSignsPlainMail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	grant.Custody.SocketPath = filepath.Join(os.TempDir(), "aw-custody-"+socketID[:8]+".sock")
-	t.Cleanup(func() { _ = os.Remove(grant.Custody.SocketPath) })
+	custodyRunDir := filepath.Join("/tmp", "aw-custody-"+socketID[:8])
+	_ = os.RemoveAll(custodyRunDir)
+	t.Cleanup(func() { _ = os.RemoveAll(custodyRunDir) })
+	grant.Custody.SocketPath = filepath.Join(custodyRunDir, "custody.sock")
 	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), grant); err != nil {
 		t.Fatal(err)
 	}
@@ -276,17 +278,24 @@ func TestGrantHomeCustodySocketSignsPlainMail(t *testing.T) {
 		signingKey: residentKey,
 		now:        time.Now,
 		replay:     map[string]string{},
+		replayAt:   map[string]time.Time{},
 		results:    map[string]*awid.PlainMessageSignResponse{},
 		grantStatus: func(ctx context.Context, grantID string) (custodyGrantStatus, error) {
-			return custodyGrantStatus{Active: true, Status: "active", TeamID: grant.TeamID, GrantDIDKey: sessionDID, Scopes: grant.Scopes}, nil
+			return custodyGrantStatus{Active: true, Status: "active", EffectiveStatus: "active", TeamID: grant.TeamID, GrantDIDKey: sessionDID, Scopes: grant.Scopes, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339)}, nil
 		},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go func() { _ = svc.serve(ctx) }()
+	errc := make(chan error, 1)
+	go func() { errc <- svc.serve(ctx) }()
 	for i := 0; i < 50; i++ {
 		if _, err := os.Stat(grant.Custody.SocketPath); err == nil {
 			break
+		}
+		select {
+		case err := <-errc:
+			t.Fatalf("custody service exited before creating socket: %v", err)
+		default:
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
