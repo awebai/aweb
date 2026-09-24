@@ -17,7 +17,8 @@ to refresh it.
 | Family | Commands |
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
-| Identity | `custody`, `id`, `mcp-config`, `team`, `whoami` || Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
+| Identity | `custody`, `id`, `mcp-config`, `team`, `whoami` |
+| Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
 | Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session` |
@@ -30,47 +31,6 @@ to refresh it.
 - `--json Output as JSON`
 - `--server-name string Override the server host or name for this command`
 - `--trace Trace redacted HTTP requests and responses to stderr`
-
-## `custody`
-
-### `custody`
-
-Local resident custody service
-
-Subcommands:
-- `serve` Serve local resident custody operations
-- `status` Probe local resident custody service
-- `stop` Stop local resident custody service
-
-Flags:
-- `-h, --help help for custody`
-
-## `custody serve`
-
-### `custody serve`
-
-Serve local resident custody operations
-
-Flags:
-- `-h, --help help for serve`
-
-## `custody status`
-
-### `custody status`
-
-Probe local resident custody service
-
-Flags:
-- `-h, --help help for status`
-
-## `custody stop`
-
-### `custody stop`
-
-Stop local resident custody service
-
-Flags:
-- `-h, --help help for stop`
 
 ## `check`
 
@@ -271,6 +231,47 @@ Flags:
 - `-h, --help help for status`
 - `--limit int Maximum team workspaces to show (default 50)`
 
+## `custody`
+
+### `custody`
+
+Local resident custody service
+
+Subcommands:
+- `serve` Serve local resident custody operations
+- `status` Probe local resident custody service
+- `stop` Stop local resident custody service
+
+Flags:
+- `-h, --help help for custody`
+
+## `custody serve`
+
+### `custody serve`
+
+Serve local resident custody operations
+
+Flags:
+- `-h, --help help for serve`
+
+## `custody status`
+
+### `custody status`
+
+Probe local resident custody service
+
+Flags:
+- `-h, --help help for status`
+
+## `custody stop`
+
+### `custody stop`
+
+Stop local resident custody service
+
+Flags:
+- `-h, --help help for stop`
+
 ## `id`
 
 ### `id`
@@ -420,6 +421,7 @@ Subcommands:
 
 Flags:
 - `-h, --help help for grant`
+- `--team string Override the selected team_id for this command`
 
 ## `id grant list`
 
@@ -437,10 +439,10 @@ Flags:
 Mint a session grant and write a self-contained grant home
 
 Flags:
+- `--bundle stringArray Grant scope bundle, repeatable or comma-separated (normal-agent)`
 - `-h, --help help for mint`
 - `--label string Optional label for the grant`
 - `--out string Directory to write the grant home (created fresh; a non-empty directory is refused)`
-- `--bundle stringArray Grant scope bundle, repeatable or comma-separated (normal-agent)`
 - `--scope stringArray Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)`
 - `--ttl duration Grant duration before expiry (60s to 720h) (default 8h0m0s)`
 
