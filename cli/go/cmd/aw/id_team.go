@@ -378,9 +378,12 @@ var teamAcceptInviteCmd = &cobra.Command{
 		"state. Global hosted accepts reuse identity.yaml's stored did:aw and signing\n" +
 		"key; they do not mint a new did:aw just because this identity joins another\n" +
 		"team. Hosted --global accepts may use --address for an owned address or\n" +
-		"--no-address for did:aw-only membership.\n" +
-		"After accepting, run `aw init` in that directory to connect the\n" +
-		"workspace.\n\n" +
+		"--no-address for did:aw-only membership. External --identity-home hosted\n" +
+		"local accepts connect that root to the issuing service when the invite names\n" +
+		"one; if connection fails, rerun the printed `aw --identity-home <root>\n" +
+		"workspace connect --service <url>` recovery command without reusing the\n" +
+		"invite. Other membership-only accepts can be connected later with `aw init`\n" +
+		"or `aw workspace connect`.\n\n" +
 		"Local-controller invite tokens are same-machine helpers: they require the\n" +
 		"local invite record and local team controller key. Local-controller global\n" +
 		"accepts default-claim team-domain/name only when the local namespace\n" +
@@ -917,33 +920,41 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if err != nil {
 		return err
 	}
-	if connectWorkspace {
+	externalHostedLocalAccept := false
+	if home.External() && acceptScope == awid.IdentityModeLocal {
+		if domain, _, parseErr := awid.ParseTeamID(accepted.Output.TeamID); parseErr == nil && isAwebHostedNamespace(domain) {
+			externalHostedLocalAccept = true
+		}
+	}
+	if connectWorkspace || externalHostedLocalAccept {
 		connectURL := firstNonEmpty(inviteAwebURL, accepted.AwebURL)
 		if connectURL == "" {
 			connectURL = awebURLForTeamInviteAt(workingDir, externalIdentityHomeRoot(home), accepted.Output.TeamID)
 		}
-		if teamHumanJoinNoConnect {
+		if connectWorkspace && teamHumanJoinNoConnect {
 			connected := false
 			accepted.Output.Connected = &connected
 			if normalized, normalizeErr := validateInviteAwebURL(connectURL); normalizeErr == nil {
 				accepted.Output.AwebURL = normalized
-				accepted.Output.ConnectCommand = workspaceConnectCommand(normalized)
+				accepted.Output.ConnectCommand = workspaceConnectCommandForIdentityHome(normalized, externalIdentityHomeRoot(home))
 			}
 			printOutput(*accepted.Output, formatTeamAcceptInvite)
 			return nil
 		}
 		if connectURL == "" {
-			return usageError("team membership was installed, but this legacy invite does not identify its aweb service; run `%s` after choosing the service", workspaceConnectCommand("<url>"))
+			return usageError("team membership was installed, but this legacy invite does not identify its aweb service; run `%s` after choosing the service", workspaceConnectCommandForIdentityHome("<url>", externalIdentityHomeRoot(home)))
 		}
 		connectURL, err = validateInviteAwebURL(connectURL)
 		if err != nil {
 			return fmt.Errorf("team membership was installed, but its aweb service URL is invalid: %w", err)
 		}
 		accepted.Output.AwebURL = connectURL
-		accepted.Output.ConnectCommand = workspaceConnectCommand(connectURL)
-		connected, connectErr := initCertificateConnectWithOptions(workingDir, connectURL, certificateConnectOptions{
-			IdentityHome: home.Root,
-		})
+		accepted.Output.ConnectCommand = workspaceConnectCommandForIdentityHome(connectURL, externalIdentityHomeRoot(home))
+		connectOpts := certificateConnectOptions{IdentityHome: home.Root}
+		if home.External() {
+			connectOpts.BindingWorkspacePath = home.Root
+		}
+		connected, connectErr := initCertificateConnectWithOptions(workingDir, connectURL, connectOpts)
 		if connectErr != nil {
 			return fmt.Errorf("team membership was installed, but workspace connection failed: %w\nRun `%s` to retry without reusing the invite", connectErr, accepted.Output.ConnectCommand)
 		}

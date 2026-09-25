@@ -23,12 +23,12 @@ func workspaceConnectRecoveryCommand(workingDir, identityHome string) (string, b
 		if membership != nil {
 			if raw := strings.TrimSpace(membership.AwebURL); raw != "" {
 				if normalized, normalizeErr := validateInviteAwebURL(raw); normalizeErr == nil {
-					return workspaceConnectCommand(normalized), true
+					return workspaceConnectCommandForIdentityHome(normalized, identityHome), true
 				}
 			}
 			if raw := awebURLForTeamInviteAt(workingDir, identityHome, membership.TeamID); raw != "" {
 				if normalized, normalizeErr := validateInviteAwebURL(raw); normalizeErr == nil {
-					return workspaceConnectCommand(normalized), true
+					return workspaceConnectCommandForIdentityHome(normalized, identityHome), true
 				}
 			}
 		}
@@ -37,5 +37,14 @@ func workspaceConnectRecoveryCommand(workingDir, identityHome string) (string, b
 }
 
 func workspaceConnectCommand(awebURL string) string {
-	return formatShellCommand([]string{"aw", "workspace", "connect", "--service", awebURL})
+	return workspaceConnectCommandForIdentityHome(awebURL, "")
+}
+
+func workspaceConnectCommandForIdentityHome(awebURL, identityHome string) string {
+	args := []string{"aw"}
+	if strings.TrimSpace(identityHome) != "" {
+		args = append(args, "--identity-home", strings.TrimSpace(identityHome))
+	}
+	args = append(args, "workspace", "connect", "--service", awebURL)
+	return formatShellCommand(args)
 }

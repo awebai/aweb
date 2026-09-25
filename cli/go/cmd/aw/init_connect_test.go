@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -198,6 +199,189 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	wsPath, _ := gotConnectPayload["workspace_path"].(string)
 	if !strings.HasSuffix(wsPath, filepath.Base(tmp)) {
 		t.Fatalf("connect payload workspace_path=%v", gotConnectPayload["workspace_path"])
+	}
+}
+
+func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	instanceHome := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identityHome := filepath.Join(root, "accepted.aw")
+	teamID := "default:recover.aweb.ai"
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(identityHome, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:           memberDID,
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     "2026-04-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(identityHome, "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: memberDID, Alias: "alice", IdentityScope: awid.IdentityModeLocal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	certPath, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(identityHome, teamID, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamStateToIdentityHome(identityHome, &awconfig.TeamState{ActiveTeam: teamID, Memberships: []awconfig.TeamMembership{{
+		TeamID:   teamID,
+		Alias:    "alice",
+		CertPath: filepath.ToSlash(certPath),
+		AwebURL:  "https://old.example.invalid/api",
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotConnectPayload connectRequest
+	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"onboarding_url": serverURL,
+				"aweb_url":       serverURL,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			if err := json.NewDecoder(r.Body).Decode(&gotConnectPayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        "alice",
+				"agent_id":     "agent-alice",
+				"workspace_id": "workspace-recovered",
+				"repo_id":      "repo-ignored",
+				"team_did_key": awid.ComputeDIDKey(teamPub),
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "workspace", "connect", "--service", server.URL, "--json")
+	run.Env = testCommandEnv(filepath.Join(root, "home"))
+	run.Dir = instanceHome
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workspace connect failed: %v\n%s", err, out)
+	}
+	if gotConnectPayload.WorkspacePath != identityHome {
+		t.Fatalf("workspace_path=%q want external root %q", gotConnectPayload.WorkspacePath, identityHome)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(identityHome, "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load external workspace: %v", err)
+	}
+	if workspace.AwebURL != server.URL || workspace.WorkspacePath != identityHome || workspace.CanonicalOrigin != "" {
+		t.Fatalf("workspace=%#v", workspace)
+	}
+	if membership := workspace.Membership(teamID); membership == nil || membership.WorkspaceID != "workspace-recovered" {
+		t.Fatalf("workspace membership=%#v", membership)
+	}
+	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("workspace connect mutated caller cwd identity home: %v", err)
+	}
+
+	gotConnectPayload = connectRequest{}
+	serviceInit := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "service", "init", "--service", server.URL, "--json")
+	serviceInit.Env = testCommandEnv(filepath.Join(root, "home"))
+	serviceInit.Dir = instanceHome
+	serviceOut, err := serviceInit.CombinedOutput()
+	if err != nil {
+		t.Fatalf("service init failed: %v\n%s", err, serviceOut)
+	}
+	if gotConnectPayload.WorkspacePath != identityHome {
+		t.Fatalf("service init workspace_path=%q want external root %q", gotConnectPayload.WorkspacePath, identityHome)
+	}
+	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("service init mutated caller cwd identity home: %v", err)
+	}
+}
+
+func TestWorkspaceConnectRejectsGrantIdentityHomeBeforeMutation(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	instanceHome := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grantHome := filepath.Join(root, "grant.aw")
+	if err := os.MkdirAll(grantHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(grantHome, "grant.yaml"), []byte("version: 1\ngrant_id: grant-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		t.Fatalf("workspace connect with grant home reached network: %s %s", r.Method, r.URL.Path)
+	}))
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{name: "workspace-connect", args: []string{"workspace", "connect", "--service", server.URL, "--json"}},
+		{name: "service-init", args: []string{"service", "init", "--service", server.URL, "--json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			called = false
+			run := exec.CommandContext(ctx, bin, append([]string{"--identity-home", grantHome}, tc.args...)...)
+			run.Env = testCommandEnv(filepath.Join(root, "home"))
+			run.Dir = instanceHome
+			out, err := run.CombinedOutput()
+			if err == nil {
+				t.Fatalf("expected grant home refusal, got success:\n%s", out)
+			}
+			if !strings.Contains(string(out), "this is a grant home") {
+				t.Fatalf("unexpected grant refusal:\n%s", out)
+			}
+			if called {
+				t.Fatal("grant-home connect should fail before network")
+			}
+			if _, err := os.Stat(filepath.Join(grantHome, "workspace.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("grant home mutated workspace.yaml: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+				t.Fatalf("grant home connect mutated caller cwd: %v", err)
+			}
+		})
 	}
 }
 

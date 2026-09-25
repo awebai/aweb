@@ -316,6 +316,105 @@ func runSelfRetireDeleteForTest(t *testing.T, serverURL, alias string) (string, 
 	return string(out), err
 }
 
+func TestAwWorkspaceDeleteExternalIdentityHomeSelfRetiresWithSelectedRoot(t *testing.T) {
+	t.Parallel()
+
+	var sawSelfRemove atomic.Bool
+	server := newLocalHTTPServer(t, selfRetireCertServerHandler(t, "worker", &sawSelfRemove, func(w http.ResponseWriter) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":                "removed",
+			"team_id":               selfRetireFixtureTeamID,
+			"canonical_team_id":     selfRetireFixtureTeamID,
+			"alias":                 "worker",
+			"identity_scope":        "local",
+			"alias_released":        true,
+			"alias_released_reason": "certificate_revoked",
+			"workspace_id":          selfRetireFixtureWorkspaceID,
+		})
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	principalRoot := filepath.Join(root, "principal")
+	instanceHome := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSelfRetireCertificateFixture(t, principalRoot, server.URL+"/api", "worker")
+
+	run := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"), "workspace", "delete", "worker")
+	run.Env = testCommandEnv(filepath.Join(root, "home"))
+	run.Dir = instanceHome
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run failed: %v\n%s", err, out)
+	}
+	if !sawSelfRemove.Load() {
+		t.Fatalf("self-remove was never called:\n%s", out)
+	}
+	if !strings.Contains(string(out), "Released alias for reuse: true") {
+		t.Fatalf("unexpected output:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("external self-retire mutated caller cwd identity home: %v", err)
+	}
+}
+
+func TestAwWorkspaceDeleteExternalIdentityHomeHasNoGenericFallback(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	principalRoot := filepath.Join(root, "principal")
+	instanceHome := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, principalRoot, testSelectionFixture{
+		AwebURL:       "https://app.aweb.ai/api",
+		TeamID:        selfRetireFixtureTeamID,
+		Alias:         "global-worker",
+		WorkspaceID:   selfRetireFixtureWorkspaceID,
+		DID:           awid.ComputeDIDKey(pub),
+		StableID:      awid.ComputeStableID(pub),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal,
+		SigningKey:    key,
+		CreatedAt:     "2026-04-04T00:00:00Z",
+	})
+
+	run := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principalRoot, ".aw"), "workspace", "delete", selfRetireFixtureWorkspaceID)
+	run.Env = testCommandEnv(filepath.Join(root, "home"))
+	run.Dir = instanceHome
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected external global self-delete refusal, got success:\n%s", out)
+	}
+	text := string(out)
+	if !strings.Contains(text, "only own hosted local self-release is supported") || !strings.Contains(text, aliasReleaseGlobalIdentity) {
+		t.Fatalf("unexpected refusal:\n%s", text)
+	}
+	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("external delete fallback mutated caller cwd identity home: %v", err)
+	}
+}
+
 func TestAwWorkspaceDeleteSelfRetiresWithTeamCertificate(t *testing.T) {
 	t.Parallel()
 

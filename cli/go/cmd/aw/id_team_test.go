@@ -2455,7 +2455,7 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
 	tmp := t.TempDir()
@@ -2471,11 +2471,16 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	}
 	identityHome := filepath.Join(canonicalTmp, "joined-team.aw")
 	teamID := "default:external.aweb.ai"
-	_, hostedTeamKey, err := awid.GenerateKeypair()
+	hostedTeamPub, hostedTeamKey, err := awid.GenerateKeypair()
 	if err != nil {
 		t.Fatal(err)
 	}
+	teamDIDKey := awid.ComputeDIDKey(hostedTeamPub)
 	var acceptedDID string
+	var sawConnect bool
+	mailInboxCalls := 0
+	chatPendingCalls := 0
+	var gotConnectPayload connectRequest
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
@@ -2509,6 +2514,25 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 				"created":        true,
 				"team_cert":      encoded,
 			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			sawConnect = true
+			if err := json.NewDecoder(r.Body).Decode(&gotConnectPayload); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":      teamID,
+				"alias":        "alice",
+				"agent_id":     "agent-alice",
+				"workspace_id": "workspace-alice",
+				"repo_id":      "",
+				"team_did_key": teamDIDKey,
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
+			mailInboxCalls++
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/pending":
+			chatPendingCalls++
+			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{})
 		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
 		default:
@@ -2527,8 +2551,14 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, out)
 	}
-	if got["team_id"] != teamID || got["alias"] != "alice" {
+	if got["team_id"] != teamID || got["alias"] != "alice" || got["connected"] != true {
 		t.Fatalf("output=%v", got)
+	}
+	if !sawConnect {
+		t.Fatal("external local accept did not auto-connect")
+	}
+	if gotConnectPayload.WorkspacePath != identityHome {
+		t.Fatalf("connect workspace_path=%q want external identity home %q", gotConnectPayload.WorkspacePath, identityHome)
 	}
 	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
 		t.Fatalf("external local accept mutated cwd identity home: %v", err)
@@ -2539,6 +2569,16 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	}
 	if identity.DID != acceptedDID || identity.IdentityScope != awid.IdentityModeLocal || identity.StableID != "" || identity.Address != "" {
 		t.Fatalf("external identity=%#v acceptedDID=%s", identity, acceptedDID)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(identityHome, "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load external workspace: %v", err)
+	}
+	if workspace.AwebURL != server.URL || workspace.WorkspacePath != identityHome || workspace.CanonicalOrigin != "" {
+		t.Fatalf("workspace=%#v", workspace)
+	}
+	if membership := workspace.Membership(teamID); membership == nil || membership.WorkspaceID != "workspace-alice" {
+		t.Fatalf("workspace membership=%#v", membership)
 	}
 	if _, err := awid.LoadSigningKey(filepath.Join(identityHome, "signing.key")); err != nil {
 		t.Fatalf("external signing key missing: %v", err)
@@ -2555,6 +2595,105 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	}
 	if state, err := awconfig.LoadEncryptionKeyStateFrom(filepath.Join(identityHome, "encryption.yaml")); err != nil || state.ActiveRecord() == nil {
 		t.Fatalf("external encryption state missing: state=%#v err=%v", state, err)
+	}
+
+	for _, args := range [][]string{
+		{"--identity-home", identityHome, "mail", "inbox", "--json", "--limit", "1"},
+		{"--identity-home", identityHome, "--team", teamID, "mail", "inbox", "--json", "--limit", "1"},
+		{"--identity-home", identityHome, "--team", teamID, "chat", "pending", "--json"},
+	} {
+		cmd := exec.CommandContext(ctx, bin, args...)
+		cmd.Env = testCommandEnv(tmp)
+		cmd.Dir = instanceHome
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%v failed: %v\n%s", args, err, out)
+		}
+	}
+	if mailInboxCalls != 2 || chatPendingCalls != 1 {
+		t.Fatalf("missing operation evidence: mail_inbox_calls=%d chat_pending_calls=%d", mailInboxCalls, chatPendingCalls)
+	}
+	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("external mail/chat mutated cwd identity home: %v", err)
+	}
+}
+
+func TestHostedLocalAcceptExternalIdentityHomeReportsRootRecoveryOnConnectFailure(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	instanceHome := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identityHome := filepath.Join(root, "joined-failed.aw")
+	teamID := "default:failed.aweb.ai"
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			var req awid.SpawnAcceptInviteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: req.DID, Alias: "alice", IdentityScope: awid.IdentityModeLocal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_slug":      "default",
+				"namespace_slug": "failed",
+				"namespace":      "failed.aweb.ai",
+				"identity_id":    "agent-alice",
+				"alias":          "alice",
+				"server_url":     serverURL,
+				"did":            req.DID,
+				"custody":        "self",
+				"identity_scope": awid.IdentityModeLocal,
+				"created":        true,
+				"team_cert":      encoded,
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			http.Error(w, "connect unavailable", http.StatusServiceUnavailable)
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "aw_inv_external_failed", "--name", "alice", "--local", "--json")
+	run.Env = append(testCommandEnv(root), "AWEB_URL="+server.URL)
+	run.Dir = instanceHome
+	out, err := run.CombinedOutput()
+	if err == nil {
+		t.Fatalf("accept/connect unexpectedly succeeded:\n%s", out)
+	}
+	wantRecovery := "aw --identity-home " + identityHome + " workspace connect --service " + server.URL
+	if !strings.Contains(string(out), wantRecovery) {
+		t.Fatalf("failure omitted external-root recovery command %q:\n%s", wantRecovery, out)
+	}
+	if _, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(identityHome, teamID); err != nil {
+		t.Fatalf("connect failure did not preserve installed certificate: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(identityHome, "workspace.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("failed connection wrote external workspace.yaml: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("failed external connect mutated caller cwd identity home: %v", err)
 	}
 }
 

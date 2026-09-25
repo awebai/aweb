@@ -207,10 +207,16 @@ interaction-log, A2A task-token entries (entries with `task_id`), and
 chat-delivery-cache state also remain in the instance home. Namespace/team
 controller keys under `~/.awid` and host TOFU state are never redirected.
 
-An external identity home grants use authority, not cleanup authority. `aw
-reset` and `aw workspace delete` refuse while the flag or environment override
-is active. `aw run` passes the canonical resolved `AWEB_IDENTITY_HOME` to its
-provider and service children so nested `aw` commands keep the same identity.
+An external identity home grants use authority, not general cleanup authority.
+`aw reset` refuses while the flag or environment override is active. `aw
+workspace delete` is admitted only for the selected principal's own hosted local
+self-release path; non-eligible external principals fail closed instead of
+falling back to generic workspace deletion. `aw workspace connect --service
+<url> --identity-home <root>` binds service workspace state under the external
+root for previously accepted local identities, and hosted external local
+`accept-invite` auto-connects that root when the invite names a service. `aw run`
+passes the canonical resolved `AWEB_IDENTITY_HOME` to its provider and service
+children so nested `aw` commands keep the same identity.
 
 ## CLI Reference
 

@@ -199,12 +199,18 @@ Rules:
   claim/create a global identity first.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
-<token>`. During compatibility, CLI JSON output may dual-emit `alias` and
-`name`. Legacy certificate/config `lifetime` input is normalized at decode and
-normal output emits only `identity_scope`. The deprecated `--alias` flag remains
-a hidden, warning compatibility alias for `--name`. New requests, registry
-storage, and product language use `name` as the
-concept and `identity_scope=local|global` for scope.
+<token>`. A hosted local accept into an explicit external `--identity-home`
+auto-connects that root when the invite names an aweb service; if connection
+fails after membership installation, the printed recovery command is `aw
+--identity-home <root> workspace connect --service <url>` and does not reuse the
+invite token. Existing accepted external roots can use the same
+`workspace connect` command to bind `workspace.yaml` under the root before
+running mail/chat. During compatibility, CLI JSON output may dual-emit `alias`
+and `name`. Legacy certificate/config `lifetime` input is normalized at decode
+and normal output emits only `identity_scope`. The deprecated `--alias` flag
+remains a hidden, warning compatibility alias for `--name`. New requests,
+registry storage, and product language use `name` as the concept and
+`identity_scope=local|global` for scope.
 
 ## Command-to-verb mapping
 

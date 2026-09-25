@@ -28,9 +28,10 @@ var serviceInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize this workspace against a service using an existing team certificate",
 	Long: "Initialize this workspace against a service using the existing .aw signing key\n" +
-		"and team certificate in this directory. This command only connects this\n" +
-		"workspace to the service; it does not create identities, create teams, or\n" +
-		"change AWID team membership.",
+		"and team certificate in this directory. With --identity-home, initialize and\n" +
+		"bind the selected external identity root instead of the caller's current\n" +
+		"directory. This command only connects this workspace to the service; it does\n" +
+		"not create identities, create teams, or change AWID team membership.",
 	RunE: runServiceInit,
 }
 
@@ -51,8 +52,15 @@ func runServiceInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	if awconfig.IsGrantHome(home.Root) {
+		return errGrantHomeRootAuthority
+	}
 	if teamID := strings.TrimSpace(serviceInitTeamID); teamID != "" {
-		if err := activateExistingTeamMembership(workingDir, teamID); err != nil {
+		if err := activateExistingTeamMembershipAt(workingDir, externalIdentityHomeRoot(home), teamID); err != nil {
 			return err
 		}
 	}
@@ -60,9 +68,14 @@ func runServiceInit(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	result, err := initCertificateConnectWithOptions(workingDir, urls.AwebURL, certificateConnectOptions{
-		Role: strings.TrimSpace(serviceInitRole),
-	})
+	opts := certificateConnectOptions{
+		Role:         strings.TrimSpace(serviceInitRole),
+		IdentityHome: home.Root,
+	}
+	if home.External() {
+		opts.BindingWorkspacePath = home.Root
+	}
+	result, err := initCertificateConnectWithOptions(workingDir, urls.AwebURL, opts)
 	if err != nil {
 		return err
 	}
@@ -71,7 +84,11 @@ func runServiceInit(cmd *cobra.Command, args []string) error {
 }
 
 func activateExistingTeamMembership(workingDir, teamID string) error {
-	teamState, err := requireTeamStateForMembership(workingDir)
+	return activateExistingTeamMembershipAt(workingDir, "", teamID)
+}
+
+func activateExistingTeamMembershipAt(workingDir, identityHome, teamID string) error {
+	teamState, err := requireTeamStateForMembershipAt(workingDir, identityHome)
 	if err != nil {
 		return err
 	}
@@ -79,5 +96,8 @@ func activateExistingTeamMembership(workingDir, teamID string) error {
 		return usageError("team certificate for %s is not installed in this workspace; run `aw id team fetch-cert` first", teamID)
 	}
 	teamState.ActiveTeam = teamID
+	if strings.TrimSpace(identityHome) != "" {
+		return awconfig.SaveTeamStateToIdentityHome(identityHome, teamState)
+	}
 	return awconfig.SaveTeamState(workingDir, teamState)
 }

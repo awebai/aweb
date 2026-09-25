@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 
 	aweb "github.com/awebai/aw"
@@ -116,7 +117,13 @@ func planSelfRetire(workingDir string, sel *awconfig.Selection, targetWorkspaceI
 	// command would go back to reporting a delete that leaks the alias, and the
 	// reason would say "no credential" when a credential was sitting right there.
 	// Nothing here needs team state; the team id comes from the selection.
-	workspace, _, err := awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	var workspace *awconfig.WorktreeWorkspace
+	var err error
+	if strings.TrimSpace(sel.IdentityHome) != "" {
+		workspace, err = awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(strings.TrimSpace(sel.IdentityHome), "workspace.yaml"))
+	} else {
+		workspace, _, err = awconfig.LoadWorktreeWorkspaceFromDir(workingDir)
+	}
 	if err != nil || workspace == nil {
 		return selfRetirePlan{reason: aliasReleaseNoCredential}
 	}

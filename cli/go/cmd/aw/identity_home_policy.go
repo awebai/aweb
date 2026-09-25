@@ -95,6 +95,7 @@ var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw reset":                  {},
 	"aw role-name set":          {},
 	"aw run":                    {},
+	"aw service init":           {},
 	"aw session lease acquire":  {},
 	"aw session lease release":  {},
 	"aw session lease renew":    {},
@@ -126,6 +127,7 @@ var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw work blocked":           {},
 	"aw work ready":             {},
 	"aw workspace add-worktree": {},
+	"aw workspace connect":      {},
 	"aw workspace delete":       {},
 	"aw workspace status":       {},
 }

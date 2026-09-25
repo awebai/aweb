@@ -129,9 +129,10 @@ Flags:
 ### `service init`
 
 Initialize this workspace against a service using the existing .aw signing key
-and team certificate in this directory. This command only connects this
-workspace to the service; it does not create identities, create teams, or
-change AWID team membership.
+and team certificate in this directory. With --identity-home, initialize and
+bind the selected external identity root instead of the caller's current
+directory. This command only connects this workspace to the service; it does
+not create identities, create teams, or change AWID team membership.
 
 Flags:
 - `-h, --help help for init`
@@ -174,6 +175,8 @@ Flags:
 
 Connect this workspace to a service using the existing .aw signing key and team certificate in this directory.
 
+With --identity-home, connect the selected external identity root and bind the
+service workspace state under that root, not the caller's current directory.
 This is the first-class workspace connection verb. It does not create identities,
 create teams, or change AWID team membership. It is equivalent to `aw service init`.
 
@@ -207,6 +210,10 @@ makes a rejoin under the same name fail. alias_released_reason says why:
 When this command can retire you, it does not fall back to a plain delete: a
 failure is reported as a failure, because a success report for a retirement that
 did not happen is what leaks names.
+
+With --identity-home, the only destructive operation admitted for an external
+principal is this own hosted local self-release path. Non-eligible external
+principals fail closed instead of falling back to generic workspace delete.
 
 Flags:
 - `-h, --help help for delete`
@@ -803,9 +810,12 @@ create a fresh local signing key and refuse to overwrite completed local
 state. Global hosted accepts reuse identity.yaml's stored did:aw and signing
 key; they do not mint a new did:aw just because this identity joins another
 team. Hosted --global accepts may use --address for an owned address or
---no-address for did:aw-only membership.
-After accepting, run `aw init` in that directory to connect the
-workspace.
+--no-address for did:aw-only membership. External --identity-home hosted
+local accepts connect that root to the issuing service when the invite names
+one; if connection fails, rerun the printed `aw --identity-home <root>
+workspace connect --service <url>` recovery command without reusing the
+invite. Other membership-only accepts can be connected later with `aw init`
+or `aw workspace connect`.
 
 Local-controller invite tokens are same-machine helpers: they require the
 local invite record and local team controller key. Local-controller global

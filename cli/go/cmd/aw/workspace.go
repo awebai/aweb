@@ -42,6 +42,8 @@ var workspaceConnectCmd = &cobra.Command{
 	Use:   "connect",
 	Short: "Connect this workspace to a service using an existing team certificate",
 	Long: "Connect this workspace to a service using the existing .aw signing key and team certificate in this directory.\n\n" +
+		"With --identity-home, connect the selected external identity root and bind the\n" +
+		"service workspace state under that root, not the caller's current directory.\n" +
 		"This is the first-class workspace connection verb. It does not create identities,\n" +
 		"create teams, or change AWID team membership. It is equivalent to `aw service init`.",
 	RunE: runServiceInit,
@@ -75,7 +77,11 @@ makes a rejoin under the same name fail. alias_released_reason says why:
 
 When this command can retire you, it does not fall back to a plain delete: a
 failure is reported as a failure, because a success report for a retirement that
-did not happen is what leaks names.`,
+did not happen is what leaks names.
+
+With --identity-home, the only destructive operation admitted for an external
+principal is this own hosted local self-release path. Non-eligible external
+principals fail closed instead of falling back to generic workspace delete.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runWorkspaceDelete,
 }
@@ -300,9 +306,6 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	loadDotenvBestEffort()
 
 	workingDir, _ := os.Getwd()
-	if err := refuseExternalIdentityCleanup(workingDir, "aw workspace delete"); err != nil {
-		return err
-	}
 	client, selection, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return err
@@ -313,9 +316,18 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		return usageError("workspace id or name is required")
 	}
 	workspaceID := target
-	if !workspaceIDPattern.MatchString(target) {
-		if !isValidWorkspaceAlias(target) {
-			return usageError("invalid workspace name %q", target)
+	resolvedExternalOwnAlias := false
+	if selection != nil && selection.ExternalIdentityHome && !workspaceIDPattern.MatchString(target) {
+		if strings.EqualFold(strings.TrimSpace(target), strings.TrimSpace(selection.Alias)) && strings.TrimSpace(selection.WorkspaceID) != "" {
+			workspaceID = strings.TrimSpace(selection.WorkspaceID)
+			resolvedExternalOwnAlias = true
+		} else {
+			return usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), aliasReleaseNotSelf)
+		}
+	}
+	if !resolvedExternalOwnAlias && !workspaceIDPattern.MatchString(workspaceID) {
+		if !isValidWorkspaceAlias(workspaceID) {
+			return usageError("invalid workspace name %q", workspaceID)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		resp, lookupErr := client.WorkspaceList(ctx, aweb.WorkspaceListParams{
@@ -355,6 +367,9 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	// this change exists to fix - a success report for a retirement that did not
 	// happen.
 	plan := planSelfRetire(workingDir, selection, workspaceID)
+	if selection != nil && selection.ExternalIdentityHome && !plan.eligible {
+		return usageError("refusing aw workspace delete through external identity home for principal %s; only own hosted local self-release is supported for an external identity home (reason: %s)", externalIdentityRef(awconfig.IdentityHome{Root: selection.IdentityHome}), plan.reason)
+	}
 	if plan.eligible {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		retired, retireErr := postSelfRetire(ctx, client, plan)

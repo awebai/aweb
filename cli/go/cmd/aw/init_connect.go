@@ -56,11 +56,12 @@ type connectRequest struct {
 }
 
 type certificateConnectOptions struct {
-	Role         string
-	HumanName    string
-	AgentType    string
-	APIKey       string
-	IdentityHome string
+	Role                 string
+	HumanName            string
+	AgentType            string
+	APIKey               string
+	IdentityHome         string
+	BindingWorkspacePath string
 }
 
 // initCertificateConnect implements the certificate-based init flow.
@@ -101,10 +102,14 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	}
 
 	hostname, _ := os.Hostname()
+	bindingWorkspacePath := strings.TrimSpace(opts.BindingWorkspacePath)
+	if bindingWorkspacePath == "" {
+		bindingWorkspacePath = workingDir
+	}
 
 	reqBody := connectRequest{
 		Hostname:      hostname,
-		WorkspacePath: workingDir,
+		WorkspacePath: bindingWorkspacePath,
 		Role:          strings.TrimSpace(opts.Role),
 		HumanName:     resolveHumanNameValue(strings.TrimSpace(opts.HumanName)),
 		AgentType:     resolveAgentTypeValue(strings.TrimSpace(opts.AgentType)),
@@ -153,11 +158,15 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		JoinedAt:    strings.TrimSpace(cert.IssuedAt),
 	})
 	workspaceState.RepoID = resp.RepoID
-	workspaceState.CanonicalOrigin = canonicalizeGitOrigin(discoverRepoOrigin(workingDir))
+	if bindingWorkspacePath == workingDir {
+		workspaceState.CanonicalOrigin = canonicalizeGitOrigin(discoverRepoOrigin(workingDir))
+	} else {
+		workspaceState.CanonicalOrigin = ""
+	}
 	workspaceState.HumanName = reqBody.HumanName
 	workspaceState.AgentType = reqBody.AgentType
 	workspaceState.Hostname = hostname
-	workspaceState.WorkspacePath = workingDir
+	workspaceState.WorkspacePath = bindingWorkspacePath
 	workspaceState.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspaceState); err != nil {
 		return connectOutput{}, err
