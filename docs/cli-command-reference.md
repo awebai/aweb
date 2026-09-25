@@ -17,7 +17,7 @@ to refresh it.
 | Family | Commands |
 | --- | --- |
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
-| Identity | `custody`, `id`, `mcp-config`, `team`, `whoami` |
+| Identity | `auth`, `custody`, `id`, `mcp-config`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
 | Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
@@ -230,6 +230,50 @@ Flags:
 - `--all Show all local team memberships in addition to the selected team status`
 - `-h, --help help for status`
 - `--limit int Maximum team workspaces to show (default 50)`
+
+## `auth`
+
+### `auth`
+
+Authenticate this host aw CLI to a human aweb account.
+
+Credentials are stored only in the host aw config directory, not in workspace or identity homes.
+
+Subcommands:
+- `login` Start browser-based device login for this host aw CLI
+- `logout` Revoke host CLI human-auth tokens and remove local credentials
+- `status` Show host CLI human-auth status without printing tokens
+
+Flags:
+- `-h, --help help for auth`
+
+## `auth login`
+
+### `auth login`
+
+Start browser-based device login for this host aw CLI
+
+Flags:
+- `-h, --help help for login`
+- `--timeout duration Maximum time to wait for browser approval (default 10m0s)`
+
+## `auth logout`
+
+### `auth logout`
+
+Revoke host CLI human-auth tokens and remove local credentials
+
+Flags:
+- `-h, --help help for logout`
+
+## `auth status`
+
+### `auth status`
+
+Show host CLI human-auth status without printing tokens
+
+Flags:
+- `-h, --help help for status`
 
 ## `custody`
 
@@ -1067,6 +1111,7 @@ Subcommands:
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
 - `list` List team memberships for this identity
+- `spawn-authority` Check whether the selected identity can create hosted spawn invites
 - `switch` Switch the active team for this identity
 - `admin` Experimental local orchestration and team administration
 
@@ -1126,6 +1171,18 @@ List team memberships for this identity
 
 Flags:
 - `-h, --help help for list`
+
+## `team spawn-authority`
+
+### `team spawn-authority`
+
+Check hosted spawn authority for the selected identity and team.
+
+This is a read-only proof against /api/v1/spawn/authority. It does not use or prove CLI human auth status.
+
+Flags:
+- `-h, --help help for spawn-authority`
+- `--team-id string Canonical team id to check (defaults to selected team)`
 
 ## `team switch`
 
