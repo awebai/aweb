@@ -306,6 +306,9 @@ func requireCLIAuthForTeamEnsure(ctx context.Context) (cliAuthConfig, error) {
 	}
 	status, err := requestCLIAuthServerStatus(ctx, cfg)
 	if err != nil {
+		if diagnostic, ok := personalWorkspaceUnsupportedServerDiagnostic("CLI auth status", "/api/v1/cli-auth/status", err); ok {
+			return cliAuthConfig{}, diagnostic
+		}
 		return cliAuthConfig{}, usageError("authorization-required: stored CLI auth is not authorized; run `aw auth login`")
 	}
 	if strings.TrimSpace(status.Status) != "" && strings.TrimSpace(status.Status) != "authorized" {
@@ -317,7 +320,7 @@ func requireCLIAuthForTeamEnsure(ctx context.Context) (cliAuthConfig, error) {
 func postPersonalWorkspaceEnsure(ctx context.Context, cfg cliAuthConfig, req personalWorkspaceEnsureRequest) (*personalWorkspaceEnsureResponse, error) {
 	var out personalWorkspaceEnsureResponse
 	if err := postCLIAuthJSON(ctx, cfg.Issuer, personalWorkspaceEnsurePath, cfg.AccessToken, req, &out); err != nil {
-		return nil, err
+		return nil, personalWorkspaceEnsureEndpointError("personal workspace ensure", personalWorkspaceEnsurePath, err)
 	}
 	return &out, nil
 }
@@ -367,9 +370,31 @@ func postPersonalWorkspaceEnroll(ctx context.Context, cfg cliAuthConfig, ensure 
 	}
 	var out personalWorkspaceEnrollResponse
 	if err := postCLIAuthJSON(ctx, cfg.Issuer, personalWorkspaceEnrollPath, cfg.AccessToken, req, &out); err != nil {
-		return nil, err
+		return nil, personalWorkspaceEnsureEndpointError("personal workspace enroll", personalWorkspaceEnrollPath, err)
 	}
 	return &out, nil
+}
+
+func personalWorkspaceEnsureEndpointError(feature, path string, err error) error {
+	if diagnostic, ok := personalWorkspaceUnsupportedServerDiagnostic(feature, path, err); ok {
+		return diagnostic
+	}
+	return err
+}
+
+func personalWorkspaceUnsupportedServerDiagnostic(feature, path string, err error) (error, bool) {
+	if statusCode, ok := cliAuthHTTPStatusCode(err); ok && statusCode == http.StatusNotFound {
+		return usageError("unsupported-server: aweb service does not support %s (%s); upgrade the aweb/cloud server and retry", feature, path), true
+	}
+	return nil, false
+}
+
+func cliAuthHTTPStatusCode(err error) (int, bool) {
+	var httpErr *cliAuthHTTPStatusError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode, true
+	}
+	return awid.HTTPStatusCode(err)
 }
 
 func postCLIAuthJSON(ctx context.Context, issuer, path, bearer string, in any, out any) error {
@@ -706,7 +731,7 @@ func verifyPersonalWorkspaceSpawnAuthority(ctx context.Context, workingDir, iden
 	path := "/api/v1/spawn/authority?team_id=" + url.QueryEscape(strings.TrimSpace(teamID))
 	var out teamSpawnAuthorityOutput
 	if err := client.Get(ctx, path, &out); err != nil {
-		return nil, err
+		return nil, personalWorkspaceEnsureEndpointError("installed-root spawn authority proof", "/api/v1/spawn/authority", err)
 	}
 	if strings.TrimSpace(out.TeamID) != strings.TrimSpace(teamID) {
 		return nil, fmt.Errorf("spawn authority team_id %q does not match ensured team %q", out.TeamID, teamID)

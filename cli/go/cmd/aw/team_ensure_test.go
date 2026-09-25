@@ -39,6 +39,85 @@ func TestTeamEnsureRefusesLocalWorkspaceKeyBeforeHTTP(t *testing.T) {
 	}
 }
 
+func TestTeamEnsureReportsUnsupportedServerDiagnostics(t *testing.T) {
+	cases := []struct {
+		name      string
+		missing   string
+		wantPath  string
+		wantStage string
+	}{
+		{name: "cli auth status", missing: "/api/v1/cli-auth/status", wantPath: "/api/v1/cli-auth/status", wantStage: "CLI auth status"},
+		{name: "ensure", missing: personalWorkspaceEnsurePath, wantPath: personalWorkspaceEnsurePath, wantStage: "personal workspace ensure"},
+		{name: "enroll", missing: personalWorkspaceEnrollPath, wantPath: personalWorkspaceEnrollPath, wantStage: "personal workspace enroll"},
+		{name: "spawn authority", missing: "/api/v1/spawn/authority", wantPath: "/api/v1/spawn/authority", wantStage: "installed-root spawn authority proof"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oldKey, oldLabel, oldJSON, oldHome := teamEnsureWorkspaceKey, teamEnsureLabel, jsonFlag, activeIdentityHome
+			teamEnsureWorkspaceKey = "aweb.ai/org/unsupported-" + strings.ReplaceAll(tc.name, " ", "-")
+			teamEnsureLabel = "Unsupported"
+			jsonFlag = true
+			wd := t.TempDir()
+			identityHome := filepath.Join(wd, "principal")
+			activeIdentityHome = awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
+			t.Cleanup(func() {
+				teamEnsureWorkspaceKey, teamEnsureLabel, jsonFlag, activeIdentityHome = oldKey, oldLabel, oldJSON, oldHome
+			})
+			t.Chdir(wd)
+
+			_, teamPriv, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			teamID := "3c0e24cc-ef76-4d98-ae4d-55b9c2f14dad"
+			canonicalTeamID := "unsupported:abjj-enroll.aweb.ai"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == tc.missing {
+					http.NotFound(w, r)
+					return
+				}
+				switch r.URL.Path {
+				case "/api/v1/cli-auth/status":
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
+				case personalWorkspaceEnsurePath:
+					_ = json.NewEncoder(w).Encode(personalWorkspaceEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID})
+				case personalWorkspaceEnrollPath:
+					var req personalWorkspaceEnrollRequest
+					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+						t.Fatal(err)
+					}
+					cert, err := awid.SignTeamCertificate(teamPriv, awid.TeamCertificateFields{Team: canonicalTeamID, MemberDIDKey: req.Identity.DID, Alias: req.Identity.Alias, IdentityScope: req.Identity.IdentityScope})
+					if err != nil {
+						t.Fatal(err)
+					}
+					encoded, err := awid.EncodeTeamCertificateHeader(cert)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_ = json.NewEncoder(w).Encode(personalWorkspaceEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-unsupported", AgentID: "agent-unsupported", Alias: req.Identity.Alias, DID: req.Identity.DID, IdentityScope: req.Identity.IdentityScope, Created: true, TeamCert: encoded})
+				case "/api/v1/spawn/authority":
+					_ = json.NewEncoder(w).Encode(teamSpawnAuthorityOutput{TeamID: teamID, ActorAgentID: "agent-unsupported", AuthKind: "team_key", LiveAgent: true, CanSpawn: true})
+				case "/v1/agents/heartbeat", "/api/v1/agents/heartbeat":
+					_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+				default:
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			writeCLIAuthConfigForTeamEnsureTest(t, server.URL)
+
+			err = runTeamEnsure(t.Context(), &cobra.Command{Use: "test"})
+			if err == nil {
+				t.Fatal("expected unsupported-server error")
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "unsupported-server") || !strings.Contains(msg, tc.wantStage) || !strings.Contains(msg, tc.wantPath) || !strings.Contains(msg, "upgrade") {
+				t.Fatalf("err=%q, want unsupported-server diagnostic for %s %s", msg, tc.wantStage, tc.wantPath)
+			}
+		})
+	}
+}
+
 func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 	oldKey, oldLabel, oldJSON, oldHome := teamEnsureWorkspaceKey, teamEnsureLabel, jsonFlag, activeIdentityHome
 	teamEnsureWorkspaceKey = "aweb.ai/org/workspace"

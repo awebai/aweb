@@ -124,11 +124,22 @@ type cliAuthAudienceError struct {
 	Message string
 }
 
+type cliAuthHTTPStatusError struct {
+	StatusCode int
+}
+
 func (e *cliAuthAudienceError) Error() string {
 	if e == nil {
 		return ""
 	}
 	return e.Message
+}
+
+func (e *cliAuthHTTPStatusError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return fmt.Sprintf("auth request failed: http %d", e.StatusCode)
 }
 
 func (e *cliOAuthError) Error() string {
@@ -455,7 +466,7 @@ func doCLIAuthJSON(req *http.Request, out any) error {
 		if resp.StatusCode == http.StatusUnauthorized {
 			return &cliOAuthError{ErrorCode: "expired", ErrorDescription: "stored CLI access token is not authorized"}
 		}
-		return fmt.Errorf("auth request failed: http %d", resp.StatusCode)
+		return &cliAuthHTTPStatusError{StatusCode: resp.StatusCode}
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, awid.MaxResponseSize))
