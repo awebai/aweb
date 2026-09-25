@@ -30,7 +30,8 @@ const (
 	// DaemonVersionReported means the running daemon reported its own version.
 	DaemonVersionReported = "reported"
 	// DaemonVersionUnknown means a daemon is running but did not report a
-	// version: it predates version reporting, or it could not be asked.
+	// version. Its compatibility is unproven; this is not proof that it is
+	// older than the CLI.
 	DaemonVersionUnknown = "unknown"
 	// DaemonVersionNotRunning means no daemon is running.
 	DaemonVersionNotRunning = "not_running"

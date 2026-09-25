@@ -366,7 +366,7 @@ func formatWakeStatus(v any) string {
 	var b strings.Builder
 	daemon := "not running"
 	if status.DaemonRunning {
-		daemonVersion := "version unknown: the daemon predates version reporting"
+		daemonVersion := "version unreported: compatibility unproven; restart the wake service on a supported aw"
 		if status.DaemonVersion != "" {
 			daemonVersion = "aw " + status.DaemonVersion
 			if status.DaemonCommit != "" {

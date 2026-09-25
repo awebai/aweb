@@ -675,10 +675,12 @@ the running daemon's own build, never the invoking CLI's:
 - `daemon_version`, `daemon_commit`: reported by the daemon itself; omitted by
   daemons that predate version reporting.
 - `daemon_version_state`: `reported`, `unknown` (a daemon is running but did not
-  report a version: treat it as older than any floor), or `not_running`.
+  report a version, so its compatibility is unproven; this is not proof of an
+  older version), or `not_running`.
 
 A host that needs a minimum daemon version compares `daemon_version` only when
-the state is `reported`, and restarts the service otherwise.
+the state is `reported`. For `unknown`, the remedy is a supported `aw` upgrade
+followed by a restart of the wake service.
 
 ## 13. Qualification runbook
 
