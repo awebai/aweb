@@ -2439,10 +2439,14 @@ both.
 
 Flags:
 - `--backend string Terminal backend hint: tmux or herdr`
-- `--delivery string Delivery mode recorded by the spawn hook; must be session`
+- `--delivery string Delivery mode recorded by the spawn hook; legacy/external uses session, native mixed uses native-channel or native-pi`
 - `-h, --help help for register`
 - `--home string Absolute instance home path`
-- `--identity-home string Absolute identity home the instance streams under`
+- `--identity-home string Absolute identity home the instance streams under (legacy single-identity registration)`
+- `--primary-identity-home string Absolute native primary identity home for disjoint native-channel/native-pi registrations`
+- `--receive-identity-json stringArray JSON receive identity binding; repeat for multi-identity broker receive`
+- `--registration-json string Read the complete wake registration JSON from this file, or '-' for stdin`
+- `--runtime-delivery string Explicit runtime delivery owner: external-session, native-channel, or native-pi`
 - `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
 
 ## `wake resume`
