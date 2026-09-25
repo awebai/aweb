@@ -115,6 +115,17 @@ type cliOAuthError struct {
 	ErrorDescription string `json:"error_description"`
 }
 
+type cliAuthAudienceError struct {
+	Message string
+}
+
+func (e *cliAuthAudienceError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
 func (e *cliOAuthError) Error() string {
 	if e == nil {
 		return ""
@@ -178,7 +189,7 @@ func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := validateCLIAuthTokenResponse(token); err != nil {
+	if err := validateCLIAuthTokenResponse(token, resource, cliAuthScope); err != nil {
 		return err
 	}
 	cfg := cliAuthConfigFromToken(issuer, resource, token, time.Now().UTC())
@@ -204,9 +215,16 @@ func runAuthStatus(ctx context.Context, cmd *cobra.Command) error {
 	if cfg.ClientID != cliAuthClientID || strings.TrimSpace(cfg.Issuer) == "" || strings.TrimSpace(cfg.Resource) == "" {
 		return printCLIAuthStatus(cmd, cliAuthStatusOutput{Status: "missing"})
 	}
+	if err := validateStoredCLIAuthAudience(cfg); err != nil {
+		return err
+	}
 	if time.Now().UTC().After(cfg.ExpiresAt) {
 		refreshed, refreshErr := refreshCLIAuthToken(ctx, cfg)
 		if refreshErr != nil {
+			var audienceErr *cliAuthAudienceError
+			if errors.As(refreshErr, &audienceErr) {
+				return refreshErr
+			}
 			return printCLIAuthStatus(cmd, cliAuthStatusOutput{Status: "expired", Issuer: cfg.Issuer, Resource: cfg.Resource, Scope: cfg.Scope, ExpiresAt: cfg.ExpiresAt.Format(time.RFC3339)})
 		}
 		cfg = refreshed
@@ -352,7 +370,7 @@ func refreshCLIAuthToken(ctx context.Context, cfg cliAuthConfig) (cliAuthConfig,
 	if err := postCLIAuthForm(ctx, cfg.Issuer, "/oauth/token", values, "", &token); err != nil {
 		return cfg, err
 	}
-	if err := validateCLIAuthTokenResponse(&token); err != nil {
+	if err := validateCLIAuthTokenResponse(&token, cfg.Resource, cliAuthScope); err != nil {
 		return cfg, err
 	}
 	return cliAuthConfigFromToken(cfg.Issuer, cfg.Resource, &token, time.Now().UTC()), nil
@@ -436,7 +454,7 @@ func doCLIAuthJSON(req *http.Request, out any) error {
 	return json.Unmarshal(data, out)
 }
 
-func validateCLIAuthTokenResponse(token *cliTokenResponse) error {
+func validateCLIAuthTokenResponse(token *cliTokenResponse, expectedResource, expectedScope string) error {
 	if token == nil {
 		return errors.New("auth token response missing")
 	}
@@ -448,6 +466,23 @@ func validateCLIAuthTokenResponse(token *cliTokenResponse) error {
 	}
 	if tokenType := strings.ToLower(strings.TrimSpace(token.TokenType)); tokenType != "" && tokenType != cliAuthTokenType {
 		return fmt.Errorf("auth token response has unsupported token_type %q", token.TokenType)
+	}
+	if got := strings.TrimSpace(token.Resource); got != "" && got != expectedResource {
+		return &cliAuthAudienceError{Message: fmt.Sprintf("auth token response resource %q does not match CLI resource %q", got, expectedResource)}
+	}
+	if got := strings.TrimSpace(token.Scope); got != "" && got != expectedScope {
+		return &cliAuthAudienceError{Message: fmt.Sprintf("auth token response scope %q does not match CLI scope %q", got, expectedScope)}
+	}
+	return nil
+}
+
+func validateStoredCLIAuthAudience(cfg cliAuthConfig) error {
+	expectedResource := cliAuthResource(cfg.Issuer)
+	if got := strings.TrimSpace(cfg.Resource); got != "" && got != expectedResource {
+		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth resource %q does not match expected CLI resource %q", got, expectedResource)}
+	}
+	if got := strings.TrimSpace(cfg.Scope); got != "" && got != cliAuthScope {
+		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth scope %q does not match expected CLI scope %q", got, cliAuthScope)}
 	}
 	return nil
 }

@@ -127,6 +127,61 @@ func TestAuthLoginUsesDeviceFlowAndStoresHostCredentialsOnly(t *testing.T) {
 	}
 }
 
+func TestAuthLoginRejectsTokenResponseWrongResourceOrScope(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resource string
+		scope    string
+		wantErr  string
+	}{
+		{name: "wrong resource", resource: "https://mcp.example.invalid", scope: cliAuthScope, wantErr: "does not match CLI resource"},
+		{name: "wrong scope", resource: "", scope: "mcp.connector", wantErr: "does not match CLI scope"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetAuthCommandGlobals(t)
+			t.Setenv("HOME", t.TempDir())
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/oauth/device_authorization":
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"device_code":               "device-secret",
+						"user_code":                 "ABCD-EFGH",
+						"verification_uri":          serverFlag + "/oauth/device",
+						"verification_uri_complete": serverFlag + "/oauth/device?user_code=ABCD-EFGH",
+						"expires_in":                600,
+						"interval":                  1,
+					})
+				case "/oauth/token":
+					resource := serverFlag + "/cli"
+					if tc.resource != "" {
+						resource = tc.resource
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"access_token":  "access-secret",
+						"token_type":    "bearer",
+						"expires_in":    3600,
+						"refresh_token": "refresh-secret",
+						"scope":         tc.scope,
+						"resource":      resource,
+					})
+				default:
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			serverFlag = server.URL
+			var out bytes.Buffer
+			err := runAuthLogin(context.Background(), authTestCmd(&out))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err=%v, want %q", err, tc.wantErr)
+			}
+			if _, ok, err := loadCLIAuthConfig(); err != nil || ok {
+				t.Fatalf("auth config ok=%t err=%v, want no persisted credentials", ok, err)
+			}
+		})
+	}
+}
+
 func TestAuthStatusRefreshesWithoutPrintingTokens(t *testing.T) {
 	resetAuthCommandGlobals(t)
 	t.Setenv("HOME", t.TempDir())
@@ -183,6 +238,58 @@ func TestAuthStatusRefreshesWithoutPrintingTokens(t *testing.T) {
 	}
 	if cfg.AccessToken != "new-access" || cfg.RefreshToken != "new-refresh" {
 		t.Fatalf("refresh not persisted atomically: %+v", cfg)
+	}
+}
+
+func TestAuthStatusRejectsRefreshTokenResponseWrongResourceOrScope(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resource string
+		scope    string
+		wantErr  string
+	}{
+		{name: "wrong resource", resource: "https://mcp.example.invalid", scope: cliAuthScope, wantErr: "does not match CLI resource"},
+		{name: "wrong scope", resource: "", scope: "mcp.connector", wantErr: "does not match CLI scope"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetAuthCommandGlobals(t)
+			t.Setenv("HOME", t.TempDir())
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/oauth/token" {
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+				resource := serverFlag + "/cli"
+				if tc.resource != "" {
+					resource = tc.resource
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"access_token":  "new-access",
+					"token_type":    "bearer",
+					"expires_in":    3600,
+					"refresh_token": "new-refresh",
+					"scope":         tc.scope,
+					"resource":      resource,
+				})
+			}))
+			defer server.Close()
+			serverFlag = server.URL
+			old := cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", Scope: cliAuthScope, ClientID: cliAuthClientID, AccessToken: "old-access", RefreshToken: "old-refresh", TokenType: "bearer", ExpiresAt: time.Now().Add(-time.Hour), UpdatedAt: time.Now().Add(-time.Hour)}
+			if err := saveCLIAuthConfig(old); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			err := runAuthStatus(context.Background(), authTestCmd(&out))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("err=%v, want %q", err, tc.wantErr)
+			}
+			cfg, ok, err := loadCLIAuthConfig()
+			if err != nil || !ok {
+				t.Fatalf("load config ok=%t err=%v", ok, err)
+			}
+			if cfg.AccessToken != "old-access" || cfg.RefreshToken != "old-refresh" {
+				t.Fatalf("wrong-audience refresh must not be persisted: %+v", cfg)
+			}
+		})
 	}
 }
 
