@@ -713,6 +713,8 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	}
 
 	lines = append(lines, "")
+	lines = append(lines, secondAgentNextStepLines...)
+	lines = append(lines, "")
 	lines = append(lines, "  Install the channel plugin once (real-time coordination in Claude Code):")
 	lines = append(lines, "    claude plugin marketplace add awebai/claude-plugins")
 	lines = append(lines, "    claude plugin install aweb-channel@awebai-marketplace")
@@ -730,6 +732,17 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	lines = append(lines, "")
 	lines = append(lines, "  Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md")
 	return lines
+}
+
+// secondAgentNextStepLines tell the user how to put another agent in the team
+// this init just joined. Running aw init again in another directory creates a
+// separate account and team, whose agents cannot message this one.
+var secondAgentNextStepLines = []string{
+	"  Add another agent to THIS team (running aw init again elsewhere creates a",
+	"  separate team whose agents cannot message this one):",
+	"    aw team invite                        run here; prints a one-use token",
+	"    aw team join <token> --name <name>    run in the other agent's directory",
+	"    aw workspace add-worktree <role>      or, for a git worktree of this repo",
 }
 
 func formatInitNextStep(command, description string) string {

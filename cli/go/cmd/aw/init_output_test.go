@@ -128,3 +128,30 @@ func TestInitNextStepLinesAPIKeyAuthSuppressesClaimHuman(t *testing.T) {
 		}
 	}
 }
+
+func TestInitNextStepLinesTellHowToAddASecondAgentToThisTeam(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result *initResult
+		done   bool
+	}{
+		{"hosted", &initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api"}, false},
+		{"api-key", &initResult{ServerName: "app.aweb.ai", ExportBaseURL: "https://app.aweb.ai/api", APIKeyAuth: true}, false},
+		{"local-all-done", &initResult{ServerName: "localhost", ExportBaseURL: "http://127.0.0.1:8000/api"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			text := strings.Join(initNextStepLines(tc.result, t.TempDir(), tc.done, tc.done, tc.done), "\n")
+			for _, want := range []string{
+				"Add another agent to THIS team",
+				"running aw init again elsewhere creates a",
+				"aw team invite",
+				"aw team join <token> --name <name>",
+				"aw workspace add-worktree <role>",
+			} {
+				if !strings.Contains(text, want) {
+					t.Fatalf("missing %q in next steps:\n%s", want, text)
+				}
+			}
+		})
+	}
+}
