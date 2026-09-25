@@ -143,6 +143,7 @@ func (r Registration) Validate() error {
 func (r Registration) Normalized() (Registration, error) { return r.normalized() }
 
 func (r Registration) normalized() (Registration, error) {
+	r = r.clone()
 	if strings.TrimSpace(r.Home) == "" || !filepath.IsAbs(strings.TrimSpace(r.Home)) {
 		return Registration{}, fmt.Errorf("--home must be an absolute instance home path")
 	}
@@ -333,13 +334,28 @@ func onlyMailChat(classes []string) bool {
 	return true
 }
 
+func (r Registration) clone() Registration {
+	out := r
+	if r.ReceiveIdentities != nil {
+		out.ReceiveIdentities = make([]ReceiveIdentity, len(r.ReceiveIdentities))
+		for i, binding := range r.ReceiveIdentities {
+			out.ReceiveIdentities[i] = binding
+			out.ReceiveIdentities[i].EventClasses = append([]string(nil), binding.EventClasses...)
+		}
+	}
+	return out
+}
+
 func (r Registration) ReceiveBindings() []ReceiveIdentity {
 	normalized, err := r.normalized()
 	if err != nil {
 		return nil
 	}
 	out := make([]ReceiveIdentity, len(normalized.ReceiveIdentities))
-	copy(out, normalized.ReceiveIdentities)
+	for i, binding := range normalized.ReceiveIdentities {
+		out[i] = binding
+		out[i].EventClasses = append([]string(nil), binding.EventClasses...)
+	}
 	return out
 }
 

@@ -78,7 +78,7 @@ func (r *instanceRunner) updateRegistration(reg Registration) {
 func (r *instanceRunner) registrationSnapshot() Registration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.reg
+	return r.reg.clone()
 }
 
 func (r *instanceRunner) home() string {

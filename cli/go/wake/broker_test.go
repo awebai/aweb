@@ -294,6 +294,34 @@ func TestNativePrimaryStreamIsNotOpenedByBroker(t *testing.T) {
 	}
 }
 
+func TestRegistrationSnapshotReceiveBindingsConcurrentSafe(t *testing.T) {
+	home := tempHome(t, "instance")
+	joined := filepath.Join(tempHome(t, "joined"), ".aw")
+	reg := Registration{
+		Home:            home,
+		Delivery:        DeliverySession,
+		RuntimeDelivery: RuntimeDeliveryExternalSession,
+		ReceiveIdentities: []ReceiveIdentity{{
+			IdentityHome: joined, Label: "joined", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}, Controls: true,
+		}},
+	}
+	_, runner, _, _ := newMultiIdentityHarness(t, reg, nil)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = runner.receiveBindings()
+				_, _ = runner.bindingForIdentityHome(joined)
+				_ = runner.registrationSnapshot().ReceiveBindings()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func TestMultiIdentityLiveReregistrationWhileRunnerEvaluates(t *testing.T) {
 	home := tempHome(t, "instance")
 	joinedA := filepath.Join(tempHome(t, "joined-a"), ".aw")
