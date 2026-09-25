@@ -42,7 +42,17 @@ var teamEnsureCmd = &cobra.Command{
 	Long: "Ensure this host has a personal workspace team authority.\n\n" +
 		"The server receives only the format-1 workspace-key digest. Credentials are installed\n" +
 		"only into the explicit --identity-home credential root, and the result is bound only\n" +
-		"after a live spawn-authority proof from that installed root.",
+		"after a live spawn-authority proof from that installed root.\n\n" +
+		"Stable diagnostics are printed to stderr and exit 2, including with --json; there is\n" +
+		"no JSON error envelope. authorization-required means host CLI auth is missing,\n" +
+		"invalid, expired, revoked, or not authorized. workspace-key-not-portable means a\n" +
+		"local/ workspace key cannot be used for hosted personal team ensure.\n" +
+		"identity-home-occupied means the explicit identity home already contains\n" +
+		"conflicting identity, team, workspace, or binding state. unsupported-server means\n" +
+		"the aweb service is older than the personal ensure/enroll contract (Cloud 0.8.12\n" +
+		"or later) and is missing one of: CLI auth status, personal workspace ensure,\n" +
+		"personal workspace enroll, or installed-root spawn-authority proof. Non-404\n" +
+		"server errors keep their existing handling.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return runTeamEnsure(cmd.Context(), cmd)

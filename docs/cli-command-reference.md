@@ -1154,6 +1154,17 @@ The server receives only the format-1 workspace-key digest. Credentials are inst
 only into the explicit --identity-home credential root, and the result is bound only
 after a live spawn-authority proof from that installed root.
 
+Stable diagnostics are printed to stderr and exit 2, including with --json; there is
+no JSON error envelope. authorization-required means host CLI auth is missing,
+invalid, expired, revoked, or not authorized. workspace-key-not-portable means a
+local/ workspace key cannot be used for hosted personal team ensure.
+identity-home-occupied means the explicit identity home already contains
+conflicting identity, team, workspace, or binding state. unsupported-server means
+the aweb service is older than the personal ensure/enroll contract (Cloud 0.8.12
+or later) and is missing one of: CLI auth status, personal workspace ensure,
+personal workspace enroll, or installed-root spawn-authority proof. Non-404
+server errors keep their existing handling.
+
 Flags:
 - `-h, --help help for ensure`
 - `--label string Optional display label for the personal workspace team`
