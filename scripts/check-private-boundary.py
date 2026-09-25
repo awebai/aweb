@@ -51,12 +51,18 @@ from pathlib import Path
 HOSTED_ENDPOINT_BASELINE = {
     # Reached by public CLI source.
     "/api/v1/auth/namespaces",
+    # Public CLI human-auth status check: aw auth status validates the narrow
+    # aweb-cli / cli.personal_workspace bearer against the hosted issuer.
+    "/api/v1/cli-auth/status",
     "/api/v1/claim-human",
     "/api/v1/discovery",
     "/api/v1/onboarding/bootstrap-redeem",
     "/api/v1/onboarding/check-username",
     "/api/v1/onboarding/cli-signup",
     "/api/v1/spawn/accept-invite",
+    # Public installed-root proof: aw team spawn-authority and personal team
+    # ensure verify that a selected certificate-authenticated identity can spawn.
+    "/api/v1/spawn/authority",
     "/api/v1/spawn/create-invite",
     "/api/v1/teams/byoidt/projection-delete",
     "/api/v1/workspaces/init",
@@ -66,6 +72,12 @@ HOSTED_ENDPOINT_BASELINE = {
     # appear in tests, conformance vectors and the generated reference.
     "/api/v1/teams/byoidt/import",
     "/api/v1/teams/default",
+    # Public personal-workspace onboarding: aw team ensure first asks the hosted
+    # service for the digest-bound personal team, then enrolls a DID-key signed
+    # local/global identity under that team. The CLI sends digest/proof material,
+    # not hosted-private schemas or implementation paths.
+    "/api/v1/teams/personal-workspace/enroll",
+    "/api/v1/teams/personal-workspace/ensure",
     "/api/v1/network/directory",
     "/api/v1/network/directory/acme/researcher",
     "/api/v1/a2a/gateway/routes",
