@@ -13,11 +13,13 @@ import (
 )
 
 var identityLogCmd = &cobra.Command{
-	Use:   "log [address]",
-	Short: "Show an identity log",
-	Long:  "Display rotation and status history. Without arguments, shows your own log.",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runDidLog,
+	Use:   "log [did_aw|address]",
+	Short: "Show a global AWID DID log",
+	Long: "Show the AWID registry DID log for a global identity. The log records DID registration and key-rotation entries, verifies the returned chain, and reports the current did:key head.\n\n" +
+		"Without arguments, the command reads the current global identity's did:aw. An explicit target may be a did:aw or a global address in <domain>/<name> form, which is resolved through the registry before reading its DID log. Local identities do not have registry-backed history; the command returns unsupported_registry_history for a current local identity instead of inventing hosted history.\n\n" +
+		"With --json, status is OK for a verified log, BROKEN for unverifiable log data or address/log key mismatch, UNREACHABLE for registry fetch failures, and unsupported_registry_history for local identities.",
+	Args: cobra.MaximumNArgs(1),
+	RunE: runDidLog,
 }
 
 func init() {
