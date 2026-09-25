@@ -20,7 +20,7 @@ var (
 )
 
 var teamAdmissionInviteCmd = &cobra.Command{
-	Use:   "admission-invite --team-id <uuid> --request-id <uuid>",
+	Use:   "admission-invite --team-id <uuid-or-canonical-team-id> --request-id <uuid>",
 	Short: "Issue a shared-team admission invite token",
 	Long: "Issue a shared-team admission invite token.\n\n" +
 		"This uses host CLI auth with scope cli.team_admission to request an ordinary\n" +
@@ -69,7 +69,7 @@ type teamAdmissionInviteOutput struct {
 }
 
 func init() {
-	teamAdmissionInviteCmd.Flags().StringVar(&teamAdmissionInviteTeamID, "team-id", "", "Cloud team UUID to issue an admission invite for")
+	teamAdmissionInviteCmd.Flags().StringVar(&teamAdmissionInviteTeamID, "team-id", "", "Cloud team UUID or canonical AWID team ID to issue an admission invite for")
 	teamAdmissionInviteCmd.Flags().StringVar(&teamAdmissionInviteRequestID, "request-id", "", "Client-generated UUID for retry-safe issuance")
 	teamAdmissionInviteCmd.Flags().StringVar(&teamAdmissionInviteAliasHint, "alias-hint", "", "Optional suggested member alias for the recipient")
 	teamAdmissionInviteCmd.GroupID = teamGroupMembership
@@ -103,8 +103,8 @@ func runTeamAdmissionInvite(ctx context.Context, cmd *cobra.Command) error {
 	if strings.TrimSpace(resp.InviteID) == "" {
 		return fmt.Errorf("team admission-invite response missing invite_id")
 	}
-	if got := strings.TrimSpace(resp.TeamID); got != "" && got != teamID {
-		return fmt.Errorf("team admission-invite response team_id %q does not match requested team_id %q", got, teamID)
+	if got := strings.TrimSpace(resp.TeamID); got != "" && got != teamID && strings.TrimSpace(resp.CanonicalTeamID) != teamID {
+		return fmt.Errorf("team admission-invite response team_id %q and canonical_team_id %q do not match requested team reference %q", got, strings.TrimSpace(resp.CanonicalTeamID), teamID)
 	}
 	if resp.MaxUses != 0 && resp.MaxUses != 1 {
 		return fmt.Errorf("team admission-invite response max_uses=%d, want 1", resp.MaxUses)

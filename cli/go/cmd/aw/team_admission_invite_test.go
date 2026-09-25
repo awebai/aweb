@@ -80,6 +80,74 @@ func TestTeamAdmissionInviteRequiresTeamAdmissionScopeAndDoesNotAcceptInvite(t *
 	}
 }
 
+func TestTeamAdmissionInviteAcceptsCanonicalTeamReference(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldTeamID, oldRequestID, oldJSON := teamAdmissionInviteTeamID, teamAdmissionInviteRequestID, jsonFlag
+	teamAdmissionInviteTeamID = "shared:example.aweb.ai"
+	teamAdmissionInviteRequestID = "a8d857a5-7c44-45e7-8027-bf4996d5088b"
+	jsonFlag = true
+	t.Cleanup(func() { teamAdmissionInviteTeamID, teamAdmissionInviteRequestID, jsonFlag = oldTeamID, oldRequestID, oldJSON })
+	t.Setenv("HOME", t.TempDir())
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/cli-auth/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
+		case strings.Replace(teamAdmissionInvitePathTemplate, "{team_id}", teamAdmissionInviteTeamID, 1):
+			_ = json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-1", Token: "aw_inv_secret", TokenPrefix: "aw_inv", MaxUses: 1, TeamID: "8ca9f8ea-43a6-45d1-917b-916634a3b5a7", CanonicalTeamID: teamAdmissionInviteTeamID})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	if err := saveCLIAuthConfigForScope(cliAuthScopeTeamAdmission, cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", Scope: cliAuthScopeTeamAdmission, ClientID: cliAuthClientID, AccessToken: "team-access", RefreshToken: "team-refresh", TokenType: "bearer", ExpiresAt: time.Now().Add(time.Hour), UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	cmd := &cobra.Command{Use: "test"}
+	cmd.SetOut(&out)
+	if err := runTeamAdmissionInvite(t.Context(), cmd); err != nil {
+		t.Fatalf("runTeamAdmissionInvite: %v", err)
+	}
+	var decoded teamAdmissionInviteOutput
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out.String())
+	}
+	if decoded.TeamID != "8ca9f8ea-43a6-45d1-917b-916634a3b5a7" || decoded.CanonicalTeamID != "shared:example.aweb.ai" {
+		t.Fatalf("output=%+v", decoded)
+	}
+}
+
+func TestTeamAdmissionInviteRejectsMismatchedCanonicalResponse(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldTeamID, oldRequestID := teamAdmissionInviteTeamID, teamAdmissionInviteRequestID
+	teamAdmissionInviteTeamID = "shared:example.aweb.ai"
+	teamAdmissionInviteRequestID = "a8d857a5-7c44-45e7-8027-bf4996d5088b"
+	t.Cleanup(func() { teamAdmissionInviteTeamID, teamAdmissionInviteRequestID = oldTeamID, oldRequestID })
+	t.Setenv("HOME", t.TempDir())
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/cli-auth/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
+		case strings.Replace(teamAdmissionInvitePathTemplate, "{team_id}", teamAdmissionInviteTeamID, 1):
+			_ = json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-1", Token: "aw_inv_secret", TokenPrefix: "aw_inv", MaxUses: 1, TeamID: "8ca9f8ea-43a6-45d1-917b-916634a3b5a7", CanonicalTeamID: "other:example.aweb.ai"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	if err := saveCLIAuthConfigForScope(cliAuthScopeTeamAdmission, cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", Scope: cliAuthScopeTeamAdmission, ClientID: cliAuthClientID, AccessToken: "team-access", RefreshToken: "team-refresh", TokenType: "bearer", ExpiresAt: time.Now().Add(time.Hour), UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := runTeamAdmissionInvite(t.Context(), &cobra.Command{Use: "test"})
+	if err == nil || !strings.Contains(err.Error(), "do not match requested team reference") {
+		t.Fatalf("err=%v, want team reference mismatch", err)
+	}
+}
+
 func TestTeamAdmissionInviteRejectsPersonalScopeOnly(t *testing.T) {
 	resetAuthCommandGlobals(t)
 	oldTeamID, oldRequestID := teamAdmissionInviteTeamID, teamAdmissionInviteRequestID

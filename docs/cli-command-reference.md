@@ -1142,7 +1142,7 @@ Flags:
 - `--alias-hint string Optional suggested member alias for the recipient`
 - `-h, --help help for admission-invite`
 - `--request-id string Client-generated UUID for retry-safe issuance`
-- `--team-id string Cloud team UUID to issue an admission invite for`
+- `--team-id string Cloud team UUID or canonical AWID team ID to issue an admission invite for`
 
 ## `team ensure`
 
