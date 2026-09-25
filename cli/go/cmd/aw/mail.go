@@ -581,6 +581,14 @@ var mailReplyCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if cmd.Flags().Changed("e2ee") && (mailReplyPlaintext || mailReplyLegacyPlaintext) {
+			return usageError("--e2ee and --plaintext are mutually exclusive")
+		}
+		if mailReplyE2EE {
+			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
+				return err
+			}
+		}
 		inbox, err := c.Inbox(ctx, awid.InboxParams{
 			UnreadOnly: false,
 			Limit:      1,
@@ -600,20 +608,12 @@ var mailReplyCmd = &cobra.Command{
 		if strings.TrimSpace(subject) == "" {
 			subject = "Re"
 		}
-		if cmd.Flags().Changed("e2ee") && (mailReplyPlaintext || mailReplyLegacyPlaintext) {
-			return usageError("--e2ee and --plaintext are mutually exclusive")
-		}
 		req := &awid.SendMessageRequest{
 			ConversationID: conversationID,
 			Subject:        subject,
 			Body:           body,
 			Priority:       awid.MessagePriority(mailReplyPriority),
 			EncryptE2EE:    mailReplyE2EE,
-		}
-		if req.EncryptE2EE {
-			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
-				return err
-			}
 		}
 		resp, err := c.SendMessageByIdentity(ctx, req)
 		if err != nil {
