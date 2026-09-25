@@ -291,7 +291,7 @@ func requireCLIAuthForTeamEnsure(ctx context.Context) (cliAuthConfig, error) {
 	if cfg.ClientID != cliAuthClientID || strings.TrimSpace(cfg.Issuer) == "" || strings.TrimSpace(cfg.Resource) == "" {
 		return cliAuthConfig{}, usageError("authorization-required: stored CLI auth is invalid; run `aw auth login`")
 	}
-	if err := validateStoredCLIAuthAudience(cfg); err != nil {
+	if err := validateStoredCLIAuthAudience(cfg, cliAuthScope); err != nil {
 		return cliAuthConfig{}, err
 	}
 	if time.Now().UTC().After(cfg.ExpiresAt) {

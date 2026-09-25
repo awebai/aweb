@@ -18,14 +18,16 @@ import (
 
 func resetAuthCommandGlobals(t *testing.T) {
 	t.Helper()
-	oldServer, oldJSON, oldTimeout := serverFlag, jsonFlag, cliAuthLoginTimeout
+	oldServer, oldJSON, oldTimeout, oldScope := serverFlag, jsonFlag, cliAuthLoginTimeout, cliAuthScopeFlag
 	serverFlag = ""
 	jsonFlag = false
 	cliAuthLoginTimeout = cliAuthDefaultTimeout
+	cliAuthScopeFlag = cliAuthScope
 	t.Cleanup(func() {
 		serverFlag = oldServer
 		jsonFlag = oldJSON
 		cliAuthLoginTimeout = oldTimeout
+		cliAuthScopeFlag = oldScope
 	})
 }
 
@@ -346,5 +348,60 @@ func assertAuthForm(t *testing.T, form url.Values, want map[string]string) {
 		if got := form.Get(key); got != value {
 			t.Fatalf("form[%s]=%q want %q (full form %v)", key, got, value, form)
 		}
+	}
+}
+
+func TestAuthScopesAreStoredSeparately(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	cliAuthScopeFlag = cliAuthScopeTeamAdmission
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth/device_authorization":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			assertAuthForm(t, r.Form, map[string]string{"client_id": cliAuthClientID, "scope": cliAuthScopeTeamAdmission, "resource": serverFlag + "/cli"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
+		case "/oauth/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "team-access", "token_type": "bearer", "expires_in": 3600, "refresh_token": "team-refresh", "scope": cliAuthScopeTeamAdmission, "resource": serverFlag + "/cli"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	serverFlag = server.URL
+	if err := saveCLIAuthConfig(cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", Scope: cliAuthScope, ClientID: cliAuthClientID, AccessToken: "personal-access", RefreshToken: "personal-refresh", TokenType: "bearer", ExpiresAt: time.Now().Add(time.Hour), UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runAuthLogin(context.Background(), authTestCmd(&out)); err != nil {
+		t.Fatalf("runAuthLogin: %v", err)
+	}
+	personal, ok, err := loadCLIAuthConfigForScope(cliAuthScope)
+	if err != nil || !ok {
+		t.Fatalf("load personal ok=%t err=%v", ok, err)
+	}
+	team, ok, err := loadCLIAuthConfigForScope(cliAuthScopeTeamAdmission)
+	if err != nil || !ok {
+		t.Fatalf("load team ok=%t err=%v", ok, err)
+	}
+	if personal.AccessToken != "personal-access" || personal.Scope != cliAuthScope {
+		t.Fatalf("personal credentials overwritten: %+v", personal)
+	}
+	if team.AccessToken != "team-access" || team.Scope != cliAuthScopeTeamAdmission {
+		t.Fatalf("team credentials not stored separately: %+v", team)
+	}
+	personalPath, err := cliAuthConfigPathForScope(cliAuthScope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamPath, err := cliAuthConfigPathForScope(cliAuthScopeTeamAdmission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if personalPath == teamPath {
+		t.Fatalf("scoped auth paths are not isolated: %s", personalPath)
 	}
 }

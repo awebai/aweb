@@ -255,6 +255,7 @@ Start browser-based device login for this host aw CLI
 
 Flags:
 - `-h, --help help for login`
+- `--scope string CLI authorization scope (cli.personal_workspace|cli.team_admission) (default "cli.personal_workspace")`
 - `--timeout duration Maximum time to wait for browser approval (default 10m0s)`
 
 ## `auth logout`
@@ -265,6 +266,7 @@ Revoke host CLI human-auth tokens and remove local credentials
 
 Flags:
 - `-h, --help help for logout`
+- `--scope string CLI authorization scope to revoke (default "cli.personal_workspace")`
 
 ## `auth status`
 
@@ -274,6 +276,7 @@ Show host CLI human-auth status without printing tokens
 
 Flags:
 - `-h, --help help for status`
+- `--scope string CLI authorization scope to inspect (default "cli.personal_workspace")`
 
 ## `custody`
 
@@ -1107,6 +1110,7 @@ switch this identity's installed memberships. Local agent orchestration, profile
 management, and owner/admin repair operations live under `aw team admin`.
 
 Subcommands:
+- `admission-invite` Issue a shared-team admission invite token
 - `ensure` Ensure this host has a personal workspace team authority
 - `invite` Invite an agent or workspace to the active team
 - `join` Join a team from an invite token
@@ -1118,6 +1122,23 @@ Subcommands:
 
 Flags:
 - `-h, --help help for team`
+
+## `team admission-invite`
+
+### `team admission-invite`
+
+Issue a shared-team admission invite token.
+
+This uses host CLI auth with scope cli.team_admission to request an ordinary
+single-use aw_inv_ token for a chosen recipient. It does not accept the invite,
+install membership, or bind this workspace; use aw team join or aw id team
+accept-invite with the returned token in the target identity root.
+
+Flags:
+- `--alias-hint string Optional suggested member alias for the recipient`
+- `-h, --help help for admission-invite`
+- `--request-id string Client-generated UUID for retry-safe issuance`
+- `--team-id string Cloud team UUID to issue an admission invite for`
 
 ## `team ensure`
 

@@ -19,15 +19,17 @@ import (
 )
 
 const (
-	cliAuthClientID       = "aweb-cli"
-	cliAuthScope          = "cli.personal_workspace"
-	cliAuthDeviceGrant    = "urn:ietf:params:oauth:grant-type:device_code"
-	cliAuthTokenType      = "bearer"
-	cliAuthDefaultTimeout = 10 * time.Minute
+	cliAuthClientID           = "aweb-cli"
+	cliAuthScope              = "cli.personal_workspace"
+	cliAuthScopeTeamAdmission = "cli.team_admission"
+	cliAuthDeviceGrant        = "urn:ietf:params:oauth:grant-type:device_code"
+	cliAuthTokenType          = "bearer"
+	cliAuthDefaultTimeout     = 10 * time.Minute
 )
 
 var (
 	cliAuthLoginTimeout time.Duration
+	cliAuthScopeFlag    string
 )
 
 var authCmd = &cobra.Command{
@@ -68,6 +70,9 @@ var authLogoutCmd = &cobra.Command{
 
 func init() {
 	authLoginCmd.Flags().DurationVar(&cliAuthLoginTimeout, "timeout", cliAuthDefaultTimeout, "Maximum time to wait for browser approval")
+	authLoginCmd.Flags().StringVar(&cliAuthScopeFlag, "scope", cliAuthScope, "CLI authorization scope (cli.personal_workspace|cli.team_admission)")
+	authStatusCmd.Flags().StringVar(&cliAuthScopeFlag, "scope", cliAuthScope, "CLI authorization scope to inspect")
+	authLogoutCmd.Flags().StringVar(&cliAuthScopeFlag, "scope", cliAuthScope, "CLI authorization scope to revoke")
 	authCmd.AddCommand(authLoginCmd)
 	authCmd.AddCommand(authStatusCmd)
 	authCmd.AddCommand(authLogoutCmd)
@@ -146,12 +151,16 @@ type cliAuthStatusOutput struct {
 
 func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
 	loadDotenvBestEffort()
+	scope, err := selectedCLIAuthScope()
+	if err != nil {
+		return err
+	}
 	issuer, err := resolveCLIAuthIssuer("")
 	if err != nil {
 		return err
 	}
 	resource := cliAuthResource(issuer)
-	device, err := requestCLIAuthDeviceCode(ctx, issuer, resource)
+	device, err := requestCLIAuthDeviceCode(ctx, issuer, resource, scope)
 	if err != nil {
 		return err
 	}
@@ -170,7 +179,7 @@ func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
 			"status":                    "pending",
 			"client_id":                 cliAuthClientID,
 			"resource":                  firstNonEmptyString(device.Resource, resource),
-			"scope":                     firstNonEmptyString(device.Scope, cliAuthScope),
+			"scope":                     firstNonEmptyString(device.Scope, scope),
 			"user_code":                 device.UserCode,
 			"verification_uri":          device.VerificationURI,
 			"verification_uri_complete": device.VerificationURIComplete,
@@ -189,15 +198,15 @@ func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := validateCLIAuthTokenResponse(token, resource, cliAuthScope); err != nil {
+	if err := validateCLIAuthTokenResponse(token, resource, scope); err != nil {
 		return err
 	}
-	cfg := cliAuthConfigFromToken(issuer, resource, token, time.Now().UTC())
-	if err := saveCLIAuthConfig(cfg); err != nil {
+	cfg := cliAuthConfigFromToken(issuer, resource, scope, token, time.Now().UTC())
+	if err := saveCLIAuthConfigForScope(scope, cfg); err != nil {
 		return err
 	}
 	if jsonFlag {
-		return json.NewEncoder(cmd.OutOrStdout()).Encode(cliAuthStatusOutput{Status: "authorized", Issuer: issuer, Resource: resource, Scope: cliAuthScope, ExpiresAt: cfg.ExpiresAt.Format(time.RFC3339)})
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(cliAuthStatusOutput{Status: "authorized", Issuer: issuer, Resource: resource, Scope: scope, ExpiresAt: cfg.ExpiresAt.Format(time.RFC3339)})
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), "aw CLI login authorized")
 	return nil
@@ -205,7 +214,11 @@ func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
 
 func runAuthStatus(ctx context.Context, cmd *cobra.Command) error {
 	loadDotenvBestEffort()
-	cfg, ok, err := loadCLIAuthConfig()
+	scope, err := selectedCLIAuthScope()
+	if err != nil {
+		return err
+	}
+	cfg, ok, err := loadCLIAuthConfigForScope(scope)
 	if err != nil {
 		return err
 	}
@@ -215,7 +228,7 @@ func runAuthStatus(ctx context.Context, cmd *cobra.Command) error {
 	if cfg.ClientID != cliAuthClientID || strings.TrimSpace(cfg.Issuer) == "" || strings.TrimSpace(cfg.Resource) == "" {
 		return printCLIAuthStatus(cmd, cliAuthStatusOutput{Status: "missing"})
 	}
-	if err := validateStoredCLIAuthAudience(cfg); err != nil {
+	if err := validateStoredCLIAuthAudience(cfg, scope); err != nil {
 		return err
 	}
 	if time.Now().UTC().After(cfg.ExpiresAt) {
@@ -228,7 +241,7 @@ func runAuthStatus(ctx context.Context, cmd *cobra.Command) error {
 			return printCLIAuthStatus(cmd, cliAuthStatusOutput{Status: "expired", Issuer: cfg.Issuer, Resource: cfg.Resource, Scope: cfg.Scope, ExpiresAt: cfg.ExpiresAt.Format(time.RFC3339)})
 		}
 		cfg = refreshed
-		if err := saveCLIAuthConfig(cfg); err != nil {
+		if err := saveCLIAuthConfigForScope(scope, cfg); err != nil {
 			return err
 		}
 	}
@@ -252,7 +265,11 @@ func runAuthStatus(ctx context.Context, cmd *cobra.Command) error {
 
 func runAuthLogout(ctx context.Context, cmd *cobra.Command) error {
 	loadDotenvBestEffort()
-	cfg, ok, err := loadCLIAuthConfig()
+	scope, err := selectedCLIAuthScope()
+	if err != nil {
+		return err
+	}
+	cfg, ok, err := loadCLIAuthConfigForScope(scope)
 	if err != nil {
 		return err
 	}
@@ -273,7 +290,7 @@ func runAuthLogout(ctx context.Context, cmd *cobra.Command) error {
 	if len(failures) > 0 {
 		return fmt.Errorf("auth logout: server revocation failed for %s; local credentials were retained", strings.Join(failures, ", "))
 	}
-	if err := removeCLIAuthConfig(); err != nil {
+	if err := removeCLIAuthConfigForScope(scope); err != nil {
 		return err
 	}
 	return printCLIAuthStatus(cmd, cliAuthStatusOutput{Status: "missing"})
@@ -299,10 +316,10 @@ func printCLIAuthStatus(cmd *cobra.Command, out cliAuthStatusOutput) error {
 	return nil
 }
 
-func requestCLIAuthDeviceCode(ctx context.Context, issuer, resource string) (*cliDeviceAuthorizationResponse, error) {
+func requestCLIAuthDeviceCode(ctx context.Context, issuer, resource, scope string) (*cliDeviceAuthorizationResponse, error) {
 	values := url.Values{}
 	values.Set("client_id", cliAuthClientID)
-	values.Set("scope", cliAuthScope)
+	values.Set("scope", scope)
 	values.Set("resource", resource)
 	var out cliDeviceAuthorizationResponse
 	if err := postCLIAuthForm(ctx, issuer, "/oauth/device_authorization", values, "", &out); err != nil {
@@ -370,10 +387,10 @@ func refreshCLIAuthToken(ctx context.Context, cfg cliAuthConfig) (cliAuthConfig,
 	if err := postCLIAuthForm(ctx, cfg.Issuer, "/oauth/token", values, "", &token); err != nil {
 		return cfg, err
 	}
-	if err := validateCLIAuthTokenResponse(&token, cfg.Resource, cliAuthScope); err != nil {
+	if err := validateCLIAuthTokenResponse(&token, cfg.Resource, cfg.Scope); err != nil {
 		return cfg, err
 	}
-	return cliAuthConfigFromToken(cfg.Issuer, cfg.Resource, &token, time.Now().UTC()), nil
+	return cliAuthConfigFromToken(cfg.Issuer, cfg.Resource, cfg.Scope, &token, time.Now().UTC()), nil
 }
 
 func revokeCLIAuthToken(ctx context.Context, issuer, token, hint string) error {
@@ -476,18 +493,18 @@ func validateCLIAuthTokenResponse(token *cliTokenResponse, expectedResource, exp
 	return nil
 }
 
-func validateStoredCLIAuthAudience(cfg cliAuthConfig) error {
+func validateStoredCLIAuthAudience(cfg cliAuthConfig, expectedScope string) error {
 	expectedResource := cliAuthResource(cfg.Issuer)
 	if got := strings.TrimSpace(cfg.Resource); got != "" && got != expectedResource {
 		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth resource %q does not match expected CLI resource %q", got, expectedResource)}
 	}
-	if got := strings.TrimSpace(cfg.Scope); got != "" && got != cliAuthScope {
-		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth scope %q does not match expected CLI scope %q", got, cliAuthScope)}
+	if got := strings.TrimSpace(cfg.Scope); got != "" && got != expectedScope {
+		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth scope %q does not match expected CLI scope %q", got, expectedScope)}
 	}
 	return nil
 }
 
-func cliAuthConfigFromToken(issuer, resource string, token *cliTokenResponse, now time.Time) cliAuthConfig {
+func cliAuthConfigFromToken(issuer, resource, scope string, token *cliTokenResponse, now time.Time) cliAuthConfig {
 	expiresIn := token.ExpiresIn
 	if expiresIn <= 0 {
 		expiresIn = 3600
@@ -495,7 +512,7 @@ func cliAuthConfigFromToken(issuer, resource string, token *cliTokenResponse, no
 	return cliAuthConfig{
 		Issuer:       issuer,
 		Resource:     firstNonEmptyString(token.Resource, resource),
-		Scope:        firstNonEmptyString(token.Scope, cliAuthScope),
+		Scope:        firstNonEmptyString(token.Scope, scope),
 		ClientID:     cliAuthClientID,
 		AccessToken:  strings.TrimSpace(token.AccessToken),
 		RefreshToken: strings.TrimSpace(token.RefreshToken),
@@ -536,16 +553,44 @@ func resolveCLIAuthIssuer(existing string) (string, error) {
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
+func selectedCLIAuthScope() (string, error) {
+	scope := strings.TrimSpace(cliAuthScopeFlag)
+	if scope == "" {
+		scope = cliAuthScope
+	}
+	switch scope {
+	case cliAuthScope, cliAuthScopeTeamAdmission:
+		return scope, nil
+	default:
+		return "", usageError("unsupported CLI auth scope %q", scope)
+	}
+}
+
 func cliAuthResource(issuer string) string {
 	return strings.TrimRight(issuer, "/") + "/cli"
 }
 
 func cliAuthConfigPath() (string, error) {
-	return awconfig.PathInUserState("auth.json")
+	return cliAuthConfigPathForScope(cliAuthScope)
+}
+
+func cliAuthConfigPathForScope(scope string) (string, error) {
+	scope = strings.TrimSpace(scope)
+	if scope == "" || scope == cliAuthScope {
+		return awconfig.PathInUserState("auth.json")
+	}
+	if scope == cliAuthScopeTeamAdmission {
+		return awconfig.PathInUserState("auth.cli_team_admission.json")
+	}
+	return "", fmt.Errorf("unsupported CLI auth scope %q", scope)
 }
 
 func loadCLIAuthConfig() (cliAuthConfig, bool, error) {
-	path, err := cliAuthConfigPath()
+	return loadCLIAuthConfigForScope(cliAuthScope)
+}
+
+func loadCLIAuthConfigForScope(scope string) (cliAuthConfig, bool, error) {
+	path, err := cliAuthConfigPathForScope(scope)
 	if err != nil {
 		return cliAuthConfig{}, false, err
 	}
@@ -564,7 +609,11 @@ func loadCLIAuthConfig() (cliAuthConfig, bool, error) {
 }
 
 func saveCLIAuthConfig(cfg cliAuthConfig) error {
-	path, err := cliAuthConfigPath()
+	return saveCLIAuthConfigForScope(cliAuthScope, cfg)
+}
+
+func saveCLIAuthConfigForScope(scope string, cfg cliAuthConfig) error {
+	path, err := cliAuthConfigPathForScope(scope)
 	if err != nil {
 		return err
 	}
@@ -577,7 +626,11 @@ func saveCLIAuthConfig(cfg cliAuthConfig) error {
 }
 
 func removeCLIAuthConfig() error {
-	path, err := cliAuthConfigPath()
+	return removeCLIAuthConfigForScope(cliAuthScope)
+}
+
+func removeCLIAuthConfigForScope(scope string) error {
+	path, err := cliAuthConfigPathForScope(scope)
 	if err != nil {
 		return err
 	}

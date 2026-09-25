@@ -78,6 +78,10 @@ HOSTED_ENDPOINT_BASELINE = {
     # not hosted-private schemas or implementation paths.
     "/api/v1/teams/personal-workspace/enroll",
     "/api/v1/teams/personal-workspace/ensure",
+    # Public shared-team admission: aw team admission-invite asks hosted aweb to
+    # issue an ordinary single-use aw_inv_ for a team the human can write to.
+    # The returned token is then consumed by existing invite-accept code.
+    "/api/v1/teams/{team_id}/admission-invite",
     "/api/v1/network/directory",
     "/api/v1/network/directory/acme/researcher",
     "/api/v1/a2a/gateway/routes",

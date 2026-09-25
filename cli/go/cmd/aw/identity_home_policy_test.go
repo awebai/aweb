@@ -39,7 +39,7 @@ func TestExternalIdentityHomePolicyDefaultsToDeny(t *testing.T) {
 }
 
 func TestIdentityHomeNeutralExemptionsAreExact(t *testing.T) {
-	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd}
+	want := []*cobra.Command{pinStoreCompareAndSetCmd, versionCmd, upgradeCmd, authLoginCmd, authStatusCmd, authLogoutCmd, teamAdmissionInviteCmd}
 	if len(identityHomeNeutralCommandExemptions) != len(want) {
 		t.Fatalf("identity-neutral exemption count=%d want %d", len(identityHomeNeutralCommandExemptions), len(want))
 	}
