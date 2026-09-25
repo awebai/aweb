@@ -666,6 +666,20 @@ Restarting is safe and cheap: state is on disk, there is no cursor, and the
 reconnect snapshot re-raises anything still unread. `systemctl --user restart`
 mid-cycle loses no wake.
 
+### Which daemon is running
+
+A service keeps running the binary it started with, so upgrading `aw` does not
+upgrade a running daemon until it is restarted. `aw wake status --json` reports
+the running daemon's own build, never the invoking CLI's:
+
+- `daemon_version`, `daemon_commit`: reported by the daemon itself; omitted by
+  daemons that predate version reporting.
+- `daemon_version_state`: `reported`, `unknown` (a daemon is running but did not
+  report a version: treat it as older than any floor), or `not_running`.
+
+A host that needs a minimum daemon version compares `daemon_version` only when
+the state is `reported`, and restarts the service otherwise.
+
 ## 13. Qualification runbook
 
 Section 7's scripted end-to-end runs against a fake `oats` and a stand-in

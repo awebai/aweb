@@ -8,13 +8,45 @@ import "time"
 // It holds counts, ids, states and timestamps. It never holds message content
 // (§6), and it holds no presented marks (§4).
 type Status struct {
-	UpdatedAt     time.Time        `json:"updated_at"`
-	StateDir      string           `json:"state_dir"`
-	DaemonRunning bool             `json:"daemon_running"`
-	DaemonPID     int              `json:"daemon_pid,omitempty"`
-	MaxStreams    int              `json:"max_streams"`
-	Streams       []StreamStatus   `json:"streams"`
-	Instances     []InstanceStatus `json:"instances"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	StateDir      string    `json:"state_dir"`
+	DaemonRunning bool      `json:"daemon_running"`
+	DaemonPID     int       `json:"daemon_pid,omitempty"`
+	// DaemonVersion and DaemonCommit are reported by the running daemon about
+	// its own build. Daemons that predate these fields omit them, so a reader
+	// must treat absence as unknown and never substitute its own version.
+	DaemonVersion string `json:"daemon_version,omitempty"`
+	DaemonCommit  string `json:"daemon_commit,omitempty"`
+	// DaemonVersionState is set by the status reader (ClassifyDaemonVersion):
+	// reported, unknown or not_running.
+	DaemonVersionState string           `json:"daemon_version_state,omitempty"`
+	MaxStreams         int              `json:"max_streams"`
+	Streams            []StreamStatus   `json:"streams"`
+	Instances          []InstanceStatus `json:"instances"`
+}
+
+// Daemon version states for Status.DaemonVersionState.
+const (
+	// DaemonVersionReported means the running daemon reported its own version.
+	DaemonVersionReported = "reported"
+	// DaemonVersionUnknown means a daemon is running but did not report a
+	// version: it predates version reporting, or it could not be asked.
+	DaemonVersionUnknown = "unknown"
+	// DaemonVersionNotRunning means no daemon is running.
+	DaemonVersionNotRunning = "not_running"
+)
+
+// ClassifyDaemonVersion sets DaemonVersionState from what the daemon itself
+// reported. It never fills DaemonVersion in.
+func (s *Status) ClassifyDaemonVersion() {
+	switch {
+	case !s.DaemonRunning:
+		s.DaemonVersionState = DaemonVersionNotRunning
+	case s.DaemonVersion != "":
+		s.DaemonVersionState = DaemonVersionReported
+	default:
+		s.DaemonVersionState = DaemonVersionUnknown
+	}
 }
 
 // StreamStatus is one identity's event stream.
