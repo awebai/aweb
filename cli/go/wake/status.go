@@ -64,13 +64,17 @@ type StreamStatus struct {
 
 // ReceiveIdentityStatus is one broker-owned receive binding for an instance.
 type ReceiveIdentityStatus struct {
-	IdentityHome   string   `json:"identity_home"`
-	TeamID         string   `json:"team_id,omitempty"`
-	Label          string   `json:"label,omitempty"`
-	DeliveryOwner  string   `json:"delivery_owner,omitempty"`
-	EventClasses   []string `json:"event_classes,omitempty"`
-	Controls       bool     `json:"controls,omitempty"`
-	StreamAdmitted bool     `json:"stream_admitted"`
+	IdentityHome   string    `json:"identity_home"`
+	TeamID         string    `json:"team_id,omitempty"`
+	Label          string    `json:"label,omitempty"`
+	DeliveryOwner  string    `json:"delivery_owner,omitempty"`
+	EventClasses   []string  `json:"event_classes,omitempty"`
+	Controls       bool      `json:"controls,omitempty"`
+	StreamAdmitted bool      `json:"stream_admitted"`
+	StreamPhase    string    `json:"stream_phase,omitempty"`
+	StreamError    string    `json:"stream_error,omitempty"`
+	UnreadCount    int       `json:"unread_count,omitempty"`
+	ConnectedAt    time.Time `json:"connected_at,omitempty"`
 }
 
 // InstancePhase is a registration's lifecycle position.

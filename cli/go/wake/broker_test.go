@@ -294,6 +294,48 @@ func TestNativePrimaryStreamIsNotOpenedByBroker(t *testing.T) {
 	}
 }
 
+func TestMultiIdentityLiveReregistrationWhileRunnerEvaluates(t *testing.T) {
+	home := tempHome(t, "instance")
+	joinedA := filepath.Join(tempHome(t, "joined-a"), ".aw")
+	joinedB := filepath.Join(tempHome(t, "joined-b"), ".aw")
+	reg := Registration{
+		Home:            home,
+		Delivery:        DeliverySession,
+		RuntimeDelivery: RuntimeDeliveryExternalSession,
+		ReceiveIdentities: []ReceiveIdentity{{
+			IdentityHome: joinedA, Label: "joined-a", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}, Controls: true,
+		}},
+	}
+	broker, runner, _, clk := newMultiIdentityHarness(t, reg, nil)
+	updated := reg
+	updated.ReceiveIdentities = []ReceiveIdentity{{
+		IdentityHome: joinedB, Label: "joined-b", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}, Controls: true,
+	}}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			if i%2 == 0 {
+				if err := broker.Register(updated); err != nil {
+					t.Errorf("register updated: %v", err)
+				}
+			} else if err := broker.Register(reg); err != nil {
+				t.Errorf("register original: %v", err)
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 50; i++ {
+			clk.advance(time.Second)
+			runner.evaluate(context.Background())
+		}
+	}()
+	wg.Wait()
+}
+
 func TestMultiIdentityRegistrationUpdateReconcilesReceiveBindings(t *testing.T) {
 	home := tempHome(t, "instance")
 	joinedA := filepath.Join(tempHome(t, "joined-a"), ".aw")
@@ -363,6 +405,13 @@ func TestMultiIdentityStreamCapAndDeregisterPruneAttachments(t *testing.T) {
 	}
 	if len(status.Instances) != 1 || len(status.Instances[0].ReceiveIdentities) != 2 {
 		t.Fatalf("instance receive status=%#v", status.Instances)
+	}
+	phases := map[string]string{}
+	for _, binding := range status.Instances[0].ReceiveIdentities {
+		phases[binding.IdentityHome] = binding.StreamPhase
+	}
+	if phases[joinedA] == "" || phases[joinedB] == "" {
+		t.Fatalf("receive status omitted per-binding stream phases: %#v", status.Instances[0].ReceiveIdentities)
 	}
 	if existed, err := broker.Deregister(home); err != nil || !existed {
 		t.Fatalf("deregister existed=%t err=%v", existed, err)

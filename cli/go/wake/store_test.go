@@ -120,6 +120,55 @@ func TestLegacyRegistrationNormalizesToOneControlledReceiveIdentity(t *testing.T
 	}
 }
 
+func TestReceiveIdentityHomesArePathAgnosticCredentialRoots(t *testing.T) {
+	home := tempHome(t, "instance")
+	primary := filepath.Join(home, ".aweb-identity")
+	joined := filepath.Join(home, ".aweb-team-ops")
+	for _, path := range []string{primary, joined} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg := Registration{
+		Home:                home,
+		Delivery:            RuntimeDeliveryNativePi,
+		RuntimeDelivery:     RuntimeDeliveryNativePi,
+		PrimaryIdentityHome: primary,
+		ReceiveIdentities: []ReceiveIdentity{{
+			IdentityHome:  joined,
+			DeliveryOwner: ReceiveOwnerSessionHints,
+			EventClasses:  []string{EventClassMail, EventClassChat},
+		}},
+	}
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("path-agnostic credential roots were refused: %v", err)
+	}
+}
+
+func TestExternalSessionAllowsPrimaryReceiveBindingWithControls(t *testing.T) {
+	home := tempHome(t, "instance")
+	primaryHome := filepath.Join(tempHome(t, "primary"), ".aweb-identity")
+	joinedHome := filepath.Join(tempHome(t, "joined"), ".aweb-team-ops")
+	for _, path := range []string{primaryHome, joinedHome} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reg := Registration{
+		Home:                home,
+		Delivery:            DeliverySession,
+		RuntimeDelivery:     RuntimeDeliveryExternalSession,
+		PrimaryIdentityHome: primaryHome,
+		ReceiveIdentities: []ReceiveIdentity{
+			{IdentityHome: primaryHome, DeliveryOwner: ReceiveOwnerSessionHints, Controls: true},
+			{IdentityHome: joinedHome, DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail, EventClassChat}},
+		},
+	}
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("external-session primary binding was refused: %v", err)
+	}
+}
+
 func TestNativePrimaryRegistrationRefusesOverlappingReceiveHomes(t *testing.T) {
 	home := tempHome(t, "instance")
 	primaryHome := filepath.Join(tempHome(t, "primary"), ".aw")

@@ -289,7 +289,7 @@ func (b *Broker) reconcileLocked() {
 	}
 	b.mu.Unlock()
 	for _, runner := range stale {
-		b.cfg.Log("deregistered home=%s", runner.reg.Home)
+		b.cfg.Log("deregistered home=%s", runner.home())
 		runner.stop()
 	}
 	b.pruneStreamsLocked()
@@ -395,7 +395,7 @@ func (b *Broker) pruneStreamsLocked() {
 	needed := map[string]struct{}{}
 	b.mu.Lock()
 	for _, runner := range b.instances {
-		for _, binding := range runner.reg.ReceiveBindings() {
+		for _, binding := range runner.receiveBindings() {
 			needed[binding.IdentityHome] = struct{}{}
 		}
 	}
@@ -419,7 +419,7 @@ func (b *Broker) pruneStreamsLocked() {
 	b.mu.Lock()
 	pending := make([]*instanceRunner, 0)
 	for _, runner := range b.instances {
-		for _, binding := range runner.reg.ReceiveBindings() {
+		for _, binding := range runner.receiveBindings() {
 			if !runner.streamAdmitted(binding.IdentityHome) {
 				pending = append(pending, runner)
 				break
@@ -428,7 +428,7 @@ func (b *Broker) pruneStreamsLocked() {
 	}
 	b.mu.Unlock()
 	for _, runner := range pending {
-		for _, binding := range runner.reg.ReceiveBindings() {
+		for _, binding := range runner.receiveBindings() {
 			runner.setStreamAdmitted(binding.IdentityHome, b.ensureStream(binding.IdentityHome))
 		}
 	}
@@ -445,7 +445,7 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 	b.mu.Lock()
 	targets := make([]dispatchTarget, 0, len(b.instances))
 	for _, runner := range b.instances {
-		if binding, ok := runner.reg.BindingForIdentityHome(identityHome); ok {
+		if binding, ok := runner.bindingForIdentityHome(identityHome); ok {
 			targets = append(targets, dispatchTarget{runner: runner, binding: binding})
 		}
 	}
@@ -560,6 +560,7 @@ func (b *Broker) Status() Status {
 	}
 	b.mu.Unlock()
 
+	enrichInstancesWithStreamStatus(instances, streams)
 	sort.SliceStable(streams, func(i, j int) bool { return streams[i].IdentityHome < streams[j].IdentityHome })
 	sort.SliceStable(instances, func(i, j int) bool { return instances[i].Home < instances[j].Home })
 
@@ -576,6 +577,26 @@ func (b *Broker) Status() Status {
 	}
 }
 
+func enrichInstancesWithStreamStatus(instances []InstanceStatus, streams []StreamStatus) {
+	byHome := map[string]StreamStatus{}
+	for _, stream := range streams {
+		byHome[stream.IdentityHome] = stream
+	}
+	for i := range instances {
+		for j := range instances[i].ReceiveIdentities {
+			stream, ok := byHome[instances[i].ReceiveIdentities[j].IdentityHome]
+			if !ok {
+				continue
+			}
+			instances[i].ReceiveIdentities[j].StreamAdmitted = stream.Admitted
+			instances[i].ReceiveIdentities[j].StreamPhase = stream.Phase
+			instances[i].ReceiveIdentities[j].StreamError = stream.LastError
+			instances[i].ReceiveIdentities[j].UnreadCount = stream.UnreadCount
+			instances[i].ReceiveIdentities[j].ConnectedAt = stream.ConnectedAt
+		}
+	}
+}
+
 func (b *Broker) writeStatus() {
 	if err := b.cfg.Store.SaveStatus(b.Status()); err != nil {
 		b.cfg.Log("status write failed err=%v", err)
@@ -586,13 +607,14 @@ func (b *Broker) writeStatus() {
 // inspect within the pending expiry, with one log line naming the home and the
 // elapsed time (§4).
 func (b *Broker) dropExpired(runner *instanceRunner, elapsed time.Duration) {
+	home := runner.home()
 	b.cfg.Log("expired home=%s pending_for=%s (never reached a confirmed live inspect; server hints are untouched and a later launch is re-raised by the reconnect snapshot)",
-		runner.reg.Home, elapsed.Round(time.Second))
-	if _, err := b.cfg.Store.DeleteRegistration(runner.reg.Home); err != nil {
-		b.cfg.Log("expired home=%s cleanup failed err=%v", runner.reg.Home, err)
+		home, elapsed.Round(time.Second))
+	if _, err := b.cfg.Store.DeleteRegistration(home); err != nil {
+		b.cfg.Log("expired home=%s cleanup failed err=%v", home, err)
 	}
 	b.mu.Lock()
-	delete(b.instances, HomeKey(runner.reg.Home))
+	delete(b.instances, HomeKey(home))
 	b.mu.Unlock()
 	go func() {
 		runner.stop()

@@ -242,7 +242,7 @@ func (r Registration) normalized() (Registration, error) {
 			return Registration{}, fmt.Errorf("duplicate receive identity_home %s", identityHome)
 		}
 		seen[identityHome] = struct{}{}
-		if primary != "" && identityHome == primary {
+		if runtime != RuntimeDeliveryExternalSession && primary != "" && identityHome == primary {
 			return Registration{}, fmt.Errorf("receive identity_home %s overlaps native primary identity_home", identityHome)
 		}
 		binding.TeamID = strings.TrimSpace(binding.TeamID)

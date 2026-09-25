@@ -229,6 +229,7 @@ func StatusFromStore(store *Store, maxStreams int) (Status, error) {
 				EventClasses:   append([]string(nil), binding.EventClasses...),
 				Controls:       binding.Controls,
 				StreamAdmitted: false,
+				StreamPhase:    "daemon-down",
 			})
 		}
 		status.Instances = append(status.Instances, InstanceStatus{

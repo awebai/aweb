@@ -473,6 +473,12 @@ func formatWakeStatus(v any) string {
 		for _, recv := range inst.ReceiveIdentities {
 			line := fmt.Sprintf("    receive identity_home=%s owner=%s controls=%t stream_admitted=%t",
 				recv.IdentityHome, dashIfEmpty(recv.DeliveryOwner), recv.Controls, recv.StreamAdmitted)
+			if strings.TrimSpace(recv.StreamPhase) != "" {
+				line += " stream_phase=" + recv.StreamPhase
+			}
+			if strings.TrimSpace(recv.StreamError) != "" {
+				line += " stream_error=" + recv.StreamError
+			}
 			if strings.TrimSpace(recv.TeamID) != "" {
 				line += " team=" + recv.TeamID
 			}
