@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +17,9 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/wake"
+	"github.com/awebai/aw/wake/session"
 )
 
 // TestWakeCommandsProductionBinary is the identity-home regression every entry
@@ -34,6 +39,121 @@ import (
 // different there, so the external-principal case for register is exercised
 // through AWEB_IDENTITY_HOME, which is not shadowed. TestWakeRegisterFlagShadowsTheRootIdentityHome
 // pins that behaviour so it is a decision rather than a surprise.
+func TestWakeBrokerOpensGrantHomeStream(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+	t.Setenv("AWID_REGISTRY_URL", "")
+	oldTeamFlag := teamFlag
+	teamFlag = ""
+	t.Cleanup(func() { teamFlag = oldTeamFlag })
+
+	requestSeen := make(chan struct {
+		path    string
+		auth    string
+		grantID string
+	}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/events/stream" {
+			http.NotFound(w, r)
+			return
+		}
+		requestSeen <- struct {
+			path    string
+			auth    string
+			grantID string
+		}{path: r.URL.Path, auth: r.Header.Get("Authorization"), grantID: r.Header.Get("X-AWEB-Grant-ID")}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: connected\ndata: {\"agent_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"team_id\":\"backend:acme.com\"}\n\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+
+	grantHome := filepath.Join(root, "grant.aweb-identity")
+	if err := os.MkdirAll(grantHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, sessionKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.GrantHomeSigningKeyPath(grantHome), sessionKey); err != nil {
+		t.Fatal(err)
+	}
+	grantID := "99999999-9999-4999-8999-999999999999"
+	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), &awconfig.GrantHome{
+		Version: awconfig.GrantHomeSchemaVersion,
+		GrantID: grantID,
+		TeamID:  "backend:acme.com",
+		Subject: awconfig.GrantSubject{
+			DIDAW:   "did:aw:alice",
+			DIDKey:  "did:key:z6MkAliceRoot",
+			Address: "acme.com/alice",
+			Alias:   "alice",
+		},
+		Scopes:    []string{"events.read", "mail.read"},
+		ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		AwebURL:   server.URL,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := wake.NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceHome := filepath.Join(root, "instance")
+	if err := os.MkdirAll(instanceHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oats := session.NewFake(session.Inspection{Home: instanceHome, Backend: "herdr", Present: true, State: session.StateIdle, RawState: "idle"})
+	broker, err := wake.NewBroker(wake.Config{
+		Store:      store,
+		Session:    oats,
+		OpenStream: wakeStreamOpener,
+		StreamTTL:  time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Register(wake.Registration{Home: instanceHome, IdentityHome: grantHome, Delivery: wake.DeliverySession, Backend: "herdr", RegisteredAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- broker.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("broker Run: %v", err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Errorf("broker did not stop")
+		}
+	}()
+
+	select {
+	case got := <-requestSeen:
+		if got.path != "/v1/events/stream" {
+			t.Fatalf("stream path=%q", got.path)
+		}
+		if !strings.HasPrefix(got.auth, "AWEB-Grant DIDKey ") {
+			t.Fatalf("Authorization=%q, want AWEB-Grant", got.auth)
+		}
+		if got.grantID != grantID {
+			t.Fatalf("grant id header=%q, want %q", got.grantID, grantID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("broker never opened grant-home event stream")
+	}
+}
+
 func TestWakeCommandsProductionBinary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()

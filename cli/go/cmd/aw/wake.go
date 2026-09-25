@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/run"
 	"github.com/awebai/aw/wake"
@@ -327,7 +328,13 @@ func wakeStreamOpener(identityHome string) (run.EventStreamOpener, error) {
 	if strings.TrimSpace(workingDir) == "" {
 		workingDir = filepath.Dir(identityHome)
 	}
-	client, _, err := resolveClientSelectionAtIdentityHome(workingDir, home)
+	var client *aweb.Client
+	var err error
+	if awconfig.IsGrantHome(home.Root) {
+		client, _, err = resolveGrantClientSelection(workingDir, home)
+	} else {
+		client, _, err = resolveClientSelectionAtIdentityHome(workingDir, home)
+	}
 	if err != nil {
 		return nil, err
 	}
