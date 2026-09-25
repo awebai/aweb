@@ -897,8 +897,10 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if err != nil {
 		return err
 	}
-	if home.External() && acceptScope != awid.IdentityModeGlobal {
-		return usageError("external identity home requires --global for team invite acceptance; local identity creation is not identity-home-aware")
+	if home.External() && acceptScope == awid.IdentityModeLocal {
+		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
+			return err
+		}
 	}
 	rawToken, inviteAwebURL, err := decodeJoinToken(args[0])
 	if err != nil {
@@ -989,7 +991,7 @@ type teamInviteStoreOptions struct {
 }
 
 func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOptions, store teamInviteStoreOptions) (*acceptedTeamInvite, error) {
-	identityHomeRoot, _, err := store.IdentityHome.resolve()
+	identityHomeRoot, explicitIdentityHome, err := store.IdentityHome.resolve()
 	if err != nil {
 		return nil, err
 	}
@@ -1019,7 +1021,60 @@ func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOpt
 		}
 		return nil, err
 	}
+	if explicitIdentityHome {
+		if err := writeExternalLocalIdentityStateIfNeeded(identityHomeRoot, accepted.Certificate); err != nil {
+			return nil, err
+		}
+	}
 	return accepted, nil
+}
+
+func ensureExternalLocalAcceptHomeAvailable(identityHome string) error {
+	home := awconfig.IdentityHome{Root: strings.TrimSpace(identityHome)}
+	for _, rel := range []string{"grant.yaml", "identity.yaml", "workspace.yaml", "teams.yaml"} {
+		path, err := awconfig.IdentityHomePath(home, rel)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(path); err == nil {
+			return usageError("refusing to overwrite existing %s", path)
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeExternalLocalIdentityStateIfNeeded(identityHome string, cert *awid.TeamCertificate) error {
+	if cert == nil || awid.NormalizeIdentityScope(cert.IdentityScope) != awid.IdentityModeLocal {
+		return nil
+	}
+	if strings.TrimSpace(cert.MemberDIDKey) == "" {
+		return fmt.Errorf("accepted local team certificate is missing member_did_key")
+	}
+	home := awconfig.IdentityHome{Root: strings.TrimSpace(identityHome)}
+	identityPath, err := awconfig.IdentityHomePath(home, "identity.yaml")
+	if err != nil {
+		return err
+	}
+	if existing, err := awconfig.LoadWorktreeIdentityFrom(identityPath); err == nil {
+		if awid.NormalizeIdentityScope(existing.IdentityScope) == awid.IdentityModeLocal && strings.TrimSpace(existing.DID) == strings.TrimSpace(cert.MemberDIDKey) {
+			return nil
+		}
+		return usageError("refusing to overwrite existing %s", identityPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	createdAt := strings.TrimSpace(cert.IssuedAt)
+	if createdAt == "" {
+		createdAt = time.Now().UTC().Format(time.RFC3339)
+	}
+	return awconfig.SaveWorktreeIdentityTo(identityPath, &awconfig.WorktreeIdentity{
+		DID:           strings.TrimSpace(cert.MemberDIDKey),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     createdAt,
+	})
 }
 
 func runTeamAdd(cmd *cobra.Command, args []string) error {
@@ -1814,7 +1869,7 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 	} else if !os.IsNotExist(err) {
 		return nil, nil, err
 	}
-	if err := ensureConnectTargetClean(workingDir); err != nil {
+	if err := ensureHostedAcceptTargetClean(workingDir, home.Root); err != nil {
 		return nil, nil, err
 	}
 	pub, signingKey, err := awid.GenerateKeypair()
@@ -1828,6 +1883,27 @@ func hostedAcceptSigningKeyAt(workingDir, identityHome string) (ed25519.PublicKe
 		return nil, nil, err
 	}
 	return pub, signingKey, nil
+}
+
+func ensureHostedAcceptTargetClean(workingDir, identityHome string) error {
+	if err := ensureAwebRuntimeGitIgnored(workingDir); err != nil {
+		return err
+	}
+	root := filepath.Clean(strings.TrimSpace(identityHome))
+	if root == "" {
+		return fmt.Errorf("identity home is required")
+	}
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return usageError("refusing to overwrite non-empty identity home %s", root)
+	}
+	return nil
 }
 
 func identityHomeForTarget(workingDir, identityHome string) (awconfig.IdentityHome, error) {

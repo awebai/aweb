@@ -2452,6 +2452,127 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 	}
 }
 
+func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	canonicalTmp, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	instanceHome := filepath.Join(canonicalTmp, "instance")
+	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	identityHome := filepath.Join(canonicalTmp, "joined-team.aw")
+	teamID := "default:external.aweb.ai"
+	_, hostedTeamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var acceptedDID string
+	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			var req awid.SpawnAcceptInviteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Token != "aw_inv_external_local" || req.Alias != "alice" || req.IdentityScope != awid.IdentityModeLocal || req.StableID != "" {
+				t.Fatalf("accept request=%+v", req)
+			}
+			acceptedDID = req.DID
+			cert, err := awid.SignTeamCertificate(hostedTeamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: req.DID, Alias: "alice", IdentityScope: awid.IdentityModeLocal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"team_id":        "server-team-id",
+				"team_slug":      "default",
+				"namespace_slug": "external",
+				"namespace":      "external.aweb.ai",
+				"identity_id":    "agent-alice",
+				"alias":          "alice",
+				"server_url":     serverURL,
+				"did":            req.DID,
+				"custody":        "self",
+				"identity_scope": awid.IdentityModeLocal,
+				"created":        true,
+				"team_cert":      encoded,
+			})
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "aw_inv_external_local", "--name", "alice", "--local", "--json")
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Dir = instanceHome
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("external local hosted accept failed: %v\n%s", err, out)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, out)
+	}
+	if got["team_id"] != teamID || got["alias"] != "alice" {
+		t.Fatalf("output=%v", got)
+	}
+	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
+		t.Fatalf("external local accept mutated cwd identity home: %v", err)
+	}
+	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(identityHome, "identity.yaml"))
+	if err != nil {
+		t.Fatalf("load external local identity: %v", err)
+	}
+	if identity.DID != acceptedDID || identity.IdentityScope != awid.IdentityModeLocal || identity.StableID != "" || identity.Address != "" {
+		t.Fatalf("external identity=%#v acceptedDID=%s", identity, acceptedDID)
+	}
+	if _, err := awid.LoadSigningKey(filepath.Join(identityHome, "signing.key")); err != nil {
+		t.Fatalf("external signing key missing: %v", err)
+	}
+	if _, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(identityHome, teamID); err != nil {
+		t.Fatalf("external certificate missing: %v", err)
+	}
+	teamState, err := awconfig.LoadTeamStateFromIdentityHome(identityHome)
+	if err != nil {
+		t.Fatalf("external team state missing: %v", err)
+	}
+	if teamState.ActiveTeam != teamID || teamState.Membership(teamID) == nil {
+		t.Fatalf("team state=%#v", teamState)
+	}
+	if state, err := awconfig.LoadEncryptionKeyStateFrom(filepath.Join(identityHome, "encryption.yaml")); err != nil || state.ActiveRecord() == nil {
+		t.Fatalf("external encryption state missing: state=%#v err=%v", state, err)
+	}
+}
+
+func TestExternalLocalAcceptRejectsGrantIdentityHome(t *testing.T) {
+	t.Parallel()
+
+	identityHome := t.TempDir()
+	if err := os.WriteFile(filepath.Join(identityHome, "grant.yaml"), []byte("version: 1\ngrant_id: grant-1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureExternalLocalAcceptHomeAvailable(identityHome); err == nil || !strings.Contains(err.Error(), "grant.yaml") {
+		t.Fatalf("err=%v, want grant.yaml refusal", err)
+	}
+	if _, err := os.Stat(filepath.Join(identityHome, "grant.yaml")); err != nil {
+		t.Fatalf("grant root was mutated: %v", err)
+	}
+}
+
 func TestTeamInviteWithoutServiceContextDoesNotUseHostedFallback(t *testing.T) {
 	t.Parallel()
 
@@ -4533,23 +4654,70 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	localAccept.Env = testCommandEnv(tmp)
 	localAccept.Dir = instanceHome
 	localOut, localErr := localAccept.CombinedOutput()
+	if localErr != nil {
+		t.Fatalf("external local accept failed: %v\n%s", localErr, localOut)
+	}
 	if _, err := os.Lstat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
 		t.Fatalf("external local accept mutated instance: %v", err)
 	}
-	if _, err := os.Lstat(emptyIdentityHome); !os.IsNotExist(err) {
-		t.Fatalf("external local accept mutated empty principal: %v", err)
+	var localGot map[string]any
+	if err := json.Unmarshal(extractJSON(t, localOut), &localGot); err != nil {
+		t.Fatalf("invalid external local accept json: %v\n%s", err, string(localOut))
+	}
+	if localGot["team_id"] != "ops:acme.com" || localGot["alias"] != "alice" {
+		t.Fatalf("external local accept output=%v", localGot)
+	}
+	localIdentity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(emptyIdentityHome, "identity.yaml"))
+	if err != nil {
+		t.Fatalf("external local accept did not write local identity: %v", err)
+	}
+	if localIdentity.IdentityScope != awid.IdentityModeLocal || localIdentity.StableID != "" || localIdentity.Address != "" {
+		t.Fatalf("external local identity should be local-only, got %#v", localIdentity)
+	}
+	if _, err := awid.LoadSigningKey(filepath.Join(emptyIdentityHome, "signing.key")); err != nil {
+		t.Fatalf("external local accept did not write signing key: %v", err)
+	}
+	externalCertPath, err := awconfig.TeamCertificatePathFromIdentityHome(emptyIdentityHome, "ops:acme.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := awid.LoadTeamCertificate(externalCertPath); err != nil {
+		t.Fatalf("external local accept did not write certificate: %v", err)
+	}
+	externalTeamState, err := awconfig.LoadTeamStateFromIdentityHome(emptyIdentityHome)
+	if err != nil {
+		t.Fatalf("external local accept did not write teams.yaml: %v", err)
+	}
+	if externalTeamState.ActiveTeam != "ops:acme.com" || externalTeamState.Membership("ops:acme.com") == nil {
+		t.Fatalf("external local team state=%#v", externalTeamState)
+	}
+	if state, err := awconfig.LoadEncryptionKeyStateFrom(filepath.Join(emptyIdentityHome, "encryption.yaml")); err != nil || state.ActiveRecord() == nil {
+		t.Fatalf("external local accept did not create encryption key state: state=%#v err=%v", state, err)
 	}
 	registeredCertMu.Lock()
-	if registeredCert != nil {
+	if registeredCert["identity_scope"] != awid.IdentityModeLocal || registeredCert["member_did_key"] != localIdentity.DID {
+		got := registeredCert
 		registeredCertMu.Unlock()
-		t.Fatalf("external local accept mutated remote certificate state: %+v", registeredCert)
+		t.Fatalf("external local accept registered cert=%+v local did=%s", got, localIdentity.DID)
 	}
+	registeredCert = nil
 	registeredCertMu.Unlock()
-	if _, err := awconfig.LoadTeamInvite(inviteID); err != nil {
-		t.Fatalf("external local accept consumed invite token: %v", err)
+	if _, err := awconfig.LoadTeamInvite(inviteID); !os.IsNotExist(err) {
+		t.Fatalf("external local accept did not consume invite token, err=%v", err)
 	}
-	if localErr == nil || !strings.Contains(string(localOut), "external identity home requires --global") {
-		t.Fatalf("external local accept did not fail closed: err=%v\n%s", localErr, localOut)
+	rootTeamState, err := awconfig.LoadTeamState(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootTeamState.Membership("ops:acme.com") != nil || rootTeamState.ActiveTeam != "backend:acme.com" {
+		t.Fatalf("external local accept mutated root team state: %#v", rootTeamState)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, ".aw", "team-certs", "ops_acme.com.jwt")); !os.IsNotExist(err) {
+		t.Fatalf("external local accept wrote root certificate: %v", err)
+	}
+	globalInviteID, token, err := createTeamInviteToken("acme.com", "ops", server.URL, "", false)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	runAdd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--global", "--address", "acme.com/alice", token, "--json")
@@ -4597,6 +4765,9 @@ func TestTeamAddSwitchListLeaveFlow(t *testing.T) {
 	}
 	if teamState.Membership("ops:acme.com") == nil {
 		t.Fatal("expected ops team membership in teams.yaml")
+	}
+	if _, err := awconfig.LoadTeamInvite(globalInviteID); !os.IsNotExist(err) {
+		t.Fatalf("global accept did not consume invite token, err=%v", err)
 	}
 	acceptedCert, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(identityHome, "ops:acme.com")
 	if err != nil {
