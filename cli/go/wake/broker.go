@@ -267,9 +267,13 @@ func (b *Broker) reconcileLocked() {
 		seen[key] = struct{}{}
 
 		b.mu.Lock()
-		_, running := b.instances[key]
+		runner, running := b.instances[key]
 		b.mu.Unlock()
 		if running {
+			runner.updateRegistration(reg)
+			for _, binding := range reg.ReceiveBindings() {
+				runner.setStreamAdmitted(binding.IdentityHome, b.ensureStream(binding.IdentityHome))
+			}
 			continue
 		}
 		b.startInstance(reg)
@@ -304,10 +308,17 @@ func (b *Broker) startInstance(reg Registration) {
 	b.instances[HomeKey(reg.Home)] = runner
 	b.mu.Unlock()
 
-	admitted := b.ensureStream(reg.IdentityHome)
-	runner.setStreamAdmitted(admitted)
-	b.cfg.Log("registered home=%s identity_home=%s backend=%s delivery=%s pending_hints=%d stream=%s",
-		reg.Home, reg.IdentityHome, orDash(reg.Backend), reg.Delivery, len(state.Pending), admittedLabel(admitted))
+	bindings := reg.ReceiveBindings()
+	admittedCount := 0
+	for _, binding := range bindings {
+		admitted := b.ensureStream(binding.IdentityHome)
+		runner.setStreamAdmitted(binding.IdentityHome, admitted)
+		if admitted {
+			admittedCount++
+		}
+	}
+	b.cfg.Log("registered home=%s identity_home=%s receive_identities=%d backend=%s delivery=%s runtime_delivery=%s pending_hints=%d streams_admitted=%d",
+		reg.Home, reg.IdentityHome, len(bindings), orDash(reg.Backend), reg.Delivery, orDash(reg.RuntimeDelivery), len(state.Pending), admittedCount)
 	if ctx := b.runningContext(); ctx != nil {
 		runner.start(ctx)
 	}
@@ -384,7 +395,9 @@ func (b *Broker) pruneStreamsLocked() {
 	needed := map[string]struct{}{}
 	b.mu.Lock()
 	for _, runner := range b.instances {
-		needed[runner.reg.IdentityHome] = struct{}{}
+		for _, binding := range runner.reg.ReceiveBindings() {
+			needed[binding.IdentityHome] = struct{}{}
+		}
 	}
 	orphans := []*streamRunner{}
 	for identityHome, runner := range b.streams {
@@ -406,24 +419,34 @@ func (b *Broker) pruneStreamsLocked() {
 	b.mu.Lock()
 	pending := make([]*instanceRunner, 0)
 	for _, runner := range b.instances {
-		if !runner.streamAdmitted() {
-			pending = append(pending, runner)
+		for _, binding := range runner.reg.ReceiveBindings() {
+			if !runner.streamAdmitted(binding.IdentityHome) {
+				pending = append(pending, runner)
+				break
+			}
 		}
 	}
 	b.mu.Unlock()
 	for _, runner := range pending {
-		runner.setStreamAdmitted(b.ensureStream(runner.reg.IdentityHome))
+		for _, binding := range runner.reg.ReceiveBindings() {
+			runner.setStreamAdmitted(binding.IdentityHome, b.ensureStream(binding.IdentityHome))
+		}
 	}
 }
 
+type dispatchTarget struct {
+	runner  *instanceRunner
+	binding ReceiveIdentity
+}
+
 // dispatch fans one identity's event out to every instance registered under
-// that identity home.
+// that identity home, carrying the receive binding context through the hint.
 func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 	b.mu.Lock()
-	targets := make([]*instanceRunner, 0, len(b.instances))
+	targets := make([]dispatchTarget, 0, len(b.instances))
 	for _, runner := range b.instances {
-		if runner.reg.IdentityHome == identityHome {
-			targets = append(targets, runner)
+		if binding, ok := runner.reg.BindingForIdentityHome(identityHome); ok {
+			targets = append(targets, dispatchTarget{runner: runner, binding: binding})
 		}
 	}
 	b.mu.Unlock()
@@ -431,13 +454,17 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 	now := b.cfg.Now()
 	switch ev.Type {
 	case awid.AgentEventControlPause:
-		for _, runner := range targets {
-			runner.setPaused(true, "control_pause")
+		for _, target := range targets {
+			if target.binding.Controls {
+				target.runner.setPaused(true, "control_pause")
+			}
 		}
 		return
 	case awid.AgentEventControlResume:
-		for _, runner := range targets {
-			runner.setPaused(false, "control_resume")
+		for _, target := range targets {
+			if target.binding.Controls {
+				target.runner.setPaused(false, "control_resume")
+			}
 		}
 		return
 	}
@@ -446,8 +473,11 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 	if !ok {
 		return
 	}
-	for _, runner := range targets {
-		runner.offer(hint, ev.UnreadCount)
+	for _, target := range targets {
+		if !target.binding.allowsKind(hint.Kind) {
+			continue
+		}
+		target.runner.offer(hint.WithReceiveIdentity(target.binding), ev.UnreadCount)
 	}
 }
 

@@ -452,6 +452,45 @@ func TestWakeCommandsFallBackToFilesWhenTheDaemonIsDown(t *testing.T) {
 	if reg.Delivery != wake.DeliverySession {
 		t.Fatalf("registration=%+v", reg)
 	}
+
+	joinedHome := filepath.Join(root, "joined-home")
+	primaryHome := filepath.Join(root, "primary-home")
+	multiHome := filepath.Join(root, "multi-agent-home")
+	for _, home := range []string{joinedHome, primaryHome, multiHome} {
+		if err := os.MkdirAll(filepath.Join(home, ".aw"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	registrationPath := filepath.Join(root, "registration.json")
+	registration := wake.Registration{
+		Home:                multiHome,
+		Delivery:            wake.RuntimeDeliveryNativePi,
+		RuntimeDelivery:     wake.RuntimeDeliveryNativePi,
+		PrimaryIdentityHome: filepath.Join(primaryHome, ".aw"),
+		ReceiveIdentities: []wake.ReceiveIdentity{{
+			IdentityHome:  filepath.Join(joinedHome, ".aw"),
+			TeamID:        "team:joined",
+			Label:         "joined",
+			DeliveryOwner: wake.ReceiveOwnerSessionHints,
+			EventClasses:  []string{wake.EventClassMail, wake.EventClassChat},
+		}},
+	}
+	encoded, err := json.Marshal(registration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(registrationPath, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run("wake", "register", "--registration-json", registrationPath, "--state-dir", stateDir)
+	multiReg, ok, err := store.LoadRegistration(multiHome)
+	if err != nil || !ok {
+		t.Fatalf("multi registration missing: ok=%t err=%v", ok, err)
+	}
+	if multiReg.RuntimeDelivery != wake.RuntimeDeliveryNativePi || len(multiReg.ReceiveIdentities) != 1 || multiReg.ReceiveIdentities[0].TeamID != "team:joined" {
+		t.Fatalf("multi registration=%+v", multiReg)
+	}
+
 	state, err := store.LoadInstance(instanceHome)
 	if err != nil || !state.Paused {
 		t.Fatalf("durable pause was not written by the fallback path: %+v err=%v", state, err)

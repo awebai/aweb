@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -33,18 +35,22 @@ import (
 const wakeStateDirEnv = "AW_WAKE_STATE_DIR"
 
 var (
-	wakeStateDirFlag     string
-	wakeMaxStreams       int
-	wakeCoalesceMS       int
-	wakeRateLimitMS      int
-	wakeOatsBin          string
-	wakeRegisterHome     string
-	wakeRegisterIDHome   string
-	wakeRegisterDelivery string
-	wakeRegisterBackend  string
-	wakeDeregisterHome   string
-	wakePauseHome        string
-	wakeResumeHome       string
+	wakeStateDirFlag             string
+	wakeMaxStreams               int
+	wakeCoalesceMS               int
+	wakeRateLimitMS              int
+	wakeOatsBin                  string
+	wakeRegisterHome             string
+	wakeRegisterIDHome           string
+	wakeRegisterDelivery         string
+	wakeRegisterBackend          string
+	wakeRegisterRuntimeDelivery  string
+	wakeRegisterPrimaryIDHome    string
+	wakeRegisterReceiveJSON      []string
+	wakeRegisterRegistrationJSON string
+	wakeDeregisterHome           string
+	wakePauseHome                string
+	wakeResumeHome               string
 )
 
 var wakeCmd = &cobra.Command{
@@ -133,11 +139,31 @@ var wakeRegisterCmd = &cobra.Command{
 		"both.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		reg := wake.Registration{
-			Home:         strings.TrimSpace(wakeRegisterHome),
-			IdentityHome: strings.TrimSpace(wakeRegisterIDHome),
-			Delivery:     strings.TrimSpace(wakeRegisterDelivery),
-			Backend:      strings.TrimSpace(wakeRegisterBackend),
-			RegisteredAt: time.Now().UTC(),
+			Home:                strings.TrimSpace(wakeRegisterHome),
+			IdentityHome:        strings.TrimSpace(wakeRegisterIDHome),
+			Delivery:            strings.TrimSpace(wakeRegisterDelivery),
+			RuntimeDelivery:     strings.TrimSpace(wakeRegisterRuntimeDelivery),
+			PrimaryIdentityHome: strings.TrimSpace(wakeRegisterPrimaryIDHome),
+			Backend:             strings.TrimSpace(wakeRegisterBackend),
+			RegisteredAt:        time.Now().UTC(),
+		}
+		if strings.TrimSpace(wakeRegisterRegistrationJSON) != "" {
+			loaded, err := loadWakeRegistrationJSON(wakeRegisterRegistrationJSON)
+			if err != nil {
+				return err
+			}
+			reg = loaded
+			if reg.RegisteredAt.IsZero() {
+				reg.RegisteredAt = time.Now().UTC()
+			}
+		} else {
+			for _, raw := range wakeRegisterReceiveJSON {
+				binding, err := parseWakeReceiveIdentityJSON(raw)
+				if err != nil {
+					return err
+				}
+				reg.ReceiveIdentities = append(reg.ReceiveIdentities, binding)
+			}
 		}
 		if err := reg.Validate(); err != nil {
 			return usageError("%s", err.Error())
@@ -158,6 +184,42 @@ var wakeRegisterCmd = &cobra.Command{
 		fmt.Fprintf(cmd.OutOrStdout(), "registered %s (identity home %s)\n", reg.Home, reg.IdentityHome)
 		return nil
 	},
+}
+
+func loadWakeRegistrationJSON(source string) (wake.Registration, error) {
+	data, err := readWakeJSONSource(source)
+	if err != nil {
+		return wake.Registration{}, err
+	}
+	var reg wake.Registration
+	if err := json.Unmarshal(data, &reg); err != nil {
+		return wake.Registration{}, usageError("invalid wake registration JSON: %v", err)
+	}
+	return reg, nil
+}
+
+func parseWakeReceiveIdentityJSON(raw string) (wake.ReceiveIdentity, error) {
+	var binding wake.ReceiveIdentity
+	if err := json.Unmarshal([]byte(raw), &binding); err != nil {
+		return wake.ReceiveIdentity{}, usageError("invalid --receive-identity-json: %v", err)
+	}
+	return binding, nil
+}
+
+func readWakeJSONSource(source string) ([]byte, error) {
+	source = strings.TrimSpace(source)
+	if source == "-" {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+		return data, nil
+	}
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 var wakeDeregisterCmd = &cobra.Command{
@@ -406,7 +468,22 @@ func formatWakeStatus(v any) string {
 	for _, inst := range status.Instances {
 		fmt.Fprintf(&b, "  %s\n", inst.Home)
 		fmt.Fprintf(&b, "    phase=%s pending_hints=%d evicted=%d paused=%t\n", inst.Phase, inst.PendingHints, inst.Evicted, inst.Paused)
-		fmt.Fprintf(&b, "    identity_home=%s backend=%s\n", inst.IdentityHome, dashIfEmpty(inst.Backend))
+		fmt.Fprintf(&b, "    identity_home=%s backend=%s runtime_delivery=%s primary_identity_home=%s\n",
+			dashIfEmpty(inst.IdentityHome), dashIfEmpty(inst.Backend), dashIfEmpty(inst.RuntimeDelivery), dashIfEmpty(inst.PrimaryIdentityHome))
+		for _, recv := range inst.ReceiveIdentities {
+			line := fmt.Sprintf("    receive identity_home=%s owner=%s controls=%t stream_admitted=%t",
+				recv.IdentityHome, dashIfEmpty(recv.DeliveryOwner), recv.Controls, recv.StreamAdmitted)
+			if strings.TrimSpace(recv.TeamID) != "" {
+				line += " team=" + recv.TeamID
+			}
+			if strings.TrimSpace(recv.Label) != "" {
+				line += " label=" + recv.Label
+			}
+			if len(recv.EventClasses) > 0 {
+				line += " events=" + strings.Join(recv.EventClasses, ",")
+			}
+			b.WriteString(line + "\n")
+		}
 		fmt.Fprintf(&b, "    last_state=%s last_inspect=%s last_attempt=%s last_submit=%s\n",
 			dashIfEmpty(inst.LastState), stampOrDash(inst.LastInspectAt), stampOrDash(inst.LastAttemptAt), stampOrDash(inst.LastSubmitAt))
 		if inst.UnreadCount > 0 {
@@ -446,8 +523,12 @@ func init() {
 	wakeRunCmd.Flags().StringVar(&wakeOatsBin, "oats-bin", "", "OATS executable to run (default $"+session.OatsBinEnv+", else `oats` from PATH)")
 
 	wakeRegisterCmd.Flags().StringVar(&wakeRegisterHome, "home", "", "Absolute instance home path")
-	wakeRegisterCmd.Flags().StringVar(&wakeRegisterIDHome, "identity-home", "", "Absolute identity home the instance streams under")
-	wakeRegisterCmd.Flags().StringVar(&wakeRegisterDelivery, "delivery", "", "Delivery mode recorded by the spawn hook; must be session")
+	wakeRegisterCmd.Flags().StringVar(&wakeRegisterIDHome, "identity-home", "", "Absolute identity home the instance streams under (legacy single-identity registration)")
+	wakeRegisterCmd.Flags().StringVar(&wakeRegisterDelivery, "delivery", "", "Delivery mode recorded by the spawn hook; legacy/external uses session, native mixed uses native-channel or native-pi")
+	wakeRegisterCmd.Flags().StringVar(&wakeRegisterRuntimeDelivery, "runtime-delivery", "", "Explicit runtime delivery owner: external-session, native-channel, or native-pi")
+	wakeRegisterCmd.Flags().StringVar(&wakeRegisterPrimaryIDHome, "primary-identity-home", "", "Absolute native primary identity home for disjoint native-channel/native-pi registrations")
+	wakeRegisterCmd.Flags().StringArrayVar(&wakeRegisterReceiveJSON, "receive-identity-json", nil, "JSON receive identity binding; repeat for multi-identity broker receive")
+	wakeRegisterCmd.Flags().StringVar(&wakeRegisterRegistrationJSON, "registration-json", "", "Read the complete wake registration JSON from this file, or '-' for stdin")
 	wakeRegisterCmd.Flags().StringVar(&wakeRegisterBackend, "backend", "", "Terminal backend hint: tmux or herdr")
 
 	wakeDeregisterCmd.Flags().StringVar(&wakeDeregisterHome, "home", "", "Absolute instance home path")

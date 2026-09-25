@@ -13,10 +13,27 @@ import (
 	"time"
 )
 
-// DeliverySession is the value the spawn hook records alongside the home. The
-// broker's exclusivity check reads this field rather than inferring the mode
-// (§4, §6): two presentation surfaces on one identity double every wake.
+// DeliverySession is the legacy value the spawn hook records alongside the
+// home when the broker owns the instance's delivery surface.
 const DeliverySession = "session"
+
+const (
+	// RuntimeDeliveryExternalSession means the native adapter is silent and the
+	// broker may own every explicit receive identity for this instance.
+	RuntimeDeliveryExternalSession = "external-session"
+	// RuntimeDeliveryNativeChannel means Claude's native channel owns the primary
+	// identity; broker receive identities must be disjoint attachments.
+	RuntimeDeliveryNativeChannel = "native-channel"
+	// RuntimeDeliveryNativePi means Pi's native extension owns the primary
+	// identity; broker receive identities must be disjoint attachments.
+	RuntimeDeliveryNativePi = "native-pi"
+)
+
+const (
+	ReceiveOwnerSessionHints = "session-hints"
+	EventClassMail           = "mail"
+	EventClassChat           = "chat"
+)
 
 // DefaultHintCap bounds the pending hint store per instance (§4).
 const DefaultHintCap = 512
@@ -87,44 +104,295 @@ func HomeKey(canonicalHome string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Registration is what the OATS spawn hook records.
-type Registration struct {
-	Home         string    `json:"home"`
-	IdentityHome string    `json:"identity_home"`
-	Delivery     string    `json:"delivery"`
-	Backend      string    `json:"backend,omitempty"`
-	RegisteredAt time.Time `json:"registered_at"`
+// ReceiveIdentity is one broker-owned identity stream attached to a registered
+// instance. It is metadata and routing context only: the broker never fetches,
+// decrypts or acknowledges message bodies for it.
+type ReceiveIdentity struct {
+	IdentityHome  string   `json:"identity_home"`
+	TeamID        string   `json:"team_id,omitempty"`
+	Label         string   `json:"label,omitempty"`
+	DeliveryOwner string   `json:"delivery_owner,omitempty"`
+	EventClasses  []string `json:"event_classes,omitempty"`
+	Controls      bool     `json:"controls,omitempty"`
 }
 
-// Validate enforces the exclusivity check and the explicit-home rule.
+// Registration is what the OATS spawn hook records. The legacy shape is one
+// IdentityHome with Delivery=session. The multi-identity shape keeps the same
+// instance Home and supplies explicit broker-owned receive identities.
+type Registration struct {
+	Home                string            `json:"home"`
+	IdentityHome        string            `json:"identity_home"`
+	Delivery            string            `json:"delivery"`
+	RuntimeDelivery     string            `json:"runtime_delivery,omitempty"`
+	PrimaryIdentityHome string            `json:"primary_identity_home,omitempty"`
+	ReceiveIdentities   []ReceiveIdentity `json:"receive_identities,omitempty"`
+	Backend             string            `json:"backend,omitempty"`
+	RegisteredAt        time.Time         `json:"registered_at"`
+}
+
+// Validate enforces explicit receive ownership, no double-consumed identity
+// homes, and the legacy delivery=session compatibility rule.
 func (r Registration) Validate() error {
+	_, err := r.normalized()
+	return err
+}
+
+// Normalized returns the canonical form the broker stores and runs. It preserves
+// the old one-identity registration by deriving one receive identity from
+// IdentityHome when ReceiveIdentities is empty.
+func (r Registration) Normalized() (Registration, error) { return r.normalized() }
+
+func (r Registration) normalized() (Registration, error) {
 	if strings.TrimSpace(r.Home) == "" || !filepath.IsAbs(strings.TrimSpace(r.Home)) {
-		return fmt.Errorf("--home must be an absolute instance home path")
+		return Registration{}, fmt.Errorf("--home must be an absolute instance home path")
 	}
-	identityHome := strings.TrimSpace(r.IdentityHome)
-	if identityHome == "" || !filepath.IsAbs(identityHome) {
-		return fmt.Errorf("--identity-home must be an absolute identity home path")
+	canonicalHome, err := CanonicalHome(r.Home)
+	if err != nil {
+		return Registration{}, err
 	}
-	// An identity home the broker cannot read is a refusal, not a pending
-	// registration: the daemon would build this identity's client from it, and
-	// a registration it can never serve should fail the hook now rather than
-	// sit in status pretending to be a wake path.
-	if info, err := os.Stat(identityHome); err != nil {
-		return fmt.Errorf("--identity-home %s is not readable: %w", identityHome, err)
-	} else if !info.IsDir() {
-		return fmt.Errorf("--identity-home %s is not a directory", identityHome)
-	}
-	if !strings.EqualFold(strings.TrimSpace(r.Delivery), DeliverySession) {
-		return fmt.Errorf(
-			"refusing to register %s: --delivery must be %q (AWEB_DELIVERY=session). The broker and a live native channel are two presentation surfaces on one identity, and running both doubles every wake",
-			strings.TrimSpace(r.Home), DeliverySession)
-	}
+	r.Home = canonicalHome
+
 	switch strings.ToLower(strings.TrimSpace(r.Backend)) {
 	case "", "tmux", "herdr":
 	default:
-		return fmt.Errorf("--backend must be tmux or herdr, got %q", r.Backend)
+		return Registration{}, fmt.Errorf("--backend must be tmux or herdr, got %q", r.Backend)
 	}
-	return nil
+
+	runtime := strings.ToLower(strings.TrimSpace(r.RuntimeDelivery))
+	if runtime == "" {
+		switch strings.ToLower(strings.TrimSpace(r.Delivery)) {
+		case DeliverySession:
+			runtime = RuntimeDeliveryExternalSession
+		case RuntimeDeliveryExternalSession, RuntimeDeliveryNativeChannel, RuntimeDeliveryNativePi:
+			runtime = strings.ToLower(strings.TrimSpace(r.Delivery))
+		}
+	}
+	if runtime == "" && len(r.ReceiveIdentities) == 0 {
+		// Preserve the old refusal wording for legacy bad registrations.
+		return Registration{}, fmt.Errorf(
+			"refusing to register %s: --delivery must be %q (AWEB_DELIVERY=session). The broker and a live native channel are two presentation surfaces on one identity, and running both doubles every wake",
+			strings.TrimSpace(r.Home), DeliverySession)
+	}
+	r.RuntimeDelivery = runtime
+	if strings.TrimSpace(r.Delivery) == "" {
+		if runtime == RuntimeDeliveryExternalSession {
+			r.Delivery = DeliverySession
+		} else {
+			r.Delivery = runtime
+		}
+	}
+
+	legacy := len(r.ReceiveIdentities) == 0
+	if legacy {
+		if !strings.EqualFold(strings.TrimSpace(r.Delivery), DeliverySession) {
+			return Registration{}, fmt.Errorf(
+				"refusing to register %s: --delivery must be %q (AWEB_DELIVERY=session). The broker and a live native channel are two presentation surfaces on one identity, and running both doubles every wake",
+				strings.TrimSpace(r.Home), DeliverySession)
+		}
+		identityHome, err := canonicalReadableIdentityHome(r.IdentityHome, "--identity-home")
+		if err != nil {
+			return Registration{}, err
+		}
+		r.IdentityHome = identityHome
+		r.RuntimeDelivery = RuntimeDeliveryExternalSession
+		r.ReceiveIdentities = []ReceiveIdentity{{
+			IdentityHome:  identityHome,
+			DeliveryOwner: ReceiveOwnerSessionHints,
+			Controls:      true,
+		}}
+		return r, nil
+	}
+
+	switch runtime {
+	case RuntimeDeliveryExternalSession, RuntimeDeliveryNativeChannel, RuntimeDeliveryNativePi:
+	default:
+		return Registration{}, fmt.Errorf("runtime_delivery must be %q, %q, or %q", RuntimeDeliveryExternalSession, RuntimeDeliveryNativeChannel, RuntimeDeliveryNativePi)
+	}
+	if runtime == RuntimeDeliveryExternalSession && strings.TrimSpace(r.Delivery) != "" && !strings.EqualFold(strings.TrimSpace(r.Delivery), DeliverySession) && !strings.EqualFold(strings.TrimSpace(r.Delivery), RuntimeDeliveryExternalSession) {
+		return Registration{}, fmt.Errorf("external-session registrations must keep delivery=%q for compatibility", DeliverySession)
+	}
+	if runtime != RuntimeDeliveryExternalSession {
+		if delivery := strings.ToLower(strings.TrimSpace(r.Delivery)); delivery != "" && delivery != runtime {
+			return Registration{}, fmt.Errorf("native mixed registration delivery must be %q, got %q", runtime, r.Delivery)
+		}
+		if strings.TrimSpace(r.PrimaryIdentityHome) == "" {
+			return Registration{}, fmt.Errorf("primary_identity_home is required when runtime_delivery is %q", runtime)
+		}
+	}
+
+	primary := ""
+	if strings.TrimSpace(r.PrimaryIdentityHome) != "" {
+		primary, err = canonicalReadableIdentityHome(r.PrimaryIdentityHome, "primary_identity_home")
+		if err != nil {
+			return Registration{}, err
+		}
+		r.PrimaryIdentityHome = primary
+	}
+
+	seen := map[string]struct{}{}
+	controlCount := 0
+	for i := range r.ReceiveIdentities {
+		binding := &r.ReceiveIdentities[i]
+		identityHome, err := canonicalReadableIdentityHome(binding.IdentityHome, fmt.Sprintf("receive_identities[%d].identity_home", i))
+		if err != nil {
+			return Registration{}, err
+		}
+		binding.IdentityHome = identityHome
+		if _, ok := seen[identityHome]; ok {
+			return Registration{}, fmt.Errorf("duplicate receive identity_home %s", identityHome)
+		}
+		seen[identityHome] = struct{}{}
+		if primary != "" && identityHome == primary {
+			return Registration{}, fmt.Errorf("receive identity_home %s overlaps native primary identity_home", identityHome)
+		}
+		binding.TeamID = strings.TrimSpace(binding.TeamID)
+		binding.Label = strings.TrimSpace(binding.Label)
+		owner := strings.ToLower(strings.TrimSpace(binding.DeliveryOwner))
+		if owner == "" {
+			owner = ReceiveOwnerSessionHints
+		}
+		if owner != ReceiveOwnerSessionHints {
+			return Registration{}, fmt.Errorf("receive_identities[%d].delivery_owner must be %q", i, ReceiveOwnerSessionHints)
+		}
+		binding.DeliveryOwner = owner
+		classes, err := normalizeEventClasses(binding.EventClasses)
+		if err != nil {
+			return Registration{}, fmt.Errorf("receive_identities[%d].event_classes: %w", i, err)
+		}
+		binding.EventClasses = classes
+		if runtime != RuntimeDeliveryExternalSession {
+			if binding.Controls {
+				return Registration{}, fmt.Errorf("receive identity_home %s cannot have runtime controls when native primary owns delivery", identityHome)
+			}
+			if len(classes) == 0 {
+				binding.EventClasses = []string{EventClassMail, EventClassChat}
+			} else if !onlyMailChat(classes) {
+				return Registration{}, fmt.Errorf("receive identity_home %s may only request mail/chat event classes when native primary owns delivery", identityHome)
+			}
+		}
+		if binding.Controls {
+			controlCount++
+		}
+	}
+	if runtime == RuntimeDeliveryExternalSession && controlCount > 1 {
+		return Registration{}, fmt.Errorf("at most one receive identity may have controls=true")
+	}
+	if strings.TrimSpace(r.IdentityHome) == "" && len(r.ReceiveIdentities) > 0 {
+		r.IdentityHome = r.ReceiveIdentities[0].IdentityHome
+	}
+	return r, nil
+}
+
+func canonicalReadableIdentityHome(raw, label string) (string, error) {
+	path := strings.TrimSpace(raw)
+	if path == "" || !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s must be an absolute identity home path", label)
+	}
+	canonical, err := CanonicalHome(path)
+	if err != nil {
+		return "", err
+	}
+	if info, err := os.Stat(canonical); err != nil {
+		return "", fmt.Errorf("%s %s is not readable: %w", label, canonical, err)
+	} else if !info.IsDir() {
+		return "", fmt.Errorf("%s %s is not a directory", label, canonical)
+	}
+	return canonical, nil
+}
+
+func normalizeEventClasses(classes []string) ([]string, error) {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, raw := range classes {
+		cls := strings.ToLower(strings.TrimSpace(raw))
+		if cls == "" {
+			continue
+		}
+		switch cls {
+		case EventClassMail, EventClassChat:
+		default:
+			return nil, fmt.Errorf("unsupported event class %q", raw)
+		}
+		if _, ok := seen[cls]; ok {
+			continue
+		}
+		seen[cls] = struct{}{}
+		out = append(out, cls)
+	}
+	return out, nil
+}
+
+func onlyMailChat(classes []string) bool {
+	for _, cls := range classes {
+		switch cls {
+		case EventClassMail, EventClassChat:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (r Registration) ReceiveBindings() []ReceiveIdentity {
+	normalized, err := r.normalized()
+	if err != nil {
+		return nil
+	}
+	out := make([]ReceiveIdentity, len(normalized.ReceiveIdentities))
+	copy(out, normalized.ReceiveIdentities)
+	return out
+}
+
+func (r Registration) BindingForIdentityHome(identityHome string) (ReceiveIdentity, bool) {
+	canonical, err := CanonicalHome(identityHome)
+	if err != nil {
+		canonical = filepath.Clean(strings.TrimSpace(identityHome))
+	}
+	for _, binding := range r.ReceiveBindings() {
+		if binding.IdentityHome == canonical {
+			return binding, true
+		}
+	}
+	return ReceiveIdentity{}, false
+}
+
+func (b ReceiveIdentity) label() string {
+	if strings.TrimSpace(b.Label) != "" {
+		return strings.TrimSpace(b.Label)
+	}
+	if strings.TrimSpace(b.TeamID) != "" {
+		return strings.TrimSpace(b.TeamID)
+	}
+	return strings.TrimSpace(b.IdentityHome)
+}
+
+func (b ReceiveIdentity) allowsKind(kind Kind) bool {
+	if b.Controls {
+		return true
+	}
+	classes := b.EventClasses
+	if len(classes) == 0 {
+		classes = []string{EventClassMail, EventClassChat}
+	}
+	switch kind {
+	case KindMail:
+		return containsString(classes, EventClassMail)
+	case KindChat:
+		return containsString(classes, EventClassChat)
+	case KindReconnect:
+		return containsString(classes, EventClassMail) || containsString(classes, EventClassChat)
+	default:
+		return false
+	}
+}
+
+func containsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 // InstanceState is the durable per-instance state: what the broker has tried,
@@ -191,7 +459,10 @@ func (s InstanceState) DurablePending() []Hint {
 	return out
 }
 
-// SaveRegistration writes one registration atomically.
+// SaveRegistration writes one registration atomically. It canonicalizes the
+// instance home but deliberately does not trust or validate the rest of the
+// registration: the daemon applies Registration.Validate while reconciling files
+// that may have been written by an older socket fallback.
 func (s *Store) SaveRegistration(r Registration) error {
 	canonical, err := CanonicalHome(r.Home)
 	if err != nil {
@@ -212,7 +483,13 @@ func (s *Store) LoadRegistration(home string) (Registration, bool, error) {
 	}
 	var r Registration
 	ok, err := readJSON(s.registryPath(HomeKey(canonical)), &r)
-	return r, ok, err
+	if err != nil || !ok {
+		return r, ok, err
+	}
+	if normalized, normalizeErr := r.normalized(); normalizeErr == nil {
+		r = normalized
+	}
+	return r, ok, nil
 }
 
 // DeleteRegistration removes a registration and its instance state. It reports
@@ -258,6 +535,9 @@ func (s *Store) ListRegistrations() ([]Registration, error) {
 		}
 		if strings.TrimSpace(r.Home) == "" {
 			continue
+		}
+		if normalized, normalizeErr := r.normalized(); normalizeErr == nil {
+			r = normalized
 		}
 		out = append(out, r)
 	}

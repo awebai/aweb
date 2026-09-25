@@ -81,6 +81,25 @@ func TestComposedTextIsTheFixedInstructionPlusASummary(t *testing.T) {
 	}
 }
 
+func TestComposedTextWithIdentityContextUsesExplicitSelectors(t *testing.T) {
+	hints := []Hint{
+		{Kind: KindMail, Intent: IntentWake, IdentityHome: "/tmp/joined-a/.aw", TeamID: "team:a", IdentityLabel: "joined-a", MessageID: "m1", From: "alice", At: at(0)},
+		{Kind: KindChat, Intent: IntentWake, IdentityHome: "/tmp/joined-b/.aw", TeamID: "team:b", IdentityLabel: "joined-b", MessageID: "c1", From: "bob", At: at(1)},
+	}
+	got := Compose(hints)
+	for _, want := range []string{
+		"Check the listed identity contexts",
+		"joined-a: `aw --identity-home '/tmp/joined-a/.aw' --team 'team:a' mail inbox`",
+		"joined-b: `aw --identity-home '/tmp/joined-b/.aw' --team 'team:b' mail inbox`",
+		"joined-a: mail from alice",
+		"joined-b: chat from bob",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("composed text missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestComposeSingularAndEmpty(t *testing.T) {
 	if got := Compose(nil); got != "" {
 		t.Fatalf("empty hint set composed %q", got)

@@ -101,6 +101,89 @@ func TestRegistrationRequiresAbsoluteHomes(t *testing.T) {
 	}
 }
 
+func TestLegacyRegistrationNormalizesToOneControlledReceiveIdentity(t *testing.T) {
+	home := tempHome(t, "instance")
+	identityHome := filepath.Join(home, ".aw")
+	reg, err := (Registration{Home: home, IdentityHome: identityHome, Delivery: DeliverySession}).Normalized()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reg.RuntimeDelivery != RuntimeDeliveryExternalSession {
+		t.Fatalf("runtime_delivery=%q", reg.RuntimeDelivery)
+	}
+	bindings := reg.ReceiveBindings()
+	if len(bindings) != 1 {
+		t.Fatalf("bindings=%#v", bindings)
+	}
+	if bindings[0].IdentityHome != identityHome || !bindings[0].Controls || bindings[0].DeliveryOwner != ReceiveOwnerSessionHints {
+		t.Fatalf("binding=%#v", bindings[0])
+	}
+}
+
+func TestNativePrimaryRegistrationRefusesOverlappingReceiveHomes(t *testing.T) {
+	home := tempHome(t, "instance")
+	primaryHome := filepath.Join(tempHome(t, "primary"), ".aw")
+	link := filepath.Join(t.TempDir(), "primary-link")
+	if err := os.Symlink(primaryHome, link); err != nil {
+		t.Fatal(err)
+	}
+	reg := Registration{
+		Home:                home,
+		Delivery:            RuntimeDeliveryNativePi,
+		RuntimeDelivery:     RuntimeDeliveryNativePi,
+		PrimaryIdentityHome: primaryHome,
+		ReceiveIdentities: []ReceiveIdentity{{
+			IdentityHome:  link,
+			DeliveryOwner: ReceiveOwnerSessionHints,
+			EventClasses:  []string{EventClassMail, EventClassChat},
+		}},
+	}
+	if err := reg.Validate(); err == nil || !strings.Contains(err.Error(), "overlaps native primary") {
+		t.Fatalf("err=%v, want overlap refusal", err)
+	}
+}
+
+func TestNativePrimaryRegistrationRefusesSessionDelivery(t *testing.T) {
+	home := tempHome(t, "instance")
+	primaryHome := filepath.Join(tempHome(t, "primary"), ".aw")
+	joinedHome := filepath.Join(tempHome(t, "joined"), ".aw")
+	reg := Registration{
+		Home:                home,
+		Delivery:            DeliverySession,
+		RuntimeDelivery:     RuntimeDeliveryNativePi,
+		PrimaryIdentityHome: primaryHome,
+		ReceiveIdentities: []ReceiveIdentity{{
+			IdentityHome:  joinedHome,
+			DeliveryOwner: ReceiveOwnerSessionHints,
+			EventClasses:  []string{EventClassMail},
+		}},
+	}
+	if err := reg.Validate(); err == nil || !strings.Contains(err.Error(), "delivery must be") {
+		t.Fatalf("err=%v, want native delivery refusal", err)
+	}
+}
+
+func TestNativePrimaryRegistrationRefusesSecondaryControls(t *testing.T) {
+	home := tempHome(t, "instance")
+	primaryHome := filepath.Join(tempHome(t, "primary"), ".aw")
+	joinedHome := filepath.Join(tempHome(t, "joined"), ".aw")
+	reg := Registration{
+		Home:                home,
+		Delivery:            RuntimeDeliveryNativeChannel,
+		RuntimeDelivery:     RuntimeDeliveryNativeChannel,
+		PrimaryIdentityHome: primaryHome,
+		ReceiveIdentities: []ReceiveIdentity{{
+			IdentityHome:  joinedHome,
+			DeliveryOwner: ReceiveOwnerSessionHints,
+			Controls:      true,
+			EventClasses:  []string{EventClassMail},
+		}},
+	}
+	if err := reg.Validate(); err == nil || !strings.Contains(err.Error(), "cannot have runtime controls") {
+		t.Fatalf("err=%v, want controls refusal", err)
+	}
+}
+
 func TestStoreRoundTripsRegistrationsAndCanonicalisesHomes(t *testing.T) {
 	store := tempStore(t)
 	home := tempHome(t, "instance")

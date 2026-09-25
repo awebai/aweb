@@ -18,7 +18,7 @@ type instanceRunner struct {
 
 	mu       sync.Mutex
 	state    InstanceState
-	admitted bool
+	admitted map[string]bool
 	// nextProbe throttles inspects for an instance with nothing pending, so a
 	// hundred idle instances do not exec `oats` fifty times a second.
 	nextProbe time.Time
@@ -41,11 +41,12 @@ type hintOffer struct {
 
 func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instanceRunner {
 	return &instanceRunner{
-		broker: b,
-		reg:    reg,
-		state:  state,
-		hints:  make(chan hintOffer, 256),
-		done:   make(chan struct{}),
+		broker:   b,
+		reg:      reg,
+		state:    state,
+		admitted: map[string]bool{},
+		hints:    make(chan hintOffer, 256),
+		done:     make(chan struct{}),
 	}
 }
 
@@ -54,6 +55,24 @@ func (r *instanceRunner) start(ctx context.Context) {
 		ctx, r.cancel = context.WithCancel(ctx)
 		go r.run(ctx)
 	})
+}
+
+func (r *instanceRunner) updateRegistration(reg Registration) {
+	r.mu.Lock()
+	r.reg = reg
+	if r.admitted == nil {
+		r.admitted = map[string]bool{}
+	}
+	needed := map[string]struct{}{}
+	for _, binding := range reg.ReceiveBindings() {
+		needed[binding.IdentityHome] = struct{}{}
+	}
+	for identityHome := range r.admitted {
+		if _, ok := needed[identityHome]; !ok {
+			delete(r.admitted, identityHome)
+		}
+	}
+	r.mu.Unlock()
 }
 
 // stop is safe to call more than once, and safe to call on a runner that was
@@ -146,16 +165,30 @@ func (r *instanceRunner) setPaused(paused bool, source string) {
 	r.persist()
 }
 
-func (r *instanceRunner) setStreamAdmitted(admitted bool) {
+func (r *instanceRunner) setStreamAdmitted(identityHome string, admitted bool) {
 	r.mu.Lock()
-	r.admitted = admitted
+	if r.admitted == nil {
+		r.admitted = map[string]bool{}
+	}
+	r.admitted[identityHome] = admitted
 	r.mu.Unlock()
 }
 
-func (r *instanceRunner) streamAdmitted() bool {
+func (r *instanceRunner) streamAdmitted(identityHome string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.admitted
+	return r.admitted[identityHome]
+}
+
+func (r *instanceRunner) allStreamsAdmitted() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, binding := range r.reg.ReceiveBindings() {
+		if !r.admitted[binding.IdentityHome] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *instanceRunner) persist() {
@@ -364,22 +397,42 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 	case r.state.ConfirmedLive():
 		phase = PhaseActive
 	}
+	receive := []ReceiveIdentityStatus{}
+	allAdmitted := true
+	for _, binding := range r.reg.ReceiveBindings() {
+		admitted := r.admitted[binding.IdentityHome]
+		if !admitted {
+			allAdmitted = false
+		}
+		receive = append(receive, ReceiveIdentityStatus{
+			IdentityHome:   binding.IdentityHome,
+			TeamID:         binding.TeamID,
+			Label:          binding.Label,
+			DeliveryOwner:  binding.DeliveryOwner,
+			EventClasses:   append([]string(nil), binding.EventClasses...),
+			Controls:       binding.Controls,
+			StreamAdmitted: admitted,
+		})
+	}
 	return InstanceStatus{
-		Home:           r.reg.Home,
-		IdentityHome:   r.reg.IdentityHome,
-		Backend:        r.reg.Backend,
-		Delivery:       r.reg.Delivery,
-		RegisteredAt:   r.reg.RegisteredAt,
-		Phase:          phase,
-		Paused:         r.state.Paused,
-		PendingHints:   len(r.state.Pending),
-		Evicted:        r.state.Evicted,
-		LastInspectAt:  r.state.LastInspectAt,
-		LastAttemptAt:  r.state.LastAttemptAt,
-		LastSubmitAt:   r.state.LastSubmitAt,
-		LastState:      r.state.LastState,
-		LastError:      r.state.LastError,
-		UnreadCount:    r.state.UnreadCount,
-		StreamAdmitted: r.admitted,
+		Home:                r.reg.Home,
+		IdentityHome:        r.reg.IdentityHome,
+		RuntimeDelivery:     r.reg.RuntimeDelivery,
+		PrimaryIdentityHome: r.reg.PrimaryIdentityHome,
+		ReceiveIdentities:   receive,
+		Backend:             r.reg.Backend,
+		Delivery:            r.reg.Delivery,
+		RegisteredAt:        r.reg.RegisteredAt,
+		Phase:               phase,
+		Paused:              r.state.Paused,
+		PendingHints:        len(r.state.Pending),
+		Evicted:             r.state.Evicted,
+		LastInspectAt:       r.state.LastInspectAt,
+		LastAttemptAt:       r.state.LastAttemptAt,
+		LastSubmitAt:        r.state.LastSubmitAt,
+		LastState:           r.state.LastState,
+		LastError:           r.state.LastError,
+		UnreadCount:         r.state.UnreadCount,
+		StreamAdmitted:      allAdmitted,
 	}
 }

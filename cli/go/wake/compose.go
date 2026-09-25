@@ -39,8 +39,17 @@ func Compose(hints []Hint) string {
 	var b strings.Builder
 	b.WriteString("aweb: ")
 	b.WriteString(pluralItems(len(ordered)))
-	b.WriteString(" waiting. Check them from this instance with `aw mail inbox`\n")
-	b.WriteString("and `aw chat pending`, then handle what is there.\n")
+	if hasIdentityContext(ordered) {
+		b.WriteString(" waiting. Check the listed identity contexts with aw, then handle what is there.\n")
+		for _, line := range commandLines(ordered) {
+			b.WriteString("  ")
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	} else {
+		b.WriteString(" waiting. Check them from this instance with `aw mail inbox`\n")
+		b.WriteString("and `aw chat pending`, then handle what is there.\n")
+	}
 
 	lines := summaryLines(ordered)
 	shown := lines
@@ -73,6 +82,66 @@ func pluralItems(n int) string {
 	return fmt.Sprintf("%d items", n)
 }
 
+func hasIdentityContext(hints []Hint) bool {
+	for _, h := range hints {
+		if strings.TrimSpace(h.IdentityHome) != "" || strings.TrimSpace(h.TeamID) != "" || strings.TrimSpace(h.IdentityLabel) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func commandLines(hints []Hint) []string {
+	type commandContext struct {
+		label string
+		home  string
+		team  string
+	}
+	seen := map[string]struct{}{}
+	contexts := []commandContext{}
+	for _, h := range hints {
+		home := strings.TrimSpace(h.IdentityHome)
+		team := strings.TrimSpace(h.TeamID)
+		if home == "" && team == "" {
+			continue
+		}
+		key := home + "|" + team
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		contexts = append(contexts, commandContext{label: safeToken(firstNonEmpty(h.IdentityLabel, team, home)), home: home, team: team})
+	}
+	sort.SliceStable(contexts, func(i, j int) bool { return contexts[i].label < contexts[j].label })
+	out := make([]string, 0, len(contexts))
+	for _, ctx := range contexts {
+		args := "aw"
+		if ctx.home != "" {
+			args += " --identity-home " + shellQuote(ctx.home)
+		}
+		if ctx.team != "" {
+			args += " --team " + shellQuote(ctx.team)
+		}
+		label := ctx.label
+		if label == "" {
+			label = "identity"
+		}
+		out = append(out, fmt.Sprintf("%s: `%s mail inbox` and `%s chat pending`", label, args, args))
+	}
+	return out
+}
+
+func contextPrefix(context string) string {
+	if context == "" {
+		return ""
+	}
+	return context + ": "
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
 type summaryGroup struct {
 	order int
 	key   string
@@ -85,6 +154,7 @@ type groupState struct {
 	waiting bool
 	ids     []string
 	from    string
+	context string
 }
 
 func summaryLines(hints []Hint) []string {
@@ -106,12 +176,15 @@ func summaryLines(hints []Hint) []string {
 
 	for _, h := range hints {
 		from := safeToken(h.From)
+		contextKey := h.IdentityHome + "|" + h.TeamID + "|" + h.IdentityLabel
+		context := safeToken(firstNonEmpty(h.IdentityLabel, h.TeamID, h.IdentityHome))
 		switch h.Kind {
 		case KindMail:
-			add("mail|"+from, renderMail, func(g *groupState) { g.from = from })
+			add("mail|"+contextKey+"|"+from, renderMail, func(g *groupState) { g.from = from; g.context = context })
 		case KindChat:
-			add("chat|"+from, renderChat, func(g *groupState) {
+			add("chat|"+contextKey+"|"+from, renderChat, func(g *groupState) {
 				g.from = from
+				g.context = context
 				if h.SenderWaiting {
 					g.waiting = true
 				}
@@ -146,10 +219,11 @@ func summaryLines(hints []Hint) []string {
 }
 
 func renderMail(g *groupState) string {
+	prefix := contextPrefix(g.context)
 	if g.from == "" {
-		return fmt.Sprintf("mail (%d unread)", g.count)
+		return prefix + fmt.Sprintf("mail (%d unread)", g.count)
 	}
-	return fmt.Sprintf("mail from %s (%d unread)", g.from, g.count)
+	return prefix + fmt.Sprintf("mail from %s (%d unread)", g.from, g.count)
 }
 
 func renderChat(g *groupState) string {
@@ -157,6 +231,7 @@ func renderChat(g *groupState) string {
 	if g.from != "" {
 		who = "chat from " + g.from
 	}
+	who = contextPrefix(g.context) + who
 	if g.waiting {
 		return who + " — sender waiting"
 	}

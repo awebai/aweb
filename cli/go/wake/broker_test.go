@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -127,6 +128,249 @@ func (h *harness) step() {
 }
 
 func (h *harness) submissions() []session.Submission { return h.oats.Submissions() }
+
+func newMultiIdentityHarness(t *testing.T, reg Registration, mutate func(*Config)) (*Broker, *instanceRunner, *Store, *clock) {
+	t.Helper()
+	store := tempStore(t)
+	clk := newClock()
+	logs := &logCapture{}
+	oats := session.NewFake(session.Inspection{Home: reg.Home, Backend: "herdr", Present: true, State: session.StateIdle, RawState: "idle"})
+	opened := map[string]int{}
+	cfg := Config{
+		Store:         store,
+		Session:       oats,
+		Coalesce:      2 * time.Second,
+		RateLimit:     30 * time.Second,
+		PollInterval:  2 * time.Second,
+		IdleProbe:     30 * time.Second,
+		PendingExpiry: 30 * time.Minute,
+		HintCap:       DefaultHintCap,
+		Now:           clk.now,
+		Log:           logs.log,
+		OpenStream: func(identityHome string) (run.EventStreamOpener, error) {
+			opened[identityHome]++
+			return func(context.Context, time.Time) (awid.EventSource, error) { return nil, context.Canceled }, nil
+		},
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	broker, err := NewBroker(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	runner := broker.instances[HomeKey(reg.Home)]
+	if runner == nil {
+		t.Fatal("registration produced no runner")
+	}
+	return broker, runner, store, clk
+}
+
+func absorbQueuedHints(t *testing.T, runner *instanceRunner, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		select {
+		case offer := <-runner.hints:
+			runner.absorb(offer)
+		default:
+			t.Fatalf("queued hints=%d, want at least %d", i, count)
+		}
+	}
+}
+
+// --- multi-identity receive -------------------------------------------------
+
+func TestMultiIdentityHintsCarryDistinctContextForCollidingMessages(t *testing.T) {
+	home := tempHome(t, "instance")
+	joinedA := filepath.Join(tempHome(t, "joined-a"), ".aw")
+	joinedB := filepath.Join(tempHome(t, "joined-b"), ".aw")
+	reg := Registration{
+		Home:            home,
+		Delivery:        DeliverySession,
+		RuntimeDelivery: RuntimeDeliveryExternalSession,
+		ReceiveIdentities: []ReceiveIdentity{
+			{IdentityHome: joinedA, TeamID: "team:a", Label: "joined-a", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}, Controls: true},
+			{IdentityHome: joinedB, TeamID: "team:b", Label: "joined-b", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}},
+		},
+	}
+	broker, runner, _, clk := newMultiIdentityHarness(t, reg, nil)
+
+	ev := awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "same-message-id", FromAlias: "sender"}
+	broker.dispatch(joinedA, ev)
+	broker.dispatch(joinedB, ev)
+	absorbQueuedHints(t, runner, 2)
+
+	runner.mu.Lock()
+	pending := append([]Hint(nil), runner.state.Pending...)
+	runner.mu.Unlock()
+	if len(pending) != 2 {
+		t.Fatalf("pending=%#v, want two distinct identity-scoped hints", pending)
+	}
+	if pending[0].DedupeKey() == pending[1].DedupeKey() {
+		t.Fatalf("colliding message ids collapsed across identities: %#v", pending)
+	}
+	clk.advance(3 * time.Second)
+	runner.evaluate(context.Background())
+	text := broker.cfg.Session.(*session.Fake).Submissions()[0].Text
+	if !strings.Contains(text, "joined-a") || !strings.Contains(text, "joined-b") {
+		t.Fatalf("wake text omitted identity contexts:\n%s", text)
+	}
+	if !strings.Contains(text, "--identity-home") || !strings.Contains(text, "--team 'team:a'") || !strings.Contains(text, "--team 'team:b'") {
+		t.Fatalf("wake text omitted exact selectors:\n%s", text)
+	}
+}
+
+func TestMultiIdentitySecondaryDoesNotControlRuntime(t *testing.T) {
+	home := tempHome(t, "instance")
+	primary := filepath.Join(tempHome(t, "primary"), ".aw")
+	secondary := filepath.Join(tempHome(t, "secondary"), ".aw")
+	reg := Registration{
+		Home:            home,
+		Delivery:        DeliverySession,
+		RuntimeDelivery: RuntimeDeliveryExternalSession,
+		ReceiveIdentities: []ReceiveIdentity{
+			{IdentityHome: primary, Label: "primary", DeliveryOwner: ReceiveOwnerSessionHints, Controls: true},
+			{IdentityHome: secondary, Label: "secondary", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail, EventClassChat}},
+		},
+	}
+	broker, runner, _, _ := newMultiIdentityHarness(t, reg, nil)
+
+	broker.dispatch(secondary, awid.AgentEvent{Type: awid.AgentEventControlPause, SignalID: "pause-secondary"})
+	runner.mu.Lock()
+	paused := runner.state.Paused
+	runner.mu.Unlock()
+	if paused {
+		t.Fatal("secondary identity paused the runtime")
+	}
+
+	broker.dispatch(primary, awid.AgentEvent{Type: awid.AgentEventControlPause, SignalID: "pause-primary"})
+	runner.mu.Lock()
+	paused = runner.state.Paused
+	runner.mu.Unlock()
+	if !paused {
+		t.Fatal("primary controlled identity did not pause the runtime")
+	}
+}
+
+func TestNativePrimaryStreamIsNotOpenedByBroker(t *testing.T) {
+	home := tempHome(t, "instance")
+	primary := filepath.Join(tempHome(t, "native-primary"), ".aw")
+	joined := filepath.Join(tempHome(t, "joined"), ".aw")
+	opened := map[string]int{}
+	reg := Registration{
+		Home:                home,
+		Delivery:            RuntimeDeliveryNativePi,
+		RuntimeDelivery:     RuntimeDeliveryNativePi,
+		PrimaryIdentityHome: primary,
+		ReceiveIdentities: []ReceiveIdentity{{
+			IdentityHome:  joined,
+			TeamID:        "team:joined",
+			Label:         "joined",
+			DeliveryOwner: ReceiveOwnerSessionHints,
+			EventClasses:  []string{EventClassMail, EventClassChat},
+		}},
+	}
+	broker, runner, _, _ := newMultiIdentityHarness(t, reg, func(cfg *Config) {
+		cfg.OpenStream = func(identityHome string) (run.EventStreamOpener, error) {
+			opened[identityHome]++
+			return func(context.Context, time.Time) (awid.EventSource, error) { return nil, context.Canceled }, nil
+		}
+	})
+	if opened[primary] != 0 {
+		t.Fatalf("broker opened native primary stream %d times", opened[primary])
+	}
+	if opened[joined] != 1 {
+		t.Fatalf("joined stream opens=%d, want 1", opened[joined])
+	}
+	broker.dispatch(primary, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m-primary"})
+	runner.mu.Lock()
+	pending := len(runner.state.Pending)
+	runner.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("native primary event reached broker pending hints: %d", pending)
+	}
+}
+
+func TestMultiIdentityRegistrationUpdateReconcilesReceiveBindings(t *testing.T) {
+	home := tempHome(t, "instance")
+	joinedA := filepath.Join(tempHome(t, "joined-a"), ".aw")
+	joinedB := filepath.Join(tempHome(t, "joined-b"), ".aw")
+	reg := Registration{
+		Home:            home,
+		Delivery:        DeliverySession,
+		RuntimeDelivery: RuntimeDeliveryExternalSession,
+		ReceiveIdentities: []ReceiveIdentity{{
+			IdentityHome: joinedA, Label: "joined-a", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}, Controls: true,
+		}},
+	}
+	broker, runner, store, _ := newMultiIdentityHarness(t, reg, nil)
+	if len(broker.Status().Streams) != 1 {
+		t.Fatalf("initial streams=%#v", broker.Status().Streams)
+	}
+
+	updated := reg
+	updated.ReceiveIdentities = []ReceiveIdentity{{
+		IdentityHome: joinedB, Label: "joined-b", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}, Controls: true,
+	}}
+	if err := store.SaveRegistration(updated); err != nil {
+		t.Fatal(err)
+	}
+	broker.Reconcile()
+	status := broker.Status()
+	if len(status.Streams) != 1 || status.Streams[0].IdentityHome != joinedB {
+		t.Fatalf("updated streams=%#v, want only %s", status.Streams, joinedB)
+	}
+	broker.dispatch(joinedA, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "old"})
+	broker.dispatch(joinedB, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "new"})
+	absorbQueuedHints(t, runner, 1)
+	runner.mu.Lock()
+	pending := append([]Hint(nil), runner.state.Pending...)
+	runner.mu.Unlock()
+	if len(pending) != 1 || pending[0].IdentityHome != joinedB {
+		t.Fatalf("pending after update=%#v", pending)
+	}
+}
+
+func TestMultiIdentityStreamCapAndDeregisterPruneAttachments(t *testing.T) {
+	home := tempHome(t, "instance")
+	joinedA := filepath.Join(tempHome(t, "joined-a"), ".aw")
+	joinedB := filepath.Join(tempHome(t, "joined-b"), ".aw")
+	reg := Registration{
+		Home:            home,
+		Delivery:        DeliverySession,
+		RuntimeDelivery: RuntimeDeliveryExternalSession,
+		ReceiveIdentities: []ReceiveIdentity{
+			{IdentityHome: joinedA, Label: "joined-a", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}, Controls: true},
+			{IdentityHome: joinedB, Label: "joined-b", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}},
+		},
+	}
+	broker, _, _, _ := newMultiIdentityHarness(t, reg, func(cfg *Config) { cfg.MaxStreams = 1 })
+	status := broker.Status()
+	if len(status.Streams) != 2 {
+		t.Fatalf("streams=%#v, want live plus over-bound", status.Streams)
+	}
+	admitted := 0
+	for _, stream := range status.Streams {
+		if stream.Admitted {
+			admitted++
+		}
+	}
+	if admitted != 1 {
+		t.Fatalf("admitted streams=%d, want 1: %#v", admitted, status.Streams)
+	}
+	if len(status.Instances) != 1 || len(status.Instances[0].ReceiveIdentities) != 2 {
+		t.Fatalf("instance receive status=%#v", status.Instances)
+	}
+	if existed, err := broker.Deregister(home); err != nil || !existed {
+		t.Fatalf("deregister existed=%t err=%v", existed, err)
+	}
+	if status := broker.Status(); len(status.Streams) != 0 || len(status.Instances) != 0 {
+		t.Fatalf("deregister left broker attachments: %#v", status)
+	}
+}
 
 // --- coalescing and rate limiting -------------------------------------------
 

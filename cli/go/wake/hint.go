@@ -42,6 +42,9 @@ const (
 type Hint struct {
 	Kind           Kind      `json:"kind"`
 	Intent         Intent    `json:"intent"`
+	IdentityHome   string    `json:"identity_home,omitempty"`
+	TeamID         string    `json:"team_id,omitempty"`
+	IdentityLabel  string    `json:"identity_label,omitempty"`
 	MessageID      string    `json:"message_id,omitempty"`
 	ConversationID string    `json:"conversation_id,omitempty"`
 	SignalID       string    `json:"signal_id,omitempty"`
@@ -72,12 +75,24 @@ type Hint struct {
 // later and produce another rate-limited reminder (§4, §6).
 func (h Hint) DedupeKey() string {
 	id := firstNonEmpty(h.MessageID, h.SignalID, h.EventID, h.SessionID, h.ConversationID, h.TaskID)
+	identity := firstNonEmpty(h.IdentityHome, h.TeamID, h.IdentityLabel)
+	prefix := string(h.Kind)
+	if identity != "" {
+		prefix = identity + "|" + prefix
+	}
 	if id == "" {
 		// Nothing identifying: keep it, keyed on arrival, rather than
 		// collapsing unrelated items onto one key.
-		return string(h.Kind) + "|@" + h.At.UTC().Format(time.RFC3339Nano)
+		return prefix + "|@" + h.At.UTC().Format(time.RFC3339Nano)
 	}
-	return string(h.Kind) + "|" + id
+	return prefix + "|" + id
+}
+
+func (h Hint) WithReceiveIdentity(binding ReceiveIdentity) Hint {
+	h.IdentityHome = binding.IdentityHome
+	h.TeamID = binding.TeamID
+	h.IdentityLabel = binding.label()
+	return h
 }
 
 func firstNonEmpty(values ...string) string {

@@ -219,22 +219,37 @@ func StatusFromStore(store *Store, maxStreams int) (Status, error) {
 		case state.ConfirmedLive():
 			phase = PhaseActive
 		}
+		receive := []ReceiveIdentityStatus{}
+		for _, binding := range reg.ReceiveBindings() {
+			receive = append(receive, ReceiveIdentityStatus{
+				IdentityHome:   binding.IdentityHome,
+				TeamID:         binding.TeamID,
+				Label:          binding.Label,
+				DeliveryOwner:  binding.DeliveryOwner,
+				EventClasses:   append([]string(nil), binding.EventClasses...),
+				Controls:       binding.Controls,
+				StreamAdmitted: false,
+			})
+		}
 		status.Instances = append(status.Instances, InstanceStatus{
-			Home:          reg.Home,
-			IdentityHome:  reg.IdentityHome,
-			Backend:       reg.Backend,
-			Delivery:      reg.Delivery,
-			RegisteredAt:  reg.RegisteredAt,
-			Phase:         phase,
-			Paused:        state.Paused,
-			PendingHints:  len(state.Pending),
-			Evicted:       state.Evicted,
-			LastInspectAt: state.LastInspectAt,
-			LastAttemptAt: state.LastAttemptAt,
-			LastSubmitAt:  state.LastSubmitAt,
-			LastState:     state.LastState,
-			LastError:     state.LastError,
-			UnreadCount:   state.UnreadCount,
+			Home:                reg.Home,
+			IdentityHome:        reg.IdentityHome,
+			RuntimeDelivery:     reg.RuntimeDelivery,
+			PrimaryIdentityHome: reg.PrimaryIdentityHome,
+			ReceiveIdentities:   receive,
+			Backend:             reg.Backend,
+			Delivery:            reg.Delivery,
+			RegisteredAt:        reg.RegisteredAt,
+			Phase:               phase,
+			Paused:              state.Paused,
+			PendingHints:        len(state.Pending),
+			Evicted:             state.Evicted,
+			LastInspectAt:       state.LastInspectAt,
+			LastAttemptAt:       state.LastAttemptAt,
+			LastSubmitAt:        state.LastSubmitAt,
+			LastState:           state.LastState,
+			LastError:           state.LastError,
+			UnreadCount:         state.UnreadCount,
 		})
 	}
 	return status, nil
