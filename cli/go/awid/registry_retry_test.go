@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 )
 
 type registryRetryRoundTripper func(*http.Request) (*http.Response, error)
@@ -52,6 +53,50 @@ func TestRegistryClientRetriesServiceUnavailableRead(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("calls=%d, want 2", calls.Load())
+	}
+}
+
+func TestRegistryClientResolveKeyAtReturnsEncryptionKey(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := ComputeDIDKey(pub)
+	stableID := ComputeStableID(pub)
+	_, rawPub, err := GenerateX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertion, err := BuildEncryptionKeyAssertion(priv, did, stableID, rawPub, "", time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/did/"+stableID+"/key" {
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"did_aw":          stableID,
+			"current_did_key": did,
+			"encryption_key":  assertion,
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	resolution, err := NewAWIDRegistryClient(server.Client(), nil).ResolveKeyAt(context.Background(), server.URL, stableID)
+	if err != nil {
+		t.Fatalf("ResolveKeyAt: %v", err)
+	}
+	if resolution.EncryptionKey == nil {
+		t.Fatal("ResolveKeyAt dropped encryption_key from /key response")
+	}
+	if got := resolution.EncryptionKey.EncryptionKeyID; got != assertion.EncryptionKeyID {
+		t.Fatalf("encryption_key_id=%q want %q", got, assertion.EncryptionKeyID)
+	}
+	if err := VerifyEncryptionKeyAssertion(resolution.EncryptionKey, did, stableID, time.Date(2026, 8, 17, 12, 1, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("returned encryption key assertion does not verify: %v", err)
 	}
 }
 

@@ -17,14 +17,15 @@ import (
 )
 
 type doctorIdentityFixture struct {
-	Bin        string
-	Dir        string
-	DID        string
-	StableID   string
-	Address    string
-	Domain     string
-	Handle     string
-	SigningKey ed25519.PrivateKey
+	Bin                 string
+	Dir                 string
+	DID                 string
+	StableID            string
+	Address             string
+	Domain              string
+	Handle              string
+	SigningKey          ed25519.PrivateKey
+	EncryptionAssertion *awid.EncryptionKeyAssertion
 }
 
 func writeDoctorIdentityFixture(t *testing.T, registryURL string) doctorIdentityFixture {
@@ -81,10 +82,14 @@ func newDoctorAWIDServer(t *testing.T, fixture *doctorIdentityFixture, opts map[
 					}
 					current = awid.ComputeDIDKey(wrongPub)
 				}
-				_ = json.NewEncoder(w).Encode(map[string]any{
+				body := map[string]any{
 					"did_aw":          fixture.StableID,
 					"current_did_key": current,
-				})
+				}
+				if fixture.EncryptionAssertion != nil {
+					body["encryption_key"] = fixture.EncryptionAssertion
+				}
+				_ = json.NewEncoder(w).Encode(body)
 			}
 		case "/v1/did/" + fixture.StableID + "/log":
 			if opts["log"] == "unavailable" {
@@ -244,6 +249,39 @@ func TestAwDoctorIdentityGlobalHappyPath(t *testing.T) {
 		doctorCheckAWIDAddressReverseListing,
 	} {
 		requireDoctorCheckStatus(t, got, id, doctorStatusOK)
+	}
+}
+
+func TestAwDoctorIdentityPublishedEncryptionKeyMatchesLocal(t *testing.T) {
+	t.Parallel()
+
+	fixture := writeDoctorIdentityFixture(t, "")
+	identity, err := awconfig.ResolveIdentityFromHome(fixture.Dir, filepath.Join(fixture.Dir, ".aw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, assertion, err := createLocalEncryptionKeyRecord(identity, fixture.SigningKey, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveEncryptionKeyStateTo(awconfig.WorktreeEncryptionStatePath(fixture.Dir), &awconfig.EncryptionKeyState{
+		ActiveKeyID: record.KeyID,
+		Keys:        []awconfig.EncryptionKeyRecord{*record},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fixture.EncryptionAssertion = assertion
+	server, _ := newDoctorAWIDServer(t, &fixture, nil)
+	updateDoctorIdentityRegistryURL(t, fixture.Dir, server.URL)
+
+	out, err := runDoctorCLI(t, fixture.Bin, fixture.Dir, "doctor", "registry", "--online", "--json")
+	if err != nil {
+		t.Fatalf("doctor registry online failed: %v\n%s", err, string(out))
+	}
+	got := decodeDoctorOutput(t, out)
+	check := requireDoctorCheckStatus(t, got, doctorCheckAWIDEncryptionKey, doctorStatusOK)
+	if check.Detail["encryption_key_id"] != record.KeyID {
+		t.Fatalf("encryption_key_id detail=%v want %s", check.Detail["encryption_key_id"], record.KeyID)
 	}
 }
 

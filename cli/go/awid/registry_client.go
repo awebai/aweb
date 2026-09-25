@@ -176,6 +176,7 @@ func (c *RegistryClient) ResolveKeyAt(ctx context.Context, registryURL, didAW st
 	res := &DidKeyResolution{
 		DIDAW:         wire.DIDAW,
 		CurrentDIDKey: wire.CurrentDIDKey,
+		EncryptionKey: wire.EncryptionKey,
 	}
 	if wire.LogHead != nil {
 		res.LogHead = &DidKeyEvidence{
