@@ -4,6 +4,13 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import subprocess
+import tempfile
+import unittest
+import uuid
+from pathlib import Path
 
 # Reviewed digest-pinned probe service image; a constant, not a discovery.
 def _bind_tmp() -> tempfile.TemporaryDirectory:
@@ -23,12 +30,9 @@ def _bind_tmp() -> tempfile.TemporaryDirectory:
 PROBE_SERVICE_IMAGE = (
     "nginx:alpine@sha256:1d40e3eb3bf4f138de1d67193f2aa5309fcaf343eb5ffadbf5e9439de1eb1ebb"
 )
-import os
-import subprocess
-import tempfile
-import unittest
-import uuid
-from pathlib import Path
+# buildx prints some fields as elapsed-time presentation. Those are not cache
+# identity or content and can change while no cache entry changed.
+BUILDX_DU_VOLATILE_FIELDS = {"LastUsedAt"}
 
 
 def run(
@@ -37,6 +41,56 @@ def run(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(args, check=check, capture_output=True, text=True, env=env)
+
+
+def stable_buildx_du_records(output: str) -> list[dict[str, object]]:
+    """Return deterministic buildx du records excluding volatile presentation.
+
+    The boundary being proved is scoped cache mutation: unrelated cache records
+    must retain their identity/content/size fields. Relative elapsed-time fields
+    such as LastUsedAt may tick while the cache remains intact, so comparing raw
+    JSON lines is too strict. Removing IDs/count/size would be too weak.
+    """
+
+    records: list[dict[str, object]] = []
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        record = json.loads(line)
+        if not isinstance(record, dict):
+            raise AssertionError(f"buildx du record is not an object: {record!r}")
+        for field in BUILDX_DU_VOLATILE_FIELDS:
+            record.pop(field, None)
+        records.append(record)
+    return sorted(
+        records,
+        key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+    )
+
+
+class StableBuildxDuRecordsTests(unittest.TestCase):
+    def test_ignores_elapsed_time_presentation_only(self) -> None:
+        before = (
+            '{"ID":"abc","Size":"12B","Mutable":false,'
+            '"LastUsedAt":"Less than a second ago"}\n'
+        )
+        after = (
+            '{"Mutable":false,"LastUsedAt":"1 second ago",'
+            '"Size":"12B","ID":"abc"}\n'
+        )
+        self.assertEqual(stable_buildx_du_records(before), stable_buildx_du_records(after))
+
+    def test_preserves_removed_or_changed_record_detection(self) -> None:
+        before = '{"ID":"abc","Size":"12B","LastUsedAt":"Less than a second ago"}\n'
+        removed = ""
+        changed = '{"ID":"abc","Size":"13B","LastUsedAt":"1 second ago"}\n'
+        self.assertNotEqual(
+            stable_buildx_du_records(before), stable_buildx_du_records(removed)
+        )
+        self.assertNotEqual(
+            stable_buildx_du_records(before), stable_buildx_du_records(changed)
+        )
 
 
 class DockerBoundaryTests(unittest.TestCase):
@@ -166,6 +220,7 @@ class DockerBoundaryTests(unittest.TestCase):
                     "--format", du_format, env=unrelated_env,
                 ).stdout
                 self.assertTrue(owned_before.strip())
+                self.assertTrue(unrelated_before.strip())
                 # Under the production bound a small cache is kept intact...
                 run(
                     "docker", "buildx", "prune", "--all", "--force",
@@ -176,7 +231,8 @@ class DockerBoundaryTests(unittest.TestCase):
                     "--format", du_format, env=buildx_env,
                 ).stdout
                 self.assertEqual(
-                    len(owned_bounded.splitlines()), len(owned_before.splitlines())
+                    stable_buildx_du_records(owned_bounded),
+                    stable_buildx_du_records(owned_before),
                 )
                 # ...while a zero bound reclaims it completely.
                 reclaim = run(
@@ -193,7 +249,10 @@ class DockerBoundaryTests(unittest.TestCase):
                     "--format", du_format, env=unrelated_env,
                 ).stdout
                 self.assertLess(len(owned_after.splitlines()), len(owned_before.splitlines()))
-                self.assertEqual(unrelated_after, unrelated_before)
+                self.assertEqual(
+                    stable_buildx_du_records(unrelated_after),
+                    stable_buildx_du_records(unrelated_before),
+                )
                 reusable_output = root / "reusable.oci.tar"
                 run(
                     "docker", "buildx", "build", "--builder", builder,
