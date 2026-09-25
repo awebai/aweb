@@ -184,7 +184,7 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 			if out == nil {
 				return nil, fmt.Errorf("custody returned no plaintext")
 			}
-			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, Subject: out.Subject, Body: out.Body}, nil
+			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, CreatedAt: out.CreatedAt, From: out.From, Recipients: out.Recipients, Subject: out.Subject, Body: out.Body}, nil
 		}
 		return nil, fmt.Errorf("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")
 	}

@@ -1039,7 +1039,7 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	if err != nil {
 		return nil, fmt.Errorf("decrypt_failed")
 	}
-	out := &awid.E2EEUnwrapResponse{Kind: plain.Kind, MessageID: plain.MessageID, ConversationID: plain.ConversationID, Subject: plain.Subject, Body: plain.Body}
+	out := &awid.E2EEUnwrapResponse{Kind: plain.Kind, MessageID: plain.MessageID, ConversationID: plain.ConversationID, CreatedAt: plain.CreatedAt, From: plain.From, Recipients: plain.Recipients, Subject: plain.Subject, Body: plain.Body}
 	s.cacheCustodyReplayResult(key, out)
 	return out, nil
 }

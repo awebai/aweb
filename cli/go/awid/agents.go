@@ -176,8 +176,11 @@ func (r *TeamRosterResolver) resolve(ctx context.Context, identifier string, for
 	if !ok || r.Client == nil {
 		return nil, fmt.Errorf("TeamRosterResolver: unsupported team member reference %q", identifier)
 	}
-	if strings.TrimSpace(r.Client.teamID) != teamID || strings.TrimSpace(r.Client.teamCertHeader) == "" || len(r.Client.signingKey) == 0 {
-		return nil, errors.New("TeamRosterResolver: team-certificate authentication is required")
+	if strings.TrimSpace(r.Client.teamID) != teamID || len(r.Client.signingKey) == 0 {
+		return nil, errors.New("TeamRosterResolver: authenticated team access is required")
+	}
+	if strings.TrimSpace(r.Client.teamCertHeader) == "" && strings.TrimSpace(r.Client.grantID) == "" {
+		return nil, errors.New("TeamRosterResolver: authenticated team access is required")
 	}
 	var out ListAgentsResponse
 	headers := map[string]string(nil)

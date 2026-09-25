@@ -768,6 +768,154 @@ func TestEncryptedChatReceiveUsesEnvelopeSenderDIDForTrust(t *testing.T) {
 	}
 }
 
+func TestGrantEncryptedReadsUseCustodyMetadataAndGrantRosterContinuity(t *testing.T) {
+	t.Parallel()
+
+	sender := newE2EETestIdentity(t, "acme.com/coordinator")
+	resident := newE2EETestIdentity(t, "acme.com/resident")
+	_, sessionKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grantID := "11111111-1111-4111-8111-111111111111"
+	teamID := "backend:acme.com"
+	createdAt := time.Date(2026, 9, 25, 6, 0, 0, 0, time.UTC)
+	mailEnvelope, err := EncryptE2EEMail(E2EEEncryptMailParams{
+		Sender:         E2EESenderKey{Address: sender.address, DID: sender.did, StableID: sender.stableID, EncryptionKey: sender.assertion, SigningKey: sender.priv},
+		Recipients:     []E2EERecipientKey{{Address: resident.address, DID: resident.did, StableID: resident.stableID, EncryptionKey: resident.assertion}},
+		Subject:        "encrypted return",
+		Body:           "mail body",
+		MessageID:      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+		ConversationID: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+		CreatedAt:      createdAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatEnvelope, err := EncryptE2EEChat(E2EEEncryptMessageParams{
+		Sender:         E2EESenderKey{Address: sender.address, DID: sender.did, StableID: sender.stableID, EncryptionKey: sender.assertion, SigningKey: sender.priv},
+		Recipients:     []E2EERecipientKey{{Address: resident.address, DID: resident.did, StableID: resident.stableID, EncryptionKey: resident.assertion}},
+		Body:           "chat body",
+		MessageID:      "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+		ConversationID: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+		CreatedAt:      createdAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var agentsRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/messages/inbox":
+			if got := r.URL.Query().Get("message_id"); got != mailEnvelope.MessageID {
+				t.Fatalf("mail message_id=%q", got)
+			}
+			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{{
+				MessageID:      mailEnvelope.MessageID,
+				ConversationID: mailEnvelope.ConversationID,
+				FromAlias:      "coordinator",
+				FromAddress:    sender.address,
+				FromDID:        sender.stableID, // Hosted routing can expose did:aw here.
+				FromStableID:   sender.stableID,
+				ToAlias:        "resident",
+				ToAddress:      resident.address,
+				ToDID:          resident.stableID,
+				ToStableID:     resident.stableID,
+				ContentMode:    ContentModeEncryptedV2,
+				MessageVersion: E2EEMessageVersion,
+				Encrypted:      mailEnvelope,
+				CreatedAt:      createdAt.Format(time.RFC3339),
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions/"+chatEnvelope.ConversationID+"/messages":
+			_ = json.NewEncoder(w).Encode(ChatHistoryResponse{Messages: []ChatMessage{{
+				MessageID:      chatEnvelope.MessageID,
+				ConversationID: chatEnvelope.ConversationID,
+				FromAgent:      "coordinator",
+				FromAddress:    sender.address,
+				FromDID:        sender.stableID, // Hosted routing can expose did:aw here.
+				FromStableID:   sender.stableID,
+				ContentMode:    ContentModeEncryptedV2,
+				MessageVersion: E2EEMessageVersion,
+				Encrypted:      chatEnvelope,
+				Timestamp:      createdAt.Format(time.RFC3339),
+			}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/agents":
+			agentsRequests++
+			if got := r.Header.Get("X-AWEB-Grant-ID"); got != grantID {
+				t.Fatalf("X-AWEB-Grant-ID=%q want %q", got, grantID)
+			}
+			if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "AWEB-Grant DIDKey ") {
+				t.Fatalf("Authorization=%q, want grant auth", got)
+			}
+			_ = json.NewEncoder(w).Encode(ListAgentsResponse{TeamID: teamID, Agents: []AgentView{{Alias: "coordinator", DIDKey: sender.did, DIDAW: sender.stableID, Address: sender.address, IdentityScope: IdentityModeLocal}}})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewWithGrant(server.URL, sessionKey, grantID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetGrantSubject(teamID, resident.stableID, resident.did, resident.address, "resident")
+	client.SetPlainMessageSigner(&fakeE2EECustody{})
+	client.SetResolver(&ChainResolver{Team: &TeamRosterResolver{Client: client, TeamID: teamID}})
+
+	mail, err := client.Inbox(context.Background(), InboxParams{MessageID: mailEnvelope.MessageID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mail.Messages[0].VerificationStatus; got != Verified {
+		t.Fatalf("mail VerificationStatus=%q, want verified", got)
+	}
+	if got := mail.Messages[0].FromDID; got != sender.did {
+		t.Fatalf("mail FromDID=%q, want custody inner sender did %q", got, sender.did)
+	}
+	chat, err := client.ChatHistory(context.Background(), ChatHistoryParams{SessionID: chatEnvelope.ConversationID, MessageID: chatEnvelope.MessageID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := chat.Messages[0].VerificationStatus; got != Verified {
+		t.Fatalf("chat VerificationStatus=%q, want verified", got)
+	}
+	if got := chat.Messages[0].FromDID; got != sender.did {
+		t.Fatalf("chat FromDID=%q, want custody inner sender did %q", got, sender.did)
+	}
+	if agentsRequests != 2 {
+		t.Fatalf("/v1/agents requests=%d, want 2", agentsRequests)
+	}
+}
+
+func TestGrantRosterContinuityFailureRemainsStale(t *testing.T) {
+	t.Parallel()
+
+	_, sessionKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamID := "backend:acme.com"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/agents" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
+		}
+		http.Error(w, `{"detail":"outside grant scope"}`, http.StatusForbidden)
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewWithGrant(server.URL, sessionKey, "11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetGrantSubject(teamID, "did:aw:resident", "did:key:zResident", "acme.com/resident", "resident")
+	client.SetResolver(&ChainResolver{Team: &TeamRosterResolver{Client: client, TeamID: teamID}})
+	status, _ := client.NormalizeSenderTrust(context.Background(), Verified, "acme.com/coordinator", "did:key:zSender", "", nil, nil, nil)
+	if status != VerificationStale {
+		t.Fatalf("status=%q, want %q", status, VerificationStale)
+	}
+}
+
 func TestChatE2EEContinuationUsesLocalDIDForHistoryLookup(t *testing.T) {
 	t.Parallel()
 
@@ -7584,7 +7732,16 @@ func (f *fakeE2EECustody) CreateE2EEEnvelope(ctx context.Context, req *E2EEEnvel
 }
 func (f *fakeE2EECustody) UnwrapE2EEMessage(ctx context.Context, req *E2EEUnwrapRequest) (*E2EEUnwrapResponse, error) {
 	f.unwrapReq = req
-	return &E2EEUnwrapResponse{Kind: req.Kind, MessageID: req.MessageID, ConversationID: req.ConversationID, Subject: "decrypted subject", Body: "decrypted body"}, nil
+	out := &E2EEUnwrapResponse{Kind: req.Kind, MessageID: req.MessageID, ConversationID: req.ConversationID, Subject: "decrypted subject", Body: "decrypted body"}
+	if req.Envelope != nil {
+		out.CreatedAt = req.Envelope.CreatedAt
+		out.From = req.Envelope.From
+		out.Recipients = make([]E2EEIdentityRef, 0, len(req.Envelope.Recipients))
+		for _, recipient := range req.Envelope.Recipients {
+			out.Recipients = append(out.Recipients, E2EEIdentityRef{Address: recipient.Address, DID: recipient.DID, StableID: recipient.StableID, TeamID: recipient.TeamID, EncryptionKeyID: recipient.EncryptionKeyID})
+		}
+	}
+	return out, nil
 }
 
 func TestGrantClientE2EESendUsesCustodyEnvelope(t *testing.T) {

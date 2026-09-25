@@ -321,12 +321,15 @@ type E2EEUnwrapRequest struct {
 }
 
 type E2EEUnwrapResponse struct {
-	Kind           string `json:"kind"`
-	MessageID      string `json:"message_id"`
-	ConversationID string `json:"conversation_id"`
-	Subject        string `json:"subject,omitempty"`
-	Body           string `json:"body"`
-	ContentNotice  string `json:"content_notice,omitempty"`
+	Kind           string            `json:"kind"`
+	MessageID      string            `json:"message_id"`
+	ConversationID string            `json:"conversation_id"`
+	CreatedAt      string            `json:"created_at,omitempty"`
+	From           E2EEIdentityRef   `json:"from,omitempty"`
+	Recipients     []E2EEIdentityRef `json:"recipients,omitempty"`
+	Subject        string            `json:"subject,omitempty"`
+	Body           string            `json:"body"`
+	ContentNotice  string            `json:"content_notice,omitempty"`
 }
 
 type E2EECustodyClient interface {

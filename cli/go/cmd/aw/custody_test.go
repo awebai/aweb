@@ -545,6 +545,48 @@ func TestCustodyCreateAndUnwrapE2EEEnvelope(t *testing.T) {
 	if unwrapped.Subject != "for alice" || unwrapped.Body != "resident secret" {
 		t.Fatalf("unexpected unwrap: %#v", unwrapped)
 	}
+	if unwrapped.From.DID != bob.did || unwrapped.From.StableID != bob.stableID || unwrapped.From.Address != bob.address {
+		t.Fatalf("unwrap sender metadata=%#v, want bob inner sender", unwrapped.From)
+	}
+	if len(unwrapped.Recipients) != 1 || unwrapped.Recipients[0].DID != alice.did || unwrapped.Recipients[0].StableID != alice.stableID || unwrapped.Recipients[0].Address != alice.address {
+		t.Fatalf("unwrap recipient metadata=%#v, want alice inner recipient", unwrapped.Recipients)
+	}
+}
+
+func TestCustodyUnwrapE2EEChatPreservesInnerMetadata(t *testing.T) {
+	alice := newCustodyE2EETestIdentity(t, "acme.com/alice")
+	bob := newCustodyE2EETestIdentity(t, "acme.com/bob")
+	_, sessionKey, _ := ed25519.GenerateKey(rand.Reader)
+	svc := testCustodyService(t, alice.signKey, sessionKey)
+	svc.identity.DID = alice.did
+	svc.identity.StableID = alice.stableID
+	svc.identity.Address = alice.address
+	svc.e2eeAssertion = alice.assertion
+	svc.e2eePrivateKey = alice.xPriv
+	incoming, err := awid.EncryptE2EEChat(awid.E2EEEncryptMessageParams{Sender: awid.E2EESenderKey{Address: bob.address, DID: bob.did, StableID: bob.stableID, EncryptionKey: bob.assertion, SigningKey: bob.signKey}, Recipients: []awid.E2EERecipientKey{{Address: alice.address, DID: alice.did, StableID: alice.stableID, EncryptionKey: alice.assertion}}, Body: "chat secret", MessageID: "44444444-4444-4444-8444-444444444445", ConversationID: "55555555-5555-4555-8555-555555555556", CreatedAt: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.readStoredEnvelope = func(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
+		if kind != "chat" || messageID != incoming.MessageID || conversationID != incoming.ConversationID {
+			t.Fatalf("unexpected stored lookup kind=%q message=%q conversation=%q", kind, messageID, conversationID)
+		}
+		return incoming, nil
+	}
+	unwrapReq := signedE2EEUnwrapRequest(t, sessionKey, alice, incoming)
+	unwrapped, err := svc.unwrapE2EEMessage(context.Background(), unwrapReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unwrapped.Body != "chat secret" {
+		t.Fatalf("unexpected unwrap body: %#v", unwrapped)
+	}
+	if unwrapped.From.DID != bob.did || unwrapped.From.StableID != bob.stableID || unwrapped.From.Address != bob.address {
+		t.Fatalf("unwrap sender metadata=%#v, want bob inner sender", unwrapped.From)
+	}
+	if len(unwrapped.Recipients) != 1 || unwrapped.Recipients[0].DID != alice.did || unwrapped.Recipients[0].StableID != alice.stableID || unwrapped.Recipients[0].Address != alice.address {
+		t.Fatalf("unwrap recipient metadata=%#v, want alice inner recipient", unwrapped.Recipients)
+	}
 }
 
 func signedE2EEUnwrapRequest(t *testing.T, sessionKey ed25519.PrivateKey, alice custodyE2EETestIdentity, envelope *awid.E2EEMessageEnvelope) *awid.E2EEUnwrapRequest {

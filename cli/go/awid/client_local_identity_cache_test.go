@@ -130,14 +130,14 @@ func TestNormalizeSenderTrustUsesAuthenticatedNoCacheTeamRosterRefresh(t *testin
 	}
 }
 
-func TestTeamRosterResolverRejectsClientWithoutCertificateAuth(t *testing.T) {
+func TestTeamRosterResolverRejectsClientWithoutAuthenticatedTeamAccess(t *testing.T) {
 	client, err := New("http://example")
 	if err != nil {
 		t.Fatal(err)
 	}
 	resolver := &TeamRosterResolver{Client: client, TeamID: "backend:acme.com"}
-	if _, err := resolver.ResolveFresh(context.Background(), "backend:acme.com/alice"); err == nil || !strings.Contains(err.Error(), "team-certificate authentication") {
-		t.Fatalf("error=%v, want certificate-auth requirement", err)
+	if _, err := resolver.ResolveFresh(context.Background(), "backend:acme.com/alice"); err == nil || !strings.Contains(err.Error(), "authenticated team access") {
+		t.Fatalf("error=%v, want authenticated-team-access requirement", err)
 	}
 }
 
