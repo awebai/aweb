@@ -113,6 +113,7 @@ var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw task show":              {},
 	"aw task stats":             {},
 	"aw task update":            {},
+	"aw team spawn-authority":   {},
 	"aw wake deregister":        {},
 	"aw wake pause":             {},
 	"aw wake register":          {},
