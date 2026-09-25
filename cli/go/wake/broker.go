@@ -75,6 +75,11 @@ type Config struct {
 	BackoffMin    time.Duration
 	BackoffMax    time.Duration
 
+	// Version and Commit identify the daemon's own build. They are reported in
+	// Status so readers see the running daemon, not the CLI asking.
+	Version string
+	Commit  string
+
 	Now func() time.Time
 	Log func(string, ...any)
 }
@@ -533,6 +538,8 @@ func (b *Broker) Status() Status {
 		StateDir:      b.cfg.Store.Dir(),
 		DaemonRunning: true,
 		DaemonPID:     os.Getpid(),
+		DaemonVersion: strings.TrimSpace(b.cfg.Version),
+		DaemonCommit:  strings.TrimSpace(b.cfg.Commit),
 		MaxStreams:    b.cfg.MaxStreams,
 		Streams:       streams,
 		Instances:     instances,
