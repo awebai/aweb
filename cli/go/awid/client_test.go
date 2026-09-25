@@ -684,6 +684,90 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 	}
 }
 
+func TestEncryptedChatReceiveUsesEnvelopeSenderDIDForTrust(t *testing.T) {
+	t.Parallel()
+
+	senderPub, senderKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderDID := ComputeDIDKey(senderPub)
+	senderStableID := ComputeStableID(senderPub)
+	receiverPub, receiverKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverDID := ComputeDIDKey(receiverPub)
+	receiverStableID := ComputeStableID(receiverPub)
+	senderAssertion := testEncryptionAssertion(t, senderKey, senderDID, senderStableID)
+	receiverXPriv, receiverXPub, err := GenerateX25519Keypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiverAssertion, err := BuildEncryptionKeyAssertion(receiverKey, receiverDID, receiverStableID, receiverXPub, "", time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := EncryptE2EEChat(E2EEEncryptMessageParams{
+		Sender:         E2EESenderKey{Address: "sender.example/grant", DID: senderDID, StableID: senderStableID, EncryptionKey: senderAssertion, SigningKey: senderKey},
+		Recipients:     []E2EERecipientKey{{Address: "receiver.example/root", DID: receiverDID, StableID: receiverStableID, EncryptionKey: receiverAssertion}},
+		Body:           "decrypted grant reply",
+		MessageID:      "ce815ba1-1c21-4148-bb02-6ce0f905aa80",
+		ConversationID: "2c077dce-d3a4-40bc-89a5-64af1b15877c",
+		CreatedAt:      time.Date(2026, 9, 25, 0, 57, 9, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/sessions/"+envelope.ConversationID+"/messages" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(ChatHistoryResponse{Messages: []ChatMessage{{
+			MessageID:      envelope.MessageID,
+			ConversationID: envelope.ConversationID,
+			FromAgent:      "grant",
+			FromAddress:    "sender.example/grant",
+			Body:           "",
+			ContentMode:    ContentModeEncryptedV2,
+			MessageVersion: E2EEMessageVersion,
+			Encrypted:      envelope,
+			Timestamp:      "2026-09-25T00:57:09Z",
+			FromDID:        senderStableID, // Outer routing metadata can carry did:aw.
+			FromStableID:   senderStableID,
+		}}})
+	}))
+	t.Cleanup(server.Close)
+
+	client, err := NewWithIdentity(server.URL, receiverKey, receiverDID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetStableID(receiverStableID)
+	client.SetAddress("receiver.example/root")
+	client.SetE2EEKey(receiverAssertion, receiverXPriv)
+	client.SetResolver(stubIdentityResolver{verify: func(_ context.Context, address, stableID string) *StableIdentityVerification {
+		if address != "sender.example/grant" || stableID != senderStableID {
+			t.Fatalf("verify address=%q stable=%q", address, stableID)
+		}
+		return &StableIdentityVerification{Outcome: StableIdentityVerified, CurrentDIDKey: senderDID}
+	}})
+
+	resp, err := client.ChatHistory(context.Background(), ChatHistoryParams{SessionID: envelope.ConversationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.Messages[0].VerificationStatus; got != Verified {
+		t.Fatalf("VerificationStatus=%q, want verified", got)
+	}
+	if got := resp.Messages[0].FromDID; got != senderDID {
+		t.Fatalf("FromDID=%q, want envelope sender did %q", got, senderDID)
+	}
+	if got := resp.Messages[0].Body; got != "decrypted grant reply" {
+		t.Fatalf("Body=%q", got)
+	}
+}
+
 func TestChatE2EEContinuationUsesLocalDIDForHistoryLookup(t *testing.T) {
 	t.Parallel()
 
@@ -5047,6 +5131,94 @@ func TestInboxVerifiedLegacyProjectedLocalAddressUsesAuthenticatedFreshRosterEqu
 	}
 	if rosterReads != 1 {
 		t.Fatalf("fresh roster reads=%d, want 1; recipient mismatch must not resolve", rosterReads)
+	}
+}
+
+func TestSenderConversationSkipsRecipientSelfBindingLikeExactMessage(t *testing.T) {
+	t.Parallel()
+
+	_, residentKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	residentDID := ComputeDIDKey(residentKey.Public().(ed25519.PublicKey))
+	_, sessionKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipientDID := ComputeDIDKey(recipientPub)
+	stableID := "did:aw:grant-sender"
+	messageID := "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+	conversationID := "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+	env := &MessageEnvelope{
+		From:           "sender.example/agent",
+		FromDID:        residentDID,
+		FromStableID:   stableID,
+		To:             "receiver.example/agent",
+		ToDID:          recipientDID,
+		Type:           "mail",
+		Body:           "outbound grant message",
+		Timestamp:      "2026-09-25T00:00:00Z",
+		MessageID:      messageID,
+		ConversationID: conversationID,
+	}
+	signature, err := SignMessage(residentKey, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := InboxMessage{
+		MessageID:      messageID,
+		ConversationID: conversationID,
+		FromAlias:      "agent",
+		FromAddress:    env.From,
+		ToAlias:        "agent",
+		ToAddress:      env.To,
+		Body:           env.Body,
+		CreatedAt:      env.Timestamp,
+		FromDID:        stableID, // Stored route DID authorizes this sender-side read.
+		ToDID:          recipientDID,
+		FromStableID:   stableID,
+		Signature:      signature,
+		SigningKeyID:   residentDID,
+		SignedPayload:  CanonicalJSON(env),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/messages/" + messageID:
+			_ = json.NewEncoder(w).Encode(stored)
+		case "/v1/messages/conversations/" + conversationID:
+			_ = json.NewEncoder(w).Encode(InboxResponse{Messages: []InboxMessage{stored}})
+		default:
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewWithGrant(server.URL, sessionKey, "grant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetGrantSubject("backend:example.com", stableID, residentDID, env.From, "agent")
+	exact, err := client.Message(context.Background(), messageID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversation, err := client.MailConversation(context.Background(), conversationID, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := exact.Messages[0].VerificationStatus; got != Verified {
+		t.Fatalf("exact status=%q, want verified", got)
+	}
+	if got := conversation.Messages[0].VerificationStatus; got != exact.Messages[0].VerificationStatus {
+		t.Fatalf("conversation status=%q, exact=%q", got, exact.Messages[0].VerificationStatus)
+	}
+	if got := conversation.Messages[0].FromDID; got != residentDID {
+		t.Fatalf("conversation signed from_did=%q, want resident %q", got, residentDID)
 	}
 }
 

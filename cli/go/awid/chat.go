@@ -758,6 +758,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 				return nil, err
 			}
 			m.Body = plain.Body
+			applyE2EEPlaintextChatMetadata(m, plain)
 			m.VerificationStatus = Verified
 		}
 		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok {
@@ -823,6 +824,21 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}
 	return &out, nil
+}
+
+func applyE2EEPlaintextChatMetadata(m *ChatMessage, plain *E2EEInnerPayload) {
+	if m == nil || plain == nil {
+		return
+	}
+	if strings.TrimSpace(plain.From.DID) != "" {
+		m.FromDID = strings.TrimSpace(plain.From.DID)
+	}
+	if strings.TrimSpace(plain.From.StableID) != "" {
+		m.FromStableID = strings.TrimSpace(plain.From.StableID)
+	}
+	if strings.TrimSpace(plain.From.Address) != "" {
+		m.FromAddress = strings.TrimSpace(plain.From.Address)
+	}
 }
 
 type ChatMarkReadRequest struct {
