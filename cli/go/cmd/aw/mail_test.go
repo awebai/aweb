@@ -320,6 +320,14 @@ func TestE2EEAssertionIdentityUsesExternalIdentityHome(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	resolved, err := awconfig.ResolveIdentityFromHome(instance, principal)
+	if err != nil {
+		t.Fatalf("resolve external identity: %v", err)
+	}
+	if !resolved.ExternalIdentityHome {
+		t.Fatal("resolved explicit identity home should retain external provenance")
+	}
+
 	identity := e2eeAssertionIdentityForSelection(&awconfig.Selection{
 		WorkingDir:   instance,
 		IdentityHome: principal,

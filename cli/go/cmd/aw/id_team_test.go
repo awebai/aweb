@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2469,6 +2470,22 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	primaryPub, primaryKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, instanceHome, testSelectionFixture{
+		AwebURL:       "https://primary.example.invalid/api",
+		TeamID:        "default:oats.aweb.ai",
+		Alias:         "primary",
+		WorkspaceID:   "primary-workspace",
+		DID:           awid.ComputeDIDKey(primaryPub),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    primaryKey,
+		CreatedAt:     "2026-04-06T00:00:00Z",
+	})
+	primaryBefore := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw"))
 	identityHome := filepath.Join(canonicalTmp, "joined-team.aw")
 	teamID := "default:external.aweb.ai"
 	hostedTeamPub, hostedTeamKey, err := awid.GenerateKeypair()
@@ -2478,6 +2495,7 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	teamDIDKey := awid.ComputeDIDKey(hostedTeamPub)
 	var acceptedDID string
 	var sawConnect bool
+	publishCertTeams := []string{}
 	mailInboxCalls := 0
 	chatPendingCalls := 0
 	var gotConnectPayload connectRequest
@@ -2534,6 +2552,11 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 			chatPendingCalls++
 			_ = json.NewEncoder(w).Encode(awid.ChatPendingResponse{})
 		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			cert := requireCertificateAuthForTest(t, r)
+			publishCertTeams = append(publishCertTeams, strings.TrimSpace(cert.Team))
+			if strings.TrimSpace(cert.Team) != teamID {
+				t.Fatalf("publish used team certificate %q, want external %q", cert.Team, teamID)
+			}
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -2560,8 +2583,11 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	if gotConnectPayload.WorkspacePath != identityHome {
 		t.Fatalf("connect workspace_path=%q want external identity home %q", gotConnectPayload.WorkspacePath, identityHome)
 	}
-	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
-		t.Fatalf("external local accept mutated cwd identity home: %v", err)
+	if len(publishCertTeams) != 1 || publishCertTeams[0] != teamID {
+		t.Fatalf("auto-publish teams=%v, want [%s]", publishCertTeams, teamID)
+	}
+	if primaryAfter := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw")); !reflect.DeepEqual(primaryAfter, primaryBefore) {
+		t.Fatal("external local accept mutated caller primary identity home")
 	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(identityHome, "identity.yaml"))
 	if err != nil {
@@ -2613,8 +2639,8 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 	if mailInboxCalls != 2 || chatPendingCalls != 1 {
 		t.Fatalf("missing operation evidence: mail_inbox_calls=%d chat_pending_calls=%d", mailInboxCalls, chatPendingCalls)
 	}
-	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
-		t.Fatalf("external mail/chat mutated cwd identity home: %v", err)
+	if primaryAfter := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw")); !reflect.DeepEqual(primaryAfter, primaryBefore) {
+		t.Fatal("external mail/chat mutated caller primary identity home")
 	}
 }
 

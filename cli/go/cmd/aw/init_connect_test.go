@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -218,6 +219,22 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 	if err := os.MkdirAll(instanceHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	primaryPub, primaryKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, instanceHome, testSelectionFixture{
+		AwebURL:       "https://primary.example.invalid/api",
+		TeamID:        "default:oats.aweb.ai",
+		Alias:         "primary",
+		WorkspaceID:   "primary-workspace",
+		DID:           awid.ComputeDIDKey(primaryPub),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		SigningKey:    primaryKey,
+		CreatedAt:     "2026-04-06T00:00:00Z",
+	})
+	primaryBefore := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw"))
 	identityHome := filepath.Join(root, "accepted.aw")
 	teamID := "default:recover.aweb.ai"
 	teamPub, teamKey, err := awid.GenerateKeypair()
@@ -258,6 +275,7 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 	}
 
 	var gotConnectPayload connectRequest
+	publishCertTeams := []string{}
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
@@ -278,6 +296,11 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 				"team_did_key": awid.ComputeDIDKey(teamPub),
 			})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			cert := requireCertificateAuthForTest(t, r)
+			publishCertTeams = append(publishCertTeams, strings.TrimSpace(cert.Team))
+			if strings.TrimSpace(cert.Team) != teamID {
+				t.Fatalf("publish used team certificate %q, want external %q", cert.Team, teamID)
+			}
 			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
 		default:
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
@@ -304,8 +327,11 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 	if membership := workspace.Membership(teamID); membership == nil || membership.WorkspaceID != "workspace-recovered" {
 		t.Fatalf("workspace membership=%#v", membership)
 	}
-	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
-		t.Fatalf("workspace connect mutated caller cwd identity home: %v", err)
+	if len(publishCertTeams) != 1 || publishCertTeams[0] != teamID {
+		t.Fatalf("workspace connect publish teams=%v, want [%s]", publishCertTeams, teamID)
+	}
+	if primaryAfter := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw")); !reflect.DeepEqual(primaryAfter, primaryBefore) {
+		t.Fatal("workspace connect mutated caller primary identity home")
 	}
 
 	gotConnectPayload = connectRequest{}
@@ -319,8 +345,11 @@ func TestWorkspaceConnectExternalIdentityHomeRecoversAcceptedRoot(t *testing.T) 
 	if gotConnectPayload.WorkspacePath != identityHome {
 		t.Fatalf("service init workspace_path=%q want external root %q", gotConnectPayload.WorkspacePath, identityHome)
 	}
-	if _, err := os.Stat(filepath.Join(instanceHome, ".aw")); !os.IsNotExist(err) {
-		t.Fatalf("service init mutated caller cwd identity home: %v", err)
+	if len(publishCertTeams) != 2 || publishCertTeams[1] != teamID {
+		t.Fatalf("service init publish teams=%v, want second %s", publishCertTeams, teamID)
+	}
+	if primaryAfter := fileDigestsForTest(t, filepath.Join(instanceHome, ".aw")); !reflect.DeepEqual(primaryAfter, primaryBefore) {
+		t.Fatal("service init mutated caller primary identity home")
 	}
 }
 

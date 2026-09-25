@@ -783,7 +783,7 @@ func publishIdentityEncryptionKey(ctx context.Context, identity *awconfig.Resolv
 		var client *aweb.Client
 		var err error
 		if home := strings.TrimSpace(identity.IdentityHome); home != "" {
-			client, _, err = resolveClientSelectionAtIdentityHome(identity.WorkingDir, awconfig.IdentityHome{Root: home})
+			client, _, err = resolveClientSelectionAtIdentityHome(identity.WorkingDir, awconfig.IdentityHome{Root: home, Source: awconfig.IdentityHomeFlag})
 		} else {
 			client, _, err = resolveClientSelectionForDir(identity.WorkingDir)
 		}

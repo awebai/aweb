@@ -204,6 +204,7 @@ func ResolveIdentityFromHome(workingDir, identityHome string) (*ResolvedIdentity
 	if err != nil {
 		return nil, err
 	}
+	resolved.ExternalIdentityHome = filepath.Clean(identityHome) != filepath.Join(filepath.Clean(workingDir), ".aw")
 	return resolved, nil
 }
 
