@@ -152,6 +152,16 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 					"created_at":      "2026-04-04T00:00:00Z",
 				}},
 			})
+		case "/v1/namespaces/myteam.aweb.ai/addresses/alice":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"address_id":      "addr-1",
+				"domain":          "myteam.aweb.ai",
+				"name":            "alice",
+				"did_aw":          stableID,
+				"current_did_key": did,
+				"reachability":    "public",
+				"created_at":      "2026-04-04T00:00:00Z",
+			})
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -202,10 +212,106 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	if got := runJSON("id", "verify", stableID, "--json"); got["status"] != "OK" {
 		t.Fatalf("verify status=%v", got["status"])
 	}
+	if got := runJSON("id", "log", "--json"); got["status"] != "OK" || got["did_aw"] != stableID || got["current_did_key"] != did || int(got["entry_count"].(float64)) != 1 {
+		t.Fatalf("current id log=%v", got)
+	} else if entries, _ := got["entries"].([]any); len(entries) != 1 || entries[0].(map[string]any)["signature"] == "" {
+		t.Fatalf("current id log did not present verified log entries: %v", got)
+	}
+	if got := runJSON("id", "log", address, "--json"); got["status"] != "OK" || got["did_aw"] != stableID || got["target"] != address {
+		t.Fatalf("address id log=%v", got)
+	} else if entries, _ := got["entries"].([]any); len(entries) != 1 {
+		t.Fatalf("address id log did not present entries: %v", got)
+	}
 	if got := runJSON("id", "namespace", "myteam.aweb.ai", "--json"); got["version"] != supportContractVersion {
 		t.Fatalf("namespace version=%v", got["version"])
 	} else if payload, _ := got["payload"].(map[string]any); payload["registry_url"] == "" {
 		t.Fatalf("namespace registry_url missing: %+v", got)
+	}
+}
+
+func TestIDLogReportsBrokenUnverifiedRegistryLog(t *testing.T) {
+	t.Parallel()
+
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	stableID := awid.ComputeStableID(pub)
+	badEntry := testDidLogEntry(t, stableID, priv, did, "create", nil, nil, 1)
+	badEntry.Signature = "tampered"
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/did/" + stableID + "/log":
+			_ = json.NewEncoder(w).Encode([]map[string]any{didLogJSON(badEntry)})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	tmp := t.TempDir()
+	writeSelfCustodyConfig(t, tmp, server.URL, "myteam.aweb.ai/alice", "myteam.aweb.ai", "alice", did, stableID, priv)
+	out, err := loadDIDLog(context.Background(), tmp, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != "BROKEN" || out.EntryCount != 1 || !strings.Contains(out.Error, "signature") {
+		t.Fatalf("broken log output=%+v", out)
+	}
+}
+
+func TestIDLogLocalIdentityReturnsUnsupportedWithoutRegistryNetwork(t *testing.T) {
+	t.Parallel()
+
+	var hits atomic.Int32
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		t.Fatalf("local id log should not contact registry/server, got %s %s", r.Method, r.URL.Path)
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	tmp := t.TempDir()
+	bin := filepath.Join(tmp, "aw")
+	buildAwBinary(t, ctx, bin)
+	pub, _, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	awDir := filepath.Join(tmp, ".aw")
+	if err := os.MkdirAll(awDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(awDir, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID:           awid.ComputeDIDKey(pub),
+		Custody:       awid.CustodySelf,
+		IdentityScope: awid.IdentityModeLocal,
+		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	run := exec.CommandContext(ctx, bin, "id", "log", "--json")
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	run.Dir = tmp
+	out, err := run.CombinedOutput()
+	if err != nil {
+		t.Fatalf("id log local failed: %v\n%s", err, out)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
+		t.Fatalf("invalid json: %v\n%s", err, out)
+	}
+	if got["status"] != "unsupported_registry_history" {
+		t.Fatalf("status=%v output=%v", got["status"], got)
+	}
+	if !strings.Contains(fmt.Sprint(got["remedy"]), "aw id show") {
+		t.Fatalf("missing actionable remedy: %v", got)
+	}
+	if hits.Load() != 0 {
+		t.Fatalf("local id log contacted server %d times", hits.Load())
 	}
 }
 
