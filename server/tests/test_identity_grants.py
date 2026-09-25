@@ -22,6 +22,7 @@ from aweb.api import create_app
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 from aweb.grant_streams import agent_event_allowed, allowed_status_categories, grant_terminal_reason
 from aweb.identity_auth_deps import MessagingAuth, get_messaging_auth
+from aweb.identity_grant_auth import required_grant_scope
 from aweb.coordination.routes.repos import router as repos_router
 from aweb.coordination.routes.tasks import router as tasks_router
 from aweb.coordination.routes.team_instructions import router as instructions_router
@@ -393,6 +394,19 @@ async def test_scope_enforcement_for_mail_chat_and_roster(aweb_cloud_db):
     assert contacts_wrong_scope.json()["detail"] == "outside grant scope"
     assert presence_allowed.status_code == 200
     assert presence_allowed.json()["grant"]["grant_id"] == presence_grant
+
+
+def test_required_grant_scope_admits_conversation_index_read_only():
+    assert required_grant_scope("GET", "/v1/conversations") is None
+    assert required_grant_scope("HEAD", "/v1/conversations") is None
+    with pytest.raises(Exception) as exc_info:
+        required_grant_scope("POST", "/v1/conversations")
+    assert getattr(exc_info.value, "status_code", None) == 403
+    assert getattr(exc_info.value, "detail", None) == "outside grant scope"
+    with pytest.raises(Exception) as nested_exc_info:
+        required_grant_scope("GET", "/v1/conversations/extra")
+    assert getattr(nested_exc_info.value, "status_code", None) == 403
+    assert getattr(nested_exc_info.value, "detail", None) == "outside grant scope"
 
 
 @pytest.mark.asyncio

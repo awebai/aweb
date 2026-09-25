@@ -48,6 +48,20 @@ def _dedupe_labels(values: list[str]) -> list[str]:
     return labels
 
 
+def _grant_conversation_scope_allowed(auth: MessagingAuth, requested_type: str | None) -> None:
+    if auth.grant is None:
+        return
+    scopes = {scope.strip() for scope in auth.grant.scopes if scope.strip()}
+    if requested_type == "mail":
+        required = {"mail.read"}
+    elif requested_type == "chat":
+        required = {"chat.read"}
+    else:
+        required = {"mail.read", "chat.read"}
+    if not required.issubset(scopes):
+        raise HTTPException(status_code=403, detail="outside grant scope")
+
+
 @router.get("", response_model=ConversationsResponse)
 async def list_conversations(
     request: Request,
@@ -77,6 +91,7 @@ async def list_conversations(
     requested_type = (conversation_type or "").strip().lower() or None
     if requested_type is not None and requested_type not in {"mail", "chat"}:
         raise HTTPException(status_code=422, detail="conversation_type must be mail or chat")
+    _grant_conversation_scope_allowed(auth, requested_type)
     target_did = (participant_did or "").strip() or None
     target_address = (participant_address or "").strip() or None
 

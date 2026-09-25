@@ -56,6 +56,11 @@ def required_grant_scope(method: str, path: str) -> str | None:
     method = method.upper()
     if path == "/v1/agents" and method in _READ_METHODS:
         return None
+    if path == "/v1/conversations" and method in _READ_METHODS:
+        # The conversations index can return mail, chat, or both depending on
+        # query parameters. Authenticate the grant here; the route enforces the
+        # type-specific read scopes after it validates the requested type.
+        return None
     if path == "/v1/messages" or path.startswith("/v1/messages/"):
         return "mail.read" if method in _READ_METHODS else "mail.send"
     if path == "/v1/chat" or path.startswith("/v1/chat/"):

@@ -13,6 +13,7 @@ from nacl.signing import SigningKey
 from awid.did import did_from_public_key
 from awid.registry import Address, KeyResolution
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.auth_context import GrantContext
 from aweb.identity_auth_deps import IDENTITY_DID_AW_HEADER, MessagingAuth, get_messaging_auth
 from aweb.routes.conversations import router as conversations_router
 
@@ -704,6 +705,137 @@ async def test_conversations_mail_isolation_excludes_other_identities(aweb_cloud
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["conversations"] == []
+
+
+@pytest.mark.asyncio
+async def test_grant_conversations_require_type_specific_read_scopes(aweb_cloud_db):
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('ops:acme.com', 'acme.com', 'ops', 'did:key:team')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, did_aw, address, alias, identity_scope, role, inbound_mode)
+        VALUES
+            ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'ops:acme.com', 'did:key:alice-current', 'did:aw:alice', 'acme.com/alice', 'alice', 'global', 'developer', 'open'),
+            ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'ops:acme.com', 'did:key:bob-current', 'did:aw:bob', 'acme.com/bob', 'bob', 'global', 'developer', 'open')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (
+            conversation_id, conversation_type, team_id, created_by_did, created_at, updated_at
+        )
+        VALUES (
+            '55555555-5555-4555-8555-555555555555',
+            'mail',
+            'ops:acme.com',
+            'did:aw:alice',
+            NOW() - INTERVAL '2 hours',
+            NOW() - INTERVAL '2 hours'
+        )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}} (
+            conversation_id, did, agent_id, alias, address, transport_hint, role
+        )
+        VALUES
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:alice', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'alice', 'acme.com/alice', 'to_alias', 'participant'),
+            ('55555555-5555-4555-8555-555555555555', 'did:aw:bob', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'bob', 'acme.com/bob', 'sender', 'initiator')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.messages}} (
+            message_id, conversation_id, from_did, to_did, from_alias, to_alias, subject, body, priority, created_at
+        )
+        VALUES (
+            '11111111-1111-4111-8111-111111111111',
+            '55555555-5555-4555-8555-555555555555',
+            'did:aw:bob',
+            'did:aw:alice',
+            'bob',
+            'alice',
+            'mail subject',
+            'mail body',
+            'normal',
+            NOW() - INTERVAL '2 hours'
+        )
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by, created_at)
+        VALUES ('22222222-2222-4222-8222-222222222222', 'ops:acme.com', 'alice', NOW() - INTERVAL '1 hour')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address)
+        VALUES
+            ('22222222-2222-4222-8222-222222222222', 'did:aw:alice', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'alice', 'acme.com/alice'),
+            ('22222222-2222-4222-8222-222222222222', 'did:aw:bob', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'bob', 'acme.com/bob')
+        """
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.chat_messages}} (
+            message_id, session_id, from_did, from_alias, body, created_at
+        )
+        VALUES (
+            '33333333-3333-4333-8333-333333333333',
+            '22222222-2222-4222-8222-222222222222',
+            'did:aw:bob',
+            'bob',
+            'chat body',
+            NOW() - INTERVAL '1 hour'
+        )
+        """
+    )
+
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+    grant_scopes = ("mail.read",)
+
+    async def _grant_auth_override():
+        return MessagingAuth(
+            did_key="did:key:alice-current",
+            did_aw="did:aw:alice",
+            address="acme.com/alice",
+            team_id="ops:acme.com",
+            alias="alice",
+            agent_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            grant=GrantContext(
+                grant_id="99999999-9999-4999-8999-999999999999",
+                session_did_key="did:key:grant-session",
+                issuing_certificate_id="cert-1",
+                scopes=grant_scopes,
+                expires_at=datetime.now(timezone.utc),
+            ),
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _grant_auth_override
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        mail_allowed = await client.get("/v1/conversations?conversation_type=mail")
+        chat_denied = await client.get("/v1/conversations?conversation_type=chat")
+        unfiltered_denied = await client.get("/v1/conversations")
+        grant_scopes = ("mail.read", "chat.read")
+        unfiltered_allowed = await client.get("/v1/conversations")
+        invalid_type = await client.get("/v1/conversations?conversation_type=task")
+
+    assert mail_allowed.status_code == 200, mail_allowed.text
+    assert [item["conversation_type"] for item in mail_allowed.json()["conversations"]] == ["mail"]
+    assert chat_denied.status_code == 403
+    assert chat_denied.json()["detail"] == "outside grant scope"
+    assert unfiltered_denied.status_code == 403
+    assert unfiltered_denied.json()["detail"] == "outside grant scope"
+    assert unfiltered_allowed.status_code == 200, unfiltered_allowed.text
+    assert {item["conversation_type"] for item in unfiltered_allowed.json()["conversations"]} == {"mail", "chat"}
+    assert invalid_type.status_code == 422
 
 
 @pytest.mark.asyncio
