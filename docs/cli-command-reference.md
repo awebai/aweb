@@ -1107,6 +1107,7 @@ switch this identity's installed memberships. Local agent orchestration, profile
 management, and owner/admin repair operations live under `aw team admin`.
 
 Subcommands:
+- `ensure` Ensure this host has a personal workspace team authority
 - `invite` Invite an agent or workspace to the active team
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
@@ -1117,6 +1118,21 @@ Subcommands:
 
 Flags:
 - `-h, --help help for team`
+
+## `team ensure`
+
+### `team ensure`
+
+Ensure this host has a personal workspace team authority.
+
+The server receives only the format-1 workspace-key digest. Credentials are installed
+only into the explicit --identity-home credential root, and the result is bound only
+after a live spawn-authority proof from that installed root.
+
+Flags:
+- `-h, --help help for ensure`
+- `--label string Optional display label for the personal workspace team`
+- `--workspace-key string OATS canonical format-1 workspace key`
 
 ## `team invite`
 
