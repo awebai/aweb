@@ -397,11 +397,14 @@ var mailSendCmd = &cobra.Command{
 				} else if conversation, findErr := findUniqueMailConversationForAgent(ctx, c, agent); findErr != nil {
 					return findErr
 				} else if conversation.conversationID != "" {
+					// E2EE key discovery needs the recipient alias, not the
+					// conversation id that replaces targetValue below.
+					recipientAlias := targetValue
 					targetKind = "conversation"
 					targetValue = conversation.conversationID
 					req.ConversationID = conversation.conversationID
 					if sendEncryptE2EE {
-						req.ToAlias = targetValue
+						req.ToAlias = recipientAlias
 					} else {
 						applyMailRecipientTarget(req, conversation.kind, conversation.value)
 						if !mailRecipientTargetApplied(req) {
@@ -462,11 +465,14 @@ var mailSendCmd = &cobra.Command{
 			if conversation, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
 				return findErr
 			} else if conversation.conversationID != "" {
+				// E2EE key discovery needs the recipient address, not the
+				// conversation id that replaces targetValue below.
+				recipientAddress := targetValue
 				targetKind = "conversation"
 				targetValue = conversation.conversationID
 				req.ConversationID = conversation.conversationID
 				if sendEncryptE2EE {
-					req.ToAddress = targetValue
+					req.ToAddress = recipientAddress
 				} else {
 					applyMailRecipientTarget(req, conversation.kind, conversation.value)
 				}
