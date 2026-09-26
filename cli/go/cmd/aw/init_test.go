@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1907,5 +1908,31 @@ func TestRunImplicitLocalInitRequiresName(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "--name is required") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInitAdmissionTeamIDRequiresExpectAccountBeforeDeviceLogin(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldAdmission, oldExpected, oldJSON := initAdmissionTeamID, initExpectedAccountID, jsonFlag
+	initAdmissionTeamID = "shared:aweb.ai"
+	initExpectedAccountID = ""
+	jsonFlag = true
+	t.Cleanup(func() { initAdmissionTeamID, initExpectedAccountID, jsonFlag = oldAdmission, oldExpected, oldJSON })
+	t.Setenv("HOME", t.TempDir())
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		t.Fatalf("device/auth server called before --expect-account validation: %s", r.URL.Path)
+	}))
+	defer server.Close()
+	serverFlag = server.URL
+	withTestWorkingDir(t, t.TempDir(), func() {
+		err := runInitAdmissionTeamID(authTestCmd(&bytes.Buffer{}))
+		if err == nil || !strings.Contains(err.Error(), "--expect-account") {
+			t.Fatalf("err=%v, want --expect-account before device login", err)
+		}
+	})
+	if called {
+		t.Fatal("server was called")
 	}
 }

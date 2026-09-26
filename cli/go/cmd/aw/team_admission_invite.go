@@ -198,6 +198,9 @@ func requireCLIAuthForScope(ctx context.Context, scope, remedy string) (cliAuthC
 		if statusCode, ok := cliAuthHTTPStatusCode(err); ok && (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) {
 			return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth for %s is not authorized; run `%s`", scope, remedy)
 		}
+		if cliAuthErrorCode(err) != "" {
+			return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth for %s is not authorized; run `%s`", scope, remedy)
+		}
 		return cliAuthConfig{}, cliAuthAccount{}, err
 	}
 	if strings.TrimSpace(status.Status) != "" && strings.TrimSpace(status.Status) != "authorized" {
@@ -211,11 +214,11 @@ func requireCLIAuthForScope(ctx context.Context, scope, remedy string) (cliAuthC
 }
 
 func selectExpectedAdmissionAccountID(explicit string, account cliAuthAccount) (string, error) {
-	expected := strings.TrimSpace(explicit)
+	expected := normalizeCLIAccountID(explicit)
 	if expected == "" {
 		return "", usageError("--expect-account is required for team admission-invite; run `aw auth status --scope %s --json` and choose the intended account", cliAuthScopeTeamAdmission)
 	}
-	if got := strings.TrimSpace(account.ID); got != "" && got != expected {
+	if got := normalizeCLIAccountID(account.ID); got != "" && got != expected {
 		return "", cliAuthAccountMismatchError(cliAuthScopeTeamAdmission, expected, "", account)
 	}
 	return expected, nil

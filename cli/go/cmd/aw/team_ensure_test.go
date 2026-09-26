@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -750,5 +753,297 @@ func TestTeamEnsureRefusesRefreshedTokenDifferentAccountBeforeMutation(t *testin
 	}
 	if mutated {
 		t.Fatal("mutation endpoint was called")
+	}
+}
+
+func workspaceTeamEnrollProofErrorForTest(req workspaceTeamEnrollRequest, aud, expectedAccountID string) error {
+	payload := map[string]any{
+		"operation":            workspaceTeamEnrollOperation,
+		"aud":                  aud,
+		"method":               http.MethodPost,
+		"path":                 workspaceTeamEnrollPath,
+		"workspace_key_format": workspaceTeamKeyFormat,
+		"workspace_key_sha256": req.WorkspaceKeySHA256,
+		"team_id":              strings.TrimSpace(req.TeamID),
+		"canonical_team_id":    strings.TrimSpace(req.CanonicalTeamID),
+		"expected_account_id":  strings.TrimSpace(expectedAccountID),
+		"did":                  req.Identity.DID,
+		"stable_id":            req.Identity.StableID,
+		"identity_scope":       req.Identity.IdentityScope,
+		"alias":                req.Identity.Alias,
+		"timestamp":            req.Proof.Timestamp,
+	}
+	canonical, err := awid.CanonicalJSONValue(payload)
+	if err != nil {
+		return err
+	}
+	pub, err := awid.ExtractPublicKey(req.Identity.DID)
+	if err != nil {
+		return err
+	}
+	sig, err := base64.RawStdEncoding.DecodeString(req.Proof.Signature)
+	if err != nil {
+		return err
+	}
+	if !ed25519.Verify(pub, []byte(canonical), sig) {
+		return fmt.Errorf("enroll signature did not verify over expected_account_id=%q canonical=%s", expectedAccountID, canonical)
+	}
+	return nil
+}
+
+func verifyWorkspaceTeamEnrollProofForTest(t *testing.T, req workspaceTeamEnrollRequest, aud, expectedAccountID string) {
+	t.Helper()
+	if err := workspaceTeamEnrollProofErrorForTest(req, aud, expectedAccountID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceTeamEnrollSignatureBindsExpectedAccountID(t *testing.T) {
+	_, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := workspaceTeamIdentityMaterial{SigningKey: priv, DIDKey: awid.ComputeDIDKey(priv.Public().(ed25519.PublicKey)), IdentityScope: awid.IdentityModeLocal, Alias: "demo"}
+	cfg := cliAuthConfig{Issuer: "http://issuer.example", AccessToken: "token"}
+	ensure := &workspaceTeamEnsureResponse{TeamID: "team", CanonicalTeamID: "team"}
+	var captured workspaceTeamEnrollRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != workspaceTeamEnrollPath {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatal(err)
+		}
+		verifyWorkspaceTeamEnrollProofForTest(t, captured, cfg.Issuer, "acct-a")
+		_ = json.NewEncoder(w).Encode(workspaceTeamEnrollResponse{State: "enrolled", TeamID: "team", CanonicalTeamID: "team", IdentityID: "ident", AgentID: "agent", Alias: "demo", DID: material.DIDKey, IdentityScope: awid.IdentityModeLocal, TeamCert: "unused"})
+	}))
+	defer server.Close()
+	cfg.Issuer = server.URL
+	if _, err := postWorkspaceTeamEnroll(t.Context(), cfg, ensure, strings.Repeat("a", 64), material, "acct-a"); err != nil {
+		t.Fatalf("post enroll: %v", err)
+	}
+	if captured.ExpectedAccountID != "acct-a" {
+		t.Fatalf("expected_account_id=%q", captured.ExpectedAccountID)
+	}
+	if err := workspaceTeamEnrollProofErrorForTest(captured, cfg.Issuer, "acct-b"); err == nil {
+		t.Fatal("tampered expected_account_id unexpectedly verified")
+	}
+}
+
+func TestTeamEnsureRefusesRecordedOwnerMismatchBeforeMutation(t *testing.T) {
+	oldKey, oldExpected, oldJSON, oldHome := teamEnsureWorkspaceKey, teamEnsureExpectedAccountID, jsonFlag, activeIdentityHome
+	teamEnsureWorkspaceKey = "aweb.ai/org/workspace"
+	teamEnsureExpectedAccountID = ""
+	jsonFlag = true
+	wd := t.TempDir()
+	identityHome := filepath.Join(wd, "principal")
+	activeIdentityHome = awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
+	t.Cleanup(func() {
+		teamEnsureWorkspaceKey, teamEnsureExpectedAccountID, jsonFlag, activeIdentityHome = oldKey, oldExpected, oldJSON, oldHome
+	})
+	t.Chdir(wd)
+	if err := saveWorkspaceTeamBindingMarker(identityHome, workspaceTeamBindingState{Version: workspaceTeamPartialVersion, Issuer: "https://example.invalid", WorkspaceKeySHA256: strings.Repeat("a", 64), TeamID: "team", ExpectedAccountID: "acct-a", AccountHandle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	mutated := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/cli-auth/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-b", "handle": "bob"}})
+		case workspaceTeamEnsurePath, workspaceTeamEnrollPath:
+			mutated = true
+			t.Fatalf("mutation endpoint called for recorded owner mismatch")
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	writeCLIAuthConfigForTeamEnsureTest(t, server.URL)
+	teamEnsureExpectedAccountID = ""
+	err := runTeamEnsure(t.Context(), &cobra.Command{Use: "test"})
+	if err == nil || !strings.Contains(err.Error(), "alice (acct-a)") || !strings.Contains(err.Error(), "bob (acct-b)") || !strings.Contains(err.Error(), "aw auth logout --scope cli.workspace_team && aw auth login --scope cli.workspace_team") {
+		t.Fatalf("err=%v, want recorded owner mismatch with accounts and fix", err)
+	}
+	if mutated {
+		t.Fatal("mutation endpoint was called")
+	}
+}
+
+func TestTeamEnsureAuthStatus401And403RefuseBeforeMutation(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			oldKey, oldExpected, oldJSON, oldHome := teamEnsureWorkspaceKey, teamEnsureExpectedAccountID, jsonFlag, activeIdentityHome
+			teamEnsureWorkspaceKey = "aweb.ai/org/workspace"
+			teamEnsureExpectedAccountID = "acct-test"
+			jsonFlag = true
+			wd := t.TempDir()
+			activeIdentityHome = awconfig.IdentityHome{Root: filepath.Join(wd, "principal"), Source: awconfig.IdentityHomeFlag}
+			t.Cleanup(func() {
+				teamEnsureWorkspaceKey, teamEnsureExpectedAccountID, jsonFlag, activeIdentityHome = oldKey, oldExpected, oldJSON, oldHome
+			})
+			t.Chdir(wd)
+			mutated := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/v1/cli-auth/status":
+					w.WriteHeader(status)
+					_, _ = w.Write([]byte(`{"detail":"not authorized"}`))
+				case workspaceTeamEnsurePath, workspaceTeamEnrollPath:
+					mutated = true
+					t.Fatalf("mutation endpoint called after status %d", status)
+				default:
+					t.Fatalf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer server.Close()
+			writeCLIAuthConfigForTeamEnsureTest(t, server.URL)
+			teamEnsureExpectedAccountID = "acct-test"
+			err := runTeamEnsure(t.Context(), &cobra.Command{Use: "test"})
+			if err == nil || !strings.Contains(err.Error(), "authorization-required") || !strings.Contains(err.Error(), "aw auth login") {
+				t.Fatalf("err=%v, want authorization-required relogin", err)
+			}
+			if mutated {
+				t.Fatal("mutation endpoint was called")
+			}
+		})
+	}
+}
+
+func TestTeamEnsureTwoAccountsSameHomeRecordedOwnerIsolation(t *testing.T) {
+	oldKey, oldExpected, oldJSON, oldHome := teamEnsureWorkspaceKey, teamEnsureExpectedAccountID, jsonFlag, activeIdentityHome
+	teamEnsureWorkspaceKey = "aweb.ai/org/workspace"
+	jsonFlag = true
+	t.Cleanup(func() {
+		teamEnsureWorkspaceKey, teamEnsureExpectedAccountID, jsonFlag, activeIdentityHome = oldKey, oldExpected, oldJSON, oldHome
+	})
+	wd := t.TempDir()
+	t.Chdir(wd)
+	hostHome := t.TempDir()
+	t.Setenv("HOME", hostHome)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(hostHome, ".config"))
+	teamID := "default:workspace.aweb.ai"
+	canonicalTeamID := "default:workspace.aweb.ai"
+	_, teamPriv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutationCounts := map[string]int{"acct-a": 0, "acct-b": 0}
+	serverURL := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		owner := ""
+		switch r.Header.Get("Authorization") {
+		case "Bearer access-a":
+			owner = "acct-a"
+		case "Bearer access-b":
+			owner = "acct-b"
+		}
+		switch r.URL.Path {
+		case "/api/v1/cli-auth/status":
+			if owner == "" {
+				t.Fatalf("unexpected Authorization=%q", r.Header.Get("Authorization"))
+			}
+			handle := map[string]string{"acct-a": "alice", "acct-b": "bob"}[owner]
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": owner, "handle": handle}})
+		case workspaceTeamEnsurePath:
+			mutationCounts[owner]++
+			var req workspaceTeamEnsureRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.ExpectedAccountID != owner {
+				t.Fatalf("ensure expected_account_id=%q owner=%q", req.ExpectedAccountID, owner)
+			}
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID})
+		case workspaceTeamEnrollPath:
+			mutationCounts[owner]++
+			var req workspaceTeamEnrollRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.ExpectedAccountID != owner {
+				t.Fatalf("enroll expected_account_id=%q owner=%q", req.ExpectedAccountID, owner)
+			}
+			verifyWorkspaceTeamEnrollProofForTest(t, req, serverURL, owner)
+			cert, err := awid.SignTeamCertificate(teamPriv, awid.TeamCertificateFields{Team: canonicalTeamID, MemberDIDKey: req.Identity.DID, Alias: req.Identity.Alias, IdentityScope: req.Identity.IdentityScope})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-" + owner, AgentID: "agent-" + owner, Alias: req.Identity.Alias, DID: req.Identity.DID, IdentityScope: req.Identity.IdentityScope, Created: true, TeamCert: encoded})
+		case "/api/v1/spawn/authority":
+			_ = json.NewEncoder(w).Encode(teamSpawnAuthorityOutput{TeamID: teamID, ActorAgentID: "agent-" + owner, AuthKind: "team_key", LiveAgent: true, CanSpawn: true})
+		case "/v1/agents/heartbeat", "/api/v1/agents/heartbeat":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	serverURL = server.URL
+	saveAuth := func(access string) {
+		t.Helper()
+		if err := saveCLIAuthConfig(cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", Scope: cliAuthScope, ClientID: cliAuthClientID, AccessToken: access, RefreshToken: "refresh-" + access, TokenType: "bearer", ExpiresAt: time.Now().Add(time.Hour), UpdatedAt: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runEnsure := func(identityHome, expected string) error {
+		t.Helper()
+		activeIdentityHome = awconfig.IdentityHome{Root: identityHome, Source: awconfig.IdentityHomeFlag}
+		teamEnsureExpectedAccountID = expected
+		cmd := &cobra.Command{Use: "test"}
+		cmd.SetOut(&bytes.Buffer{})
+		return runTeamEnsure(t.Context(), cmd)
+	}
+	home1 := filepath.Join(wd, "home1")
+	home2 := filepath.Join(wd, "home2")
+	saveAuth("access-a")
+	if err := runEnsure(home1, "acct-a"); err != nil {
+		t.Fatalf("home1 account A ensure: %v", err)
+	}
+	binding1, err := loadWorkspaceTeamBindingMarker(home1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding1 == nil || binding1.ExpectedAccountID != "acct-a" || binding1.AccountHandle != "alice" {
+		t.Fatalf("home1 binding after A=%+v", binding1)
+	}
+	beforeA, beforeB := mutationCounts["acct-a"], mutationCounts["acct-b"]
+	saveAuth("access-b")
+	err = runEnsure(home1, "")
+	if err == nil || !strings.Contains(err.Error(), "alice (acct-a)") || !strings.Contains(err.Error(), "bob (acct-b)") {
+		t.Fatalf("home1 retry as B err=%v, want owner mismatch", err)
+	}
+	if mutationCounts["acct-a"] != beforeA || mutationCounts["acct-b"] != beforeB {
+		t.Fatalf("mutation counts changed after mismatch: before A=%d B=%d after=%v", beforeA, beforeB, mutationCounts)
+	}
+	if err := runEnsure(home2, "acct-b"); err != nil {
+		t.Fatalf("home2 account B ensure: %v", err)
+	}
+	binding2, err := loadWorkspaceTeamBindingMarker(home2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding2 == nil || binding2.ExpectedAccountID != "acct-b" || binding2.AccountHandle != "bob" {
+		t.Fatalf("home2 binding after B=%+v", binding2)
+	}
+	binding1Again, err := loadWorkspaceTeamBindingMarker(home1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if binding1Again == nil || binding1Again.ExpectedAccountID != "acct-a" || binding1Again.AccountHandle != "alice" {
+		t.Fatalf("home1 binding changed after home2 B=%+v", binding1Again)
+	}
+}
+
+func TestSelectExpectedWorkspaceTeamAccountIDNormalizesCase(t *testing.T) {
+	got, err := selectExpectedWorkspaceTeamAccountID("550E8400-E29B-41D4-A716-446655440000", nil, cliAuthAccount{ID: "550e8400-e29b-41d4-a716-446655440000", Handle: "alice"})
+	if err != nil {
+		t.Fatalf("select expected account: %v", err)
+	}
+	if got != "550e8400-e29b-41d4-a716-446655440000" {
+		t.Fatalf("normalized id=%q", got)
 	}
 }

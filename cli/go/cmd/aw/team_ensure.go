@@ -355,12 +355,16 @@ func requireAuthorizedCLIAuthAccount(status cliAuthStatusOutput, scope, remedy s
 	if status.Account != nil {
 		account = *status.Account
 	}
-	account.ID = strings.TrimSpace(account.ID)
+	account.ID = normalizeCLIAccountID(account.ID)
 	account.Handle = strings.TrimSpace(account.Handle)
 	if account.ID == "" {
 		return cliAuthAccount{}, usageError("authorization-required: CLI auth status for %s did not include account.id; run `%s` again", scope, remedy)
 	}
 	return account, nil
+}
+
+func normalizeCLIAccountID(id string) string {
+	return strings.ToLower(strings.TrimSpace(id))
 }
 
 func formatCLIAuthAccount(handle, id string) string {
@@ -377,11 +381,11 @@ func cliAuthAccountMismatchError(scope, expectedID, expectedHandle string, accou
 }
 
 func selectExpectedWorkspaceTeamAccountID(explicit string, binding *workspaceTeamBindingState, account cliAuthAccount) (string, error) {
-	expected := strings.TrimSpace(explicit)
+	expected := normalizeCLIAccountID(explicit)
 	recorded := ""
 	recordedHandle := ""
 	if binding != nil {
-		recorded = strings.TrimSpace(binding.ExpectedAccountID)
+		recorded = normalizeCLIAccountID(binding.ExpectedAccountID)
 		recordedHandle = strings.TrimSpace(binding.AccountHandle)
 	}
 	if expected != "" && recorded != "" && expected != recorded {
@@ -395,7 +399,7 @@ func selectExpectedWorkspaceTeamAccountID(explicit string, binding *workspaceTea
 	if expected == "" {
 		return "", usageError("--expect-account is required for first workspace-team enrollment; run `aw auth status --json` and choose the intended account")
 	}
-	if got := strings.TrimSpace(account.ID); got != "" && got != expected {
+	if got := normalizeCLIAccountID(account.ID); got != "" && got != expected {
 		return "", cliAuthAccountMismatchError(cliAuthScope, expected, expectedHandle, account)
 	}
 	return expected, nil

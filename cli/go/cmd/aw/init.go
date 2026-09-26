@@ -363,6 +363,9 @@ func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	if err := ensureConnectTargetClean(wd); err != nil {
 		return err
 	}
+	if strings.TrimSpace(initExpectedAccountID) == "" {
+		return usageError("--expect-account is required for --admission-team-id; run `aw auth status --scope %s --json` and choose the intended account", cliAuthScopeTeamAdmission)
+	}
 	if err := ensureTeamAdmissionAuthForInit(cmd); err != nil {
 		return err
 	}
