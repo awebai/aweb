@@ -52,13 +52,14 @@ Run this from the repo you want to use as an agent workspace:
 
 ```bash
 aw init \
+  --new-team \
   --awid-registry http://localhost:8010 \
   --aweb-url http://localhost:8000 \
   --name alice
 ```
 
-Because the registry URL is localhost, `aw init` takes the implicit local path
-automatically:
+Because the registry URL is localhost and `--new-team` is explicit, `aw init`
+takes the local-team path:
 
 - namespace: `local`
 - team: `default`

@@ -727,7 +727,16 @@ func savePersonalWorkspaceBinding(identityHome string, output *teamAcceptInviteO
 	workspace.WorkspacePath = identityHome
 	workspace.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	upsertWorkspaceMembershipCache(workspace, awconfig.WorktreeMembership{TeamID: strings.TrimSpace(output.TeamID), Alias: strings.TrimSpace(output.Alias), CertPath: filepath.ToSlash(strings.TrimSpace(output.CertPath)), JoinedAt: strings.TrimSpace(cert.IssuedAt)})
-	return awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace)
+	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspace); err != nil {
+		return err
+	}
+	recordMachineWorkspaceBestEffort(awconfig.MachineWorkspaceIndexEntry{
+		Path:      workspace.WorkspacePath,
+		TeamID:    strings.TrimSpace(output.TeamID),
+		Alias:     strings.TrimSpace(output.Alias),
+		ServerURL: strings.TrimSpace(awebURL),
+	})
+	return nil
 }
 
 func verifyPersonalWorkspaceSpawnAuthority(ctx context.Context, workingDir, identityHome, teamID string) (*teamSpawnAuthorityOutput, error) {

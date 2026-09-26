@@ -197,6 +197,11 @@ Rules:
   must not mint a new `did:aw` merely because the identity joins another team.
 - A global join without an existing global identity should fail with guidance to
   claim/create a global identity first.
+- `aw init --join-from ...` and `aw init --admission-team-id ...` follow the same
+  rule: local is the default, while `--global` is an opt-in to reuse the current
+  self-custodial global identity. They do not silently downgrade `--global` to a
+  local join. `aw init --personal-workspace` is the only `aw init` outcome that
+  accepts `--identity-home`, and the root must be explicit.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
 <token>`. A hosted local accept into an explicit external `--identity-home`

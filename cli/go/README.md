@@ -224,8 +224,14 @@ children so nested `aw` commands keep the same identity.
 
 ```bash
 aw run <provider>                     # Primary human entrypoint (guided onboarding + run loop)
-aw init                               # Bind the current workspace using the active cert from .aw/team-certs/
-aw init --global --name <name>         # Bind with a durable self-custodial global identity
+aw init                               # Explicitly choose/create/bind a workspace outcome
+aw init --new-account --username <u> --name <name>  # Create a hosted aweb.ai account/team
+aw init --new-team --byod --domain <domain>         # Create a self-hosted/BYOD team
+aw init --join-from <path> --join-team <team>       # Join from an existing local workspace/identity home
+aw init --admission-team-id <team>                  # Request hosted team admission with CLI device auth
+aw init --personal-workspace --workspace-key <key> --identity-home <root>  # Ensure a personal workspace in an explicit root
+aw init --new-account --global --username <u> --name <name>  # Create a hosted self-custodial global identity
+aw init --global --join-from <path> --join-team <team>       # Join by reusing an existing global identity
 aw whoami                             # Show current identity
 aw inbound-mode                       # Show this agent's inbound delivery mode
 aw inbound-mode team-and-contacts         # Restrict inbound delivery for this global agent

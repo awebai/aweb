@@ -87,42 +87,11 @@ func runTeamAdmissionInvite(ctx context.Context, cmd *cobra.Command) error {
 	if requestID == "" {
 		return usageError("--request-id is required")
 	}
-	cfg, err := requireCLIAuthForScope(ctx, cliAuthScopeTeamAdmission, "aw auth login --scope "+cliAuthScopeTeamAdmission)
+	resp, err := issueTeamAdmissionInvite(ctx, teamID, requestID, strings.TrimSpace(teamAdmissionInviteAliasHint))
 	if err != nil {
 		return err
 	}
-	path := strings.Replace(teamAdmissionInvitePathTemplate, "{team_id}", url.PathEscape(teamID), 1)
-	req := teamAdmissionInviteRequest{AliasHint: strings.TrimSpace(teamAdmissionInviteAliasHint), RequestID: requestID, ExpiresInSeconds: 600}
-	var resp teamAdmissionInviteResponse
-	if err := postCLIAuthJSON(ctx, cfg.Issuer, path, cfg.AccessToken, req, &resp); err != nil {
-		return err
-	}
-	if strings.TrimSpace(resp.Token) == "" {
-		return fmt.Errorf("team admission-invite response missing token")
-	}
-	if strings.TrimSpace(resp.InviteID) == "" {
-		return fmt.Errorf("team admission-invite response missing invite_id")
-	}
-	if got := strings.TrimSpace(resp.TeamID); got != "" && got != teamID && strings.TrimSpace(resp.CanonicalTeamID) != teamID {
-		return fmt.Errorf("team admission-invite response team_id %q and canonical_team_id %q do not match requested team reference %q", got, strings.TrimSpace(resp.CanonicalTeamID), teamID)
-	}
-	if resp.MaxUses != 0 && resp.MaxUses != 1 {
-		return fmt.Errorf("team admission-invite response max_uses=%d, want 1", resp.MaxUses)
-	}
-	out := teamAdmissionInviteOutput{
-		InviteID:        resp.InviteID,
-		Token:           resp.Token,
-		TokenPrefix:     resp.TokenPrefix,
-		MaxUses:         resp.MaxUses,
-		ExpiresAt:       resp.ExpiresAt,
-		TeamID:          firstNonEmptyString(resp.TeamID, teamID),
-		CanonicalTeamID: resp.CanonicalTeamID,
-		TeamSlug:        resp.TeamSlug,
-		NamespaceSlug:   resp.NamespaceSlug,
-		Namespace:       resp.Namespace,
-		ServerURL:       resp.ServerURL,
-		JoinCommand:     "aw team join " + resp.Token + " --name <name>",
-	}
+	out := teamAdmissionInviteOutputFromResponse(resp, teamID)
 	if jsonFlag {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
 	}
@@ -136,6 +105,57 @@ func runTeamAdmissionInvite(ctx context.Context, cmd *cobra.Command) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "canonical_team_id: %s\n", out.CanonicalTeamID)
 	}
 	return nil
+}
+
+func issueTeamAdmissionInvite(ctx context.Context, teamID, requestID, aliasHint string) (teamAdmissionInviteResponse, error) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID == "" {
+		return teamAdmissionInviteResponse{}, usageError("--team-id is required")
+	}
+	requestID = strings.TrimSpace(requestID)
+	if requestID == "" {
+		return teamAdmissionInviteResponse{}, usageError("--request-id is required")
+	}
+	cfg, err := requireCLIAuthForScope(ctx, cliAuthScopeTeamAdmission, "aw auth login --scope "+cliAuthScopeTeamAdmission)
+	if err != nil {
+		return teamAdmissionInviteResponse{}, err
+	}
+	path := strings.Replace(teamAdmissionInvitePathTemplate, "{team_id}", url.PathEscape(teamID), 1)
+	req := teamAdmissionInviteRequest{AliasHint: strings.TrimSpace(aliasHint), RequestID: requestID, ExpiresInSeconds: 600}
+	var resp teamAdmissionInviteResponse
+	if err := postCLIAuthJSON(ctx, cfg.Issuer, path, cfg.AccessToken, req, &resp); err != nil {
+		return teamAdmissionInviteResponse{}, err
+	}
+	if strings.TrimSpace(resp.Token) == "" {
+		return teamAdmissionInviteResponse{}, fmt.Errorf("team admission-invite response missing token")
+	}
+	if strings.TrimSpace(resp.InviteID) == "" {
+		return teamAdmissionInviteResponse{}, fmt.Errorf("team admission-invite response missing invite_id")
+	}
+	if got := strings.TrimSpace(resp.TeamID); got != "" && got != teamID && strings.TrimSpace(resp.CanonicalTeamID) != teamID {
+		return teamAdmissionInviteResponse{}, fmt.Errorf("team admission-invite response team_id %q and canonical_team_id %q do not match requested team reference %q", got, strings.TrimSpace(resp.CanonicalTeamID), teamID)
+	}
+	if resp.MaxUses != 0 && resp.MaxUses != 1 {
+		return teamAdmissionInviteResponse{}, fmt.Errorf("team admission-invite response max_uses=%d, want 1", resp.MaxUses)
+	}
+	return resp, nil
+}
+
+func teamAdmissionInviteOutputFromResponse(resp teamAdmissionInviteResponse, requestedTeamID string) teamAdmissionInviteOutput {
+	return teamAdmissionInviteOutput{
+		InviteID:        resp.InviteID,
+		Token:           resp.Token,
+		TokenPrefix:     resp.TokenPrefix,
+		MaxUses:         resp.MaxUses,
+		ExpiresAt:       resp.ExpiresAt,
+		TeamID:          firstNonEmptyString(resp.TeamID, requestedTeamID),
+		CanonicalTeamID: resp.CanonicalTeamID,
+		TeamSlug:        resp.TeamSlug,
+		NamespaceSlug:   resp.NamespaceSlug,
+		Namespace:       resp.Namespace,
+		ServerURL:       resp.ServerURL,
+		JoinCommand:     "aw team join " + resp.Token + " --name <name>",
+	}
 }
 
 func requireCLIAuthForScope(ctx context.Context, scope, remedy string) (cliAuthConfig, error) {

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
@@ -52,6 +54,13 @@ var (
 	initRole               string
 	initGlobal             bool
 	initInboundMode        string
+	initJoinFrom           string
+	initJoinTeam           string
+	initAdmissionTeamID    string
+	initPersonalWorkspace  bool
+	initWorkspaceKey       string
+	initNewAccount         bool
+	initNewTeam            bool
 )
 
 var (
@@ -97,6 +106,13 @@ func init() {
 	initCmd.Flags().BoolVar(&initGlobal, "persistent", false, "Deprecated alias for --global")
 	markDeprecatedHiddenFlag(initCmd, "persistent", "global")
 	initCmd.Flags().StringVar(&initInboundMode, "inbound-mode", "", "Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.")
+	initCmd.Flags().StringVar(&initJoinFrom, "join-from", "", "Add an agent to a team by minting one invite from this existing workspace or identity home")
+	initCmd.Flags().StringVar(&initJoinTeam, "join-team", "", "Team ID to use with --join-from when the source has more than one membership")
+	initCmd.Flags().StringVar(&initAdmissionTeamID, "admission-team-id", "", "Add an agent through host human admission for this explicit team ID")
+	initCmd.Flags().BoolVar(&initPersonalWorkspace, "personal-workspace", false, "Ensure a personal workspace team using explicit --identity-home and --workspace-key")
+	initCmd.Flags().StringVar(&initWorkspaceKey, "workspace-key", "", "OATS canonical format-1 workspace key for --personal-workspace")
+	initCmd.Flags().BoolVar(&initNewAccount, "new-account", false, "Explicitly create a new hosted aweb.ai account")
+	initCmd.Flags().BoolVar(&initNewTeam, "new-team", false, "Explicitly create a new self-hosted/BYOD team")
 
 	rootCmd.AddCommand(initCmd)
 }
@@ -104,6 +120,351 @@ func init() {
 func addWorkspaceRoleFlags(cmd *cobra.Command, target *string, description string) {
 	cmd.Flags().StringVar(target, "role-name", "", description)
 	cmd.Flags().StringVar(target, "role", "", "Compatibility alias for --role-name")
+}
+
+func validateInitOutcomeFlags() error {
+	outcomes := initOutcomeFlagNames()
+	if len(outcomes) > 1 {
+		return usageError("init outcome flags are mutually exclusive: %s", strings.Join(outcomes, ", "))
+	}
+	if strings.TrimSpace(initJoinTeam) != "" && strings.TrimSpace(initJoinFrom) == "" {
+		return usageError("--join-team requires --join-from")
+	}
+	if strings.TrimSpace(activeIdentityHome.Root) != "" && activeIdentityHome.External() && !initPersonalWorkspace {
+		return usageError("aw init with --identity-home is only supported for --personal-workspace; refusing to use an external identity home for account, team, or add-agent init")
+	}
+	return nil
+}
+
+func initOutcomeFlagNames() []string {
+	var outcomes []string
+	if strings.TrimSpace(initJoinFrom) != "" {
+		outcomes = append(outcomes, "--join-from")
+	}
+	if strings.TrimSpace(initAdmissionTeamID) != "" {
+		outcomes = append(outcomes, "--admission-team-id")
+	}
+	if initPersonalWorkspace {
+		outcomes = append(outcomes, "--personal-workspace")
+	}
+	if initNewAccount {
+		outcomes = append(outcomes, "--new-account")
+	}
+	if initNewTeam {
+		outcomes = append(outcomes, "--new-team")
+	}
+	return outcomes
+}
+
+func missingInitOutcomeError(action, flag string) error {
+	guidance := initWorkspaceDiscoveryGuidance()
+	if guidance != "" {
+		return usageError("explicit init outcome required to %s; rerun with %s, or choose --join-from, --admission-team-id, or --personal-workspace\n\n%s", action, flag, guidance)
+	}
+	return usageError("explicit init outcome required to %s; rerun with %s, or choose --join-from, --admission-team-id, or --personal-workspace", action, flag)
+}
+
+func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
+	if !canPrompt {
+		return missingInitOutcomeError(action, flag)
+	}
+	printInitWorkspaceDiscoveryChoices(os.Stderr)
+	promptIn := bufferedPromptReader(os.Stdin)
+	choice, err := promptRequiredStringWithIO("Choose aw init outcome (number, join-from, admission-team-id, personal-workspace, new-account, new-team)", "", promptIn, os.Stderr)
+	if err != nil {
+		return err
+	}
+	if applyInitDiscoveryChoice(strings.TrimSpace(choice)) {
+		fmt.Fprintf(os.Stderr, "Confirmed: this will join team %s from %s.\n", initJoinTeam, initJoinFrom)
+		return nil
+	}
+	switch strings.TrimSpace(choice) {
+	case "new-account", "--new-account":
+		if flag != "--new-account" {
+			return usageError("chosen outcome --new-account does not match this init path; rerun with --new-account or choose %s", flag)
+		}
+		fmt.Fprintln(os.Stderr, "Confirmed: this will create a NEW ACCOUNT with its own team.")
+		initNewAccount = true
+		return nil
+	case "new-team", "--new-team":
+		if flag != "--new-team" {
+			return usageError("chosen outcome --new-team does not match this init path; rerun with --new-team or choose %s", flag)
+		}
+		fmt.Fprintln(os.Stderr, "Confirmed: this will create a new team for this workspace.")
+		initNewTeam = true
+		return nil
+	case "join-from", "--join-from":
+		source, err := promptRequiredStringWithIO("Join from workspace or identity home", "", promptIn, os.Stderr)
+		if err != nil {
+			return err
+		}
+		initJoinFrom = strings.TrimSpace(source)
+		team, err := promptStringWithIO("Team ID for join (blank is allowed only when the source has one membership)", strings.TrimSpace(initJoinTeam), promptIn, os.Stderr)
+		if err != nil {
+			return err
+		}
+		initJoinTeam = strings.TrimSpace(team)
+		teamLabel := initJoinTeam
+		if teamLabel == "" {
+			teamLabel = "the source's only team"
+		}
+		fmt.Fprintf(os.Stderr, "Confirmed: this will join %s from %s.\n", teamLabel, initJoinFrom)
+		return nil
+	case "admission-team-id", "--admission-team-id":
+		teamID, err := promptRequiredStringWithIO("Admission team ID", "", promptIn, os.Stderr)
+		if err != nil {
+			return err
+		}
+		initAdmissionTeamID = strings.TrimSpace(teamID)
+		fmt.Fprintf(os.Stderr, "Confirmed: this will request hosted admission for team %s.\n", initAdmissionTeamID)
+		return nil
+	case "personal-workspace", "--personal-workspace":
+		identityHomeRoot, err := promptRequiredStringWithIO("Identity home root for personal workspace", strings.TrimSpace(activeIdentityHome.Root), promptIn, os.Stderr)
+		if err != nil {
+			return err
+		}
+		identityHomeRoot, err = filepathAbs(identityHomeRoot)
+		if err != nil {
+			return err
+		}
+		workspaceKey, err := promptRequiredStringWithIO("Personal workspace key", strings.TrimSpace(initWorkspaceKey), promptIn, os.Stderr)
+		if err != nil {
+			return err
+		}
+		initPersonalWorkspace = true
+		initWorkspaceKey = strings.TrimSpace(workspaceKey)
+		activeIdentityHome = awconfig.IdentityHome{Root: identityHomeRoot, Source: awconfig.IdentityHomeFlag}
+		fmt.Fprintf(os.Stderr, "Confirmed: this will ensure a personal workspace in explicit identity home %s.\n", identityHomeRoot)
+		return nil
+	default:
+		return usageError("unknown init outcome %q; choose join-from, admission-team-id, personal-workspace, new-account, or new-team", choice)
+	}
+}
+
+func applyInitDiscoveryChoice(choice string) bool {
+	if choice == "" {
+		return false
+	}
+	entries, err := awconfig.LoadMachineWorkspaceIndex()
+	if err != nil {
+		return false
+	}
+	for i, entry := range entries {
+		if choice == fmt.Sprintf("%d", i+1) {
+			if entry.Availability != awconfig.MachineWorkspaceAvailable {
+				return false
+			}
+			initJoinFrom = strings.TrimSpace(entry.Path)
+			initJoinTeam = strings.TrimSpace(entry.TeamID)
+			return initJoinFrom != "" && initJoinTeam != ""
+		}
+	}
+	if strings.Contains(choice, string(os.PathSeparator)) || strings.HasPrefix(choice, ".") {
+		initJoinFrom = strings.TrimSpace(choice)
+		return true
+	}
+	return false
+}
+
+func initWorkspaceDiscoveryGuidance() string {
+	entries, err := awconfig.LoadMachineWorkspaceIndex()
+	if err != nil {
+		return fmt.Sprintf("Warning: could not read workspace discovery index at ~/.config/aw/workspaces.yaml: %v", err)
+	}
+	if len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Existing workspace discovery index (~/.config/aw/workspaces.yaml; discovery only, not authority):\n")
+	for i, entry := range entries {
+		availability := string(entry.Availability)
+		if availability == "" {
+			availability = string(awconfig.MachineWorkspaceUnavailable)
+		}
+		detail := ""
+		if strings.TrimSpace(entry.AvailabilityError) != "" {
+			detail = ": " + strings.TrimSpace(entry.AvailabilityError)
+		}
+		fmt.Fprintf(&b, "  %d) %s team=%s alias=%s server=%s [%s%s]\n", i+1, entry.Path, entry.TeamID, entry.Alias, entry.ServerURL, availability, detail)
+		if entry.Availability == awconfig.MachineWorkspaceAvailable {
+			fmt.Fprintf(&b, "     join with: aw init --join-from %q --join-team %q\n", entry.Path, entry.TeamID)
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func printInitWorkspaceDiscoveryChoices(out io.Writer) {
+	guidance := initWorkspaceDiscoveryGuidance()
+	if guidance == "" {
+		return
+	}
+	fmt.Fprintln(out, guidance)
+}
+
+func runPromptedExplicitInitOutcome(cmd *cobra.Command) (bool, error) {
+	if initPersonalWorkspace {
+		return true, runInitPersonalWorkspace(cmd)
+	}
+	if strings.TrimSpace(initJoinFrom) != "" {
+		return true, runInitJoinFrom(cmd)
+	}
+	if strings.TrimSpace(initAdmissionTeamID) != "" {
+		return true, runInitAdmissionTeamID(cmd)
+	}
+	return false, nil
+}
+
+func runInitPersonalWorkspace(cmd *cobra.Command) error {
+	if strings.TrimSpace(activeIdentityHome.Root) == "" || !activeIdentityHome.External() {
+		return usageError("--identity-home is required with --personal-workspace")
+	}
+	if strings.TrimSpace(initWorkspaceKey) == "" {
+		return usageError("--workspace-key is required with --personal-workspace")
+	}
+	previousKey, previousLabel := teamEnsureWorkspaceKey, teamEnsureLabel
+	teamEnsureWorkspaceKey = strings.TrimSpace(initWorkspaceKey)
+	teamEnsureLabel = strings.TrimSpace(initName)
+	defer func() {
+		teamEnsureWorkspaceKey = previousKey
+		teamEnsureLabel = previousLabel
+	}()
+	return runTeamEnsure(cmd.Context(), cmd)
+}
+
+func runInitJoinFrom(cmd *cobra.Command) error {
+	wd, _ := os.Getwd()
+	if err := ensureConnectTargetClean(wd); err != nil {
+		return err
+	}
+	sourceWorkingDir, sourceIdentityHome, teamID, err := resolveInitJoinSource(strings.TrimSpace(initJoinFrom), strings.TrimSpace(initJoinTeam))
+	if err != nil {
+		return err
+	}
+	_, token, err := createHostedTeamInviteTokenAt(sourceWorkingDir, sourceIdentityHome, teamID, true)
+	if err != nil {
+		return fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, teamID)
+	}
+	return acceptInitInviteAndConnect(cmd, wd, token, "")
+}
+
+func runInitAdmissionTeamID(cmd *cobra.Command) error {
+	wd, _ := os.Getwd()
+	if err := ensureConnectTargetClean(wd); err != nil {
+		return err
+	}
+	if err := ensureTeamAdmissionAuthForInit(cmd); err != nil {
+		return err
+	}
+	resp, err := issueTeamAdmissionInvite(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), newRegistryReadRequestID(), resolveAliasValue(resolveInitLocalName()))
+	if err != nil {
+		return err
+	}
+	return acceptInitInviteAndConnect(cmd, wd, resp.Token, resp.ServerURL)
+}
+
+func ensureTeamAdmissionAuthForInit(cmd *cobra.Command) error {
+	_, ok, err := loadCLIAuthConfigForScope(cliAuthScopeTeamAdmission)
+	if err != nil {
+		return err
+	}
+	if ok {
+		return nil
+	}
+	if initIsTTY() && !jsonFlag {
+		allow, err := promptYesNoWithIO("No cli.team_admission login was found. Start bounded device login now?", true, os.Stdin, os.Stderr)
+		if err != nil {
+			return err
+		}
+		if !allow {
+			return usageError("authorization-required: run `aw auth login --scope %s` before this command", cliAuthScopeTeamAdmission)
+		}
+	}
+	previousScope := cliAuthScopeFlag
+	cliAuthScopeFlag = cliAuthScopeTeamAdmission
+	defer func() { cliAuthScopeFlag = previousScope }()
+	parent := cmd.Context()
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, cliAuthLoginTimeout)
+	defer cancel()
+	return runAuthLogin(ctx, cmd)
+}
+
+func initInviteIdentityScope() string {
+	return teamAcceptScopeFromGlobal(initGlobal)
+}
+
+func acceptInitInviteAndConnect(cmd *cobra.Command, workingDir, token, preferredAwebURL string) error {
+	alias := resolveAliasValue(resolveInitLocalName())
+	accepted, err := acceptAndStoreTeamInvite(workingDir, token, teamAcceptInviteOptions{
+		Name:    alias,
+		Scope:   initInviteIdentityScope(),
+		AwebURL: strings.TrimSpace(preferredAwebURL),
+	}, teamInviteStoreOptions{IdentityHome: currentEncryptionKeyIdentityHome(), SetActive: true})
+	if err != nil {
+		return err
+	}
+	awebURL := firstNonEmptyString(strings.TrimSpace(preferredAwebURL), strings.TrimSpace(accepted.AwebURL), strings.TrimSpace(accepted.Output.AwebURL))
+	if awebURL == "" {
+		return usageError("accepted invite did not include an aweb URL; rerun aw init with --aweb-url")
+	}
+	result, err := initCertificateConnectWithOptions(workingDir, awebURL, certificateConnectOptions{
+		Role:      resolveRequestedRole(strings.TrimSpace(initRole)),
+		HumanName: resolveHumanNameValue(strings.TrimSpace(initHumanName)),
+		AgentType: resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
+	})
+	if err != nil {
+		return err
+	}
+	printOutput(result, formatConnect)
+	return nil
+}
+
+func resolveInitJoinSource(rawSource, explicitTeam string) (workingDir, identityHome, teamID string, err error) {
+	source := strings.TrimSpace(rawSource)
+	if source == "" {
+		return "", "", "", usageError("--join-from is required")
+	}
+	clean, err := filepathAbs(source)
+	if err != nil {
+		return "", "", "", err
+	}
+	if info, statErr := os.Stat(filepath.Join(clean, ".aw")); statErr == nil && info.IsDir() {
+		workingDir = clean
+	} else {
+		identityHome = clean
+		workingDir = clean
+	}
+	teamID = strings.TrimSpace(explicitTeam)
+	if teamID != "" {
+		return workingDir, identityHome, teamID, nil
+	}
+	var state *awconfig.TeamState
+	if identityHome != "" {
+		state, err = awconfig.LoadTeamStateFromIdentityHome(identityHome)
+	} else {
+		state, err = awconfig.LoadTeamState(workingDir)
+	}
+	if err != nil {
+		return "", "", "", fmt.Errorf("load --join-from team memberships: %w", err)
+	}
+	if len(state.Memberships) != 1 {
+		ids := make([]string, 0, len(state.Memberships))
+		for _, membership := range state.Memberships {
+			ids = append(ids, membership.TeamID)
+		}
+		return "", "", "", usageError("--join-team is required when --join-from has %d team memberships (%s)", len(state.Memberships), strings.Join(ids, ", "))
+	}
+	return workingDir, identityHome, state.Memberships[0].TeamID, nil
+}
+
+func filepathAbs(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
@@ -115,6 +476,18 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	if err := validateInitInboundMode(); err != nil {
 		return err
+	}
+	if err := validateInitOutcomeFlags(); err != nil {
+		return err
+	}
+	if initPersonalWorkspace {
+		return runInitPersonalWorkspace(cmd)
+	}
+	if strings.TrimSpace(initJoinFrom) != "" {
+		return runInitJoinFrom(cmd)
+	}
+	if strings.TrimSpace(initAdmissionTeamID) != "" {
+		return runInitAdmissionTeamID(cmd)
 	}
 
 	// When only --inject-docs, --setup-hooks, or --setup-channel are requested,
@@ -217,6 +590,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if workspaceMissing {
+		canPrompt := initIsTTY() && !jsonFlag
 		awebURL, err := resolveInitAwebURL()
 		if err != nil {
 			return err
@@ -226,6 +600,14 @@ func runInit(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if initShouldUseImplicitLocalFlow(registryURL) {
+			if !initNewTeam {
+				if err := requireOrPromptInitOutcome(canPrompt, "create a new self-hosted team", "--new-team"); err != nil {
+					return err
+				}
+				if handled, err := runPromptedExplicitInitOutcome(cmd); handled || err != nil {
+					return err
+				}
+			}
 			result, err := initRunImplicitLocalFlow(implicitLocalInitRequest{
 				WorkingDir:  wd,
 				AwebURL:     awebURL,
@@ -252,7 +634,23 @@ func runInit(cmd *cobra.Command, args []string) error {
 			}
 			return nil
 		}
-		canPrompt := initIsTTY() && !jsonFlag
+		if initBYOD {
+			if !initNewTeam {
+				if err := requireOrPromptInitOutcome(canPrompt, "create a new BYOD team", "--new-team"); err != nil {
+					return err
+				}
+				if handled, err := runPromptedExplicitInitOutcome(cmd); handled || err != nil {
+					return err
+				}
+			}
+		} else if !initNewAccount {
+			if err := requireOrPromptInitOutcome(canPrompt, "create a new hosted account", "--new-account"); err != nil {
+				return err
+			}
+			if handled, err := runPromptedExplicitInitOutcome(cmd); handled || err != nil {
+				return err
+			}
+		}
 		askPostCreateSetup := canPrompt && !initHasExplicitOnboardingArgs()
 		result, err := guidedOnboardingWizard(guidedOnboardingRequest{
 			WorkingDir:  wd,

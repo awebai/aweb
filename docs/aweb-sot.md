@@ -1033,12 +1033,30 @@ POST /v1/connect, server auto-provisions the agent, returns workspace
 binding, CLI writes `.aw/workspace.yaml`. No prompts.
 
 **Case B — directory has no identity yet:**
-The CLI runs the wizard to create the identity, then connects.
+The CLI requires an explicit outcome before it creates or joins identity state.
+Noninteractive callers pass one of the outcome flags below; TTY callers can pick
+one from the chooser. The machine workspace index at
+`~/.config/aw/workspaces.yaml` is discovery-only and nonsecret: it suggests
+previous roots and reports unavailable roots, but authority still comes from the
+selected root's `identity.yaml`, `teams.yaml`, certificates and server checks.
 
-Hosted is the default path; `--byod` is the explicit opt-in.
-There is no interactive path-chooser — plain `aw init` on a clean
-directory goes to the hosted flow against the configured aweb
-server.
+Supported clean-directory outcomes:
+- `--new-account`: create a hosted aweb.ai account/team. This is the hosted
+  account path described below.
+- `--new-team --byod`: create a self-hosted/BYOD team.
+- `--join-from <path> [--join-team <team>]`: mint one invite from an existing
+  local workspace or identity home, then accept and connect in this run. The
+  default identity scope is local. With `--global`, this reuses the current
+  self-custodial global identity; if none exists the CLI fails with `aw id
+  create` guidance rather than silently creating a local identity.
+- `--admission-team-id <team>`: use host CLI auth with scope
+  `cli.team_admission` to issue one admission invite, then accept and connect.
+  Missing CLI auth starts bounded device authorization in both TTY and
+  noninteractive modes; TTY refusal exits nonzero and prints the exact `aw auth
+  login --scope cli.team_admission` command.
+- `--personal-workspace --workspace-key <key> --identity-home <root>`: ensure a
+  hosted personal workspace in the explicit identity home. The identity-home
+  root is never inferred for this outcome.
 
 DEFAULT — Hosted (use a managed namespace from a hosted operator):
 - User picks a username (`--username` flag in noninteractive mode,

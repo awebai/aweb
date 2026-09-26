@@ -2704,6 +2704,30 @@ phase_aw_init_local_quickstart() {
     return
   fi
 
+  if missing_outcome_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
+    --awid-registry "$local_awid_url" \
+    --aweb-url "$local_aweb_url" \
+    --name "$local_alias" 2>&1)"; then
+    missing_outcome_exit=0
+  else
+    missing_outcome_exit=$?
+  fi
+  if [[ "$missing_outcome_exit" != "0" ]]; then
+    echo "  PASS: clean local init requires explicit --new-team outcome"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: clean local init accepted implicit outcome"
+    fail=$((fail + 1))
+  fi
+  assert_contains "missing outcome names --new-team" "$missing_outcome_out" "--new-team"
+  if [[ ! -e "$WIZARD_BYOD_DIR/.aw" ]]; then
+    echo "  PASS: missing-outcome rejection leaves identity state absent"
+    pass=$((pass + 1))
+  else
+    echo "  FAIL: missing-outcome rejection created .aw"
+    fail=$((fail + 1))
+  fi
+
   # A wrong but nonempty credential is the only way to get past startup and
   # reproduce the old half-initialized state. AWID keeps the generated token;
   # only aweb is restarted with a different value.
@@ -2719,6 +2743,7 @@ phase_aw_init_local_quickstart() {
   done
 
   if wizard_failed_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
+    --new-team \
     --awid-registry "$local_awid_url" \
     --aweb-url "$local_aweb_url" \
     --name "$local_alias" 2>&1)"; then
@@ -2761,6 +2786,7 @@ phase_aw_init_local_quickstart() {
   done
 
   if wizard_out="$(run_aw_in "$WIZARD_BYOD_DIR" init \
+    --new-team \
     --awid-registry "$local_awid_url" \
     --aweb-url "$local_aweb_url" \
     --name "$local_alias" 2>&1)"; then

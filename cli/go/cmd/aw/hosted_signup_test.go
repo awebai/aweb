@@ -169,6 +169,7 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 		bin,
 		"--json",
 		"init",
+		"--new-account",
 		"--persistent",
 		"--username", "juanre",
 		"--name", "laptop",
@@ -450,7 +451,7 @@ func TestInitSelfCustodialGlobalCLIThenAddWorktreeTwiceUsesStoredWorkspaceAPIKey
 	initGitRepoWithOriginAndCommit(t, repo, "https://github.com/acme/hosted-chain.git")
 	buildAwBinary(t, ctx, bin)
 
-	initCmd := exec.CommandContext(ctx, bin, "--json", "init", "--persistent", "--username", "hostedchain", "--name", "laptop", "--url", server.URL)
+	initCmd := exec.CommandContext(ctx, bin, "--json", "init", "--new-account", "--persistent", "--username", "hostedchain", "--name", "laptop", "--url", server.URL)
 	initCmd.Env = testCommandEnv(tmp)
 	initCmd.Dir = repo
 	if out, err := initCmd.CombinedOutput(); err != nil {
@@ -635,6 +636,7 @@ func TestInitSelfCustodialGlobalCLITreatsSameKeyAlreadyRegisteredAsSuccess(t *te
 		bin,
 		"--json",
 		"init",
+		"--new-account",
 		"--persistent",
 		"--username", "juanre",
 		"--name", "laptop",
@@ -762,6 +764,7 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 		bin,
 		"--json",
 		"init",
+		"--new-account",
 		"--username", "juanre",
 		"--local-name", "laptop",
 		"--url", server.URL,

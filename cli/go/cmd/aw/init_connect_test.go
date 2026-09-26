@@ -17,6 +17,85 @@ import (
 	"github.com/awebai/aw/awid"
 )
 
+func TestInitCertificateConnectRecordsExternalIdentityHomeInMachineIndex(t *testing.T) {
+	// Uses HOME for the machine index; do not mark parallel.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workingDir := filepath.Join(t.TempDir(), "caller")
+	identityHome := filepath.Join(t.TempDir(), "principal")
+	if err := os.MkdirAll(workingDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(identityHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDIDKey := awid.ComputeDIDKey(memberPub)
+	teamDIDKey := awid.ComputeDIDKey(teamPub)
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+		Team:          "backend:acme.com",
+		MemberDIDKey:  memberDIDKey,
+		Alias:         "alice",
+		IdentityScope: awid.IdentityModeLocal,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(identityHome, "identity.yaml"), &awconfig.WorktreeIdentity{DID: memberDIDKey, StableID: awid.ComputeStableID(memberPub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, CreatedAt: "2026-04-06T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(identityHome, "signing.key"), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	certPath, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(identityHome, cert.Team, cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamStateToIdentityHome(identityHome, &awconfig.TeamState{ActiveTeam: cert.Team, Memberships: []awconfig.TeamMembership{{TeamID: cert.Team, Alias: "alice", CertPath: certPath, JoinedAt: cert.IssuedAt, AwebURL: "https://old.example"}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": "backend:acme.com", "alias": "alice", "agent_id": "agent-1", "workspace_id": "ws-1", "team_did_key": teamDIDKey})
+		case r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key":
+			_ = json.NewEncoder(w).Encode(awid.PublishAgentEncryptionKeyResponse{AgentID: "agent-1", TeamID: "backend:acme.com", Alias: "alice"})
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	out, err := initCertificateConnectWithOptions(workingDir, server.URL, certificateConnectOptions{IdentityHome: identityHome, BindingWorkspacePath: identityHome})
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	if out.TeamID != "backend:acme.com" || out.Alias != "alice" {
+		t.Fatalf("connect output=%+v", out)
+	}
+	entries, err := awconfig.LoadMachineWorkspaceIndex()
+	if err != nil {
+		t.Fatalf("load machine index: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("entries=%d want 1: %#v", len(entries), entries)
+	}
+	if entries[0].Path != identityHome || entries[0].TeamID != "backend:acme.com" || entries[0].Alias != "alice" || entries[0].ServerURL != server.URL {
+		t.Fatalf("machine index recorded wrong root/team: %#v", entries[0])
+	}
+	if _, err := os.Stat(filepath.Join(workingDir, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("external connect should not write caller cwd workspace.yaml: %v", err)
+	}
+}
+
 func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	t.Parallel()
 

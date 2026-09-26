@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -20,10 +22,12 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	oldWizard := guidedOnboardingWizard
 	oldIsTTY := initIsTTY
 	oldPrintReady := initPrintGuidedOnboardingReady
+	oldNewAccount := initNewAccount
 	t.Cleanup(func() {
 		guidedOnboardingWizard = oldWizard
 		initIsTTY = oldIsTTY
 		initPrintGuidedOnboardingReady = oldPrintReady
+		initNewAccount = oldNewAccount
 	})
 
 	tmp := t.TempDir()
@@ -40,6 +44,7 @@ func TestInitUsesGuidedOnboardingInTTY(t *testing.T) {
 	initSetupHooks = false
 	initWriteContext = true
 	initIsTTY = func() bool { return true }
+	initNewAccount = true
 
 	var captured guidedOnboardingRequest
 	var readyCalls int
@@ -102,6 +107,7 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 	oldBYOD := initBYOD
 	oldPersistent := initGlobal
 	oldURL := initURL
+	oldNewAccount := initNewAccount
 	t.Cleanup(func() {
 		guidedOnboardingWizard = oldWizard
 		initIsTTY = oldIsTTY
@@ -113,6 +119,7 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 		initBYOD = oldBYOD
 		initGlobal = oldPersistent
 		initURL = oldURL
+		initNewAccount = oldNewAccount
 	})
 
 	tmp := t.TempDir()
@@ -130,6 +137,7 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 	initDomain = ""
 	initBYOD = false
 	initGlobal = false
+	initNewAccount = true
 
 	var captured guidedOnboardingRequest
 	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
@@ -159,12 +167,479 @@ func TestInitExplicitHostedArgsInTTYSkipsOptionalPostCreatePrompts(t *testing.T)
 	}
 }
 
+func TestInitNoTTYHostedRequiresExplicitNewAccountBeforeWizard(t *testing.T) {
+	// Cannot use t.Parallel() — needs cwd and globals.
+	oldWizard := guidedOnboardingWizard
+	oldIsTTY := initIsTTY
+	oldUsername, oldName, oldURL := initUsername, initName, initURL
+	oldJSON := jsonFlag
+	t.Cleanup(func() {
+		guidedOnboardingWizard = oldWizard
+		initIsTTY = oldIsTTY
+		initUsername, initName, initURL = oldUsername, oldName, oldURL
+		jsonFlag = oldJSON
+	})
+	tmp := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+	initIsTTY = func() bool { return false }
+	initURL = "https://app.aweb.ai"
+	initUsername = "alice"
+	initName = "alice"
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		t.Fatalf("guidedOnboardingWizard should not run before explicit outcome: %+v", req)
+		return nil, nil
+	}
+	cmd := &cobraCommandClone{Command: *initCmd}
+	cmd.ResetFlagsForTest()
+	cmd.Command.SetContext(context.Background())
+	cmd.Command.SetIn(strings.NewReader(""))
+	cmd.Command.SetOut(io.Discard)
+	cmd.Command.SetErr(io.Discard)
+	err := runInit(&cmd.Command, nil)
+	if err == nil || !strings.Contains(err.Error(), "--new-account") {
+		t.Fatalf("expected --new-account usage error, got %v", err)
+	}
+
+	jsonFlag = true
+	err = runInit(&cmd.Command, nil)
+	if err == nil || !strings.Contains(err.Error(), "--new-account") {
+		t.Fatalf("expected --json to follow no-TTY --new-account usage error, got %v", err)
+	}
+}
+
+func TestInitNoTTYLocalhostRequiresExplicitNewTeamBeforeLocalFlow(t *testing.T) {
+	// Cannot use t.Parallel() — needs cwd and globals.
+	oldLocalFlow := initRunImplicitLocalFlow
+	oldIsTTY := initIsTTY
+	oldAwebURL, oldRegistry, oldName := initAwebURL, initAWIDRegistry, initName
+	t.Cleanup(func() {
+		initRunImplicitLocalFlow = oldLocalFlow
+		initIsTTY = oldIsTTY
+		initAwebURL, initAWIDRegistry, initName = oldAwebURL, oldRegistry, oldName
+	})
+	tmp := t.TempDir()
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+	initIsTTY = func() bool { return false }
+	initAwebURL = "http://localhost:8100"
+	initAWIDRegistry = "http://127.0.0.1:8010"
+	initName = "alice"
+	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
+		t.Fatalf("implicit local flow should not run before explicit --new-team: %+v", req)
+		return connectOutput{}, nil
+	}
+	cmd := &cobraCommandClone{Command: *initCmd}
+	cmd.ResetFlagsForTest()
+	cmd.Command.SetContext(context.Background())
+	cmd.Command.SetIn(strings.NewReader(""))
+	cmd.Command.SetOut(io.Discard)
+	cmd.Command.SetErr(io.Discard)
+	err := runInit(&cmd.Command, nil)
+	if err == nil || !strings.Contains(err.Error(), "--new-team") {
+		t.Fatalf("expected --new-team usage error, got %v", err)
+	}
+}
+
+func TestInitTTYMissingOutcomeUsesChooserConfirmation(t *testing.T) {
+	// Cannot use t.Parallel() — needs cwd and globals/stdin.
+	oldWizard := guidedOnboardingWizard
+	oldIsTTY := initIsTTY
+	oldURL, oldUsername, oldName, oldNewAccount := initURL, initUsername, initName, initNewAccount
+	oldStdin, oldStderr := os.Stdin, os.Stderr
+	t.Cleanup(func() {
+		guidedOnboardingWizard = oldWizard
+		initIsTTY = oldIsTTY
+		initURL, initUsername, initName, initNewAccount = oldURL, oldUsername, oldName, oldNewAccount
+		os.Stdin, os.Stderr = oldStdin, oldStderr
+	})
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	discovered := filepath.Join(tmp, "discovered-workspace")
+	if err := os.MkdirAll(discovered, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.RecordMachineWorkspace(awconfig.MachineWorkspaceIndexEntry{Path: discovered, TeamID: "backend:acme.com", Alias: "bob", ServerURL: "https://app.aweb.ai"}); err != nil {
+		t.Fatalf("record workspace discovery: %v", err)
+	}
+	origWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origWd)
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inR.Close()
+	defer outR.Close()
+	os.Stdin, os.Stderr = inR, outW
+	if _, err := inW.WriteString("new-account\n"); err != nil {
+		t.Fatal(err)
+	}
+	inW.Close()
+	initIsTTY = func() bool { return true }
+	initURL = "https://app.aweb.ai"
+	initUsername = "alice"
+	initName = "alice"
+	var got guidedOnboardingRequest
+	guidedOnboardingWizard = func(req guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		got = req
+		return &guidedOnboardingResult{}, nil
+	}
+	cmd := &cobraCommandClone{Command: *initCmd}
+	cmd.ResetFlagsForTest()
+	cmd.Command.SetContext(context.Background())
+	cmd.Command.SetOut(io.Discard)
+	cmd.Command.SetErr(io.Discard)
+	if err := runInit(&cmd.Command, nil); err != nil {
+		t.Fatalf("runInit: %v", err)
+	}
+	outW.Close()
+	promptBytes, _ := io.ReadAll(outR)
+	if !strings.Contains(string(promptBytes), "Confirmed: this will create a NEW ACCOUNT") {
+		t.Fatalf("missing visible confirmation: %s", promptBytes)
+	}
+	if !strings.Contains(string(promptBytes), "Existing workspace discovery index") || !strings.Contains(string(promptBytes), discovered) || !strings.Contains(string(promptBytes), "aw init --join-from") {
+		t.Fatalf("missing discovery choices in prompt: %s", promptBytes)
+	}
+	if got.Username != "alice" || got.Name != "" || got.Alias != "alice" {
+		t.Fatalf("guided request after chooser=%+v", got)
+	}
+}
+
+func TestRequireInitOutcomeNonTTYIncludesDiscoveryGuidance(t *testing.T) {
+	// Uses HOME for discovery index; do not mark parallel.
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	discovered := filepath.Join(tmp, "workspace")
+	if err := os.MkdirAll(discovered, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.RecordMachineWorkspace(awconfig.MachineWorkspaceIndexEntry{Path: discovered, TeamID: "backend:acme.com", Alias: "alice", ServerURL: "https://app.aweb.ai"}); err != nil {
+		t.Fatalf("record workspace discovery: %v", err)
+	}
+
+	err := requireOrPromptInitOutcome(false, "create a new hosted account", "--new-account")
+	if err == nil {
+		t.Fatal("expected missing outcome error")
+	}
+	text := err.Error()
+	for _, want := range []string{"explicit init outcome required", "Existing workspace discovery index", discovered, "aw init --join-from"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in error:\n%v", want, err)
+		}
+	}
+}
+
+func TestRequireInitOutcomeTTYCanSelectDiscoveryEntry(t *testing.T) {
+	// Uses HOME/globals/stdin; do not mark parallel.
+	oldJoinFrom, oldJoinTeam := initJoinFrom, initJoinTeam
+	oldStdin, oldStderr := os.Stdin, os.Stderr
+	t.Cleanup(func() {
+		initJoinFrom, initJoinTeam = oldJoinFrom, oldJoinTeam
+		os.Stdin, os.Stderr = oldStdin, oldStderr
+	})
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	discovered := filepath.Join(tmp, "workspace")
+	if err := os.MkdirAll(discovered, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.RecordMachineWorkspace(awconfig.MachineWorkspaceIndexEntry{Path: discovered, TeamID: "backend:acme.com", Alias: "alice", ServerURL: "https://app.aweb.ai"}); err != nil {
+		t.Fatalf("record workspace discovery: %v", err)
+	}
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inR.Close()
+	defer outR.Close()
+	os.Stdin, os.Stderr = inR, outW
+	if _, err := inW.WriteString("1\n"); err != nil {
+		t.Fatal(err)
+	}
+	inW.Close()
+
+	if err := requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account"); err != nil {
+		t.Fatalf("prompt outcome: %v", err)
+	}
+	outW.Close()
+	promptBytes, _ := io.ReadAll(outR)
+	if initJoinFrom != discovered || initJoinTeam != "backend:acme.com" {
+		t.Fatalf("selected join source=%q team=%q", initJoinFrom, initJoinTeam)
+	}
+	if !strings.Contains(string(promptBytes), "Confirmed: this will join team backend:acme.com") {
+		t.Fatalf("missing join confirmation: %s", promptBytes)
+	}
+}
+
+func TestRequireInitOutcomeTTYPersonalPromptsIdentityHome(t *testing.T) {
+	// Uses globals/stdin; do not mark parallel.
+	oldPersonal, oldWorkspaceKey, oldHome := initPersonalWorkspace, initWorkspaceKey, activeIdentityHome
+	oldStdin, oldStderr := os.Stdin, os.Stderr
+	t.Cleanup(func() {
+		initPersonalWorkspace, initWorkspaceKey, activeIdentityHome = oldPersonal, oldWorkspaceKey, oldHome
+		os.Stdin, os.Stderr = oldStdin, oldStderr
+	})
+	identityHome := filepath.Join(t.TempDir(), "principal")
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inR.Close()
+	defer outR.Close()
+	os.Stdin, os.Stderr = inR, outW
+	if _, err := inW.WriteString("personal-workspace\n" + identityHome + "\noats/workspace/test\n"); err != nil {
+		t.Fatal(err)
+	}
+	inW.Close()
+
+	if err := requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account"); err != nil {
+		t.Fatalf("prompt outcome: %v", err)
+	}
+	outW.Close()
+	promptBytes, _ := io.ReadAll(outR)
+	if !initPersonalWorkspace || initWorkspaceKey != "oats/workspace/test" || activeIdentityHome.Root != identityHome || activeIdentityHome.Source != awconfig.IdentityHomeFlag {
+		t.Fatalf("personal selection personal=%v key=%q home=%+v", initPersonalWorkspace, initWorkspaceKey, activeIdentityHome)
+	}
+	if !strings.Contains(string(promptBytes), "explicit identity home "+identityHome) {
+		t.Fatalf("missing personal confirmation: %s", promptBytes)
+	}
+}
+
+func TestInitGlobalJoinRequiresExistingGlobalIdentity(t *testing.T) {
+	oldGlobal, oldName := initGlobal, initName
+	initGlobal = true
+	initName = "alice"
+	t.Cleanup(func() { initGlobal, initName = oldGlobal, oldName })
+	t.Setenv("HOME", t.TempDir())
+	workingDir := t.TempDir()
+
+	err := acceptInitInviteAndConnect(authTestCmd(&bytes.Buffer{}), workingDir, "aw_inv_no_identity", "https://app.aweb.ai")
+	if err == nil || !strings.Contains(err.Error(), "aw id create") {
+		t.Fatalf("expected existing global identity guidance, got %v", err)
+	}
+}
+
+func TestInitInviteIdentityScopeDefaultsLocalAndHonorsGlobal(t *testing.T) {
+	oldGlobal := initGlobal
+	t.Cleanup(func() { initGlobal = oldGlobal })
+	initGlobal = false
+	if got := initInviteIdentityScope(); got != awid.IdentityModeLocal {
+		t.Fatalf("default scope=%q", got)
+	}
+	initGlobal = true
+	if got := initInviteIdentityScope(); got != awid.IdentityModeGlobal {
+		t.Fatalf("global scope=%q", got)
+	}
+}
+
+func TestEnsureTeamAdmissionAuthForInitNonTTYRunsDeviceLogin(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldIsTTY := initIsTTY
+	initIsTTY = func() bool { return false }
+	t.Cleanup(func() { initIsTTY = oldIsTTY })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	var sawDevice, sawToken bool
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth/device_authorization":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("scope") != cliAuthScopeTeamAdmission {
+				t.Fatalf("scope=%q", r.Form.Get("scope"))
+			}
+			sawDevice = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "verification_uri_complete": serverFlag + "/oauth/device?user_code=ABCD-EFGH", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
+		case "/oauth/token":
+			if err := r.ParseForm(); err != nil {
+				t.Fatal(err)
+			}
+			if r.Form.Get("device_code") != "device-secret" {
+				t.Fatalf("device_code=%q", r.Form.Get("device_code"))
+			}
+			sawToken = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "team-access", "token_type": "bearer", "expires_in": 3600, "refresh_token": "team-refresh", "scope": cliAuthScopeTeamAdmission, "resource": serverFlag + "/cli"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	serverFlag = server.URL
+
+	var out bytes.Buffer
+	cmd := authTestCmd(&out)
+	if err := ensureTeamAdmissionAuthForInit(cmd); err != nil {
+		t.Fatalf("ensure auth: %v", err)
+	}
+	if !sawDevice || !sawToken {
+		t.Fatalf("device=%t token=%t", sawDevice, sawToken)
+	}
+	if !strings.Contains(out.String(), "Open this URL to approve aw CLI login") || strings.Contains(out.String(), "team-access") || strings.Contains(out.String(), "device-secret") {
+		t.Fatalf("unexpected auth output: %q", out.String())
+	}
+	cfg, ok, err := loadCLIAuthConfigForScope(cliAuthScopeTeamAdmission)
+	if err != nil || !ok {
+		t.Fatalf("load team admission auth ok=%t err=%v", ok, err)
+	}
+	if cfg.AccessToken != "team-access" || cfg.Scope != cliAuthScopeTeamAdmission {
+		t.Fatalf("unexpected cfg=%+v", cfg)
+	}
+}
+
+func TestEnsureTeamAdmissionAuthForInitNonTTYReportsDeviceExpiry(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldIsTTY := initIsTTY
+	initIsTTY = func() bool { return false }
+	t.Cleanup(func() { initIsTTY = oldIsTTY })
+	t.Setenv("HOME", t.TempDir())
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth/device_authorization":
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
+		case "/oauth/token":
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "expired_token"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	serverFlag = server.URL
+	cliAuthLoginTimeout = 2 * time.Second
+
+	var out bytes.Buffer
+	err := ensureTeamAdmissionAuthForInit(authTestCmd(&out))
+	if err == nil || !strings.Contains(err.Error(), "device code expired") {
+		t.Fatalf("expected expiry, got %v", err)
+	}
+	if !strings.Contains(out.String(), "Open this URL") {
+		t.Fatalf("missing device instructions: %q", out.String())
+	}
+}
+
+func TestEnsureTeamAdmissionAuthForInitNonTTYPendingTimesOut(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldIsTTY := initIsTTY
+	initIsTTY = func() bool { return false }
+	t.Cleanup(func() { initIsTTY = oldIsTTY })
+	t.Setenv("HOME", t.TempDir())
+
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth/device_authorization":
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
+		case "/oauth/token":
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "authorization_pending"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	serverFlag = server.URL
+	cliAuthLoginTimeout = 50 * time.Millisecond
+
+	var out bytes.Buffer
+	err := ensureTeamAdmissionAuthForInit(authTestCmd(&out))
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting for browser approval") {
+		t.Fatalf("expected pending timeout, got %v", err)
+	}
+	if !strings.Contains(out.String(), "Open this URL") {
+		t.Fatalf("missing device instructions: %q", out.String())
+	}
+}
+
+func TestEnsureTeamAdmissionAuthForInitTTYDeclineGivesLoginCommand(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldIsTTY := initIsTTY
+	oldStdin, oldStderr := os.Stdin, os.Stderr
+	initIsTTY = func() bool { return true }
+	t.Cleanup(func() {
+		initIsTTY = oldIsTTY
+		os.Stdin, os.Stderr = oldStdin, oldStderr
+	})
+	t.Setenv("HOME", t.TempDir())
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inR.Close()
+	defer outR.Close()
+	os.Stdin, os.Stderr = inR, outW
+	if _, err := inW.WriteString("n\n"); err != nil {
+		t.Fatal(err)
+	}
+	inW.Close()
+
+	err = ensureTeamAdmissionAuthForInit(authTestCmd(&bytes.Buffer{}))
+	outW.Close()
+	promptBytes, _ := io.ReadAll(outR)
+	if err == nil || !strings.Contains(err.Error(), "aw auth login --scope cli.team_admission") {
+		t.Fatalf("expected login command error, got %v", err)
+	}
+	if !strings.Contains(string(promptBytes), "Start bounded device login now") {
+		t.Fatalf("missing prompt: %s", promptBytes)
+	}
+}
+
+func TestInitOutcomeFlagValidation(t *testing.T) {
+	oldJoinFrom, oldJoinTeam := initJoinFrom, initJoinTeam
+	oldAdmission, oldNewAccount := initAdmissionTeamID, initNewAccount
+	t.Cleanup(func() {
+		initJoinFrom, initJoinTeam = oldJoinFrom, oldJoinTeam
+		initAdmissionTeamID, initNewAccount = oldAdmission, oldNewAccount
+	})
+	initJoinFrom = "../source"
+	initAdmissionTeamID = "team:example.com"
+	if err := validateInitOutcomeFlags(); err == nil || !strings.Contains(err.Error(), "--join-from") || !strings.Contains(err.Error(), "--admission-team-id") {
+		t.Fatalf("expected mutual exclusion naming both flags, got %v", err)
+	}
+	initAdmissionTeamID = ""
+	initJoinFrom = ""
+	initJoinTeam = "team:example.com"
+	if err := validateInitOutcomeFlags(); err == nil || !strings.Contains(err.Error(), "--join-team requires --join-from") {
+		t.Fatalf("expected join-team dependency error, got %v", err)
+	}
+	initJoinTeam = ""
+	initNewAccount = true
+	if err := validateInitOutcomeFlags(); err != nil {
+		t.Fatalf("single outcome unexpectedly failed: %v", err)
+	}
+}
+
 func TestInitFailsNonInteractiveHostedWhenRequiredFlagsMissing(t *testing.T) {
 	// Cannot use t.Parallel() — needs cwd and globals.
 
 	oldIsTTY := initIsTTY
+	oldNewAccount := initNewAccount
 	t.Cleanup(func() {
 		initIsTTY = oldIsTTY
+		initNewAccount = oldNewAccount
 	})
 
 	tmp := t.TempDir()
@@ -177,6 +652,7 @@ func TestInitFailsNonInteractiveHostedWhenRequiredFlagsMissing(t *testing.T) {
 	initInjectDocs = false
 	initSetupHooks = false
 	initIsTTY = func() bool { return false }
+	initNewAccount = true
 
 	cmd := &cobraCommandClone{Command: *initCmd}
 	cmd.ResetFlagsForTest()
@@ -427,6 +903,7 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 	oldRole := initRole
 	oldHumanName := initHumanName
 	oldAgentType := initAgentType
+	oldNewTeam := initNewTeam
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldLocalFlow
 		guidedOnboardingWizard = oldWizard
@@ -438,6 +915,7 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 		initRole = oldRole
 		initHumanName = oldHumanName
 		initAgentType = oldAgentType
+		initNewTeam = oldNewTeam
 	})
 
 	tmp := t.TempDir()
@@ -454,6 +932,7 @@ func TestInitUsesImplicitLocalFlowWhenRegistryIsLocalhost(t *testing.T) {
 	initRole = "developer"
 	initHumanName = "Alice Operator"
 	initAgentType = "codex"
+	initNewTeam = true
 
 	var got implicitLocalInitRequest
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
@@ -514,6 +993,7 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	oldName := initName
 	oldRole := initRole
 	oldPersistent := initGlobal
+	oldNewAccount := initNewAccount
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldLocalFlow
 		guidedOnboardingWizard = oldWizard
@@ -528,6 +1008,7 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 		initName = oldName
 		initRole = oldRole
 		initGlobal = oldPersistent
+		initNewAccount = oldNewAccount
 	})
 
 	tmp := t.TempDir()
@@ -548,6 +1029,7 @@ func TestInitUsesGuidedOnboardingForExplicitHostedArgsWhenRegistryIsLocalhost(t 
 	initName = ""
 	initRole = "developer"
 	initGlobal = true
+	initNewAccount = true
 
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		t.Fatalf("local flow should not run for explicit hosted args: %+v", req)
@@ -597,6 +1079,7 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 	oldName := initName
 	oldRole := initRole
 	oldPersistent := initGlobal
+	oldNewTeam := initNewTeam
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldLocalFlow
 		guidedOnboardingWizard = oldWizard
@@ -611,6 +1094,7 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 		initName = oldName
 		initRole = oldRole
 		initGlobal = oldPersistent
+		initNewTeam = oldNewTeam
 	})
 
 	tmp := t.TempDir()
@@ -631,6 +1115,7 @@ func TestInitUsesGuidedOnboardingForExplicitBYODArgsWhenRegistryIsLocalhost(t *t
 	initName = ""
 	initRole = "developer"
 	initGlobal = false
+	initNewTeam = true
 
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		t.Fatalf("local flow should not run for explicit BYOD args: %+v", req)
@@ -672,12 +1157,14 @@ func TestInitUsesResolvedAliasForImplicitLocalFlow(t *testing.T) {
 	oldAwebURL := initAwebURL
 	oldRegistry := initAWIDRegistry
 	oldAlias := initAlias
+	oldNewTeam := initNewTeam
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldLocalFlow
 		initIsTTY = oldIsTTY
 		initAwebURL = oldAwebURL
 		initAWIDRegistry = oldRegistry
 		initAlias = oldAlias
+		initNewTeam = oldNewTeam
 	})
 
 	tmp := t.TempDir()
@@ -692,6 +1179,7 @@ func TestInitUsesResolvedAliasForImplicitLocalFlow(t *testing.T) {
 	initAwebURL = "http://localhost:8100"
 	initAWIDRegistry = "http://127.0.0.1:8010"
 	initAlias = ""
+	initNewTeam = true
 
 	var got implicitLocalInitRequest
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
@@ -720,6 +1208,7 @@ func TestInitUsesGuidedOnboardingWhenRegistryIsNotLocalhost(t *testing.T) {
 	oldAwebURL := initAwebURL
 	oldRegistry := initAWIDRegistry
 	oldAlias := initAlias
+	oldNewAccount := initNewAccount
 	t.Cleanup(func() {
 		initRunImplicitLocalFlow = oldLocalFlow
 		guidedOnboardingWizard = oldWizard
@@ -727,6 +1216,7 @@ func TestInitUsesGuidedOnboardingWhenRegistryIsNotLocalhost(t *testing.T) {
 		initAwebURL = oldAwebURL
 		initAWIDRegistry = oldRegistry
 		initAlias = oldAlias
+		initNewAccount = oldNewAccount
 	})
 
 	tmp := t.TempDir()
@@ -740,6 +1230,7 @@ func TestInitUsesGuidedOnboardingWhenRegistryIsNotLocalhost(t *testing.T) {
 	initAwebURL = "https://app.example.com"
 	initAWIDRegistry = "https://api.example.com"
 	initAlias = "alice"
+	initNewAccount = true
 
 	initRunImplicitLocalFlow = func(req implicitLocalInitRequest) (connectOutput, error) {
 		t.Fatalf("local flow should not run: %+v", req)

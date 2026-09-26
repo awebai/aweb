@@ -77,6 +77,7 @@ By default, init creates or updates the clearly marked aweb section in
 AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
 
 Flags:
+- `--admission-team-id string Add an agent through host human admission for this explicit team ID`
 - `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
 - `--aweb-url string Base URL for the aweb server used by aw init (overrides AWEB_URL)`
 - `--awid-registry string Base URL for the awid registry used by aw init (overrides AWID_REGISTRY_URL)`
@@ -88,7 +89,12 @@ Flags:
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
 - `--inbound-mode string Inbound delivery mode for a global identity (open|team-and-contacts). Only valid with --global.`
 - `--inject-docs Inject aw coordination instructions into CLAUDE.md and AGENTS.md`
+- `--join-from string Add an agent to a team by minting one invite from this existing workspace or identity home`
+- `--join-team string Team ID to use with --join-from when the source has more than one membership`
 - `--name string Identity/member name (global address name with --global, local routing name otherwise)`
+- `--new-account Explicitly create a new hosted aweb.ai account`
+- `--new-team Explicitly create a new self-hosted/BYOD team`
+- `--personal-workspace Ensure a personal workspace team using explicit --identity-home and --workspace-key`
 - `--print-exports Print shell export lines after JSON output`
 - `--role string Compatibility alias for --role-name`
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
@@ -96,6 +102,7 @@ Flags:
 - `--setup-hooks Set up Claude Code PostToolUse hook for aw notify`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `--username string Hosted username to create`
+- `--workspace-key string OATS canonical format-1 workspace key for --personal-workspace`
 - `--write-context Ensure .aw/context exists in the current directory (default true)`
 
 ## `reset`

@@ -171,6 +171,12 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 	if err := awconfig.SaveWorktreeWorkspaceTo(workspacePath, workspaceState); err != nil {
 		return connectOutput{}, err
 	}
+	recordMachineWorkspaceBestEffort(awconfig.MachineWorkspaceIndexEntry{
+		Path:      workspaceState.WorkspacePath,
+		TeamID:    resp.TeamID,
+		Alias:     resp.Alias,
+		ServerURL: awebURL,
+	})
 
 	// Ensure .aw/context exists
 	if err := ensureWorktreeContextAtIdentityHome(identityHome); err != nil {
