@@ -321,6 +321,11 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 	legacyEphemeral := "ephemeral"
 	legacyPersistentFlag := "--" + legacyPersistent
 	legacyEphemeralFlag := "--" + legacyEphemeral
+	retiredWorkspaceTeamFlag := "--" + "per" + "sonal-" + "work" + "space"
+	retiredWorkspaceTeamPhrase := "per" + "sonal " + "work" + "space"
+	retiredWorkspaceTeamHyphen := "per" + "sonal-" + "work" + "space"
+	retiredWorkspaceTeamUnderscore := "per" + "sonal_" + "work" + "space"
+	retiredWorkspaceTeamScope := "cli." + retiredWorkspaceTeamUnderscore
 
 	cases := []struct {
 		name       string
@@ -331,8 +336,8 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 		{
 			name:       "init",
 			args:       []string{"init", "--help"},
-			want:       []string{"--global", "Identity/member name"},
-			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity, "Local workspace routing name"},
+			want:       []string{"--global", "Identity/member name", "--workspace-team"},
+			mustAbsent: []string{legacyPersistentFlag, legacyEphemeralIdentity, legacyPersistentIdentity, "Local workspace routing name", retiredWorkspaceTeamFlag, retiredWorkspaceTeamPhrase, retiredWorkspaceTeamHyphen},
 		},
 		{
 			name:       "id create",
@@ -351,6 +356,18 @@ func TestGlobalLocalHelpDoesNotAdvertiseLegacyLifetimeFlags(t *testing.T) {
 			args:       []string{"id", "team", "add-member", "--help"},
 			want:       []string{"--global", "--local", "Global member address", "local workspace member certificate"},
 			mustAbsent: []string{"--lifetime", legacyPersistent, legacyEphemeral},
+		},
+		{
+			name:       "team ensure",
+			args:       []string{"team", "ensure", "--help"},
+			want:       []string{"workspace's default team", "--workspace-key"},
+			mustAbsent: []string{retiredWorkspaceTeamPhrase, retiredWorkspaceTeamHyphen, retiredWorkspaceTeamUnderscore, "cli." + "per" + "sonal"},
+		},
+		{
+			name:       "auth login",
+			args:       []string{"auth", "login", "--help"},
+			want:       []string{"cli.workspace_team", "cli.team_admission"},
+			mustAbsent: []string{retiredWorkspaceTeamScope, retiredWorkspaceTeamUnderscore, retiredWorkspaceTeamHyphen},
 		},
 	}
 

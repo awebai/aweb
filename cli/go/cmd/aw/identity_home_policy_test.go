@@ -34,7 +34,7 @@ func TestExternalIdentityHomePolicyDefaultsToDeny(t *testing.T) {
 		t.Fatal("init must retain its descendant persistent hook for the production shadowing regression")
 	}
 	if _, allowed := identityHomeAwareCommandPaths[initCmd.CommandPath()]; !allowed {
-		t.Fatal("init must be allowlisted so --personal-workspace can use an explicit identity home")
+		t.Fatal("init must be allowlisted so --workspace-team can use an explicit identity home")
 	}
 }
 
@@ -60,7 +60,7 @@ func TestIdentityHomeAwareAllowlistNamesExistingRunnableCommands(t *testing.T) {
 	}
 }
 
-func TestInitExternalIdentityHomeAllowedOnlyForPersonalWorkspace(t *testing.T) {
+func TestInitExternalIdentityHomeAllowedOnlyForWorkspaceTeam(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	root, err := filepath.EvalSymlinks(t.TempDir())
@@ -102,7 +102,7 @@ func TestInitExternalIdentityHomeAllowedOnlyForPersonalWorkspace(t *testing.T) {
 			cmd.Dir = instance
 			cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home", tc.name)), append([]string{awconfig.IdentityHomeEnv + "=", "AW_NO_UPDATE_CHECK=1", "AWID_REGISTRY_URL=" + registry.URL, "AWEB_URL=" + registry.URL}, tc.env...)...)
 			out, err := cmd.CombinedOutput()
-			if err == nil || !strings.Contains(string(out), "aw init with --identity-home is only supported for --personal-workspace") {
+			if err == nil || !strings.Contains(string(out), "aw init with --identity-home is only supported for --workspace-team") {
 				t.Fatalf("init external-home guard error=%v\n%s", err, out)
 			}
 			if got := requests.Load(); got != beforeRequests {
@@ -121,21 +121,21 @@ func TestInitExternalIdentityHomeAllowedOnlyForPersonalWorkspace(t *testing.T) {
 		})
 	}
 
-	t.Run("personal-workspace-passes-identity-home-policy", func(t *testing.T) {
-		instance := filepath.Join(root, "instances", "personal")
-		identityHome := filepath.Join(root, "principals", "personal")
+	t.Run("workspace-team-passes-identity-home-policy", func(t *testing.T) {
+		instance := filepath.Join(root, "instances", "workspace-team")
+		identityHome := filepath.Join(root, "principals", "workspace-team")
 		if err := os.MkdirAll(instance, 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.MkdirAll(identityHome, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "init", "--personal-workspace", "--workspace-key", "oats/workspace/test")
+		cmd := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "init", "--workspace-team", "--workspace-key", "oats/workspace/test")
 		cmd.Dir = instance
-		cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home", "personal")), awconfig.IdentityHomeEnv+"=", "AW_NO_UPDATE_CHECK=1", "AWID_REGISTRY_URL="+registry.URL, "AWEB_URL="+registry.URL)
+		cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home", "workspace-team")), awconfig.IdentityHomeEnv+"=", "AW_NO_UPDATE_CHECK=1", "AWID_REGISTRY_URL="+registry.URL, "AWEB_URL="+registry.URL)
 		out, err := cmd.CombinedOutput()
 		if err == nil || !strings.Contains(string(out), "authorization-required") {
-			t.Fatalf("personal-workspace did not pass identity-home policy to team ensure: err=%v\n%s", err, out)
+			t.Fatalf("workspace-team did not pass identity-home policy to team ensure: err=%v\n%s", err, out)
 		}
 	})
 }

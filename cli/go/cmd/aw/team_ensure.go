@@ -24,11 +24,11 @@ import (
 )
 
 const (
-	personalWorkspaceKeyFormat       = 1
-	personalWorkspaceEnsurePath      = "/api/v1/teams/personal-workspace/ensure"
-	personalWorkspaceEnrollPath      = "/api/v1/teams/personal-workspace/enroll"
-	personalWorkspaceEnrollOperation = "personal_workspace_member_enroll.v1"
-	personalWorkspacePartialVersion  = 1
+	workspaceTeamKeyFormat       = 1
+	workspaceTeamEnsurePath      = "/api/v1/teams/workspace-team/ensure"
+	workspaceTeamEnrollPath      = "/api/v1/teams/workspace-team/enroll"
+	workspaceTeamEnrollOperation = "workspace_team_member_enroll.v1"
+	workspaceTeamPartialVersion  = 1
 )
 
 var (
@@ -38,20 +38,20 @@ var (
 
 var teamEnsureCmd = &cobra.Command{
 	Use:   "ensure --workspace-key <canonical-key>",
-	Short: "Ensure this host has a personal workspace team authority",
-	Long: "Ensure this host has a personal workspace team authority.\n\n" +
+	Short: "Ensure this host has a workspace's default team authority",
+	Long: "Ensure this host has a workspace's default team authority.\n\n" +
 		"The server receives only the format-1 workspace-key digest. Credentials are installed\n" +
 		"only into the explicit --identity-home credential root, and the result is bound only\n" +
 		"after a live spawn-authority proof from that installed root.\n\n" +
 		"Stable diagnostics are printed to stderr and exit 2, including with --json; there is\n" +
 		"no JSON error envelope. authorization-required means host CLI auth is missing,\n" +
 		"invalid, expired, revoked, or not authorized. workspace-key-not-portable means a\n" +
-		"local/ workspace key cannot be used for hosted personal team ensure.\n" +
+		"local/ workspace key cannot be used for hosted default team ensure.\n" +
 		"identity-home-occupied means the explicit identity home already contains\n" +
 		"conflicting identity, team, workspace, or binding state. unsupported-server means\n" +
-		"the aweb service is older than the personal ensure/enroll contract (Cloud 0.8.12\n" +
-		"or later) and is missing one of: CLI auth status, personal workspace ensure,\n" +
-		"personal workspace enroll, or installed-root spawn-authority proof. Non-404\n" +
+		"the aweb service is older than the workspace's default team ensure/enroll contract (Cloud 0.8.16\n" +
+		"or later) and is missing one of: CLI auth status, workspace's default team ensure,\n" +
+		"workspace's default team enroll, or installed-root spawn-authority proof. Non-404\n" +
 		"server errors keep their existing handling.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -59,14 +59,14 @@ var teamEnsureCmd = &cobra.Command{
 	},
 }
 
-type personalWorkspaceEnsureRequest struct {
+type workspaceTeamEnsureRequest struct {
 	WorkspaceKeyFormat int    `json:"workspace_key_format"`
 	WorkspaceKeySHA256 string `json:"workspace_key_sha256"`
 	Label              string `json:"label,omitempty"`
 	ExpectedTeamID     string `json:"expected_team_id,omitempty"`
 }
 
-type personalWorkspaceEnsureResponse struct {
+type workspaceTeamEnsureResponse struct {
 	State           string         `json:"state"`
 	TeamID          string         `json:"team_id"`
 	CanonicalTeamID string         `json:"canonical_team_id"`
@@ -76,16 +76,16 @@ type personalWorkspaceEnsureResponse struct {
 	Binding         map[string]any `json:"binding,omitempty"`
 }
 
-type personalWorkspaceEnrollRequest struct {
-	WorkspaceKeyFormat int                             `json:"workspace_key_format"`
-	WorkspaceKeySHA256 string                          `json:"workspace_key_sha256"`
-	TeamID             string                          `json:"team_id"`
-	CanonicalTeamID    string                          `json:"canonical_team_id"`
-	Identity           personalWorkspaceEnrollIdentity `json:"identity"`
-	Proof              personalWorkspaceEnrollProof    `json:"proof"`
+type workspaceTeamEnrollRequest struct {
+	WorkspaceKeyFormat int                         `json:"workspace_key_format"`
+	WorkspaceKeySHA256 string                      `json:"workspace_key_sha256"`
+	TeamID             string                      `json:"team_id"`
+	CanonicalTeamID    string                      `json:"canonical_team_id"`
+	Identity           workspaceTeamEnrollIdentity `json:"identity"`
+	Proof              workspaceTeamEnrollProof    `json:"proof"`
 }
 
-type personalWorkspaceEnrollIdentity struct {
+type workspaceTeamEnrollIdentity struct {
 	Alias         string `json:"alias"`
 	HumanName     string `json:"human_name,omitempty"`
 	AgentType     string `json:"agent_type"`
@@ -96,30 +96,30 @@ type personalWorkspaceEnrollIdentity struct {
 	Custody       string `json:"custody"`
 }
 
-type personalWorkspaceEnrollProof struct {
+type workspaceTeamEnrollProof struct {
 	Type      string `json:"type"`
 	Timestamp string `json:"timestamp"`
 	Signature string `json:"signature"`
 }
 
-type personalWorkspaceEnrollResponse struct {
-	State               string                          `json:"state"`
-	TeamID              string                          `json:"team_id"`
-	CanonicalTeamID     string                          `json:"canonical_team_id"`
-	IdentityID          string                          `json:"identity_id"`
-	AgentID             string                          `json:"agent_id"`
-	Alias               string                          `json:"alias"`
-	DID                 string                          `json:"did"`
-	StableID            string                          `json:"stable_id"`
-	IdentityScope       string                          `json:"identity_scope"`
-	Created             bool                            `json:"created"`
-	APIKey              string                          `json:"api_key,omitempty"`
-	APIKeyCreated       bool                            `json:"api_key_created"`
-	TeamCert            string                          `json:"team_cert"`
-	SpawnAuthorityCheck *personalWorkspaceSpawnAdvisory `json:"spawn_authority_check,omitempty"`
+type workspaceTeamEnrollResponse struct {
+	State               string                      `json:"state"`
+	TeamID              string                      `json:"team_id"`
+	CanonicalTeamID     string                      `json:"canonical_team_id"`
+	IdentityID          string                      `json:"identity_id"`
+	AgentID             string                      `json:"agent_id"`
+	Alias               string                      `json:"alias"`
+	DID                 string                      `json:"did"`
+	StableID            string                      `json:"stable_id"`
+	IdentityScope       string                      `json:"identity_scope"`
+	Created             bool                        `json:"created"`
+	APIKey              string                      `json:"api_key,omitempty"`
+	APIKeyCreated       bool                        `json:"api_key_created"`
+	TeamCert            string                      `json:"team_cert"`
+	SpawnAuthorityCheck *workspaceTeamSpawnAdvisory `json:"spawn_authority_check,omitempty"`
 }
 
-type personalWorkspaceSpawnAdvisory struct {
+type workspaceTeamSpawnAdvisory struct {
 	TeamID   string `json:"team_id"`
 	CanSpawn bool   `json:"can_spawn"`
 }
@@ -140,7 +140,7 @@ type teamEnsureOutput struct {
 	AuthKind        string `json:"auth_kind,omitempty"`
 }
 
-type personalWorkspacePartialState struct {
+type workspaceTeamPartialState struct {
 	Version            int    `yaml:"version"`
 	Issuer             string `yaml:"issuer"`
 	WorkspaceKeySHA256 string `yaml:"workspace_key_sha256"`
@@ -151,7 +151,7 @@ type personalWorkspacePartialState struct {
 	CreatedAt          string `yaml:"created_at"`
 }
 
-type personalWorkspaceBindingState struct {
+type workspaceTeamBindingState struct {
 	Version            int    `yaml:"version"`
 	Issuer             string `yaml:"issuer"`
 	WorkspaceKeySHA256 string `yaml:"workspace_key_sha256"`
@@ -160,7 +160,7 @@ type personalWorkspaceBindingState struct {
 	BoundAt            string `yaml:"bound_at"`
 }
 
-type personalWorkspaceIdentityMaterial struct {
+type workspaceTeamIdentityMaterial struct {
 	PublicKey      ed25519.PublicKey
 	SigningKey     ed25519.PrivateKey
 	DIDKey         string
@@ -173,7 +173,7 @@ type personalWorkspaceIdentityMaterial struct {
 
 func init() {
 	teamEnsureCmd.Flags().StringVar(&teamEnsureWorkspaceKey, "workspace-key", "", "OATS canonical format-1 workspace key")
-	teamEnsureCmd.Flags().StringVar(&teamEnsureLabel, "label", "", "Optional display label for the personal workspace team")
+	teamEnsureCmd.Flags().StringVar(&teamEnsureLabel, "label", "", "Optional display label for the workspace's default team")
 	teamEnsureCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamEnsureCmd)
 }
@@ -191,7 +191,7 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if !home.External() {
 		return usageError("aw team ensure requires explicit --identity-home selecting the credential root to install")
 	}
-	workspaceDigest, err := personalWorkspaceDigest(teamEnsureWorkspaceKey)
+	workspaceDigest, err := workspaceTeamDigest(teamEnsureWorkspaceKey)
 	if err != nil {
 		return err
 	}
@@ -199,8 +199,8 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	ensure, err := postPersonalWorkspaceEnsure(ctx, cfg, personalWorkspaceEnsureRequest{
-		WorkspaceKeyFormat: personalWorkspaceKeyFormat,
+	ensure, err := postWorkspaceTeamEnsure(ctx, cfg, workspaceTeamEnsureRequest{
+		WorkspaceKeyFormat: workspaceTeamKeyFormat,
 		WorkspaceKeySHA256: workspaceDigest,
 		Label:              strings.TrimSpace(teamEnsureLabel),
 	})
@@ -213,15 +213,15 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if strings.TrimSpace(ensure.CanonicalTeamID) == "" {
 		return fmt.Errorf("team ensure response missing canonical_team_id")
 	}
-	material, err := preparePersonalWorkspaceIdentityMaterial(workingDir, home.Root, cfg.Issuer, workspaceDigest, strings.TrimSpace(teamEnsureLabel), ensure)
+	material, err := prepareWorkspaceTeamIdentityMaterial(workingDir, home.Root, cfg.Issuer, workspaceDigest, strings.TrimSpace(teamEnsureLabel), ensure)
 	if err != nil {
 		return err
 	}
-	enroll, err := postPersonalWorkspaceEnroll(ctx, cfg, ensure, workspaceDigest, material)
+	enroll, err := postWorkspaceTeamEnroll(ctx, cfg, ensure, workspaceDigest, material)
 	if err != nil {
 		return err
 	}
-	cert, err := decodePersonalWorkspaceTeamCert(enroll.TeamCert)
+	cert, err := decodeWorkspaceTeamTeamCert(enroll.TeamCert)
 	if err != nil {
 		return err
 	}
@@ -243,17 +243,17 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if strings.TrimSpace(enroll.APIKey) != "" || enroll.APIKeyCreated {
 		return fmt.Errorf("team ensure enroll response returned an API key; this client path requires cert-authenticated retryable enrollment")
 	}
-	if err := installPersonalWorkspaceEnrollment(workingDir, home.Root, cfg.Issuer, material, enroll, cert); err != nil {
+	if err := installWorkspaceTeamEnrollment(workingDir, home.Root, cfg.Issuer, material, enroll, cert); err != nil {
 		return err
 	}
-	spawn, err := verifyPersonalWorkspaceSpawnAuthority(ctx, workingDir, home.Root, enroll.TeamID)
+	spawn, err := verifyWorkspaceTeamSpawnAuthority(ctx, workingDir, home.Root, enroll.TeamID)
 	if err != nil {
 		return err
 	}
-	if err := savePersonalWorkspaceBindingMarker(home.Root, personalWorkspaceBindingState{Version: personalWorkspacePartialVersion, Issuer: cfg.Issuer, WorkspaceKeySHA256: workspaceDigest, TeamID: enroll.TeamID, CanonicalTeamID: enroll.CanonicalTeamID, BoundAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+	if err := saveWorkspaceTeamBindingMarker(home.Root, workspaceTeamBindingState{Version: workspaceTeamPartialVersion, Issuer: cfg.Issuer, WorkspaceKeySHA256: workspaceDigest, TeamID: enroll.TeamID, CanonicalTeamID: enroll.CanonicalTeamID, BoundAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		return err
 	}
-	if err := removePersonalWorkspacePartial(home.Root); err != nil {
+	if err := removeWorkspaceTeamPartial(home.Root); err != nil {
 		return fmt.Errorf("remove partial team ensure state: %w", err)
 	}
 	out := teamEnsureOutput{
@@ -278,13 +278,13 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	return nil
 }
 
-func personalWorkspaceDigest(raw string) (string, error) {
+func workspaceTeamDigest(raw string) (string, error) {
 	key := strings.TrimSpace(raw)
 	if key == "" {
 		return "", usageError("--workspace-key is required")
 	}
 	if strings.HasPrefix(key, "local/") {
-		return "", usageError("workspace-key-not-portable: local workspace keys cannot be used for hosted personal team ensure")
+		return "", usageError("workspace-key-not-portable: local workspace keys cannot be used for hosted default team ensure")
 	}
 	sum := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:]), nil
@@ -316,7 +316,7 @@ func requireCLIAuthForTeamEnsure(ctx context.Context) (cliAuthConfig, error) {
 	}
 	status, err := requestCLIAuthServerStatus(ctx, cfg)
 	if err != nil {
-		if diagnostic, ok := personalWorkspaceUnsupportedServerDiagnostic("CLI auth status", "/api/v1/cli-auth/status", err); ok {
+		if diagnostic, ok := workspaceTeamUnsupportedServerDiagnostic("CLI auth status", "/api/v1/cli-auth/status", err); ok {
 			return cliAuthConfig{}, diagnostic
 		}
 		return cliAuthConfig{}, usageError("authorization-required: stored CLI auth is not authorized; run `aw auth login`")
@@ -327,15 +327,15 @@ func requireCLIAuthForTeamEnsure(ctx context.Context) (cliAuthConfig, error) {
 	return cfg, nil
 }
 
-func postPersonalWorkspaceEnsure(ctx context.Context, cfg cliAuthConfig, req personalWorkspaceEnsureRequest) (*personalWorkspaceEnsureResponse, error) {
-	var out personalWorkspaceEnsureResponse
-	if err := postCLIAuthJSON(ctx, cfg.Issuer, personalWorkspaceEnsurePath, cfg.AccessToken, req, &out); err != nil {
-		return nil, personalWorkspaceEnsureEndpointError("personal workspace ensure", personalWorkspaceEnsurePath, err)
+func postWorkspaceTeamEnsure(ctx context.Context, cfg cliAuthConfig, req workspaceTeamEnsureRequest) (*workspaceTeamEnsureResponse, error) {
+	var out workspaceTeamEnsureResponse
+	if err := postCLIAuthJSON(ctx, cfg.Issuer, workspaceTeamEnsurePath, cfg.AccessToken, req, &out); err != nil {
+		return nil, workspaceTeamEnsureEndpointError("workspace's default team ensure", workspaceTeamEnsurePath, err)
 	}
 	return &out, nil
 }
 
-func postPersonalWorkspaceEnroll(ctx context.Context, cfg cliAuthConfig, ensure *personalWorkspaceEnsureResponse, digest string, material personalWorkspaceIdentityMaterial) (*personalWorkspaceEnrollResponse, error) {
+func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *workspaceTeamEnsureResponse, digest string, material workspaceTeamIdentityMaterial) (*workspaceTeamEnrollResponse, error) {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	issuerAud, err := cliAuthIssuerAudience(cfg.Issuer)
 	if err != nil {
@@ -346,11 +346,11 @@ func postPersonalWorkspaceEnroll(ctx context.Context, cfg cliAuthConfig, ensure 
 		stableID = material.StableID
 	}
 	payload := map[string]any{
-		"operation":            personalWorkspaceEnrollOperation,
+		"operation":            workspaceTeamEnrollOperation,
 		"aud":                  issuerAud,
 		"method":               http.MethodPost,
-		"path":                 personalWorkspaceEnrollPath,
-		"workspace_key_format": personalWorkspaceKeyFormat,
+		"path":                 workspaceTeamEnrollPath,
+		"workspace_key_format": workspaceTeamKeyFormat,
 		"workspace_key_sha256": digest,
 		"team_id":              strings.TrimSpace(ensure.TeamID),
 		"canonical_team_id":    strings.TrimSpace(ensure.CanonicalTeamID),
@@ -363,12 +363,12 @@ func postPersonalWorkspaceEnroll(ctx context.Context, cfg cliAuthConfig, ensure 
 	if err != nil {
 		return nil, err
 	}
-	req := personalWorkspaceEnrollRequest{
-		WorkspaceKeyFormat: personalWorkspaceKeyFormat,
+	req := workspaceTeamEnrollRequest{
+		WorkspaceKeyFormat: workspaceTeamKeyFormat,
 		WorkspaceKeySHA256: digest,
 		TeamID:             strings.TrimSpace(ensure.TeamID),
 		CanonicalTeamID:    strings.TrimSpace(ensure.CanonicalTeamID),
-		Identity: personalWorkspaceEnrollIdentity{
+		Identity: workspaceTeamEnrollIdentity{
 			Alias:         material.Alias,
 			AgentType:     "agent",
 			DID:           material.DIDKey,
@@ -376,23 +376,23 @@ func postPersonalWorkspaceEnroll(ctx context.Context, cfg cliAuthConfig, ensure 
 			IdentityScope: material.IdentityScope,
 			Custody:       awid.CustodySelf,
 		},
-		Proof: personalWorkspaceEnrollProof{Type: "didkey-intent-v1", Timestamp: timestamp, Signature: signature},
+		Proof: workspaceTeamEnrollProof{Type: "didkey-intent-v1", Timestamp: timestamp, Signature: signature},
 	}
-	var out personalWorkspaceEnrollResponse
-	if err := postCLIAuthJSON(ctx, cfg.Issuer, personalWorkspaceEnrollPath, cfg.AccessToken, req, &out); err != nil {
-		return nil, personalWorkspaceEnsureEndpointError("personal workspace enroll", personalWorkspaceEnrollPath, err)
+	var out workspaceTeamEnrollResponse
+	if err := postCLIAuthJSON(ctx, cfg.Issuer, workspaceTeamEnrollPath, cfg.AccessToken, req, &out); err != nil {
+		return nil, workspaceTeamEnsureEndpointError("workspace's default team enroll", workspaceTeamEnrollPath, err)
 	}
 	return &out, nil
 }
 
-func personalWorkspaceEnsureEndpointError(feature, path string, err error) error {
-	if diagnostic, ok := personalWorkspaceUnsupportedServerDiagnostic(feature, path, err); ok {
+func workspaceTeamEnsureEndpointError(feature, path string, err error) error {
+	if diagnostic, ok := workspaceTeamUnsupportedServerDiagnostic(feature, path, err); ok {
 		return diagnostic
 	}
 	return err
 }
 
-func personalWorkspaceUnsupportedServerDiagnostic(feature, path string, err error) (error, bool) {
+func workspaceTeamUnsupportedServerDiagnostic(feature, path string, err error) (error, bool) {
 	if statusCode, ok := cliAuthHTTPStatusCode(err); ok && statusCode == http.StatusNotFound {
 		return usageError("unsupported-server: aweb service does not support %s (%s); upgrade the aweb/cloud server and retry", feature, path), true
 	}
@@ -435,40 +435,40 @@ func cliAuthIssuerAudience(issuer string) (string, error) {
 	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
-func preparePersonalWorkspaceIdentityMaterial(workingDir, identityHome, issuer, digest, label string, ensure *personalWorkspaceEnsureResponse) (personalWorkspaceIdentityMaterial, error) {
+func prepareWorkspaceTeamIdentityMaterial(workingDir, identityHome, issuer, digest, label string, ensure *workspaceTeamEnsureResponse) (workspaceTeamIdentityMaterial, error) {
 	if identity, err := awconfig.ResolveIdentityFromHome(workingDir, identityHome); err == nil {
 		if awid.NormalizeIdentityScope(identity.IdentityScope) != awid.IdentityModeGlobal {
-			return personalWorkspaceIdentityMaterial{}, usageError("identity-home-occupied: existing identity.yaml in %s is not an explicit global identity", identityHome)
+			return workspaceTeamIdentityMaterial{}, usageError("identity-home-occupied: existing identity.yaml in %s is not an explicit global identity", identityHome)
 		}
 		signingKey, err := awid.LoadSigningKey(identity.SigningKeyPath)
 		if err != nil {
-			return personalWorkspaceIdentityMaterial{}, fmt.Errorf("load global identity signing key: %w", err)
+			return workspaceTeamIdentityMaterial{}, fmt.Errorf("load global identity signing key: %w", err)
 		}
 		pub := signingKey.Public().(ed25519.PublicKey)
 		didKey := awid.ComputeDIDKey(pub)
 		if didKey != strings.TrimSpace(identity.DID) {
-			return personalWorkspaceIdentityMaterial{}, usageError("current signing key did:key %s does not match identity.yaml did %s", didKey, identity.DID)
+			return workspaceTeamIdentityMaterial{}, usageError("current signing key did:key %s does not match identity.yaml did %s", didKey, identity.DID)
 		}
 		stableID := strings.TrimSpace(identity.StableID)
 		if stableID == "" {
-			return personalWorkspaceIdentityMaterial{}, usageError("explicit global identity is missing stable_id")
+			return workspaceTeamIdentityMaterial{}, usageError("explicit global identity is missing stable_id")
 		}
-		return personalWorkspaceIdentityMaterial{PublicKey: pub, SigningKey: signingKey, DIDKey: didKey, StableID: stableID, IdentityScope: awid.IdentityModeGlobal, Alias: personalWorkspaceAlias(label), ExistingGlobal: true}, nil
+		return workspaceTeamIdentityMaterial{PublicKey: pub, SigningKey: signingKey, DIDKey: didKey, StableID: stableID, IdentityScope: awid.IdentityModeGlobal, Alias: workspaceTeamAlias(label), ExistingGlobal: true}, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return personalWorkspaceIdentityMaterial{}, err
+		return workspaceTeamIdentityMaterial{}, err
 	}
 
-	partialPath, partial, err := loadPersonalWorkspacePartial(identityHome)
+	partialPath, partial, err := loadWorkspaceTeamPartial(identityHome)
 	if err != nil {
-		return personalWorkspaceIdentityMaterial{}, err
+		return workspaceTeamIdentityMaterial{}, err
 	}
 	if partial != nil {
 		if partial.Issuer != strings.TrimSpace(issuer) || partial.WorkspaceKeySHA256 != strings.TrimSpace(digest) {
-			return personalWorkspaceIdentityMaterial{}, usageError("identity-home-occupied: partial team ensure state at %s belongs to another issuer or workspace", partialPath)
+			return workspaceTeamIdentityMaterial{}, usageError("identity-home-occupied: partial team ensure state at %s belongs to another issuer or workspace", partialPath)
 		}
-		material, err := materialFromPersonalWorkspacePartial(partialPath, partial)
+		material, err := materialFromWorkspaceTeamPartial(partialPath, partial)
 		if err != nil {
-			return personalWorkspaceIdentityMaterial{}, err
+			return workspaceTeamIdentityMaterial{}, err
 		}
 		material.Partial = true
 		return material, nil
@@ -476,53 +476,53 @@ func preparePersonalWorkspaceIdentityMaterial(workingDir, identityHome, issuer, 
 
 	signingPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "signing.key")
 	if err != nil {
-		return personalWorkspaceIdentityMaterial{}, err
+		return workspaceTeamIdentityMaterial{}, err
 	}
 	if signingKey, err := awid.LoadSigningKey(signingPath); err == nil {
-		if err := validatePersonalWorkspaceExistingLocalRoot(identityHome, issuer, digest, ensure); err != nil {
-			return personalWorkspaceIdentityMaterial{}, err
+		if err := validateWorkspaceTeamExistingLocalRoot(identityHome, issuer, digest, ensure); err != nil {
+			return workspaceTeamIdentityMaterial{}, err
 		}
 		pub := signingKey.Public().(ed25519.PublicKey)
-		return personalWorkspaceIdentityMaterial{PublicKey: pub, SigningKey: signingKey, DIDKey: awid.ComputeDIDKey(pub), StableID: "", IdentityScope: awid.IdentityModeLocal, Alias: personalWorkspaceAlias(label)}, nil
+		return workspaceTeamIdentityMaterial{PublicKey: pub, SigningKey: signingKey, DIDKey: awid.ComputeDIDKey(pub), StableID: "", IdentityScope: awid.IdentityModeLocal, Alias: workspaceTeamAlias(label)}, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return personalWorkspaceIdentityMaterial{}, err
+		return workspaceTeamIdentityMaterial{}, err
 	}
 
 	if occupied, err := identityHomeHasUnexpectedFiles(identityHome); err != nil {
-		return personalWorkspaceIdentityMaterial{}, err
+		return workspaceTeamIdentityMaterial{}, err
 	} else if occupied {
-		return personalWorkspaceIdentityMaterial{}, usageError("identity-home-occupied: %s is not empty", identityHome)
+		return workspaceTeamIdentityMaterial{}, usageError("identity-home-occupied: %s is not empty", identityHome)
 	}
 	generated, err := generateAPIKeyBootstrapIdentity()
 	if err != nil {
-		return personalWorkspaceIdentityMaterial{}, err
+		return workspaceTeamIdentityMaterial{}, err
 	}
-	partial = &personalWorkspacePartialState{
-		Version:            personalWorkspacePartialVersion,
+	partial = &workspaceTeamPartialState{
+		Version:            workspaceTeamPartialVersion,
 		Issuer:             strings.TrimSpace(issuer),
 		WorkspaceKeySHA256: strings.TrimSpace(digest),
-		Alias:              personalWorkspaceAlias(label),
+		Alias:              workspaceTeamAlias(label),
 		DIDKey:             generated.DIDKey,
 		StableID:           generated.StableID,
 		SigningKeyB64:      base64.StdEncoding.EncodeToString([]byte(generated.SigningKey)),
 		CreatedAt:          time.Now().UTC().Format(time.RFC3339),
 	}
-	if err := savePersonalWorkspacePartial(identityHome, partial); err != nil {
-		return personalWorkspaceIdentityMaterial{}, err
+	if err := saveWorkspaceTeamPartial(identityHome, partial); err != nil {
+		return workspaceTeamIdentityMaterial{}, err
 	}
-	return personalWorkspaceIdentityMaterial{PublicKey: generated.PublicKey, SigningKey: generated.SigningKey, DIDKey: generated.DIDKey, StableID: "", IdentityScope: awid.IdentityModeLocal, Alias: partial.Alias, Partial: true}, nil
+	return workspaceTeamIdentityMaterial{PublicKey: generated.PublicKey, SigningKey: generated.SigningKey, DIDKey: generated.DIDKey, StableID: "", IdentityScope: awid.IdentityModeLocal, Alias: partial.Alias, Partial: true}, nil
 }
 
-func validatePersonalWorkspaceExistingLocalRoot(identityHome, issuer, digest string, ensure *personalWorkspaceEnsureResponse) error {
-	binding, err := loadPersonalWorkspaceBindingMarker(identityHome)
+func validateWorkspaceTeamExistingLocalRoot(identityHome, issuer, digest string, ensure *workspaceTeamEnsureResponse) error {
+	binding, err := loadWorkspaceTeamBindingMarker(identityHome)
 	if err != nil {
 		return err
 	}
 	if binding == nil {
-		return usageError("identity-home-occupied: %s already contains local identity material without personal workspace binding state", identityHome)
+		return usageError("identity-home-occupied: %s already contains local identity material without workspace's default team binding state", identityHome)
 	}
 	if strings.TrimSpace(binding.Issuer) != strings.TrimSpace(issuer) || strings.TrimSpace(binding.WorkspaceKeySHA256) != strings.TrimSpace(digest) || strings.TrimSpace(binding.TeamID) != strings.TrimSpace(ensure.TeamID) || strings.TrimSpace(binding.CanonicalTeamID) != strings.TrimSpace(ensure.CanonicalTeamID) {
-		return usageError("identity-home-occupied: %s is already bound to a different personal workspace", identityHome)
+		return usageError("identity-home-occupied: %s is already bound to a different workspace's default team", identityHome)
 	}
 	teamState, err := awconfig.LoadTeamStateFromIdentityHome(identityHome)
 	if err != nil {
@@ -530,15 +530,15 @@ func validatePersonalWorkspaceExistingLocalRoot(identityHome, issuer, digest str
 	}
 	membership := teamState.Membership(strings.TrimSpace(ensure.CanonicalTeamID))
 	if membership == nil {
-		return usageError("identity-home-occupied: %s personal workspace binding has no matching team membership", identityHome)
+		return usageError("identity-home-occupied: %s workspace's default team binding has no matching team membership", identityHome)
 	}
 	return nil
 }
 
-func personalWorkspaceAlias(label string) string {
+func workspaceTeamAlias(label string) string {
 	candidate := strings.TrimSpace(label)
 	if candidate == "" {
-		return "personal"
+		return "workspace"
 	}
 	var b strings.Builder
 	for _, r := range strings.ToLower(candidate) {
@@ -547,17 +547,17 @@ func personalWorkspaceAlias(label string) string {
 		}
 	}
 	if b.Len() == 0 {
-		return "personal"
+		return "workspace"
 	}
 	return b.String()
 }
 
-func personalWorkspacePartialPath(identityHome string) (string, error) {
-	return awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "personal-workspace-ensure.yaml")
+func workspaceTeamPartialPath(identityHome string) (string, error) {
+	return awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "workspace-team-ensure.yaml")
 }
 
-func loadPersonalWorkspacePartial(identityHome string) (string, *personalWorkspacePartialState, error) {
-	path, err := personalWorkspacePartialPath(identityHome)
+func loadWorkspaceTeamPartial(identityHome string) (string, *workspaceTeamPartialState, error) {
+	path, err := workspaceTeamPartialPath(identityHome)
 	if err != nil {
 		return "", nil, err
 	}
@@ -568,18 +568,18 @@ func loadPersonalWorkspacePartial(identityHome string) (string, *personalWorkspa
 	if err != nil {
 		return path, nil, err
 	}
-	var state personalWorkspacePartialState
+	var state workspaceTeamPartialState
 	if err := yaml.Unmarshal(data, &state); err != nil {
 		return path, nil, fmt.Errorf("read partial team ensure state %s: %w", path, err)
 	}
-	if state.Version != personalWorkspacePartialVersion {
+	if state.Version != workspaceTeamPartialVersion {
 		return path, nil, usageError("partial team ensure state at %s has unsupported version %d", path, state.Version)
 	}
 	return path, &state, nil
 }
 
-func savePersonalWorkspacePartial(identityHome string, state *personalWorkspacePartialState) error {
-	path, err := personalWorkspacePartialPath(identityHome)
+func saveWorkspaceTeamPartial(identityHome string, state *workspaceTeamPartialState) error {
+	path, err := workspaceTeamPartialPath(identityHome)
 	if err != nil {
 		return err
 	}
@@ -590,8 +590,8 @@ func savePersonalWorkspacePartial(identityHome string, state *personalWorkspaceP
 	return awid.AtomicWriteFile(path, data)
 }
 
-func removePersonalWorkspacePartial(identityHome string) error {
-	path, err := personalWorkspacePartialPath(identityHome)
+func removeWorkspaceTeamPartial(identityHome string) error {
+	path, err := workspaceTeamPartialPath(identityHome)
 	if err != nil {
 		return err
 	}
@@ -601,12 +601,12 @@ func removePersonalWorkspacePartial(identityHome string) error {
 	return nil
 }
 
-func personalWorkspaceBindingPath(identityHome string) (string, error) {
-	return awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "personal-workspace-binding.yaml")
+func workspaceTeamBindingPath(identityHome string) (string, error) {
+	return awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "workspace-team-binding.yaml")
 }
 
-func loadPersonalWorkspaceBindingMarker(identityHome string) (*personalWorkspaceBindingState, error) {
-	path, err := personalWorkspaceBindingPath(identityHome)
+func loadWorkspaceTeamBindingMarker(identityHome string) (*workspaceTeamBindingState, error) {
+	path, err := workspaceTeamBindingPath(identityHome)
 	if err != nil {
 		return nil, err
 	}
@@ -617,18 +617,18 @@ func loadPersonalWorkspaceBindingMarker(identityHome string) (*personalWorkspace
 	if err != nil {
 		return nil, err
 	}
-	var state personalWorkspaceBindingState
+	var state workspaceTeamBindingState
 	if err := yaml.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("read personal workspace binding state %s: %w", path, err)
+		return nil, fmt.Errorf("read workspace's default team binding state %s: %w", path, err)
 	}
-	if state.Version != personalWorkspacePartialVersion {
-		return nil, usageError("personal workspace binding state at %s has unsupported version %d", path, state.Version)
+	if state.Version != workspaceTeamPartialVersion {
+		return nil, usageError("workspace's default team binding state at %s has unsupported version %d", path, state.Version)
 	}
 	return &state, nil
 }
 
-func savePersonalWorkspaceBindingMarker(identityHome string, state personalWorkspaceBindingState) error {
-	path, err := personalWorkspaceBindingPath(identityHome)
+func saveWorkspaceTeamBindingMarker(identityHome string, state workspaceTeamBindingState) error {
+	path, err := workspaceTeamBindingPath(identityHome)
 	if err != nil {
 		return err
 	}
@@ -639,21 +639,21 @@ func savePersonalWorkspaceBindingMarker(identityHome string, state personalWorks
 	return awid.AtomicWriteFile(path, data)
 }
 
-func materialFromPersonalWorkspacePartial(path string, state *personalWorkspacePartialState) (personalWorkspaceIdentityMaterial, error) {
+func materialFromWorkspaceTeamPartial(path string, state *workspaceTeamPartialState) (workspaceTeamIdentityMaterial, error) {
 	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(state.SigningKeyB64))
 	if err != nil {
-		return personalWorkspaceIdentityMaterial{}, fmt.Errorf("decode partial team ensure signing key from %s: %w", path, err)
+		return workspaceTeamIdentityMaterial{}, fmt.Errorf("decode partial team ensure signing key from %s: %w", path, err)
 	}
 	if len(raw) != ed25519.PrivateKeySize {
-		return personalWorkspaceIdentityMaterial{}, fmt.Errorf("partial team ensure state %s has invalid signing key size %d", path, len(raw))
+		return workspaceTeamIdentityMaterial{}, fmt.Errorf("partial team ensure state %s has invalid signing key size %d", path, len(raw))
 	}
 	signingKey := ed25519.PrivateKey(raw)
 	pub := signingKey.Public().(ed25519.PublicKey)
 	didKey := awid.ComputeDIDKey(pub)
 	if didKey != strings.TrimSpace(state.DIDKey) {
-		return personalWorkspaceIdentityMaterial{}, fmt.Errorf("partial team ensure state %s did_key does not match signing key", path)
+		return workspaceTeamIdentityMaterial{}, fmt.Errorf("partial team ensure state %s did_key does not match signing key", path)
 	}
-	return personalWorkspaceIdentityMaterial{PublicKey: pub, SigningKey: signingKey, DIDKey: didKey, StableID: "", IdentityScope: awid.IdentityModeLocal, Alias: personalWorkspaceAlias(state.Alias)}, nil
+	return workspaceTeamIdentityMaterial{PublicKey: pub, SigningKey: signingKey, DIDKey: didKey, StableID: "", IdentityScope: awid.IdentityModeLocal, Alias: workspaceTeamAlias(state.Alias)}, nil
 }
 
 func identityHomeHasUnexpectedFiles(identityHome string) (bool, error) {
@@ -673,7 +673,7 @@ func identityHomeHasUnexpectedFiles(identityHome string) (bool, error) {
 	return false, nil
 }
 
-func decodePersonalWorkspaceTeamCert(encoded string) (*awid.TeamCertificate, error) {
+func decodeWorkspaceTeamTeamCert(encoded string) (*awid.TeamCertificate, error) {
 	encoded = strings.TrimSpace(encoded)
 	if encoded == "" {
 		return nil, fmt.Errorf("team ensure enroll response missing team_cert")
@@ -689,7 +689,7 @@ func decodePersonalWorkspaceTeamCert(encoded string) (*awid.TeamCertificate, err
 	return nil, fmt.Errorf("decode team ensure team_cert: %w", err)
 }
 
-func installPersonalWorkspaceEnrollment(workingDir, identityHome, issuer string, material personalWorkspaceIdentityMaterial, enroll *personalWorkspaceEnrollResponse, cert *awid.TeamCertificate) error {
+func installWorkspaceTeamEnrollment(workingDir, identityHome, issuer string, material workspaceTeamIdentityMaterial, enroll *workspaceTeamEnrollResponse, cert *awid.TeamCertificate) error {
 	if err := persistLocalSigningKeyAndCertificateAt(workingDir, identityHome, material.SigningKey, cert); err != nil {
 		return err
 	}
@@ -708,10 +708,10 @@ func installPersonalWorkspaceEnrollment(workingDir, identityHome, issuer string,
 	if err := recordAcceptedTeamMembership(workingDir, output, cert, "", strings.TrimRight(issuer, "/"), recordMembershipOptions{IdentityHome: explicitEncryptionKeyIdentityHome(identityHome), SetActive: true, WriteWorkspaceBinding: false}); err != nil {
 		return err
 	}
-	return savePersonalWorkspaceBinding(identityHome, output, cert, strings.TrimRight(issuer, "/"))
+	return saveWorkspaceTeamBinding(identityHome, output, cert, strings.TrimRight(issuer, "/"))
 }
 
-func savePersonalWorkspaceBinding(identityHome string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, awebURL string) error {
+func saveWorkspaceTeamBinding(identityHome string, output *teamAcceptInviteOutput, cert *awid.TeamCertificate, awebURL string) error {
 	workspacePath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "workspace.yaml")
 	if err != nil {
 		return err
@@ -739,7 +739,7 @@ func savePersonalWorkspaceBinding(identityHome string, output *teamAcceptInviteO
 	return nil
 }
 
-func verifyPersonalWorkspaceSpawnAuthority(ctx context.Context, workingDir, identityHome, teamID string) (*teamSpawnAuthorityOutput, error) {
+func verifyWorkspaceTeamSpawnAuthority(ctx context.Context, workingDir, identityHome, teamID string) (*teamSpawnAuthorityOutput, error) {
 	client, sel, err := resolveClientSelectionForDir(workingDir)
 	if err != nil {
 		return nil, fmt.Errorf("resolve installed identity for spawn authority: %w", err)
@@ -750,7 +750,7 @@ func verifyPersonalWorkspaceSpawnAuthority(ctx context.Context, workingDir, iden
 	path := "/api/v1/spawn/authority?team_id=" + url.QueryEscape(strings.TrimSpace(teamID))
 	var out teamSpawnAuthorityOutput
 	if err := client.Get(ctx, path, &out); err != nil {
-		return nil, personalWorkspaceEnsureEndpointError("installed-root spawn authority proof", "/api/v1/spawn/authority", err)
+		return nil, workspaceTeamEnsureEndpointError("installed-root spawn authority proof", "/api/v1/spawn/authority", err)
 	}
 	if strings.TrimSpace(out.TeamID) != strings.TrimSpace(teamID) {
 		return nil, fmt.Errorf("spawn authority team_id %q does not match ensured team %q", out.TeamID, teamID)

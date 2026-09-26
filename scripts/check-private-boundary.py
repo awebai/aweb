@@ -52,7 +52,7 @@ HOSTED_ENDPOINT_BASELINE = {
     # Reached by public CLI source.
     "/api/v1/auth/namespaces",
     # Public CLI human-auth status check: aw auth status validates the narrow
-    # aweb-cli / cli.personal_workspace bearer against the hosted issuer.
+    # aweb-cli / cli.workspace_team bearer against the hosted issuer.
     "/api/v1/cli-auth/status",
     "/api/v1/claim-human",
     "/api/v1/discovery",
@@ -60,7 +60,7 @@ HOSTED_ENDPOINT_BASELINE = {
     "/api/v1/onboarding/check-username",
     "/api/v1/onboarding/cli-signup",
     "/api/v1/spawn/accept-invite",
-    # Public installed-root proof: aw team spawn-authority and personal team
+    # Public installed-root proof: aw team spawn-authority and default team
     # ensure verify that a selected certificate-authenticated identity can spawn.
     "/api/v1/spawn/authority",
     "/api/v1/spawn/create-invite",
@@ -72,12 +72,12 @@ HOSTED_ENDPOINT_BASELINE = {
     # appear in tests, conformance vectors and the generated reference.
     "/api/v1/teams/byoidt/import",
     "/api/v1/teams/default",
-    # Public personal-workspace onboarding: aw team ensure first asks the hosted
-    # service for the digest-bound personal team, then enrolls a DID-key signed
+    # Public workspace-team onboarding: aw team ensure first asks the hosted
+    # service for the digest-bound default team, then enrolls a DID-key signed
     # local/global identity under that team. The CLI sends digest/proof material,
     # not hosted-private schemas or implementation paths.
-    "/api/v1/teams/personal-workspace/enroll",
-    "/api/v1/teams/personal-workspace/ensure",
+    "/api/v1/teams/workspace-team/enroll",
+    "/api/v1/teams/workspace-team/ensure",
     # Public shared-team admission: aw team admission-invite asks hosted aweb to
     # issue an ordinary single-use aw_inv_ for a team the human can write to.
     # The returned token is then consumed by existing invite-accept code.

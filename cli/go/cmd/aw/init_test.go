@@ -431,12 +431,12 @@ func TestRequireInitOutcomeTTYUnavailableDiscoveryEntryReportsReason(t *testing.
 	}
 }
 
-func TestRequireInitOutcomeTTYPersonalPromptsIdentityHome(t *testing.T) {
+func TestRequireInitOutcomeTTYWorkspaceTeamPromptsIdentityHome(t *testing.T) {
 	// Uses globals/stdin; do not mark parallel.
-	oldPersonal, oldWorkspaceKey, oldHome := initPersonalWorkspace, initWorkspaceKey, activeIdentityHome
+	oldWorkspaceTeam, oldWorkspaceKey, oldHome := initWorkspaceTeam, initWorkspaceKey, activeIdentityHome
 	oldStdin, oldStderr := os.Stdin, os.Stderr
 	t.Cleanup(func() {
-		initPersonalWorkspace, initWorkspaceKey, activeIdentityHome = oldPersonal, oldWorkspaceKey, oldHome
+		initWorkspaceTeam, initWorkspaceKey, activeIdentityHome = oldWorkspaceTeam, oldWorkspaceKey, oldHome
 		os.Stdin, os.Stderr = oldStdin, oldStderr
 	})
 	identityHome := filepath.Join(t.TempDir(), "principal")
@@ -451,7 +451,7 @@ func TestRequireInitOutcomeTTYPersonalPromptsIdentityHome(t *testing.T) {
 	defer inR.Close()
 	defer outR.Close()
 	os.Stdin, os.Stderr = inR, outW
-	if _, err := inW.WriteString("personal-workspace\n" + identityHome + "\noats/workspace/test\n"); err != nil {
+	if _, err := inW.WriteString("workspace-team\n" + identityHome + "\noats/workspace/test\n"); err != nil {
 		t.Fatal(err)
 	}
 	inW.Close()
@@ -461,11 +461,11 @@ func TestRequireInitOutcomeTTYPersonalPromptsIdentityHome(t *testing.T) {
 	}
 	outW.Close()
 	promptBytes, _ := io.ReadAll(outR)
-	if !initPersonalWorkspace || initWorkspaceKey != "oats/workspace/test" || activeIdentityHome.Root != identityHome || activeIdentityHome.Source != awconfig.IdentityHomeFlag {
-		t.Fatalf("personal selection personal=%v key=%q home=%+v", initPersonalWorkspace, initWorkspaceKey, activeIdentityHome)
+	if !initWorkspaceTeam || initWorkspaceKey != "oats/workspace/test" || activeIdentityHome.Root != identityHome || activeIdentityHome.Source != awconfig.IdentityHomeFlag {
+		t.Fatalf("workspace-team selection workspace_team=%v key=%q home=%+v", initWorkspaceTeam, initWorkspaceKey, activeIdentityHome)
 	}
 	if !strings.Contains(string(promptBytes), "explicit identity home "+identityHome) {
-		t.Fatalf("missing personal confirmation: %s", promptBytes)
+		t.Fatalf("missing workspace-team confirmation: %s", promptBytes)
 	}
 }
 

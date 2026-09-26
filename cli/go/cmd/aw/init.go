@@ -57,7 +57,7 @@ var (
 	initJoinFrom           string
 	initJoinTeam           string
 	initAdmissionTeamID    string
-	initPersonalWorkspace  bool
+	initWorkspaceTeam      bool
 	initWorkspaceKey       string
 	initNewAccount         bool
 	initNewTeam            bool
@@ -109,8 +109,8 @@ func init() {
 	initCmd.Flags().StringVar(&initJoinFrom, "join-from", "", "Add an agent to a team by minting one invite from this existing workspace or identity home")
 	initCmd.Flags().StringVar(&initJoinTeam, "join-team", "", "Team ID to use with --join-from when the source has more than one membership")
 	initCmd.Flags().StringVar(&initAdmissionTeamID, "admission-team-id", "", "Add an agent through host human admission for this explicit team ID")
-	initCmd.Flags().BoolVar(&initPersonalWorkspace, "personal-workspace", false, "Ensure a personal workspace team using explicit --identity-home and --workspace-key")
-	initCmd.Flags().StringVar(&initWorkspaceKey, "workspace-key", "", "OATS canonical format-1 workspace key for --personal-workspace")
+	initCmd.Flags().BoolVar(&initWorkspaceTeam, "workspace-team", false, "Ensure a workspace's default team using explicit --identity-home and --workspace-key")
+	initCmd.Flags().StringVar(&initWorkspaceKey, "workspace-key", "", "OATS canonical format-1 workspace key for --workspace-team")
 	initCmd.Flags().BoolVar(&initNewAccount, "new-account", false, "Explicitly create a new hosted aweb.ai account")
 	initCmd.Flags().BoolVar(&initNewTeam, "new-team", false, "Explicitly create a new self-hosted/BYOD team")
 
@@ -130,8 +130,8 @@ func validateInitOutcomeFlags() error {
 	if strings.TrimSpace(initJoinTeam) != "" && strings.TrimSpace(initJoinFrom) == "" {
 		return usageError("--join-team requires --join-from")
 	}
-	if strings.TrimSpace(activeIdentityHome.Root) != "" && activeIdentityHome.External() && !initPersonalWorkspace {
-		return usageError("aw init with --identity-home is only supported for --personal-workspace; refusing to use an external identity home for account, team, or add-agent init")
+	if strings.TrimSpace(activeIdentityHome.Root) != "" && activeIdentityHome.External() && !initWorkspaceTeam {
+		return usageError("aw init with --identity-home is only supported for --workspace-team; refusing to use an external identity home for account, team, or add-agent init")
 	}
 	return nil
 }
@@ -144,8 +144,8 @@ func initOutcomeFlagNames() []string {
 	if strings.TrimSpace(initAdmissionTeamID) != "" {
 		outcomes = append(outcomes, "--admission-team-id")
 	}
-	if initPersonalWorkspace {
-		outcomes = append(outcomes, "--personal-workspace")
+	if initWorkspaceTeam {
+		outcomes = append(outcomes, "--workspace-team")
 	}
 	if initNewAccount {
 		outcomes = append(outcomes, "--new-account")
@@ -159,9 +159,9 @@ func initOutcomeFlagNames() []string {
 func missingInitOutcomeError(action, flag string) error {
 	guidance := initWorkspaceDiscoveryGuidance()
 	if guidance != "" {
-		return usageError("explicit init outcome required to %s; rerun with %s, or choose --join-from, --admission-team-id, or --personal-workspace\n\n%s", action, flag, guidance)
+		return usageError("explicit init outcome required to %s; rerun with %s, or choose --join-from, --admission-team-id, or --workspace-team\n\n%s", action, flag, guidance)
 	}
-	return usageError("explicit init outcome required to %s; rerun with %s, or choose --join-from, --admission-team-id, or --personal-workspace", action, flag)
+	return usageError("explicit init outcome required to %s; rerun with %s, or choose --join-from, --admission-team-id, or --workspace-team", action, flag)
 }
 
 func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
@@ -170,7 +170,7 @@ func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
 	}
 	printInitWorkspaceDiscoveryChoices(os.Stderr)
 	promptIn := bufferedPromptReader(os.Stdin)
-	choice, err := promptRequiredStringWithIO("Choose aw init outcome (number, join-from, admission-team-id, personal-workspace, new-account, new-team)", "", promptIn, os.Stderr)
+	choice, err := promptRequiredStringWithIO("Choose aw init outcome (number, join-from, admission-team-id, workspace-team, new-account, new-team)", "", promptIn, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -221,8 +221,8 @@ func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
 		initAdmissionTeamID = strings.TrimSpace(teamID)
 		fmt.Fprintf(os.Stderr, "Confirmed: this will request hosted admission for team %s.\n", initAdmissionTeamID)
 		return nil
-	case "personal-workspace", "--personal-workspace":
-		identityHomeRoot, err := promptRequiredStringWithIO("Identity home root for personal workspace", strings.TrimSpace(activeIdentityHome.Root), promptIn, os.Stderr)
+	case "workspace-team", "--workspace-team":
+		identityHomeRoot, err := promptRequiredStringWithIO("Identity home root for workspace's default team", strings.TrimSpace(activeIdentityHome.Root), promptIn, os.Stderr)
 		if err != nil {
 			return err
 		}
@@ -230,17 +230,17 @@ func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
 		if err != nil {
 			return err
 		}
-		workspaceKey, err := promptRequiredStringWithIO("Personal workspace key", strings.TrimSpace(initWorkspaceKey), promptIn, os.Stderr)
+		workspaceKey, err := promptRequiredStringWithIO("Workspace's default team key", strings.TrimSpace(initWorkspaceKey), promptIn, os.Stderr)
 		if err != nil {
 			return err
 		}
-		initPersonalWorkspace = true
+		initWorkspaceTeam = true
 		initWorkspaceKey = strings.TrimSpace(workspaceKey)
 		activeIdentityHome = awconfig.IdentityHome{Root: identityHomeRoot, Source: awconfig.IdentityHomeFlag}
-		fmt.Fprintf(os.Stderr, "Confirmed: this will ensure a personal workspace in explicit identity home %s.\n", identityHomeRoot)
+		fmt.Fprintf(os.Stderr, "Confirmed: this will ensure a workspace's default team in explicit identity home %s.\n", identityHomeRoot)
 		return nil
 	default:
-		return usageError("unknown init outcome %q; choose join-from, admission-team-id, personal-workspace, new-account, or new-team", choice)
+		return usageError("unknown init outcome %q; choose join-from, admission-team-id, workspace-team, new-account, or new-team", choice)
 	}
 }
 
@@ -309,8 +309,8 @@ func printInitWorkspaceDiscoveryChoices(out io.Writer) {
 }
 
 func runPromptedExplicitInitOutcome(cmd *cobra.Command) (bool, error) {
-	if initPersonalWorkspace {
-		return true, runInitPersonalWorkspace(cmd)
+	if initWorkspaceTeam {
+		return true, runInitWorkspaceTeam(cmd)
 	}
 	if strings.TrimSpace(initJoinFrom) != "" {
 		return true, runInitJoinFrom(cmd)
@@ -321,12 +321,12 @@ func runPromptedExplicitInitOutcome(cmd *cobra.Command) (bool, error) {
 	return false, nil
 }
 
-func runInitPersonalWorkspace(cmd *cobra.Command) error {
+func runInitWorkspaceTeam(cmd *cobra.Command) error {
 	if strings.TrimSpace(activeIdentityHome.Root) == "" || !activeIdentityHome.External() {
-		return usageError("--identity-home is required with --personal-workspace")
+		return usageError("--identity-home is required with --workspace-team")
 	}
 	if strings.TrimSpace(initWorkspaceKey) == "" {
-		return usageError("--workspace-key is required with --personal-workspace")
+		return usageError("--workspace-key is required with --workspace-team")
 	}
 	previousKey, previousLabel := teamEnsureWorkspaceKey, teamEnsureLabel
 	teamEnsureWorkspaceKey = strings.TrimSpace(initWorkspaceKey)
@@ -493,8 +493,8 @@ func runInit(cmd *cobra.Command, args []string) error {
 	if err := validateInitOutcomeFlags(); err != nil {
 		return err
 	}
-	if initPersonalWorkspace {
-		return runInitPersonalWorkspace(cmd)
+	if initWorkspaceTeam {
+		return runInitWorkspaceTeam(cmd)
 	}
 	if strings.TrimSpace(initJoinFrom) != "" {
 		return runInitJoinFrom(cmd)

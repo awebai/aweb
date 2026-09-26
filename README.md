@@ -195,7 +195,7 @@ repository:
 
 ```bash
 npm install -g @awebai/aw
-aw init
+aw init  # interactive; agents should use an explicit outcome such as: aw init --new-account --username <username> --name <name>
 bd config set mail.delegate "aw beads-mail"
 ```
 

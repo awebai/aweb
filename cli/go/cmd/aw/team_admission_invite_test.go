@@ -86,7 +86,9 @@ func TestTeamAdmissionInviteAcceptsCanonicalTeamReference(t *testing.T) {
 	teamAdmissionInviteTeamID = "shared:example.aweb.ai"
 	teamAdmissionInviteRequestID = "a8d857a5-7c44-45e7-8027-bf4996d5088b"
 	jsonFlag = true
-	t.Cleanup(func() { teamAdmissionInviteTeamID, teamAdmissionInviteRequestID, jsonFlag = oldTeamID, oldRequestID, oldJSON })
+	t.Cleanup(func() {
+		teamAdmissionInviteTeamID, teamAdmissionInviteRequestID, jsonFlag = oldTeamID, oldRequestID, oldJSON
+	})
 	t.Setenv("HOME", t.TempDir())
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -47,8 +47,8 @@ func TestTeamEnsureReportsUnsupportedServerDiagnostics(t *testing.T) {
 		wantStage string
 	}{
 		{name: "cli auth status", missing: "/api/v1/cli-auth/status", wantPath: "/api/v1/cli-auth/status", wantStage: "CLI auth status"},
-		{name: "ensure", missing: personalWorkspaceEnsurePath, wantPath: personalWorkspaceEnsurePath, wantStage: "personal workspace ensure"},
-		{name: "enroll", missing: personalWorkspaceEnrollPath, wantPath: personalWorkspaceEnrollPath, wantStage: "personal workspace enroll"},
+		{name: "ensure", missing: workspaceTeamEnsurePath, wantPath: workspaceTeamEnsurePath, wantStage: "workspace's default team ensure"},
+		{name: "enroll", missing: workspaceTeamEnrollPath, wantPath: workspaceTeamEnrollPath, wantStage: "workspace's default team enroll"},
 		{name: "spawn authority", missing: "/api/v1/spawn/authority", wantPath: "/api/v1/spawn/authority", wantStage: "installed-root spawn authority proof"},
 	}
 	for _, tc := range cases {
@@ -79,10 +79,10 @@ func TestTeamEnsureReportsUnsupportedServerDiagnostics(t *testing.T) {
 				switch r.URL.Path {
 				case "/api/v1/cli-auth/status":
 					_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
-				case personalWorkspaceEnsurePath:
-					_ = json.NewEncoder(w).Encode(personalWorkspaceEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID})
-				case personalWorkspaceEnrollPath:
-					var req personalWorkspaceEnrollRequest
+				case workspaceTeamEnsurePath:
+					_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID})
+				case workspaceTeamEnrollPath:
+					var req workspaceTeamEnrollRequest
 					if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 						t.Fatal(err)
 					}
@@ -94,7 +94,7 @@ func TestTeamEnsureReportsUnsupportedServerDiagnostics(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					_ = json.NewEncoder(w).Encode(personalWorkspaceEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-unsupported", AgentID: "agent-unsupported", Alias: req.Identity.Alias, DID: req.Identity.DID, IdentityScope: req.Identity.IdentityScope, Created: true, TeamCert: encoded})
+					_ = json.NewEncoder(w).Encode(workspaceTeamEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-unsupported", AgentID: "agent-unsupported", Alias: req.Identity.Alias, DID: req.Identity.DID, IdentityScope: req.Identity.IdentityScope, Created: true, TeamCert: encoded})
 				case "/api/v1/spawn/authority":
 					_ = json.NewEncoder(w).Encode(teamSpawnAuthorityOutput{TeamID: teamID, ActorAgentID: "agent-unsupported", AuthKind: "team_key", LiveAgent: true, CanSpawn: true})
 				case "/v1/agents/heartbeat", "/api/v1/agents/heartbeat":
@@ -149,7 +149,7 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 				t.Fatalf("status Authorization=%q", got)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
-		case personalWorkspaceEnsurePath:
+		case workspaceTeamEnsurePath:
 			if got := r.Header.Get("Authorization"); got != "Bearer awcli_test" {
 				t.Fatalf("ensure Authorization=%q", got)
 			}
@@ -163,13 +163,13 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 			if strings.Contains(body["workspace_key_sha256"].(string), "workspace") {
 				t.Fatalf("digest leaked raw workspace key: %#v", body)
 			}
-			_ = json.NewEncoder(w).Encode(personalWorkspaceEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID, Label: "Demo"})
-		case personalWorkspaceEnrollPath:
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID, Label: "Demo"})
+		case workspaceTeamEnrollPath:
 			enrollCount++
 			if got := r.Header.Get("Authorization"); got != "Bearer awcli_test" {
 				t.Fatalf("enroll Authorization=%q", got)
 			}
-			var req personalWorkspaceEnrollRequest
+			var req workspaceTeamEnrollRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
@@ -202,7 +202,7 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 				http.Error(w, "lost after commit", http.StatusInternalServerError)
 				return
 			}
-			_ = json.NewEncoder(w).Encode(personalWorkspaceEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-1", AgentID: "agent-1", Alias: req.Identity.Alias, DID: req.Identity.DID, IdentityScope: req.Identity.IdentityScope, Created: false, APIKeyCreated: false, TeamCert: encoded, SpawnAuthorityCheck: &personalWorkspaceSpawnAdvisory{TeamID: teamID, CanSpawn: false}})
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-1", AgentID: "agent-1", Alias: req.Identity.Alias, DID: req.Identity.DID, IdentityScope: req.Identity.IdentityScope, Created: false, APIKeyCreated: false, TeamCert: encoded, SpawnAuthorityCheck: &workspaceTeamSpawnAdvisory{TeamID: teamID, CanSpawn: false}})
 		case "/api/v1/spawn/authority":
 			spawnAuthSeen = true
 			if got := r.URL.Query().Get("team_id"); got != teamID {
@@ -229,7 +229,7 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(identityHome, "signing.key")); !os.IsNotExist(err) {
 		t.Fatalf("signing key installed before successful retry: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(identityHome, "personal-workspace-ensure.yaml")); err != nil {
+	if _, err := os.Stat(filepath.Join(identityHome, "workspace-team-ensure.yaml")); err != nil {
 		t.Fatalf("partial state missing after lost response: %v", err)
 	}
 
@@ -245,10 +245,10 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 	if !spawnAuthSeen {
 		t.Fatal("spawn authority was not checked")
 	}
-	if _, err := os.Stat(filepath.Join(identityHome, "personal-workspace-ensure.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(identityHome, "workspace-team-ensure.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("partial state was not removed after bind: %v", err)
 	}
-	bindingPath, err := personalWorkspaceBindingPath(identityHome)
+	bindingPath, err := workspaceTeamBindingPath(identityHome)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,9 +297,9 @@ func TestTeamEnsureOccupiedRootPreservesBytesAndSkipsHTTP(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
-		case personalWorkspaceEnsurePath:
-			_ = json.NewEncoder(w).Encode(personalWorkspaceEnsureResponse{State: "ready", TeamID: "personal:team", CanonicalTeamID: "default:personal.aweb.ai"})
-		case personalWorkspaceEnrollPath:
+		case workspaceTeamEnsurePath:
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: "default:workspace.aweb.ai", CanonicalTeamID: "default:workspace.aweb.ai"})
+		case workspaceTeamEnrollPath:
 			enrollCalled = true
 			t.Fatalf("enroll was called for occupied root")
 		default:
@@ -365,9 +365,9 @@ func TestTeamEnsureForeignLocalRootPreservesBytesAndSkipsEnroll(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
-		case personalWorkspaceEnsurePath:
-			_ = json.NewEncoder(w).Encode(personalWorkspaceEnsureResponse{State: "ready", TeamID: "personal:team", CanonicalTeamID: "default:personal.aweb.ai"})
-		case personalWorkspaceEnrollPath:
+		case workspaceTeamEnsurePath:
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: "default:workspace.aweb.ai", CanonicalTeamID: "default:workspace.aweb.ai"})
+		case workspaceTeamEnrollPath:
 			enrollCalled = true
 			t.Fatalf("enroll was called for foreign local root")
 		default:
@@ -426,10 +426,10 @@ func TestTeamEnsureExistingGlobalPreservesStableIDAndUsesServerReturnedStableID(
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
-		case personalWorkspaceEnsurePath:
-			_ = json.NewEncoder(w).Encode(personalWorkspaceEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID})
-		case personalWorkspaceEnrollPath:
-			var req personalWorkspaceEnrollRequest
+		case workspaceTeamEnsurePath:
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID})
+		case workspaceTeamEnrollPath:
+			var req workspaceTeamEnrollRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
@@ -448,7 +448,7 @@ func TestTeamEnsureExistingGlobalPreservesStableIDAndUsesServerReturnedStableID(
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(personalWorkspaceEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-global", AgentID: "agent-global", Alias: req.Identity.Alias, DID: did, StableID: stableID, IdentityScope: awid.IdentityModeGlobal, Created: true, APIKeyCreated: false, TeamCert: encoded})
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-global", AgentID: "agent-global", Alias: req.Identity.Alias, DID: did, StableID: stableID, IdentityScope: awid.IdentityModeGlobal, Created: true, APIKeyCreated: false, TeamCert: encoded})
 		case "/api/v1/spawn/authority":
 			_ = json.NewEncoder(w).Encode(teamSpawnAuthorityOutput{TeamID: teamID, ActorAgentID: "agent-global", AuthKind: "team_key", LiveAgent: true, CanSpawn: true})
 		default:
@@ -503,10 +503,10 @@ func TestTeamEnsureDoesNotReturnBoundWhenSpawnAuthorityFails(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized"})
-		case personalWorkspaceEnsurePath:
-			_ = json.NewEncoder(w).Encode(personalWorkspaceEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID})
-		case personalWorkspaceEnrollPath:
-			var req personalWorkspaceEnrollRequest
+		case workspaceTeamEnsurePath:
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnsureResponse{State: "ready", TeamID: teamID, CanonicalTeamID: canonicalTeamID})
+		case workspaceTeamEnrollPath:
+			var req workspaceTeamEnrollRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
@@ -518,7 +518,7 @@ func TestTeamEnsureDoesNotReturnBoundWhenSpawnAuthorityFails(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_ = json.NewEncoder(w).Encode(personalWorkspaceEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-no-spawn", AgentID: "agent-no-spawn", Alias: req.Identity.Alias, DID: req.Identity.DID, IdentityScope: req.Identity.IdentityScope, Created: true, APIKeyCreated: false, TeamCert: encoded, SpawnAuthorityCheck: &personalWorkspaceSpawnAdvisory{TeamID: teamID, CanSpawn: true}})
+			_ = json.NewEncoder(w).Encode(workspaceTeamEnrollResponse{State: "enrolled", TeamID: teamID, CanonicalTeamID: canonicalTeamID, IdentityID: "ident-no-spawn", AgentID: "agent-no-spawn", Alias: req.Identity.Alias, DID: req.Identity.DID, IdentityScope: req.Identity.IdentityScope, Created: true, APIKeyCreated: false, TeamCert: encoded, SpawnAuthorityCheck: &workspaceTeamSpawnAdvisory{TeamID: teamID, CanSpawn: true}})
 		case "/api/v1/spawn/authority":
 			_ = json.NewEncoder(w).Encode(teamSpawnAuthorityOutput{TeamID: teamID, ActorAgentID: "agent-no-spawn", AuthKind: "team_key", LiveAgent: true, CanSpawn: false})
 		default:
@@ -538,7 +538,7 @@ func TestTeamEnsureDoesNotReturnBoundWhenSpawnAuthorityFails(t *testing.T) {
 	if strings.Contains(out.String(), "bound") {
 		t.Fatalf("reported bound despite failed spawn authority: %s", out.String())
 	}
-	bindingPath, pathErr := personalWorkspaceBindingPath(identityHome)
+	bindingPath, pathErr := workspaceTeamBindingPath(identityHome)
 	if pathErr != nil {
 		t.Fatal(pathErr)
 	}

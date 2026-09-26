@@ -1054,8 +1054,8 @@ Supported clean-directory outcomes:
   Missing CLI auth starts bounded device authorization in both TTY and
   noninteractive modes; TTY refusal exits nonzero and prints the exact `aw auth
   login --scope cli.team_admission` command.
-- `--personal-workspace --workspace-key <key> --identity-home <root>`: ensure a
-  hosted personal workspace in the explicit identity home. The identity-home
+- `--workspace-team --workspace-key <key> --identity-home <root>`: ensure a
+  hosted workspace's default team in the explicit identity home. The identity-home
   root is never inferred for this outcome.
 
 DEFAULT — Hosted (use a managed namespace from a hosted operator):

@@ -229,7 +229,7 @@ aw init --new-account --username <u> --name <name>  # Create a hosted aweb.ai ac
 aw init --new-team --byod --domain <domain>         # Create a self-hosted/BYOD team
 aw init --join-from <path> --join-team <team>       # Join from an existing local workspace/identity home
 aw init --admission-team-id <team>                  # Request hosted team admission with CLI device auth
-aw init --personal-workspace --workspace-key <key> --identity-home <root>  # Ensure a personal workspace in an explicit root
+aw init --workspace-team --workspace-key <key> --identity-home <root>  # Ensure a workspace's default team in an explicit root
 aw init --new-account --global --username <u> --name <name>  # Create a hosted self-custodial global identity
 aw init --global --join-from <path> --join-team <team>       # Join by reusing an existing global identity
 aw whoami                             # Show current identity

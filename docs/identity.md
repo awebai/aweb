@@ -200,7 +200,7 @@ Rules:
 - `aw init --join-from ...` and `aw init --admission-team-id ...` follow the same
   rule: local is the default, while `--global` is an opt-in to reuse the current
   self-custodial global identity. They do not silently downgrade `--global` to a
-  local join. `aw init --personal-workspace` is the only `aw init` outcome that
+  local join. `aw init --workspace-team` is the only `aw init` outcome that
   accepts `--identity-home`, and the root must be explicit.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join

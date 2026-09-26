@@ -94,7 +94,6 @@ Flags:
 - `--name string Identity/member name (global address name with --global, local routing name otherwise)`
 - `--new-account Explicitly create a new hosted aweb.ai account`
 - `--new-team Explicitly create a new self-hosted/BYOD team`
-- `--personal-workspace Ensure a personal workspace team using explicit --identity-home and --workspace-key`
 - `--print-exports Print shell export lines after JSON output`
 - `--role string Compatibility alias for --role-name`
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
@@ -102,7 +101,8 @@ Flags:
 - `--setup-hooks Set up Claude Code PostToolUse hook for aw notify`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `--username string Hosted username to create`
-- `--workspace-key string OATS canonical format-1 workspace key for --personal-workspace`
+- `--workspace-key string OATS canonical format-1 workspace key for --workspace-team`
+- `--workspace-team Ensure a workspace's default team using explicit --identity-home and --workspace-key`
 - `--write-context Ensure .aw/context exists in the current directory (default true)`
 
 ## `reset`
@@ -269,7 +269,7 @@ Start browser-based device login for this host aw CLI
 
 Flags:
 - `-h, --help help for login`
-- `--scope string CLI authorization scope (cli.personal_workspace|cli.team_admission) (default "cli.personal_workspace")`
+- `--scope string CLI authorization scope (cli.workspace_team|cli.team_admission) (default "cli.workspace_team")`
 - `--timeout duration Maximum time to wait for browser approval (default 10m0s)`
 
 ## `auth logout`
@@ -280,7 +280,7 @@ Revoke host CLI human-auth tokens and remove local credentials
 
 Flags:
 - `-h, --help help for logout`
-- `--scope string CLI authorization scope to revoke (default "cli.personal_workspace")`
+- `--scope string CLI authorization scope to revoke (default "cli.workspace_team")`
 
 ## `auth status`
 
@@ -290,7 +290,7 @@ Show host CLI human-auth status without printing tokens
 
 Flags:
 - `-h, --help help for status`
-- `--scope string CLI authorization scope to inspect (default "cli.personal_workspace")`
+- `--scope string CLI authorization scope to inspect (default "cli.workspace_team")`
 
 ## `custody`
 
@@ -1132,7 +1132,7 @@ management, and owner/admin repair operations live under `aw team admin`.
 
 Subcommands:
 - `admission-invite` Issue a shared-team admission invite token
-- `ensure` Ensure this host has a personal workspace team authority
+- `ensure` Ensure this host has a workspace's default team authority
 - `invite` Invite an agent or workspace to the active team
 - `join` Join a team from an invite token
 - `leave` Remove a team membership from this identity
@@ -1165,7 +1165,7 @@ Flags:
 
 ### `team ensure`
 
-Ensure this host has a personal workspace team authority.
+Ensure this host has a workspace's default team authority.
 
 The server receives only the format-1 workspace-key digest. Credentials are installed
 only into the explicit --identity-home credential root, and the result is bound only
@@ -1174,17 +1174,17 @@ after a live spawn-authority proof from that installed root.
 Stable diagnostics are printed to stderr and exit 2, including with --json; there is
 no JSON error envelope. authorization-required means host CLI auth is missing,
 invalid, expired, revoked, or not authorized. workspace-key-not-portable means a
-local/ workspace key cannot be used for hosted personal team ensure.
+local/ workspace key cannot be used for hosted default team ensure.
 identity-home-occupied means the explicit identity home already contains
 conflicting identity, team, workspace, or binding state. unsupported-server means
-the aweb service is older than the personal ensure/enroll contract (Cloud 0.8.12
-or later) and is missing one of: CLI auth status, personal workspace ensure,
-personal workspace enroll, or installed-root spawn-authority proof. Non-404
+the aweb service is older than the workspace's default team ensure/enroll contract (Cloud 0.8.16
+or later) and is missing one of: CLI auth status, workspace's default team ensure,
+workspace's default team enroll, or installed-root spawn-authority proof. Non-404
 server errors keep their existing handling.
 
 Flags:
 - `-h, --help help for ensure`
-- `--label string Optional display label for the personal workspace team`
+- `--label string Optional display label for the workspace's default team`
 - `--workspace-key string OATS canonical format-1 workspace key`
 
 ## `team invite`
