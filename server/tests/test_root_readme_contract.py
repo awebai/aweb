@@ -32,7 +32,7 @@ def test_root_readme_contains_a_complete_evaluation_path() -> None:
 
     for command in [
         "npm install -g @awebai/aw",
-        "aw init --username <username> --name alice",
+        "aw init --new-account --username <username> --name alice",
         "aw team invite",
         "aw team join <invite-token> --name bob",
         "aw events stream --json",
