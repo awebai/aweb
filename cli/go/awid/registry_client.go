@@ -607,6 +607,7 @@ func (c *RegistryClient) newRequest(ctx context.Context, method, registryURL, pa
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("Accept", "application/json")
+	setUserAgent(req, "")
 	if requestID := strings.TrimSpace(c.RequestID); requestID != "" {
 		req.Header.Set("X-Request-ID", requestID)
 	}

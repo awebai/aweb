@@ -924,6 +924,7 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 	}
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
+	setUserAgent(req, c.userAgent)
 	if c.grantID != "" && c.signingKey != nil {
 		timestamp := time.Now().UTC().Format(time.RFC3339)
 		credential, err := SignIdentityGrantCredential(c.signingKey, http.MethodGet, req.URL, c.grantID, nil, timestamp)

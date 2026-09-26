@@ -94,6 +94,9 @@ func doNoRedirect(client *http.Client, req *http.Request, defaultTimeout time.Du
 	noRedirectClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	}
+	if req.Header.Get("User-Agent") == "" {
+		setUserAgent(req, "")
+	}
 	return noRedirectClient.Do(req)
 }
 

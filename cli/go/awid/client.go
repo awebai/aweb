@@ -1371,9 +1371,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			req.Header.Set("Content-Type", "application/json")
 		}
 		req.Header.Set("Accept", accept)
-		if c.userAgent != "" {
-			req.Header.Set("User-Agent", c.userAgent)
-		}
+		setUserAgent(req, c.userAgent)
 		for key, value := range extraHeaders {
 			key = strings.TrimSpace(key)
 			value = strings.TrimSpace(value)
