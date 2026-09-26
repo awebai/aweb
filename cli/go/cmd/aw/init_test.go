@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -388,6 +390,47 @@ func TestRequireInitOutcomeTTYCanSelectDiscoveryEntry(t *testing.T) {
 	}
 }
 
+func TestRequireInitOutcomeTTYUnavailableDiscoveryEntryReportsReason(t *testing.T) {
+	// Uses HOME/globals/stdin; do not mark parallel.
+	oldJoinFrom, oldJoinTeam := initJoinFrom, initJoinTeam
+	oldStdin, oldStderr := os.Stdin, os.Stderr
+	t.Cleanup(func() {
+		initJoinFrom, initJoinTeam = oldJoinFrom, oldJoinTeam
+		os.Stdin, os.Stderr = oldStdin, oldStderr
+	})
+	tmp := t.TempDir()
+	t.Setenv("HOME", filepath.Join(tmp, "home"))
+	missing := filepath.Join(tmp, "missing-workspace")
+	if err := awconfig.RecordMachineWorkspace(awconfig.MachineWorkspaceIndexEntry{Path: missing, TeamID: "backend:acme.com", Alias: "alice", ServerURL: "https://app.aweb.ai"}); err != nil {
+		t.Fatalf("record workspace discovery: %v", err)
+	}
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inR.Close()
+	defer outR.Close()
+	os.Stdin, os.Stderr = inR, outW
+	if _, err := inW.WriteString("1\n"); err != nil {
+		t.Fatal(err)
+	}
+	inW.Close()
+
+	err = requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
+	outW.Close()
+	promptBytes, _ := io.ReadAll(outR)
+	if err == nil || !strings.Contains(err.Error(), "workspace discovery entry 1 is unavailable") || !strings.Contains(err.Error(), "stat") {
+		t.Fatalf("expected unavailable-entry reason, got err=%v prompt=%s", err, promptBytes)
+	}
+	if initJoinFrom != "" || initJoinTeam != "" {
+		t.Fatalf("unavailable entry selected join source=%q team=%q", initJoinFrom, initJoinTeam)
+	}
+}
+
 func TestRequireInitOutcomeTTYPersonalPromptsIdentityHome(t *testing.T) {
 	// Uses globals/stdin; do not mark parallel.
 	oldPersonal, oldWorkspaceKey, oldHome := initPersonalWorkspace, initWorkspaceKey, activeIdentityHome
@@ -453,6 +496,400 @@ func TestInitInviteIdentityScopeDefaultsLocalAndHonorsGlobal(t *testing.T) {
 	}
 }
 
+func TestInitJoinFromHostedSuccessPreservesSourceAndConnectsTarget(t *testing.T) {
+	oldJoinFrom, oldJoinTeam, oldName, oldGlobal := initJoinFrom, initJoinTeam, initName, initGlobal
+	oldJSON, oldServer := jsonFlag, serverFlag
+	t.Cleanup(func() {
+		initJoinFrom, initJoinTeam, initName, initGlobal = oldJoinFrom, oldJoinTeam, oldName, oldGlobal
+		jsonFlag, serverFlag = oldJSON, oldServer
+	})
+	t.Setenv("HOME", t.TempDir())
+
+	teamID := "shared:aweb.ai"
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := awid.ComputeDIDKey(teamPub)
+	var sawCreateInvite, sawAccept, sawConnect bool
+	var acceptedDID string
+	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
+			sawCreateInvite = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"invite_id": "invite-hosted", "token": "aw_inv_join_hosted", "server_url": serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			sawAccept = true
+			var req awid.SpawnAcceptInviteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Token != "aw_inv_join_hosted" || req.Alias != "target" || req.IdentityScope != awid.IdentityModeLocal || req.StableID != "" {
+				t.Fatalf("accept request=%+v", req)
+			}
+			acceptedDID = req.DID
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: req.DID, Alias: "target", IdentityScope: awid.IdentityModeLocal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "team_slug": "shared", "namespace": "aweb.ai", "namespace_slug": "aweb", "identity_id": "target-id", "alias": "target", "server_url": serverURL, "did": req.DID, "custody": "self", "identity_scope": awid.IdentityModeLocal, "created": true, "team_cert": encoded})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			sawConnect = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "target", "agent_id": "agent-target", "workspace_id": "workspace-target", "team_did_key": teamDID})
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-target", teamID, "target")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	serverFlag = server.URL
+
+	source := t.TempDir()
+	sourcePub, sourceKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceKey, CreatedAt: "2026-09-26T00:00:00Z"})
+	sourceBefore := fileDigestsForTest(t, filepath.Join(source, ".aw"))
+	target := t.TempDir()
+	withTestWorkingDir(t, target, func() {
+		initJoinFrom = source
+		initJoinTeam = teamID
+		initName = "target"
+		initGlobal = false
+		jsonFlag = true
+		var out bytes.Buffer
+		if err := runInitJoinFrom(authTestCmd(&out)); err != nil {
+			t.Fatalf("runInitJoinFrom: %v\n%s", err, out.String())
+		}
+	})
+	if !sawCreateInvite || !sawAccept || !sawConnect {
+		t.Fatalf("create=%t accept=%t connect=%t", sawCreateInvite, sawAccept, sawConnect)
+	}
+	assertInitJoinTarget(t, target, teamID, "target", acceptedDID, sourceBefore, source)
+}
+
+func TestInitJoinFromControllerKeySuccessPreservesSourceAndConnectsTarget(t *testing.T) {
+	oldJoinFrom, oldJoinTeam, oldName, oldGlobal := initJoinFrom, initJoinTeam, initName, initGlobal
+	oldJSON, oldRegistry := jsonFlag, initAWIDRegistry
+	t.Cleanup(func() {
+		initJoinFrom, initJoinTeam, initName, initGlobal = oldJoinFrom, oldJoinTeam, oldName, oldGlobal
+		jsonFlag, initAWIDRegistry = oldJSON, oldRegistry
+	})
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	teamID := "backend:source"
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := awid.ComputeDIDKey(teamPub)
+	if err := awconfig.SaveTeamKey("source", "backend", teamKey); err != nil {
+		t.Fatalf("save team key: %v", err)
+	}
+	var sawRegistry, sawConnect bool
+	registry := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/source/teams/backend/certificates" {
+			sawRegistry = true
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		t.Fatalf("unexpected registry %s %s", r.Method, r.URL.Path)
+	}))
+	initAWIDRegistry = registry.URL
+	if err := awconfig.SaveControllerMeta("source", &awconfig.ControllerMeta{Domain: "source", RegistryURL: registry.URL, CreatedAt: "2026-09-26T00:00:00Z"}); err != nil {
+		t.Fatalf("save controller meta: %v", err)
+	}
+	awebServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			sawConnect = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "target", "agent_id": "agent-target", "workspace_id": "workspace-target", "team_did_key": teamDID})
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-target", teamID, "target")
+		default:
+			t.Fatalf("unexpected aweb %s %s", r.Method, r.URL.Path)
+		}
+	}))
+
+	source := t.TempDir()
+	sourcePub, sourceSigning, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: awebServer.URL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceSigning, CreatedAt: "2026-09-26T00:00:00Z"})
+	sourceBefore := fileDigestsForTest(t, filepath.Join(source, ".aw"))
+	target := t.TempDir()
+	withTestWorkingDir(t, target, func() {
+		initJoinFrom = source
+		initJoinTeam = teamID
+		initName = "target"
+		initGlobal = false
+		jsonFlag = true
+		var out bytes.Buffer
+		if err := runInitJoinFrom(authTestCmd(&out)); err != nil {
+			t.Fatalf("runInitJoinFrom: %v\n%s", err, out.String())
+		}
+	})
+	if !sawRegistry || !sawConnect {
+		t.Fatalf("registry=%t connect=%t", sawRegistry, sawConnect)
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+	if err != nil {
+		t.Fatalf("load target cert: %v", err)
+	}
+	assertInitJoinTarget(t, target, teamID, "target", cert.MemberDIDKey, sourceBefore, source)
+}
+
+func TestInitJoinFromDenialLeavesTargetEmptyAndSuggestsAdmission(t *testing.T) {
+	oldJoinFrom, oldJoinTeam, oldName := initJoinFrom, initJoinTeam, initName
+	oldServer := serverFlag
+	t.Cleanup(func() {
+		initJoinFrom, initJoinTeam, initName = oldJoinFrom, oldJoinTeam, oldName
+		serverFlag = oldServer
+	})
+	t.Setenv("HOME", t.TempDir())
+	teamID := "shared:aweb.ai"
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite" {
+			http.Error(w, "denied by policy", http.StatusForbidden)
+			return
+		}
+		t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+	}))
+	serverFlag = server.URL
+	source := t.TempDir()
+	sourcePub, sourceKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSelectionFixtureForTest(t, source, testSelectionFixture{AwebURL: server.URL, TeamID: teamID, Alias: "source", WorkspaceID: "workspace-source", DID: awid.ComputeDIDKey(sourcePub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: sourceKey, CreatedAt: "2026-09-26T00:00:00Z"})
+	target := t.TempDir()
+	withTestWorkingDir(t, target, func() {
+		initJoinFrom = source
+		initJoinTeam = teamID
+		initName = "target"
+		err = runInitJoinFrom(authTestCmd(&bytes.Buffer{}))
+	})
+	if err == nil || !strings.Contains(err.Error(), "create hosted team invite") || !strings.Contains(err.Error(), "--admission-team-id "+teamID) {
+		t.Fatalf("expected denial with admission alternative, got %v", err)
+	}
+	if entries, readErr := os.ReadDir(target); readErr != nil || len(entries) != 0 {
+		t.Fatalf("target was written entries=%v err=%v", entries, readErr)
+	}
+}
+
+func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldAdmission, oldName, oldJSON := initAdmissionTeamID, initName, jsonFlag
+	t.Cleanup(func() { initAdmissionTeamID, initName, jsonFlag = oldAdmission, oldName, oldJSON })
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	teamID := "shared:aweb.ai"
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := awid.ComputeDIDKey(teamPub)
+	var sawAdmission, sawAccept, sawConnect bool
+	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cli-auth/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "scope": cliAuthScopeTeamAdmission, "resource": serverURL + "/cli"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/"+teamID+"/admission-invite":
+			sawAdmission = true
+			var req teamAdmissionInviteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.AliasHint != "target" || req.RequestID == "" {
+				t.Fatalf("admission req=%+v", req)
+			}
+			_ = json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-admission", Token: "aw_inv_admission", MaxUses: 1, TeamID: teamID, CanonicalTeamID: teamID, ServerURL: serverURL})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			sawAccept = true
+			var req awid.SpawnAcceptInviteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Token != "aw_inv_admission" || req.Alias != "target" || req.IdentityScope != awid.IdentityModeLocal {
+				t.Fatalf("accept req=%+v", req)
+			}
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: req.DID, Alias: "target", IdentityScope: awid.IdentityModeLocal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "team_slug": "shared", "namespace": "aweb.ai", "identity_id": "target-id", "alias": "target", "server_url": serverURL, "did": req.DID, "custody": "self", "identity_scope": awid.IdentityModeLocal, "created": true, "team_cert": encoded})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			sawConnect = true
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "target", "agent_id": "agent-target", "workspace_id": "workspace-target", "team_did_key": teamDID})
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-target", teamID, "target")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	serverFlag = server.URL
+	cfg := cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", Scope: cliAuthScopeTeamAdmission, ClientID: cliAuthClientID, AccessToken: "team-access", RefreshToken: "team-refresh", TokenType: cliAuthTokenType, ExpiresAt: time.Now().Add(time.Hour), UpdatedAt: time.Now()}
+	if err := saveCLIAuthConfigForScope(cliAuthScopeTeamAdmission, cfg); err != nil {
+		t.Fatalf("save auth: %v", err)
+	}
+	target := t.TempDir()
+	withTestWorkingDir(t, target, func() {
+		initAdmissionTeamID = teamID
+		initName = "target"
+		jsonFlag = true
+		var out bytes.Buffer
+		cmd := authTestCmd(&out)
+		cmd.SetContext(context.Background())
+		if err := runInitAdmissionTeamID(cmd); err != nil {
+			t.Fatalf("runInitAdmissionTeamID: %v\n%s", err, out.String())
+		}
+	})
+	if !sawAdmission || !sawAccept || !sawConnect {
+		t.Fatalf("admission=%t accept=%t connect=%t", sawAdmission, sawAccept, sawConnect)
+	}
+}
+
+func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T) {
+	oldGlobal, oldName, oldJSON := initGlobal, initName, jsonFlag
+	t.Cleanup(func() { initGlobal, initName, jsonFlag = oldGlobal, oldName, oldJSON })
+	t.Setenv("HOME", t.TempDir())
+	teamID := "shared:aweb.ai"
+	teamPub, teamKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamDID := awid.ComputeDIDKey(teamPub)
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberDID := awid.ComputeDIDKey(memberPub)
+	stableID := awid.ComputeStableID(memberPub)
+	var sawGlobalAccept bool
+	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/accept-invite":
+			var req awid.SpawnAcceptInviteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatal(err)
+			}
+			if req.Token != "aw_inv_global" || req.Name != "alice" || req.Alias != "" || req.IdentityScope != awid.IdentityModeGlobal || req.StableID != stableID || req.DID != memberDID {
+				t.Fatalf("global accept req=%+v", req)
+			}
+			sawGlobalAccept = true
+			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: req.DID, MemberDIDAW: req.StableID, MemberAddress: "aweb.ai/alice", Alias: "alice", IdentityScope: awid.IdentityModeGlobal})
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := awid.EncodeTeamCertificateHeader(cert)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "team_slug": "shared", "namespace": "aweb.ai", "identity_id": "alice-id", "alias": "alice", "server_url": serverURL, "did": req.DID, "stable_id": req.StableID, "address": "aweb.ai/alice", "custody": "self", "identity_scope": awid.IdentityModeGlobal, "created": true, "team_cert": encoded})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/connect":
+			_ = json.NewEncoder(w).Encode(map[string]any{"team_id": teamID, "alias": "alice", "agent_id": "agent-alice", "workspace_id": "workspace-alice", "team_did_key": teamDID})
+		case strings.HasSuffix(r.URL.Path, "/encryption-key") && (r.Method == http.MethodPost || r.Method == http.MethodPut):
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", teamID, "alice")
+		default:
+			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	})
+	target := t.TempDir()
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(target), memberKey); err != nil {
+		t.Fatalf("save key: %v", err)
+	}
+	writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: memberDID, StableID: stableID, Address: "aweb.ai/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: awid.DefaultAWIDRegistryURL, CreatedAt: "2026-09-26T00:00:00Z"})
+	initGlobal = true
+	initName = "alice"
+	jsonFlag = true
+	var out bytes.Buffer
+	if err := acceptInitInviteAndConnect(authTestCmd(&out), target, "aw_inv_global", server.URL); err != nil {
+		t.Fatalf("acceptInitInviteAndConnect: %v\n%s", err, out.String())
+	}
+	if !sawGlobalAccept {
+		t.Fatal("global accept was not sent")
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+	if err != nil {
+		t.Fatalf("load cert: %v", err)
+	}
+	if cert.IdentityScope != awid.IdentityModeGlobal || cert.MemberDIDAW != stableID || cert.MemberAddress != "aweb.ai/alice" {
+		t.Fatalf("cert=%+v", cert)
+	}
+}
+
+func withTestWorkingDir(t *testing.T, dir string, fn func()) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(orig); err != nil {
+			t.Fatalf("restore cwd: %v", err)
+		}
+	}()
+	fn()
+}
+
+func assertInitJoinTarget(t *testing.T, target, teamID, alias, wantDID string, sourceBefore map[string]struct{}, source string) {
+	t.Helper()
+	if after := fileDigestsForTest(t, filepath.Join(source, ".aw")); !reflect.DeepEqual(after, sourceBefore) {
+		t.Fatal("join-from mutated source .aw")
+	}
+	key, err := awid.LoadSigningKey(filepath.Join(target, ".aw", "signing.key"))
+	if err != nil {
+		t.Fatalf("load target signing key: %v", err)
+	}
+	targetDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	if targetDID != wantDID {
+		t.Fatalf("target did=%s want %s", targetDID, wantDID)
+	}
+	sourceKey, err := awid.LoadSigningKey(filepath.Join(source, ".aw", "signing.key"))
+	if err != nil {
+		t.Fatalf("load source signing key: %v", err)
+	}
+	if targetDID == awid.ComputeDIDKey(sourceKey.Public().(ed25519.PublicKey)) {
+		t.Fatalf("target reused source DID %s", targetDID)
+	}
+	workspace, err := awconfig.LoadWorktreeWorkspaceFrom(filepath.Join(target, ".aw", "workspace.yaml"))
+	if err != nil {
+		t.Fatalf("load target workspace: %v", err)
+	}
+	membership := workspace.Membership(teamID)
+	if membership == nil || membership.Alias != alias || membership.WorkspaceID != "workspace-target" {
+		t.Fatalf("target membership=%+v workspace=%+v", membership, workspace)
+	}
+	teamState, err := awconfig.LoadTeamState(target)
+	if err != nil {
+		t.Fatalf("load target team state: %v", err)
+	}
+	if teamState.ActiveTeam != teamID || teamState.Membership(teamID) == nil {
+		t.Fatalf("target team state=%+v", teamState)
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeam(target, teamID)
+	if err != nil {
+		t.Fatalf("load target cert: %v", err)
+	}
+	if cert.MemberDIDKey != wantDID || cert.Alias != alias || cert.IdentityScope != awid.IdentityModeLocal {
+		t.Fatalf("target cert=%+v", cert)
+	}
+}
+
 func TestEnsureTeamAdmissionAuthForInitNonTTYRunsDeviceLogin(t *testing.T) {
 	resetAuthCommandGlobals(t)
 	oldIsTTY := initIsTTY
@@ -505,6 +942,49 @@ func TestEnsureTeamAdmissionAuthForInitNonTTYRunsDeviceLogin(t *testing.T) {
 	}
 	if cfg.AccessToken != "team-access" || cfg.Scope != cliAuthScopeTeamAdmission {
 		t.Fatalf("unexpected cfg=%+v", cfg)
+	}
+}
+
+func TestEnsureTeamAdmissionAuthForInitJSONWritesDeviceDocumentsToStderr(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	oldIsTTY := initIsTTY
+	oldStderr := os.Stderr
+	initIsTTY = func() bool { return false }
+	jsonFlag = true
+	t.Cleanup(func() {
+		initIsTTY = oldIsTTY
+		os.Stderr = oldStderr
+	})
+	t.Setenv("HOME", t.TempDir())
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth/device_authorization":
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "device-secret", "user_code": "ABCD-EFGH", "verification_uri": serverFlag + "/oauth/device", "expires_in": 600, "interval": 1, "resource": serverFlag + "/cli", "scope": cliAuthScopeTeamAdmission})
+		case "/oauth/token":
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "team-access", "token_type": "bearer", "expires_in": 3600, "refresh_token": "team-refresh", "scope": cliAuthScopeTeamAdmission, "resource": serverFlag + "/cli"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	serverFlag = server.URL
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stderrR.Close()
+	os.Stderr = stderrW
+	var stdout bytes.Buffer
+	cmd := authTestCmd(&stdout)
+	if err := ensureTeamAdmissionAuthForInit(cmd); err != nil {
+		t.Fatalf("ensure auth: %v", err)
+	}
+	stderrW.Close()
+	stderrBytes, _ := io.ReadAll(stderrR)
+	if stdout.String() != "" {
+		t.Fatalf("json init auth helper wrote to stdout: %q", stdout.String())
+	}
+	if !strings.Contains(string(stderrBytes), `"status":"pending"`) || !strings.Contains(string(stderrBytes), `"status":"authorized"`) {
+		t.Fatalf("missing json auth documents on stderr: %s", stderrBytes)
 	}
 }
 

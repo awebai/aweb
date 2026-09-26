@@ -69,15 +69,24 @@ func createWorkspaceTeamInviteFromDir(workingDir string) (workspaceTeamInvite, e
 }
 
 func createWorkspaceTeamInviteAt(workingDir, identityHome string) (workspaceTeamInvite, error) {
+	return createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, "")
+}
+
+func createWorkspaceTeamInviteForTeamAt(workingDir, identityHome, explicitTeamID string) (workspaceTeamInvite, error) {
 	workspace, teamState, rootDir, err := loadCurrentWorkspaceAndTeamState(workingDir, identityHome)
 	if err != nil {
 		return workspaceTeamInvite{}, err
 	}
-	membership := awconfig.ActiveMembershipFor(workspace, teamState)
-	if membership == nil {
-		return workspaceTeamInvite{}, fmt.Errorf("workspace %s has no active team", workingDir)
+	teamID := strings.TrimSpace(explicitTeamID)
+	if teamID == "" {
+		membership := awconfig.ActiveMembershipFor(workspace, teamState)
+		if membership == nil {
+			return workspaceTeamInvite{}, fmt.Errorf("workspace %s has no active team", workingDir)
+		}
+		teamID = strings.TrimSpace(membership.TeamID)
+	} else if teamState == nil || teamState.Membership(teamID) == nil {
+		return workspaceTeamInvite{}, usageError("team %q is not present in --join-from memberships", teamID)
 	}
-	teamID := strings.TrimSpace(membership.TeamID)
 	domain, team, err := awid.ParseTeamID(teamID)
 	if err != nil {
 		return workspaceTeamInvite{}, err

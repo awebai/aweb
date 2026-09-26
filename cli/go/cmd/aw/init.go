@@ -174,7 +174,10 @@ func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
 	if err != nil {
 		return err
 	}
-	if applyInitDiscoveryChoice(strings.TrimSpace(choice)) {
+	if handled, err := applyInitDiscoveryChoice(strings.TrimSpace(choice)); handled || err != nil {
+		if err != nil {
+			return err
+		}
 		fmt.Fprintf(os.Stderr, "Confirmed: this will join team %s from %s.\n", initJoinTeam, initJoinFrom)
 		return nil
 	}
@@ -241,29 +244,33 @@ func requireOrPromptInitOutcome(canPrompt bool, action, flag string) error {
 	}
 }
 
-func applyInitDiscoveryChoice(choice string) bool {
+func applyInitDiscoveryChoice(choice string) (bool, error) {
 	if choice == "" {
-		return false
+		return false, nil
 	}
 	entries, err := awconfig.LoadMachineWorkspaceIndex()
 	if err != nil {
-		return false
+		return false, nil
 	}
 	for i, entry := range entries {
 		if choice == fmt.Sprintf("%d", i+1) {
 			if entry.Availability != awconfig.MachineWorkspaceAvailable {
-				return false
+				detail := strings.TrimSpace(entry.AvailabilityError)
+				if detail != "" {
+					return true, usageError("workspace discovery entry %d is unavailable: %s", i+1, detail)
+				}
+				return true, usageError("workspace discovery entry %d is unavailable", i+1)
 			}
 			initJoinFrom = strings.TrimSpace(entry.Path)
 			initJoinTeam = strings.TrimSpace(entry.TeamID)
-			return initJoinFrom != "" && initJoinTeam != ""
+			return initJoinFrom != "" && initJoinTeam != "", nil
 		}
 	}
 	if strings.Contains(choice, string(os.PathSeparator)) || strings.HasPrefix(choice, ".") {
 		initJoinFrom = strings.TrimSpace(choice)
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 func initWorkspaceDiscoveryGuidance() string {
@@ -340,11 +347,11 @@ func runInitJoinFrom(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	_, token, err := createHostedTeamInviteTokenAt(sourceWorkingDir, sourceIdentityHome, teamID, true)
+	invite, err := createWorkspaceTeamInviteForTeamAt(sourceWorkingDir, sourceIdentityHome, teamID)
 	if err != nil {
 		return fmt.Errorf("%w; alternatively use --admission-team-id %s with host authorization", err, teamID)
 	}
-	return acceptInitInviteAndConnect(cmd, wd, token, "")
+	return acceptInitInviteAndConnect(cmd, wd, invite.Token, invite.AwebURL)
 }
 
 func runInitAdmissionTeamID(cmd *cobra.Command) error {
@@ -388,7 +395,13 @@ func ensureTeamAdmissionAuthForInit(cmd *cobra.Command) error {
 	}
 	ctx, cancel := context.WithTimeout(parent, cliAuthLoginTimeout)
 	defer cancel()
-	return runAuthLogin(ctx, cmd)
+	loginCmd := cmd
+	if jsonFlag {
+		loginCmd = &cobra.Command{Use: cmd.Use}
+		loginCmd.SetOut(os.Stderr)
+		loginCmd.SetErr(cmd.ErrOrStderr())
+	}
+	return runAuthLogin(ctx, loginCmd)
 }
 
 func initInviteIdentityScope() string {

@@ -57,15 +57,15 @@ Choose either hosted or self-hosted setup. Do not mix the two paths.
 
 ### Hosted aweb.ai
 
-`--username` creates a hosted account on aweb.ai, along with its namespace,
-team, and API key. To avoid creating one, use `aw init --byod` with a domain you
-control, or take the self-hosted path below, which runs entirely against your
-own Compose stack.
+`--new-account --username` explicitly creates a hosted account on aweb.ai,
+along with its namespace, team, and API key. To avoid creating one, use
+`aw init --byod --new-team` with a domain you control, or take the self-hosted
+path below, which runs entirely against your own Compose stack.
 
 In Alice's existing directory:
 
 ```bash
-aw init --username <username> --name alice
+aw init --new-account --username <username> --name alice
 aw check
 aw team invite
 ```
@@ -143,12 +143,12 @@ re-running `docker compose up` in a shell that has exported it points the `aweb`
 container at its own localhost instead of the `awid` container. The order above
 is safe; a later `docker compose up` in the same shell is not.
 
-In Alice's directory, plain local init creates a local self-custodial identity,
-the `default:local` team when needed, its membership certificate, and the aweb
-workspace projection:
+In Alice's directory, explicit local-team init creates a local self-custodial
+identity, the `default:local` team when needed, its membership certificate, and
+the aweb workspace projection:
 
 ```bash
-aw init --name alice
+aw init --new-team --name alice
 aw check
 aw team invite
 ```

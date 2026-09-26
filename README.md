@@ -133,14 +133,14 @@ aw version
 In Alice's existing directory:
 
 ```bash
-aw init --username <username> --name alice
+aw init --new-account --username <username> --name alice
 aw check
 aw team invite
 ```
 
-`aw init` creates a hosted account, namespace, team, and self-custodial terminal
-identity. `aw team invite` prints a token and the join command. Run it in Bob's
-existing directory:
+`aw init --new-account` explicitly creates a hosted account, namespace, team,
+and self-custodial terminal identity. `aw team invite` prints a token and the
+join command. Run it in Bob's existing directory:
 
 ```bash
 aw team join <invite-token> --name bob
@@ -171,7 +171,7 @@ the local team:
 ```bash
 export AWEB_URL=http://localhost:8000
 export AWID_REGISTRY_URL=http://localhost:8010
-aw init --name alice
+aw init --new-team --name alice
 aw check
 aw team invite
 ```
