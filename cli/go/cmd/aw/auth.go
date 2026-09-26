@@ -19,12 +19,14 @@ import (
 )
 
 const (
-	cliAuthClientID           = "aweb-cli"
-	cliAuthScope              = "cli.workspace_team"
-	cliAuthScopeTeamAdmission = "cli.team_admission"
-	cliAuthDeviceGrant        = "urn:ietf:params:oauth:grant-type:device_code"
-	cliAuthTokenType          = "bearer"
-	cliAuthDefaultTimeout     = 10 * time.Minute
+	cliAuthClientID = "aweb-cli"
+	cliAuthScope    = "cli.workspace_team"
+	// Retired scope (renamed to cli.workspace_team); kept only to tell users to re-login.
+	cliAuthRetiredWorkspaceScope = "cli.personal_workspace"
+	cliAuthScopeTeamAdmission    = "cli.team_admission"
+	cliAuthDeviceGrant           = "urn:ietf:params:oauth:grant-type:device_code"
+	cliAuthTokenType             = "bearer"
+	cliAuthDefaultTimeout        = 10 * time.Minute
 )
 
 var (
@@ -510,16 +512,12 @@ func validateStoredCLIAuthAudience(cfg cliAuthConfig, expectedScope string) erro
 		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth resource %q does not match expected CLI resource %q", got, expectedResource)}
 	}
 	if got := strings.TrimSpace(cfg.Scope); got != "" && got != expectedScope {
-		if expectedScope == cliAuthScope && got == retiredWorkspaceTeamAuthScope() {
+		if expectedScope == cliAuthScope && got == cliAuthRetiredWorkspaceScope {
 			return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth uses the retired default-team scope; run `aw auth login --scope %s` again", cliAuthScope)}
 		}
 		return &cliAuthAudienceError{Message: fmt.Sprintf("stored CLI auth scope %q does not match expected CLI scope %q", got, expectedScope)}
 	}
 	return nil
-}
-
-func retiredWorkspaceTeamAuthScope() string {
-	return "cli." + "per" + "sonal_" + "work" + "space"
 }
 
 func cliAuthConfigFromToken(issuer, resource, scope string, token *cliTokenResponse, now time.Time) cliAuthConfig {
@@ -580,7 +578,7 @@ func selectedCLIAuthScope() (string, error) {
 	case cliAuthScope, cliAuthScopeTeamAdmission:
 		return scope, nil
 	default:
-		if scope == retiredWorkspaceTeamAuthScope() {
+		if scope == cliAuthRetiredWorkspaceScope {
 			return "", usageError("CLI auth scope was renamed; run `aw auth login --scope %s`", cliAuthScope)
 		}
 		return "", usageError("unsupported CLI auth scope %q", scope)
