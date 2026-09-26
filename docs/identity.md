@@ -201,7 +201,11 @@ Rules:
   rule: local is the default, while `--global` is an opt-in to reuse the current
   self-custodial global identity. They do not silently downgrade `--global` to a
   local join. `aw init --workspace-team` is the only `aw init` outcome that
-  accepts `--identity-home`, and the root must be explicit.
+  accepts `--identity-home`, and the root must be explicit. Hosted
+  workspace-team and admission init outcomes also require an explicit expected
+  account id (`--expect-account`) chosen from `aw auth status --json`; the CLI
+  sends it as `expected_account_id` and fails closed if the logged-in account or
+  recorded owner does not match.
 
 Current surfaces include `aw id team accept-invite <token>` and `aw team join
 <token>`. A hosted local accept into an explicit external `--identity-home`

@@ -84,6 +84,7 @@ Flags:
 - `--byod Use a domain you control instead of hosted aweb.ai onboarding`
 - `--do-not-touch-agents-md Do not create or update AGENTS.md or CLAUDE.md during init`
 - `--domain string BYOD domain to use with --byod`
+- `--expect-account string Expected hosted account ID for workspace-team or admission init`
 - `--global Create an addressed self-custodial global identity instead of the default local workspace`
 - `-h, --help help for init`
 - `--human-name string Human name (default: AWEB_HUMAN or $USER)`
@@ -1157,6 +1158,7 @@ accept-invite with the returned token in the target identity root.
 
 Flags:
 - `--alias-hint string Optional suggested member alias for the recipient`
+- `--expect-account string Expected hosted account ID issuing this admission invite`
 - `-h, --help help for admission-invite`
 - `--request-id string Client-generated UUID for retry-safe issuance`
 - `--team-id string Cloud team UUID or canonical AWID team ID to issue an admission invite for`
@@ -1183,6 +1185,7 @@ workspace's default team enroll, or installed-root spawn-authority proof. Non-40
 server errors keep their existing handling.
 
 Flags:
+- `--expect-account string Expected hosted account ID that owns this workspace's default team`
 - `-h, --help help for ensure`
 - `--label string Optional display label for the workspace's default team`
 - `--workspace-key string OATS canonical format-1 workspace key`

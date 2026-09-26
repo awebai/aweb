@@ -59,6 +59,7 @@ var (
 	initAdmissionTeamID    string
 	initWorkspaceTeam      bool
 	initWorkspaceKey       string
+	initExpectedAccountID  string
 	initNewAccount         bool
 	initNewTeam            bool
 )
@@ -111,6 +112,7 @@ func init() {
 	initCmd.Flags().StringVar(&initAdmissionTeamID, "admission-team-id", "", "Add an agent through host human admission for this explicit team ID")
 	initCmd.Flags().BoolVar(&initWorkspaceTeam, "workspace-team", false, "Ensure a workspace's default team using explicit --identity-home and --workspace-key")
 	initCmd.Flags().StringVar(&initWorkspaceKey, "workspace-key", "", "OATS canonical format-1 workspace key for --workspace-team")
+	initCmd.Flags().StringVar(&initExpectedAccountID, "expect-account", "", "Expected hosted account ID for workspace-team or admission init")
 	initCmd.Flags().BoolVar(&initNewAccount, "new-account", false, "Explicitly create a new hosted aweb.ai account")
 	initCmd.Flags().BoolVar(&initNewTeam, "new-team", false, "Explicitly create a new self-hosted/BYOD team")
 
@@ -328,12 +330,14 @@ func runInitWorkspaceTeam(cmd *cobra.Command) error {
 	if strings.TrimSpace(initWorkspaceKey) == "" {
 		return usageError("--workspace-key is required with --workspace-team")
 	}
-	previousKey, previousLabel := teamEnsureWorkspaceKey, teamEnsureLabel
+	previousKey, previousLabel, previousExpected := teamEnsureWorkspaceKey, teamEnsureLabel, teamEnsureExpectedAccountID
 	teamEnsureWorkspaceKey = strings.TrimSpace(initWorkspaceKey)
 	teamEnsureLabel = strings.TrimSpace(initName)
+	teamEnsureExpectedAccountID = strings.TrimSpace(initExpectedAccountID)
 	defer func() {
 		teamEnsureWorkspaceKey = previousKey
 		teamEnsureLabel = previousLabel
+		teamEnsureExpectedAccountID = previousExpected
 	}()
 	return runTeamEnsure(cmd.Context(), cmd)
 }
@@ -362,6 +366,9 @@ func runInitAdmissionTeamID(cmd *cobra.Command) error {
 	if err := ensureTeamAdmissionAuthForInit(cmd); err != nil {
 		return err
 	}
+	previousExpected := teamAdmissionInviteExpectedAccountID
+	teamAdmissionInviteExpectedAccountID = strings.TrimSpace(initExpectedAccountID)
+	defer func() { teamAdmissionInviteExpectedAccountID = previousExpected }()
 	resp, err := issueTeamAdmissionInvite(cmd.Context(), strings.TrimSpace(initAdmissionTeamID), newRegistryReadRequestID(), resolveAliasValue(resolveInitLocalName()))
 	if err != nil {
 		return err

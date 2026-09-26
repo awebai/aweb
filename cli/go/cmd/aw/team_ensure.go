@@ -32,8 +32,9 @@ const (
 )
 
 var (
-	teamEnsureWorkspaceKey string
-	teamEnsureLabel        string
+	teamEnsureWorkspaceKey      string
+	teamEnsureLabel             string
+	teamEnsureExpectedAccountID string
 )
 
 var teamEnsureCmd = &cobra.Command{
@@ -64,6 +65,7 @@ type workspaceTeamEnsureRequest struct {
 	WorkspaceKeySHA256 string `json:"workspace_key_sha256"`
 	Label              string `json:"label,omitempty"`
 	ExpectedTeamID     string `json:"expected_team_id,omitempty"`
+	ExpectedAccountID  string `json:"expected_account_id"`
 }
 
 type workspaceTeamEnsureResponse struct {
@@ -79,6 +81,7 @@ type workspaceTeamEnsureResponse struct {
 type workspaceTeamEnrollRequest struct {
 	WorkspaceKeyFormat int                         `json:"workspace_key_format"`
 	WorkspaceKeySHA256 string                      `json:"workspace_key_sha256"`
+	ExpectedAccountID  string                      `json:"expected_account_id"`
 	TeamID             string                      `json:"team_id"`
 	CanonicalTeamID    string                      `json:"canonical_team_id"`
 	Identity           workspaceTeamEnrollIdentity `json:"identity"`
@@ -138,6 +141,8 @@ type teamEnsureOutput struct {
 	CanSpawn        bool   `json:"can_spawn"`
 	ActorAgentID    string `json:"actor_agent_id,omitempty"`
 	AuthKind        string `json:"auth_kind,omitempty"`
+	AccountID       string `json:"account_id,omitempty"`
+	AccountHandle   string `json:"account_handle,omitempty"`
 }
 
 type workspaceTeamPartialState struct {
@@ -157,6 +162,8 @@ type workspaceTeamBindingState struct {
 	WorkspaceKeySHA256 string `yaml:"workspace_key_sha256"`
 	TeamID             string `yaml:"team_id"`
 	CanonicalTeamID    string `yaml:"canonical_team_id,omitempty"`
+	ExpectedAccountID  string `yaml:"expected_account_id,omitempty"`
+	AccountHandle      string `yaml:"account_handle,omitempty"`
 	BoundAt            string `yaml:"bound_at"`
 }
 
@@ -174,6 +181,7 @@ type workspaceTeamIdentityMaterial struct {
 func init() {
 	teamEnsureCmd.Flags().StringVar(&teamEnsureWorkspaceKey, "workspace-key", "", "OATS canonical format-1 workspace key")
 	teamEnsureCmd.Flags().StringVar(&teamEnsureLabel, "label", "", "Optional display label for the workspace's default team")
+	teamEnsureCmd.Flags().StringVar(&teamEnsureExpectedAccountID, "expect-account", "", "Expected hosted account ID that owns this workspace's default team")
 	teamEnsureCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamEnsureCmd)
 }
@@ -195,7 +203,15 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	cfg, err := requireCLIAuthForTeamEnsure(ctx)
+	cfg, account, err := requireCLIAuthForTeamEnsure(ctx)
+	if err != nil {
+		return err
+	}
+	binding, err := loadWorkspaceTeamBindingMarker(home.Root)
+	if err != nil {
+		return err
+	}
+	expectedAccountID, err := selectExpectedWorkspaceTeamAccountID(teamEnsureExpectedAccountID, binding, account)
 	if err != nil {
 		return err
 	}
@@ -203,6 +219,7 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
 		WorkspaceKeySHA256: workspaceDigest,
 		Label:              strings.TrimSpace(teamEnsureLabel),
+		ExpectedAccountID:  expectedAccountID,
 	})
 	if err != nil {
 		return err
@@ -217,7 +234,7 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	enroll, err := postWorkspaceTeamEnroll(ctx, cfg, ensure, workspaceDigest, material)
+	enroll, err := postWorkspaceTeamEnroll(ctx, cfg, ensure, workspaceDigest, material, expectedAccountID)
 	if err != nil {
 		return err
 	}
@@ -250,7 +267,7 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := saveWorkspaceTeamBindingMarker(home.Root, workspaceTeamBindingState{Version: workspaceTeamPartialVersion, Issuer: cfg.Issuer, WorkspaceKeySHA256: workspaceDigest, TeamID: enroll.TeamID, CanonicalTeamID: enroll.CanonicalTeamID, BoundAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+	if err := saveWorkspaceTeamBindingMarker(home.Root, workspaceTeamBindingState{Version: workspaceTeamPartialVersion, Issuer: cfg.Issuer, WorkspaceKeySHA256: workspaceDigest, TeamID: enroll.TeamID, CanonicalTeamID: enroll.CanonicalTeamID, ExpectedAccountID: expectedAccountID, AccountHandle: strings.TrimSpace(account.Handle), BoundAt: time.Now().UTC().Format(time.RFC3339)}); err != nil {
 		return err
 	}
 	if err := removeWorkspaceTeamPartial(home.Root); err != nil {
@@ -270,6 +287,8 @@ func runTeamEnsure(ctx context.Context, cmd *cobra.Command) error {
 		CanSpawn:        spawn.CanSpawn,
 		ActorAgentID:    spawn.ActorAgentID,
 		AuthKind:        spawn.AuthKind,
+		AccountID:       expectedAccountID,
+		AccountHandle:   strings.TrimSpace(account.Handle),
 	}
 	if jsonFlag {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(out)
@@ -290,41 +309,96 @@ func workspaceTeamDigest(raw string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func requireCLIAuthForTeamEnsure(ctx context.Context) (cliAuthConfig, error) {
+func requireCLIAuthForTeamEnsure(ctx context.Context) (cliAuthConfig, cliAuthAccount, error) {
 	cfg, ok, err := loadCLIAuthConfig()
 	if err != nil {
-		return cliAuthConfig{}, err
+		return cliAuthConfig{}, cliAuthAccount{}, err
 	}
 	if !ok || strings.TrimSpace(cfg.AccessToken) == "" {
-		return cliAuthConfig{}, usageError("authorization-required: run `aw auth login` before `aw team ensure`")
+		return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: run `aw auth login` before `aw team ensure`")
 	}
 	if cfg.ClientID != cliAuthClientID || strings.TrimSpace(cfg.Issuer) == "" || strings.TrimSpace(cfg.Resource) == "" {
-		return cliAuthConfig{}, usageError("authorization-required: stored CLI auth is invalid; run `aw auth login`")
+		return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth is invalid; run `aw auth login`")
 	}
 	if err := validateStoredCLIAuthAudience(cfg, cliAuthScope); err != nil {
-		return cliAuthConfig{}, err
+		return cliAuthConfig{}, cliAuthAccount{}, err
 	}
 	if time.Now().UTC().After(cfg.ExpiresAt) {
 		refreshed, refreshErr := refreshCLIAuthToken(ctx, cfg)
 		if refreshErr != nil {
-			return cliAuthConfig{}, usageError("authorization-required: stored CLI auth is expired or revoked; run `aw auth login`")
+			return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth is expired or revoked; run `aw auth login`")
 		}
 		cfg = refreshed
 		if err := saveCLIAuthConfig(cfg); err != nil {
-			return cliAuthConfig{}, err
+			return cliAuthConfig{}, cliAuthAccount{}, err
 		}
 	}
 	status, err := requestCLIAuthServerStatus(ctx, cfg)
 	if err != nil {
 		if diagnostic, ok := workspaceTeamUnsupportedServerDiagnostic("CLI auth status", "/api/v1/cli-auth/status", err); ok {
-			return cliAuthConfig{}, diagnostic
+			return cliAuthConfig{}, cliAuthAccount{}, diagnostic
 		}
-		return cliAuthConfig{}, usageError("authorization-required: stored CLI auth is not authorized; run `aw auth login`")
+		return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth is not authorized; run `aw auth login`")
 	}
 	if strings.TrimSpace(status.Status) != "" && strings.TrimSpace(status.Status) != "authorized" {
-		return cliAuthConfig{}, usageError("authorization-required: stored CLI auth status is %s; run `aw auth login`", status.Status)
+		return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth status is %s; run `aw auth login`", status.Status)
 	}
-	return cfg, nil
+	account, err := requireAuthorizedCLIAuthAccount(status, cliAuthScope, "aw auth login")
+	if err != nil {
+		return cliAuthConfig{}, cliAuthAccount{}, err
+	}
+	return cfg, account, nil
+}
+
+func requireAuthorizedCLIAuthAccount(status cliAuthStatusOutput, scope, remedy string) (cliAuthAccount, error) {
+	account := cliAuthAccount{}
+	if status.Account != nil {
+		account = *status.Account
+	}
+	account.ID = strings.TrimSpace(account.ID)
+	account.Handle = strings.TrimSpace(account.Handle)
+	if account.ID == "" {
+		return cliAuthAccount{}, usageError("authorization-required: CLI auth status for %s did not include account.id; run `%s` again", scope, remedy)
+	}
+	return account, nil
+}
+
+func formatCLIAuthAccount(handle, id string) string {
+	handle = strings.TrimSpace(handle)
+	id = strings.TrimSpace(id)
+	if handle != "" && id != "" {
+		return fmt.Sprintf("%s (%s)", handle, id)
+	}
+	return firstNonEmptyString(id, handle, "<unknown>")
+}
+
+func cliAuthAccountMismatchError(scope, expectedID, expectedHandle string, account cliAuthAccount) error {
+	return usageError("authorization-required: logged-in account %s does not match expected account %s; run `aw auth logout --scope %s && aw auth login --scope %s` as %s", formatCLIAuthAccount(account.Handle, account.ID), formatCLIAuthAccount(expectedHandle, expectedID), scope, scope, formatCLIAuthAccount(expectedHandle, expectedID))
+}
+
+func selectExpectedWorkspaceTeamAccountID(explicit string, binding *workspaceTeamBindingState, account cliAuthAccount) (string, error) {
+	expected := strings.TrimSpace(explicit)
+	recorded := ""
+	recordedHandle := ""
+	if binding != nil {
+		recorded = strings.TrimSpace(binding.ExpectedAccountID)
+		recordedHandle = strings.TrimSpace(binding.AccountHandle)
+	}
+	if expected != "" && recorded != "" && expected != recorded {
+		return "", usageError("expected account conflict: explicit expected account %s does not match recorded owner %s", formatCLIAuthAccount("", expected), formatCLIAuthAccount(recordedHandle, recorded))
+	}
+	expectedHandle := ""
+	if expected == "" {
+		expected = recorded
+		expectedHandle = recordedHandle
+	}
+	if expected == "" {
+		return "", usageError("--expect-account is required for first workspace-team enrollment; run `aw auth status --json` and choose the intended account")
+	}
+	if got := strings.TrimSpace(account.ID); got != "" && got != expected {
+		return "", cliAuthAccountMismatchError(cliAuthScope, expected, expectedHandle, account)
+	}
+	return expected, nil
 }
 
 func postWorkspaceTeamEnsure(ctx context.Context, cfg cliAuthConfig, req workspaceTeamEnsureRequest) (*workspaceTeamEnsureResponse, error) {
@@ -335,7 +409,7 @@ func postWorkspaceTeamEnsure(ctx context.Context, cfg cliAuthConfig, req workspa
 	return &out, nil
 }
 
-func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *workspaceTeamEnsureResponse, digest string, material workspaceTeamIdentityMaterial) (*workspaceTeamEnrollResponse, error) {
+func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *workspaceTeamEnsureResponse, digest string, material workspaceTeamIdentityMaterial, expectedAccountID string) (*workspaceTeamEnrollResponse, error) {
 	timestamp := time.Now().UTC().Format(time.RFC3339)
 	issuerAud, err := cliAuthIssuerAudience(cfg.Issuer)
 	if err != nil {
@@ -354,6 +428,7 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 		"workspace_key_sha256": digest,
 		"team_id":              strings.TrimSpace(ensure.TeamID),
 		"canonical_team_id":    strings.TrimSpace(ensure.CanonicalTeamID),
+		"expected_account_id":  strings.TrimSpace(expectedAccountID),
 		"did":                  material.DIDKey,
 		"stable_id":            stableID,
 		"identity_scope":       material.IdentityScope,
@@ -366,6 +441,7 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 	req := workspaceTeamEnrollRequest{
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
 		WorkspaceKeySHA256: digest,
+		ExpectedAccountID:  strings.TrimSpace(expectedAccountID),
 		TeamID:             strings.TrimSpace(ensure.TeamID),
 		CanonicalTeamID:    strings.TrimSpace(ensure.CanonicalTeamID),
 		Identity: workspaceTeamEnrollIdentity{
@@ -388,6 +464,9 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 func workspaceTeamEnsureEndpointError(feature, path string, err error) error {
 	if diagnostic, ok := workspaceTeamUnsupportedServerDiagnostic(feature, path, err); ok {
 		return diagnostic
+	}
+	if cliAuthErrorCode(err) == "cli_account_owner_mismatch" {
+		return usageError("cli_account_owner_mismatch: %s rejected the expected account before mutation; run `aw auth status --json` and choose the owning account", feature)
 	}
 	return err
 }

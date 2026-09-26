@@ -128,6 +128,8 @@ type cliAuthAudienceError struct {
 
 type cliAuthHTTPStatusError struct {
 	StatusCode int
+	ErrorCode  string
+	Detail     string
 }
 
 func (e *cliAuthAudienceError) Error() string {
@@ -140,6 +142,12 @@ func (e *cliAuthAudienceError) Error() string {
 func (e *cliAuthHTTPStatusError) Error() string {
 	if e == nil {
 		return ""
+	}
+	if strings.TrimSpace(e.ErrorCode) != "" {
+		return fmt.Sprintf("auth request failed: http %d: %s", e.StatusCode, strings.TrimSpace(e.ErrorCode))
+	}
+	if strings.TrimSpace(e.Detail) != "" {
+		return fmt.Sprintf("auth request failed: http %d: %s", e.StatusCode, strings.TrimSpace(e.Detail))
 	}
 	return fmt.Sprintf("auth request failed: http %d", e.StatusCode)
 }
@@ -154,12 +162,18 @@ func (e *cliOAuthError) Error() string {
 	return e.ErrorCode
 }
 
+type cliAuthAccount struct {
+	ID     string `json:"id"`
+	Handle string `json:"handle,omitempty"`
+}
+
 type cliAuthStatusOutput struct {
-	Status    string `json:"status"`
-	Issuer    string `json:"issuer,omitempty"`
-	Resource  string `json:"resource,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	Status    string          `json:"status"`
+	Issuer    string          `json:"issuer,omitempty"`
+	Resource  string          `json:"resource,omitempty"`
+	Scope     string          `json:"scope,omitempty"`
+	ExpiresAt string          `json:"expires_at,omitempty"`
+	Account   *cliAuthAccount `json:"account,omitempty"`
 }
 
 func runAuthLogin(ctx context.Context, cmd *cobra.Command) error {
@@ -326,6 +340,12 @@ func printCLIAuthStatus(cmd *cobra.Command, out cliAuthStatusOutput) error {
 	if out.ExpiresAt != "" {
 		fmt.Fprintf(cmd.OutOrStdout(), "expires_at: %s\n", out.ExpiresAt)
 	}
+	if out.Account != nil && strings.TrimSpace(out.Account.ID) != "" {
+		fmt.Fprintf(cmd.OutOrStdout(), "account_id: %s\n", strings.TrimSpace(out.Account.ID))
+		if strings.TrimSpace(out.Account.Handle) != "" {
+			fmt.Fprintf(cmd.OutOrStdout(), "account_handle: %s\n", strings.TrimSpace(out.Account.Handle))
+		}
+	}
 	return nil
 }
 
@@ -468,7 +488,7 @@ func doCLIAuthJSON(req *http.Request, out any) error {
 		if resp.StatusCode == http.StatusUnauthorized {
 			return &cliOAuthError{ErrorCode: "expired", ErrorDescription: "stored CLI access token is not authorized"}
 		}
-		return &cliAuthHTTPStatusError{StatusCode: resp.StatusCode}
+		return cliAuthHTTPStatusErrorFromResponse(resp.StatusCode, data)
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, awid.MaxResponseSize))
@@ -482,6 +502,51 @@ func doCLIAuthJSON(req *http.Request, out any) error {
 		return nil
 	}
 	return json.Unmarshal(data, out)
+}
+
+func cliAuthHTTPStatusErrorFromResponse(statusCode int, data []byte) error {
+	httpErr := &cliAuthHTTPStatusError{StatusCode: statusCode}
+	var doc struct {
+		Code   string          `json:"code"`
+		Error  string          `json:"error"`
+		Detail json.RawMessage `json:"detail"`
+	}
+	if json.Unmarshal(data, &doc) == nil {
+		httpErr.ErrorCode = firstNonEmptyString(doc.Code, doc.Error)
+		if len(doc.Detail) > 0 {
+			var detailString string
+			if json.Unmarshal(doc.Detail, &detailString) == nil {
+				httpErr.Detail = strings.TrimSpace(detailString)
+				if httpErr.ErrorCode == "" {
+					httpErr.ErrorCode = strings.TrimSpace(detailString)
+				}
+			} else {
+				var detailObject struct {
+					Code    string `json:"code"`
+					Error   string `json:"error"`
+					Message string `json:"message"`
+					Detail  string `json:"detail"`
+				}
+				if json.Unmarshal(doc.Detail, &detailObject) == nil {
+					httpErr.ErrorCode = firstNonEmptyString(httpErr.ErrorCode, detailObject.Code, detailObject.Error)
+					httpErr.Detail = firstNonEmptyString(detailObject.Message, detailObject.Detail)
+				}
+			}
+		}
+	}
+	return httpErr
+}
+
+func cliAuthErrorCode(err error) string {
+	var oauthErr *cliOAuthError
+	if errors.As(err, &oauthErr) {
+		return strings.TrimSpace(oauthErr.ErrorCode)
+	}
+	var httpErr *cliAuthHTTPStatusError
+	if errors.As(err, &httpErr) {
+		return strings.TrimSpace(httpErr.ErrorCode)
+	}
+	return ""
 }
 
 func validateCLIAuthTokenResponse(token *cliTokenResponse, expectedResource, expectedScope string) error {

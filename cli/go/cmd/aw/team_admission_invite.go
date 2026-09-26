@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -14,9 +15,10 @@ import (
 const teamAdmissionInvitePathTemplate = "/api/v1/teams/{team_id}/admission-invite"
 
 var (
-	teamAdmissionInviteTeamID    string
-	teamAdmissionInviteRequestID string
-	teamAdmissionInviteAliasHint string
+	teamAdmissionInviteTeamID            string
+	teamAdmissionInviteRequestID         string
+	teamAdmissionInviteAliasHint         string
+	teamAdmissionInviteExpectedAccountID string
 )
 
 var teamAdmissionInviteCmd = &cobra.Command{
@@ -34,9 +36,10 @@ var teamAdmissionInviteCmd = &cobra.Command{
 }
 
 type teamAdmissionInviteRequest struct {
-	AliasHint        string `json:"alias_hint,omitempty"`
-	RequestID        string `json:"request_id"`
-	ExpiresInSeconds int    `json:"expires_in_seconds"`
+	AliasHint         string `json:"alias_hint,omitempty"`
+	RequestID         string `json:"request_id"`
+	ExpiresInSeconds  int    `json:"expires_in_seconds"`
+	ExpectedAccountID string `json:"expected_account_id"`
 }
 
 type teamAdmissionInviteResponse struct {
@@ -72,6 +75,7 @@ func init() {
 	teamAdmissionInviteCmd.Flags().StringVar(&teamAdmissionInviteTeamID, "team-id", "", "Cloud team UUID or canonical AWID team ID to issue an admission invite for")
 	teamAdmissionInviteCmd.Flags().StringVar(&teamAdmissionInviteRequestID, "request-id", "", "Client-generated UUID for retry-safe issuance")
 	teamAdmissionInviteCmd.Flags().StringVar(&teamAdmissionInviteAliasHint, "alias-hint", "", "Optional suggested member alias for the recipient")
+	teamAdmissionInviteCmd.Flags().StringVar(&teamAdmissionInviteExpectedAccountID, "expect-account", "", "Expected hosted account ID issuing this admission invite")
 	teamAdmissionInviteCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamAdmissionInviteCmd)
 	identityHomeNeutralCommandExemptions[teamAdmissionInviteCmd] = struct{}{}
@@ -116,14 +120,21 @@ func issueTeamAdmissionInvite(ctx context.Context, teamID, requestID, aliasHint 
 	if requestID == "" {
 		return teamAdmissionInviteResponse{}, usageError("--request-id is required")
 	}
-	cfg, err := requireCLIAuthForScope(ctx, cliAuthScopeTeamAdmission, "aw auth login --scope "+cliAuthScopeTeamAdmission)
+	cfg, account, err := requireCLIAuthForScope(ctx, cliAuthScopeTeamAdmission, "aw auth login --scope "+cliAuthScopeTeamAdmission)
+	if err != nil {
+		return teamAdmissionInviteResponse{}, err
+	}
+	expectedAccountID, err := selectExpectedAdmissionAccountID(teamAdmissionInviteExpectedAccountID, account)
 	if err != nil {
 		return teamAdmissionInviteResponse{}, err
 	}
 	path := strings.Replace(teamAdmissionInvitePathTemplate, "{team_id}", url.PathEscape(teamID), 1)
-	req := teamAdmissionInviteRequest{AliasHint: strings.TrimSpace(aliasHint), RequestID: requestID, ExpiresInSeconds: 600}
+	req := teamAdmissionInviteRequest{AliasHint: strings.TrimSpace(aliasHint), RequestID: requestID, ExpiresInSeconds: 600, ExpectedAccountID: expectedAccountID}
 	var resp teamAdmissionInviteResponse
 	if err := postCLIAuthJSON(ctx, cfg.Issuer, path, cfg.AccessToken, req, &resp); err != nil {
+		if cliAuthErrorCode(err) == "cli_account_owner_mismatch" {
+			return teamAdmissionInviteResponse{}, usageError("cli_account_owner_mismatch: team admission-invite rejected the expected account before mutation; run `aw auth status --scope %s --json` and choose the owning account", cliAuthScopeTeamAdmission)
+		}
 		return teamAdmissionInviteResponse{}, err
 	}
 	if strings.TrimSpace(resp.Token) == "" {
@@ -158,36 +169,54 @@ func teamAdmissionInviteOutputFromResponse(resp teamAdmissionInviteResponse, req
 	}
 }
 
-func requireCLIAuthForScope(ctx context.Context, scope, remedy string) (cliAuthConfig, error) {
+func requireCLIAuthForScope(ctx context.Context, scope, remedy string) (cliAuthConfig, cliAuthAccount, error) {
 	cfg, ok, err := loadCLIAuthConfigForScope(scope)
 	if err != nil {
-		return cliAuthConfig{}, err
+		return cliAuthConfig{}, cliAuthAccount{}, err
 	}
 	if !ok || strings.TrimSpace(cfg.AccessToken) == "" {
-		return cliAuthConfig{}, usageError("authorization-required: run `%s` before this command", remedy)
+		return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: run `%s` before this command", remedy)
 	}
 	if cfg.ClientID != cliAuthClientID || strings.TrimSpace(cfg.Issuer) == "" || strings.TrimSpace(cfg.Resource) == "" {
-		return cliAuthConfig{}, usageError("authorization-required: stored CLI auth for %s is invalid; run `%s`", scope, remedy)
+		return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth for %s is invalid; run `%s`", scope, remedy)
 	}
 	if err := validateStoredCLIAuthAudience(cfg, scope); err != nil {
-		return cliAuthConfig{}, err
+		return cliAuthConfig{}, cliAuthAccount{}, err
 	}
 	if time.Now().UTC().After(cfg.ExpiresAt) {
 		refreshed, refreshErr := refreshCLIAuthToken(ctx, cfg)
 		if refreshErr != nil {
-			return cliAuthConfig{}, usageError("authorization-required: stored CLI auth for %s is expired or revoked; run `%s`", scope, remedy)
+			return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth for %s is expired or revoked; run `%s`", scope, remedy)
 		}
 		cfg = refreshed
 		if err := saveCLIAuthConfigForScope(scope, cfg); err != nil {
-			return cliAuthConfig{}, err
+			return cliAuthConfig{}, cliAuthAccount{}, err
 		}
 	}
 	status, err := requestCLIAuthServerStatus(ctx, cfg)
 	if err != nil {
-		return cliAuthConfig{}, err
+		if statusCode, ok := cliAuthHTTPStatusCode(err); ok && (statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden) {
+			return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth for %s is not authorized; run `%s`", scope, remedy)
+		}
+		return cliAuthConfig{}, cliAuthAccount{}, err
 	}
 	if strings.TrimSpace(status.Status) != "" && strings.TrimSpace(status.Status) != "authorized" {
-		return cliAuthConfig{}, usageError("authorization-required: stored CLI auth for %s is %s; run `%s`", scope, status.Status, remedy)
+		return cliAuthConfig{}, cliAuthAccount{}, usageError("authorization-required: stored CLI auth for %s is %s; run `%s`", scope, status.Status, remedy)
 	}
-	return cfg, nil
+	account, err := requireAuthorizedCLIAuthAccount(status, scope, remedy)
+	if err != nil {
+		return cliAuthConfig{}, cliAuthAccount{}, err
+	}
+	return cfg, account, nil
+}
+
+func selectExpectedAdmissionAccountID(explicit string, account cliAuthAccount) (string, error) {
+	expected := strings.TrimSpace(explicit)
+	if expected == "" {
+		return "", usageError("--expect-account is required for team admission-invite; run `aw auth status --scope %s --json` and choose the intended account", cliAuthScopeTeamAdmission)
+	}
+	if got := strings.TrimSpace(account.ID); got != "" && got != expected {
+		return "", cliAuthAccountMismatchError(cliAuthScopeTeamAdmission, expected, "", account)
+	}
+	return expected, nil
 }

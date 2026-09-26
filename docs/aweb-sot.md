@@ -1049,14 +1049,19 @@ Supported clean-directory outcomes:
   default identity scope is local. With `--global`, this reuses the current
   self-custodial global identity; if none exists the CLI fails with `aw id
   create` guidance rather than silently creating a local identity.
-- `--admission-team-id <team>`: use host CLI auth with scope
-  `cli.team_admission` to issue one admission invite, then accept and connect.
-  Missing CLI auth starts bounded device authorization in both TTY and
-  noninteractive modes; TTY refusal exits nonzero and prints the exact `aw auth
-  login --scope cli.team_admission` command.
-- `--workspace-team --workspace-key <key> --identity-home <root>`: ensure a
-  hosted workspace's default team in the explicit identity home. The identity-home
-  root is never inferred for this outcome.
+- `--admission-team-id <team> --expect-account <account-id>`: use host CLI
+  auth with scope `cli.team_admission` to issue one admission invite, then
+  accept and connect. Missing CLI auth starts bounded device authorization in
+  both TTY and noninteractive modes; TTY refusal exits nonzero and prints the
+  exact `aw auth login --scope cli.team_admission` command. The expected
+  account comes from explicit operator choice after `aw auth status --json`; it
+  is sent as `expected_account_id` and mismatches fail closed before mutation.
+- `--workspace-team --workspace-key <key> --identity-home <root>
+  --expect-account <account-id>`: ensure a hosted workspace's default team in
+  the explicit identity home. The identity-home root is never inferred for this
+  outcome. First enrollment requires the explicit expected account id; retries
+  use the owner recorded in `workspace-team-binding.yaml`, and an explicit value
+  that disagrees with the recorded owner fails closed.
 
 DEFAULT — Hosted (use a managed namespace from a hosted operator):
 - User picks a username (`--username` flag in noninteractive mode,

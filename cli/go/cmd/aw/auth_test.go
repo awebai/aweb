@@ -19,15 +19,22 @@ import (
 func resetAuthCommandGlobals(t *testing.T) {
 	t.Helper()
 	oldServer, oldJSON, oldTimeout, oldScope := serverFlag, jsonFlag, cliAuthLoginTimeout, cliAuthScopeFlag
+	oldAdmissionExpected, oldTeamExpected, oldInitExpected := teamAdmissionInviteExpectedAccountID, teamEnsureExpectedAccountID, initExpectedAccountID
 	serverFlag = ""
 	jsonFlag = false
 	cliAuthLoginTimeout = cliAuthDefaultTimeout
 	cliAuthScopeFlag = cliAuthScope
+	teamAdmissionInviteExpectedAccountID = ""
+	teamEnsureExpectedAccountID = ""
+	initExpectedAccountID = ""
 	t.Cleanup(func() {
 		serverFlag = oldServer
 		jsonFlag = oldJSON
 		cliAuthLoginTimeout = oldTimeout
 		cliAuthScopeFlag = oldScope
+		teamAdmissionInviteExpectedAccountID = oldAdmissionExpected
+		teamEnsureExpectedAccountID = oldTeamExpected
+		initExpectedAccountID = oldInitExpected
 	})
 }
 
@@ -240,6 +247,61 @@ func TestAuthStatusRefreshesWithoutPrintingTokens(t *testing.T) {
 	}
 	if cfg.AccessToken != "new-access" || cfg.RefreshToken != "new-refresh" {
 		t.Fatalf("refresh not persisted atomically: %+v", cfg)
+	}
+}
+
+func TestAuthStatusIncludesAuthoritativeAccountFromServer(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/cli-auth/status" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer access-secret" {
+			t.Fatalf("Authorization=%q", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-1", "handle": "alice"}})
+	}))
+	defer server.Close()
+	if err := saveCLIAuthConfig(cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", Scope: cliAuthScope, ClientID: cliAuthClientID, AccessToken: "access-secret", RefreshToken: "refresh-secret", TokenType: "bearer", ExpiresAt: time.Now().Add(time.Hour), UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	jsonFlag = true
+	var out bytes.Buffer
+	if err := runAuthStatus(context.Background(), authTestCmd(&out)); err != nil {
+		t.Fatalf("runAuthStatus: %v", err)
+	}
+	var got cliAuthStatusOutput
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Account == nil || got.Account.ID != "acct-1" || got.Account.Handle != "alice" {
+		t.Fatalf("account=%+v", got.Account)
+	}
+}
+
+func TestAuthStatusPlainPrintsAuthoritativeAccount(t *testing.T) {
+	resetAuthCommandGlobals(t)
+	t.Setenv("HOME", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/cli-auth/status" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-1", "handle": "alice"}})
+	}))
+	defer server.Close()
+	if err := saveCLIAuthConfig(cliAuthConfig{Issuer: server.URL, Resource: server.URL + "/cli", Scope: cliAuthScope, ClientID: cliAuthClientID, AccessToken: "access-secret", RefreshToken: "refresh-secret", TokenType: "bearer", ExpiresAt: time.Now().Add(time.Hour), UpdatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := runAuthStatus(context.Background(), authTestCmd(&out)); err != nil {
+		t.Fatalf("runAuthStatus: %v", err)
+	}
+	stdout := out.String()
+	for _, want := range []string{"status: authorized", "account_id: acct-1", "account_handle: alice"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("stdout missing %q: %s", want, stdout)
+		}
 	}
 }
 

@@ -686,8 +686,10 @@ func TestInitJoinFromDenialLeavesTargetEmptyAndSuggestsAdmission(t *testing.T) {
 
 func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 	resetAuthCommandGlobals(t)
-	oldAdmission, oldName, oldJSON := initAdmissionTeamID, initName, jsonFlag
-	t.Cleanup(func() { initAdmissionTeamID, initName, jsonFlag = oldAdmission, oldName, oldJSON })
+	oldAdmission, oldName, oldJSON, oldExpected := initAdmissionTeamID, initName, jsonFlag, initExpectedAccountID
+	t.Cleanup(func() {
+		initAdmissionTeamID, initName, jsonFlag, initExpectedAccountID = oldAdmission, oldName, oldJSON, oldExpected
+	})
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	teamID := "shared:aweb.ai"
@@ -700,14 +702,14 @@ func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/cli-auth/status":
-			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "scope": cliAuthScopeTeamAdmission, "resource": serverURL + "/cli"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "scope": cliAuthScopeTeamAdmission, "resource": serverURL + "/cli", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/teams/"+teamID+"/admission-invite":
 			sawAdmission = true
 			var req teamAdmissionInviteRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				t.Fatal(err)
 			}
-			if req.AliasHint != "target" || req.RequestID == "" {
+			if req.AliasHint != "target" || req.RequestID == "" || req.ExpectedAccountID != "acct-test" {
 				t.Fatalf("admission req=%+v", req)
 			}
 			_ = json.NewEncoder(w).Encode(teamAdmissionInviteResponse{InviteID: "invite-admission", Token: "aw_inv_admission", MaxUses: 1, TeamID: teamID, CanonicalTeamID: teamID, ServerURL: serverURL})
@@ -747,6 +749,7 @@ func TestInitAdmissionTeamIDIssuesAcceptsAndConnects(t *testing.T) {
 	withTestWorkingDir(t, target, func() {
 		initAdmissionTeamID = teamID
 		initName = "target"
+		initExpectedAccountID = "acct-test"
 		jsonFlag = true
 		var out bytes.Buffer
 		cmd := authTestCmd(&out)
