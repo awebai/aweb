@@ -115,6 +115,66 @@ func TestBundledGrantMailReadOnlyUsesManualAckAndDeliveryStore(t *testing.T) {
 	}
 }
 
+func TestBundledReadinessStatusReportsWaitingReason(t *testing.T) {
+	if _, err := os.Stat("channel_core_runner_bundle.mjs"); err != nil {
+		t.Skipf("bundle unavailable: %v", err)
+	}
+	root := t.TempDir()
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	failPath := filepath.Join(root, "inspect-fails")
+	if err := os.WriteFile(failPath, []byte("fail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oats := writeFailingThenIdleOATS(t, root, inputPath, failPath)
+	server := mailServer(t, "ready mail")
+	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
+	reg := Registration{Home: filepath.Join(root, "terminal"), IdentityHome: grantHome, Delivery: DeliverySession}
+	if err := os.MkdirAll(reg.Home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: oats, AWCommand: writeFakeAW(t, root, ""), Coalesce: time.Millisecond, RateLimit: time.Millisecond, InspectDelay: 25 * time.Millisecond})
+	defer child.Stop()
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running && st.LastError == "" })
+	child.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-wait", ConversationID: "conv"})
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
+		return st.TraceStage == "lane_job_started" && st.ReadinessWaiting == "inspect_error" && strings.Contains(st.ReadinessError, "inspect unavailable")
+	})
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
+		return st.ReadinessWaiting == "inspect_start" && strings.Contains(st.ReadinessError, "inspect unavailable")
+	})
+	if err := os.Remove(failPath); err != nil {
+		t.Fatal(err)
+	}
+	waitForFileContains(t, inputPath, "ready mail")
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
+		return st.TraceStage == "lane_job_completed" && st.ReadinessState == "idle" && st.ReadinessError == "" && st.ReadinessWaiting == "ready"
+	})
+}
+
+func TestChannelCoreRestartReportsExitAndClearsPerRunStatus(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "crashed-once")
+	writeFakeNode(t, root, "#!/bin/sh\nif [ ! -f "+shellQuoteForTest(marker)+" ]; then\n  printf '{\"type\":\"status\",\"ready\":true,\"trace_stage\":\"lane_job_started\",\"trace_message_id\":\"dead\",\"readiness_waiting\":\"inspect_start\",\"readiness_error\":\"dead readiness\",\"ambient_queued\":7,\"ambient_dropped\":8}\n'\n  printf 'uncaught Error: write EPIPE\n' >&2\n  printf x > "+shellQuoteForTest(marker)+"\n  exit 42\nfi\nprintf '{\"type\":\"status\",\"ready\":true}\n'\nwhile IFS= read -r line; do :; done\n")
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	child := NewChannelCoreRunner(store).StartChild(context.Background(), Registration{Home: filepath.Join(root, "terminal")}, channelCoreChildConfig{})
+	defer child.Stop()
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
+		return st.Running && st.RestartCount == 1 && strings.Contains(st.LastExit, "exit status 42") && strings.Contains(st.LastExit, "write EPIPE")
+	})
+	st := child.Status()
+	if st.TraceStage != "" || st.TraceMessageID != "" || st.ReadinessWaiting != "" || st.ReadinessError != "" || st.AmbientQueued != 0 || st.AmbientDropped != 0 {
+		t.Fatalf("stale per-run status survived restart: %#v", st)
+	}
+}
+
 func TestBundledGrantChatReadMarksReadWithGrantAuth(t *testing.T) {
 	root := t.TempDir()
 	store, _ := NewStore(filepath.Join(root, "state"))
@@ -298,8 +358,23 @@ func writeFakeNode(t *testing.T, root, script string) string {
 
 func writeFakeOATS(t *testing.T, root, inputPath string) string {
 	t.Helper()
+	return writeStateOATS(t, root, inputPath, "idle")
+}
+
+func writeStateOATS(t *testing.T, root, inputPath, state string) string {
+	t.Helper()
 	path := filepath.Join(root, "oats")
-	script := "#!/bin/sh\nif [ \"$1 $2\" = \"session inspect\" ]; then printf '{\"ok\":true,\"result\":{\"present\":true,\"state\":\"idle\"}}\\n'; exit 0; fi\nif [ \"$1 $2\" = \"session input\" ]; then cat >> " + shellQuoteForTest(inputPath) + "; printf '{\"ok\":true,\"result\":{\"submitted\":true}}\\n'; exit 0; fi\nprintf '{\"ok\":false,\"error\":{\"message\":\"bad oats\"}}\\n'; exit 1\n"
+	script := "#!/bin/sh\nif [ \"$1 $2\" = \"session inspect\" ]; then printf '{\"ok\":true,\"result\":{\"present\":true,\"state\":\"" + state + "\"}}\\n'; exit 0; fi\nif [ \"$1 $2\" = \"session input\" ]; then cat >> " + shellQuoteForTest(inputPath) + "; printf '{\"ok\":true,\"result\":{\"submitted\":true}}\\n'; exit 0; fi\nprintf '{\"ok\":false,\"error\":{\"message\":\"bad oats\"}}\\n'; exit 1\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func writeFailingThenIdleOATS(t *testing.T, root, inputPath, failPath string) string {
+	t.Helper()
+	path := filepath.Join(root, "oats")
+	script := "#!/bin/sh\nif [ \"$1 $2\" = \"session inspect\" ]; then if [ -f " + shellQuoteForTest(failPath) + " ]; then printf '{\"ok\":false,\"error\":{\"message\":\"inspect unavailable\"}}\\n'; exit 1; fi; printf '{\"ok\":true,\"result\":{\"present\":true,\"state\":\"idle\"}}\\n'; exit 0; fi\nif [ \"$1 $2\" = \"session input\" ]; then cat >> " + shellQuoteForTest(inputPath) + "; printf '{\"ok\":true,\"result\":{\"submitted\":true}}\\n'; exit 0; fi\nprintf '{\"ok\":false,\"error\":{\"message\":\"bad oats\"}}\\n'; exit 1\n"
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -9964,10 +9964,14 @@ function createTerminalDeliveryReadinessGate(options) {
         const rateDelay = lastDeliveryAt === 0 ? 0 : rateLimitMs - (now - lastDeliveryAt);
         const windowDelay = Math.max(0, coalesceDelay, rateDelay);
         if (windowDelay > 0) {
+          const waitReason = rateDelay > coalesceDelay ? "rate_limit" : "coalesce";
+          options.onReadinessStatus?.({ waiting: waitReason });
           await sleep(windowDelay, options.signal);
+          options.onReadinessStatus?.({ waiting: `${waitReason}_done` });
           continue;
         }
         if (options.isPaused?.()) {
+          options.onReadinessStatus?.({ paused: true, waiting: "paused" });
           options.log?.("aweb: terminal delivery is paused; delivery waits before fetch");
           await sleep(inspectDelayMs, options.signal);
           continue;
@@ -9978,6 +9982,7 @@ function createTerminalDeliveryReadinessGate(options) {
         } catch (error) {
           if (error instanceof TerminalAbortError) throw error;
           const detail = error instanceof Error ? error.message : String(error);
+          options.onReadinessStatus?.({ error: detail, waiting: "inspect_error" });
           options.log?.(`aweb: terminal inspect failed; delivery waits before fetch: ${detail}`);
           await sleep(inspectDelayMs, options.signal);
           continue;
@@ -9986,28 +9991,34 @@ function createTerminalDeliveryReadinessGate(options) {
         const present = inspection.present ?? true;
         if (present) confirmedLive = true;
         const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, present);
+        options.onReadinessStatus?.({ state, error: "", paused: false });
         if (confirmedLive && (state === "stopped" || state === "not-launched")) {
+          options.onReadinessStatus?.({ state, waiting: "inactive" });
           options.onInactive?.(state);
           rejectWaiters(new TerminalInactiveError(state));
           return;
         }
         if (!confirmedLive) {
+          options.onReadinessStatus?.({ state, waiting: "not_confirmed_live" });
           options.log?.("aweb: terminal has not confirmed live yet; delivery waits before fetch");
           await sleep(inspectDelayMs, options.signal);
           continue;
         }
         const leadIntent = waiters.find((waiter) => waiter.intent !== "ambient")?.intent || "wake";
         if (!terminalReadyForIntent(state, leadIntent)) {
+          options.onReadinessStatus?.({ state, waiting: `not_ready:${leadIntent}` });
           options.log?.(`aweb: terminal not ready for ${leadIntent} delivery (state=${state}); delivery waits before fetch`);
           await sleep(inspectDelayMs, options.signal);
           continue;
         }
         throwIfAborted2(options.signal);
         if (options.isPaused?.()) {
+          options.onReadinessStatus?.({ state, paused: true, waiting: "paused_after_inspect" });
           options.log?.("aweb: terminal delivery is paused after inspect; delivery waits before fetch");
           await sleep(inspectDelayMs, options.signal);
           continue;
         }
+        options.onReadinessStatus?.({ state, error: "", paused: false, waiting: "ready" });
         const batch = waiters.splice(0, waiters.length);
         lastDeliveryAt = Date.now();
         for (const waiter of batch) waiter.resolve();
@@ -10042,6 +10053,7 @@ function createTerminalDeliveryReadinessGate(options) {
         originalReject(error);
       };
       waiters.push(waiter);
+      options.onReadinessStatus?.({ waiting: "queued" });
       void drain();
     });
   };
@@ -10158,14 +10170,26 @@ function traceStatus(bindingID, entry) {
 }
 function runOATS(bin, args, input = "") {
   return new Promise((resolve2, reject) => {
-    const child = spawn2(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const hasInput = input.length > 0;
+    const child = spawn2(bin, args, { stdio: [hasInput ? "pipe" : "ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      abort.signal.removeEventListener("abort", onAbort);
+      reject(error);
+    };
     const onAbort = () => {
       child.kill("SIGTERM");
-      reject(new Error("oats command aborted"));
+      fail(new Error("oats command aborted"));
     };
     abort.signal.addEventListener("abort", onAbort, { once: true });
+    if (!child.stdout || !child.stderr) {
+      fail(new Error("oats subprocess stdout/stderr unavailable"));
+      return;
+    }
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -10174,26 +10198,28 @@ function runOATS(bin, args, input = "") {
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
     });
-    child.on("error", (error) => {
-      abort.signal.removeEventListener("abort", onAbort);
-      reject(error);
-    });
+    child.on("error", fail);
     child.on("close", () => {
+      if (settled) return;
       abort.signal.removeEventListener("abort", onAbort);
       let envelope;
       try {
         envelope = JSON.parse(stdout.trim());
       } catch (error) {
-        reject(new Error((stderr || stdout || (error instanceof Error ? error.message : String(error))).trim()));
+        fail(new Error((stderr || stdout || (error instanceof Error ? error.message : String(error))).trim()));
         return;
       }
       if (!envelope.ok) {
-        reject(new Error(`${envelope.error?.code || "E_OATS"}: ${envelope.error?.message || "oats command failed"}`));
+        fail(new Error(`${envelope.error?.code || "E_OATS"}: ${envelope.error?.message || "oats command failed"}`));
         return;
       }
+      settled = true;
       resolve2(envelope);
     });
-    child.stdin.end(input);
+    if (hasInput && child.stdin) {
+      child.stdin.on("error", fail);
+      child.stdin.end(input);
+    }
   });
 }
 async function start(init) {
@@ -10202,7 +10228,9 @@ async function start(init) {
   const awCommand = init.awCommand || "aw";
   const session = {
     async inspect(home) {
+      status({ readiness_waiting: "inspect_start" });
       const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"]);
+      status({ readiness_waiting: "inspect_done" });
       return { present: envelope.result?.present, state: envelope.result?.state, rawState: envelope.result?.state };
     },
     async input(home, text) {
@@ -10224,6 +10252,12 @@ async function start(init) {
       inactive = state;
       status({ inactive: state });
     },
+    onReadinessStatus: (readiness) => status({
+      readiness_state: readiness.state,
+      readiness_error: readiness.error,
+      readiness_paused: readiness.paused,
+      readiness_waiting: readiness.waiting
+    }),
     log: (message) => {
       if (message.includes("terminal delivery is paused")) status({ paused: true, log: message });
       else {

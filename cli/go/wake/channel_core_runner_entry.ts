@@ -116,38 +116,52 @@ function traceStatus(bindingID: string, entry: { stage?: string; message_id?: st
 
 function runOATS(bin: string, args: string[], input = ""): Promise<OATSEnvelope> {
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const hasInput = input.length > 0;
+    const child = spawn(bin, args, { stdio: [hasInput ? "pipe" : "ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      abort.signal.removeEventListener("abort", onAbort);
+      reject(error);
+    };
     const onAbort = () => {
       child.kill("SIGTERM");
-      reject(new Error("oats command aborted"));
+      fail(new Error("oats command aborted"));
     };
     abort.signal.addEventListener("abort", onAbort, { once: true });
+    if (!child.stdout || !child.stderr) {
+      fail(new Error("oats subprocess stdout/stderr unavailable"));
+      return;
+    }
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => { stdout += chunk; });
     child.stderr.on("data", (chunk) => { stderr += chunk; });
-    child.on("error", (error) => {
-      abort.signal.removeEventListener("abort", onAbort);
-      reject(error);
-    });
+    child.on("error", fail);
     child.on("close", () => {
+      if (settled) return;
       abort.signal.removeEventListener("abort", onAbort);
       let envelope: OATSEnvelope;
       try {
         envelope = JSON.parse(stdout.trim()) as OATSEnvelope;
       } catch (error) {
-        reject(new Error((stderr || stdout || (error instanceof Error ? error.message : String(error))).trim()));
+        fail(new Error((stderr || stdout || (error instanceof Error ? error.message : String(error))).trim()));
         return;
       }
       if (!envelope.ok) {
-        reject(new Error(`${envelope.error?.code || "E_OATS"}: ${envelope.error?.message || "oats command failed"}`));
+        fail(new Error(`${envelope.error?.code || "E_OATS"}: ${envelope.error?.message || "oats command failed"}`));
         return;
       }
+      settled = true;
       resolve(envelope);
     });
-    child.stdin.end(input);
+    if (hasInput && child.stdin) {
+      child.stdin.on("error", fail);
+      child.stdin.end(input);
+    }
   });
 }
 
@@ -157,7 +171,9 @@ async function start(init: InitLine): Promise<void> {
   const awCommand = init.awCommand || "aw";
   const session = {
     async inspect(home: string): Promise<TerminalInspection> {
+      status({ readiness_waiting: "inspect_start" });
       const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"]);
+      status({ readiness_waiting: "inspect_done" });
       return { present: envelope.result?.present, state: envelope.result?.state, rawState: envelope.result?.state };
     },
     async input(home: string, text: string): Promise<void> {
@@ -176,6 +192,12 @@ async function start(init: InitLine): Promise<void> {
     inspectDelayMs: init.inspectDelayMs,
     isPaused: () => paused,
     onInactive: (state) => { inactive = state; status({ inactive: state }); },
+    onReadinessStatus: (readiness) => status({
+      readiness_state: readiness.state,
+      readiness_error: readiness.error,
+      readiness_paused: readiness.paused,
+      readiness_waiting: readiness.waiting,
+    }),
     log: (message) => {
       if (message.includes("terminal delivery is paused")) status({ paused: true, log: message });
       else { lastError = message; status({ log: message }); }

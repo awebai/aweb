@@ -517,9 +517,12 @@ func formatWakeStatus(v any) string {
 		if inst.UnreadCount > 0 {
 			fmt.Fprintf(&b, "    unread=%d\n", inst.UnreadCount)
 		}
-		if strings.TrimSpace(inst.ChannelCore.NodePath) != "" || strings.TrimSpace(inst.ChannelCore.LastError) != "" {
+		if strings.TrimSpace(inst.ChannelCore.NodePath) != "" || strings.TrimSpace(inst.ChannelCore.LastError) != "" || inst.ChannelCore.RestartCount > 0 {
 			fmt.Fprintf(&b, "    channel_core node=%s bundle=%s last_success=%s\n",
 				dashIfEmpty(inst.ChannelCore.NodePath), dashIfEmpty(inst.ChannelCore.BundlePath), stampOrDash(inst.ChannelCore.LastSuccessAt))
+			if inst.ChannelCore.RestartCount > 0 || strings.TrimSpace(inst.ChannelCore.LastExit) != "" {
+				fmt.Fprintf(&b, "    channel_core_restarts=%d last_exit=%s\n", inst.ChannelCore.RestartCount, dashIfEmpty(inst.ChannelCore.LastExit))
+			}
 			if strings.TrimSpace(inst.ChannelCore.LastError) != "" {
 				fmt.Fprintf(&b, "    channel_core_error=%s\n", inst.ChannelCore.LastError)
 			}

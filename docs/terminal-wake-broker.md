@@ -185,9 +185,13 @@ authority. Chat read grants continue to use the chat read endpoint because
 `chat.read` covers presentation and read-state update. Known at-least-once
 limitation: if the terminal accepted input and the child dies before
 channel-core's durable mark or ack/read lands, the next child can present the
-same item again. That is the same accepted gap as the Claude and Pi adapters,
-and it is preferable to Go inventing per-target read state or suppressing an
-unread item.
+same item again. If a child dies after accepting an event but before completing
+presentation, Go does not replay the in-flight offer; recovery waits for the
+next stream snapshot (up to the stream reconnect cycle, about five minutes),
+where server unread state re-raises the item and the DeliveryStore dedupes any
+already accepted presentation. That is the same accepted gap as the Claude and
+Pi adapters, and it is preferable to Go inventing per-target read state or
+suppressing an unread item.
 
 **At-least-once bounded hints are the honest contract.** Exactly-once
 presentation is not available on this transport and the note should not imply

@@ -29,6 +29,7 @@ export interface TerminalReadinessGateOptions {
   rateLimitMs?: number;
   inspectDelayMs?: number;
   onInactive?: (state: TerminalReadinessState) => void;
+  onReadinessStatus?: (status: { state?: TerminalReadinessState; error?: string; paused?: boolean; waiting?: string }) => void;
   isPaused?: () => boolean;
   log?: (message: string) => void;
 }
@@ -198,10 +199,14 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
         const rateDelay = lastDeliveryAt === 0 ? 0 : rateLimitMs - (now - lastDeliveryAt);
         const windowDelay = Math.max(0, coalesceDelay, rateDelay);
         if (windowDelay > 0) {
+          const waitReason = rateDelay > coalesceDelay ? "rate_limit" : "coalesce";
+          options.onReadinessStatus?.({ waiting: waitReason });
           await sleep(windowDelay, options.signal);
+          options.onReadinessStatus?.({ waiting: `${waitReason}_done` });
           continue;
         }
         if (options.isPaused?.()) {
+          options.onReadinessStatus?.({ paused: true, waiting: "paused" });
           options.log?.("aweb: terminal delivery is paused; delivery waits before fetch");
           await sleep(inspectDelayMs, options.signal);
           continue;
@@ -213,6 +218,7 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
         } catch (error) {
           if (error instanceof TerminalAbortError) throw error;
           const detail = error instanceof Error ? error.message : String(error);
+          options.onReadinessStatus?.({ error: detail, waiting: "inspect_error" });
           options.log?.(`aweb: terminal inspect failed; delivery waits before fetch: ${detail}`);
           await sleep(inspectDelayMs, options.signal);
           continue;
@@ -221,18 +227,22 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
         const present = inspection.present ?? true;
         if (present) confirmedLive = true;
         const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, present);
+        options.onReadinessStatus?.({ state, error: "", paused: false });
         if (confirmedLive && (state === "stopped" || state === "not-launched")) {
+          options.onReadinessStatus?.({ state, waiting: "inactive" });
           options.onInactive?.(state);
           rejectWaiters(new TerminalInactiveError(state));
           return;
         }
         if (!confirmedLive) {
+          options.onReadinessStatus?.({ state, waiting: "not_confirmed_live" });
           options.log?.("aweb: terminal has not confirmed live yet; delivery waits before fetch");
           await sleep(inspectDelayMs, options.signal);
           continue;
         }
         const leadIntent = waiters.find((waiter) => waiter.intent !== "ambient")?.intent || "wake";
         if (!terminalReadyForIntent(state, leadIntent)) {
+          options.onReadinessStatus?.({ state, waiting: `not_ready:${leadIntent}` });
           options.log?.(`aweb: terminal not ready for ${leadIntent} delivery (state=${state}); delivery waits before fetch`);
           await sleep(inspectDelayMs, options.signal);
           continue;
@@ -240,10 +250,12 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
 
         throwIfAborted(options.signal);
         if (options.isPaused?.()) {
+          options.onReadinessStatus?.({ state, paused: true, waiting: "paused_after_inspect" });
           options.log?.("aweb: terminal delivery is paused after inspect; delivery waits before fetch");
           await sleep(inspectDelayMs, options.signal);
           continue;
         }
+        options.onReadinessStatus?.({ state, error: "", paused: false, waiting: "ready" });
         const batch = waiters.splice(0, waiters.length);
         lastDeliveryAt = Date.now();
         for (const waiter of batch) waiter.resolve();
@@ -279,6 +291,7 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
         originalReject(error);
       };
       waiters.push(waiter);
+      options.onReadinessStatus?.({ waiting: "queued" });
       void drain();
     });
   };

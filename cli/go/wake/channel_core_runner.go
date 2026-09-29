@@ -23,23 +23,29 @@ import (
 var channelCoreRunnerFS embed.FS
 
 type ChannelCoreStatus struct {
-	NodePath       string            `json:"node_path,omitempty"`
-	BundlePath     string            `json:"bundle_path,omitempty"`
-	LastError      string            `json:"last_error,omitempty"`
-	LastRunAt      time.Time         `json:"last_run_at,omitempty"`
-	LastSuccessAt  time.Time         `json:"last_success_at,omitempty"`
-	LastInputAt    time.Time         `json:"last_input_at,omitempty"`
-	AmbientQueued  int               `json:"ambient_queued"`
-	AmbientDropped int               `json:"ambient_dropped"`
-	Evicted        int               `json:"evicted_events"`
-	BindingErrors  map[string]string `json:"binding_errors,omitempty"`
-	Generation     int               `json:"generation,omitempty"`
-	Paused         bool              `json:"paused,omitempty"`
-	TraceStage     string            `json:"trace_stage,omitempty"`
-	TraceBindingID string            `json:"trace_binding_id,omitempty"`
-	TraceMessageID string            `json:"trace_message_id,omitempty"`
-	TraceSessionID string            `json:"trace_session_id,omitempty"`
-	Running        bool              `json:"running"`
+	NodePath         string            `json:"node_path,omitempty"`
+	BundlePath       string            `json:"bundle_path,omitempty"`
+	LastError        string            `json:"last_error,omitempty"`
+	LastRunAt        time.Time         `json:"last_run_at,omitempty"`
+	LastSuccessAt    time.Time         `json:"last_success_at,omitempty"`
+	LastInputAt      time.Time         `json:"last_input_at,omitempty"`
+	AmbientQueued    int               `json:"ambient_queued"`
+	AmbientDropped   int               `json:"ambient_dropped"`
+	Evicted          int               `json:"evicted_events"`
+	BindingErrors    map[string]string `json:"binding_errors,omitempty"`
+	Generation       int               `json:"generation,omitempty"`
+	Paused           bool              `json:"paused,omitempty"`
+	ReadinessState   string            `json:"readiness_state,omitempty"`
+	ReadinessError   string            `json:"readiness_error,omitempty"`
+	ReadinessPaused  bool              `json:"readiness_paused,omitempty"`
+	ReadinessWaiting string            `json:"readiness_waiting,omitempty"`
+	RestartCount     int               `json:"restart_count,omitempty"`
+	LastExit         string            `json:"last_exit,omitempty"`
+	TraceStage       string            `json:"trace_stage,omitempty"`
+	TraceBindingID   string            `json:"trace_binding_id,omitempty"`
+	TraceMessageID   string            `json:"trace_message_id,omitempty"`
+	TraceSessionID   string            `json:"trace_session_id,omitempty"`
+	Running          bool              `json:"running"`
 }
 
 type ChannelCoreRunner struct{ store *Store }
@@ -49,13 +55,14 @@ type ChannelCoreChild struct {
 	reg    Registration
 	cfg    channelCoreChildConfig
 
-	mu     sync.Mutex
-	st     ChannelCoreStatus
-	paused bool
-	in     chan childLine
-	ctl    chan childLine
-	cancel context.CancelFunc
-	done   chan struct{}
+	mu         sync.Mutex
+	st         ChannelCoreStatus
+	paused     bool
+	lastStderr string
+	in         chan childLine
+	ctl        chan childLine
+	cancel     context.CancelFunc
+	done       chan struct{}
 }
 
 type channelCoreChildConfig struct {
@@ -97,23 +104,27 @@ type childLine struct {
 }
 
 type childStatusLine struct {
-	Type           string `json:"type"`
-	Inactive       string `json:"inactive,omitempty"`
-	LastInputAt    string `json:"last_input_at,omitempty"`
-	LastError      string `json:"last_error,omitempty"`
-	AmbientQueued  *int   `json:"ambient_queued,omitempty"`
-	AmbientDropped *int   `json:"ambient_dropped,omitempty"`
-	Ready          bool   `json:"ready,omitempty"`
-	Stopped        bool   `json:"stopped,omitempty"`
-	Fatal          bool   `json:"fatal,omitempty"`
-	Delivered      bool   `json:"delivered,omitempty"`
-	Paused         *bool  `json:"paused,omitempty"`
-	BindingID      string `json:"binding_id,omitempty"`
-	Error          string `json:"error,omitempty"`
-	TraceStage     string `json:"trace_stage,omitempty"`
-	TraceMessageID string `json:"trace_message_id,omitempty"`
-	TraceSessionID string `json:"trace_session_id,omitempty"`
-	Log            string `json:"log,omitempty"`
+	Type             string  `json:"type"`
+	Inactive         string  `json:"inactive,omitempty"`
+	LastInputAt      string  `json:"last_input_at,omitempty"`
+	LastError        string  `json:"last_error,omitempty"`
+	AmbientQueued    *int    `json:"ambient_queued,omitempty"`
+	AmbientDropped   *int    `json:"ambient_dropped,omitempty"`
+	Ready            bool    `json:"ready,omitempty"`
+	Stopped          bool    `json:"stopped,omitempty"`
+	Fatal            bool    `json:"fatal,omitempty"`
+	Delivered        bool    `json:"delivered,omitempty"`
+	Paused           *bool   `json:"paused,omitempty"`
+	BindingID        string  `json:"binding_id,omitempty"`
+	Error            string  `json:"error,omitempty"`
+	ReadinessState   string  `json:"readiness_state,omitempty"`
+	ReadinessError   *string `json:"readiness_error,omitempty"`
+	ReadinessPaused  *bool   `json:"readiness_paused,omitempty"`
+	ReadinessWaiting string  `json:"readiness_waiting,omitempty"`
+	TraceStage       string  `json:"trace_stage,omitempty"`
+	TraceMessageID   string  `json:"trace_message_id,omitempty"`
+	TraceSessionID   string  `json:"trace_session_id,omitempty"`
+	Log              string  `json:"log,omitempty"`
 }
 
 func NewChannelCoreRunner(store *Store) *ChannelCoreRunner { return &ChannelCoreRunner{store: store} }
@@ -209,6 +220,7 @@ func (c *ChannelCoreChild) run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		c.recordExit(err)
 		c.setError(err)
 		if c.cfg.Log != nil {
 			c.cfg.Log("channel-core child exited home=%s err=%v", c.reg.Home, err)
@@ -359,6 +371,18 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 		if line.Paused != nil {
 			c.st.Paused = *line.Paused
 		}
+		if line.ReadinessState != "" {
+			c.st.ReadinessState = line.ReadinessState
+		}
+		if line.ReadinessError != nil {
+			c.st.ReadinessError = *line.ReadinessError
+		}
+		if line.ReadinessPaused != nil {
+			c.st.ReadinessPaused = *line.ReadinessPaused
+		}
+		if line.ReadinessWaiting != "" {
+			c.st.ReadinessWaiting = line.ReadinessWaiting
+		}
 		if line.TraceStage != "" {
 			c.st.TraceStage = line.TraceStage
 			c.st.TraceBindingID = line.BindingID
@@ -382,13 +406,15 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 }
 
 func (c *ChannelCoreChild) readStderr(r io.Reader) {
-	if c.cfg.Log == nil {
-		_, _ = io.Copy(io.Discard, r)
-		return
-	}
 	s := bufio.NewScanner(r)
 	for s.Scan() {
-		c.cfg.Log("channel-core child stderr home=%s: %s", c.reg.Home, s.Text())
+		line := s.Text()
+		c.mu.Lock()
+		c.lastStderr = line
+		c.mu.Unlock()
+		if c.cfg.Log != nil {
+			c.cfg.Log("channel-core child stderr home=%s: %s", c.reg.Home, line)
+		}
 	}
 }
 
@@ -399,7 +425,38 @@ func (c *ChannelCoreChild) setNode(node, bundle, err string, running bool) {
 	c.st.LastError = err
 	c.st.LastRunAt = time.Now().UTC()
 	c.st.Running = running
+	if err == "" {
+		c.resetPerRunLocked()
+	}
 	c.mu.Unlock()
+}
+
+func (c *ChannelCoreChild) resetPerRunLocked() {
+	c.st.AmbientQueued = 0
+	c.st.AmbientDropped = 0
+	c.st.ReadinessState = ""
+	c.st.ReadinessError = ""
+	c.st.ReadinessPaused = false
+	c.st.ReadinessWaiting = ""
+	c.st.TraceStage = ""
+	c.st.TraceBindingID = ""
+	c.st.TraceMessageID = ""
+	c.st.TraceSessionID = ""
+	c.lastStderr = ""
+}
+
+func (c *ChannelCoreChild) recordExit(err error) {
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.st.RestartCount++
+	text := err.Error()
+	if c.lastStderr != "" {
+		text += "; stderr: " + c.lastStderr
+	}
+	c.st.LastExit = text
 }
 func (c *ChannelCoreChild) setRunning(running bool) {
 	c.mu.Lock()
