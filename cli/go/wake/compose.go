@@ -273,14 +273,10 @@ func summaryLines(hints []Hint) []string {
 
 func renderMail(g *groupState) string {
 	prefix := contextPrefix(g.context)
-	count := g.unreadCount
-	if count <= 0 {
-		count = g.count
-	}
 	if g.from == "" {
-		return prefix + fmt.Sprintf("mail (%d unread)", count)
+		return prefix + fmt.Sprintf("mail (%d)", g.count)
 	}
-	return prefix + fmt.Sprintf("mail from %s (%d unread)", g.from, count)
+	return prefix + fmt.Sprintf("mail from %s (%d)", g.from, g.count)
 }
 
 func renderChat(g *groupState) string {

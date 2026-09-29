@@ -446,7 +446,8 @@ func (s *InstanceState) AddHint(h Hint, cap int) bool {
 		if s.Pending[i].DedupeKey() == key {
 			// Already pending: keep the earliest arrival so the coalescing
 			// window is measured from when the item first appeared, but adopt
-			// a sender-waiting escalation.
+			// the latest count metadata and any sender-waiting escalation.
+			s.Pending[i].UnreadCount = h.UnreadCount
 			if h.SenderWaiting {
 				s.Pending[i].SenderWaiting = true
 				s.Pending[i].Intent = IntentSteer

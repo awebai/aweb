@@ -539,7 +539,7 @@ func TestBurstCoalescesIntoOneSubmission(t *testing.T) {
 	if !strings.Contains(subs[0].Text, "3 mail messages") {
 		t.Fatalf("the burst did not collapse into one message:\n%s", subs[0].Text)
 	}
-	if !strings.Contains(subs[0].Text, "mail from alice (2 unread)") || !strings.Contains(subs[0].Text, "mail from bob (1 unread)") {
+	if !strings.Contains(subs[0].Text, "mail from alice (2)") || !strings.Contains(subs[0].Text, "mail from bob (1)") {
 		t.Fatalf("summary lost a sender:\n%s", subs[0].Text)
 	}
 

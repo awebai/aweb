@@ -74,7 +74,7 @@ func TestComposedTextIsTheFixedInstructionPlusASummary(t *testing.T) {
 	got := Compose(hints)
 	want := "aweb: 2 mail messages and 1 chat waiting. Check them from this instance with `aw mail inbox`\n" +
 		"and `aw chat pending`, then handle what is there.\n" +
-		"  mail from alice (2 unread)\n" +
+		"  mail from alice (2)\n" +
 		"  chat from bob — sender waiting\n"
 	if got != want {
 		t.Fatalf("composed text\n---got---\n%s\n---want---\n%s", got, want)
@@ -146,8 +146,22 @@ func TestComposeMailPlusAmbientCountsOnlyMessagesInHeader(t *testing.T) {
 	if !strings.HasPrefix(got, "aweb: 1 mail message waiting.") {
 		t.Fatalf("mail plus ambient header should count real message hints only:\n%s", got)
 	}
-	if !strings.Contains(got, "mail from alice (2 unread)") || !strings.Contains(got, "work available (1): task-1") {
+	if !strings.Contains(got, "mail from alice (1)") || !strings.Contains(got, "work available (1): task-1") {
 		t.Fatalf("mail plus ambient details missing:\n%s", got)
+	}
+}
+
+func TestComposeMailDetailDoesNotSumInboxTotalUnread(t *testing.T) {
+	got := Compose([]Hint{
+		{Kind: KindMail, Intent: IntentWake, MessageID: "m1", From: "alice", UnreadCount: 5, At: at(0)},
+		{Kind: KindMail, Intent: IntentWake, MessageID: "m2", From: "alice", UnreadCount: 5, At: at(1)},
+		{Kind: KindMail, Intent: IntentWake, MessageID: "m3", From: "alice", UnreadCount: 5, At: at(2)},
+	})
+	if strings.Contains(got, "15 unread") {
+		t.Fatalf("mail detail summed repeated inbox totals:\n%s", got)
+	}
+	if !strings.Contains(got, "mail from alice (3)") {
+		t.Fatalf("mail detail should count mail hints in the group:\n%s", got)
 	}
 }
 
