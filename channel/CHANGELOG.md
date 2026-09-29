@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.11
+
+- Bundles Channel Core 0.2.0, including the shared terminal wake adapter
+  readiness/status APIs and grant-home client support used by the `aw-v1.36.15`
+  wake broker.
+
 ## 1.7.10
 
 - Keeps event-stream reconnect/disconnect status out of Claude model input while

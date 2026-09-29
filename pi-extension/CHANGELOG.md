@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.12
+
+- Bundles Channel Core 0.2.0, including the shared terminal wake adapter
+  readiness/status APIs and grant-home client support used by the `aw-v1.36.15`
+  wake broker.
+
 ## 0.3.11
 
 - Keeps event-stream reconnect/disconnect status out of Pi model turns while
