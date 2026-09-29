@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL, shouldNotifyStreamStateToClaude } from "../src/index.js";
+import { createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL, handleClaudeStreamState, notifyClaudeAwakening } from "../src/index.js";
 import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
 
 describe("loadChannelConfig", () => {
@@ -48,8 +48,20 @@ describe("createChannelRegistryResolver", () => {
 });
 
 describe("stream state handling", () => {
-  test("transport reconnect and disconnect are diagnostics, not Claude model input", () => {
-    expect(shouldNotifyStreamStateToClaude()).toBe(false);
+  test("transport reconnect and disconnect are diagnostics, not Claude model input", async () => {
+    const logs: string[] = [];
+    const notifications: unknown[] = [];
+    const mcp = { notification: async (item: unknown) => { notifications.push(item); } } as any;
+
+    handleClaudeStreamState({ state: "disconnected", cause: "network unavailable", retryInMs: 1000 }, (message) => logs.push(message));
+    handleClaudeStreamState({ state: "reconnected" }, (message) => logs.push(message));
+    handleClaudeStreamState({ state: "disconnected", cause: "connection closed", retryInMs: 2000 }, (message) => logs.push(message));
+
+    expect(logs).toHaveLength(3);
+    expect(notifications).toHaveLength(0);
+
+    await notifyClaudeAwakening(mcp, { kind: "mail", content: "hello", deliveryIntent: "wake", meta: { type: "mail", message_id: "m1" } });
+    expect(notifications).toHaveLength(1);
   });
 });
 

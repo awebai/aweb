@@ -13,10 +13,35 @@ import {
   deliveryOptionsForAwakening,
   type WakeLogEvent,
 } from "../src/wake.ts";
-import { shouldNotifyStreamStateToPi } from "../src/index.ts";
+import { createPiAwakeningHandler, handlePiStreamState } from "../src/index.ts";
 
-test("transport reconnect and disconnect are diagnostics, not Pi model input", () => {
-  assert.equal(shouldNotifyStreamStateToPi(), false);
+test("transport reconnect and disconnect are diagnostics, not Pi model input", async () => {
+  const calls: Array<Parameters<ExtensionAPI["sendMessage"]>> = [];
+  const logs: string[] = [];
+  const statuses: string[] = [];
+  const pi = fakePi((message, options) => {
+    calls.push([message, options]);
+  });
+  const ctx = {
+    hasUI: true,
+    ui: {
+      theme: { fg: (_kind: string, text: string) => text },
+      setStatus: (_key: string, value: string) => statuses.push(value),
+    },
+  };
+
+  handlePiStreamState({ state: "disconnected", cause: "network unavailable", retryInMs: 1000 }, ctx, (message) => logs.push(message));
+  handlePiStreamState({ state: "reconnected" }, ctx, (message) => logs.push(message));
+  handlePiStreamState({ state: "disconnected", cause: "connection closed", retryInMs: 2000 }, ctx, (message) => logs.push(message));
+
+  assert.equal(calls.length, 0);
+  assert.equal(logs.length, 3);
+  assert.equal(statuses.length, 3);
+
+  const dispatcher = createWakeDispatcher(pi, () => {});
+  await createPiAwakeningHandler(dispatcher)(awakening());
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0].customType, "aweb-channel");
 });
 
 function awakening(overrides: Partial<ChannelAwakening> = {}): ChannelAwakening {

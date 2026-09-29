@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   type APIClient,
   type AgentEvent,
+  type ChannelAwakening,
   CHANNEL_CORE_SECURITY_CONTRACT,
   createChannelClient,
   createRegistryResolver,
@@ -25,6 +26,7 @@ import {
   type SelfIdentity,
   selectDeliveryMode,
   type DeliveryMode,
+  type EventStreamState,
   SenderTrustManager,
   startChannelLoop,
 } from "@awebai/channel-core";
@@ -35,6 +37,21 @@ export { resolveRegistryFallbackURL, CHANNEL_CORE_SECURITY_CONTRACT };
 
 export function loadChannelConfig(workdir: string) {
   return resolveConfig(workdir);
+}
+
+export function notifyClaudeAwakening(mcp: Server, awakening: ChannelAwakening) {
+  return mcp.notification({
+    method: "notifications/claude/channel",
+    params: { content: awakening.content, meta: awakening.meta },
+  });
+}
+
+export function handleClaudeStreamState(
+  state: EventStreamState,
+  log: (message: string) => void = console.error,
+): void {
+  if (state.state === "connected") return;
+  log(formatEventStreamState(state));
 }
 
 /**
@@ -199,10 +216,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
       signal: abort.signal,
       teamID: config.teamID,
       workdir,
-      onAwakening: (awakening) => mcp.notification({
-        method: "notifications/claude/channel",
-        params: { content: awakening.content, meta: awakening.meta },
-      }),
+      onAwakening: (awakening) => notifyClaudeAwakening(mcp, awakening),
       // On Claude the MCP notification IS the presentation of the mail to the
       // agent (Claude presents at the first tool boundary), so mail is marked read
       // at presentation — matching the honest semantic "presented = read". If the
@@ -214,16 +228,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
       // replay burst on reconnect (default-aajy).
       mailAcknowledgment: "delivery",
       onTrace: traceSink?.onTrace,
-      onStreamState: (state) => {
-        if (state.state === "connected") return;
-        const content = formatEventStreamState(state);
-        console.error(content);
-        if (!shouldNotifyStreamStateToClaude()) return;
-        void mcp.notification({
-          method: "notifications/claude/channel",
-          params: { content, meta: { type: "channel_status", stream_state: state.state } },
-        }).catch(() => {});
-      },
+      onStreamState: (state) => handleClaudeStreamState(state),
       log: (message) => console.error(message),
     });
   } finally {
@@ -258,10 +263,6 @@ export async function dispatchEvent(
     dispatched,
     event,
   );
-}
-
-export function shouldNotifyStreamStateToClaude(): boolean {
-  return false;
 }
 
 export function isDirectExecution(moduleURL: string): boolean {

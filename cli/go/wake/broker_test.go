@@ -481,7 +481,7 @@ func TestAmbientContextRidesWithRealWakeWithoutInflatingMessageCount(t *testing.
 	if len(subs) != 1 {
 		t.Fatalf("submissions=%d", len(subs))
 	}
-	if !strings.Contains(subs[0].Text, "1 unread message waiting") || strings.Contains(subs[0].Text, "2 unread") || strings.Contains(subs[0].Text, "2 items") {
+	if !strings.Contains(subs[0].Text, "1 mail message waiting") || strings.Contains(subs[0].Text, "2 unread") || strings.Contains(subs[0].Text, "2 items") {
 		t.Fatalf("message count was not truthful:\n%s", subs[0].Text)
 	}
 	if !strings.Contains(subs[0].Text, "work available") {
@@ -536,7 +536,7 @@ func TestBurstCoalescesIntoOneSubmission(t *testing.T) {
 	if len(subs) != 1 {
 		t.Fatalf("a burst produced %d submissions, want 1", len(subs))
 	}
-	if !strings.Contains(subs[0].Text, "3 unread messages") {
+	if !strings.Contains(subs[0].Text, "3 mail messages") {
 		t.Fatalf("the burst did not collapse into one message:\n%s", subs[0].Text)
 	}
 	if !strings.Contains(subs[0].Text, "mail from alice (2 unread)") || !strings.Contains(subs[0].Text, "mail from bob (1 unread)") {
@@ -913,7 +913,7 @@ func TestRestartRereadsRegistrationsAndPendingHints(t *testing.T) {
 	if len(subs) != 1 {
 		t.Fatalf("the restarted daemon submitted %d times, want 1", len(subs))
 	}
-	if !strings.Contains(subs[0].Text, "2 unread messages") {
+	if !strings.Contains(subs[0].Text, "2 mail messages") {
 		t.Fatalf("hints held across the restart were lost:\n%s", subs[0].Text)
 	}
 }

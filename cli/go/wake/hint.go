@@ -55,6 +55,7 @@ type Hint struct {
 	AppEventType   string    `json:"app_event_type,omitempty"`
 	From           string    `json:"from,omitempty"`
 	SenderWaiting  bool      `json:"sender_waiting,omitempty"`
+	UnreadCount    int       `json:"unread_count,omitempty"`
 	At             time.Time `json:"at"`
 
 	// Transient marks a hint that is never persisted. A control signal is an
@@ -120,6 +121,7 @@ func HintFromEvent(ev awid.AgentEvent, now time.Time) (Hint, bool) {
 		base.MessageID = ev.MessageID
 		base.ConversationID = ev.ConversationID
 		base.From = ev.FromAlias
+		base.UnreadCount = ev.UnreadCount
 		return base, true
 
 	case string(awid.AgentEventActionableChat), "chat_message":
@@ -133,6 +135,7 @@ func HintFromEvent(ev awid.AgentEvent, now time.Time) (Hint, bool) {
 		base.SessionID = ev.SessionID
 		base.From = ev.FromAlias
 		base.SenderWaiting = ev.SenderWaiting
+		base.UnreadCount = ev.UnreadCount
 		return base, true
 
 	case string(awid.AgentEventControlInterrupt):
