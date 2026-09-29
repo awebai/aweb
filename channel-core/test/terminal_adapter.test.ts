@@ -169,6 +169,60 @@ describe("terminal channel adapter", () => {
     }
   });
 
+  test("readiness is rechecked after the rate-limit wait", async () => {
+    vi.useFakeTimers();
+    try {
+      let state = "idle";
+      const session: TerminalSession = {
+        inspect: vi.fn(async () => ({ present: true, state })),
+        input: vi.fn(async () => {}),
+      };
+      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, coalesceMs: 0, rateLimitMs: 20, inspectDelayMs: 5 });
+      await ready("wake", new AbortController().signal);
+
+      let resolved = false;
+      const second = ready("wake", new AbortController().signal).then(() => { resolved = true; });
+      await flush();
+      state = "working";
+      await vi.advanceTimersByTimeAsync(20);
+      await flush();
+      expect(resolved).toBe(false);
+      state = "idle";
+      await vi.advanceTimersByTimeAsync(5);
+      await second;
+      expect(resolved).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("pause is rechecked after the coalesce wait", async () => {
+    vi.useFakeTimers();
+    try {
+      let paused = false;
+      const session: TerminalSession = {
+        inspect: vi.fn(async () => ({ present: true, state: "idle" })),
+        input: vi.fn(async () => {}),
+      };
+      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, isPaused: () => paused, coalesceMs: 10, rateLimitMs: 0, inspectDelayMs: 5 });
+      let resolved = false;
+      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
+      await flush();
+      paused = true;
+      await vi.advanceTimersByTimeAsync(10);
+      await flush();
+      expect(resolved).toBe(false);
+      expect(session.inspect).not.toHaveBeenCalled();
+      paused = false;
+      await vi.advanceTimersByTimeAsync(5);
+      await waiting;
+      expect(resolved).toBe(true);
+      expect(session.inspect).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("ambient awakenings are bounded and piggyback without initiating input", async () => {
     const inputs: string[] = [];
     const session: TerminalSession = {

@@ -39,7 +39,11 @@ retried by re-dispatch rather than waiting for a later reconnect/event. The
 bounded retry budget is 100 ms, 250 ms and 500 ms. After it is exhausted the
 event is left for the next event or the next stream re-open snapshot (the server
 stream cycle is up to 300 seconds), preserving at-least-once delivery without
-holding already-fetched terminal content.
+holding already-fetched terminal content. The gate currently stamps the rate
+window when readiness releases. If the subsequent unread fetch finds nothing
+because the item was read out of band, the next real delivery can still wait up
+to the 30 second rate limit; a later `noteInput`-style stamp can narrow that,
+but it is outside this foundation pass.
 
 ## Readiness before fetch
 
@@ -61,9 +65,12 @@ paused, the gate sleeps and continues before fetch. Inspect errors are treated
 like transient OATS failures: they are logged/statused, then the gate sleeps and
 tries again. Every delivery window uses the Go broker defaults: 2 seconds
 coalescing, 30 seconds rate limit and a 2 second inspect/defer poll. The first
-waiting caller opens the window; all callers waiting when the coalesce/rate
-window closes pass together. The window then resets so the next burst coalesces
-again.
+waiting caller opens the window; after coalesce and rate-limit have elapsed,
+the gate checks pause and performs a fresh inspect. All callers waiting at that
+fresh ready inspect pass together immediately, with no await between readiness
+and release. If pause is set or the fresh inspect reports busy/blocked/shell,
+the gate polls and re-inspects; it does not restart the already-elapsed
+coalesce/rate wait. The window then resets so the next burst coalesces again.
 
 After every await in readiness (inspect or delay), abort is checked again. Abort
 while inspect is in flight rejects readiness and no input may occur. Once

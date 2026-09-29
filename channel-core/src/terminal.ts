@@ -162,6 +162,7 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
 interface ReadinessWaiter {
   intent: ChannelDeliveryIntent;
   signal?: AbortSignal;
+  enqueuedAt: number;
   resolve: () => void;
   reject: (error: Error) => void;
 }
@@ -191,6 +192,15 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
     try {
       while (waiters.length > 0) {
         throwIfAborted(options.signal);
+        const now = Date.now();
+        const firstWaiterAt = waiters.reduce((oldest, waiter) => Math.min(oldest, waiter.enqueuedAt), waiters[0].enqueuedAt);
+        const coalesceDelay = coalesceMs - (now - firstWaiterAt);
+        const rateDelay = lastDeliveryAt === 0 ? 0 : rateLimitMs - (now - lastDeliveryAt);
+        const windowDelay = Math.max(0, coalesceDelay, rateDelay);
+        if (windowDelay > 0) {
+          await sleep(windowDelay, options.signal);
+          continue;
+        }
         if (options.isPaused?.()) {
           options.log?.("aweb: terminal delivery is paused; delivery waits before fetch");
           await sleep(inspectDelayMs, options.signal);
@@ -228,9 +238,6 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
           continue;
         }
 
-        await sleep(coalesceMs, options.signal);
-        const rateDelay = lastDeliveryAt === 0 ? 0 : rateLimitMs - (Date.now() - lastDeliveryAt);
-        if (rateDelay > 0) await sleep(rateDelay, options.signal);
         throwIfAborted(options.signal);
         const batch = waiters.splice(0, waiters.length);
         lastDeliveryAt = Date.now();
@@ -249,7 +256,7 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
     throwIfAborted(options.signal);
     throwIfAborted(signal);
     return new Promise<void>((resolve, reject) => {
-      const waiter: ReadinessWaiter = { intent, signal, resolve, reject };
+      const waiter: ReadinessWaiter = { intent, signal, enqueuedAt: Date.now(), resolve, reject };
       const onAbort = () => {
         signal.removeEventListener("abort", onAbort);
         removeWaiter(waiter);
