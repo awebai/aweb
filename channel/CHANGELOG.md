@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.10
+
+- Keeps event-stream reconnect/disconnect status out of Claude model input while
+  preserving stderr diagnostics. Genuine mail/chat/control/app awakenings still
+  deliver through the Channel notification path.
+- This is the bounded Stage 1 wake fix for planned CLI tag `aw-v1.36.14`;
+  `aweb-abkk` remains the follow-up architecture work for a full
+  channel-core terminal wake adapter.
+
 ## 1.7.9
 
 - Adds `AWEB_DELIVERY`. With `AWEB_DELIVERY=session` the plugin registers no

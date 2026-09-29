@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.11
+
+- Keeps event-stream reconnect/disconnect status out of Pi model turns while
+  preserving status-line updates and warning diagnostics. Genuine aweb
+  awakenings still enqueue through the Pi wake dispatcher.
+- This is the bounded Stage 1 wake fix for planned CLI tag `aw-v1.36.14`;
+  `aweb-abkk` remains the follow-up architecture work for a full
+  channel-core terminal wake adapter.
+
 ## 0.3.10
 
 - Adds `AWEB_DELIVERY`. With `AWEB_DELIVERY=session` the extension opens no
