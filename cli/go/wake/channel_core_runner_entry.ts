@@ -104,6 +104,16 @@ function status(extra: Record<string, unknown> = {}): void {
   });
 }
 
+function traceStatus(bindingID: string, entry: { stage?: string; message_id?: string; session_id?: string }): void {
+  emit({
+    type: "status",
+    binding_id: bindingID,
+    trace_stage: entry.stage,
+    trace_message_id: entry.message_id,
+    trace_session_id: entry.session_id,
+  });
+}
+
 function runOATS(bin: string, args: string[], input = ""): Promise<OATSEnvelope> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -201,6 +211,7 @@ async function start(init: InitLine): Promise<void> {
       onAwakening,
       awaitDeliveryReady: (intent: ChannelDeliveryIntent, signal: AbortSignal) => awaitReady(intent, signal),
       mailAcknowledgment: config.authMode === "grant" && !grantScopes.has("mail.send") ? "manual" : "delivery",
+      onTrace: (entry) => traceStatus(binding.binding_id, entry),
     }, new Set<string>(), queue, (message) => {
       lastError = message;
       status({ binding_id: binding.binding_id, error: message });

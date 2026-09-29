@@ -33,6 +33,10 @@ type ChannelCoreStatus struct {
 	AmbientDropped int               `json:"ambient_dropped"`
 	Evicted        int               `json:"evicted_events"`
 	BindingErrors  map[string]string `json:"binding_errors,omitempty"`
+	TraceStage     string            `json:"trace_stage,omitempty"`
+	TraceBindingID string            `json:"trace_binding_id,omitempty"`
+	TraceMessageID string            `json:"trace_message_id,omitempty"`
+	TraceSessionID string            `json:"trace_session_id,omitempty"`
 	Running        bool              `json:"running"`
 }
 
@@ -59,6 +63,7 @@ type channelCoreChildConfig struct {
 	OatsBin       string
 	AWCommand     string
 	AdmissionSize int
+	Paused        bool
 	Log           func(string, ...any)
 	OnInactive    func(string)
 }
@@ -93,14 +98,17 @@ type childStatusLine struct {
 	Inactive       string `json:"inactive,omitempty"`
 	LastInputAt    string `json:"last_input_at,omitempty"`
 	LastError      string `json:"last_error,omitempty"`
-	AmbientQueued  int    `json:"ambient_queued,omitempty"`
-	AmbientDropped int    `json:"ambient_dropped,omitempty"`
+	AmbientQueued  *int   `json:"ambient_queued,omitempty"`
+	AmbientDropped *int   `json:"ambient_dropped,omitempty"`
 	Ready          bool   `json:"ready,omitempty"`
 	Stopped        bool   `json:"stopped,omitempty"`
 	Fatal          bool   `json:"fatal,omitempty"`
 	Delivered      bool   `json:"delivered,omitempty"`
 	BindingID      string `json:"binding_id,omitempty"`
 	Error          string `json:"error,omitempty"`
+	TraceStage     string `json:"trace_stage,omitempty"`
+	TraceMessageID string `json:"trace_message_id,omitempty"`
+	TraceSessionID string `json:"trace_session_id,omitempty"`
 	Log            string `json:"log,omitempty"`
 }
 
@@ -113,7 +121,7 @@ func (r *ChannelCoreRunner) StartChild(ctx context.Context, reg Registration, cf
 		cfg.AdmissionSize = 256
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	c := &ChannelCoreChild{runner: r, reg: reg.clone(), cfg: cfg, in: make(chan childLine, cfg.AdmissionSize), ctl: make(chan childLine, 16), cancel: cancel, done: make(chan struct{})}
+	c := &ChannelCoreChild{runner: r, reg: reg.clone(), cfg: cfg, paused: cfg.Paused, in: make(chan childLine, cfg.AdmissionSize), ctl: make(chan childLine, 16), cancel: cancel, done: make(chan struct{})}
 	go c.run(ctx)
 	return c
 }
@@ -178,7 +186,14 @@ func (c *ChannelCoreChild) Status() ChannelCoreStatus {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.st
+	st := c.st
+	if c.st.BindingErrors != nil {
+		st.BindingErrors = make(map[string]string, len(c.st.BindingErrors))
+		for key, value := range c.st.BindingErrors {
+			st.BindingErrors[key] = value
+		}
+	}
+	return st
 }
 
 func (c *ChannelCoreChild) run(ctx context.Context) {
@@ -234,7 +249,7 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 		c.setNode(node, bundle, err.Error(), false)
 		return err
 	}
-	c.setNode(node, bundle, "", true)
+	c.setNode(node, bundle, "", false)
 	doneRead := make(chan struct{})
 	go c.readStatus(stdout, doneRead)
 	go c.readStderr(stderr)
@@ -327,8 +342,24 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 				c.st.LastSuccessAt = t
 			}
 		}
-		c.st.AmbientQueued = line.AmbientQueued
-		c.st.AmbientDropped = line.AmbientDropped
+		if line.Ready {
+			c.st.Running = true
+		}
+		if line.AmbientQueued != nil {
+			c.st.AmbientQueued = *line.AmbientQueued
+		}
+		if line.AmbientDropped != nil {
+			c.st.AmbientDropped = *line.AmbientDropped
+		}
+		if line.TraceStage != "" {
+			c.st.TraceStage = line.TraceStage
+			c.st.TraceBindingID = line.BindingID
+			c.st.TraceMessageID = line.TraceMessageID
+			c.st.TraceSessionID = line.TraceSessionID
+			if line.BindingID != "" && (line.TraceStage == "lane_job_completed" || line.TraceStage == "lane_job_started") && c.st.BindingErrors != nil {
+				delete(c.st.BindingErrors, line.BindingID)
+			}
+		}
 		if line.BindingID != "" && line.Error != "" {
 			if c.st.BindingErrors == nil {
 				c.st.BindingErrors = map[string]string{}

@@ -10147,6 +10147,15 @@ function status(extra = {}) {
     ...extra
   });
 }
+function traceStatus(bindingID, entry) {
+  emit({
+    type: "status",
+    binding_id: bindingID,
+    trace_stage: entry.stage,
+    trace_message_id: entry.message_id,
+    trace_session_id: entry.session_id
+  });
+}
 function runOATS(bin, args, input = "") {
   return new Promise((resolve2, reject) => {
     const child = spawn2(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -10251,7 +10260,8 @@ async function start(init) {
       awCommand,
       onAwakening,
       awaitDeliveryReady: (intent, signal) => awaitReady(intent, signal),
-      mailAcknowledgment: config.authMode === "grant" && !grantScopes.has("mail.send") ? "manual" : "delivery"
+      mailAcknowledgment: config.authMode === "grant" && !grantScopes.has("mail.send") ? "manual" : "delivery",
+      onTrace: (entry) => traceStatus(binding.binding_id, entry)
     }, /* @__PURE__ */ new Set(), queue, (message) => {
       lastError = message;
       status({ binding_id: binding.binding_id, error: message });

@@ -281,7 +281,7 @@ func (b *Broker) reconcileLocked() {
 		b.mu.Unlock()
 		if running {
 			runner.updateRegistration(reg)
-			runner.conflictHome = conflictHome
+			runner.setConflictHome(conflictHome)
 			if conflictHome == "" {
 				for _, binding := range reg.ReceiveBindings() {
 					runner.setStreamAdmitted(binding.IdentityHome, b.ensureStream(binding.IdentityHome))
@@ -327,7 +327,7 @@ func (b *Broker) startInstance(reg Registration, conflictHome string) *instanceR
 	state.Home = reg.Home
 
 	runner := newInstanceRunner(b, reg, state)
-	runner.conflictHome = conflictHome
+	runner.setConflictHome(conflictHome)
 	b.mu.Lock()
 	b.instances[HomeKey(reg.Home)] = runner
 	b.mu.Unlock()
@@ -477,6 +477,9 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 		}
 	}
 	b.mu.Unlock()
+	if len(targets) == 0 {
+		b.cfg.Log("event dropped identity_home=%s reason=no_registered_binding message_id=%s session_id=%s", identityHome, ev.MessageID, ev.SessionID)
+	}
 
 	switch ev.Type {
 	case awid.AgentEventControlPause:

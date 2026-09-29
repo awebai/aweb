@@ -3,6 +3,7 @@ package wake
 import (
 	"context"
 	"os"
+	"reflect"
 	"sync"
 
 	awid "github.com/awebai/aw/awid"
@@ -21,6 +22,8 @@ type instanceRunner struct {
 	state        InstanceState
 	admitted     map[string]bool
 	events       chan eventOffer
+	restart      chan struct{}
+	inactive     chan string
 	child        *ChannelCoreChild
 	conflictHome string
 	cancel       context.CancelFunc
@@ -45,6 +48,8 @@ func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instan
 		state:    state,
 		admitted: map[string]bool{},
 		events:   make(chan eventOffer, 256),
+		restart:  make(chan struct{}, 1),
+		inactive: make(chan string, 1),
 		done:     make(chan struct{}),
 	}
 }
@@ -58,6 +63,7 @@ func (r *instanceRunner) start(ctx context.Context) {
 
 func (r *instanceRunner) updateRegistration(reg Registration) {
 	r.mu.Lock()
+	changed := !sameReceiveBindings(r.reg.ReceiveBindings(), reg.ReceiveBindings())
 	r.reg = reg
 	if r.admitted == nil {
 		r.admitted = map[string]bool{}
@@ -71,6 +77,37 @@ func (r *instanceRunner) updateRegistration(reg Registration) {
 			delete(r.admitted, identityHome)
 		}
 	}
+	r.mu.Unlock()
+	if changed {
+		r.requestRestart()
+	}
+}
+
+func sameReceiveBindings(left, right []ReceiveIdentity) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	leftKeys := make([]string, 0, len(left))
+	rightKeys := make([]string, 0, len(right))
+	for _, binding := range left {
+		leftKeys = append(leftKeys, bindingID(binding))
+	}
+	for _, binding := range right {
+		rightKeys = append(rightKeys, bindingID(binding))
+	}
+	return reflect.DeepEqual(leftKeys, rightKeys)
+}
+
+func (r *instanceRunner) requestRestart() {
+	select {
+	case r.restart <- struct{}{}:
+	default:
+	}
+}
+
+func (r *instanceRunner) setConflictHome(home string) {
+	r.mu.Lock()
+	r.conflictHome = home
 	r.mu.Unlock()
 }
 
@@ -89,10 +126,14 @@ func (r *instanceRunner) receiveBindings() []ReceiveIdentity {
 }
 
 func (r *instanceRunner) bindingForIdentityHome(identityHome string) (ReceiveIdentity, bool) {
+	r.mu.Lock()
 	if r.conflictHome != "" {
+		r.mu.Unlock()
 		return ReceiveIdentity{}, false
 	}
-	return r.registrationSnapshot().BindingForIdentityHome(identityHome)
+	reg := r.reg.clone()
+	r.mu.Unlock()
+	return reg.BindingForIdentityHome(identityHome)
 }
 
 // stop is safe to call more than once, and safe to call on a runner that was
@@ -110,29 +151,77 @@ func (r *instanceRunner) stop() {
 
 func (r *instanceRunner) run(ctx context.Context) {
 	defer close(r.done)
-	if r.broker.cfg.ChannelCore != nil {
+	var child *ChannelCoreChild
+	startChild := func() {
+		if r.broker.cfg.ChannelCore == nil {
+			return
+		}
+		r.mu.Lock()
+		inactive := r.state.Inactive
+		paused := r.state.Paused
+		reg := r.reg.clone()
+		r.mu.Unlock()
+		if inactive {
+			return
+		}
 		awCommand, _ := os.Executable()
-		r.child = r.broker.cfg.ChannelCore.StartChild(ctx, r.registrationSnapshot(), channelCoreChildConfig{
+		newChild := r.broker.cfg.ChannelCore.StartChild(ctx, reg, channelCoreChildConfig{
 			Coalesce: r.broker.cfg.Coalesce, RateLimit: r.broker.cfg.RateLimit, InspectDelay: r.broker.cfg.PollInterval,
-			OatsBin: session.DefaultOatsBin, AWCommand: awCommand, AdmissionSize: 256, Log: r.broker.cfg.Log,
+			OatsBin: session.DefaultOatsBin, AWCommand: awCommand, AdmissionSize: 256, Paused: paused, Log: r.broker.cfg.Log,
 			OnInactive: func(state string) {
-				r.mu.Lock()
-				r.state.Inactive = true
-				r.state.LastState = state
-				r.mu.Unlock()
-				r.persist()
+				select {
+				case r.inactive <- state:
+				default:
+				}
 			},
 		})
-		defer r.child.Stop()
+		r.mu.Lock()
+		r.child = newChild
+		r.mu.Unlock()
+		child = newChild
 	}
+	stopChild := func() {
+		if child == nil {
+			return
+		}
+		child.Stop()
+		r.mu.Lock()
+		if r.child == child {
+			r.child = nil
+		}
+		r.mu.Unlock()
+		child = nil
+	}
+	startChild()
+	defer stopChild()
 	for {
 		select {
 		case <-ctx.Done():
 			r.persist()
 			return
+		case state := <-r.inactive:
+			r.mu.Lock()
+			r.state.Inactive = true
+			r.state.LastState = state
+			r.mu.Unlock()
+			r.persist()
+			stopChild()
+		case <-r.restart:
+			stopChild()
+			startChild()
 		case offer := <-r.events:
-			if r.child != nil {
-				r.child.Offer(offer.binding, offer.event)
+			r.mu.Lock()
+			inactive := r.state.Inactive
+			if inactive {
+				r.state.Evicted++
+			}
+			r.mu.Unlock()
+			if inactive {
+				r.broker.cfg.Log("event dropped home=%s reason=inactive message_id=%s session_id=%s", r.home(), offer.event.MessageID, offer.event.SessionID)
+				continue
+			}
+			if child != nil {
+				child.Offer(offer.binding, offer.event)
 			}
 		}
 	}
@@ -140,6 +229,16 @@ func (r *instanceRunner) run(ctx context.Context) {
 
 // offerEvent queues an event for the channel-core child. It never blocks the stream goroutine.
 func (r *instanceRunner) offerEvent(ev awid.AgentEvent, binding ReceiveIdentity) {
+	r.mu.Lock()
+	inactive := r.state.Inactive
+	if inactive {
+		r.state.Evicted++
+	}
+	r.mu.Unlock()
+	if inactive {
+		r.broker.cfg.Log("event dropped home=%s reason=inactive message_id=%s session_id=%s", r.home(), ev.MessageID, ev.SessionID)
+		return
+	}
 	select {
 	case r.events <- eventOffer{event: ev, binding: binding}:
 	default:
@@ -213,7 +312,6 @@ func (r *instanceRunner) persist() {
 
 func (r *instanceRunner) snapshot() InstanceStatus {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	phase := PhasePending
 	switch {
 	case r.state.Inactive:
@@ -238,7 +336,8 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 			StreamAdmitted: admitted,
 		})
 	}
-	return InstanceStatus{
+	child := r.child
+	status := InstanceStatus{
 		Home:                r.reg.Home,
 		IdentityHome:        r.reg.IdentityHome,
 		RuntimeDelivery:     r.reg.RuntimeDelivery,
@@ -255,7 +354,11 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 		LastError:           r.state.LastError,
 		UnreadCount:         r.state.UnreadCount,
 		StreamAdmitted:      allAdmitted,
-		ChannelCore:         r.child.Status(),
 		ConflictHome:        r.conflictHome,
 	}
+	r.mu.Unlock()
+	if child != nil {
+		status.ChannelCore = child.Status()
+	}
+	return status
 }
