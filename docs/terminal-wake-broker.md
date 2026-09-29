@@ -168,6 +168,23 @@ status. The daemon reports its own build in `daemon_version` and `daemon_commit`
 a CLI must not substitute its own version for an older daemon that does not
 report these fields.
 
+## Runtime prerequisite
+
+`aw wake` runs the bundled channel-core child with the system `node` executable
+found on the daemon's `PATH`; Node is not embedded in the `aw` binary. Current
+terminal wake delivery evidence is Node 22 in the Linux candidate gate and Node
+26.8.2 on the macOS host. Use a tested Node runtime available to the daemon
+rather than assuming the `aw` binary carries one.
+
+A service unit must set a `PATH` that contains both `aw` and `node` as seen by
+the service user. On macOS/Homebrew, replace the example with the real `aw` path
+and include the Node directory, commonly `/opt/homebrew/bin` on Apple Silicon or
+`/usr/local/bin` on Intel/Homebrew. On Linux/systemd, replace the example with
+the real `aw` path and include the directory printed by `command -v node` for
+that user. After installation, `aw wake status` should show
+`channel_core node=<path>` for active registered homes. `system Node executable
+not found` means the service `PATH` is wrong.
+
 ## Service units
 
 Example **launchd** user agent:
@@ -179,6 +196,10 @@ Example **launchd** user agent:
 <dict>
   <key>Label</key>            <string>ai.aweb.wake</string>
   <key>ProgramArguments</key> <array><string>/usr/local/bin/aw</string><string>wake</string><string>run</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
   <key>RunAtLoad</key>        <true/>
   <key>KeepAlive</key>        <true/>
   <key>StandardOutPath</key>  <string>/tmp/aweb-wake.log</string>
@@ -205,6 +226,9 @@ RestartSec=2
 [Install]
 WantedBy=default.target
 ```
+
+The `ExecStart` and `PATH` values above are placeholders: replace them with the
+actual locations of `aw` and `node` for the service user.
 
 Restarting the daemon is safe for registered instances, but it is not a promise
 of lossless replay for already accepted presentations; use the recovery guidance
