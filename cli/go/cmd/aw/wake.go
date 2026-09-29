@@ -385,7 +385,7 @@ func wakeStore() (*wake.Store, error) {
 // path every other identity-home-aware command uses. The broker needs
 // stream-read authority and nothing else — it never opens a message, so it
 // never needs decryption material for any identity.
-func wakeStreamOpener(identityHome string) (run.EventStreamOpener, error) {
+func wakeStreamOpener(identityHome, teamID string) (run.EventStreamOpener, error) {
 	identityHome = strings.TrimSpace(identityHome)
 	if identityHome == "" || !filepath.IsAbs(identityHome) {
 		return nil, fmt.Errorf("identity home must be an absolute path, got %q", identityHome)
@@ -398,14 +398,32 @@ func wakeStreamOpener(identityHome string) (run.EventStreamOpener, error) {
 	var client *aweb.Client
 	var err error
 	if awconfig.IsGrantHome(home.Root) {
+		if err := validateGrantHomeTeam(home.Root, teamID); err != nil {
+			return nil, err
+		}
 		client, _, err = resolveGrantClientSelection(workingDir, home)
 	} else {
-		client, _, err = resolveClientSelectionAtIdentityHome(workingDir, home)
+		client, _, err = resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamID, home)
 	}
 	if err != nil {
 		return nil, err
 	}
 	return run.NewEventStreamOpener(client.Client), nil
+}
+
+func validateGrantHomeTeam(identityHome, teamID string) error {
+	grant, err := awconfig.LoadGrantHome(identityHome)
+	if err != nil {
+		return err
+	}
+	want := strings.TrimSpace(teamID)
+	if want == "" {
+		return nil
+	}
+	if got := strings.TrimSpace(grant.TeamID); got != want {
+		return fmt.Errorf("grant home is bound to team %s; requested team %s conflicts", got, want)
+	}
+	return nil
 }
 
 func wakeLogger() func(string, ...any) {

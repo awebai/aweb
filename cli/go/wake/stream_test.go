@@ -155,7 +155,7 @@ func TestRegisterBeforeRunStartsReconciledRunners(t *testing.T) {
 		RateLimit:    50 * time.Millisecond,
 		PollInterval: 10 * time.Millisecond,
 		Reconcile:    20 * time.Millisecond,
-		OpenStream: func(string) (run.EventStreamOpener, error) {
+		OpenStream: func(string, string) (run.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
@@ -201,7 +201,7 @@ func TestBrokerNeverFetchesOrAcknowledgesAnything(t *testing.T) {
 		Store:   store,
 		Session: session.NewFake(session.Inspection{}),
 		Log:     logs.log,
-		OpenStream: func(identityHome string) (run.EventStreamOpener, error) {
+		OpenStream: func(identityHome, teamID string) (run.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
@@ -232,7 +232,7 @@ func TestPlannedCloseIsNotReportedAsAnOutage(t *testing.T) {
 		Session:   session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateBusy, RawState: "working"}),
 		Log:       logs.log,
 		StreamTTL: 80 * time.Millisecond,
-		OpenStream: func(string) (run.EventStreamOpener, error) {
+		OpenStream: func(string, string) (run.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
@@ -268,7 +268,7 @@ func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 		Store:   store,
 		Session: oats,
 		Log:     logs.log,
-		OpenStream: func(identityHome string) (run.EventStreamOpener, error) {
+		OpenStream: func(identityHome, teamID string) (run.EventStreamOpener, error) {
 			if strings.HasPrefix(identityHome, badHome) {
 				return openerFor(t, bad.URL), nil
 			}
@@ -346,7 +346,7 @@ func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 		Log:        logs.log,
 		BackoffMin: 10 * time.Millisecond,
 		BackoffMax: 20 * time.Millisecond,
-		OpenStream: func(string) (run.EventStreamOpener, error) { return openerFor(t, server.URL), nil },
+		OpenStream: func(string, string) (run.EventStreamOpener, error) { return openerFor(t, server.URL), nil },
 	})
 	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}); err != nil {
 		t.Fatal(err)

@@ -15,6 +15,34 @@ import (
 	"github.com/awebai/aw/wake/session"
 )
 
+func TestInstanceSetPausedBeforeStartAndAfterStopReturns(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker, err := NewBroker(Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := newInstanceRunner(broker, Registration{Home: filepath.Join(t.TempDir(), "terminal")}, InstanceState{Home: filepath.Join(t.TempDir(), "terminal")})
+	runner.setPaused(true, "test-before-start")
+	if !runner.state.Paused {
+		t.Fatal("pause before start was not stored")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	runner.start(ctx)
+	waitForCond(t, "runner started", func() bool { runner.mu.Lock(); defer runner.mu.Unlock(); return runner.cancel != nil })
+	cancel()
+	runner.stop()
+	done := make(chan struct{})
+	go func() { runner.setPaused(false, "test-after-stop"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("setPaused hung after runner stop")
+	}
+}
+
 func TestBrokerRestoresPauseBeforeChildDelivery(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {

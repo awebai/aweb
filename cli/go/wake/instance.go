@@ -71,19 +71,22 @@ func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instan
 
 func (r *instanceRunner) start(ctx context.Context) {
 	r.startOnce.Do(func() {
-		ctx, r.cancel = context.WithCancel(ctx)
+		ctx, cancel := context.WithCancel(ctx)
+		r.mu.Lock()
+		r.cancel = cancel
+		r.mu.Unlock()
 		go r.run(ctx)
 	})
 }
 
-func (r *instanceRunner) updateRegistration(reg Registration) {
+func (r *instanceRunner) updateRegistration(reg Registration) bool {
 	r.mu.Lock()
 	changed := !sameReceiveBindings(r.reg.ReceiveBindings(), reg.ReceiveBindings())
 	started := r.cancel != nil
 	if !started || !changed {
 		r.publishRegistrationLocked(reg, changed)
 		r.mu.Unlock()
-		return
+		return false
 	}
 	r.mu.Unlock()
 	select {
@@ -95,6 +98,7 @@ func (r *instanceRunner) updateRegistration(reg Registration) {
 		}
 		r.updates <- reg
 	}
+	return true
 }
 
 func (r *instanceRunner) publishRegistrationLocked(reg Registration, bumpGeneration bool) {
@@ -151,7 +155,7 @@ func (r *instanceRunner) receiveBindings() []ReceiveIdentity {
 	return r.registrationSnapshot().ReceiveBindings()
 }
 
-func (r *instanceRunner) bindingForIdentityHome(identityHome string) (ReceiveIdentity, int, bool) {
+func (r *instanceRunner) bindingForStreamKey(key string) (ReceiveIdentity, int, bool) {
 	r.mu.Lock()
 	if r.conflictHome != "" {
 		r.mu.Unlock()
@@ -160,8 +164,12 @@ func (r *instanceRunner) bindingForIdentityHome(identityHome string) (ReceiveIde
 	reg := r.reg.clone()
 	generation := r.generation
 	r.mu.Unlock()
-	binding, ok := reg.BindingForIdentityHome(identityHome)
-	return binding, generation, ok
+	for _, binding := range reg.ReceiveBindings() {
+		if got, err := bindingKey(binding.IdentityHome, binding.TeamID); err == nil && got == key {
+			return binding, generation, true
+		}
+	}
+	return ReceiveIdentity{}, 0, false
 }
 
 // stop is safe to call more than once, and safe to call on a runner that was
@@ -250,6 +258,7 @@ func (r *instanceRunner) run(ctx context.Context) {
 			r.publishRegistrationLocked(reg, true)
 			r.mu.Unlock()
 			startChild()
+			go r.broker.admitRunnerStreams(r)
 		case offer := <-r.events:
 			r.mu.Lock()
 			inactive := r.state.Inactive
@@ -310,15 +319,23 @@ func (r *instanceRunner) offerEvent(ev awid.AgentEvent, binding ReceiveIdentity,
 }
 
 func (r *instanceRunner) setPaused(paused bool, source string) {
+	r.mu.Lock()
+	started := r.cancel != nil
+	r.mu.Unlock()
+	if !started {
+		r.applyPause(paused, source, nil)
+		return
+	}
 	done := make(chan struct{})
 	req := pauseRequest{paused: paused, source: source, done: done}
 	select {
 	case r.pauses <- req:
-		<-done
-		return
-	default:
+		select {
+		case <-done:
+		case <-r.done:
+		}
+	case <-r.done:
 	}
-	r.applyPause(paused, source, nil)
 }
 
 func (r *instanceRunner) applyPause(paused bool, source string, child *ChannelCoreChild) {

@@ -238,14 +238,18 @@ func (r Registration) normalized() (Registration, error) {
 			return Registration{}, err
 		}
 		binding.IdentityHome = identityHome
-		if _, ok := seen[identityHome]; ok {
-			return Registration{}, fmt.Errorf("duplicate receive identity_home %s", identityHome)
+		binding.TeamID = strings.TrimSpace(binding.TeamID)
+		key, err := bindingKey(identityHome, binding.TeamID)
+		if err != nil {
+			return Registration{}, err
 		}
-		seen[identityHome] = struct{}{}
+		if _, ok := seen[key]; ok {
+			return Registration{}, fmt.Errorf("duplicate receive binding identity_home=%s team=%s", identityHome, binding.TeamID)
+		}
+		seen[key] = struct{}{}
 		if runtime != RuntimeDeliveryExternalSession && primary != "" && identityHome == primary {
 			return Registration{}, fmt.Errorf("receive identity_home %s overlaps native primary identity_home", identityHome)
 		}
-		binding.TeamID = strings.TrimSpace(binding.TeamID)
 		binding.Label = strings.TrimSpace(binding.Label)
 		owner := strings.ToLower(strings.TrimSpace(binding.DeliveryOwner))
 		if owner == "" {

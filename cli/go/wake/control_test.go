@@ -30,7 +30,7 @@ func TestControlSocketDrivesTheRunningDaemon(t *testing.T) {
 		Store:      store,
 		Session:    oats,
 		Log:        logs.log,
-		OpenStream: func(string) (run.EventStreamOpener, error) { return nil, errors.New("no stream in this test") },
+		OpenStream: func(string, string) (run.EventStreamOpener, error) { return nil, errors.New("no stream in this test") },
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -129,7 +129,7 @@ func TestFallbackFilesAreReconciledByTheDaemon(t *testing.T) {
 		Store:      store,
 		Session:    oats,
 		Log:        logs.log,
-		OpenStream: func(string) (run.EventStreamOpener, error) { return nil, errors.New("no stream in this test") },
+		OpenStream: func(string, string) (run.EventStreamOpener, error) { return nil, errors.New("no stream in this test") },
 	})
 
 	waitFor(t, "the daemon to reconcile the fallback file", func() bool {
