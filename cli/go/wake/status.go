@@ -110,4 +110,5 @@ type InstanceStatus struct {
 	LastError           string                  `json:"last_error,omitempty"`
 	UnreadCount         int                     `json:"unread_count,omitempty"`
 	StreamAdmitted      bool                    `json:"stream_admitted"`
+	ChannelCore         ChannelCoreStatus       `json:"channel_core,omitempty"`
 }

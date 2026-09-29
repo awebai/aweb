@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	awid "github.com/awebai/aw/awid"
 	"github.com/awebai/aw/wake/session"
 )
 
@@ -24,6 +25,7 @@ type instanceRunner struct {
 	nextProbe time.Time
 
 	hints  chan hintOffer
+	events chan eventOffer
 	cancel context.CancelFunc
 	done   chan struct{}
 	// startOnce keeps a registration reconciled before Broker.Run from being
@@ -39,6 +41,11 @@ type hintOffer struct {
 	unread int
 }
 
+type eventOffer struct {
+	event   awid.AgentEvent
+	binding ReceiveIdentity
+}
+
 func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instanceRunner {
 	return &instanceRunner{
 		broker:   b,
@@ -46,6 +53,7 @@ func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instan
 		state:    state,
 		admitted: map[string]bool{},
 		hints:    make(chan hintOffer, 256),
+		events:   make(chan eventOffer, 256),
 		done:     make(chan struct{}),
 	}
 }
@@ -116,6 +124,8 @@ func (r *instanceRunner) run(ctx context.Context) {
 		case <-ctx.Done():
 			r.persist()
 			return
+		case offer := <-r.events:
+			r.deliverEvent(ctx, offer)
 		case offer := <-r.hints:
 			r.absorb(offer)
 			// A new hint may be immediately actionable; the coalescing window
@@ -131,6 +141,24 @@ func (r *instanceRunner) run(ctx context.Context) {
 // a full channel drops the *oldest* offer rather than stalling every other
 // instance on one wedged runner, and the drop is counted as an eviction so it
 // is visible in status.
+func (r *instanceRunner) offerEvent(ev awid.AgentEvent, binding ReceiveIdentity) {
+	select {
+	case r.events <- eventOffer{event: ev, binding: binding}:
+	default:
+		r.mu.Lock()
+		r.state.Evicted++
+		r.mu.Unlock()
+		select {
+		case <-r.events:
+		default:
+		}
+		select {
+		case r.events <- eventOffer{event: ev, binding: binding}:
+		default:
+		}
+	}
+}
+
 func (r *instanceRunner) offer(h Hint, unread int) {
 	select {
 	case r.hints <- hintOffer{hint: h, unread: unread}:
@@ -146,6 +174,41 @@ func (r *instanceRunner) offer(h Hint, unread int) {
 		case r.hints <- hintOffer{hint: h, unread: unread}:
 		default:
 		}
+	}
+}
+
+func (r *instanceRunner) deliverEvent(ctx context.Context, offer eventOffer) {
+	cfg := r.broker.cfg
+	reg := r.registrationSnapshot()
+	now := cfg.Now()
+	r.mu.Lock()
+	if r.state.Inactive {
+		r.mu.Unlock()
+		return
+	}
+	r.state.LastAttemptAt = now
+	r.mu.Unlock()
+
+	inactive, err := cfg.ChannelCore.Deliver(ctx, reg, offer.binding, offer.event, cfg.Coalesce, cfg.RateLimit, cfg.PollInterval, "aw")
+	r.mu.Lock()
+	if inactive != "" {
+		r.state.Inactive = true
+		r.state.LastState = inactive
+	}
+	if err != nil {
+		r.state.LastError = err.Error()
+	} else {
+		r.state.LastError = ""
+		r.state.LastSubmitAt = now
+	}
+	r.mu.Unlock()
+	r.persist()
+	if err != nil {
+		cfg.Log("channel-core delivery failed home=%s type=%s err=%v", reg.Home, offer.event.Type, err)
+		return
+	}
+	if inactive != "" {
+		cfg.Log("inactive home=%s state=%s (registration kept; removal belongs to the retire hook)", reg.Home, inactive)
 	}
 }
 
@@ -454,5 +517,6 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 		LastError:           r.state.LastError,
 		UnreadCount:         r.state.UnreadCount,
 		StreamAdmitted:      allAdmitted,
+		ChannelCore:         r.broker.cfg.ChannelCore.Status(),
 	}
 }

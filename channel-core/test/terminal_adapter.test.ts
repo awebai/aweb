@@ -6,6 +6,7 @@ import {
   terminalReadyForIntent,
   TerminalInactiveError,
   type ChannelAwakening,
+  type TerminalInspection,
   type TerminalSession,
 } from "../src/index.js";
 
@@ -218,6 +219,35 @@ describe("terminal channel adapter", () => {
       await waiting;
       expect(resolved).toBe(true);
       expect(session.inspect).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("pause is rechecked after inspect before release", async () => {
+    vi.useFakeTimers();
+    try {
+      let paused = false;
+      let resolveInspect: ((inspection: TerminalInspection) => void) | undefined;
+      const session: TerminalSession = {
+        inspect: vi.fn(() => new Promise<TerminalInspection>((resolve) => { resolveInspect = resolve; })),
+        input: vi.fn(async () => {}),
+      };
+      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, isPaused: () => paused, coalesceMs: 0, rateLimitMs: 0, inspectDelayMs: 5 });
+      let resolved = false;
+      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
+      await flush();
+      expect(session.inspect).toHaveBeenCalledTimes(1);
+      paused = true;
+      resolveInspect?.({ present: true, state: "idle" });
+      await flush();
+      expect(resolved).toBe(false);
+      paused = false;
+      await vi.advanceTimersByTimeAsync(5);
+      resolveInspect?.({ present: true, state: "idle" });
+      await waiting;
+      expect(resolved).toBe(true);
+      expect(session.inspect).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

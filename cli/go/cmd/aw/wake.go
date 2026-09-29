@@ -90,15 +90,16 @@ var wakeRunCmd = &cobra.Command{
 		defer func() { _ = lock.Release() }()
 
 		broker, err := wake.NewBroker(wake.Config{
-			Store:      store,
-			Session:    &session.ExecClient{Bin: strings.TrimSpace(wakeOatsBin)},
-			OpenStream: wakeStreamOpener,
-			MaxStreams: wakeMaxStreams,
-			Coalesce:   millis(wakeCoalesceMS),
-			RateLimit:  millis(wakeRateLimitMS),
-			Version:    version,
-			Commit:     daemonCommitForStatus(),
-			Log:        wakeLogger(),
+			Store:       store,
+			Session:     &session.ExecClient{Bin: strings.TrimSpace(wakeOatsBin)},
+			ChannelCore: wake.NewChannelCoreRunner(store),
+			OpenStream:  wakeStreamOpener,
+			MaxStreams:  wakeMaxStreams,
+			Coalesce:    millis(wakeCoalesceMS),
+			RateLimit:   millis(wakeRateLimitMS),
+			Version:     version,
+			Commit:      daemonCommitForStatus(),
+			Log:         wakeLogger(),
 		})
 		if err != nil {
 			return err
@@ -494,6 +495,13 @@ func formatWakeStatus(v any) string {
 			dashIfEmpty(inst.LastState), stampOrDash(inst.LastInspectAt), stampOrDash(inst.LastAttemptAt), stampOrDash(inst.LastSubmitAt))
 		if inst.UnreadCount > 0 {
 			fmt.Fprintf(&b, "    unread=%d\n", inst.UnreadCount)
+		}
+		if strings.TrimSpace(inst.ChannelCore.NodePath) != "" || strings.TrimSpace(inst.ChannelCore.LastError) != "" {
+			fmt.Fprintf(&b, "    channel_core node=%s bundle=%s last_success=%s\n",
+				dashIfEmpty(inst.ChannelCore.NodePath), dashIfEmpty(inst.ChannelCore.BundlePath), stampOrDash(inst.ChannelCore.LastSuccessAt))
+			if strings.TrimSpace(inst.ChannelCore.LastError) != "" {
+				fmt.Fprintf(&b, "    channel_core_error=%s\n", inst.ChannelCore.LastError)
+			}
 		}
 		if strings.TrimSpace(inst.LastError) != "" {
 			fmt.Fprintf(&b, "    last_error=%s\n", inst.LastError)

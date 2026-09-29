@@ -55,8 +55,9 @@ const (
 
 // Config configures a Broker.
 type Config struct {
-	Store   *Store
-	Session session.Client
+	Store       *Store
+	Session     session.Client
+	ChannelCore *ChannelCoreRunner
 
 	// OpenStream builds the event stream source for one identity home. It is
 	// injected so the broker can be tested with no server and no credentials,
@@ -477,7 +478,11 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 		if !target.binding.allowsKind(hint.Kind) {
 			continue
 		}
-		target.runner.offer(hint.WithReceiveIdentity(target.binding), ev.UnreadCount)
+		if b.cfg.ChannelCore != nil {
+			target.runner.offerEvent(ev, target.binding)
+		} else {
+			target.runner.offer(hint.WithReceiveIdentity(target.binding), ev.UnreadCount)
+		}
 	}
 }
 

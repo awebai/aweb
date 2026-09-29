@@ -239,6 +239,11 @@ export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGa
         }
 
         throwIfAborted(options.signal);
+        if (options.isPaused?.()) {
+          options.log?.("aweb: terminal delivery is paused after inspect; delivery waits before fetch");
+          await sleep(inspectDelayMs, options.signal);
+          continue;
+        }
         const batch = waiters.splice(0, waiters.length);
         lastDeliveryAt = Date.now();
         for (const waiter of batch) waiter.resolve();
