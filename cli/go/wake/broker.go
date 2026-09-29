@@ -538,21 +538,32 @@ func (b *Broker) Register(reg Registration) error {
 	if err != nil {
 		return err
 	}
+	b.reconcileMu.Lock()
+	defer b.reconcileMu.Unlock()
 	if err := b.refuseDuplicateBinding(reg); err != nil {
 		return err
 	}
 	if reg.RegisteredAt.IsZero() {
 		reg.RegisteredAt = b.cfg.Now()
 	}
+	_, hadExistingRunner := b.instanceRunner(canonical)
+	hadExistingRegistration := false
 	if existing, ok, _ := b.cfg.Store.LoadRegistration(canonical); ok {
 		// Re-registration keeps the original clock so the pending expiry is
 		// not restarted by a retrying hook.
 		reg.RegisteredAt = existing.RegisteredAt
+		hadExistingRegistration = true
 	}
 	if err := b.cfg.Store.SaveRegistration(reg); err != nil {
 		return err
 	}
-	b.Reconcile()
+	if err := b.cfg.Store.ResetInstanceLifecycle(reg.Home); err != nil {
+		return err
+	}
+	b.reconcileLocked()
+	if hadExistingRunner || hadExistingRegistration {
+		b.reactivateRunner(reg.Home)
+	}
 	return nil
 }
 
@@ -586,13 +597,61 @@ func (b *Broker) refuseDuplicateBinding(reg Registration) error {
 	return nil
 }
 
+func (b *Broker) instanceRunner(home string) (*instanceRunner, bool) {
+	canonical, err := CanonicalHome(home)
+	if err != nil {
+		return nil, false
+	}
+	b.mu.Lock()
+	runner := b.instances[HomeKey(canonical)]
+	b.mu.Unlock()
+	return runner, runner != nil
+}
+
+func (b *Broker) reactivateRunner(home string) {
+	if runner, ok := b.instanceRunner(home); ok {
+		runner.reactivateRegistration()
+	}
+}
+
+// RegisterInStore applies the daemon-down registration fallback semantics:
+// write the registration and reset lifecycle status while preserving pause.
+func RegisterInStore(store *Store, reg Registration) error {
+	if existing, ok, loadErr := store.LoadRegistration(reg.Home); loadErr == nil && ok {
+		reg.RegisteredAt = existing.RegisteredAt
+	}
+	if err := store.SaveRegistration(reg); err != nil {
+		return err
+	}
+	return store.ResetInstanceLifecycle(reg.Home)
+}
+
 // Deregister removes a registration and its state.
 func (b *Broker) Deregister(home string) (bool, error) {
-	existed, err := b.cfg.Store.DeleteRegistration(home)
+	canonical, err := CanonicalHome(home)
+	if err != nil {
+		return false, err
+	}
+	b.reconcileMu.Lock()
+	defer b.reconcileMu.Unlock()
+	key := HomeKey(canonical)
+	b.mu.Lock()
+	runner := b.instances[key]
+	if runner != nil {
+		delete(b.instances, key)
+	}
+	b.mu.Unlock()
+	if runner != nil {
+		runner.stop()
+	}
+	existed, err := b.cfg.Store.DeleteRegistration(canonical)
+	if runner != nil {
+		existed = true
+	}
 	if err != nil {
 		return existed, err
 	}
-	b.Reconcile()
+	b.pruneStreamsLocked()
 	return existed, nil
 }
 

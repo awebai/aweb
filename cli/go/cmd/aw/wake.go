@@ -174,10 +174,7 @@ var wakeRegisterCmd = &cobra.Command{
 			return err
 		}
 		_, err = wakeCallOrFallback(store, wake.ControlRequest{Op: wake.OpRegister, Registration: &reg}, func() error {
-			if existing, ok, loadErr := store.LoadRegistration(reg.Home); loadErr == nil && ok {
-				reg.RegisteredAt = existing.RegisteredAt
-			}
-			return store.SaveRegistration(reg)
+			return wake.RegisterInStore(store, reg)
 		})
 		if err != nil {
 			return err

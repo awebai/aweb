@@ -3,6 +3,7 @@ package wake
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -272,6 +273,286 @@ func TestBrokerIgnoresStaleInactiveGeneration(t *testing.T) {
 	}
 }
 
+func TestBrokerDeregisterStopsBeforeDeletingState(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	writeFakeOATS(t, root, inputPath)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	server := mailServer(t, "deregister mail")
+	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: (&logCapture{}).log})
+	defer cancel()
+	if err := broker.Register(Registration{Home: home, IdentityHome: grantHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	existed, err := broker.Deregister(home)
+	if err != nil || !existed {
+		t.Fatalf("deregister existed=%v err=%v", existed, err)
+	}
+	statePath := store.instancePath(HomeKey(home))
+	assertNoFileAfter(t, statePath, 300*time.Millisecond)
+	cancel()
+	assertNoFileAfter(t, statePath, 300*time.Millisecond)
+	existed, err = broker.Deregister(home)
+	if err != nil || existed {
+		t.Fatalf("second deregister existed=%v err=%v, want idempotent false/nil", existed, err)
+	}
+}
+
+func TestBrokerDeregisterThenSameHomeRegisterStartsFreshAndDelivers(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	writeStoppedOATS(t, root, inputPath)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	server := mailServer(t, "reactivated mail")
+	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: (&logCapture{}).log})
+	defer cancel()
+	reg := Registration{Home: home, IdentityHome: grantHome, Delivery: DeliverySession}
+	if err := broker.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-first", ConversationID: "conv"})
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
+	if existed, err := broker.Deregister(home); err != nil || !existed {
+		t.Fatalf("deregister existed=%v err=%v", existed, err)
+	}
+	writeFakeOATS(t, root, inputPath)
+	if err := broker.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.ChannelCore.Running && !inst.Paused && inst.Phase == PhasePending
+	})
+	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "reactivated", ConversationID: "conv"})
+	waitForFileContains(t, inputPath, "reactivated mail")
+}
+
+func TestBrokerExplicitRegisterReactivatesInactiveHome(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	writeStoppedOATS(t, root, inputPath)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	server := mailServer(t, "explicit reactivate mail")
+	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: (&logCapture{}).log})
+	defer cancel()
+	reg := Registration{Home: home, IdentityHome: grantHome, Delivery: DeliverySession}
+	if err := broker.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-first", ConversationID: "conv"})
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
+	writeFakeOATS(t, root, inputPath)
+	if err := broker.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.ChannelCore.Running && inst.Phase == PhasePending && inst.LastState == "" && inst.LastError == ""
+	})
+	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "explicit-reactivated", ConversationID: "conv"})
+	waitForFileContains(t, inputPath, "explicit reactivate mail")
+}
+
+func TestBrokerExplicitRegisterFencesStaleInactiveCallback(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	writeFakeOATS(t, root, inputPath)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	server := mailServer(t, "stale inactive fenced mail")
+	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logs := &logCapture{}
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: logs.log})
+	defer cancel()
+	reg := Registration{Home: home, IdentityHome: grantHome, Delivery: DeliverySession}
+	if err := broker.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	runner := broker.instances[HomeKey(home)]
+	runner.mu.Lock()
+	oldGeneration := runner.generation
+	runner.mu.Unlock()
+	if err := broker.Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.ChannelCore.Running && inst.ChannelCore.Generation > oldGeneration
+	})
+	runner.inactive <- inactiveSignal{generation: oldGeneration, state: "stopped"}
+	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "after-stale-inactive", ConversationID: "conv"})
+	waitForFileContains(t, inputPath, "stale inactive fenced mail")
+	if inst := instanceByHome(t, broker, home); inst.Phase == PhaseInactive {
+		t.Fatalf("stale inactive generation made reactivated registration inactive: %#v", inst)
+	}
+	if !strings.Contains(logs.all(), "inactive ignored") {
+		t.Fatalf("missing stale inactive diagnostic: %s", logs.all())
+	}
+}
+
+func TestBrokerDeregisterSerializesConcurrentReconcile(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := tempHome(t, "terminal")
+	idHome := filepath.Join(tempHome(t, "identity"), ".aw")
+	writeWakeTestTeamState(t, idHome, "team:one")
+	reg := Registration{Home: home, IdentityHome: idHome, Delivery: DeliverySession, RegisteredAt: time.Now().UTC()}
+	if err := store.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	broker, err := NewBroker(Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := newInstanceRunner(broker, reg, InstanceState{Home: home})
+	cancelCalled := make(chan struct{})
+	releaseStop := make(chan struct{})
+	runner.cancel = func() {
+		close(cancelCalled)
+		<-releaseStop
+		close(runner.done)
+	}
+	broker.mu.Lock()
+	broker.instances[HomeKey(home)] = runner
+	broker.mu.Unlock()
+	deregisterDone := make(chan error, 1)
+	go func() {
+		existed, err := broker.Deregister(home)
+		if err == nil && !existed {
+			err = errors.New("deregister reported missing registration")
+		}
+		deregisterDone <- err
+	}()
+	select {
+	case <-cancelCalled:
+	case <-time.After(time.Second):
+		t.Fatal("deregister did not reach runner stop")
+	}
+	statusDone := make(chan struct{})
+	go func() { _ = broker.Status(); close(statusDone) }()
+	select {
+	case <-statusDone:
+	case <-time.After(time.Second):
+		t.Fatal("deregister held b.mu while waiting for runner stop")
+	}
+	reconcileDone := make(chan struct{})
+	go func() { broker.Reconcile(); close(reconcileDone) }()
+	select {
+	case <-reconcileDone:
+		t.Fatal("concurrent reconcile completed while deregister stop/delete was in progress")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseStop)
+	select {
+	case err := <-deregisterDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("deregister did not complete")
+	}
+	select {
+	case <-reconcileDone:
+	case <-time.After(time.Second):
+		t.Fatal("reconcile did not complete after deregister released")
+	}
+	broker.mu.Lock()
+	_, running := broker.instances[HomeKey(home)]
+	broker.mu.Unlock()
+	if running {
+		t.Fatal("concurrent reconcile recreated runner during deregister")
+	}
+	if _, ok, err := store.LoadRegistration(home); err != nil || ok {
+		t.Fatalf("registration after deregister ok=%v err=%v", ok, err)
+	}
+	assertNoFileAfter(t, store.instancePath(HomeKey(home)), 50*time.Millisecond)
+}
+
+func TestRegisterInStoreFallbackResetsLifecyclePreservesPause(t *testing.T) {
+	store, err := NewStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := tempHome(t, "terminal")
+	idHome := filepath.Join(tempHome(t, "identity"), ".aw")
+	writeWakeTestTeamState(t, idHome, "team:one")
+	if err := store.SaveInstance(InstanceState{Home: home, Paused: true, Inactive: true, FirstPresentAt: time.Now(), LastInspectAt: time.Now(), LastState: "stopped", LastError: "boom", UnreadCount: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RegisterInStore(store, Registration{Home: home, IdentityHome: idHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.LoadInstance(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Paused || state.Inactive || !state.FirstPresentAt.IsZero() || !state.LastInspectAt.IsZero() || state.LastState != "" || state.LastError != "" || state.UnreadCount != 0 {
+		t.Fatalf("fallback state=%#v, want pause preserved and lifecycle reset", state)
+	}
+	if existed, err := store.DeleteRegistration(home); err != nil || !existed {
+		t.Fatalf("delete registration existed=%v err=%v", existed, err)
+	}
+	if err := RegisterInStore(store, Registration{Home: home, IdentityHome: idHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	state, err = store.LoadInstance(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Paused || state.Inactive {
+		t.Fatalf("fresh fallback state=%#v, want unpaused active lifecycle", state)
+	}
+}
+
 func TestBrokerInactiveStopsChildAndDropsLaterEvents(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -382,6 +663,24 @@ func instanceByHome(t *testing.T, broker *Broker, home string) InstanceStatus {
 	}
 	t.Fatalf("instance %s not found", home)
 	return InstanceStatus{}
+}
+
+func assertNoFileAfter(t *testing.T, path string, d time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for {
+		_, err := os.Stat(path)
+		if os.IsNotExist(err) && time.Now().After(deadline) {
+			return
+		}
+		if err == nil && time.Now().After(deadline) {
+			t.Fatalf("%s exists after %s", path, d)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			t.Fatalf("stat %s: %v", path, err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func assertFileNotContains(t *testing.T, path, needle string) {

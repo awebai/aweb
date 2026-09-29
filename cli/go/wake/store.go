@@ -631,6 +631,22 @@ func (s *Store) LoadInstance(home string) (InstanceState, error) {
 	return state, nil
 }
 
+// ResetInstanceLifecycle clears terminal lifecycle/error status for an explicit
+// registration while preserving durable operator pause intent.
+func (s *Store) ResetInstanceLifecycle(home string) error {
+	state, err := s.LoadInstance(home)
+	if err != nil {
+		return err
+	}
+	state.FirstPresentAt = time.Time{}
+	state.Inactive = false
+	state.LastInspectAt = time.Time{}
+	state.LastState = ""
+	state.LastError = ""
+	state.UnreadCount = 0
+	return s.SaveInstance(state)
+}
+
 // SaveStatus writes the status snapshot the CLI reads when the daemon is down.
 func (s *Store) SaveStatus(status Status) error {
 	return writeJSONAtomic(s.StatusPath(), status)

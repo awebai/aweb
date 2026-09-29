@@ -109,6 +109,11 @@
 
 ### CLI compatibility
 
+- `aw wake deregister` now stops the retired wake runner before removing its
+  registration/state, so runner shutdown cannot recreate the deleted instance
+  state. Explicit same-home registration reactivates an inactive wake home and
+  clears lifecycle errors while preserving intentional pause state; the
+  daemon-down registration fallback applies the same lifecycle reset.
 - `aw team invite` now prints the complete porcelain `aw team join` command,
   and `aw team join` installs membership and connects the current workspace in
   one step using the invite's embedded aweb service URL. Hosted servers now

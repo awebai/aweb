@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"sync"
+	"time"
 
 	awid "github.com/awebai/aw/awid"
 	"github.com/awebai/aw/wake/session"
@@ -25,6 +26,7 @@ type instanceRunner struct {
 	events       chan eventOffer
 	updates      chan Registration
 	inactive     chan inactiveSignal
+	reactivate   chan reactivateRequest
 	pauses       chan pauseRequest
 	child        *ChannelCoreChild
 	pendingReg   *Registration
@@ -56,17 +58,22 @@ type pauseRequest struct {
 	done   chan struct{}
 }
 
+type reactivateRequest struct {
+	done chan struct{}
+}
+
 func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instanceRunner {
 	return &instanceRunner{
-		broker:   b,
-		reg:      reg,
-		state:    state,
-		admitted: map[string]bool{},
-		events:   make(chan eventOffer, 256),
-		updates:  make(chan Registration, 1),
-		inactive: make(chan inactiveSignal, 1),
-		pauses:   make(chan pauseRequest, 16),
-		done:     make(chan struct{}),
+		broker:     b,
+		reg:        reg,
+		state:      state,
+		admitted:   map[string]bool{},
+		events:     make(chan eventOffer, 256),
+		updates:    make(chan Registration, 1),
+		inactive:   make(chan inactiveSignal, 1),
+		reactivate: make(chan reactivateRequest, 1),
+		pauses:     make(chan pauseRequest, 16),
+		done:       make(chan struct{}),
 	}
 }
 
@@ -144,6 +151,38 @@ func (r *instanceRunner) setConflictHome(home string) {
 	r.mu.Lock()
 	r.conflictHome = home
 	r.mu.Unlock()
+}
+
+func (r *instanceRunner) reactivateRegistration() {
+	r.mu.Lock()
+	started := r.cancel != nil
+	if !started {
+		r.resetLifecycleLocked()
+		r.generation++
+		r.mu.Unlock()
+		r.persist()
+		return
+	}
+	r.mu.Unlock()
+	done := make(chan struct{})
+	req := reactivateRequest{done: done}
+	select {
+	case r.reactivate <- req:
+		select {
+		case <-done:
+		case <-r.done:
+		}
+	case <-r.done:
+	}
+}
+
+func (r *instanceRunner) resetLifecycleLocked() {
+	r.state.FirstPresentAt = time.Time{}
+	r.state.Inactive = false
+	r.state.LastInspectAt = time.Time{}
+	r.state.LastState = ""
+	r.state.LastError = ""
+	r.state.UnreadCount = 0
 }
 
 func (r *instanceRunner) registrationSnapshot() Registration {
@@ -269,6 +308,16 @@ func (r *instanceRunner) run(ctx context.Context) {
 		case req := <-r.pauses:
 			r.applyPause(req.paused, req.source, child)
 			close(req.done)
+		case req := <-r.reactivate:
+			stopChild()
+			r.mu.Lock()
+			r.resetLifecycleLocked()
+			r.generation++
+			r.mu.Unlock()
+			r.persist()
+			startChild()
+			close(req.done)
+			go r.broker.admitRunnerStreams(r)
 		case reg := <-r.updates:
 			stopChild()
 			r.mu.Lock()
