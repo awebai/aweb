@@ -13,6 +13,11 @@ import {
   deliveryOptionsForAwakening,
   type WakeLogEvent,
 } from "../src/wake.ts";
+import { shouldNotifyStreamStateToPi } from "../src/index.ts";
+
+test("transport reconnect and disconnect are diagnostics, not Pi model input", () => {
+  assert.equal(shouldNotifyStreamStateToPi(), false);
+});
 
 function awakening(overrides: Partial<ChannelAwakening> = {}): ChannelAwakening {
   return {

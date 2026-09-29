@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
-import { createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL } from "../src/index.js";
+import { createChannelRegistryResolver, loadChannelConfig, isDirectExecution, resolveRegistryFallbackURL, shouldNotifyStreamStateToClaude } from "../src/index.js";
 import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
 
 describe("loadChannelConfig", () => {
@@ -44,6 +44,12 @@ describe("createChannelRegistryResolver", () => {
     await expect(registry.discoverRegistry("foreign.example"))
       .resolves.toBe("https://foreign.registry.example");
     expect(calls).toEqual(["_awid.foreign.example"]);
+  });
+});
+
+describe("stream state handling", () => {
+  test("transport reconnect and disconnect are diagnostics, not Claude model input", () => {
+    expect(shouldNotifyStreamStateToClaude()).toBe(false);
   });
 });
 

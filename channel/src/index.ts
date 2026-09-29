@@ -218,6 +218,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
         if (state.state === "connected") return;
         const content = formatEventStreamState(state);
         console.error(content);
+        if (!shouldNotifyStreamStateToClaude()) return;
         void mcp.notification({
           method: "notifications/claude/channel",
           params: { content, meta: { type: "channel_status", stream_state: state.state } },
@@ -257,6 +258,10 @@ export async function dispatchEvent(
     dispatched,
     event,
   );
+}
+
+export function shouldNotifyStreamStateToClaude(): boolean {
+  return false;
 }
 
 export function isDirectExecution(moduleURL: string): boolean {

@@ -231,6 +231,10 @@ async function sendFirstSessionWelcome(pi: ExtensionAPI, cwd: string, teamID: st
   );
 }
 
+export function shouldNotifyStreamStateToPi(): boolean {
+  return false;
+}
+
 export default function awebPiExtension(pi: ExtensionAPI) {
   let abortController: AbortController | undefined;
   let wakeDispatcher: WakeDispatcher | undefined;
@@ -393,6 +397,8 @@ export default function awebPiExtension(pi: ExtensionAPI) {
         }
         if (state.state === "connected") return;
         const content = formatEventStreamState(state);
+        console.warn(content);
+        if (!shouldNotifyStreamStateToPi()) return;
         pi.sendMessage({
           customType: "aweb-channel-status",
           content,
