@@ -373,8 +373,9 @@ func TestRunBinaryUsesExternalPrincipalWorkspaceAndPropagatesIdentityHome(t *tes
 		t.Fatal(err)
 	}
 	capturePath := filepath.Join(root, "provider-identity-home")
+	stdinCapturePath := filepath.Join(root, "provider-stdin")
 	provider := filepath.Join(providerBin, "claude")
-	script := "#!/bin/sh\nprintf '%s' \"$AWEB_IDENTITY_HOME\" > \"$RUN_IDENTITY_CAPTURE\"\nprintf '%s\\n' '{\"type\":\"result\",\"duration_ms\":1,\"session_id\":\"attached-session\"}'\n"
+	script := "#!/bin/sh\nprintf '%s' \"$AWEB_IDENTITY_HOME\" > \"$RUN_IDENTITY_CAPTURE\"\ncat > \"$RUN_STDIN_CAPTURE\"\nprintf '%s\\n' '{\"type\":\"result\",\"duration_ms\":1,\"session_id\":\"attached-session\"}'\n"
 	if err := os.WriteFile(provider, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -383,6 +384,7 @@ func TestRunBinaryUsesExternalPrincipalWorkspaceAndPropagatesIdentityHome(t *tes
 	cmd.Env = append(testCommandEnv(filepath.Join(root, "user-home")),
 		"PATH="+providerBin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"RUN_IDENTITY_CAPTURE="+capturePath,
+		"RUN_STDIN_CAPTURE="+stdinCapturePath,
 		awconfig.IdentityHomeEnv+"=",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -394,6 +396,13 @@ func TestRunBinaryUsesExternalPrincipalWorkspaceAndPropagatesIdentityHome(t *tes
 	}
 	if got := strings.TrimSpace(string(captured)); got != identityHome {
 		t.Fatalf("provider %s=%q want %q", awconfig.IdentityHomeEnv, got, identityHome)
+	}
+	stdin, err := os.ReadFile(stdinCapturePath)
+	if err != nil {
+		t.Fatalf("provider did not receive stdin: %v", err)
+	}
+	if got := string(stdin); got != "done" {
+		t.Fatalf("provider stdin=%q want %q", got, "done")
 	}
 	if _, err := os.Lstat(filepath.Join(instance, ".aw", "workspace.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("run copied principal workspace into instance: %v", err)
