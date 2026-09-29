@@ -116,8 +116,12 @@ func TestBrokerInitialSnapshotWaitsForAppliedRebind(t *testing.T) {
 			}, nil
 		}
 		inst := instanceByHome(t, broker, home)
-		if inst.IdentityHome != newHome || inst.ChannelCore.Generation < 1 {
-			t.Fatalf("new stream opened before applied transition: inst=%#v", inst)
+		runner := broker.instances[HomeKey(home)]
+		runner.mu.Lock()
+		generation := runner.generation
+		runner.mu.Unlock()
+		if inst.IdentityHome != newHome || generation < 1 {
+			t.Fatalf("new stream opened before applied transition: generation=%d inst=%#v", generation, inst)
 		}
 		openedNew <- struct{}{}
 		return func(context.Context, time.Time) (awid.EventSource, error) {
