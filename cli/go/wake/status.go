@@ -101,11 +101,8 @@ type InstanceStatus struct {
 	RegisteredAt        time.Time               `json:"registered_at"`
 	Phase               string                  `json:"phase"`
 	Paused              bool                    `json:"paused"`
-	PendingHints        int                     `json:"pending_hints"`
-	Evicted             int                     `json:"evicted_hints"`
+	Evicted             int                     `json:"evicted_events"`
 	LastInspectAt       time.Time               `json:"last_inspect_at,omitempty"`
-	LastAttemptAt       time.Time               `json:"last_attempt_at,omitempty"`
-	LastSubmitAt        time.Time               `json:"last_submit_at,omitempty"`
 	LastState           string                  `json:"last_state,omitempty"`
 	LastError           string                  `json:"last_error,omitempty"`
 	UnreadCount         int                     `json:"unread_count,omitempty"`

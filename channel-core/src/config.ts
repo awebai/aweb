@@ -20,6 +20,10 @@ export interface AgentConfig {
   registryURL: string;
   signingKey: Uint8Array;
   teamCertificateHeader: string;
+  authMode?: "team" | "grant";
+  grantID?: string;
+  grantSessionDID?: string;
+  grantScopes?: string[];
 }
 
 interface WorkspaceMembership {
@@ -59,6 +63,21 @@ interface IdentityConfig {
 interface IdentityHomeSelection {
   root: string;
   external: boolean;
+}
+
+interface GrantHomeConfig {
+  version?: number;
+  grant_id?: string;
+  team_id?: string;
+  subject?: {
+    did_aw?: string;
+    did_key?: string;
+    address?: string;
+    alias?: string;
+  };
+  scopes?: string[];
+  expires_at?: string;
+  aweb_url?: string;
 }
 
 export interface ResolveConfigOptions {
@@ -138,6 +157,10 @@ export function selectDeliveryMode(env: NodeJS.ProcessEnv = process.env): Delive
 
 export async function resolveConfig(workdir: string, options: ResolveConfigOptions = {}): Promise<AgentConfig> {
   const identityHome = selectIdentityHome(workdir, options);
+  const grantPath = join(identityHome.root, "grant.yaml");
+  if (lstatIfExists(grantPath)?.isFile()) {
+    return resolveGrantConfig(identityHome, options);
+  }
   const workspacePath = join(identityHome.root, "workspace.yaml");
   const teamsPath = join(identityHome.root, "teams.yaml");
   const identityPath = join(identityHome.root, "identity.yaml");
@@ -207,6 +230,44 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
     registryURL,
     signingKey,
     teamCertificateHeader: encodeTeamCertificateHeader(certificate),
+  };
+}
+
+async function resolveGrantConfig(identityHome: IdentityHomeSelection, options: ResolveConfigOptions): Promise<AgentConfig> {
+  const grantPath = join(identityHome.root, "grant.yaml");
+  preflightFile(grantPath, "grant file");
+  const grant = await readYAML<GrantHomeConfig>(grantPath);
+  if (!grant) throw new Error(`invalid grant home ${grantPath}: missing grant.yaml`);
+  if (grant.version !== 1) throw new Error(`invalid grant home ${grantPath}: unsupported version ${grant.version}`);
+  const grantID = (grant.grant_id || "").trim();
+  const teamID = (grant.team_id || "").trim();
+  const requestedTeam = (options.teamID || "").trim();
+  if (requestedTeam && requestedTeam !== teamID) {
+    throw new Error(`grant home is bound to team ${teamID}; requested team ${requestedTeam} conflicts`);
+  }
+  const expiresAt = String(grant.expires_at || "").trim();
+  if (expiresAt && Date.now() > Date.parse(expiresAt)) {
+    throw new Error(`identity grant ${grantID} expired at ${expiresAt}`);
+  }
+  const signingKeyPath = join(identityHome.root, "grant-signing.key");
+  preflightFile(signingKeyPath, "grant signing key");
+  const signingKey = await loadSigningKey(signingKeyPath);
+  const grantSessionDID = computeDIDKey(ed.getPublicKey(signingKey));
+  const subject = grant.subject || {};
+  return {
+    baseURL: (grant.aweb_url || "").trim(),
+    did: (subject.did_key || "").trim(),
+    stableID: (subject.did_aw || "").trim(),
+    address: (subject.address || "").trim(),
+    alias: (subject.alias || "").trim(),
+    teamID,
+    registryURL: "",
+    signingKey,
+    teamCertificateHeader: "",
+    authMode: "grant",
+    grantID,
+    grantSessionDID,
+    grantScopes: (grant.scopes || []).map((scope) => String(scope).trim()).filter(Boolean),
   };
 }
 

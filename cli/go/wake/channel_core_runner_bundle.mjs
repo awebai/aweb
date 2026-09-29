@@ -2065,7 +2065,7 @@ import { spawn as spawn2 } from "node:child_process";
 import { createInterface } from "node:readline";
 
 // channel-core/src/api/client.ts
-import { createHash } from "node:crypto";
+import { createHash as createHash2 } from "node:crypto";
 
 // channel-core/node_modules/@noble/ed25519/index.js
 var ed25519_CURVE = {
@@ -3161,131 +3161,8 @@ async function readBoundedJSON(response) {
   return JSON.parse(await readBoundedResponse(response));
 }
 
-// channel-core/src/api/client.ts
-etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
-function canonicalTimestamp() {
-  return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
-}
-var APIClient = class {
-  constructor(baseURL, auth) {
-    this.baseURL = baseURL;
-    this.auth = auth;
-  }
-  baseURL;
-  auth;
-  hasTeamCertificateAuth(teamID) {
-    return this.auth.teamID === teamID && this.auth.teamCertificateHeader.trim() !== "" && this.auth.did.trim() !== "" && this.auth.signingKey.length > 0;
-  }
-  async get(path) {
-    return this.request("GET", path);
-  }
-  async getFresh(path) {
-    return this.request("GET", path, void 0, true);
-  }
-  async post(path, body) {
-    return this.request("POST", path, body);
-  }
-  async request(method, path, body, noCache = false) {
-    const url = this.baseURL + path;
-    const bodyText = body === void 0 ? "" : JSON.stringify(body);
-    const headers = {
-      Accept: "application/json",
-      ...this.authHeaders(path, bodyText)
-    };
-    if (noCache) headers["Cache-Control"] = "no-cache";
-    const init = {
-      method,
-      headers,
-      redirect: "error",
-      signal: AbortSignal.timeout(3e4)
-    };
-    if (body !== void 0) {
-      headers["Content-Type"] = "application/json";
-      init.body = bodyText;
-    }
-    const resp = await fetch(url, init);
-    if (!resp.ok) {
-      const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text);
-    }
-    return readBoundedJSON(resp);
-  }
-  /** Open an SSE stream. Returns the raw Response for streaming. */
-  async openSSE(path, signal) {
-    const url = this.baseURL + path;
-    const resp = await fetch(url, {
-      signal,
-      redirect: "error",
-      headers: {
-        Accept: "text/event-stream",
-        "Cache-Control": "no-cache",
-        ...this.authHeaders(path, "")
-      }
-    });
-    if (!resp.ok) {
-      const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text);
-    }
-    return resp;
-  }
-  authHeaders(path, bodyText) {
-    if (this.usesIdentityMessagingAuth(path)) {
-      return this.identityAuthHeaders(bodyText);
-    }
-    return this.teamAuthHeaders(bodyText);
-  }
-  usesIdentityMessagingAuth(path) {
-    const cleanPath = path.split("?", 1)[0] ?? path;
-    return cleanPath === "/v1/messages" || cleanPath.startsWith("/v1/messages/") || cleanPath.startsWith("/v1/chat");
-  }
-  identityAuthHeaders(bodyText) {
-    const timestamp2 = canonicalTimestamp();
-    const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
-    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"did_aw":${JSON.stringify(this.auth.stableID)},"timestamp":${JSON.stringify(timestamp2)}}`;
-    const signature = Buffer.from(
-      sign(new TextEncoder().encode(payload), this.auth.signingKey)
-    ).toString("base64").replace(/=+$/, "");
-    const headers = {
-      Authorization: `DIDKey ${this.auth.did} ${signature}`,
-      "X-AWEB-Timestamp": timestamp2
-    };
-    if (this.auth.stableID.trim()) {
-      headers["X-AWEB-DID-AW"] = this.auth.stableID;
-    }
-    return headers;
-  }
-  teamAuthHeaders(bodyText) {
-    const timestamp2 = canonicalTimestamp();
-    const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
-    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(this.auth.teamID)},"timestamp":${JSON.stringify(timestamp2)}}`;
-    const signature = Buffer.from(
-      sign(new TextEncoder().encode(payload), this.auth.signingKey)
-    ).toString("base64").replace(/=+$/, "");
-    return {
-      Authorization: `DIDKey ${this.auth.did} ${signature}`,
-      "X-AWEB-Timestamp": timestamp2,
-      "X-AWID-Team-Certificate": this.auth.teamCertificateHeader
-    };
-  }
-};
-var APIError = class extends Error {
-  constructor(statusCode, body) {
-    super(body ? `aweb: http ${statusCode}: ${body}` : `aweb: http ${statusCode}`);
-    this.statusCode = statusCode;
-    this.body = body;
-  }
-  statusCode;
-  body;
-};
-
-// channel-core/src/api/events.ts
-var EVENT_STREAM_SERVER_HEARTBEAT_MS = 3e4;
-var EVENT_STREAM_INACTIVITY_MS = 2 * EVENT_STREAM_SERVER_HEARTBEAT_MS + 15e3;
-var EVENT_STREAM_DEADLINE_MS = 5 * 60 * 1e3;
-var EVENT_STREAM_PLANNED_CLOSE_MS = 4 * 60 * 1e3;
-
 // channel-core/src/identity/did.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash } from "node:crypto";
 
 // channel-core/node_modules/base-x/src/esm/index.js
 function base(ALPHABET2) {
@@ -3449,9 +3326,174 @@ function extractPublicKey(did) {
   return decoded.slice(2);
 }
 function computeStableID(publicKey) {
-  const hash = createHash2("sha256").update(publicKey).digest();
+  const hash = createHash("sha256").update(publicKey).digest();
   return "did:aw:" + esm_default2.encode(hash.subarray(0, 20));
 }
+
+// channel-core/src/api/client.ts
+etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
+function canonicalTimestamp() {
+  return (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+function canonicalGrantPayload(fields) {
+  const entries = Object.entries(fields).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([key, value]) => `${JSON.stringify(key)}:${typeof value === "number" ? String(value) : JSON.stringify(value)}`).join(",")}}`;
+}
+function signIdentityGrantHeaders(options) {
+  const bodyText = options.bodyText || "";
+  const bodyHash = createHash2("sha256").update(bodyText, "utf-8").digest("hex");
+  const url = new URL(options.baseURL + options.path);
+  const canonicalPayload = canonicalGrantPayload({
+    v: 1,
+    auth: "identity-grant",
+    aud: `${url.protocol}//${url.host}`,
+    method: options.method.toUpperCase(),
+    path: `${url.pathname}${url.search}` || "/",
+    grant_id: options.grantID,
+    body_sha256: bodyHash,
+    timestamp: options.timestamp
+  });
+  const signature = Buffer.from(sign(new TextEncoder().encode(canonicalPayload), options.signingKey)).toString("base64").replace(/=+$/, "");
+  return {
+    Authorization: `AWEB-Grant DIDKey ${computeDIDKey(getPublicKey(options.signingKey))} ${signature}`,
+    "X-AWEB-Grant-ID": options.grantID,
+    "X-AWEB-Timestamp": options.timestamp,
+    "X-AWEB-Signed-Payload": Buffer.from(canonicalPayload, "utf-8").toString("base64url"),
+    canonicalPayload,
+    bodySHA256: bodyHash
+  };
+}
+var APIClient = class {
+  constructor(baseURL, auth) {
+    this.baseURL = baseURL;
+    this.auth = auth;
+  }
+  baseURL;
+  auth;
+  hasTeamCertificateAuth(teamID) {
+    return this.auth.teamID === teamID && this.auth.teamCertificateHeader.trim() !== "" && this.auth.did.trim() !== "" && this.auth.signingKey.length > 0;
+  }
+  async get(path) {
+    return this.request("GET", path);
+  }
+  async getFresh(path) {
+    return this.request("GET", path, void 0, true);
+  }
+  async post(path, body) {
+    return this.request("POST", path, body);
+  }
+  async request(method, path, body, noCache = false) {
+    const url = this.baseURL + path;
+    const bodyText = body === void 0 ? "" : JSON.stringify(body);
+    const headers = {
+      Accept: "application/json",
+      ...this.authHeaders(method, path, bodyText)
+    };
+    if (noCache) headers["Cache-Control"] = "no-cache";
+    const init = {
+      method,
+      headers,
+      redirect: "error",
+      signal: AbortSignal.timeout(3e4)
+    };
+    if (body !== void 0) {
+      headers["Content-Type"] = "application/json";
+      init.body = bodyText;
+    }
+    const resp = await fetch(url, init);
+    if (!resp.ok) {
+      const text = await readSafeErrorExcerpt(resp).catch(() => "");
+      throw new APIError(resp.status, text);
+    }
+    return readBoundedJSON(resp);
+  }
+  /** Open an SSE stream. Returns the raw Response for streaming. */
+  async openSSE(path, signal) {
+    const url = this.baseURL + path;
+    const resp = await fetch(url, {
+      signal,
+      redirect: "error",
+      headers: {
+        Accept: "text/event-stream",
+        "Cache-Control": "no-cache",
+        ...this.authHeaders("GET", path, "")
+      }
+    });
+    if (!resp.ok) {
+      const text = await readSafeErrorExcerpt(resp).catch(() => "");
+      throw new APIError(resp.status, text);
+    }
+    return resp;
+  }
+  authHeaders(method, path, bodyText) {
+    if (this.auth.authMode === "grant") {
+      return this.grantAuthHeaders(method, path, bodyText);
+    }
+    if (this.usesIdentityMessagingAuth(path)) {
+      return this.identityAuthHeaders(bodyText);
+    }
+    return this.teamAuthHeaders(bodyText);
+  }
+  usesIdentityMessagingAuth(path) {
+    const cleanPath = path.split("?", 1)[0] ?? path;
+    return cleanPath === "/v1/messages" || cleanPath.startsWith("/v1/messages/") || cleanPath.startsWith("/v1/chat");
+  }
+  grantAuthHeaders(method, path, bodyText) {
+    const grantID = (this.auth.grantID || "").trim();
+    if (!grantID) throw new Error("grant_id is required for grant authentication");
+    const signed = signIdentityGrantHeaders({ baseURL: this.baseURL, path, method, bodyText, signingKey: this.auth.signingKey, grantID, timestamp: canonicalTimestamp() });
+    return {
+      Authorization: signed.Authorization,
+      "X-AWEB-Grant-ID": signed["X-AWEB-Grant-ID"],
+      "X-AWEB-Timestamp": signed["X-AWEB-Timestamp"],
+      "X-AWEB-Signed-Payload": signed["X-AWEB-Signed-Payload"]
+    };
+  }
+  identityAuthHeaders(bodyText) {
+    const timestamp2 = canonicalTimestamp();
+    const bodyHash = createHash2("sha256").update(bodyText, "utf-8").digest("hex");
+    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"did_aw":${JSON.stringify(this.auth.stableID)},"timestamp":${JSON.stringify(timestamp2)}}`;
+    const signature = Buffer.from(
+      sign(new TextEncoder().encode(payload), this.auth.signingKey)
+    ).toString("base64").replace(/=+$/, "");
+    const headers = {
+      Authorization: `DIDKey ${this.auth.did} ${signature}`,
+      "X-AWEB-Timestamp": timestamp2
+    };
+    if (this.auth.stableID.trim()) {
+      headers["X-AWEB-DID-AW"] = this.auth.stableID;
+    }
+    return headers;
+  }
+  teamAuthHeaders(bodyText) {
+    const timestamp2 = canonicalTimestamp();
+    const bodyHash = createHash2("sha256").update(bodyText, "utf-8").digest("hex");
+    const payload = `{"body_sha256":${JSON.stringify(bodyHash)},"team_id":${JSON.stringify(this.auth.teamID)},"timestamp":${JSON.stringify(timestamp2)}}`;
+    const signature = Buffer.from(
+      sign(new TextEncoder().encode(payload), this.auth.signingKey)
+    ).toString("base64").replace(/=+$/, "");
+    return {
+      Authorization: `DIDKey ${this.auth.did} ${signature}`,
+      "X-AWEB-Timestamp": timestamp2,
+      "X-AWID-Team-Certificate": this.auth.teamCertificateHeader
+    };
+  }
+};
+var APIError = class extends Error {
+  constructor(statusCode, body) {
+    super(body ? `aweb: http ${statusCode}: ${body}` : `aweb: http ${statusCode}`);
+    this.statusCode = statusCode;
+    this.body = body;
+  }
+  statusCode;
+  body;
+};
+
+// channel-core/src/api/events.ts
+var EVENT_STREAM_SERVER_HEARTBEAT_MS = 3e4;
+var EVENT_STREAM_INACTIVITY_MS = 2 * EVENT_STREAM_SERVER_HEARTBEAT_MS + 15e3;
+var EVENT_STREAM_DEADLINE_MS = 5 * 60 * 1e3;
+var EVENT_STREAM_PLANNED_CLOSE_MS = 4 * 60 * 1e3;
 
 // channel-core/src/identity/base64.ts
 var RAW_STD_BASE64 = /^[A-Za-z0-9+/]*$/;
@@ -6927,6 +6969,10 @@ function selectIdentityHome(workdir, options = {}) {
 }
 async function resolveConfig(workdir, options = {}) {
   const identityHome = selectIdentityHome(workdir, options);
+  const grantPath = join(identityHome.root, "grant.yaml");
+  if (lstatIfExists(grantPath)?.isFile()) {
+    return resolveGrantConfig(identityHome, options);
+  }
   const workspacePath = join(identityHome.root, "workspace.yaml");
   const teamsPath = join(identityHome.root, "teams.yaml");
   const identityPath = join(identityHome.root, "identity.yaml");
@@ -6990,6 +7036,43 @@ async function resolveConfig(workdir, options = {}) {
     registryURL,
     signingKey,
     teamCertificateHeader: encodeTeamCertificateHeader(certificate)
+  };
+}
+async function resolveGrantConfig(identityHome, options) {
+  const grantPath = join(identityHome.root, "grant.yaml");
+  preflightFile(grantPath, "grant file");
+  const grant = await readYAML(grantPath);
+  if (!grant) throw new Error(`invalid grant home ${grantPath}: missing grant.yaml`);
+  if (grant.version !== 1) throw new Error(`invalid grant home ${grantPath}: unsupported version ${grant.version}`);
+  const grantID = (grant.grant_id || "").trim();
+  const teamID = (grant.team_id || "").trim();
+  const requestedTeam = (options.teamID || "").trim();
+  if (requestedTeam && requestedTeam !== teamID) {
+    throw new Error(`grant home is bound to team ${teamID}; requested team ${requestedTeam} conflicts`);
+  }
+  const expiresAt = String(grant.expires_at || "").trim();
+  if (expiresAt && Date.now() > Date.parse(expiresAt)) {
+    throw new Error(`identity grant ${grantID} expired at ${expiresAt}`);
+  }
+  const signingKeyPath = join(identityHome.root, "grant-signing.key");
+  preflightFile(signingKeyPath, "grant signing key");
+  const signingKey = await loadSigningKey(signingKeyPath);
+  const grantSessionDID = computeDIDKey(getPublicKey(signingKey));
+  const subject = grant.subject || {};
+  return {
+    baseURL: (grant.aweb_url || "").trim(),
+    did: (subject.did_key || "").trim(),
+    stableID: (subject.did_aw || "").trim(),
+    address: (subject.address || "").trim(),
+    alias: (subject.alias || "").trim(),
+    teamID,
+    registryURL: "",
+    signingKey,
+    teamCertificateHeader: "",
+    authMode: "grant",
+    grantID,
+    grantSessionDID,
+    grantScopes: (grant.scopes || []).map((scope) => String(scope).trim()).filter(Boolean)
   };
 }
 async function loadConfiguredTeamCertificate(identityHome, activeTeam, certPath) {
@@ -8825,15 +8908,17 @@ function createLocalAWPinStoreWriter(options = {}) {
 }
 function createLocalAWDecryptProvider(options) {
   const awCommand = options.awCommand || process.env.AW_BIN || "aw";
+  const identityArgs = options.identityHome?.trim() ? ["--identity-home", options.identityHome.trim()] : [];
   const teamArgs = options.teamID?.trim() ? ["--team", options.teamID.trim()] : [];
+  const execOptions = { cwd: options.workdir, timeout: 15e3, maxBuffer: 1024 * 1024 };
   return {
     async mailMessage(messageID) {
       const id = messageID.trim();
       if (!id) return null;
       const { stdout } = await execFileAsync(
         awCommand,
-        [...teamArgs, "mail", "show", "--message-id", id, "--json"],
-        { cwd: options.workdir, timeout: 15e3, maxBuffer: 1024 * 1024 }
+        [...identityArgs, ...teamArgs, "mail", "show", "--message-id", id, "--json"],
+        execOptions
       );
       const payload = parseJSONOutput(stdout);
       const message = (payload.messages || []).find((msg) => msg.message_id === id);
@@ -8845,8 +8930,8 @@ function createLocalAWDecryptProvider(options) {
       if (!session || !id) return null;
       const { stdout } = await execFileAsync(
         awCommand,
-        [...teamArgs, "chat", "history", "--session-id", session, "--message-id", id, "--limit", "1", "--json"],
-        { cwd: options.workdir, timeout: 15e3, maxBuffer: 1024 * 1024 }
+        [...identityArgs, ...teamArgs, "chat", "history", "--session-id", session, "--message-id", id, "--limit", "1", "--json"],
+        execOptions
       );
       const payload = parseJSONOutput(stdout);
       const message = (payload.messages || []).find((msg) => msg.message_id === id);
@@ -9114,9 +9199,11 @@ function createChannelClient(config) {
     stableID: config.stableID,
     signingKey: config.signingKey,
     teamID: config.teamID,
-    teamCertificateHeader: config.teamCertificateHeader
+    teamCertificateHeader: config.teamCertificateHeader,
+    authMode: config.authMode,
+    grantID: config.grantID
   });
-  if (!client.hasTeamCertificateAuth(config.teamID)) {
+  if (config.authMode !== "grant" && !client.hasTeamCertificateAuth(config.teamID)) {
     throw new Error(`selected active team ${config.teamID} is missing certificate signing authentication`);
   }
   return client;
@@ -10043,6 +10130,7 @@ var lastError = "";
 var inactive = "";
 var handlerStatus = { ambientQueued: 0, ambientDropped: 0 };
 var queues = /* @__PURE__ */ new Map();
+var bindingCapabilities = /* @__PURE__ */ new Map();
 var consumers = [];
 function emit(payload) {
   process.stdout.write(`${JSON.stringify(payload)}
@@ -10100,6 +10188,7 @@ function runOATS(bin, args, input = "") {
   });
 }
 async function start(init) {
+  paused = Boolean(init.paused);
   const oatsBin = init.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
   const awCommand = init.awCommand || "aw";
   const session = {
@@ -10141,6 +10230,8 @@ async function start(init) {
     const queue = new EventQueue();
     queues.set(binding.binding_id, queue);
     const config = await resolveConfig(init.home, { identityHome: binding.identity_home, teamID: binding.team_id });
+    const grantScopes = new Set(config.grantScopes || []);
+    bindingCapabilities.set(binding.binding_id, { grant: config.authMode === "grant", scopes: grantScopes });
     const client = createChannelClient(config);
     const pinStore = binding.pin_store_path ? await loadPinStore(binding.pin_store_path) : await loadPinStore();
     const trust = new SenderTrustManager(client, createRegistryResolver(config), config.teamID, config.did, config.stableID);
@@ -10154,13 +10245,13 @@ async function start(init) {
       signal: abort.signal,
       deliveryStore,
       deliveryStorePath: binding.delivery_store_path,
-      localDecrypt: createLocalAWDecryptProvider({ workdir: init.home, awCommand, teamID: config.teamID }),
+      localDecrypt: createLocalAWDecryptProvider({ workdir: init.home, awCommand, identityHome: binding.identity_home, teamID: config.teamID }),
       teamID: config.teamID,
       workdir: init.home,
       awCommand,
       onAwakening,
       awaitDeliveryReady: (intent, signal) => awaitReady(intent, signal),
-      mailAcknowledgment: "delivery"
+      mailAcknowledgment: config.authMode === "grant" && !grantScopes.has("mail.send") ? "manual" : "delivery"
     }, /* @__PURE__ */ new Set(), queue, (message) => {
       lastError = message;
       status({ binding_id: binding.binding_id, error: message });
@@ -10179,6 +10270,20 @@ async function main() {
       initialized = true;
       await start(msg);
     } else if (msg.type === "event") {
+      const capabilities = bindingCapabilities.get(msg.binding_id);
+      if (capabilities?.grant) {
+        const type2 = String(msg.event.type || "");
+        if ((type2 === "actionable_mail" || type2 === "mail_message") && !capabilities.scopes.has("mail.read")) {
+          lastError = "grant lacks mail.read";
+          status({ binding_id: msg.binding_id, error: lastError });
+          continue;
+        }
+        if ((type2 === "actionable_chat" || type2 === "chat_message") && !capabilities.scopes.has("chat.read")) {
+          lastError = "grant lacks chat.read";
+          status({ binding_id: msg.binding_id, error: lastError });
+          continue;
+        }
+      }
       queues.get(msg.binding_id)?.push(msg.event);
     } else if (msg.type === "pause") {
       paused = true;

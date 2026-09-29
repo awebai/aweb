@@ -25,6 +25,7 @@ interface InitLine {
   coalesceMs?: number;
   rateLimitMs?: number;
   inspectDelayMs?: number;
+  paused?: boolean;
   bindings: BindingConfig[];
 }
 
@@ -84,6 +85,7 @@ let lastError = "";
 let inactive = "";
 let handlerStatus = { ambientQueued: 0, ambientDropped: 0 };
 const queues = new Map<string, EventQueue>();
+const bindingCapabilities = new Map<string, { grant: boolean; scopes: Set<string> }>();
 const consumers: Promise<void>[] = [];
 
 function emit(payload: Record<string, unknown>): void {
@@ -140,6 +142,7 @@ function runOATS(bin: string, args: string[], input = ""): Promise<OATSEnvelope>
 }
 
 async function start(init: InitLine): Promise<void> {
+  paused = Boolean(init.paused);
   const oatsBin = init.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
   const awCommand = init.awCommand || "aw";
   const session = {
@@ -176,6 +179,8 @@ async function start(init: InitLine): Promise<void> {
     const queue = new EventQueue();
     queues.set(binding.binding_id, queue);
     const config = await resolveConfig(init.home, { identityHome: binding.identity_home, teamID: binding.team_id });
+    const grantScopes = new Set(config.grantScopes || []);
+    bindingCapabilities.set(binding.binding_id, { grant: config.authMode === "grant", scopes: grantScopes });
     const client = createChannelClient(config);
     const pinStore = binding.pin_store_path ? await loadPinStore(binding.pin_store_path) : await loadPinStore();
     const trust = new SenderTrustManager(client, createRegistryResolver(config), config.teamID, config.did, config.stableID);
@@ -189,13 +194,13 @@ async function start(init: InitLine): Promise<void> {
       signal: abort.signal,
       deliveryStore,
       deliveryStorePath: binding.delivery_store_path,
-      localDecrypt: createLocalAWDecryptProvider({ workdir: init.home, awCommand, teamID: config.teamID }),
+      localDecrypt: createLocalAWDecryptProvider({ workdir: init.home, awCommand, identityHome: binding.identity_home, teamID: config.teamID }),
       teamID: config.teamID,
       workdir: init.home,
       awCommand,
       onAwakening,
       awaitDeliveryReady: (intent: ChannelDeliveryIntent, signal: AbortSignal) => awaitReady(intent, signal),
-      mailAcknowledgment: "delivery",
+      mailAcknowledgment: config.authMode === "grant" && !grantScopes.has("mail.send") ? "manual" : "delivery",
     }, new Set<string>(), queue, (message) => {
       lastError = message;
       status({ binding_id: binding.binding_id, error: message });
@@ -215,6 +220,20 @@ async function main(): Promise<void> {
       initialized = true;
       await start(msg);
     } else if (msg.type === "event") {
+      const capabilities = bindingCapabilities.get(msg.binding_id);
+      if (capabilities?.grant) {
+        const type = String(msg.event.type || "");
+        if ((type === "actionable_mail" || type === "mail_message") && !capabilities.scopes.has("mail.read")) {
+          lastError = "grant lacks mail.read";
+          status({ binding_id: msg.binding_id, error: lastError });
+          continue;
+        }
+        if ((type === "actionable_chat" || type === "chat_message") && !capabilities.scopes.has("chat.read")) {
+          lastError = "grant lacks chat.read";
+          status({ binding_id: msg.binding_id, error: lastError });
+          continue;
+        }
+      }
       queues.get(msg.binding_id)?.push(msg.event);
     } else if (msg.type === "pause") {
       paused = true;

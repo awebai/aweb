@@ -2,11 +2,42 @@ import { createHash } from "node:crypto";
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import { readBoundedJSON, readSafeErrorExcerpt } from "./response.js";
+import { computeDIDKey } from "../identity/did.js";
 
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 function canonicalTimestamp(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function canonicalGrantPayload(fields: Record<string, string | number>): string {
+  const entries = Object.entries(fields).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  return `{${entries.map(([key, value]) => `${JSON.stringify(key)}:${typeof value === "number" ? String(value) : JSON.stringify(value)}`).join(",")}}`;
+}
+
+export function signIdentityGrantHeaders(options: { baseURL: string; path: string; method: string; bodyText?: string; signingKey: Uint8Array; grantID: string; timestamp: string }): Record<string, string> & { canonicalPayload: string; bodySHA256: string } {
+  const bodyText = options.bodyText || "";
+  const bodyHash = createHash("sha256").update(bodyText, "utf-8").digest("hex");
+  const url = new URL(options.baseURL + options.path);
+  const canonicalPayload = canonicalGrantPayload({
+    v: 1,
+    auth: "identity-grant",
+    aud: `${url.protocol}//${url.host}`,
+    method: options.method.toUpperCase(),
+    path: `${url.pathname}${url.search}` || "/",
+    grant_id: options.grantID,
+    body_sha256: bodyHash,
+    timestamp: options.timestamp,
+  });
+  const signature = Buffer.from(ed.sign(new TextEncoder().encode(canonicalPayload), options.signingKey)).toString("base64").replace(/=+$/, "");
+  return {
+    Authorization: `AWEB-Grant DIDKey ${computeDIDKey(ed.getPublicKey(options.signingKey))} ${signature}`,
+    "X-AWEB-Grant-ID": options.grantID,
+    "X-AWEB-Timestamp": options.timestamp,
+    "X-AWEB-Signed-Payload": Buffer.from(canonicalPayload, "utf-8").toString("base64url"),
+    canonicalPayload,
+    bodySHA256: bodyHash,
+  };
 }
 
 export interface APIClientAuth {
@@ -15,6 +46,8 @@ export interface APIClientAuth {
   signingKey: Uint8Array;
   teamID: string;
   teamCertificateHeader: string;
+  authMode?: "team" | "grant";
+  grantID?: string;
 }
 
 export class APIClient {
@@ -52,7 +85,7 @@ export class APIClient {
     const bodyText = body === undefined ? "" : JSON.stringify(body);
     const headers: Record<string, string> = {
       Accept: "application/json",
-      ...this.authHeaders(path, bodyText),
+      ...this.authHeaders(method, path, bodyText),
     };
     if (noCache) headers["Cache-Control"] = "no-cache";
     const init: RequestInit = {
@@ -85,7 +118,7 @@ export class APIClient {
       headers: {
         Accept: "text/event-stream",
         "Cache-Control": "no-cache",
-        ...this.authHeaders(path, ""),
+        ...this.authHeaders("GET", path, ""),
       },
     });
 
@@ -97,7 +130,10 @@ export class APIClient {
     return resp;
   }
 
-  private authHeaders(path: string, bodyText: string): Record<string, string> {
+  private authHeaders(method: string, path: string, bodyText: string): Record<string, string> {
+    if (this.auth.authMode === "grant") {
+      return this.grantAuthHeaders(method, path, bodyText);
+    }
     if (this.usesIdentityMessagingAuth(path)) {
       return this.identityAuthHeaders(bodyText);
     }
@@ -109,6 +145,18 @@ export class APIClient {
     return cleanPath === "/v1/messages"
       || cleanPath.startsWith("/v1/messages/")
       || cleanPath.startsWith("/v1/chat");
+  }
+
+  private grantAuthHeaders(method: string, path: string, bodyText: string): Record<string, string> {
+    const grantID = (this.auth.grantID || "").trim();
+    if (!grantID) throw new Error("grant_id is required for grant authentication");
+    const signed = signIdentityGrantHeaders({ baseURL: this.baseURL, path, method, bodyText, signingKey: this.auth.signingKey, grantID, timestamp: canonicalTimestamp() });
+    return {
+      Authorization: signed.Authorization,
+      "X-AWEB-Grant-ID": signed["X-AWEB-Grant-ID"],
+      "X-AWEB-Timestamp": signed["X-AWEB-Timestamp"],
+      "X-AWEB-Signed-Payload": signed["X-AWEB-Signed-Payload"],
+    };
   }
 
   private identityAuthHeaders(bodyText: string): Record<string, string> {

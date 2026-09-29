@@ -23,16 +23,17 @@ import (
 var channelCoreRunnerFS embed.FS
 
 type ChannelCoreStatus struct {
-	NodePath       string    `json:"node_path,omitempty"`
-	BundlePath     string    `json:"bundle_path,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
-	LastRunAt      time.Time `json:"last_run_at,omitempty"`
-	LastSuccessAt  time.Time `json:"last_success_at,omitempty"`
-	LastInputAt    time.Time `json:"last_input_at,omitempty"`
-	AmbientQueued  int       `json:"ambient_queued,omitempty"`
-	AmbientDropped int       `json:"ambient_dropped,omitempty"`
-	Evicted        int       `json:"evicted_events,omitempty"`
-	Running        bool      `json:"running"`
+	NodePath       string            `json:"node_path,omitempty"`
+	BundlePath     string            `json:"bundle_path,omitempty"`
+	LastError      string            `json:"last_error,omitempty"`
+	LastRunAt      time.Time         `json:"last_run_at,omitempty"`
+	LastSuccessAt  time.Time         `json:"last_success_at,omitempty"`
+	LastInputAt    time.Time         `json:"last_input_at,omitempty"`
+	AmbientQueued  int               `json:"ambient_queued"`
+	AmbientDropped int               `json:"ambient_dropped"`
+	Evicted        int               `json:"evicted_events"`
+	BindingErrors  map[string]string `json:"binding_errors,omitempty"`
+	Running        bool              `json:"running"`
 }
 
 type ChannelCoreRunner struct{ store *Store }
@@ -44,7 +45,9 @@ type ChannelCoreChild struct {
 
 	mu     sync.Mutex
 	st     ChannelCoreStatus
+	paused bool
 	in     chan childLine
+	ctl    chan childLine
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -75,6 +78,7 @@ type initLine struct {
 	CoalesceMs     int            `json:"coalesceMs,omitempty"`
 	RateLimitMs    int            `json:"rateLimitMs,omitempty"`
 	InspectDelayMs int            `json:"inspectDelayMs,omitempty"`
+	Paused         bool           `json:"paused,omitempty"`
 	Bindings       []childBinding `json:"bindings"`
 }
 
@@ -95,6 +99,8 @@ type childStatusLine struct {
 	Stopped        bool   `json:"stopped,omitempty"`
 	Fatal          bool   `json:"fatal,omitempty"`
 	Delivered      bool   `json:"delivered,omitempty"`
+	BindingID      string `json:"binding_id,omitempty"`
+	Error          string `json:"error,omitempty"`
 	Log            string `json:"log,omitempty"`
 }
 
@@ -107,7 +113,7 @@ func (r *ChannelCoreRunner) StartChild(ctx context.Context, reg Registration, cf
 		cfg.AdmissionSize = 256
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	c := &ChannelCoreChild{runner: r, reg: reg.clone(), cfg: cfg, in: make(chan childLine, cfg.AdmissionSize), cancel: cancel, done: make(chan struct{})}
+	c := &ChannelCoreChild{runner: r, reg: reg.clone(), cfg: cfg, in: make(chan childLine, cfg.AdmissionSize), ctl: make(chan childLine, 16), cancel: cancel, done: make(chan struct{})}
 	go c.run(ctx)
 	return c
 }
@@ -121,15 +127,30 @@ func (c *ChannelCoreChild) Stop() {
 }
 
 func (c *ChannelCoreChild) Pause(paused bool) {
+	line := childLine{Type: "resume"}
 	if paused {
-		c.offer(childLine{Type: "pause"})
-		return
+		line.Type = "pause"
 	}
-	c.offer(childLine{Type: "resume"})
+	c.mu.Lock()
+	c.paused = paused
+	c.mu.Unlock()
+	c.control(line)
 }
 
 func (c *ChannelCoreChild) Offer(binding ReceiveIdentity, ev awid.AgentEvent) {
+	if teamID, err := effectiveTeamID(binding.IdentityHome, binding.TeamID); err == nil {
+		binding.TeamID = teamID
+	}
 	c.offer(childLine{Type: "event", BindingID: bindingID(binding), Event: agentEventForChannelCore(ev)})
+}
+
+func (c *ChannelCoreChild) control(line childLine) {
+	select {
+	case c.ctl <- line:
+		return
+	default:
+	}
+	go func() { c.ctl <- line }()
 }
 
 func (c *ChannelCoreChild) offer(line childLine) {
@@ -216,7 +237,9 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 	c.setNode(node, bundle, "", true)
 	doneRead := make(chan struct{})
 	go c.readStatus(stdout, doneRead)
-	go io.Copy(io.Discard, stderr)
+	go c.readStderr(stderr)
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
 	enc := json.NewEncoder(stdin)
 	if err := enc.Encode(c.initLine()); err != nil {
 		_ = cmd.Process.Kill()
@@ -224,17 +247,44 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 	}
 	for {
 		select {
+		case line := <-c.ctl:
+			if err := enc.Encode(line); err != nil {
+				_ = cmd.Process.Kill()
+				<-waitCh
+				<-doneRead
+				c.setRunning(false)
+				return err
+			}
+			continue
+		default:
+		}
+		select {
 		case <-ctx.Done():
 			_ = enc.Encode(childLine{Type: "shutdown"})
 			_ = stdin.Close()
-			_ = cmd.Wait()
+			<-waitCh
 			<-doneRead
 			c.setRunning(false)
 			return ctx.Err()
+		case err := <-waitCh:
+			<-doneRead
+			c.setRunning(false)
+			if err == nil {
+				err = errors.New("channel-core child exited")
+			}
+			return err
+		case line := <-c.ctl:
+			if err := enc.Encode(line); err != nil {
+				_ = cmd.Process.Kill()
+				<-waitCh
+				<-doneRead
+				c.setRunning(false)
+				return err
+			}
 		case line := <-c.in:
 			if err := enc.Encode(line); err != nil {
 				_ = cmd.Process.Kill()
-				_ = cmd.Wait()
+				<-waitCh
 				<-doneRead
 				c.setRunning(false)
 				return err
@@ -253,7 +303,10 @@ func (c *ChannelCoreChild) initLine() initLine {
 		b.TeamID = teamID
 		bindings = append(bindings, childBinding{BindingID: bindingID(b), IdentityHome: b.IdentityHome, TeamID: teamID, DeliveryStorePath: filepath.Join(b.IdentityHome, "channel-delivered-ids-"+safeTeamID(teamID)+".json")})
 	}
-	return initLine{Type: "init", Home: c.reg.Home, OatsBin: c.cfg.OatsBin, AWCommand: c.cfg.AWCommand, CoalesceMs: millis(c.cfg.Coalesce), RateLimitMs: millis(c.cfg.RateLimit), InspectDelayMs: millis(c.cfg.InspectDelay), Bindings: bindings}
+	c.mu.Lock()
+	paused := c.paused
+	c.mu.Unlock()
+	return initLine{Type: "init", Home: c.reg.Home, OatsBin: c.cfg.OatsBin, AWCommand: c.cfg.AWCommand, CoalesceMs: millis(c.cfg.Coalesce), RateLimitMs: millis(c.cfg.RateLimit), InspectDelayMs: millis(c.cfg.InspectDelay), Paused: paused, Bindings: bindings}
 }
 
 func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
@@ -274,16 +327,29 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 				c.st.LastSuccessAt = t
 			}
 		}
-		if line.AmbientQueued != 0 {
-			c.st.AmbientQueued = line.AmbientQueued
-		}
-		if line.AmbientDropped != 0 {
-			c.st.AmbientDropped = line.AmbientDropped
+		c.st.AmbientQueued = line.AmbientQueued
+		c.st.AmbientDropped = line.AmbientDropped
+		if line.BindingID != "" && line.Error != "" {
+			if c.st.BindingErrors == nil {
+				c.st.BindingErrors = map[string]string{}
+			}
+			c.st.BindingErrors[line.BindingID] = line.Error
 		}
 		c.mu.Unlock()
 		if line.Inactive != "" && c.cfg.OnInactive != nil {
 			c.cfg.OnInactive(line.Inactive)
 		}
+	}
+}
+
+func (c *ChannelCoreChild) readStderr(r io.Reader) {
+	if c.cfg.Log == nil {
+		_, _ = io.Copy(io.Discard, r)
+		return
+	}
+	s := bufio.NewScanner(r)
+	for s.Scan() {
+		c.cfg.Log("channel-core child stderr home=%s: %s", c.reg.Home, s.Text())
 	}
 }
 

@@ -468,7 +468,7 @@ func formatWakeStatus(v any) string {
 	b.WriteString("\nInstances:\n")
 	for _, inst := range status.Instances {
 		fmt.Fprintf(&b, "  %s\n", inst.Home)
-		fmt.Fprintf(&b, "    phase=%s pending_hints=%d evicted=%d paused=%t\n", inst.Phase, inst.PendingHints, inst.Evicted, inst.Paused)
+		fmt.Fprintf(&b, "    phase=%s evicted=%d paused=%t\n", inst.Phase, inst.Evicted, inst.Paused)
 		fmt.Fprintf(&b, "    identity_home=%s backend=%s runtime_delivery=%s primary_identity_home=%s\n",
 			dashIfEmpty(inst.IdentityHome), dashIfEmpty(inst.Backend), dashIfEmpty(inst.RuntimeDelivery), dashIfEmpty(inst.PrimaryIdentityHome))
 		for _, recv := range inst.ReceiveIdentities {
@@ -491,8 +491,8 @@ func formatWakeStatus(v any) string {
 			}
 			b.WriteString(line + "\n")
 		}
-		fmt.Fprintf(&b, "    last_state=%s last_inspect=%s last_attempt=%s last_submit=%s\n",
-			dashIfEmpty(inst.LastState), stampOrDash(inst.LastInspectAt), stampOrDash(inst.LastAttemptAt), stampOrDash(inst.LastSubmitAt))
+		fmt.Fprintf(&b, "    last_state=%s last_inspect=%s\n",
+			dashIfEmpty(inst.LastState), stampOrDash(inst.LastInspectAt))
 		if strings.TrimSpace(inst.ConflictHome) != "" {
 			fmt.Fprintf(&b, "    conflict=%s\n", inst.ConflictHome)
 		}

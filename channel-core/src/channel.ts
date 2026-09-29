@@ -352,6 +352,8 @@ export function createChannelClient(config: {
   signingKey: Uint8Array;
   teamID: string;
   teamCertificateHeader: string;
+  authMode?: "team" | "grant";
+  grantID?: string;
 }): APIClient {
   const client = new APIClient(config.baseURL, {
     did: config.did,
@@ -359,8 +361,10 @@ export function createChannelClient(config: {
     signingKey: config.signingKey,
     teamID: config.teamID,
     teamCertificateHeader: config.teamCertificateHeader,
+    authMode: config.authMode,
+    grantID: config.grantID,
   });
-  if (!client.hasTeamCertificateAuth(config.teamID)) {
+  if (config.authMode !== "grant" && !client.hasTeamCertificateAuth(config.teamID)) {
     throw new Error(`selected active team ${config.teamID} is missing certificate signing authentication`);
   }
   return client;

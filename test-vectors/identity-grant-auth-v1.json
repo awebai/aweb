@@ -1,0 +1,16 @@
+{
+  "seed_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+  "method": "GET",
+  "url": "https://app.aweb.ai/v1/messages/inbox?unread_only=true&message_id=mail-1",
+  "grant_id": "99999999-9999-4999-8999-999999999999",
+  "body": "",
+  "timestamp": "2026-09-29T20:00:00Z",
+  "did_key": "did:key:z6MkneMkZqwqRiU5mJzSG3kDwzt9P8C59N4NGTfBLfSGE7c7",
+  "body_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "canonical_payload": "{\"aud\":\"https://app.aweb.ai\",\"auth\":\"identity-grant\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"grant_id\":\"99999999-9999-4999-8999-999999999999\",\"method\":\"GET\",\"path\":\"/v1/messages/inbox?unread_only=true&message_id=mail-1\",\"timestamp\":\"2026-09-29T20:00:00Z\",\"v\":1}",
+  "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2FwcC5hd2ViLmFpIiwiYXV0aCI6ImlkZW50aXR5LWdyYW50IiwiYm9keV9zaGEyNTYiOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZ3JhbnRfaWQiOiI5OTk5OTk5OS05OTk5LTQ5OTktODk5OS05OTk5OTk5OTk5OTkiLCJtZXRob2QiOiJHRVQiLCJwYXRoIjoiL3YxL21lc3NhZ2VzL2luYm94P3VucmVhZF9vbmx5PXRydWUmbWVzc2FnZV9pZD1tYWlsLTEiLCJ0aW1lc3RhbXAiOiIyMDI2LTA5LTI5VDIwOjAwOjAwWiIsInYiOjF9",
+  "authorization": "AWEB-Grant DIDKey did:key:z6MkneMkZqwqRiU5mJzSG3kDwzt9P8C59N4NGTfBLfSGE7c7 N6WylfKxCxHCaSH3dm+LVUT0/6hPDe3JDFid/DqHbS00UcMXoVhI4w4d7X+npJgmSwFiuJi+N0BUcl3fW9T8Cw",
+  "x_aweb_grant_id": "99999999-9999-4999-8999-999999999999",
+  "x_aweb_timestamp": "2026-09-29T20:00:00Z",
+  "x_aweb_signed_payload": "eyJhdWQiOiJodHRwczovL2FwcC5hd2ViLmFpIiwiYXV0aCI6ImlkZW50aXR5LWdyYW50IiwiYm9keV9zaGEyNTYiOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1IiwiZ3JhbnRfaWQiOiI5OTk5OTk5OS05OTk5LTQ5OTktODk5OS05OTk5OTk5OTk5OTkiLCJtZXRob2QiOiJHRVQiLCJwYXRoIjoiL3YxL21lc3NhZ2VzL2luYm94P3VucmVhZF9vbmx5PXRydWUmbWVzc2FnZV9pZD1tYWlsLTEiLCJ0aW1lc3RhbXAiOiIyMDI2LTA5LTI5VDIwOjAwOjAwWiIsInYiOjF9"
+}

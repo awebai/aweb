@@ -176,11 +176,18 @@ There is deliberately **no durable "presented" mark keyed on `submitted:true`
 outside channel-core.** A TTY write is not evidence of processing. The broker
 therefore does not create its own read or delivery marks; channel-core writes
 its normal durable delivery mark and ack/read only after the terminal handler
-accepts input. Known at-least-once limitation: if the terminal accepted input
-and the child dies before channel-core's durable mark or ack lands, the next
-child can present the same item again. That is the same accepted gap as the
-Claude and Pi adapters, and it is preferable to Go inventing per-target read
-state or suppressing an unread item.
+accepts input. For read-only grant homes (`mail.read` without `mail.send`),
+mail acknowledgment is manual: channel-core still records the durable
+`DeliveryStore` mark after accepted terminal input so the host does not
+re-present the same unread mail on restart, but it does not call the server mail
+ack route and the message remains unread server-side for a holder with send/ack
+authority. Chat read grants continue to use the chat read endpoint because
+`chat.read` covers presentation and read-state update. Known at-least-once
+limitation: if the terminal accepted input and the child dies before
+channel-core's durable mark or ack/read lands, the next child can present the
+same item again. That is the same accepted gap as the Claude and Pi adapters,
+and it is preferable to Go inventing per-target read state or suppressing an
+unread item.
 
 **At-least-once bounded hints are the honest contract.** Exactly-once
 presentation is not available on this transport and the note should not imply
@@ -193,8 +200,12 @@ home and the identity home both supplied explicitly, and happens only when the
 capability's delivery setting is `session`. This monorepo's older
 `aweb.identity` grant deployment is one deployment, not the interface: nothing
 in the broker may hardwire it, and initial direct identities and Merlin's
-authority transfer are not grant homes at all. OATS owns the `delivery:session`
-hook glue and the narrow retained-authority binding. The spawn hook records
+authority transfer are not grant homes at all. Grant homes are consumed with the
+scopes they already carry; the broker and channel-core do not widen grant
+server authority or copy resident/root keys. The grant subject (`grant.yaml`
+subject DID/AWID/address/alias) is the self/trust identity, while the grant
+session key only signs `AWEB-Grant` request credentials. OATS owns the
+`delivery:session` hook glue and the narrow retained-authority binding. The spawn hook records
 `AWEB_DELIVERY=session` in the registration alongside the home, the same value
 the instance gets in its launch environment; the field is explicit so the
 broker's exclusivity check reads it rather than infers it, and a registration

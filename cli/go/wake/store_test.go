@@ -269,11 +269,9 @@ func TestStoreRoundTripsRegistrationsAndCanonicalisesHomes(t *testing.T) {
 func TestStoreDropsLegacyPendingHintsOnDisk(t *testing.T) {
 	store := tempStore(t)
 	home := tempHome(t, "instance")
-
-	state := InstanceState{Home: home}
-	state.AddHint(Hint{Kind: KindMail, MessageID: "m1", At: at(0)}, DefaultHintCap)
-	state.AddHint(Hint{Kind: KindControl, SignalID: "s1", At: at(1), Transient: true}, DefaultHintCap)
-	if err := store.SaveInstance(state); err != nil {
+	key := HomeKey(home)
+	path := filepath.Join(store.Dir(), "instances.d", key+".json")
+	if err := os.WriteFile(path, []byte(`{"home":"`+home+`","pending":[{"kind":"mail"},{"kind":"control"}],"evicted":3}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -281,11 +279,21 @@ func TestStoreDropsLegacyPendingHintsOnDisk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded.Pending) != 0 {
-		t.Fatalf("legacy pending hints must be dropped, not replayed: %#v", reloaded.Pending)
+	if len(reloaded.LegacyPending) != 0 {
+		t.Fatalf("legacy pending hints must be dropped, not replayed: %#v", reloaded.LegacyPending)
 	}
-	if reloaded.Evicted != 0 {
-		t.Fatalf("freshly saved child-owned state should not count dropped hints: %d", reloaded.Evicted)
+	if reloaded.Evicted != 5 {
+		t.Fatalf("dropped legacy hints must be counted as evicted: %d", reloaded.Evicted)
+	}
+	if err := store.SaveInstance(reloaded); err != nil {
+		t.Fatal(err)
+	}
+	again, err := store.LoadInstance(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.LegacyPending) != 0 || again.Evicted != 5 {
+		t.Fatalf("legacy pending survived save/load: %#v evicted=%d", again.LegacyPending, again.Evicted)
 	}
 }
 

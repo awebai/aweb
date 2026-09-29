@@ -1,4 +1,4 @@
-export { APIClient, APIError, type APIClientAuth } from "./api/client.js";
+export { APIClient, APIError, signIdentityGrantHeaders, type APIClientAuth } from "./api/client.js";
 export { streamAgentEvents, parseAgentEvent, formatEventStreamState, streamErrorCause, type AgentEvent, type AgentEventType, type EventStreamState } from "./api/events.js";
 export { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 export { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";

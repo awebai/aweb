@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   symlinkSync,
   writeFileSync,
@@ -12,6 +13,8 @@ import {
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { resolveConfig } from "../src/config.js";
+import { computeDIDKey } from "../src/identity/did.js";
+import * as ed from "@noble/ed25519";
 import {
   createShadowedPrincipalFixture,
   writeSigningKey,
@@ -321,5 +324,39 @@ describe("resolveConfig", () => {
     ].join("\n"));
 
     await expect(resolveConfig(dir)).rejects.toThrow(/migrate-multi-team/);
+  });
+
+  test("loads grant-home config from grant.yaml and grant-signing.key", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "channel-config-grant-")));
+    const grantHome = join(dir, "grant.aw");
+    mkdirSync(grantHome, { recursive: true });
+    const seed = new Uint8Array(32).fill(31);
+    writeSigningKey(join(grantHome, "grant-signing.key"), seed);
+    writeFileSync(join(grantHome, "grant.yaml"), [
+      "version: 1",
+      "grant_id: 99999999-9999-4999-8999-999999999999",
+      "team_id: backend:acme.com",
+      "subject:",
+      "  did_aw: did:aw:alice",
+      "  did_key: did:key:zSubjectRoot",
+      "  address: acme.com/alice",
+      "  alias: alice",
+      "scopes:",
+      "  - events.read",
+      "  - mail.read",
+      "expires_at: 2099-01-01T00:00:00Z",
+      "aweb_url: https://app.aweb.ai",
+      "",
+    ].join("\n"));
+
+    const config = await resolveConfig(dir, { identityHome: grantHome, teamID: "backend:acme.com" });
+    expect(config.authMode).toBe("grant");
+    expect(config.grantID).toBe("99999999-9999-4999-8999-999999999999");
+    expect(config.grantScopes).toEqual(["events.read", "mail.read"]);
+    expect(config.teamID).toBe("backend:acme.com");
+    expect(config.alias).toBe("alice");
+    expect(config.stableID).toBe("did:aw:alice");
+    expect(config.did).toBe("did:key:zSubjectRoot");
+    expect(config.grantSessionDID).toBe(computeDIDKey(ed.getPublicKey(seed)));
   });
 });

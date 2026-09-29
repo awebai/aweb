@@ -11,6 +11,12 @@ if [[ "$version" != "0.27.5" ]]; then
   echo "unexpected esbuild version $version (want 0.27.5)" >&2
   exit 1
 fi
+TSC="$ROOT/channel-core/node_modules/.bin/tsc"
+if [[ ! -x "$TSC" ]]; then
+  echo "missing pinned tsc at channel-core/node_modules/.bin/tsc" >&2
+  exit 1
+fi
+"$TSC" --noEmit --strict --skipLibCheck --moduleResolution bundler --module ESNext --target ESNext --lib ESNext --types node --typeRoots "$ROOT/channel-core/node_modules/@types" "$ROOT/cli/go/wake/channel_core_runner_entry.ts"
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
 "$ESBUILD" "$ROOT/cli/go/wake/channel_core_runner_entry.ts" \

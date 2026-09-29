@@ -37,9 +37,6 @@ const (
 	EventClassChat           = "chat"
 )
 
-// DefaultHintCap bounds the pending hint store per instance (§4).
-const DefaultHintCap = 512
-
 // Store is the on-disk state directory:
 //
 //	<dir>/registry.d/<key>.json    one registration per instance home
@@ -290,10 +287,23 @@ type teamStateYAML struct {
 	ActiveTeam string `yaml:"active_team"`
 }
 
+type grantStateYAML struct {
+	TeamID string `yaml:"team_id"`
+}
+
 func effectiveTeamID(identityHome, teamID string) (string, error) {
 	teamID = strings.TrimSpace(teamID)
 	if teamID != "" {
 		return teamID, nil
+	}
+	if data, err := os.ReadFile(filepath.Join(identityHome, "grant.yaml")); err == nil {
+		var grant grantStateYAML
+		if err := yaml.Unmarshal(data, &grant); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(grant.TeamID), nil
+	} else if !os.IsNotExist(err) {
+		return "", err
 	}
 	data, err := os.ReadFile(filepath.Join(identityHome, "teams.yaml"))
 	if err != nil {
@@ -419,7 +429,10 @@ func (b ReceiveIdentity) label() string {
 	return strings.TrimSpace(b.IdentityHome)
 }
 
-func (b ReceiveIdentity) allowsKind(kind Kind) bool {
+func (b ReceiveIdentity) allowsEventClass(class string) bool {
+	if class == "" {
+		return false
+	}
 	if b.Controls {
 		return true
 	}
@@ -427,14 +440,7 @@ func (b ReceiveIdentity) allowsKind(kind Kind) bool {
 	if len(classes) == 0 {
 		classes = []string{EventClassMail, EventClassChat}
 	}
-	switch kind {
-	case KindMail:
-		return containsString(classes, EventClassMail)
-	case KindChat:
-		return containsString(classes, EventClassChat)
-	default:
-		return false
-	}
+	return containsString(classes, class)
 }
 
 func containsString(values []string, value string) bool {
@@ -446,73 +452,25 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
-// InstanceState is the durable per-instance state: what the broker has tried,
-// never what it believes arrived.
+// InstanceState is the durable per-instance state Go owns: registration
+// lifecycle, pause/inactive state, error/status metadata, and child admission
+// evictions. Legacy `pending` hint arrays from older stores are accepted on
+// load and dropped; they are never replayed or composed by Go.
 type InstanceState struct {
-	Home           string    `json:"home"`
-	Pending        []Hint    `json:"pending"`
-	Evicted        int       `json:"evicted"`
-	Paused         bool      `json:"paused"`
-	FirstPresentAt time.Time `json:"first_present_at,omitempty"`
-	Inactive       bool      `json:"inactive,omitempty"`
-	LastInspectAt  time.Time `json:"last_inspect_at,omitempty"`
-	LastAttemptAt  time.Time `json:"last_attempt_at,omitempty"`
-	LastSubmitAt   time.Time `json:"last_submit_at,omitempty"`
-	LastState      string    `json:"last_state,omitempty"`
-	LastError      string    `json:"last_error,omitempty"`
-	UnreadCount    int       `json:"unread_count,omitempty"`
+	Home           string            `json:"home"`
+	LegacyPending  []json.RawMessage `json:"pending,omitempty"`
+	Evicted        int               `json:"evicted"`
+	Paused         bool              `json:"paused"`
+	FirstPresentAt time.Time         `json:"first_present_at,omitempty"`
+	Inactive       bool              `json:"inactive,omitempty"`
+	LastInspectAt  time.Time         `json:"last_inspect_at,omitempty"`
+	LastState      string            `json:"last_state,omitempty"`
+	LastError      string            `json:"last_error,omitempty"`
+	UnreadCount    int               `json:"unread_count,omitempty"`
 }
 
-// ConfirmedLive reports whether one live inspect has been seen.
+// ConfirmedLive reports whether the child has reported one live terminal observation.
 func (s InstanceState) ConfirmedLive() bool { return !s.FirstPresentAt.IsZero() }
-
-// AddHint inserts a hint into the pending set, collapsing a hint already
-// pending under the same key. It returns whether the set changed.
-//
-// Eviction is oldest-first and counted, because the note requires a backlog and
-// every eviction to be visible in status rather than silent (§4).
-func (s *InstanceState) AddHint(h Hint, cap int) bool {
-	if h.Kind == KindReconnect {
-		return false
-	}
-	if cap <= 0 {
-		cap = DefaultHintCap
-	}
-	key := h.DedupeKey()
-	for i := range s.Pending {
-		if s.Pending[i].DedupeKey() == key {
-			// Already pending: keep the earliest arrival so the coalescing
-			// window is measured from when the item first appeared, but adopt
-			// the latest count metadata and any sender-waiting escalation.
-			s.Pending[i].UnreadCount = h.UnreadCount
-			if h.SenderWaiting {
-				s.Pending[i].SenderWaiting = true
-				s.Pending[i].Intent = IntentSteer
-			}
-			return false
-		}
-	}
-	s.Pending = append(s.Pending, h)
-	for len(s.Pending) > cap {
-		s.Pending = s.Pending[1:]
-		s.Evicted++
-	}
-	return true
-}
-
-// DurablePending returns the pending hints that survive a restart. Transient
-// control signals are excluded: an at-most-once signal that was lost across an
-// SSE gap is reported, not replayed (§4).
-func (s InstanceState) DurablePending() []Hint {
-	out := make([]Hint, 0, len(s.Pending))
-	for _, h := range s.Pending {
-		if h.Transient || h.Kind == KindReconnect {
-			continue
-		}
-		out = append(out, h)
-	}
-	return out
-}
 
 // SaveRegistration writes one registration atomically. It canonicalizes the
 // instance home but deliberately does not trust or validate the rest of the
@@ -605,7 +563,7 @@ func (s *Store) ListRegistrations() ([]Registration, error) {
 	return out, nil
 }
 
-// SaveInstance writes per-instance state atomically, dropping transient hints.
+// SaveInstance writes per-instance state atomically, dropping legacy hints.
 func (s *Store) SaveInstance(state InstanceState) error {
 	canonical, err := CanonicalHome(state.Home)
 	if err != nil {
@@ -613,7 +571,7 @@ func (s *Store) SaveInstance(state InstanceState) error {
 	}
 	persisted := state
 	persisted.Home = canonical
-	persisted.Pending = nil
+	persisted.LegacyPending = nil
 	return writeJSONAtomic(s.instancePath(HomeKey(canonical)), persisted)
 }
 
@@ -632,9 +590,9 @@ func (s *Store) LoadInstance(home string) (InstanceState, error) {
 		return InstanceState{Home: canonical}, nil
 	}
 	state.Home = canonical
-	if len(state.Pending) > 0 {
-		state.Evicted += len(state.Pending)
-		state.Pending = nil
+	if len(state.LegacyPending) > 0 {
+		state.Evicted += len(state.LegacyPending)
+		state.LegacyPending = nil
 	}
 	return state, nil
 }

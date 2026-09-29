@@ -71,7 +71,6 @@ type Config struct {
 	IdleProbe     time.Duration
 	PendingExpiry time.Duration
 	Reconcile     time.Duration
-	HintCap       int
 	StreamTTL     time.Duration
 	BackoffMin    time.Duration
 	BackoffMax    time.Duration
@@ -106,9 +105,6 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Reconcile <= 0 {
 		c.Reconcile = DefaultReconcile
-	}
-	if c.HintCap <= 0 {
-		c.HintCap = DefaultHintCap
 	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
@@ -347,8 +343,8 @@ func (b *Broker) startInstance(reg Registration, conflictHome string) *instanceR
 			}
 		}
 	}
-	b.cfg.Log("registered home=%s identity_home=%s receive_identities=%d backend=%s delivery=%s runtime_delivery=%s pending_hints=%d streams_admitted=%d",
-		reg.Home, reg.IdentityHome, len(bindings), orDash(reg.Backend), reg.Delivery, orDash(reg.RuntimeDelivery), len(state.Pending), admittedCount)
+	b.cfg.Log("registered home=%s identity_home=%s receive_identities=%d backend=%s delivery=%s runtime_delivery=%s streams_admitted=%d",
+		reg.Home, reg.IdentityHome, len(bindings), orDash(reg.Backend), reg.Delivery, orDash(reg.RuntimeDelivery), admittedCount)
 	if ctx := b.runningContext(); ctx != nil {
 		runner.start(ctx)
 	}
@@ -482,7 +478,6 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 	}
 	b.mu.Unlock()
 
-	now := b.cfg.Now()
 	switch ev.Type {
 	case awid.AgentEventControlPause:
 		for _, target := range targets {
@@ -500,12 +495,12 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 		return
 	}
 
-	hint, ok := HintFromEvent(ev, now)
+	class, ok := eventDeliveryClass(ev)
 	if !ok {
 		return
 	}
 	for _, target := range targets {
-		if !target.binding.allowsKind(hint.Kind) {
+		if !target.binding.allowsEventClass(class) {
 			continue
 		}
 		target.runner.offerEvent(ev, target.binding)

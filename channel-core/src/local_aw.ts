@@ -26,6 +26,7 @@ export interface LocalDecryptProvider {
 export interface LocalAWDecryptOptions {
   workdir: string;
   awCommand?: string;
+  identityHome?: string;
   teamID?: string;
 }
 
@@ -57,15 +58,17 @@ export function createLocalAWPinStoreWriter(options: LocalAWPinStoreOptions = {}
 
 export function createLocalAWDecryptProvider(options: LocalAWDecryptOptions): LocalDecryptProvider {
   const awCommand = options.awCommand || process.env.AW_BIN || "aw";
+  const identityArgs = options.identityHome?.trim() ? ["--identity-home", options.identityHome.trim()] : [];
   const teamArgs = options.teamID?.trim() ? ["--team", options.teamID.trim()] : [];
+  const execOptions = { cwd: options.workdir, timeout: 15_000, maxBuffer: 1024 * 1024 };
   return {
     async mailMessage(messageID: string): Promise<DecryptedMailContent | null> {
       const id = messageID.trim();
       if (!id) return null;
       const { stdout } = await execFileAsync(
         awCommand,
-        [...teamArgs, "mail", "show", "--message-id", id, "--json"],
-        { cwd: options.workdir, timeout: 15_000, maxBuffer: 1024 * 1024 },
+        [...identityArgs, ...teamArgs, "mail", "show", "--message-id", id, "--json"],
+        execOptions,
       );
       const payload = parseJSONOutput<{ messages?: InboxMessage[] }>(stdout);
       const message = (payload.messages || []).find((msg) => msg.message_id === id);
@@ -77,8 +80,8 @@ export function createLocalAWDecryptProvider(options: LocalAWDecryptOptions): Lo
       if (!session || !id) return null;
       const { stdout } = await execFileAsync(
         awCommand,
-        [...teamArgs, "chat", "history", "--session-id", session, "--message-id", id, "--limit", "1", "--json"],
-        { cwd: options.workdir, timeout: 15_000, maxBuffer: 1024 * 1024 },
+        [...identityArgs, ...teamArgs, "chat", "history", "--session-id", session, "--message-id", id, "--limit", "1", "--json"],
+        execOptions,
       );
       const payload = parseJSONOutput<{ messages?: ChatMessage[] }>(stdout);
       const message = (payload.messages || []).find((msg) => msg.message_id === id);

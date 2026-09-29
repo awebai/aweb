@@ -145,12 +145,11 @@ func TestRegisterBeforeRunStartsReconciledRunners(t *testing.T) {
 	server := newRecordingServer(t, sseEvent("actionable_mail", `{"message_id":"m1","from_alias":"alice"}`))
 	store := tempStore(t)
 	home := tempHome(t, "instance")
-	oats := session.NewFake(session.Inspection{Home: home, Present: true, State: session.StateIdle, RawState: "idle"})
 	logs := &logCapture{}
 
 	broker, err := NewBroker(Config{
 		Store:        store,
-		Session:      oats,
+		Session:      session.NewFake(session.Inspection{}),
 		Log:          logs.log,
 		Coalesce:     20 * time.Millisecond,
 		RateLimit:    50 * time.Millisecond,
@@ -165,9 +164,6 @@ func TestRegisterBeforeRunStartsReconciledRunners(t *testing.T) {
 	}
 	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession}); err != nil {
 		t.Fatal(err)
-	}
-	if len(oats.Submissions()) != 0 {
-		t.Fatalf("registration before Run submitted early: %v", oats.Submissions())
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -185,73 +181,41 @@ func TestRegisterBeforeRunStartsReconciledRunners(t *testing.T) {
 		}
 	})
 
-	waitFor(t, "pre-Run registration to stream and submit after Run starts", func() bool {
-		return len(oats.Submissions()) > 0
-	})
-	if !strings.Contains(oats.Submissions()[0].Text, "mail from alice") {
-		t.Fatalf("wake did not summarize pre-Run registration event:\n%s", oats.Submissions()[0].Text)
-	}
+	waitFor(t, "pre-Run registration to start its identity stream", func() bool { return server.openCount() > 0 })
 }
 
-// TestBrokerNeverAcknowledgesAnything is the §6 prohibition proved at the wire.
-//
+// TestBrokerNeverFetchesOrAcknowledgesAnything is the §6 prohibition proved at the wire.
 // A real client streams from a stand-in server which records every request path
-// it sees. A mail event arrives, the broker types a wake — and the server has
-// still seen nothing but the event stream: no inbox fetch, no ack, no chat read
-// mark. Asserting the *whole* request set rather than the absence of one path
-// is what makes this hold against a future addition nobody thought to forbid.
-func TestBrokerNeverAcknowledgesAnything(t *testing.T) {
+// it sees. Events arrive, and the Go broker still performs only the event stream;
+// fetch/decrypt/delivered/read/ack belong to the channel-core child.
+func TestBrokerNeverFetchesOrAcknowledgesAnything(t *testing.T) {
 	server := newRecordingServer(t,
 		sseEvent("actionable_mail", `{"message_id":"m1","conversation_id":"conv-1","from_alias":"alice","subject":"secret","unread_count":3}`),
 		sseEvent("actionable_chat", `{"message_id":"c1","session_id":"s1","from_alias":"bob","sender_waiting":true}`),
 	)
 	store := tempStore(t)
 	home := tempHome(t, "instance")
-	oats := session.NewFake(session.Inspection{Home: home, Backend: "tmux", Present: true, State: session.StateUnknown, RawState: "unknown"})
 	logs := &logCapture{}
 
 	broker, _ := liveBroker(t, Config{
 		Store:   store,
-		Session: oats,
+		Session: session.NewFake(session.Inspection{}),
 		Log:     logs.log,
-		// A window wide enough that two events arriving together are one wake,
-		// which is the behaviour under test.
-		Coalesce: 250 * time.Millisecond,
 		OpenStream: func(identityHome string) (run.EventStreamOpener, error) {
 			return openerFor(t, server.URL), nil
 		},
 	})
-	if err := broker.Register(Registration{
-		Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession, Backend: "tmux",
-	}); err != nil {
+	if err := broker.Register(Registration{Home: home, IdentityHome: home + "/.aw", Delivery: DeliverySession, Backend: "tmux"}); err != nil {
 		t.Fatal(err)
 	}
 
-	waitFor(t, "a wake to be typed", func() bool { return len(oats.Submissions()) > 0 })
-
-	text := oats.Submissions()[0].Text
-	if strings.Contains(text, "secret") {
-		t.Fatalf("a subject reached the terminal:\n%s", text)
-	}
-	if !strings.Contains(text, "mail from alice") || !strings.Contains(text, "chat from bob — sender waiting") {
-		t.Fatalf("the wake did not summarise what arrived:\n%s", text)
-	}
-
+	waitFor(t, "the event stream to open", func() bool { return server.openCount() > 0 })
+	time.Sleep(50 * time.Millisecond)
 	for _, path := range server.seenPaths() {
 		if path != "/v1/events/stream" {
-			t.Fatalf("the broker called %s; it streams and nothing else — no fetch, no ack, no read mark", path)
+			t.Fatalf("the broker called %s; Go may stream only — no fetch, no ack, no read mark", path)
 		}
 	}
-
-	// The identity's unread count is reported so a backlog is visible.
-	waitFor(t, "the unread count to reach status", func() bool {
-		for _, stream := range broker.Status().Streams {
-			if stream.UnreadCount == 3 {
-				return true
-			}
-		}
-		return false
-	})
 }
 
 // TestPlannedCloseIsNotReportedAsAnOutage: the broker closes at its own TTL
@@ -332,8 +296,7 @@ func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 	if !strings.Contains(logs.all(), "stream quarantined") {
 		t.Fatalf("the quarantine was not reported:\n%s", logs.all())
 	}
-	// The daemon is still serving: the healthy identity still gets its wake.
-	waitFor(t, "the healthy identity to be woken", func() bool { return len(oats.Submissions()) > 0 })
+	// The daemon is still serving: the healthy identity remains live.
 }
 
 // TestReconnectAfterAnOutageDeliversOnlySnapshotItems: transport recovery is
@@ -395,16 +358,7 @@ func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 	mu.Unlock()
 
 	waitFor(t, "the stream to recover", func() bool { return strings.Contains(logs.all(), "stream reconnected") })
-	waitFor(t, "a wake after recovery", func() bool { return len(oats.Submissions()) > 0 })
-
-	text := oats.Submissions()[0].Text
-	if strings.Contains(text, "reconnected") {
-		t.Fatalf("transport recovery reached terminal input:\n%s", text)
-	}
-	if !strings.Contains(text, "mail from alice") {
-		t.Fatalf("snapshot mail was not delivered after recovery:\n%s", text)
-	}
-	// The daemon survived the outage rather than stopping on it.
+	// The daemon survived the outage rather than stopping on it, and no Go terminal submission path exists here.
 	if !broker.Status().DaemonRunning {
 		t.Fatal("an outage stopped the daemon")
 	}
