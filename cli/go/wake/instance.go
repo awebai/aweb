@@ -2,6 +2,7 @@ package wake
 
 import (
 	"context"
+	"os"
 	"sync"
 	"time"
 
@@ -24,10 +25,12 @@ type instanceRunner struct {
 	// hundred idle instances do not exec `oats` fifty times a second.
 	nextProbe time.Time
 
-	hints  chan hintOffer
-	events chan eventOffer
-	cancel context.CancelFunc
-	done   chan struct{}
+	hints        chan hintOffer
+	events       chan eventOffer
+	child        *ChannelCoreChild
+	conflictHome string
+	cancel       context.CancelFunc
+	done         chan struct{}
 	// startOnce keeps a registration reconciled before Broker.Run from being
 	// launched twice once the daemon context becomes available.
 	startOnce sync.Once
@@ -98,6 +101,9 @@ func (r *instanceRunner) receiveBindings() []ReceiveIdentity {
 }
 
 func (r *instanceRunner) bindingForIdentityHome(identityHome string) (ReceiveIdentity, bool) {
+	if r.conflictHome != "" {
+		return ReceiveIdentity{}, false
+	}
 	return r.registrationSnapshot().BindingForIdentityHome(identityHome)
 }
 
@@ -116,6 +122,21 @@ func (r *instanceRunner) stop() {
 
 func (r *instanceRunner) run(ctx context.Context) {
 	defer close(r.done)
+	if r.broker.cfg.ChannelCore != nil {
+		awCommand, _ := os.Executable()
+		r.child = r.broker.cfg.ChannelCore.StartChild(ctx, r.registrationSnapshot(), channelCoreChildConfig{
+			Coalesce: r.broker.cfg.Coalesce, RateLimit: r.broker.cfg.RateLimit, InspectDelay: r.broker.cfg.PollInterval,
+			OatsBin: session.DefaultOatsBin, AWCommand: awCommand, AdmissionSize: 256, Log: r.broker.cfg.Log,
+			OnInactive: func(state string) {
+				r.mu.Lock()
+				r.state.Inactive = true
+				r.state.LastState = state
+				r.mu.Unlock()
+				r.persist()
+			},
+		})
+		defer r.child.Stop()
+	}
 	ticker := time.NewTicker(r.broker.cfg.PollInterval)
 	defer ticker.Stop()
 
@@ -125,7 +146,9 @@ func (r *instanceRunner) run(ctx context.Context) {
 			r.persist()
 			return
 		case offer := <-r.events:
-			r.deliverEvent(ctx, offer)
+			if r.child != nil {
+				r.child.Offer(offer.binding, offer.event)
+			}
 		case offer := <-r.hints:
 			r.absorb(offer)
 			// A new hint may be immediately actionable; the coalescing window
@@ -174,41 +197,6 @@ func (r *instanceRunner) offer(h Hint, unread int) {
 		case r.hints <- hintOffer{hint: h, unread: unread}:
 		default:
 		}
-	}
-}
-
-func (r *instanceRunner) deliverEvent(ctx context.Context, offer eventOffer) {
-	cfg := r.broker.cfg
-	reg := r.registrationSnapshot()
-	now := cfg.Now()
-	r.mu.Lock()
-	if r.state.Inactive {
-		r.mu.Unlock()
-		return
-	}
-	r.state.LastAttemptAt = now
-	r.mu.Unlock()
-
-	inactive, err := cfg.ChannelCore.Deliver(ctx, reg, offer.binding, offer.event, cfg.Coalesce, cfg.RateLimit, cfg.PollInterval, "aw")
-	r.mu.Lock()
-	if inactive != "" {
-		r.state.Inactive = true
-		r.state.LastState = inactive
-	}
-	if err != nil {
-		r.state.LastError = err.Error()
-	} else {
-		r.state.LastError = ""
-		r.state.LastSubmitAt = now
-	}
-	r.mu.Unlock()
-	r.persist()
-	if err != nil {
-		cfg.Log("channel-core delivery failed home=%s type=%s err=%v", reg.Home, offer.event.Type, err)
-		return
-	}
-	if inactive != "" {
-		cfg.Log("inactive home=%s state=%s (registration kept; removal belongs to the retire hook)", reg.Home, inactive)
 	}
 }
 
@@ -517,6 +505,7 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 		LastError:           r.state.LastError,
 		UnreadCount:         r.state.UnreadCount,
 		StreamAdmitted:      allAdmitted,
-		ChannelCore:         r.broker.cfg.ChannelCore.Status(),
+		ChannelCore:         r.child.Status(),
+		ConflictHome:        r.conflictHome,
 	}
 }

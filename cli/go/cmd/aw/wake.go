@@ -493,6 +493,9 @@ func formatWakeStatus(v any) string {
 		}
 		fmt.Fprintf(&b, "    last_state=%s last_inspect=%s last_attempt=%s last_submit=%s\n",
 			dashIfEmpty(inst.LastState), stampOrDash(inst.LastInspectAt), stampOrDash(inst.LastAttemptAt), stampOrDash(inst.LastSubmitAt))
+		if strings.TrimSpace(inst.ConflictHome) != "" {
+			fmt.Fprintf(&b, "    conflict=%s\n", inst.ConflictHome)
+		}
 		if inst.UnreadCount > 0 {
 			fmt.Fprintf(&b, "    unread=%d\n", inst.UnreadCount)
 		}

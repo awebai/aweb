@@ -153,22 +153,34 @@ extracting alongside the private helper at `cli/go/cmd/aw/helpers.go:310`. The
 broker needs stream-read authority and nothing else: it never opens a message,
 so it never needs decryption material for any identity.
 
+**Delivery is one consumer per receive binding, not fan-out.** A receive
+binding is the resolved pair `(identity_home, team_id)`, with an omitted team
+normalized to that identity home's effective active team at registration time.
+`aw wake register` rejects a binding already owned by another registration and
+names the owning home. Stores written by older versions that already contain a
+duplicate are served deterministically: the earliest registered home owns the
+binding; later duplicates are reported as conflicts in status and receive no
+delivery. This is a compatibility change from the old hint-only broker, whose
+fan-out was possible only because it never acknowledged. Channel-core is now the
+presentation surface for a binding, so it fetches once, presents once, and
+acknowledges/marks read once, matching Claude and Pi.
+
 **Pending state lives on disk, per instance, and holds no presented marks.**
 `~/.config/aw/wake/` holds `instances.d/<sha256-of-canonical-home>.json`
-(pending hints, last attempt, rate-limit state), `registry.d/`, `status.json`,
-and `lock/`. The hint store is bounded at 512 per instance and eviction is
-reported in status.
+(registration lifecycle and status such as pause, first live observation,
+inactive state, last errors and child delivery status), `registry.d/`,
+`status.json`, and `lock/`. Legacy pending hints from older stores are dropped
+on load and counted as evicted; they are never composed or injected.
 
-There is deliberately **no durable "presented" mark keyed on `submitted:true`,
-and no suppression of a future wake for an item that is still unread.** A TTY
-write is not evidence of processing. If a prompt is dropped — a harness
-restarting, a pane replaced between inspect and input, a paste that lands
-somewhere unintended — a mark taken on the strength of that write would strand
-real unread work with no path back, because the broker is not the surface that
-would notice. So the broker persists what it has *tried*, not what it believes
-*arrived*: hints coalesce, retries are rate-limited, and the reconnect
-snapshot's unread state drives later reminders until the authoritative unread
-state clears.
+There is deliberately **no durable "presented" mark keyed on `submitted:true`
+outside channel-core.** A TTY write is not evidence of processing. The broker
+therefore does not create its own read or delivery marks; channel-core writes
+its normal durable delivery mark and ack/read only after the terminal handler
+accepts input. Known at-least-once limitation: if the terminal accepted input
+and the child dies before channel-core's durable mark or ack lands, the next
+child can present the same item again. That is the same accepted gap as the
+Claude and Pi adapters, and it is preferable to Go inventing per-target read
+state or suppressing an unread item.
 
 **At-least-once bounded hints are the honest contract.** Exactly-once
 presentation is not available on this transport and the note should not imply

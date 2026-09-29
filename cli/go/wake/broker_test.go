@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -128,6 +129,62 @@ func (h *harness) step() {
 }
 
 func (h *harness) submissions() []session.Submission { return h.oats.Submissions() }
+
+func writeWakeTestTeamState(t *testing.T, identityHome, teamID string) {
+	t.Helper()
+	if err := os.MkdirAll(identityHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(identityHome, "teams.yaml"), []byte("active_team: "+teamID+"\nmemberships:\n  - team_id: "+teamID+"\n    alias: test\n    cert_path: cert.json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegisterRejectsDuplicateEffectiveBinding(t *testing.T) {
+	store := tempStore(t)
+	home1 := tempHome(t, "one")
+	home2 := tempHome(t, "two")
+	identityHome := filepath.Join(tempHome(t, "identity"), ".aw")
+	writeWakeTestTeamState(t, identityHome, "team:one")
+	broker, err := NewBroker(Config{Store: store, Session: session.NewFake(session.Inspection{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Register(Registration{Home: home1, IdentityHome: identityHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	err = broker.Register(Registration{Home: home2, Delivery: DeliverySession, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{{IdentityHome: identityHome, TeamID: "team:one", DeliveryOwner: ReceiveOwnerSessionHints, Controls: true}}})
+	if err == nil || !strings.Contains(err.Error(), home1) || !strings.Contains(err.Error(), "already owned") {
+		t.Fatalf("duplicate binding error=%v, want owner %s", err, home1)
+	}
+}
+
+func TestLoadedDuplicateBindingReportsConflict(t *testing.T) {
+	store := tempStore(t)
+	home1 := tempHome(t, "one")
+	home2 := tempHome(t, "two")
+	identityHome := filepath.Join(tempHome(t, "identity"), ".aw")
+	writeWakeTestTeamState(t, identityHome, "team:one")
+	if err := store.SaveRegistration(Registration{Home: home1, IdentityHome: identityHome, Delivery: DeliverySession, RegisteredAt: at(0)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveRegistration(Registration{Home: home2, Delivery: DeliverySession, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{{IdentityHome: identityHome, TeamID: "team:one", DeliveryOwner: ReceiveOwnerSessionHints, Controls: true}}, RegisteredAt: at(1)}); err != nil {
+		t.Fatal(err)
+	}
+	broker, err := NewBroker(Config{Store: store, Session: session.NewFake(session.Inspection{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker.Reconcile()
+	status := broker.Status()
+	conflicts := map[string]string{}
+	for _, inst := range status.Instances {
+		conflicts[inst.Home] = inst.ConflictHome
+	}
+	if conflicts[home1] != "" || conflicts[home2] != home1 {
+		t.Fatalf("conflicts=%#v, want %s to own and %s to conflict", conflicts, home1, home2)
+	}
+}
 
 func newMultiIdentityHarness(t *testing.T, reg Registration, mutate func(*Config)) (*Broker, *instanceRunner, *Store, *clock) {
 	t.Helper()

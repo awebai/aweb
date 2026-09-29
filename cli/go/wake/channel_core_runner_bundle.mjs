@@ -12,11 +12,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
   throw Error('Dynamic require of "' + x + '" is not supported');
 });
 var __commonJS = (cb, mod) => function __require2() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -83,36 +79,36 @@ var require_cjs = __commonJS({
       return domain.slice(0, -suffix.length - 1);
     }
     function extractHostname(url, urlIsValidHostname) {
-      let start = 0;
+      let start2 = 0;
       let end = url.length;
       let hasUpper = false;
       if (!urlIsValidHostname) {
         if (url.startsWith("data:")) {
           return null;
         }
-        while (start < url.length && url.charCodeAt(start) <= 32) {
-          start += 1;
+        while (start2 < url.length && url.charCodeAt(start2) <= 32) {
+          start2 += 1;
         }
-        while (end > start + 1 && url.charCodeAt(end - 1) <= 32) {
+        while (end > start2 + 1 && url.charCodeAt(end - 1) <= 32) {
           end -= 1;
         }
-        if (url.charCodeAt(start) === 47 && url.charCodeAt(start + 1) === 47) {
-          start += 2;
+        if (url.charCodeAt(start2) === 47 && url.charCodeAt(start2 + 1) === 47) {
+          start2 += 2;
         } else {
-          const indexOfProtocol = url.indexOf(":/", start);
+          const indexOfProtocol = url.indexOf(":/", start2);
           if (indexOfProtocol !== -1) {
-            const protocolSize = indexOfProtocol - start;
-            const c0 = url.charCodeAt(start);
-            const c1 = url.charCodeAt(start + 1);
-            const c2 = url.charCodeAt(start + 2);
-            const c3 = url.charCodeAt(start + 3);
-            const c4 = url.charCodeAt(start + 4);
+            const protocolSize = indexOfProtocol - start2;
+            const c0 = url.charCodeAt(start2);
+            const c1 = url.charCodeAt(start2 + 1);
+            const c2 = url.charCodeAt(start2 + 2);
+            const c3 = url.charCodeAt(start2 + 3);
+            const c4 = url.charCodeAt(start2 + 4);
             if (protocolSize === 5 && c0 === 104 && c1 === 116 && c2 === 116 && c3 === 112 && c4 === 115) ;
             else if (protocolSize === 4 && c0 === 104 && c1 === 116 && c2 === 116 && c3 === 112) ;
             else if (protocolSize === 3 && c0 === 119 && c1 === 115 && c2 === 115) ;
             else if (protocolSize === 2 && c0 === 119 && c1 === 115) ;
             else {
-              for (let i = start; i < indexOfProtocol; i += 1) {
+              for (let i = start2; i < indexOfProtocol; i += 1) {
                 const lowerCaseCode = url.charCodeAt(i) | 32;
                 if (!(lowerCaseCode >= 97 && lowerCaseCode <= 122 || // [a, z]
                 lowerCaseCode >= 48 && lowerCaseCode <= 57 || // [0, 9]
@@ -123,16 +119,16 @@ var require_cjs = __commonJS({
                 }
               }
             }
-            start = indexOfProtocol + 2;
-            while (url.charCodeAt(start) === 47) {
-              start += 1;
+            start2 = indexOfProtocol + 2;
+            while (url.charCodeAt(start2) === 47) {
+              start2 += 1;
             }
           }
         }
         let indexOfIdentifier = -1;
         let indexOfClosingBracket = -1;
         let indexOfPort = -1;
-        for (let i = start; i < end; i += 1) {
+        for (let i = start2; i < end; i += 1) {
           const code = url.charCodeAt(i);
           if (code === 35 || // '#'
           code === 47 || // '/'
@@ -149,22 +145,22 @@ var require_cjs = __commonJS({
             hasUpper = true;
           }
         }
-        if (indexOfIdentifier !== -1 && indexOfIdentifier > start && indexOfIdentifier < end) {
-          start = indexOfIdentifier + 1;
+        if (indexOfIdentifier !== -1 && indexOfIdentifier > start2 && indexOfIdentifier < end) {
+          start2 = indexOfIdentifier + 1;
         }
-        if (url.charCodeAt(start) === 91) {
+        if (url.charCodeAt(start2) === 91) {
           if (indexOfClosingBracket !== -1) {
-            return url.slice(start + 1, indexOfClosingBracket).toLowerCase();
+            return url.slice(start2 + 1, indexOfClosingBracket).toLowerCase();
           }
           return null;
-        } else if (indexOfPort !== -1 && indexOfPort > start && indexOfPort < end) {
+        } else if (indexOfPort !== -1 && indexOfPort > start2 && indexOfPort < end) {
           end = indexOfPort;
         }
       }
-      while (end > start + 1 && url.charCodeAt(end - 1) === 46) {
+      while (end > start2 + 1 && url.charCodeAt(end - 1) === 46) {
         end -= 1;
       }
-      const hostname = start !== 0 || end !== url.length ? url.slice(start, end) : url;
+      const hostname = start2 !== 0 || end !== url.length ? url.slice(start2, end) : url;
       if (hasUpper) {
         return hostname.toLowerCase();
       }
@@ -192,17 +188,17 @@ var require_cjs = __commonJS({
       if (hostname.length < 3) {
         return false;
       }
-      let start = hostname.startsWith("[") ? 1 : 0;
+      let start2 = hostname.startsWith("[") ? 1 : 0;
       let end = hostname.length;
       if (hostname[end - 1] === "]") {
         end -= 1;
       }
-      if (end - start > 39) {
+      if (end - start2 > 39) {
         return false;
       }
       let hasColon = false;
-      for (; start < end; start += 1) {
-        const code = hostname.charCodeAt(start);
+      for (; start2 < end; start2 += 1) {
+        const code = hostname.charCodeAt(start2);
         if (code === 58) {
           hasColon = true;
         } else if (!(code >= 48 && code <= 57 || // 0-9
@@ -555,10 +551,10 @@ var require_polyfills = __commonJS({
       if (platform === "win32") {
         fs.rename = typeof fs.rename !== "function" ? fs.rename : (function(fs$rename) {
           function rename2(from, to, cb) {
-            var start = Date.now();
+            var start2 = Date.now();
             var backoff = 0;
             fs$rename(from, to, function CB(er) {
-              if (er && (er.code === "EACCES" || er.code === "EPERM" || er.code === "EBUSY") && Date.now() - start < 6e4) {
+              if (er && (er.code === "EACCES" || er.code === "EPERM" || er.code === "EBUSY") && Date.now() - start2 < 6e4) {
                 setTimeout(function() {
                   fs.stat(to, function(stater, st) {
                     if (stater && stater.code === "ENOENT")
@@ -1594,7 +1590,7 @@ var require_signal_exit = __commonJS({
         emitter.count -= 1;
       };
       module.exports.unload = unload;
-      emit = function emit2(event, code, signal) {
+      emit2 = function emit3(event, code, signal) {
         if (emitter.emitted[event]) {
           return;
         }
@@ -1610,8 +1606,8 @@ var require_signal_exit = __commonJS({
           var listeners = process2.listeners(sig);
           if (listeners.length === emitter.count) {
             unload();
-            emit("exit", null, sig);
-            emit("afterexit", null, sig);
+            emit2("exit", null, sig);
+            emit2("afterexit", null, sig);
             if (isWin && sig === "SIGHUP") {
               sig = "SIGINT";
             }
@@ -1648,8 +1644,8 @@ var require_signal_exit = __commonJS({
         }
         process2.exitCode = code || /* istanbul ignore next */
         0;
-        emit("exit", process2.exitCode, null);
-        emit("afterexit", process2.exitCode, null);
+        emit2("exit", process2.exitCode, null);
+        emit2("afterexit", process2.exitCode, null);
         originalProcessReallyExit.call(process2, process2.exitCode);
       };
       originalProcessEmit = process2.emit;
@@ -1659,8 +1655,8 @@ var require_signal_exit = __commonJS({
             process2.exitCode = arg;
           }
           var ret = originalProcessEmit.apply(this, arguments);
-          emit("exit", process2.exitCode, null);
-          emit("afterexit", process2.exitCode, null);
+          emit2("exit", process2.exitCode, null);
+          emit2("afterexit", process2.exitCode, null);
           return ret;
         } else {
           return originalProcessEmit.apply(this, arguments);
@@ -1673,7 +1669,7 @@ var require_signal_exit = __commonJS({
     var EE;
     var emitter;
     var unload;
-    var emit;
+    var emit2;
     var sigListeners;
     var loaded;
     var load2;
@@ -2065,9 +2061,8 @@ var require_proper_lockfile = __commonJS({
 });
 
 // cli/go/wake/channel_core_runner_entry.ts
-import { execFile as execFile2 } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { promisify as promisify2 } from "node:util";
+import { spawn as spawn2 } from "node:child_process";
+import { createInterface } from "node:readline";
 
 // channel-core/src/api/client.ts
 import { createHash } from "node:crypto";
@@ -3670,13 +3665,13 @@ async function ackMessage(client, messageId) {
 }
 async function verifyInboxMessage(msg) {
   if (msg.signed_payload && msg.signature && msg.from_did) {
-    const status2 = await verifySignedPayload(
+    const status3 = await verifySignedPayload(
       msg.signed_payload,
       msg.signature,
       msg.from_did,
       msg.signing_key_id || ""
     );
-    if (status2 !== "verified") return status2;
+    if (status3 !== "verified") return status3;
     return signedPayloadConversationStatus(msg.signed_payload, msg.conversation_id);
   }
   const from = msg.from_address || msg.from_alias;
@@ -3697,12 +3692,12 @@ async function verifyInboxMessage(msg) {
     signature: msg.signature,
     signing_key_id: msg.signing_key_id
   };
-  const status = await verifyMessage(env);
-  if (status === "failed" && msg.conversation_id) {
+  const status2 = await verifyMessage(env);
+  if (status2 === "failed" && msg.conversation_id) {
     const legacyStatus = await verifyMessage({ ...env, conversation_id: void 0 });
     return legacyStatus === "verified" ? "verified_legacy" : legacyStatus;
   }
-  return status;
+  return status2;
 }
 
 // channel-core/src/api/chat.ts
@@ -3758,8 +3753,8 @@ async function markRead(client, sessionId, messageIds) {
     throw new Error("aweb: cannot mark chat read without presented message IDs");
   }
   const path = `/v1/chat/sessions/${encodeURIComponent(sessionId)}/read`;
-  for (let start = 0; start < messageIds.length; start += CHAT_MARK_READ_BATCH_SIZE) {
-    const chunk = messageIds.slice(start, start + CHAT_MARK_READ_BATCH_SIZE);
+  for (let start2 = 0; start2 < messageIds.length; start2 += CHAT_MARK_READ_BATCH_SIZE) {
+    const chunk = messageIds.slice(start2, start2 + CHAT_MARK_READ_BATCH_SIZE);
     try {
       try {
         await client.post(path, { message_ids: chunk });
@@ -3774,7 +3769,7 @@ async function markRead(client, sessionId, messageIds) {
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       throw new Error(
-        `aweb: marked ${start} of ${messageIds.length} presented chat messages; next mark-read chunk failed: ${detail}`,
+        `aweb: marked ${start2} of ${messageIds.length} presented chat messages; next mark-read chunk failed: ${detail}`,
         { cause: error }
       );
     }
@@ -3782,13 +3777,13 @@ async function markRead(client, sessionId, messageIds) {
 }
 async function verifyChatMessage(msg) {
   if (msg.signed_payload && msg.signature && msg.from_did) {
-    const status2 = await verifySignedPayload(
+    const status3 = await verifySignedPayload(
       msg.signed_payload,
       msg.signature,
       msg.from_did,
       msg.signing_key_id || ""
     );
-    if (status2 !== "verified") return status2;
+    if (status3 !== "verified") return status3;
     return signedPayloadConversationStatus(msg.signed_payload, msg.conversation_id);
   }
   const from = msg.from_address || msg.from_agent;
@@ -3808,12 +3803,12 @@ async function verifyChatMessage(msg) {
     signature: msg.signature,
     signing_key_id: msg.signing_key_id
   };
-  const status = await verifyMessage(env);
-  if (status === "failed" && msg.conversation_id) {
+  const status2 = await verifyMessage(env);
+  if (status2 === "failed" && msg.conversation_id) {
     const legacyStatus = await verifyMessage({ ...env, conversation_id: void 0 });
     return legacyStatus === "verified" ? "verified_legacy" : legacyStatus;
   }
-  return status;
+  return status2;
 }
 
 // channel-core/src/config.ts
@@ -5083,9 +5078,9 @@ function requireLoader() {
       state.tagMap[handle] = prefix;
     }
   };
-  function captureSegment(state, start, end, checkJson) {
-    if (start < end) {
-      const _result = state.input.slice(start, end);
+  function captureSegment(state, start2, end, checkJson) {
+    if (start2 < end) {
+      const _result = state.input.slice(start2, end);
       if (checkJson) {
         for (let _position = 0, _length = _result.length; _position < _length; _position += 1) {
           const _character = _result.charCodeAt(_position);
@@ -6508,25 +6503,25 @@ function requireDumper() {
     if (line === "" || line[0] === " ") return line;
     const breakRe = / [^ ]/g;
     let match;
-    let start = 0;
+    let start2 = 0;
     let end;
     let curr = 0;
     let next = 0;
     let result = "";
     while (match = breakRe.exec(line)) {
       next = match.index;
-      if (next - start > width) {
-        end = curr > start ? curr : next;
-        result += "\n" + line.slice(start, end);
-        start = end + 1;
+      if (next - start2 > width) {
+        end = curr > start2 ? curr : next;
+        result += "\n" + line.slice(start2, end);
+        start2 = end + 1;
       }
       curr = next;
     }
     result += "\n";
-    if (line.length - start > width && curr > start) {
-      result += line.slice(start, curr) + "\n" + line.slice(curr + 1);
+    if (line.length - start2 > width && curr > start2) {
+      result += line.slice(start2, curr) + "\n" + line.slice(curr + 1);
     } else {
-      result += line.slice(start);
+      result += line.slice(start2);
     }
     return result.slice(1);
   }
@@ -6911,7 +6906,16 @@ async function loadSigningKey(path) {
 
 // channel-core/src/config.ts
 etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
-function selectIdentityHome(workdir) {
+function selectIdentityHome(workdir, options = {}) {
+  const explicitHome = (options.identityHome || "").trim();
+  if (explicitHome) {
+    if (!isAbsolute(explicitHome)) {
+      throw new Error("identityHome option must be an absolute path");
+    }
+    const root2 = normalize(explicitHome);
+    preflightDirectory(root2, "identity home");
+    return { root: root2, external: true };
+  }
   const configuredHome = (process.env.AWEB_IDENTITY_HOME || "").trim();
   if (!configuredHome) return { root: join(workdir, ".aw"), external: false };
   if (!isAbsolute(configuredHome)) {
@@ -6921,8 +6925,8 @@ function selectIdentityHome(workdir) {
   preflightDirectory(root, "identity home");
   return { root, external: true };
 }
-async function resolveConfig(workdir) {
-  const identityHome = selectIdentityHome(workdir);
+async function resolveConfig(workdir, options = {}) {
+  const identityHome = selectIdentityHome(workdir, options);
   const workspacePath = join(identityHome.root, "workspace.yaml");
   const teamsPath = join(identityHome.root, "teams.yaml");
   const identityPath = join(identityHome.root, "identity.yaml");
@@ -6944,7 +6948,7 @@ async function resolveConfig(workdir) {
   if (!teamState) {
     throw new Error("worktree team state is missing .aw/teams.yaml; run `aw init` or `aw id team add` first");
   }
-  const activeTeam = (teamState.active_team || "").trim();
+  const activeTeam = (options.teamID || teamState.active_team || "").trim();
   const teamMembership = (teamState.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
   const workspaceMembership = (workspace.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
   const teamID = activeTeam;
@@ -8201,21 +8205,21 @@ var SenderTrustManager = class {
   teamRosterCache;
   teamRosterRequest;
   async resolveTrustMetadata(verificationStatus, rawAddress, fromStableID, toDID, toStableID, context) {
-    const status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    const status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const trimmedAddress = rawAddress.trim();
-    if (!status || !trimmedAddress) return void 0;
-    if (context && !context.fromDID && (status === "verified" || status === "verified_legacy" || status === "verified_custodial")) {
+    if (!status2 || !trimmedAddress) return void 0;
+    if (context && !context.fromDID && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial")) {
       return void 0;
     }
     const rosterAlias = this.teamRosterAliasReference(trimmedAddress);
-    if (status !== "verified" && status !== "verified_legacy" && status !== "verified_custodial" && rosterAlias !== void 0 && !fromStableID) {
+    if (status2 !== "verified" && status2 !== "verified_legacy" && status2 !== "verified_custodial" && rosterAlias !== void 0 && !fromStableID) {
       return void 0;
     }
     const trustAddress = this.canonicalTrustAddress(trimmedAddress);
     const meta = await this.resolveAgentMeta(trimmedAddress);
     const stableIdentityCheck = context && meta.resolved && meta.identityScope !== "local" ? await this.prepareStableIdentityRegistry(
       context.pinStore,
-      status,
+      status2,
       context.verificationAddress,
       context.fromDID,
       fromStableID
@@ -8280,32 +8284,32 @@ var SenderTrustManager = class {
     return resolvedMetadata.trustAddress === this.canonicalTrustAddress(rawAddress) ? resolvedMetadata : void 0;
   }
   normalizeTrustDecision(store, verificationStatus, rawAddress, fromDID, fromStableID, toDID, toStableID, rotationAnnouncement, replacementAnnouncement, resolved) {
-    let status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
+    let status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const acceptedInput = verificationStatus === "verified" || verificationStatus === "verified_legacy" || verificationStatus === "verified_custodial";
-    const recipientBindingMismatch = acceptedInput && status === "identity_mismatch";
-    if (!status || !rawAddress.trim()) return { status, stored: false };
-    const acceptedSignature = status === "verified" || status === "verified_legacy" || status === "verified_custodial";
-    if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status, stored: false };
+    const recipientBindingMismatch = acceptedInput && status2 === "identity_mismatch";
+    if (!status2 || !rawAddress.trim()) return { status: status2, stored: false };
+    const acceptedSignature = status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial";
+    if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status: status2, stored: false };
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     const meta = resolved?.meta || this.unavailableAgentMeta();
     if (!meta.resolved) return this.unresolvedMetadataResult(meta);
     if (this.teamRosterAliasReference(rawAddress.trim()) !== void 0 && fromDID) {
       if (meta.identityScope === "local") {
-        return this.verifyResolvedLocalSender(store, rawAddress.trim(), trustAddress, fromDID, meta, status);
+        return this.verifyResolvedLocalSender(store, rawAddress.trim(), trustAddress, fromDID, meta, status2);
       }
       if (!fromStableID) return { status: "identity_mismatch", stored: false };
     }
     const registryCheck = this.applyPreparedStableIdentityRegistry(
       store,
-      status,
+      status2,
       fromDID,
       fromStableID,
       resolved?.stableIdentityCheck
     );
-    status = registryCheck.status;
+    status2 = registryCheck.status;
     const pinResult = this.checkTOFUPinWithMeta(
       store,
-      status,
+      status2,
       rawAddress.trim(),
       trustAddress,
       fromDID,
@@ -8332,31 +8336,31 @@ var SenderTrustManager = class {
     }
     return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
   }
-  checkRecipientBinding(status, toDID, toStableID) {
-    if (status !== "verified" && status !== "verified_legacy" && status !== "verified_custodial") {
-      return status;
+  checkRecipientBinding(status2, toDID, toStableID) {
+    if (status2 !== "verified" && status2 !== "verified_legacy" && status2 !== "verified_custodial") {
+      return status2;
     }
     const selfStableID = this.selfStableID.trim();
     const recipientStableID = (toStableID || "").trim();
     if (selfStableID && recipientStableID) {
-      return recipientStableID.toLowerCase() === selfStableID.toLowerCase() ? status : "identity_mismatch";
+      return recipientStableID.toLowerCase() === selfStableID.toLowerCase() ? status2 : "identity_mismatch";
     }
     const selfDID = this.selfDid.trim();
     const recipientDID = (toDID || "").trim();
     if (!recipientDID || !selfDID) {
-      return status;
+      return status2;
     }
     if (recipientDID.startsWith("did:aw:")) {
-      if (recipientStableID) return status;
+      if (recipientStableID) return status2;
       if (selfStableID) {
-        return recipientDID.toLowerCase() === selfStableID.toLowerCase() ? status : "identity_mismatch";
+        return recipientDID.toLowerCase() === selfStableID.toLowerCase() ? status2 : "identity_mismatch";
       }
-      return status;
+      return status2;
     }
-    return recipientDID === selfDID ? status : "identity_mismatch";
+    return recipientDID === selfDID ? status2 : "identity_mismatch";
   }
-  requiresStableIdentityCheck(status, fromDID, fromStableID) {
-    return status === "verified" && Boolean(fromDID) && Boolean(fromStableID?.startsWith("did:aw:"));
+  requiresStableIdentityCheck(status2, fromDID, fromStableID) {
+    return status2 === "verified" && Boolean(fromDID) && Boolean(fromStableID?.startsWith("did:aw:"));
   }
   unavailableAgentMeta() {
     return {
@@ -8372,8 +8376,8 @@ var SenderTrustManager = class {
       stored: false
     };
   }
-  async prepareStableIdentityRegistry(store, status, trustAddress, fromDID, fromStableID) {
-    if (!this.requiresStableIdentityCheck(status, fromDID, fromStableID)) return void 0;
+  async prepareStableIdentityRegistry(store, status2, trustAddress, fromDID, fromStableID) {
+    if (!this.requiresStableIdentityCheck(status2, fromDID, fromStableID)) return void 0;
     const checkpoint = this.pinCheckpoint(store, fromStableID);
     this.seedVerifiedHeadFromPin(store, fromStableID);
     return {
@@ -8381,9 +8385,9 @@ var SenderTrustManager = class {
       result: await this.registry.verifyStableIdentity(trustAddress, fromStableID, fromDID)
     };
   }
-  applyPreparedStableIdentityRegistry(store, status, fromDID, fromStableID, prepared) {
-    if (!this.requiresStableIdentityCheck(status, fromDID, fromStableID)) {
-      return { status, confirmedCurrentKey: false };
+  applyPreparedStableIdentityRegistry(store, status2, fromDID, fromStableID, prepared) {
+    if (!this.requiresStableIdentityCheck(status2, fromDID, fromStableID)) {
+      return { status: status2, confirmedCurrentKey: false };
     }
     if (!prepared) return { status: "verification_stale", confirmedCurrentKey: false };
     const currentCheckpoint = this.pinCheckpoint(store, fromStableID);
@@ -8401,7 +8405,7 @@ var SenderTrustManager = class {
       return { status: "identity_mismatch", confirmedCurrentKey: false };
     }
     return {
-      status,
+      status: status2,
       confirmedCurrentKey: registryResult.outcome === "OK_VERIFIED" && registryResult.currentDidKey === fromDID,
       verifiedHead: registryResult.verifiedHead
     };
@@ -8439,18 +8443,18 @@ var SenderTrustManager = class {
     if (!stableID || !head || !isValidDidLogSequence(head.seq) || !head.entryHash.trim()) return false;
     return store.advanceLogCheckpoint(stableID, head.seq, head.entryHash);
   }
-  checkTOFUPinWithMeta(store, status, rawAddress, trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryConfirmedCurrentKey) {
-    if (!status || status !== "verified" && status !== "verified_custodial" || !fromDID || !trustAddress || !meta.resolved) {
-      return { status, stored: false };
+  checkTOFUPinWithMeta(store, status2, rawAddress, trustAddress, fromDID, fromStableID, rotationAnnouncement, replacementAnnouncement, meta, registryConfirmedCurrentKey) {
+    if (!status2 || status2 !== "verified" && status2 !== "verified_custodial" || !fromDID || !trustAddress || !meta.resolved) {
+      return { status: status2, stored: false };
     }
     if (meta.identityScope === "local") {
       return {
-        status,
+        status: status2,
         stored: store.removeAddresses([trustAddress, rawAddress !== trustAddress ? rawAddress : ""])
       };
     }
-    if (meta.custody === "custodial" && status === "verified") {
-      status = "verified_custodial";
+    if (meta.custody === "custodial" && status2 === "verified") {
+      status2 = "verified_custodial";
     }
     if (fromStableID && !fromStableID.startsWith("did:aw:")) {
       fromStableID = void 0;
@@ -8470,21 +8474,21 @@ var SenderTrustManager = class {
     switch (pinResult) {
       case "new":
         store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
-        return { status, stored: true };
+        return { status: status2, stored: true };
       case "ok": {
         if (fromStableID) {
           const pin = store.pins.get(pinKey);
           if (pin?.did_key && pin.did_key !== fromDID) {
             if (registryConfirmedCurrentKey) {
               store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID);
-              return { status, stored: true };
+              return { status: status2, stored: true };
             }
             if (!this.verifyRotationAnnouncement(rotationAnnouncement, fromDID, pin.did_key) && !this.verifyReplacementAnnouncement(trustAddress, replacementAnnouncement, fromDID, pin.did_key, meta)) {
               return { status: "identity_mismatch", stored: false };
             }
           }
         }
-        return { status, stored: store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID) };
+        return { status: status2, stored: store.recordVerifiedIdentity(pinKey, trustAddress, fromStableID, fromDID) };
       }
       case "mismatch": {
         const pinnedKey = store.addresses.get(trustAddress) || "";
@@ -8492,21 +8496,21 @@ var SenderTrustManager = class {
           const pin = store.pins.get(pinnedKey);
           if (pin?.did_key === fromDID) {
             store.recordVerifiedIdentity(pinnedKey, trustAddress, fromStableID);
-            return { status, stored: true };
+            return { status: status2, stored: true };
           }
           if (pin?.did_key && (this.verifyRotationAnnouncement(rotationAnnouncement, fromDID, pin.did_key) || this.verifyReplacementAnnouncement(trustAddress, replacementAnnouncement, fromDID, pin.did_key, meta))) {
             store.recordVerifiedIdentity(pinnedKey, trustAddress, fromStableID, fromDID);
-            return { status, stored: true };
+            return { status: status2, stored: true };
           }
         }
         if (this.verifyRotationAnnouncement(rotationAnnouncement, fromDID, pinnedKey) || this.verifyReplacementAnnouncement(trustAddress, replacementAnnouncement, fromDID, pinnedKey, meta)) {
           store.replaceVerifiedIdentity(pinnedKey, pinKey, trustAddress, fromStableID, fromDID);
-          return { status, stored: true };
+          return { status: status2, stored: true };
         }
         return { status: "identity_mismatch", stored: false };
       }
       case "skipped":
-        return { status, stored: false };
+        return { status: status2, stored: false };
     }
   }
   verifyRotationAnnouncement(announcement, messageDID, pinnedDID) {
@@ -8898,15 +8902,16 @@ function execFileWithInput(command, args, input, cwd) {
 function parseJSONOutput(stdout) {
   const trimmed = stdout.trim();
   if (!trimmed) throw new Error("aw returned empty JSON output");
-  const start = trimmed.indexOf("{");
-  if (start < 0) throw new Error("aw JSON output did not contain an object");
-  return JSON.parse(trimmed.slice(start));
+  const start2 = trimmed.indexOf("{");
+  if (start2 < 0) throw new Error("aw JSON output did not contain an object");
+  return JSON.parse(trimmed.slice(start2));
 }
 
 // channel-core/src/channel.ts
 var DEFAULT_PIN_STORE_PATH = join2(homedir(), ".config", "aw", "known_agents.yaml");
 var DEFAULT_DELIVERY_STORE_PATH = join2(homedir(), ".config", "aw", "channel-delivered-ids.json");
 var DEFAULT_UNDELIVERED_LOG_PATH = join2(homedir(), ".config", "aw", "channel-undelivered.jsonl");
+var MAX_DISPATCHED_IDS = 2e3;
 var MAX_DELIVERED_IDS = 5e3;
 var DELIVERED_IDS_TTL_MS = 24 * 60 * 60 * 1e3;
 var MAIL_FETCH_LIMIT = 200;
@@ -8915,6 +8920,7 @@ var PIN_STORE_CAS_MAX_ATTEMPTS = 3;
 var APP_EVENT_SUMMARY_SEPARATOR = " \u2014 ";
 var MAX_APP_EVENT_VALUE_LENGTH = 160;
 var MAX_APP_EVENT_PAYLOAD_LENGTH = 500;
+var LANE_RETRY_DELAYS_MS = [100, 250, 500];
 async function loadPinStore(path = DEFAULT_PIN_STORE_PATH) {
   let content;
   try {
@@ -9139,9 +9145,77 @@ function eventForMessage(event, messageID, conversationID) {
     conversation_id: conversationID || event.conversation_id
   };
 }
+async function consumeAgentEvents(options, dispatched, events, log = () => {
+}) {
+  const lanes = /* @__PURE__ */ new Map();
+  const pending = /* @__PURE__ */ new Set();
+  for await (const event of events) {
+    const lane = eventDispatchLane(event);
+    emitTrace(options, "event_enqueued", event, lane);
+    const previous = lane ? lanes.get(lane) : void 0;
+    const job = (previous || Promise.resolve()).then(async () => {
+      emitTrace(options, "lane_job_started", event, lane);
+      await dispatchAgentEventWithRetry(options, dispatched, event, log);
+      pruneDispatched(dispatched);
+      emitTrace(options, "lane_job_completed", event, lane);
+    }).catch((error) => {
+      emitTrace(options, "lane_job_failed", event, lane);
+      const detail = error instanceof Error ? error.message : String(error);
+      log(`aweb: could not process an incoming event: ${detail}; it remains pending`);
+    });
+    pending.add(job);
+    if (lane) lanes.set(lane, job);
+    void job.finally(() => {
+      pending.delete(job);
+      if (lane && lanes.get(lane) === job) lanes.delete(lane);
+    });
+  }
+  await Promise.all([...pending]);
+}
+function eventDeliveryIntent(event) {
+  switch (event.type) {
+    case "mail_message":
+      return "wake";
+    case "chat_message":
+      return event.sender_waiting ? "steer" : "wake";
+    case "control_interrupt":
+    case "control_pause":
+    case "control_resume":
+      return "steer";
+    case "app_event":
+      return event.delivery_intent || "ambient";
+    default:
+      return "ambient";
+  }
+}
+function shouldRetryEvent(event) {
+  return eventDeliveryIntent(event) !== "ambient";
+}
 async function awaitDeliveryReady(options, intent) {
   if (!options.awaitDeliveryReady || intent === "ambient") return;
   await options.awaitDeliveryReady(intent, options.signal || new AbortController().signal);
+}
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw new Error("channel delivery aborted");
+}
+function abortableDelay(ms, signal) {
+  return new Promise((resolve2, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("channel delivery aborted"));
+      return;
+    }
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener("abort", onAbort);
+      resolve2();
+    }
+    function onAbort() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new Error("channel delivery aborted"));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 function eventDispatchLane(event) {
   switch (event.type) {
@@ -9165,6 +9239,22 @@ async function deliverAwakening(options, awakening) {
     await options.onAwakening(awakening);
   } catch (error) {
     throw new RetryableAwakeningError(error);
+  }
+}
+async function dispatchAgentEventWithRetry(options, dispatched, event, log) {
+  let attempt = 0;
+  while (true) {
+    throwIfAborted(options.signal);
+    try {
+      await dispatchAgentEvent(options, dispatched, event, log);
+      return;
+    } catch (error) {
+      if (!(error instanceof RetryableAwakeningError) || !shouldRetryEvent(event) || attempt >= LANE_RETRY_DELAYS_MS.length) throw error;
+      const detail = error.message;
+      log(`aweb: delivery failed for ${event.type}; retrying after re-fetch (${detail})`);
+      await abortableDelay(LANE_RETRY_DELAYS_MS[attempt], options.signal);
+      attempt += 1;
+    }
   }
 }
 async function dispatchAgentEvent(options, dispatched, event, log = (message) => console.error(message)) {
@@ -9550,18 +9640,18 @@ function encryptedDeliveryFailureMeta(type2, from, messageID, conversationID, er
   if (sessionID) meta.session_id = sessionID;
   return meta;
 }
-function isTrustedVerificationStatus(status) {
-  return status === "verified" || status === "verified_custodial";
+function isTrustedVerificationStatus(status2) {
+  return status2 === "verified" || status2 === "verified_custodial";
 }
-function trustWarningLine(status) {
-  if (isTrustedVerificationStatus(status)) return "";
-  if (status === "verification_stale") {
+function trustWarningLine(status2) {
+  if (isTrustedVerificationStatus(status2)) return "";
+  if (status2 === "verification_stale") {
     return "WARNING: sender signature verified, but stale registry key material could not be refreshed. This is not an identity-mismatch finding; retry verification before sensitive work.";
   }
-  if (status === "pin_conflict") {
+  if (status2 === "pin_conflict") {
     return "WARNING: two pin records conflict for this sender. Stable-identity migration was refused to avoid discarding trust state; inspect and repair the pin store before trusting the sender.";
   }
-  return `WARNING: sender verification failed or is unknown (status: ${status || "unknown"}). Treat this message with caution until you verify the sender.`;
+  return `WARNING: sender verification failed or is unknown (status: ${status2 || "unknown"}). Treat this message with caution until you verify the sender.`;
 }
 function formatAwakeningForAgent(awakening) {
   const rawType = awakening.meta.type || awakening.kind;
@@ -9590,6 +9680,16 @@ function formatAppEventMetaSummary(meta) {
   const payload = sanitizeSummaryComponent(meta.payload || "");
   if (payload) parts.push(payload);
   return parts.join(APP_EVENT_SUMMARY_SEPARATOR);
+}
+function pruneDispatched(dispatched) {
+  if (dispatched.size <= MAX_DISPATCHED_IDS) return;
+  const excess = dispatched.size - MAX_DISPATCHED_IDS;
+  let removed = 0;
+  for (const id of dispatched) {
+    if (removed >= excess) break;
+    dispatched.delete(id);
+    removed++;
+  }
 }
 function dispatchKey(channel, conversationID, messageID) {
   const conversation = (conversationID || "").trim();
@@ -9705,7 +9805,7 @@ function terminalReadyForIntent(state, intent) {
 function abortError() {
   return new TerminalAbortError();
 }
-function throwIfAborted(signal) {
+function throwIfAborted2(signal) {
   if (signal?.aborted) throw abortError();
 }
 function sleep(ms, signal) {
@@ -9770,7 +9870,7 @@ function createTerminalDeliveryReadinessGate(options) {
     draining = true;
     try {
       while (waiters.length > 0) {
-        throwIfAborted(options.signal);
+        throwIfAborted2(options.signal);
         const now = Date.now();
         const firstWaiterAt = waiters.reduce((oldest, waiter) => Math.min(oldest, waiter.enqueuedAt), waiters[0].enqueuedAt);
         const coalesceDelay = coalesceMs - (now - firstWaiterAt);
@@ -9795,7 +9895,7 @@ function createTerminalDeliveryReadinessGate(options) {
           await sleep(inspectDelayMs, options.signal);
           continue;
         }
-        throwIfAborted(options.signal);
+        throwIfAborted2(options.signal);
         const present = inspection.present ?? true;
         if (present) confirmedLive = true;
         const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, present);
@@ -9815,7 +9915,7 @@ function createTerminalDeliveryReadinessGate(options) {
           await sleep(inspectDelayMs, options.signal);
           continue;
         }
-        throwIfAborted(options.signal);
+        throwIfAborted2(options.signal);
         if (options.isPaused?.()) {
           options.log?.("aweb: terminal delivery is paused after inspect; delivery waits before fetch");
           await sleep(inspectDelayMs, options.signal);
@@ -9834,8 +9934,8 @@ function createTerminalDeliveryReadinessGate(options) {
   };
   return async (intent, signal = options.signal ?? new AbortController().signal) => {
     if (intent === "ambient") return;
-    throwIfAborted(options.signal);
-    throwIfAborted(signal);
+    throwIfAborted2(options.signal);
+    throwIfAborted2(signal);
     return new Promise((resolve2, reject) => {
       const waiter = { intent, signal, enqueuedAt: Date.now(), resolve: resolve2, reject };
       const onAbort = () => {
@@ -9878,7 +9978,7 @@ function createTerminalAwakeningHandler(options) {
     options.signal.addEventListener("abort", () => rejectAll(abortError()), { once: true });
   }
   const handler = (async (awakening) => {
-    throwIfAborted(options.signal);
+    throwIfAborted2(options.signal);
     if (awakening.deliveryIntent === "ambient") {
       return new Promise((resolve2, reject) => {
         const key = ambientKey(awakening);
@@ -9899,7 +9999,7 @@ function createTerminalAwakeningHandler(options) {
     }
     const ambientBatch = [...ambient.values()];
     const text = [...ambientBatch.map((item) => item.awakening), awakening].map((item) => formatAwakeningForAgent(item)).join("\n\n---\n\n");
-    throwIfAborted(options.signal);
+    throwIfAborted2(options.signal);
     await options.session.input(options.home, text);
     for (const item of ambientBatch) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
@@ -9911,125 +10011,193 @@ function createTerminalAwakeningHandler(options) {
 }
 
 // cli/go/wake/channel_core_runner_entry.ts
-var execFileAsync2 = promisify2(execFile2);
-async function stdin() {
-  const chunks = [];
-  for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk));
-  return Buffer.concat(chunks).toString("utf8");
+var EventQueue = class {
+  items = [];
+  waiters = [];
+  closed = false;
+  push(event) {
+    if (this.closed) return;
+    const waiter = this.waiters.shift();
+    if (waiter) waiter({ value: event, done: false });
+    else this.items.push(event);
+  }
+  close() {
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) waiter({ value: void 0, done: true });
+  }
+  [Symbol.asyncIterator]() {
+    return {
+      next: () => {
+        const item = this.items.shift();
+        if (item) return Promise.resolve({ value: item, done: false });
+        if (this.closed) return Promise.resolve({ value: void 0, done: true });
+        return new Promise((resolve2) => this.waiters.push(resolve2));
+      }
+    };
+  }
+};
+var abort = new AbortController();
+var paused = false;
+var lastInputAt = "";
+var lastError = "";
+var inactive = "";
+var handlerStatus = { ambientQueued: 0, ambientDropped: 0 };
+var queues = /* @__PURE__ */ new Map();
+var consumers = [];
+function emit(payload) {
+  process.stdout.write(`${JSON.stringify(payload)}
+`);
 }
-async function runOATS(bin, args, input = "") {
-  let stdout = "";
-  try {
-    const result = await execFileAsync2(bin, args, { input, maxBuffer: 1024 * 1024 });
-    stdout = result.stdout;
-  } catch (error) {
-    const any = error;
-    stdout = any.stdout || "";
-    if (!stdout.trim()) {
-      const detail = (any.stderr || any.message || "oats command failed").trim();
-      throw new Error(detail);
-    }
-  }
-  let envelope;
-  try {
-    envelope = JSON.parse(stdout);
-  } catch (error) {
-    throw new Error(`invalid oats JSON: ${error instanceof Error ? error.message : String(error)}`);
-  }
-  if (!envelope.ok) {
-    const code = envelope.error?.code || "E_OATS";
-    const message = envelope.error?.message || "oats command failed";
-    throw new Error(`${code}: ${message}`);
-  }
-  return envelope;
+function status(extra = {}) {
+  emit({
+    type: "status",
+    inactive,
+    last_input_at: lastInputAt,
+    last_error: lastError,
+    ambient_queued: handlerStatus.ambientQueued,
+    ambient_dropped: handlerStatus.ambientDropped,
+    ...extra
+  });
 }
-function paused(statePath) {
-  if (!statePath) return false;
-  try {
-    const raw = JSON.parse(readFileSync(statePath, "utf8"));
-    return raw.paused === true;
-  } catch (error) {
-    if (error.code === "ENOENT") return false;
-    throw error;
-  }
+function runOATS(bin, args, input = "") {
+  return new Promise((resolve2, reject) => {
+    const child = spawn2(bin, args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const onAbort = () => {
+      child.kill("SIGTERM");
+      reject(new Error("oats command aborted"));
+    };
+    abort.signal.addEventListener("abort", onAbort, { once: true });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      abort.signal.removeEventListener("abort", onAbort);
+      reject(error);
+    });
+    child.on("close", () => {
+      abort.signal.removeEventListener("abort", onAbort);
+      let envelope;
+      try {
+        envelope = JSON.parse(stdout.trim());
+      } catch (error) {
+        reject(new Error((stderr || stdout || (error instanceof Error ? error.message : String(error))).trim()));
+        return;
+      }
+      if (!envelope.ok) {
+        reject(new Error(`${envelope.error?.code || "E_OATS"}: ${envelope.error?.message || "oats command failed"}`));
+        return;
+      }
+      resolve2(envelope);
+    });
+    child.stdin.end(input);
+  });
 }
-async function main() {
-  const request = JSON.parse(await stdin());
-  process.env.AWEB_IDENTITY_HOME = request.identityHome;
-  const config = await resolveConfig(request.home);
-  const client = createChannelClient(config);
-  const pinStore = request.pinStorePath ? await loadPinStore(request.pinStorePath) : await loadPinStore();
-  const registry = createRegistryResolver(config);
-  const trust = new SenderTrustManager(client, registry, config.teamID, config.did, config.stableID);
-  const deliveryStore = await DeliveryStore.load(request.deliveryStorePath);
-  const signal = new AbortController();
-  const oatsBin = request.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
-  let inactive = "";
+async function start(init) {
+  const oatsBin = init.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
+  const awCommand = init.awCommand || "aw";
   const session = {
     async inspect(home) {
       const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"]);
-      return {
-        present: envelope.result?.present,
-        state: envelope.result?.state,
-        rawState: envelope.result?.state
-      };
+      return { present: envelope.result?.present, state: envelope.result?.state, rawState: envelope.result?.state };
     },
     async input(home, text) {
       const envelope = await runOATS(oatsBin, ["session", "input", "--home", home, "--json"], text);
       if (!envelope.result?.submitted) throw new Error("oats session input did not report submitted:true");
+      lastInputAt = (/* @__PURE__ */ new Date()).toISOString();
+      status({ delivered: true });
     }
   };
-  const awaitDeliveryReady2 = createTerminalDeliveryReadinessGate({
-    home: request.home,
+  const awaitReady = createTerminalDeliveryReadinessGate({
+    home: init.home,
     session,
-    signal: signal.signal,
-    coalesceMs: request.coalesceMs,
-    rateLimitMs: request.rateLimitMs,
-    inspectDelayMs: request.inspectDelayMs,
-    isPaused: () => paused(request.statePath),
+    signal: abort.signal,
+    coalesceMs: init.coalesceMs,
+    rateLimitMs: init.rateLimitMs,
+    inspectDelayMs: init.inspectDelayMs,
+    isPaused: () => paused,
     onInactive: (state) => {
       inactive = state;
+      status({ inactive: state });
     },
-    log: (message) => console.error(message)
+    log: (message) => {
+      lastError = message;
+      status({ log: message });
+    }
   });
-  const handler = createTerminalAwakeningHandler({
-    home: request.home,
-    session,
-    signal: signal.signal,
-    log: (message) => console.error(message)
-  });
-  await dispatchAgentEvent({
-    client,
-    pinStore,
-    pinStoreWriter: createLocalAWPinStoreWriter({ workdir: request.home }),
-    trust,
-    self: {
-      alias: config.alias,
-      address: config.address,
-      did: config.did,
-      stableID: config.stableID
-    },
-    signal: signal.signal,
-    deliveryStore,
-    deliveryStorePath: request.deliveryStorePath,
-    localDecrypt: createLocalAWDecryptProvider({
-      workdir: request.home,
-      awCommand: request.awCommand || "aw",
-      teamID: config.teamID
-    }),
-    teamID: config.teamID,
-    workdir: request.home,
-    awCommand: request.awCommand,
-    onAwakening: handler,
-    awaitDeliveryReady: (intent, abort) => awaitDeliveryReady2(intent, abort),
-    mailAcknowledgment: "delivery"
-  }, /* @__PURE__ */ new Set(), [request.event], (message) => console.error(message));
-  console.log(JSON.stringify({ ok: true, inactive, terminal: handler.status() }));
+  const handler = createTerminalAwakeningHandler({ home: init.home, session, signal: abort.signal });
+  const onAwakening = async (awakening) => {
+    await handler(awakening);
+    handlerStatus = handler.status();
+    status();
+  };
+  for (const binding of init.bindings) {
+    const queue = new EventQueue();
+    queues.set(binding.binding_id, queue);
+    const config = await resolveConfig(init.home, { identityHome: binding.identity_home, teamID: binding.team_id });
+    const client = createChannelClient(config);
+    const pinStore = binding.pin_store_path ? await loadPinStore(binding.pin_store_path) : await loadPinStore();
+    const trust = new SenderTrustManager(client, createRegistryResolver(config), config.teamID, config.did, config.stableID);
+    const deliveryStore = await DeliveryStore.load(binding.delivery_store_path);
+    consumers.push(consumeAgentEvents({
+      client,
+      pinStore,
+      pinStoreWriter: createLocalAWPinStoreWriter({ workdir: init.home, awCommand }),
+      trust,
+      self: { alias: config.alias, address: config.address, did: config.did, stableID: config.stableID },
+      signal: abort.signal,
+      deliveryStore,
+      deliveryStorePath: binding.delivery_store_path,
+      localDecrypt: createLocalAWDecryptProvider({ workdir: init.home, awCommand, teamID: config.teamID }),
+      teamID: config.teamID,
+      workdir: init.home,
+      awCommand,
+      onAwakening,
+      awaitDeliveryReady: (intent, signal) => awaitReady(intent, signal),
+      mailAcknowledgment: "delivery"
+    }, /* @__PURE__ */ new Set(), queue, (message) => {
+      lastError = message;
+      status({ binding_id: binding.binding_id, error: message });
+    }));
+  }
+  status({ ready: true });
+}
+async function main() {
+  const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  let initialized = false;
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    const msg = JSON.parse(line);
+    if (msg.type === "init") {
+      if (initialized) throw new Error("runner already initialized");
+      initialized = true;
+      await start(msg);
+    } else if (msg.type === "event") {
+      queues.get(msg.binding_id)?.push(msg.event);
+    } else if (msg.type === "pause") {
+      paused = true;
+      status({ paused: true });
+    } else if (msg.type === "resume") {
+      paused = false;
+      status({ paused: false });
+    } else if (msg.type === "shutdown") {
+      break;
+    }
+  }
+  abort.abort();
+  for (const queue of queues.values()) queue.close();
+  await Promise.allSettled(consumers);
+  status({ stopped: true });
 }
 main().catch((error) => {
-  const detail = error instanceof Error ? error.message : String(error);
-  console.error(detail);
-  console.log(JSON.stringify({ ok: false, error: detail }));
+  lastError = error instanceof Error ? error.message : String(error);
+  status({ fatal: true });
   process.exitCode = 1;
 });
 /*! Bundled license information:

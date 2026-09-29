@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // DeliverySession is the legacy value the spawn hook records alongside the
@@ -282,6 +284,41 @@ func (r Registration) normalized() (Registration, error) {
 		r.IdentityHome = r.ReceiveIdentities[0].IdentityHome
 	}
 	return r, nil
+}
+
+type teamStateYAML struct {
+	ActiveTeam string `yaml:"active_team"`
+}
+
+func effectiveTeamID(identityHome, teamID string) (string, error) {
+	teamID = strings.TrimSpace(teamID)
+	if teamID != "" {
+		return teamID, nil
+	}
+	data, err := os.ReadFile(filepath.Join(identityHome, "teams.yaml"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	var state teamStateYAML
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		return "", err
+	}
+	teamID = strings.TrimSpace(state.ActiveTeam)
+	if teamID == "" {
+		return "", nil
+	}
+	return teamID, nil
+}
+
+func bindingKey(identityHome, teamID string) (string, error) {
+	team, err := effectiveTeamID(identityHome, teamID)
+	if err != nil {
+		return "", err
+	}
+	return identityHome + "\x00" + team, nil
 }
 
 func canonicalReadableIdentityHome(raw, label string) (string, error) {
@@ -576,7 +613,7 @@ func (s *Store) SaveInstance(state InstanceState) error {
 	}
 	persisted := state
 	persisted.Home = canonical
-	persisted.Pending = state.DurablePending()
+	persisted.Pending = nil
 	return writeJSONAtomic(s.instancePath(HomeKey(canonical)), persisted)
 }
 
@@ -595,7 +632,10 @@ func (s *Store) LoadInstance(home string) (InstanceState, error) {
 		return InstanceState{Home: canonical}, nil
 	}
 	state.Home = canonical
-	state.Pending = state.DurablePending()
+	if len(state.Pending) > 0 {
+		state.Evicted += len(state.Pending)
+		state.Pending = nil
+	}
 	return state, nil
 }
 

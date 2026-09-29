@@ -1,14 +1,14 @@
 package wake
 
 import (
-	"bytes"
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,139 +17,298 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
-	"github.com/awebai/aw/wake/session"
 )
 
 //go:embed channel_core_runner_bundle.mjs
 var channelCoreRunnerFS embed.FS
 
 type ChannelCoreStatus struct {
-	NodePath      string    `json:"node_path,omitempty"`
-	BundlePath    string    `json:"bundle_path,omitempty"`
-	LastError     string    `json:"last_error,omitempty"`
-	LastRunAt     time.Time `json:"last_run_at,omitempty"`
-	LastSuccessAt time.Time `json:"last_success_at,omitempty"`
+	NodePath       string    `json:"node_path,omitempty"`
+	BundlePath     string    `json:"bundle_path,omitempty"`
+	LastError      string    `json:"last_error,omitempty"`
+	LastRunAt      time.Time `json:"last_run_at,omitempty"`
+	LastSuccessAt  time.Time `json:"last_success_at,omitempty"`
+	LastInputAt    time.Time `json:"last_input_at,omitempty"`
+	AmbientQueued  int       `json:"ambient_queued,omitempty"`
+	AmbientDropped int       `json:"ambient_dropped,omitempty"`
+	Evicted        int       `json:"evicted_events,omitempty"`
+	Running        bool      `json:"running"`
 }
 
-type ChannelCoreRunner struct {
-	store *Store
-	bin   string
-	mu    sync.Mutex
-	st    ChannelCoreStatus
+type ChannelCoreRunner struct{ store *Store }
+
+type ChannelCoreChild struct {
+	runner *ChannelCoreRunner
+	reg    Registration
+	cfg    channelCoreChildConfig
+
+	mu     sync.Mutex
+	st     ChannelCoreStatus
+	in     chan childLine
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
-type channelCoreRequest struct {
-	Event             map[string]any `json:"event"`
-	Home              string         `json:"home"`
-	IdentityHome      string         `json:"identityHome"`
-	TeamID            string         `json:"teamID,omitempty"`
-	StatePath         string         `json:"statePath,omitempty"`
-	OatsBin           string         `json:"oatsBin,omitempty"`
-	AWCommand         string         `json:"awCommand,omitempty"`
-	DeliveryStorePath string         `json:"deliveryStorePath,omitempty"`
-	CoalesceMs        int            `json:"coalesceMs,omitempty"`
-	RateLimitMs       int            `json:"rateLimitMs,omitempty"`
-	InspectDelayMs    int            `json:"inspectDelayMs,omitempty"`
+type channelCoreChildConfig struct {
+	Coalesce      time.Duration
+	RateLimit     time.Duration
+	InspectDelay  time.Duration
+	OatsBin       string
+	AWCommand     string
+	AdmissionSize int
+	Log           func(string, ...any)
+	OnInactive    func(string)
 }
 
-type channelCoreResponse struct {
-	OK       bool           `json:"ok"`
-	Inactive string         `json:"inactive,omitempty"`
-	Terminal map[string]any `json:"terminal,omitempty"`
-	Error    string         `json:"error,omitempty"`
+type childBinding struct {
+	BindingID         string `json:"binding_id"`
+	IdentityHome      string `json:"identity_home"`
+	TeamID            string `json:"team_id"`
+	DeliveryStorePath string `json:"delivery_store_path"`
+}
+
+type initLine struct {
+	Type           string         `json:"type"`
+	Home           string         `json:"home"`
+	OatsBin        string         `json:"oatsBin,omitempty"`
+	AWCommand      string         `json:"awCommand,omitempty"`
+	CoalesceMs     int            `json:"coalesceMs,omitempty"`
+	RateLimitMs    int            `json:"rateLimitMs,omitempty"`
+	InspectDelayMs int            `json:"inspectDelayMs,omitempty"`
+	Bindings       []childBinding `json:"bindings"`
+}
+
+type childLine struct {
+	Type      string         `json:"type"`
+	BindingID string         `json:"binding_id,omitempty"`
+	Event     map[string]any `json:"event,omitempty"`
+}
+
+type childStatusLine struct {
+	Type           string `json:"type"`
+	Inactive       string `json:"inactive,omitempty"`
+	LastInputAt    string `json:"last_input_at,omitempty"`
+	LastError      string `json:"last_error,omitempty"`
+	AmbientQueued  int    `json:"ambient_queued,omitempty"`
+	AmbientDropped int    `json:"ambient_dropped,omitempty"`
+	Ready          bool   `json:"ready,omitempty"`
+	Stopped        bool   `json:"stopped,omitempty"`
+	Fatal          bool   `json:"fatal,omitempty"`
+	Delivered      bool   `json:"delivered,omitempty"`
+	Log            string `json:"log,omitempty"`
 }
 
 func NewChannelCoreRunner(store *Store) *ChannelCoreRunner { return &ChannelCoreRunner{store: store} }
 
-func (r *ChannelCoreRunner) Status() ChannelCoreStatus {
-	if r == nil {
+func (r *ChannelCoreRunner) Status() ChannelCoreStatus { return ChannelCoreStatus{} }
+
+func (r *ChannelCoreRunner) StartChild(ctx context.Context, reg Registration, cfg channelCoreChildConfig) *ChannelCoreChild {
+	if cfg.AdmissionSize <= 0 {
+		cfg.AdmissionSize = 256
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	c := &ChannelCoreChild{runner: r, reg: reg.clone(), cfg: cfg, in: make(chan childLine, cfg.AdmissionSize), cancel: cancel, done: make(chan struct{})}
+	go c.run(ctx)
+	return c
+}
+
+func (c *ChannelCoreChild) Stop() {
+	if c == nil {
+		return
+	}
+	c.cancel()
+	<-c.done
+}
+
+func (c *ChannelCoreChild) Pause(paused bool) {
+	if paused {
+		c.offer(childLine{Type: "pause"})
+		return
+	}
+	c.offer(childLine{Type: "resume"})
+}
+
+func (c *ChannelCoreChild) Offer(binding ReceiveIdentity, ev awid.AgentEvent) {
+	c.offer(childLine{Type: "event", BindingID: bindingID(binding), Event: agentEventForChannelCore(ev)})
+}
+
+func (c *ChannelCoreChild) offer(line childLine) {
+	select {
+	case c.in <- line:
+		return
+	default:
+	}
+	c.mu.Lock()
+	c.st.Evicted++
+	c.mu.Unlock()
+	select {
+	case <-c.in:
+	default:
+	}
+	select {
+	case c.in <- line:
+	default:
+	}
+}
+
+func (c *ChannelCoreChild) Status() ChannelCoreStatus {
+	if c == nil {
 		return ChannelCoreStatus{}
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.st
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.st
 }
 
-func (r *ChannelCoreRunner) Deliver(ctx context.Context, reg Registration, binding ReceiveIdentity, ev awid.AgentEvent, coalesce, rate, inspect time.Duration, awCommand string) (string, error) {
-	if r == nil {
-		return "", errors.New("channel-core runner is not configured")
+func (c *ChannelCoreChild) run(ctx context.Context) {
+	defer close(c.done)
+	backoff := 100 * time.Millisecond
+	for ctx.Err() == nil {
+		err := c.runOnce(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		c.setError(err)
+		if c.cfg.Log != nil {
+			c.cfg.Log("channel-core child exited home=%s err=%v", c.reg.Home, err)
+		}
+		t := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			return
+		case <-t.C:
+		}
+		if backoff < 2*time.Second {
+			backoff *= 2
+		}
 	}
+}
+
+func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 	node, err := exec.LookPath("node")
 	if err != nil {
-		r.note("", "", "system Node executable not found in PATH")
-		return "", errors.New("system Node executable not found in PATH")
+		c.setNode("", "", "system Node executable not found in PATH", false)
+		return errors.New("system Node executable not found in PATH")
 	}
-	bundle, err := r.bundlePath()
+	bundle, err := c.runner.bundlePath()
 	if err != nil {
-		r.note(node, "", err.Error())
-		return "", err
+		c.setNode(node, "", err.Error(), false)
+		return err
 	}
-	req := channelCoreRequest{
-		Event:             agentEventForChannelCore(ev),
-		Home:              reg.Home,
-		IdentityHome:      binding.IdentityHome,
-		TeamID:            binding.TeamID,
-		StatePath:         r.store.instancePath(HomeKey(reg.Home)),
-		OatsBin:           session.DefaultOatsBin,
-		AWCommand:         awCommand,
-		DeliveryStorePath: filepath.Join(binding.IdentityHome, "channel-delivered-ids.json"),
-		CoalesceMs:        millis(coalesce),
-		RateLimitMs:       millis(rate),
-		InspectDelayMs:    millis(inspect),
-	}
-	raw, _ := json.Marshal(req)
 	cmd := exec.CommandContext(ctx, node, bundle)
-	cmd.Stdin = bytes.NewReader(raw)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	r.note(node, bundle, "")
-	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail == "" {
-			detail = strings.TrimSpace(stdout.String())
-		}
-		if detail == "" {
-			detail = err.Error()
-		}
-		r.note(node, bundle, detail)
-		return "", fmt.Errorf("channel-core delivery failed: %s", detail)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return err
 	}
-	var resp channelCoreResponse
-	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &resp); err != nil {
-		detail := strings.TrimSpace(stderr.String())
-		if detail != "" {
-			detail += ": "
-		}
-		detail += err.Error()
-		r.note(node, bundle, detail)
-		return "", fmt.Errorf("channel-core delivery returned invalid JSON: %s", detail)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
 	}
-	if !resp.OK {
-		detail := strings.TrimSpace(resp.Error)
-		if detail == "" {
-			detail = strings.TrimSpace(stderr.String())
-		}
-		if detail == "" {
-			detail = "channel-core delivery failed"
-		}
-		r.note(node, bundle, detail)
-		return resp.Inactive, errors.New(detail)
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return err
 	}
-	r.mu.Lock()
-	r.st.LastError = ""
-	r.st.LastSuccessAt = time.Now().UTC()
-	r.mu.Unlock()
-	return resp.Inactive, nil
+	if err := cmd.Start(); err != nil {
+		c.setNode(node, bundle, err.Error(), false)
+		return err
+	}
+	c.setNode(node, bundle, "", true)
+	doneRead := make(chan struct{})
+	go c.readStatus(stdout, doneRead)
+	go io.Copy(io.Discard, stderr)
+	enc := json.NewEncoder(stdin)
+	if err := enc.Encode(c.initLine()); err != nil {
+		_ = cmd.Process.Kill()
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			_ = enc.Encode(childLine{Type: "shutdown"})
+			_ = stdin.Close()
+			_ = cmd.Wait()
+			<-doneRead
+			c.setRunning(false)
+			return ctx.Err()
+		case line := <-c.in:
+			if err := enc.Encode(line); err != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				<-doneRead
+				c.setRunning(false)
+				return err
+			}
+		}
+	}
 }
 
-func (r *ChannelCoreRunner) note(node, bundle, lastErr string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.st.NodePath = node
-	r.st.BundlePath = bundle
-	r.st.LastError = lastErr
-	r.st.LastRunAt = time.Now().UTC()
+func (c *ChannelCoreChild) initLine() initLine {
+	bindings := []childBinding{}
+	for _, b := range c.reg.ReceiveBindings() {
+		teamID, err := effectiveTeamID(b.IdentityHome, b.TeamID)
+		if err != nil {
+			teamID = b.TeamID
+		}
+		b.TeamID = teamID
+		bindings = append(bindings, childBinding{BindingID: bindingID(b), IdentityHome: b.IdentityHome, TeamID: teamID, DeliveryStorePath: filepath.Join(b.IdentityHome, "channel-delivered-ids-"+safeTeamID(teamID)+".json")})
+	}
+	return initLine{Type: "init", Home: c.reg.Home, OatsBin: c.cfg.OatsBin, AWCommand: c.cfg.AWCommand, CoalesceMs: millis(c.cfg.Coalesce), RateLimitMs: millis(c.cfg.RateLimit), InspectDelayMs: millis(c.cfg.InspectDelay), Bindings: bindings}
+}
+
+func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
+	defer close(done)
+	s := bufio.NewScanner(r)
+	for s.Scan() {
+		var line childStatusLine
+		if err := json.Unmarshal(s.Bytes(), &line); err != nil {
+			continue
+		}
+		c.mu.Lock()
+		if line.LastError != "" {
+			c.st.LastError = line.LastError
+		}
+		if line.LastInputAt != "" {
+			if t, err := time.Parse(time.RFC3339Nano, line.LastInputAt); err == nil {
+				c.st.LastInputAt = t
+				c.st.LastSuccessAt = t
+			}
+		}
+		if line.AmbientQueued != 0 {
+			c.st.AmbientQueued = line.AmbientQueued
+		}
+		if line.AmbientDropped != 0 {
+			c.st.AmbientDropped = line.AmbientDropped
+		}
+		c.mu.Unlock()
+		if line.Inactive != "" && c.cfg.OnInactive != nil {
+			c.cfg.OnInactive(line.Inactive)
+		}
+	}
+}
+
+func (c *ChannelCoreChild) setNode(node, bundle, err string, running bool) {
+	c.mu.Lock()
+	c.st.NodePath = node
+	c.st.BundlePath = bundle
+	c.st.LastError = err
+	c.st.LastRunAt = time.Now().UTC()
+	c.st.Running = running
+	c.mu.Unlock()
+}
+func (c *ChannelCoreChild) setRunning(running bool) {
+	c.mu.Lock()
+	c.st.Running = running
+	c.mu.Unlock()
+}
+func (c *ChannelCoreChild) setError(err error) {
+	if err == nil {
+		return
+	}
+	c.mu.Lock()
+	c.st.LastError = err.Error()
+	c.st.Running = false
+	c.mu.Unlock()
 }
 
 func (r *ChannelCoreRunner) bundlePath() (string, error) {
@@ -182,6 +341,14 @@ func millis(d time.Duration) int {
 		return 0
 	}
 	return int(d / time.Millisecond)
+}
+func bindingID(b ReceiveIdentity) string { return b.IdentityHome + "|" + b.TeamID }
+func safeTeamID(team string) string {
+	s := strings.NewReplacer("/", "_", ":", "_", "\\", "_").Replace(team)
+	if s == "" {
+		return "default"
+	}
+	return s
 }
 
 func agentEventForChannelCore(ev awid.AgentEvent) map[string]any {

@@ -61,7 +61,21 @@ interface IdentityHomeSelection {
   external: boolean;
 }
 
-function selectIdentityHome(workdir: string): IdentityHomeSelection {
+export interface ResolveConfigOptions {
+  identityHome?: string;
+  teamID?: string;
+}
+
+function selectIdentityHome(workdir: string, options: ResolveConfigOptions = {}): IdentityHomeSelection {
+  const explicitHome = (options.identityHome || "").trim();
+  if (explicitHome) {
+    if (!isAbsolute(explicitHome)) {
+      throw new Error("identityHome option must be an absolute path");
+    }
+    const root = normalize(explicitHome);
+    preflightDirectory(root, "identity home");
+    return { root, external: true };
+  }
   const configuredHome = (process.env.AWEB_IDENTITY_HOME || "").trim();
   if (!configuredHome) return { root: join(workdir, ".aw"), external: false };
   if (!isAbsolute(configuredHome)) {
@@ -122,8 +136,8 @@ export function selectDeliveryMode(env: NodeJS.ProcessEnv = process.env): Delive
   };
 }
 
-export async function resolveConfig(workdir: string): Promise<AgentConfig> {
-  const identityHome = selectIdentityHome(workdir);
+export async function resolveConfig(workdir: string, options: ResolveConfigOptions = {}): Promise<AgentConfig> {
+  const identityHome = selectIdentityHome(workdir, options);
   const workspacePath = join(identityHome.root, "workspace.yaml");
   const teamsPath = join(identityHome.root, "teams.yaml");
   const identityPath = join(identityHome.root, "identity.yaml");
@@ -148,7 +162,7 @@ export async function resolveConfig(workdir: string): Promise<AgentConfig> {
   if (!teamState) {
     throw new Error("worktree team state is missing .aw/teams.yaml; run `aw init` or `aw id team add` first");
   }
-  const activeTeam = (teamState.active_team || "").trim();
+  const activeTeam = (options.teamID || teamState.active_team || "").trim();
   const teamMembership = (teamState.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
   const workspaceMembership = (workspace.memberships || []).find((item) => (item.team_id || "").trim() === activeTeam);
   const teamID = activeTeam;

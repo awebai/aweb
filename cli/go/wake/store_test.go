@@ -266,7 +266,7 @@ func TestStoreRoundTripsRegistrationsAndCanonicalisesHomes(t *testing.T) {
 	}
 }
 
-func TestStoreDropsTransientHintsOnDisk(t *testing.T) {
+func TestStoreDropsLegacyPendingHintsOnDisk(t *testing.T) {
 	store := tempStore(t)
 	home := tempHome(t, "instance")
 
@@ -281,8 +281,11 @@ func TestStoreDropsTransientHintsOnDisk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded.Pending) != 1 || reloaded.Pending[0].Kind != KindMail {
-		t.Fatalf("a transient control signal was replayed from disk: %#v", reloaded.Pending)
+	if len(reloaded.Pending) != 0 {
+		t.Fatalf("legacy pending hints must be dropped, not replayed: %#v", reloaded.Pending)
+	}
+	if reloaded.Evicted != 0 {
+		t.Fatalf("freshly saved child-owned state should not count dropped hints: %d", reloaded.Evicted)
 	}
 }
 

@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	awid "github.com/awebai/aw/awid"
 )
 
 func TestChannelCoreRunnerReportsMissingSystemNode(t *testing.T) {
@@ -16,15 +14,17 @@ func TestChannelCoreRunnerReportsMissingSystemNode(t *testing.T) {
 	}
 	runner := NewChannelCoreRunner(store)
 	t.Setenv("PATH", "")
-	_, err = runner.Deliver(context.Background(), Registration{Home: t.TempDir()}, ReceiveIdentity{IdentityHome: t.TempDir()}, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "m1"}, time.Millisecond, time.Millisecond, time.Millisecond, "aw")
-	if err == nil || !strings.Contains(err.Error(), "system Node executable not found") {
-		t.Fatalf("err=%v", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	child := runner.StartChild(ctx, Registration{Home: t.TempDir()}, channelCoreChildConfig{AdmissionSize: 1})
+	defer child.Stop()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		status := child.Status()
+		if strings.Contains(status.LastError, "system Node executable not found") {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
-	status := runner.Status()
-	if !strings.Contains(status.LastError, "system Node executable not found") {
-		t.Fatalf("status did not report missing node: %#v", status)
-	}
-	if !status.LastRunAt.After(time.Time{}) {
-		t.Fatalf("last run was not recorded: %#v", status)
-	}
+	t.Fatalf("status did not report missing node: %#v", child.Status())
 }

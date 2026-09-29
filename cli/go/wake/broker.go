@@ -250,6 +250,7 @@ func (b *Broker) reconcileLocked() {
 	}
 
 	seen := map[string]struct{}{}
+	bindingOwners := map[string]string{}
 	for _, reg := range registrations {
 		canonical, err := CanonicalHome(reg.Home)
 		if err != nil {
@@ -266,18 +267,43 @@ func (b *Broker) reconcileLocked() {
 		}
 		key := HomeKey(canonical)
 		seen[key] = struct{}{}
+		conflictHome := ""
+		for _, binding := range reg.ReceiveBindings() {
+			bindingKey, err := bindingKey(binding.IdentityHome, binding.TeamID)
+			if err != nil {
+				b.cfg.Log("registration binding skipped home=%s identity_home=%s err=%v", reg.Home, binding.IdentityHome, err)
+				continue
+			}
+			if owner := bindingOwners[bindingKey]; owner != "" && owner != reg.Home {
+				conflictHome = owner
+				break
+			}
+		}
 
 		b.mu.Lock()
 		runner, running := b.instances[key]
 		b.mu.Unlock()
 		if running {
 			runner.updateRegistration(reg)
-			for _, binding := range reg.ReceiveBindings() {
-				runner.setStreamAdmitted(binding.IdentityHome, b.ensureStream(binding.IdentityHome))
+			runner.conflictHome = conflictHome
+			if conflictHome == "" {
+				for _, binding := range reg.ReceiveBindings() {
+					runner.setStreamAdmitted(binding.IdentityHome, b.ensureStream(binding.IdentityHome))
+				}
 			}
+		} else {
+			runner = b.startInstance(reg, conflictHome)
+		}
+		if conflictHome != "" {
+			b.cfg.Log("registration conflict home=%s winner=%s", reg.Home, conflictHome)
 			continue
 		}
-		b.startInstance(reg)
+		for _, binding := range reg.ReceiveBindings() {
+			bindingKey, err := bindingKey(binding.IdentityHome, binding.TeamID)
+			if err == nil {
+				bindingOwners[bindingKey] = reg.Home
+			}
+		}
 	}
 
 	b.mu.Lock()
@@ -296,7 +322,7 @@ func (b *Broker) reconcileLocked() {
 	b.pruneStreamsLocked()
 }
 
-func (b *Broker) startInstance(reg Registration) {
+func (b *Broker) startInstance(reg Registration, conflictHome string) *instanceRunner {
 	state, err := b.cfg.Store.LoadInstance(reg.Home)
 	if err != nil {
 		b.cfg.Log("state unreadable home=%s err=%v", reg.Home, err)
@@ -305,17 +331,20 @@ func (b *Broker) startInstance(reg Registration) {
 	state.Home = reg.Home
 
 	runner := newInstanceRunner(b, reg, state)
+	runner.conflictHome = conflictHome
 	b.mu.Lock()
 	b.instances[HomeKey(reg.Home)] = runner
 	b.mu.Unlock()
 
 	bindings := reg.ReceiveBindings()
 	admittedCount := 0
-	for _, binding := range bindings {
-		admitted := b.ensureStream(binding.IdentityHome)
-		runner.setStreamAdmitted(binding.IdentityHome, admitted)
-		if admitted {
-			admittedCount++
+	if conflictHome == "" {
+		for _, binding := range bindings {
+			admitted := b.ensureStream(binding.IdentityHome)
+			runner.setStreamAdmitted(binding.IdentityHome, admitted)
+			if admitted {
+				admittedCount++
+			}
 		}
 	}
 	b.cfg.Log("registered home=%s identity_home=%s receive_identities=%d backend=%s delivery=%s runtime_delivery=%s pending_hints=%d streams_admitted=%d",
@@ -323,6 +352,7 @@ func (b *Broker) startInstance(reg Registration) {
 	if ctx := b.runningContext(); ctx != nil {
 		runner.start(ctx)
 	}
+	return runner
 }
 
 func admittedLabel(admitted bool) string {
@@ -478,11 +508,7 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 		if !target.binding.allowsKind(hint.Kind) {
 			continue
 		}
-		if b.cfg.ChannelCore != nil {
-			target.runner.offerEvent(ev, target.binding)
-		} else {
-			target.runner.offer(hint.WithReceiveIdentity(target.binding), ev.UnreadCount)
-		}
+		target.runner.offerEvent(ev, target.binding)
 	}
 }
 
@@ -493,7 +519,11 @@ func (b *Broker) Register(reg Registration) error {
 		return err
 	}
 	reg.Home = canonical
-	if err := reg.Validate(); err != nil {
+	reg, err = reg.Normalized()
+	if err != nil {
+		return err
+	}
+	if err := b.refuseDuplicateBinding(reg); err != nil {
 		return err
 	}
 	if reg.RegisteredAt.IsZero() {
@@ -508,6 +538,36 @@ func (b *Broker) Register(reg Registration) error {
 		return err
 	}
 	b.Reconcile()
+	return nil
+}
+
+func (b *Broker) refuseDuplicateBinding(reg Registration) error {
+	existing, err := b.cfg.Store.ListRegistrations()
+	if err != nil {
+		return err
+	}
+	want := map[string]ReceiveIdentity{}
+	for _, binding := range reg.ReceiveBindings() {
+		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err != nil {
+			return fmt.Errorf("resolve receive binding team for %s: %w", binding.IdentityHome, err)
+		}
+		want[key] = binding
+	}
+	for _, other := range existing {
+		if other.Home == reg.Home {
+			continue
+		}
+		for _, binding := range other.ReceiveBindings() {
+			key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+			if err != nil {
+				continue
+			}
+			if _, ok := want[key]; ok {
+				return fmt.Errorf("receive binding identity_home=%s team=%s is already owned by registration %s", binding.IdentityHome, strings.TrimSpace(binding.TeamID), other.Home)
+			}
+		}
+	}
 	return nil
 }
 
