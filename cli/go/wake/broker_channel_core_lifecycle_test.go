@@ -12,6 +12,7 @@ import (
 	"time"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/run"
 	"github.com/awebai/aw/wake/session"
 )
 
@@ -82,6 +83,68 @@ func TestBrokerRestoresPauseBeforeChildDelivery(t *testing.T) {
 	data, _ := os.ReadFile(inputPath)
 	if got := strings.Count(string(data), "paused mail"); got != 1 {
 		t.Fatalf("input count=%d want 1: %q", got, data)
+	}
+}
+
+func TestBrokerInitialSnapshotWaitsForAppliedRebind(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	writeFakeOATS(t, root, inputPath)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	oldServer := mailServer(t, "removed snapshot mail")
+	newServer := mailServer(t, "applied snapshot mail")
+	oldHome := writeGrantHome(t, filepath.Join(root, "old"), oldServer.URL, []string{"events.read", "mail.read", "mail.send"})
+	newHome := writeGrantHome(t, filepath.Join(root, "new"), newServer.URL, []string{"events.read", "mail.read", "mail.send"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logs := &logCapture{}
+	var broker *Broker
+	openedNew := make(chan struct{}, 1)
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: logs.log, OpenStream: func(identityHome, teamID string) (run.EventStreamOpener, error) {
+		if identityHome != newHome {
+			return func(context.Context, time.Time) (awid.EventSource, error) {
+				return &oneEventSource{event: awid.AgentEvent{Type: awid.AgentEventChannelReconnected}}, nil
+			}, nil
+		}
+		inst := instanceByHome(t, broker, home)
+		if inst.IdentityHome != newHome || inst.ChannelCore.Generation < 1 {
+			t.Fatalf("new stream opened before applied transition: inst=%#v", inst)
+		}
+		openedNew <- struct{}{}
+		return func(context.Context, time.Time) (awid.EventSource, error) {
+			return &oneEventSource{event: awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "snapshot-new", ConversationID: "conv-new"}}, nil
+		}, nil
+	}})
+	defer cancel()
+	if err := broker.Register(Registration{Home: home, IdentityHome: oldHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	if err := broker.Register(Registration{Home: home, IdentityHome: newHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-openedNew:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("new stream was not opened after applied transition; logs=%s", logs.all())
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.ChannelCore.Generation >= 1 && inst.ChannelCore.TraceStage == "lane_job_completed" && inst.ChannelCore.TraceMessageID == "snapshot-new"
+	})
+	waitForFileContains(t, inputPath, "applied snapshot mail")
+	assertFileNotContains(t, inputPath, "removed snapshot mail")
+	data, _ := os.ReadFile(inputPath)
+	if got := strings.Count(string(data), "applied snapshot mail"); got != 1 {
+		t.Fatalf("applied snapshot input count=%d want 1: %q", got, data)
 	}
 }
 

@@ -53,6 +53,7 @@ func (s *Status) ClassifyDaemonVersion() {
 // StreamStatus is one identity's event stream.
 type StreamStatus struct {
 	IdentityHome string    `json:"identity_home"`
+	TeamID       string    `json:"team_id,omitempty"`
 	Phase        string    `json:"phase"`
 	LastError    string    `json:"last_error,omitempty"`
 	UnreadCount  int       `json:"unread_count,omitempty"`

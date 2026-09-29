@@ -27,6 +27,7 @@ type instanceRunner struct {
 	inactive     chan inactiveSignal
 	pauses       chan pauseRequest
 	child        *ChannelCoreChild
+	pendingReg   *Registration
 	conflictHome string
 	cancel       context.CancelFunc
 	done         chan struct{}
@@ -88,6 +89,8 @@ func (r *instanceRunner) updateRegistration(reg Registration) bool {
 		r.mu.Unlock()
 		return false
 	}
+	pending := reg.clone()
+	r.pendingReg = &pending
 	r.mu.Unlock()
 	select {
 	case r.updates <- reg:
@@ -111,11 +114,13 @@ func (r *instanceRunner) publishRegistrationLocked(reg Registration, bumpGenerat
 	}
 	needed := map[string]struct{}{}
 	for _, binding := range reg.ReceiveBindings() {
-		needed[binding.IdentityHome] = struct{}{}
+		if key, err := bindingKey(binding.IdentityHome, binding.TeamID); err == nil {
+			needed[key] = struct{}{}
+		}
 	}
-	for identityHome := range r.admitted {
-		if _, ok := needed[identityHome]; !ok {
-			delete(r.admitted, identityHome)
+	for key := range r.admitted {
+		if _, ok := needed[key]; !ok {
+			delete(r.admitted, key)
 		}
 	}
 }
@@ -155,6 +160,15 @@ func (r *instanceRunner) receiveBindings() []ReceiveIdentity {
 	return r.registrationSnapshot().ReceiveBindings()
 }
 
+func (r *instanceRunner) pendingReceiveBindings() []ReceiveIdentity {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.pendingReg == nil {
+		return nil
+	}
+	return r.pendingReg.ReceiveBindings()
+}
+
 func (r *instanceRunner) bindingForStreamKey(key string) (ReceiveIdentity, int, bool) {
 	r.mu.Lock()
 	if r.conflictHome != "" {
@@ -166,6 +180,9 @@ func (r *instanceRunner) bindingForStreamKey(key string) (ReceiveIdentity, int, 
 	r.mu.Unlock()
 	for _, binding := range reg.ReceiveBindings() {
 		if got, err := bindingKey(binding.IdentityHome, binding.TeamID); err == nil && got == key {
+			if teamID, err := effectiveTeamID(binding.IdentityHome, binding.TeamID); err == nil {
+				binding.TeamID = teamID
+			}
 			return binding, generation, true
 		}
 	}
@@ -256,14 +273,18 @@ func (r *instanceRunner) run(ctx context.Context) {
 			stopChild()
 			r.mu.Lock()
 			r.publishRegistrationLocked(reg, true)
+			r.pendingReg = nil
 			r.mu.Unlock()
 			startChild()
-			go r.broker.admitRunnerStreams(r)
+			go func() {
+				r.broker.admitRunnerStreams(r)
+				r.broker.pruneStreams()
+			}()
 		case offer := <-r.events:
 			r.mu.Lock()
 			inactive := r.state.Inactive
 			currentGeneration := r.generation
-			_, bindingAllowed := r.reg.BindingForIdentityHome(offer.binding.IdentityHome)
+			bindingAllowed := r.reg.hasBinding(offer.binding)
 			if inactive || offer.generation != currentGeneration || !bindingAllowed {
 				r.state.Evicted++
 			}
@@ -288,7 +309,7 @@ func (r *instanceRunner) offerEvent(ev awid.AgentEvent, binding ReceiveIdentity,
 	r.mu.Lock()
 	inactive := r.state.Inactive
 	currentGeneration := r.generation
-	_, bindingAllowed := r.reg.BindingForIdentityHome(binding.IdentityHome)
+	bindingAllowed := r.reg.hasBinding(binding)
 	if inactive || generation != currentGeneration || !bindingAllowed {
 		r.state.Evicted++
 	}
@@ -359,26 +380,35 @@ func (r *instanceRunner) applyPause(paused bool, source string, child *ChannelCo
 	r.persist()
 }
 
-func (r *instanceRunner) setStreamAdmitted(identityHome string, admitted bool) {
+func (r *instanceRunner) setStreamAdmitted(binding ReceiveIdentity, admitted bool) {
+	key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+	if err != nil {
+		return
+	}
 	r.mu.Lock()
 	if r.admitted == nil {
 		r.admitted = map[string]bool{}
 	}
-	r.admitted[identityHome] = admitted
+	r.admitted[key] = admitted
 	r.mu.Unlock()
 }
 
-func (r *instanceRunner) streamAdmitted(identityHome string) bool {
+func (r *instanceRunner) streamAdmitted(binding ReceiveIdentity) bool {
+	key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+	if err != nil {
+		return false
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.admitted[identityHome]
+	return r.admitted[key]
 }
 
 func (r *instanceRunner) allStreamsAdmitted() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, binding := range r.reg.ReceiveBindings() {
-		if !r.admitted[binding.IdentityHome] {
+		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err != nil || !r.admitted[key] {
 			return false
 		}
 	}
@@ -406,7 +436,8 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 	receive := []ReceiveIdentityStatus{}
 	allAdmitted := true
 	for _, binding := range r.reg.ReceiveBindings() {
-		admitted := r.admitted[binding.IdentityHome]
+		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		admitted := err == nil && r.admitted[key]
 		if !admitted {
 			allAdmitted = false
 		}

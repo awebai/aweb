@@ -3,8 +3,10 @@ package wake
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -80,6 +82,23 @@ func (rs *recordingServer) openCount() int {
 func sseEvent(name, data string) string {
 	return "event: " + name + "\ndata: " + data + "\n\n"
 }
+
+type oneEventSource struct {
+	event awid.AgentEvent
+	once  sync.Once
+}
+
+func (s *oneEventSource) Next(ctx context.Context) (*awid.AgentEvent, error) {
+	var ev *awid.AgentEvent
+	s.once.Do(func() { copy := s.event; ev = &copy })
+	if ev != nil {
+		return ev, nil
+	}
+	<-ctx.Done()
+	return nil, io.EOF
+}
+
+func (s *oneEventSource) Close() error { return nil }
 
 func openerFor(t *testing.T, baseURL string) run.EventStreamOpener {
 	t.Helper()
@@ -188,6 +207,67 @@ func TestRegisterBeforeRunStartsReconciledRunners(t *testing.T) {
 // A real client streams from a stand-in server which records every request path
 // it sees. Events arrive, and the Go broker still performs only the event stream;
 // fetch/decrypt/delivered/read/ack belong to the channel-core child.
+func TestBrokerRoutesSameRootStreamsByPinnedTeam(t *testing.T) {
+	store := tempStore(t)
+	root := filepath.Join(tempHome(t, "identity"), ".aw")
+	writeWakeTestTeamState(t, root, "team:a")
+	home := tempHome(t, "instance")
+	logs := &logCapture{}
+	opened := make(chan string, 4)
+	broker, err := NewBroker(Config{
+		Store:   store,
+		Session: session.NewFake(session.Inspection{}),
+		Log:     logs.log,
+		OpenStream: func(identityHome, teamID string) (run.EventStreamOpener, error) {
+			opened <- identityHome + "|" + teamID
+			ev := awid.AgentEvent{Type: awid.AgentEventChannelReconnected}
+			if teamID == "team:b" {
+				ev = awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-b"}
+			}
+			return func(context.Context, time.Time) (awid.EventSource, error) { return &oneEventSource{event: ev}, nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Register(Registration{Home: home, Delivery: DeliverySession, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{
+		{IdentityHome: root, TeamID: "team:a", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}},
+		{IdentityHome: root, TeamID: "team:b", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	writeWakeTestTeamState(t, root, "team:switched")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	broker.mu.Lock()
+	streams := make([]*streamRunner, 0, len(broker.streams))
+	for _, stream := range broker.streams {
+		streams = append(streams, stream)
+	}
+	runner := broker.instances[HomeKey(home)]
+	broker.mu.Unlock()
+	for _, stream := range streams {
+		stream.start(ctx)
+	}
+	seen := map[string]bool{}
+	for len(seen) < 2 {
+		select {
+		case key := <-opened:
+			seen[key] = true
+		case <-time.After(time.Second):
+			t.Fatalf("opened=%#v, logs=%s", seen, logs.all())
+		}
+	}
+	if !seen[root+"|team:a"] || !seen[root+"|team:b"] || seen[root+"|team:switched"] {
+		t.Fatalf("stream opens=%#v, want pinned team:a/team:b only", seen)
+	}
+	waitFor(t, "team-b event to reach the runner", func() bool { return len(runner.events) == 1 })
+	offer := <-runner.events
+	if offer.binding.TeamID != "team:b" || offer.event.MessageID != "mail-b" {
+		t.Fatalf("offer=%#v, want team-b mail", offer)
+	}
+}
+
 func TestBrokerNeverFetchesOrAcknowledgesAnything(t *testing.T) {
 	server := newRecordingServer(t,
 		sseEvent("actionable_mail", `{"message_id":"m1","conversation_id":"conv-1","from_alias":"alice","subject":"secret","unread_count":3}`),

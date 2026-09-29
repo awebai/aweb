@@ -80,6 +80,46 @@ func TestRegisterRejectsDuplicateEffectiveBinding(t *testing.T) {
 	}
 }
 
+func TestRegisterAllowsSameRootDifferentTeams(t *testing.T) {
+	store := tempStore(t)
+	clk := newClock()
+	home := tempHome(t, "one")
+	identityHome := filepath.Join(tempHome(t, "identity"), ".aw")
+	writeWakeTestTeamState(t, identityHome, "team:one")
+	broker := newBrokerForUnit(t, store, clk.now)
+	err := broker.Register(Registration{Home: home, Delivery: DeliverySession, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{
+		{IdentityHome: identityHome, TeamID: "team:one", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}},
+		{IdentityHome: identityHome, TeamID: "team:two", DeliveryOwner: ReceiveOwnerSessionHints, EventClasses: []string{EventClassMail}},
+	}})
+	if err != nil {
+		t.Fatalf("same root under different teams should be allowed: %v", err)
+	}
+}
+
+func TestRegisterPinsBlankTeamToEffectiveTeam(t *testing.T) {
+	store := tempStore(t)
+	clk := newClock()
+	home := tempHome(t, "one")
+	identityHome := filepath.Join(tempHome(t, "identity"), ".aw")
+	writeWakeTestTeamState(t, identityHome, "team:one")
+	broker := newBrokerForUnit(t, store, clk.now)
+	if err := broker.Register(Registration{Home: home, IdentityHome: identityHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	stored, ok, err := store.LoadRegistration(home)
+	if err != nil || !ok {
+		t.Fatalf("load registration ok=%v err=%v", ok, err)
+	}
+	bindings := stored.ReceiveBindings()
+	if len(bindings) != 1 || bindings[0].TeamID != "team:one" {
+		t.Fatalf("bindings=%#v, want blank team pinned to team:one", bindings)
+	}
+	writeWakeTestTeamState(t, identityHome, "team:two")
+	if got, err := bindingKey(identityHome, bindings[0].TeamID); err != nil || !strings.Contains(got, "team:one") {
+		t.Fatalf("binding key after active switch = %q err=%v, want pinned team:one", got, err)
+	}
+}
+
 func TestRegisterRejectsBlankTeamDuplicateOfEffectiveTeam(t *testing.T) {
 	store := tempStore(t)
 	clk := newClock()

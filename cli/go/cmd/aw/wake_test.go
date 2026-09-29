@@ -154,6 +154,142 @@ func TestWakeBrokerOpensGrantHomeStream(t *testing.T) {
 	}
 }
 
+func TestWakeStreamOpenerPinsExplicitTeamAcrossActiveSwitch(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+	t.Setenv("AWID_REGISTRY_URL", "")
+	oldTeamFlag := teamFlag
+	teamFlag = ""
+	t.Cleanup(func() { teamFlag = oldTeamFlag })
+
+	seen := make(chan string, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/events/stream" {
+			http.NotFound(w, r)
+			return
+		}
+		cert, err := awid.DecodeTeamCertificateHeader(strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate")))
+		if err != nil {
+			t.Errorf("decode cert: %v", err)
+			return
+		}
+		seen <- cert.Team
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: connected\ndata: {\"agent_id\":\"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"team_id\":\"" + cert.Team + "\"}\n\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+
+	memberPub, memberKey, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamA := "backend:alpha.test"
+	teamB := "backend:beta.test"
+	workspaceA := workspaceBinding(server.URL, teamA, "alice", "workspace-a")
+	workspaceB := workspaceBinding(server.URL, teamB, "alice", "workspace-b")
+	fixture := &testSelectionFixture{AwebURL: server.URL, Alias: "alice", DID: awid.ComputeDIDKey(memberPub), IdentityScope: awid.IdentityModeLocal, SigningKey: memberKey, CreatedAt: "2026-04-09T00:00:00Z"}
+	fixture.TeamID, fixture.WorkspaceID = teamA, "workspace-a"
+	writeTeamCertificateWorkspaceForTest(t, root, workspaceA, fixture)
+	fixture.TeamID, fixture.WorkspaceID = teamB, "workspace-b"
+	writeTeamCertificateWorkspaceForTest(t, root, workspaceB, fixture)
+	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(root), memberKey); err != nil {
+		t.Fatal(err)
+	}
+	workspace := awconfig.WorktreeWorkspace{AwebURL: server.URL, Memberships: []awconfig.WorktreeMembership{workspaceA.Memberships[0], workspaceB.Memberships[0]}}
+	writeWorkspaceBindingForTest(t, root, workspace)
+	if err := awconfig.SaveTeamState(root, &awconfig.TeamState{ActiveTeam: teamA, Memberships: []awconfig.TeamMembership{
+		{TeamID: teamA, Alias: "alice", CertPath: awconfig.TeamCertificateRelativePath(teamA), JoinedAt: "2026-04-04T00:00:00Z"},
+		{TeamID: teamB, Alias: "alice", CertPath: awconfig.TeamCertificateRelativePath(teamB), JoinedAt: "2026-04-04T00:00:00Z"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	identityHome := filepath.Join(root, ".aw")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	for _, team := range []string{teamA, teamB} {
+		opener, err := wakeStreamOpener(identityHome, team)
+		if err != nil {
+			t.Fatalf("opener for %s: %v", team, err)
+		}
+		source, err := opener(ctx, time.Now().Add(time.Minute))
+		if err != nil {
+			t.Fatalf("open stream for %s: %v", team, err)
+		}
+		_ = source.Close()
+	}
+	got := []string{<-seen, <-seen}
+	if !reflect.DeepEqual(got, []string{teamA, teamB}) {
+		t.Fatalf("stream cert teams=%v want [%s %s]", got, teamA, teamB)
+	}
+}
+
+func TestWakeStreamOpenerGrantTeamValidationIsPerCall(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "xdg"))
+	t.Setenv("AWID_REGISTRY_URL", "")
+	oldTeamFlag := teamFlag
+	teamFlag = ""
+	t.Cleanup(func() { teamFlag = oldTeamFlag })
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/events/stream" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: connected\ndata: {}\n\n"))
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+	grantHome := filepath.Join(root, "grant.aweb-identity")
+	if err := os.MkdirAll(grantHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, sessionKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(awconfig.GrantHomeSigningKeyPath(grantHome), sessionKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), &awconfig.GrantHome{Version: awconfig.GrantHomeSchemaVersion, GrantID: "99999999-9999-4999-8999-999999999999", TeamID: "backend:grant.test", Subject: awconfig.GrantSubject{DIDKey: "did:key:z6MkGrant"}, Scopes: []string{"events.read"}, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339), AwebURL: server.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wakeStreamOpener(grantHome, "backend:other.test"); err == nil || !strings.Contains(err.Error(), "requested team") {
+		t.Fatalf("grant mismatch error=%v, want fail closed with requested team", err)
+	}
+	results := make(chan error, 2)
+	for _, team := range []string{"backend:grant.test", "backend:other.test"} {
+		team := team
+		go func() {
+			_, err := wakeStreamOpener(grantHome, team)
+			results <- err
+		}()
+	}
+	var ok, failed bool
+	for i := 0; i < 2; i++ {
+		err := <-results
+		if err == nil {
+			ok = true
+		} else if strings.Contains(err.Error(), "requested team") {
+			failed = true
+		} else {
+			t.Fatalf("unexpected concurrent opener error: %v", err)
+		}
+	}
+	if !ok || !failed || teamFlag != "" {
+		t.Fatalf("concurrent grant opens ok=%v failed=%v teamFlag=%q", ok, failed, teamFlag)
+	}
+}
+
 func TestWakeCommandsProductionBinary(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer cancel()

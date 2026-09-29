@@ -42,7 +42,9 @@ const (
 )
 
 type streamRunner struct {
+	key          string
 	identityHome string
+	teamID       string
 	open         run.EventStreamOpener
 	onEvent      func(awid.AgentEvent)
 	log          func(string, ...any)
@@ -66,7 +68,7 @@ type streamRunner struct {
 	stopOnce  sync.Once
 }
 
-func newStreamRunner(identityHome string, open run.EventStreamOpener, onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, ttl, backoffMin, backoffMax time.Duration) *streamRunner {
+func newStreamRunner(key, identityHome, teamID string, open run.EventStreamOpener, onEvent func(awid.AgentEvent), log func(string, ...any), now func() time.Time, ttl, backoffMin, backoffMax time.Duration) *streamRunner {
 	if ttl <= 0 {
 		ttl = DefaultStreamTTL
 	}
@@ -77,7 +79,9 @@ func newStreamRunner(identityHome string, open run.EventStreamOpener, onEvent fu
 		backoffMax = DefaultBackoffMax
 	}
 	return &streamRunner{
+		key:          key,
 		identityHome: identityHome,
+		teamID:       teamID,
 		open:         open,
 		onEvent:      onEvent,
 		log:          log,
@@ -116,6 +120,7 @@ func (s *streamRunner) snapshot() StreamStatus {
 	defer s.mu.Unlock()
 	return StreamStatus{
 		IdentityHome: s.identityHome,
+		TeamID:       s.teamID,
 		Phase:        string(s.phase),
 		LastError:    s.lastError,
 		UnreadCount:  s.unread,

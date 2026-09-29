@@ -194,9 +194,14 @@ func (r Registration) normalized() (Registration, error) {
 			return Registration{}, err
 		}
 		r.IdentityHome = identityHome
+		teamID, err := effectiveTeamID(identityHome, "")
+		if err != nil {
+			return Registration{}, err
+		}
 		r.RuntimeDelivery = RuntimeDeliveryExternalSession
 		r.ReceiveIdentities = []ReceiveIdentity{{
 			IdentityHome:  identityHome,
+			TeamID:        teamID,
 			DeliveryOwner: ReceiveOwnerSessionHints,
 			Controls:      true,
 		}}
@@ -238,7 +243,10 @@ func (r Registration) normalized() (Registration, error) {
 			return Registration{}, err
 		}
 		binding.IdentityHome = identityHome
-		binding.TeamID = strings.TrimSpace(binding.TeamID)
+		binding.TeamID, err = effectiveTeamID(identityHome, binding.TeamID)
+		if err != nil {
+			return Registration{}, err
+		}
 		key, err := bindingKey(identityHome, binding.TeamID)
 		if err != nil {
 			return Registration{}, err
@@ -335,6 +343,14 @@ func bindingKey(identityHome, teamID string) (string, error) {
 	return identityHome + "\x00" + team, nil
 }
 
+func splitBindingKey(key string) (string, string) {
+	parts := strings.SplitN(key, "\x00", 2)
+	if len(parts) != 2 {
+		return key, ""
+	}
+	return parts[0], parts[1]
+}
+
 func canonicalReadableIdentityHome(raw, label string) (string, error) {
 	path := strings.TrimSpace(raw)
 	if path == "" || !filepath.IsAbs(path) {
@@ -421,6 +437,20 @@ func (r Registration) BindingForIdentityHome(identityHome string) (ReceiveIdenti
 		}
 	}
 	return ReceiveIdentity{}, false
+}
+
+func (r Registration) hasBinding(want ReceiveIdentity) bool {
+	wantKey, err := bindingKey(want.IdentityHome, want.TeamID)
+	if err != nil {
+		return false
+	}
+	for _, binding := range r.ReceiveBindings() {
+		gotKey, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err == nil && gotKey == wantKey {
+			return true
+		}
+	}
+	return false
 }
 
 func (b ReceiveIdentity) label() string {

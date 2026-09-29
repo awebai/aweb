@@ -335,7 +335,7 @@ func (b *Broker) startInstance(reg Registration, conflictHome string) *instanceR
 	if conflictHome == "" {
 		for _, binding := range bindings {
 			admitted := b.ensureStream(binding)
-			runner.setStreamAdmitted(binding.IdentityHome, admitted)
+			runner.setStreamAdmitted(binding, admitted)
 			if admitted {
 				admittedCount++
 			}
@@ -351,7 +351,7 @@ func (b *Broker) startInstance(reg Registration, conflictHome string) *instanceR
 
 func (b *Broker) admitRunnerStreams(runner *instanceRunner) {
 	for _, binding := range runner.receiveBindings() {
-		runner.setStreamAdmitted(binding.IdentityHome, b.ensureStream(binding))
+		runner.setStreamAdmitted(binding, b.ensureStream(binding))
 	}
 }
 
@@ -398,7 +398,7 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 		b.cfg.Log("stream unavailable identity_home=%s team=%s err=%v", binding.IdentityHome, teamID, err)
 		return false
 	}
-	runner := newStreamRunner(key, opener, func(ev awid.AgentEvent) {
+	runner := newStreamRunner(key, binding.IdentityHome, teamID, opener, func(ev awid.AgentEvent) {
 		b.dispatchStream(key, ev)
 	}, b.cfg.Log, b.cfg.Now, b.cfg.StreamTTL, b.cfg.BackoffMin, b.cfg.BackoffMax)
 
@@ -432,6 +432,11 @@ func (b *Broker) pruneStreamsLocked() {
 				needed[key] = struct{}{}
 			}
 		}
+		for _, binding := range runner.pendingReceiveBindings() {
+			if key, err := bindingKey(binding.IdentityHome, binding.TeamID); err == nil {
+				needed[key] = struct{}{}
+			}
+		}
 	}
 	orphans := []*streamRunner{}
 	for identityHome, runner := range b.streams {
@@ -454,7 +459,7 @@ func (b *Broker) pruneStreamsLocked() {
 	pending := make([]*instanceRunner, 0)
 	for _, runner := range b.instances {
 		for _, binding := range runner.receiveBindings() {
-			if !runner.streamAdmitted(binding.IdentityHome) {
+			if !runner.streamAdmitted(binding) {
 				pending = append(pending, runner)
 				break
 			}
@@ -626,8 +631,9 @@ func (b *Broker) Status() Status {
 	for _, runner := range b.streams {
 		streams = append(streams, runner.snapshot())
 	}
-	for identityHome := range b.overBound {
-		streams = append(streams, StreamStatus{IdentityHome: identityHome, Phase: "over-bound", Admitted: false})
+	for key := range b.overBound {
+		identityHome, teamID := splitBindingKey(key)
+		streams = append(streams, StreamStatus{IdentityHome: identityHome, TeamID: teamID, Phase: "over-bound", Admitted: false})
 	}
 	instances := make([]InstanceStatus, 0, len(b.instances))
 	for _, runner := range b.instances {
@@ -653,13 +659,19 @@ func (b *Broker) Status() Status {
 }
 
 func enrichInstancesWithStreamStatus(instances []InstanceStatus, streams []StreamStatus) {
-	byHome := map[string]StreamStatus{}
+	byBinding := map[string]StreamStatus{}
 	for _, stream := range streams {
-		byHome[stream.IdentityHome] = stream
+		if key, err := bindingKey(stream.IdentityHome, stream.TeamID); err == nil {
+			byBinding[key] = stream
+		}
 	}
 	for i := range instances {
 		for j := range instances[i].ReceiveIdentities {
-			stream, ok := byHome[instances[i].ReceiveIdentities[j].IdentityHome]
+			key, err := bindingKey(instances[i].ReceiveIdentities[j].IdentityHome, instances[i].ReceiveIdentities[j].TeamID)
+			if err != nil {
+				continue
+			}
+			stream, ok := byBinding[key]
 			if !ok {
 				continue
 			}
