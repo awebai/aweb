@@ -35,19 +35,21 @@ orchestrator that owns the process decides when and how to surface the wake.
 
 `aw wake run` is aweb's own implementation of the host wake service row above,
 and it is the only wake path for an instance whose runtime has no channel at
-all. One daemon per host holds a reconnecting stream per registered identity,
-coalesces the resulting hints per instance, and types a short message into that
-instance's original terminal through the OATS input operation.
+all. One daemon per host supervises registered OATS instance homes and a
+channel-core delivery child per active registration.
 
-What it types is a fixed instruction to fetch plus a hint summary — how many
-items of what kind, with senders and ids where the event carried them. Never a
-subject, never a body. The broker does not fetch, decrypt, present, or
-acknowledge anything: the instance's own `aw` does all of that, which is why
-the row above still says the external path owns acknowledgement. Registration
-comes from the OATS spawn hook and is refused without `AWEB_DELIVERY=session`,
-so the broker and a live native channel never run on one identity.
+Go owns registration, lifecycle, status and stream admission. Channel-core owns
+readiness gating, exact fetch, local decrypt/trust, terminal presentation,
+delivered IDs, and mail/chat read acknowledgement. Current shared-core session
+delivery presents message content with sender trust status and records delivery
+before acknowledging mail/chat where its capabilities permit. This acknowledges
+presentation, not completion of the requested work. Read-only mail grants remain
+capability-limited: they can record local delivery but cannot call the server
+mail ack route.
 
-The design, the state-to-action table, the failure modes and the service unit
+Registration comes from the OATS spawn hook and is refused without
+`AWEB_DELIVERY=session`, so the broker and a live native channel never run on
+one identity. The design, state-to-action table, failure modes and service unit
 examples are in [the terminal wake broker note](terminal-wake-broker.md).
 
 ### Hand delivery to a host wake service: `AWEB_DELIVERY`
@@ -74,8 +76,9 @@ With `AWEB_DELIVERY=session`:
   aweb skills, the welcome and status text, and the `aw` CLI path. Each prints
   one line at startup saying delivery is external, and the Pi status line reads
   `aweb delivery external`;
-- acknowledgement moves with delivery. The channel marks nothing read, so the
-  external path owns presentation and acknowledgement.
+- acknowledgement moves with delivery. For `aw wake`, channel-core marks mail
+  and chat read after accepted terminal presentation where the identity's
+  capabilities permit.
 
 Set it wherever the runtime is launched, for example
 `AWEB_DELIVERY=session pi` or `AWEB_DELIVERY=session claude …`.
@@ -314,6 +317,17 @@ Remember that inbox presentation acknowledges the unread messages returned. A
 custom integration that needs fetch-before-ack control should use event
 `message_id` plus `aw mail show --message-id`, then explicitly acknowledge after
 presentation.
+
+After an uncertain crash or compaction, unread checks still find newly waiting
+messages but do not prove earlier work completed. Recover known mail IDs with
+`aw mail show --message-id <id> --json`; otherwise paginate
+`aw mail inbox --show-all --json` using `next_cursor`/`--cursor` until the
+uncertain interval is covered. For chat, recover exact sessions with
+`aw chat history --session-id <session-id> --json`, adding `--message-id <id>`
+for an exact message. Without an exact ID, chat history is bounded (default
+1000), includes read and unread messages, and does not establish completeness
+beyond its limit. Reconcile with durable task/state and side-effect receipts
+before retrying actions.
 
 ## Verify reconnect
 

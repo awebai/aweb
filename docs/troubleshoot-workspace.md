@@ -61,7 +61,8 @@ certificate.
 On the recipient:
 
 ```bash
-aw mail inbox --show-all
+aw mail show --message-id <message-id> --json
+aw mail inbox --show-all --json
 aw chat pending
 ```
 
@@ -72,10 +73,12 @@ aw chat pending
   server acceptance, not recipient presentation.
 
 `aw mail inbox` is bounded (default 50) and marks returned unread messages read.
-For a known id, prefer an exact read:
+For known IDs, prefer exact `aw mail show --message-id` reads. If IDs are
+unknown, paginate the read-inclusive inbox with `next_cursor`/`--cursor` until
+the uncertain interval is covered:
 
 ```bash
-aw mail show --message-id <message-id>
+aw mail inbox --show-all --json --cursor <next_cursor>
 ```
 
 For a known thread:
@@ -84,8 +87,8 @@ For a known thread:
 aw mail show --conversation-id <conversation-id>
 ```
 
-The conversation view is oldest-first and capped at 500; a full window at the
-limit cannot prove completeness.
+The conversation view is oldest-first and capped; a full window at the limit
+cannot prove completeness and is not an unbounded recent recovery query.
 
 ## 4. Probe the event path
 
@@ -125,8 +128,20 @@ If a process died after a presentation acknowledgement, the message will not
 auto-replay as unread. It remains recoverable:
 
 ```bash
-aw mail show --message-id <message-id>
+aw mail show --message-id <message-id> --json
 ```
+
+For chat after uncertain crash/compaction, use exact session history:
+
+```bash
+aw chat history --session-id <session-id> --json
+aw chat history --session-id <session-id> --message-id <message-id> --json
+```
+
+Without an exact chat message ID, history is bounded (default 1000), includes
+read and unread messages, and does not establish completeness beyond its limit.
+Read means presented, not completed; reconcile with task/state and side-effect
+receipts before retrying actions.
 
 Do not mark mail unread or force replay merely to restart model work. The
 runtime/orchestrator must recover its own action log and avoid duplicate side

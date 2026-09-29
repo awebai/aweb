@@ -2494,12 +2494,14 @@ Flags:
 
 Terminal wake broker.
 
-One daemon per host holds a reconnecting event stream per registered identity,
-coalesces the resulting hints per instance, and types a short fetch instruction
-plus a hint summary into each instance's original terminal through OATS.
+One daemon per host supervises registered instance homes and one channel-core
+delivery child per active registration. Go owns registration, lifecycle, status
+and stream admission; channel-core owns readiness gating, exact fetch, decrypt/
+trust, terminal presentation, delivered IDs, and mail/chat read acknowledgement.
 
-It never fetches, decrypts or types a sender's message, and it never
-acknowledges anything: the instance's own `aw` does all of that.
+A mail/chat item is marked read after accepted terminal presentation, not after
+task completion. Read-only mail grants record local delivery but cannot call the
+server mail ack route.
 
 Subcommands:
 - `deregister` Remove an instance home from the wake broker
@@ -2507,7 +2509,7 @@ Subcommands:
 - `register` Register an instance home with the wake broker
 - `resume` Let the broker type into one instance again
 - `run` Run the host wake broker in the foreground
-- `status` Report per-home broker state, last attempt, and pending hints
+- `status` Report per-home broker lifecycle, readiness, and delivery status
 
 Flags:
 - `-h, --help help for wake`
@@ -2537,8 +2539,9 @@ Flags:
 
 Stop the broker typing into one instance.
 
-Pause is durable broker state and survives a restart. It suppresses typing;
-it does not stop the stream, drop hints, or acknowledge anything.
+Pause is durable broker state and survives a restart. It suppresses terminal
+presentation before fetch; it does not stop the stream or change server read
+state by itself.
 
 Flags:
 - `-h, --help help for pause`
@@ -2595,10 +2598,12 @@ Flags:
 
 Run the host wake broker in the foreground.
 
-One daemon per host. All state is on disk and there is no cursor, so the
-daemon is safe to restart at any time: it re-reads its registrations and
-pending hints, and the reconnect snapshot re-raises anything still unread.
-A second start exits 0 reporting the running daemon.
+One daemon per host. Go state is on disk and there is no resumable event
+cursor, so the daemon is safe to restart at any time: it re-reads registrations
+and restarts channel-core children. Unread server state re-raises items that
+were not yet presented/read; already-read content remains recoverable with
+mail history commands, not unread-only wake replay. A second start exits 0
+reporting the running daemon.
 
 Flags:
 - `--coalesce int Coalescing window in milliseconds (default 2000)`
@@ -2612,7 +2617,7 @@ Flags:
 
 ### `wake status`
 
-Report per-home broker state, last attempt, and pending hints
+Report per-home broker lifecycle, readiness, and delivery status
 
 Flags:
 - `-h, --help help for status`

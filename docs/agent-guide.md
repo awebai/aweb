@@ -210,11 +210,15 @@ see [Portable orchestrator integration](orchestrator-integration.md).
 Start by separating layers:
 
 1. `aw check` — local identity, membership, workspace, and service diagnostics.
-2. `aw mail inbox --show-all` — is the durable message present?
+2. `aw mail show --message-id <id> --json` for known IDs, or
+   `aw mail inbox --show-all --json` with `--cursor` pagination — is the durable
+   message present?
 3. `aw events stream --json --timeout 10` — can this identity open the wake
    path and receive a fresh snapshot?
 4. Runtime logs — did the channel/extension/orchestrator present the signal?
 
 If mail is present but no runtime woke, do not recreate identity state. Repair
-the wake integration. Continue with
+the wake integration. If mail was already presented before a crash, read state
+means presentation, not completed work; reconcile with task/state and
+side-effect receipts before retrying actions. Continue with
 [Troubleshoot a workspace](troubleshoot-workspace.md).

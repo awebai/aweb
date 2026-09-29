@@ -357,16 +357,18 @@ resumable server event cursor.
 - Each connection emits `connected`, then a snapshot of current actionable
   unread mail and pending chat, then changes while the response remains open.
 - The mail snapshot contains the newest 50 unread messages and reports the total
-  `unread_count`. Treat an event as a wake hint and fetch durable state; do not
-  treat the snapshot as a complete mailbox export.
+  `unread_count`. Treat an event as a wake signal and fetch durable state; do
+  not treat the snapshot as a complete mailbox export.
 - `aw events stream` does not acknowledge mail.
 - `aw mail show --message-id` and `aw mail show --conversation-id` are read-only.
+  The conversation view is oldest-first and bounded.
 - `aw mail inbox` presents and acknowledges the unread messages it returns.
 - `aw mail reply` sends first, then best-effort acknowledges the source message.
 - `aw mail ack <message-id>` explicitly marks one message read.
 - `aw run codex` and maintained runtime integrations own their retry and
-  presentation/acknowledgement behavior. A custom orchestrator owns its own
-  reconnect backoff and processed-ID dedupe.
+  presentation/acknowledgement behavior. Shared-core session delivery marks
+  read after accepted presentation, not after task completion. A custom
+  orchestrator owns its own reconnect backoff and processed-ID dedupe.
 
 See [Receiving events and waking agents](receiving-events.md) for the runtime
 matrix and [Portable orchestrator integration](orchestrator-integration.md) for
@@ -388,12 +390,20 @@ semantics. See the [MCP tutorial](mcp-tutorial.md) separately.
   in both directories. Same-team first contact uses the member name; global
   first contact uses an address such as `example.com/bob`.
 - **Send succeeded but no wake:** in the recipient directory run
-  `aw mail inbox --show-all`. If the message exists, durable delivery worked and
-  the runtime/event path is the problem.
+  `aw mail inbox --show-all --json` and continue with `--cursor` until the
+  interval is covered. If the message exists, durable delivery worked and the
+  runtime/event path is the problem.
 - **Raw stream ended:** this is expected at the server response cap. Reopen it;
   custom long-running consumers must add retry with backoff.
 - **Message was already read:** it will not return in an unread event snapshot.
-  Use `aw mail show --message-id <message-id>` or the conversation view.
+  Use `aw mail show --message-id <message-id> --json`; if you only know the
+  conversation, remember `aw mail show --conversation-id` is oldest-first and
+  bounded, not an unbounded recent recovery query.
+- **Chat recovery after crash/compaction:** use
+  `aw chat history --session-id <session-id> --json`, adding
+  `--message-id <message-id>` for an exact message. Without an exact ID, chat
+  history is bounded (default 1000), includes read and unread messages, and does
+  not establish completeness beyond its limit.
 - **Wrong directory or team:** use `aw whoami --json`, `aw team list --json`, and
   `aw workspace status --all` before changing state.
 

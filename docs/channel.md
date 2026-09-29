@@ -132,7 +132,8 @@ and the two sub-cases recover differently:
   at the next tool boundary): the ack has already fired, so the message is read
   server-side. An unread-only reconnect does NOT re-fetch it and it is absent
   from the unread inbox. Its content is still on the server, reachable via
-  `aw mail show <id>` or a read-inclusive view, but it is not auto-recovered.
+  `aw mail show --message-id <id> --json` or a read-inclusive paginated inbox
+  view, but it is not auto-recovered.
   (Auto-surfacing this case on reconnect was considered and deliberately
   rejected: re-delivering already-read mail would reopen the replay/double-action
   hazard, and a crashed agent recovers procedurally on restart. See default-aaka.)
@@ -149,8 +150,11 @@ mail as read. `aw mail show` is read-only.
 Event-stream health is separate from initial workspace connectivity. A stream
 failure changes the runtime status to events-down/retrying and emits one concise
 `aweb:` line with the summarized cause and retry cadence; steady retries stay
-silent. Recovery emits one reconnected line and tells the agent to check
-`aw mail inbox` and `aw chat pending` for durable messages missed while deaf.
+silent. Recovery emits one reconnected line and tells the agent to check unread
+mail and pending chat for newly waiting work. After an uncertain crash, recover
+known mail IDs with `aw mail show --message-id <id> --json` or page
+`aw mail inbox --show-all --json` with `--cursor`; unread-only checks do not
+prove previously presented work completed.
 
 ### Chat (`type="chat"`)
 

@@ -22,12 +22,13 @@ import (
 )
 
 // The terminal wake broker: one reconnecting event stream per authorized
-// identity on a host, coalescing hints and typing them into each instance's
-// original terminal through the OATS input operation.
+// receive binding on a host, with a long-lived channel-core child per instance
+// handling readiness, exact fetch, decrypt/trust, terminal presentation and
+// delivery/read acknowledgements through the OATS input operation.
 //
-// docs/terminal-wake-broker.md is the design; this file is only the command
-// surface. The broker never fetches, decrypts or types a sender's content, and
-// it never acknowledges anything on any path.
+// docs/terminal-wake-broker.md and docs/channel-core-terminal-adapter.md are
+// the contract; this file is only the command surface. Go owns registration,
+// lifecycle, status and admission. The channel-core child owns delivery state.
 
 // StateDirEnv overrides the default state directory. It exists so a test or a
 // second host profile can point the broker somewhere else without a flag on
@@ -55,23 +56,27 @@ var (
 
 var wakeCmd = &cobra.Command{
 	Use:   "wake",
-	Short: "Terminal wake broker: stream events and type wake hints into instance terminals",
+	Short: "Terminal wake broker: stream events and present wakes through instance terminals",
 	Long: "Terminal wake broker.\n\n" +
-		"One daemon per host holds a reconnecting event stream per registered identity,\n" +
-		"coalesces the resulting hints per instance, and types a short fetch instruction\n" +
-		"plus a hint summary into each instance's original terminal through OATS.\n\n" +
-		"It never fetches, decrypts or types a sender's message, and it never\n" +
-		"acknowledges anything: the instance's own `aw` does all of that.",
+		"One daemon per host supervises registered instance homes and one channel-core\n" +
+		"delivery child per active registration. Go owns registration, lifecycle, status\n" +
+		"and stream admission; channel-core owns readiness gating, exact fetch, decrypt/\n" +
+		"trust, terminal presentation, delivered IDs, and mail/chat read acknowledgement.\n\n" +
+		"A mail/chat item is marked read after accepted terminal presentation, not after\n" +
+		"task completion. Read-only mail grants record local delivery but cannot call the\n" +
+		"server mail ack route.",
 }
 
 var wakeRunCmd = &cobra.Command{
 	Use:   "run",
 	Short: "Run the host wake broker in the foreground",
 	Long: "Run the host wake broker in the foreground.\n\n" +
-		"One daemon per host. All state is on disk and there is no cursor, so the\n" +
-		"daemon is safe to restart at any time: it re-reads its registrations and\n" +
-		"pending hints, and the reconnect snapshot re-raises anything still unread.\n" +
-		"A second start exits 0 reporting the running daemon.",
+		"One daemon per host. Go state is on disk and there is no resumable event\n" +
+		"cursor, so the daemon is safe to restart at any time: it re-reads registrations\n" +
+		"and restarts channel-core children. Unread server state re-raises items that\n" +
+		"were not yet presented/read; already-read content remains recoverable with\n" +
+		"mail history commands, not unread-only wake replay. A second start exits 0\n" +
+		"reporting the running daemon.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store, err := wakeStore()
 		if err != nil {
@@ -267,8 +272,9 @@ var wakePauseCmd = &cobra.Command{
 	Use:   "pause",
 	Short: "Stop the broker typing into one instance, durably",
 	Long: "Stop the broker typing into one instance.\n\n" +
-		"Pause is durable broker state and survives a restart. It suppresses typing;\n" +
-		"it does not stop the stream, drop hints, or acknowledge anything.",
+		"Pause is durable broker state and survives a restart. It suppresses terminal\n" +
+		"presentation before fetch; it does not stop the stream or change server read\n" +
+		"state by itself.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return wakeSetPaused(cmd, wakePauseHome, true)
 	},
@@ -284,7 +290,7 @@ var wakeResumeCmd = &cobra.Command{
 
 var wakeStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Report per-home broker state, last attempt, and pending hints",
+	Short: "Report per-home broker lifecycle, readiness, and delivery status",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		store, err := wakeStore()
 		if err != nil {

@@ -40,13 +40,15 @@ const (
 // Store is the on-disk state directory:
 //
 //	<dir>/registry.d/<key>.json    one registration per instance home
-//	<dir>/instances.d/<key>.json   pending hints, last attempt, rate limit, pause
+//	<dir>/instances.d/<key>.json   lifecycle, pause, readiness and delivery status
 //	<dir>/status.json              what `aw wake status` reads when the daemon is down
 //	<dir>/lock/                    the one-daemon-per-host lock
 //	<dir>/control.sock             the daemon's local control socket
 //
-// <key> is the SHA-256 of the canonical instance home path. Nothing under the
-// directory is a presented mark, and nothing under it holds message content.
+// <key> is the SHA-256 of the canonical instance home path. Go stores no
+// message content here. Channel-core's per-binding DeliveryStore is separate
+// delivery state: it dedupes accepted terminal presentations and is not a proof
+// of completed agent work.
 type Store struct {
 	dir string
 }
@@ -103,9 +105,10 @@ func HomeKey(canonicalHome string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// ReceiveIdentity is one broker-owned identity stream attached to a registered
-// instance. It is metadata and routing context only: the broker never fetches,
-// decrypts or acknowledges message bodies for it.
+// ReceiveIdentity is one broker-owned receive binding attached to a registered
+// instance. Go uses it for stream routing and child configuration; the
+// channel-core child uses it for exact fetch, decrypt/trust, delivered IDs, and
+// mail/chat read acknowledgement.
 type ReceiveIdentity struct {
 	IdentityHome  string   `json:"identity_home"`
 	TeamID        string   `json:"team_id,omitempty"`
@@ -487,9 +490,9 @@ func containsString(values []string, value string) bool {
 }
 
 // InstanceState is the durable per-instance state Go owns: registration
-// lifecycle, pause/inactive state, error/status metadata, and child admission
-// evictions. Legacy `pending` hint arrays from older stores are accepted on
-// load and dropped; they are never replayed or composed by Go.
+// lifecycle, pause/inactive state, readiness/error/status metadata, and child
+// admission evictions. Legacy `pending` hint arrays from older stores are
+// accepted on load and dropped; they are never replayed or composed by Go.
 type InstanceState struct {
 	Home           string            `json:"home"`
 	LegacyPending  []json.RawMessage `json:"pending,omitempty"`
@@ -597,7 +600,8 @@ func (s *Store) ListRegistrations() ([]Registration, error) {
 	return out, nil
 }
 
-// SaveInstance writes per-instance state atomically, dropping legacy hints.
+// SaveInstance writes per-instance lifecycle/status state atomically, dropping
+// legacy hint queues from pre-channel-core stores.
 func (s *Store) SaveInstance(state InstanceState) error {
 	canonical, err := CanonicalHome(state.Home)
 	if err != nil {

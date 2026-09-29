@@ -114,6 +114,10 @@
   state. Explicit same-home registration reactivates an inactive wake home and
   clears lifecycle errors while preserving intentional pause state; the
   daemon-down registration fallback applies the same lifecycle reset.
+- `aw wake` help and terminal-wake documentation now describe the shipped
+  shared-core delivery contract: accepted terminal presentation records delivery
+  and marks mail/chat read where capabilities permit; recovery after uncertain
+  crashes uses exact IDs or read-inclusive pagination, not unread-only replay.
 - `aw team invite` now prints the complete porcelain `aw team join` command,
   and `aw team join` installs membership and connects the current workspace in
   one step using the invite's embedded aweb service URL. Hosted servers now
