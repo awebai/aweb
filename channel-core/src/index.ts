@@ -16,6 +16,15 @@ export { SenderTrustManager, canonicalReplacementJSON, canonicalRotationJSON, no
 export { computeDIDKey, extractPublicKey } from "./identity/did.js";
 export { CHANNEL_CORE_SECURITY_CONTRACT } from "./contract.js";
 export { loadSigningKey } from "./identity/keys.js";
+export {
+  createTerminalAwakeningHandler,
+  normalizeTerminalReadiness,
+  terminalReadyForIntent,
+  type TerminalAwakeningHandlerOptions,
+  type TerminalInspection,
+  type TerminalReadinessState,
+  type TerminalSession,
+} from "./terminal.js";
 export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader, type CertificateIdentityScope, type LegacyCertificateLifetime, type TeamCertificate } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./identity/signing.js";
 export {
