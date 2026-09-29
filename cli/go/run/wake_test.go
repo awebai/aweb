@@ -163,8 +163,8 @@ func TestEventBusRetriesTransientOpenError(t *testing.T) {
 	}
 	cancel()
 	bus.Stop()
-	if !sawRecovery {
-		t.Fatal("recovery did not enqueue a catch-up event")
+	if sawRecovery {
+		t.Fatal("transport recovery was enqueued as communication")
 	}
 	if requests.Load() < 3 {
 		t.Fatalf("expected retries after transient failures, got %d requests", requests.Load())
@@ -179,8 +179,13 @@ func TestEventBusRetriesTransientOpenError(t *testing.T) {
 		}
 	}
 noticesDone:
-	if len(gotNotices) < 2 || !strings.HasPrefix(gotNotices[0], "aweb: event stream disconnected (network unavailable)") || gotNotices[1] != "aweb: event stream reconnected; catching up" {
+	if len(gotNotices) == 0 || !strings.HasPrefix(gotNotices[0], "aweb: event stream disconnected (network unavailable)") {
 		t.Fatalf("connection notices=%v", gotNotices)
+	}
+	for _, notice := range gotNotices {
+		if strings.Contains(notice, "reconnected") || strings.Contains(notice, "catching up") {
+			t.Fatalf("transport recovery notice reached model-facing notices: %v", gotNotices)
+		}
 	}
 	if strings.Contains(strings.Join(gotNotices, "\n"), "TypeError") {
 		t.Fatalf("raw error leaked in notices: %v", gotNotices)

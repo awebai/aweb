@@ -451,6 +451,68 @@ func TestMultiIdentityStreamCapAndDeregisterPruneAttachments(t *testing.T) {
 
 // --- coalescing and rate limiting -------------------------------------------
 
+func TestAmbientOnlyNeverSubmitsInIdleOrUnknown(t *testing.T) {
+	for _, rawState := range []string{"idle", "unknown"} {
+		t.Run(rawState, func(t *testing.T) {
+			h := newHarness(t, nil)
+			h.oats.Script(session.Scripted{Inspection: session.Inspection{Home: h.home, Backend: "tmux", Present: true, State: session.NormalizeState(rawState), RawState: rawState}})
+			h.offer(Hint{Kind: KindWork, Intent: IntentAmbient, TaskID: "task-1", At: h.clock.now()})
+			h.clock.advance(3 * time.Second)
+			h.step()
+			if n := len(h.submissions()); n != 0 {
+				t.Fatalf("ambient-only submitted %d times", n)
+			}
+			state, _ := h.store.LoadInstance(h.home)
+			if len(state.Pending) != 1 || state.Pending[0].Kind != KindWork {
+				t.Fatalf("ambient hint was not retained as context: %#v", state.Pending)
+			}
+		})
+	}
+}
+
+func TestAmbientContextRidesWithRealWakeWithoutInflatingMessageCount(t *testing.T) {
+	h := newHarness(t, nil)
+	h.offer(Hint{Kind: KindWork, Intent: IntentAmbient, TaskID: "task-1", At: h.clock.now()})
+	h.clock.advance(1 * time.Second)
+	h.mail("m1", "alice")
+	h.clock.advance(3 * time.Second)
+	h.step()
+	subs := h.submissions()
+	if len(subs) != 1 {
+		t.Fatalf("submissions=%d", len(subs))
+	}
+	if !strings.Contains(subs[0].Text, "1 unread message waiting") || strings.Contains(subs[0].Text, "2 unread") || strings.Contains(subs[0].Text, "2 items") {
+		t.Fatalf("message count was not truthful:\n%s", subs[0].Text)
+	}
+	if !strings.Contains(subs[0].Text, "work available") {
+		t.Fatalf("ambient context did not ride with real wake:\n%s", subs[0].Text)
+	}
+}
+
+func TestLegacyReconnectPendingIsDroppedBeforeSubmission(t *testing.T) {
+	h := newHarness(t, nil)
+	h.runner.mu.Lock()
+	h.runner.state.Pending = []Hint{{Kind: KindReconnect, Intent: IntentWake, At: h.clock.now()}}
+	h.runner.mu.Unlock()
+	h.runner.persist()
+
+	loaded, err := h.store.LoadInstance(h.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Pending) != 0 {
+		t.Fatalf("legacy reconnect survived load: %#v", loaded.Pending)
+	}
+	h.runner.mu.Lock()
+	h.runner.state = loaded
+	h.runner.mu.Unlock()
+	h.clock.advance(3 * time.Second)
+	h.step()
+	if n := len(h.submissions()); n != 0 {
+		t.Fatalf("legacy reconnect submitted %d times", n)
+	}
+}
+
 func TestBurstCoalescesIntoOneSubmission(t *testing.T) {
 	h := newHarness(t, nil)
 
@@ -474,7 +536,7 @@ func TestBurstCoalescesIntoOneSubmission(t *testing.T) {
 	if len(subs) != 1 {
 		t.Fatalf("a burst produced %d submissions, want 1", len(subs))
 	}
-	if !strings.Contains(subs[0].Text, "3 items") {
+	if !strings.Contains(subs[0].Text, "3 unread messages") {
 		t.Fatalf("the burst did not collapse into one message:\n%s", subs[0].Text)
 	}
 	if !strings.Contains(subs[0].Text, "mail from alice (2 unread)") || !strings.Contains(subs[0].Text, "mail from bob (1 unread)") {
@@ -851,7 +913,7 @@ func TestRestartRereadsRegistrationsAndPendingHints(t *testing.T) {
 	if len(subs) != 1 {
 		t.Fatalf("the restarted daemon submitted %d times, want 1", len(subs))
 	}
-	if !strings.Contains(subs[0].Text, "2 items") {
+	if !strings.Contains(subs[0].Text, "2 unread messages") {
 		t.Fatalf("hints held across the restart were lost:\n%s", subs[0].Text)
 	}
 }

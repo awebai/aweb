@@ -72,7 +72,7 @@ func TestComposedTextIsTheFixedInstructionPlusASummary(t *testing.T) {
 		{Kind: KindChat, Intent: IntentSteer, MessageID: "c1", From: "bob", SenderWaiting: true, At: at(2)},
 	}
 	got := Compose(hints)
-	want := "aweb: 3 items waiting. Check them from this instance with `aw mail inbox`\n" +
+	want := "aweb: 3 unread messages waiting. Check them from this instance with `aw mail inbox`\n" +
 		"and `aw chat pending`, then handle what is there.\n" +
 		"  mail from alice (2 unread)\n" +
 		"  chat from bob — sender waiting\n"
@@ -105,8 +105,12 @@ func TestComposeSingularAndEmpty(t *testing.T) {
 		t.Fatalf("empty hint set composed %q", got)
 	}
 	got := Compose([]Hint{{Kind: KindMail, MessageID: "m1", From: "alice", At: at(0)}})
-	if !strings.HasPrefix(got, "aweb: 1 item waiting.") {
+	if !strings.HasPrefix(got, "aweb: 1 unread message waiting.") {
 		t.Fatalf("singular header missing:\n%s", got)
+	}
+	got = Compose([]Hint{{Kind: KindWork, Intent: IntentAmbient, TaskID: "task-1", At: at(0)}})
+	if !strings.HasPrefix(got, "aweb: 1 event pending.") || strings.Contains(got, "message") {
+		t.Fatalf("ambient-only text inflated waiting messages:\n%s", got)
 	}
 }
 

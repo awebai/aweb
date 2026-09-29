@@ -36,19 +36,26 @@ func Compose(hints []Hint) string {
 		return ordered[i].At.Before(ordered[j].At)
 	})
 
+	messageCount := waitingMessageCount(ordered)
+
 	var b strings.Builder
 	b.WriteString("aweb: ")
-	b.WriteString(pluralItems(len(ordered)))
-	if hasIdentityContext(ordered) {
-		b.WriteString(" waiting. Check the listed identity contexts with aw, then handle what is there.\n")
-		for _, line := range commandLines(ordered) {
-			b.WriteString("  ")
-			b.WriteString(line)
-			b.WriteString("\n")
+	if messageCount > 0 {
+		b.WriteString(pluralMessages(messageCount))
+		if hasIdentityContext(ordered) {
+			b.WriteString(" waiting. Check the listed identity contexts with aw, then handle what is there.\n")
+			for _, line := range commandLines(ordered) {
+				b.WriteString("  ")
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+		} else {
+			b.WriteString(" waiting. Check them from this instance with `aw mail inbox`\n")
+			b.WriteString("and `aw chat pending`, then handle what is there.\n")
 		}
 	} else {
-		b.WriteString(" waiting. Check them from this instance with `aw mail inbox`\n")
-		b.WriteString("and `aw chat pending`, then handle what is there.\n")
+		b.WriteString(pluralEvents(len(ordered)))
+		b.WriteString(" pending. Review the listed event context, then handle what is there.\n")
 	}
 
 	lines := summaryLines(ordered)
@@ -75,11 +82,29 @@ func Compose(hints []Hint) string {
 	return out
 }
 
-func pluralItems(n int) string {
-	if n == 1 {
-		return "1 item"
+func waitingMessageCount(hints []Hint) int {
+	count := 0
+	for _, h := range hints {
+		switch h.Kind {
+		case KindMail, KindChat:
+			count++
+		}
 	}
-	return fmt.Sprintf("%d items", n)
+	return count
+}
+
+func pluralMessages(n int) string {
+	if n == 1 {
+		return "1 unread message"
+	}
+	return fmt.Sprintf("%d unread messages", n)
+}
+
+func pluralEvents(n int) string {
+	if n == 1 {
+		return "1 event"
+	}
+	return fmt.Sprintf("%d events", n)
 }
 
 func hasIdentityContext(hints []Hint) bool {
@@ -194,7 +219,10 @@ func summaryLines(hints []Hint) []string {
 			// typed into the terminal (§4, §6). Queued text is not an interrupt.
 			add("control", renderControl, nil)
 		case KindReconnect:
-			add("reconnect", renderReconnect, nil)
+			// Legacy persisted reconnect hints are filtered before submission.
+			// If one reaches composition from an old test helper, ignore it rather
+			// than generating transport-status model input.
+			continue
 		case KindWork:
 			add("work", renderWork, func(g *groupState) { g.ids = appendID(g.ids, safeToken(h.TaskID)) })
 		case KindClaim:
@@ -243,10 +271,6 @@ func renderControl(g *groupState) string {
 		return "control signal"
 	}
 	return fmt.Sprintf("control signals (%d)", g.count)
-}
-
-func renderReconnect(_ *groupState) string {
-	return "reconnected — earlier items may still be unread"
 }
 
 func renderWork(g *groupState) string {

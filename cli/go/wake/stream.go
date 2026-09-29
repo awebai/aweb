@@ -207,8 +207,9 @@ func (s *streamRunner) run(ctx context.Context) {
 				recoveryPending = false
 				outageReported = false
 				s.log("stream reconnected identity_home=%s", s.identityHome)
-				// One catch-up hint, not one per missed message (§6).
-				s.onEvent(awid.AgentEvent{Type: awid.AgentEventChannelReconnected})
+				// Transport recovery is diagnostic-only. The fresh stream snapshot
+				// re-raises real actionable events; reconnect itself never becomes
+				// terminal/model input.
 			}
 		})
 		plannedClose := streamCtx.Err() != nil && ctx.Err() == nil

@@ -291,8 +291,9 @@ func (b *EventBus) run(ctx context.Context) {
 			if recoveryPending {
 				recoveryPending = false
 				disconnectReported = false
-				b.connectionNotice("aweb: event stream reconnected; catching up")
-				b.queue.Push(BusEvent{Priority: PriorityCommunication, Event: awid.AgentEvent{Type: awid.AgentEventChannelReconnected}})
+				// Transport recovery is observable through connection state and
+				// diagnostics, but it is not communication. The fresh stream snapshot
+				// is the only catch-up source for real actionable events.
 			}
 		}
 

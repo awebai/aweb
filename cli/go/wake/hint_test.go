@@ -40,10 +40,10 @@ func TestHintIntentsMatchTheDeliveryTable(t *testing.T) {
 		{awid.AgentEvent{Type: awid.AgentEventClaimRemoved, TaskID: "t"}, KindClaimRemoved, IntentAmbient, true},
 		{awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "e"}, KindApp, IntentAmbient, true},
 		{awid.AgentEvent{Type: awid.AgentEventAppEvent, EventID: "e", DeliveryIntent: "wake"}, KindApp, IntentWake, true},
-		{awid.AgentEvent{Type: awid.AgentEventChannelReconnected}, KindReconnect, IntentWake, true},
 
-		// Informational, and the two control signals that change durable
-		// broker state rather than announcing a waiting item.
+		// Informational transport state and the two control signals that change
+		// durable broker state rather than announcing a waiting item.
+		{awid.AgentEvent{Type: awid.AgentEventChannelReconnected}, "", "", false},
 		{awid.AgentEvent{Type: awid.AgentEventConnected}, "", "", false},
 		{awid.AgentEvent{Type: awid.AgentEventError}, "", "", false},
 		{awid.AgentEvent{Type: awid.AgentEventControlPause}, "", "", false},
@@ -82,6 +82,21 @@ func TestControlInterruptIsTransient(t *testing.T) {
 	state.AddHint(mail, DefaultHintCap)
 	if len(state.Pending) != 2 {
 		t.Fatalf("pending=%d", len(state.Pending))
+	}
+	durable := state.DurablePending()
+	if len(durable) != 1 || durable[0].Kind != KindMail {
+		t.Fatalf("durable pending=%#v", durable)
+	}
+}
+
+func TestLegacyReconnectHintsAreNeverDurableOrQueued(t *testing.T) {
+	state := InstanceState{Home: "/h"}
+	if state.AddHint(Hint{Kind: KindReconnect, Intent: IntentWake, At: at(0)}, DefaultHintCap) {
+		t.Fatal("legacy reconnect hint was queued")
+	}
+	state.Pending = []Hint{
+		{Kind: KindReconnect, Intent: IntentWake, At: at(0)},
+		{Kind: KindMail, Intent: IntentWake, MessageID: "m1", At: at(1)},
 	}
 	durable := state.DurablePending()
 	if len(durable) != 1 || durable[0].Kind != KindMail {

@@ -170,10 +170,10 @@ func HintFromEvent(ev awid.AgentEvent, now time.Time) (Hint, bool) {
 		return base, true
 
 	case string(awid.AgentEventChannelReconnected):
-		// One catch-up hint after an outage, not one per missed message (§6).
-		base.Kind = KindReconnect
-		base.Intent = IntentWake
-		return base, true
+		// Transport recovery is status, not actionable work. The fresh stream's
+		// snapshot re-raises real mail/chat/control/app events; a reconnect by
+		// itself must not type a model turn or inflate the waiting count.
+		return Hint{}, false
 
 	default:
 		// connected, error, control_pause, control_resume, and anything a
@@ -200,7 +200,7 @@ func batchRank(h Hint) int {
 	switch h.Kind {
 	case KindControl:
 		return 0
-	case KindMail, KindChat, KindReconnect:
+	case KindMail, KindChat:
 		return 1
 	case KindApp:
 		if h.Intent == IntentWake || h.Intent == IntentSteer {

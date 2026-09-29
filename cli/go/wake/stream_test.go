@@ -336,10 +336,10 @@ func TestFourXXQuarantinesOneIdentityAndLeavesOthersStreaming(t *testing.T) {
 	waitFor(t, "the healthy identity to be woken", func() bool { return len(oats.Submissions()) > 0 })
 }
 
-// TestReconnectAfterAnOutageRaisesOneCatchUpHint (§6): on recovery the snapshot
-// supplies what was missed and the synthesized channel_reconnected produces one
-// catch-up hint, not one per message.
-func TestReconnectAfterAnOutageRaisesOneCatchUpHint(t *testing.T) {
+// TestReconnectAfterAnOutageDeliversOnlySnapshotItems: transport recovery is
+// diagnostic-only. The fresh stream snapshot supplies real missed work; no
+// reconnect/status hint reaches the terminal.
+func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 	var mu sync.Mutex
 	fail := true
 	opens := 0
@@ -398,11 +398,11 @@ func TestReconnectAfterAnOutageRaisesOneCatchUpHint(t *testing.T) {
 	waitFor(t, "a wake after recovery", func() bool { return len(oats.Submissions()) > 0 })
 
 	text := oats.Submissions()[0].Text
-	if !strings.Contains(text, "reconnected — earlier items may still be unread") {
-		t.Fatalf("the catch-up hint is missing:\n%s", text)
+	if strings.Contains(text, "reconnected") {
+		t.Fatalf("transport recovery reached terminal input:\n%s", text)
 	}
-	if strings.Count(text, "reconnected") != 1 {
-		t.Fatalf("more than one catch-up hint per recovery:\n%s", text)
+	if !strings.Contains(text, "mail from alice") {
+		t.Fatalf("snapshot mail was not delivered after recovery:\n%s", text)
 	}
 	// The daemon survived the outage rather than stopping on it.
 	if !broker.Status().DaemonRunning {

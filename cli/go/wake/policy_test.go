@@ -16,17 +16,35 @@ import (
 func TestStateToActionTable(t *testing.T) {
 	intents := []Intent{IntentWake, IntentSteer, IntentAmbient}
 
-	confirmed := map[session.State]Action{
-		session.StateIdle:    ActionSubmit,
-		session.StateBusy:    ActionDefer,
-		session.StateBlocked: ActionDefer,
-		session.StateShell:   ActionDefer,
-		session.StateUnknown: ActionSubmit,
-		session.StateStopped: ActionInactive,
+	confirmedByIntent := map[Intent]map[session.State]Action{
+		IntentWake: {
+			session.StateIdle:    ActionSubmit,
+			session.StateBusy:    ActionDefer,
+			session.StateBlocked: ActionDefer,
+			session.StateShell:   ActionDefer,
+			session.StateUnknown: ActionSubmit,
+			session.StateStopped: ActionInactive,
+		},
+		IntentSteer: {
+			session.StateIdle:    ActionSubmit,
+			session.StateBusy:    ActionDefer,
+			session.StateBlocked: ActionDefer,
+			session.StateShell:   ActionDefer,
+			session.StateUnknown: ActionSubmit,
+			session.StateStopped: ActionInactive,
+		},
+		IntentAmbient: {
+			session.StateIdle:    ActionDefer,
+			session.StateBusy:    ActionDefer,
+			session.StateBlocked: ActionDefer,
+			session.StateShell:   ActionDefer,
+			session.StateUnknown: ActionDefer,
+			session.StateStopped: ActionInactive,
+		},
 	}
 
 	for _, intent := range intents {
-		for state, want := range confirmed {
+		for state, want := range confirmedByIntent[intent] {
 			if got := ActionFor(intent, state, true); got != want {
 				t.Errorf("confirmed live: ActionFor(%s, %s)=%s want %s", intent, state, got, want)
 			}
@@ -71,6 +89,14 @@ func TestRawStateStringsReachTheirTableCell(t *testing.T) {
 
 // TestWorkingAndBlockedNeverSubmit is the §6 prohibition stated as its own
 // test, so a future edit to the table cannot quietly lose it.
+func TestAmbientNeverInitiatesModelInput(t *testing.T) {
+	for _, state := range []session.State{session.StateIdle, session.StateBusy, session.StateBlocked, session.StateShell, session.StateUnknown} {
+		if got := ActionFor(IntentAmbient, state, true); got == ActionSubmit {
+			t.Errorf("ActionFor(ambient, %s) submitted without a real wake/steer", state)
+		}
+	}
+}
+
 func TestWorkingAndBlockedAndShellNeverSubmit(t *testing.T) {
 	for _, state := range []session.State{session.StateBusy, session.StateBlocked, session.StateShell} {
 		for _, intent := range []Intent{IntentWake, IntentSteer, IntentAmbient} {

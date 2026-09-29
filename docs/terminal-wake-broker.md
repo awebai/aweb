@@ -58,10 +58,10 @@ Events consumed (`channel-core/src/api/events.ts:3`): `connected`,
   (`cli/go/awid/events.go:21`); channel-core normalizes them to `mail_message`
   and `chat_message` at `channel-core/src/api/events.ts:265`. Same events, two
   spellings — the broker must accept both.
-- `connected` and `error` are informational in the Go bus, which drops both
-  (`cli/go/run/eventbus.go:54`), and the bus synthesizes a local
-  `channel_reconnected` after an outage (`cli/go/awid/events.go:33`, pushed at
-  `cli/go/run/eventbus.go:295`). The broker needs all three.
+- `connected`, `error`, and transport reconnects are informational status. They
+  stay visible through logs/status but are not model input. The fresh stream's
+  snapshot is the only catch-up source for real mail, chat, control and app
+  events.
 
 Delivery intents are assigned per event kind, not negotiated:
 
@@ -230,16 +230,21 @@ extension degrades to the conservative path rather than to a crash.
 | --- | --- | --- | --- | --- | --- |
 | `wake` | type now | defer | defer | coalesce, rate-limited | inactive after first confirmed live |
 | `steer` | type now | defer | defer | coalesce, rate-limited | inactive after first confirmed live |
-| `ambient` | type now | defer, coalesce | defer, coalesce | coalesce, rate-limited | inactive after first confirmed live |
+| `ambient` | defer | defer, coalesce | defer, coalesce | defer, coalesce | inactive after first confirmed live |
 
-**`unknown` gets a coalescing and rate-limit policy, not a delay.** tmux always
-says `unknown` and carries no readiness promise, and no amount of waiting turns
-that into one — an initial fixed delay would only make the instance feel deaf
-without making the write safer. So the broker sends, and bounds how often it
-sends. Typing while the harness is running may simply enqueue as a user
-message, which is the behaviour that makes this acceptable; there is no
-readiness framework here and the note should not invent one. Retry policy lives
-in the broker, nowhere else.
+Ambient-only events never initiate model input, including when tmux reports
+`unknown`. Work/claim/app ambient context may be retained and coalesced so it can
+ride along with a genuine `wake` or `steer`, but it never inflates the waiting
+message count and never types a turn by itself.
+
+**`unknown` gets a coalescing and rate-limit policy for genuine wake/steer, not
+a delay.** tmux always says `unknown` and carries no readiness promise, and no
+amount of waiting turns that into one — an initial fixed delay would only make
+the instance feel deaf without making the write safer. So the broker sends
+real wake/steer work, and bounds how often it sends. Typing while the harness is
+running may simply enqueue as a user message, which is the behaviour that makes
+this acceptable; there is no readiness framework here and the note should not
+invent one. Retry policy lives in the broker, nowhere else.
 
 A **known** `blocked` defers an ordinary wake — that is a real signal and worth
 honouring. Deferred hints are re-evaluated on each inspect poll (two seconds)
@@ -247,13 +252,16 @@ with an unbounded wait; an instance that never leaves `working` fills its hint
 store and reports the backlog and every eviction in status.
 
 **What the broker types.** One short message, in two parts: the fixed
-instruction — check pending mail and chat with `aw` from inside this instance,
-and handle what is there — and a hint summary saying how many items of what
-kind are waiting, with senders and ids where the event carried them. Metadata
-and counts only. No subjects for encrypted mail, no bodies ever, and nothing
-that requires the broker to have opened a message. The instance's own `aw`
-verifies, decrypts, presents and acknowledges; the broker's text exists to make
-it run.
+instruction and a hint summary. When mail/chat is present, the count is a count
+of real unread message hints only, and the instruction tells the instance to
+check pending mail and chat with `aw`. Non-message context such as controls,
+app events and coordination context is labelled separately and never inflates a
+"messages waiting" count. Metadata and counts only. No subjects for encrypted
+mail, no bodies ever, and nothing that requires the broker to have opened a
+message. Transport connection, disconnection and reconnection are status only:
+they are visible in logs/status, never typed as model input. The instance's own
+`aw` verifies, decrypts, presents and acknowledges; the broker's text exists to
+make it run.
 
 **No broker acknowledgement, ever.** `submitted:true` means bytes reached the
 terminal, and nothing in this design converts that into a read. The ack belongs
@@ -371,8 +379,8 @@ What the broker reads out of it:
 - **Never promise exactly-once.** Duplicate reminders are the designed
   behaviour; a missed wake is the failure.
 - Stream deaf for one identity: reported in `status.json` and retried; on
-  recovery the snapshot supplies what was missed and the synthesized
-  `channel_reconnected` produces one catch-up hint, not one per message.
+  recovery the snapshot supplies what was missed. Transport reconnect itself
+  never becomes a hint or model input.
 - Broker crash: instances keep running, wakes stop, nothing was acknowledged
   anyway; restart re-reads registrations and pending hints, and the reconnect
   snapshot re-raises anything still unread. This is the case the no-marks rule

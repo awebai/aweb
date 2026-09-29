@@ -589,7 +589,7 @@ func TestEventBusQueuesAppEventWakeAndDedupesByEventID(t *testing.T) {
 			recoveries++
 		}
 	}
-	if appEvents != 1 || recoveries != 1 {
+	if appEvents != 1 || recoveries != 0 {
 		t.Fatalf("queued app_events=%d recoveries=%d; all=%v", appEvents, recoveries, queued)
 	}
 
@@ -687,7 +687,7 @@ func TestEventBusDedupesReplayByMessageIDAcrossReconnects(t *testing.T) {
 			recoveries++
 		}
 	}
-	if chats != 1 || recoveries != 1 {
+	if chats != 1 || recoveries != 0 {
 		t.Fatalf("queued chats=%d recoveries=%d; all=%v", chats, recoveries, queued)
 	}
 

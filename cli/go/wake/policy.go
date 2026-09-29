@@ -38,7 +38,7 @@ func (a Action) String() string {
 //	| Intent  | idle/done | working | blocked | shell | unknown            | stopped/not-launched |
 //	| wake    | type now  | defer   | defer   | defer | coalesce, limited  | inactive after first confirmed live |
 //	| steer   | type now  | defer   | defer   | defer | coalesce, limited  | inactive after first confirmed live |
-//	| ambient | type now  | defer   | defer   | defer | coalesce, limited  | inactive after first confirmed live |
+//	| ambient | defer     | defer   | defer   | defer | defer              | inactive after first confirmed live |
 //
 // The shell column is the one addition to the note's table, from the OATS
 // lead's samples: startup can briefly report "shell" before the exec begins,
@@ -46,11 +46,9 @@ func (a Action) String() string {
 // harness. Deferring is the same verdict the note reaches for `blocked` — a
 // real signal that the target is not the harness — reached one step earlier.
 //
-// The three intent rows are identical as the note writes them: the annotations
-// differ ("defer, coalesce" for ambient) but coalescing is what deferral does
-// here — a deferred hint stays in the pending set — so the action is the same
-// cell. Intent is still a parameter, because it is a parameter of the note's
-// table and every one of the fifteen cells is asserted.
+// Ambient is retained only as context for a genuine wake/steer batch. It never
+// initiates model input on its own, even in idle or tmux "unknown", and it
+// never inflates the waiting-message count.
 //
 // confirmedLive is whether one live inspect (ok, present:true) has been seen
 // for this instance. Before that, everything is tolerated and nothing is
@@ -58,6 +56,14 @@ func (a Action) String() string {
 func ActionFor(intent Intent, state session.State, confirmedLive bool) Action {
 	if !confirmedLive {
 		return ActionWaitPending
+	}
+	if intent == IntentAmbient {
+		switch state {
+		case session.StateStopped:
+			return ActionInactive
+		default:
+			return ActionDefer
+		}
 	}
 	switch state {
 	case session.StateIdle:
