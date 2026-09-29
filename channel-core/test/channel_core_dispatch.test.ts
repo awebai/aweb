@@ -2806,4 +2806,123 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/session-chat-after-ambient/read", { message_ids: ["chat-after-ambient"] });
   });
 
+
+  test("restart redelivers a wake that stopped before input", async () => {
+    const storePath = join(await mkdtemp(join(tmpdir(), "aweb-terminal-restart-")), "delivered.json");
+    const mail = {
+      message_id: "mail-restart-before-input",
+      conversation_id: "conv-restart-before-input",
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: "eve",
+      subject: "hello",
+      body: "restart body",
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+    };
+    const firstAbort = new AbortController();
+    const firstClient = {
+      get: vi.fn(async () => ({ messages: [mail] })),
+      post: vi.fn(async () => undefined),
+    };
+    await consumeAgentEvents(
+      {
+        client: firstClient as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        deliveryStore: await DeliveryStore.load(storePath),
+        signal: firstAbort.signal,
+        awaitDeliveryReady: vi.fn(async () => {
+          firstAbort.abort();
+          throw new Error("session stopped before input");
+        }),
+        onAwakening: vi.fn(),
+      },
+      new Set(),
+      (async function* () { yield { type: "mail_message", message_id: "mail-restart-before-input" } satisfies AgentEvent; })(),
+    );
+    expect(firstClient.get).not.toHaveBeenCalled();
+
+    const secondClient = {
+      get: vi.fn(async () => ({ messages: [mail] })),
+      post: vi.fn(async () => undefined),
+    };
+    const onAwakening = vi.fn(async () => undefined);
+    await consumeAgentEvents(
+      {
+        client: secondClient as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        deliveryStore: await DeliveryStore.load(storePath),
+        onAwakening,
+      },
+      new Set(),
+      (async function* () { yield { type: "mail_message", message_id: "mail-restart-before-input" } satisfies AgentEvent; })(),
+    );
+    expect(onAwakening).toHaveBeenCalledTimes(1);
+    expect(secondClient.post).toHaveBeenCalledWith("/v1/messages/mail-restart-before-input/ack");
+  });
+
+  test("restart after abort during accepted input does not present a delivered item twice", async () => {
+    const storePath = join(await mkdtemp(join(tmpdir(), "aweb-terminal-accepted-")), "delivered.json");
+    const mail = {
+      message_id: "mail-abort-during-input",
+      conversation_id: "conv-abort-during-input",
+      from_agent_id: "agent-1",
+      from_alias: "alice",
+      from_address: "acme.com/alice",
+      to_alias: "eve",
+      subject: "hello",
+      body: "accepted body",
+      priority: "normal",
+      created_at: "2025-01-01T00:00:00Z",
+    };
+    const abort = new AbortController();
+    const firstClient = {
+      get: vi.fn(async () => ({ messages: [mail] })),
+      post: vi.fn(async () => undefined),
+    };
+    let inputCount = 0;
+    await consumeAgentEvents(
+      {
+        client: firstClient as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        deliveryStore: await DeliveryStore.load(storePath),
+        signal: abort.signal,
+        onAwakening: vi.fn(async () => {
+          inputCount += 1;
+          abort.abort();
+        }),
+      },
+      new Set(),
+      (async function* () { yield { type: "mail_message", message_id: "mail-abort-during-input" } satisfies AgentEvent; })(),
+    );
+    expect(inputCount).toBe(1);
+    expect(firstClient.post).toHaveBeenCalledWith("/v1/messages/mail-abort-during-input/ack");
+
+    const secondClient = {
+      get: vi.fn(async () => ({ messages: [mail] })),
+      post: vi.fn(async () => undefined),
+    };
+    const onAwakening = vi.fn(async () => undefined);
+    await consumeAgentEvents(
+      {
+        client: secondClient as never,
+        pinStore: new PinStore(),
+        trust,
+        self,
+        deliveryStore: await DeliveryStore.load(storePath),
+        onAwakening,
+      },
+      new Set(),
+      (async function* () { yield { type: "mail_message", message_id: "mail-abort-during-input" } satisfies AgentEvent; })(),
+    );
+    expect(onAwakening).not.toHaveBeenCalled();
+  });
+
 });

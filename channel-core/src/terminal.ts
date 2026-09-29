@@ -29,6 +29,7 @@ export interface TerminalReadinessGateOptions {
   rateLimitMs?: number;
   inspectDelayMs?: number;
   onInactive?: (state: TerminalReadinessState) => void;
+  isPaused?: () => boolean;
   log?: (message: string) => void;
 }
 
@@ -48,8 +49,8 @@ interface AmbientItem {
   reject: (error: Error) => void;
 }
 
-const DEFAULT_TERMINAL_COALESCE_MS = 500;
-const DEFAULT_TERMINAL_RATE_LIMIT_MS = 15_000;
+const DEFAULT_TERMINAL_COALESCE_MS = 2_000;
+const DEFAULT_TERMINAL_RATE_LIMIT_MS = 30_000;
 const DEFAULT_TERMINAL_INSPECT_DELAY_MS = 2_000;
 const DEFAULT_MAX_AMBIENT = 50;
 
@@ -158,56 +159,116 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
  * so messages read out of band while the terminal is busy are dropped by the
  * later unread-only fetch instead of being held as already-fetched content.
  */
+interface ReadinessWaiter {
+  intent: ChannelDeliveryIntent;
+  signal?: AbortSignal;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
 export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGateOptions) {
   const coalesceMs = options.coalesceMs ?? DEFAULT_TERMINAL_COALESCE_MS;
   const rateLimitMs = options.rateLimitMs ?? DEFAULT_TERMINAL_RATE_LIMIT_MS;
   const inspectDelayMs = options.inspectDelayMs ?? DEFAULT_TERMINAL_INSPECT_DELAY_MS;
   let confirmedLive = false;
-  let firstReadyAt = 0;
   let lastDeliveryAt = 0;
+  let draining = false;
+  const waiters: ReadinessWaiter[] = [];
+
+  const rejectWaiters = (error: Error) => {
+    const batch = waiters.splice(0, waiters.length);
+    for (const waiter of batch) waiter.reject(error);
+  };
+
+  const removeWaiter = (waiter: ReadinessWaiter) => {
+    const index = waiters.indexOf(waiter);
+    if (index >= 0) waiters.splice(index, 1);
+  };
+
+  const drain = async (): Promise<void> => {
+    if (draining) return;
+    draining = true;
+    try {
+      while (waiters.length > 0) {
+        throwIfAborted(options.signal);
+        if (options.isPaused?.()) {
+          options.log?.("aweb: terminal delivery is paused; delivery waits before fetch");
+          await sleep(inspectDelayMs, options.signal);
+          continue;
+        }
+
+        let inspection: TerminalInspection;
+        try {
+          inspection = await raceAbort(options.session.inspect(options.home), options.signal);
+        } catch (error) {
+          if (error instanceof TerminalAbortError) throw error;
+          const detail = error instanceof Error ? error.message : String(error);
+          options.log?.(`aweb: terminal inspect failed; delivery waits before fetch: ${detail}`);
+          await sleep(inspectDelayMs, options.signal);
+          continue;
+        }
+        throwIfAborted(options.signal);
+        const present = inspection.present ?? true;
+        if (present) confirmedLive = true;
+        const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, present);
+        if (confirmedLive && (state === "stopped" || state === "not-launched")) {
+          options.onInactive?.(state);
+          rejectWaiters(new TerminalInactiveError(state));
+          return;
+        }
+        if (!confirmedLive) {
+          options.log?.("aweb: terminal has not confirmed live yet; delivery waits before fetch");
+          await sleep(inspectDelayMs, options.signal);
+          continue;
+        }
+        const leadIntent = waiters.find((waiter) => waiter.intent !== "ambient")?.intent || "wake";
+        if (!terminalReadyForIntent(state, leadIntent)) {
+          options.log?.(`aweb: terminal not ready for ${leadIntent} delivery (state=${state}); delivery waits before fetch`);
+          await sleep(inspectDelayMs, options.signal);
+          continue;
+        }
+
+        await sleep(coalesceMs, options.signal);
+        const rateDelay = lastDeliveryAt === 0 ? 0 : rateLimitMs - (Date.now() - lastDeliveryAt);
+        if (rateDelay > 0) await sleep(rateDelay, options.signal);
+        throwIfAborted(options.signal);
+        const batch = waiters.splice(0, waiters.length);
+        lastDeliveryAt = Date.now();
+        for (const waiter of batch) waiter.resolve();
+      }
+    } catch (error) {
+      rejectWaiters(error instanceof Error ? error : new Error(String(error)));
+    } finally {
+      draining = false;
+      if (waiters.length > 0) void drain();
+    }
+  };
 
   return async (intent: ChannelDeliveryIntent, signal: AbortSignal = options.signal ?? new AbortController().signal): Promise<void> => {
     if (intent === "ambient") return;
-    while (true) {
-      throwIfAborted(options.signal);
-      throwIfAborted(signal);
-      const inspection = await raceAbort(options.session.inspect(options.home), signal);
-      throwIfAborted(options.signal);
-      throwIfAborted(signal);
-      const present = inspection.present ?? true;
-      if (present) confirmedLive = true;
-      const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, present);
-      if (confirmedLive && (state === "stopped" || state === "not-launched")) {
-        options.onInactive?.(state);
-        throw new TerminalInactiveError(state);
-      }
-      if (!confirmedLive) {
-        options.log?.("aweb: terminal has not confirmed live yet; delivery waits before fetch");
-        await sleep(inspectDelayMs, signal);
-        continue;
-      }
-      if (!terminalReadyForIntent(state, intent)) {
-        options.log?.(`aweb: terminal not ready for ${intent} delivery (state=${state}); delivery waits before fetch`);
-        await sleep(inspectDelayMs, signal);
-        continue;
-      }
-
-      const now = Date.now();
-      if (state === "unknown") {
-        if (firstReadyAt === 0) firstReadyAt = now;
-        const oldestDelay = coalesceMs - (now - firstReadyAt);
-        const rateDelay = lastDeliveryAt === 0 ? 0 : rateLimitMs - (now - lastDeliveryAt);
-        const delay = Math.max(0, oldestDelay, rateDelay);
-        if (delay > 0) {
-          await sleep(delay, signal);
-          continue;
-        }
-      } else {
-        firstReadyAt = 0;
-      }
-      lastDeliveryAt = Date.now();
-      return;
-    }
+    throwIfAborted(options.signal);
+    throwIfAborted(signal);
+    return new Promise<void>((resolve, reject) => {
+      const waiter: ReadinessWaiter = { intent, signal, resolve, reject };
+      const onAbort = () => {
+        signal.removeEventListener("abort", onAbort);
+        removeWaiter(waiter);
+        reject(abortError());
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      const originalResolve = waiter.resolve;
+      waiter.resolve = () => {
+        signal.removeEventListener("abort", onAbort);
+        originalResolve();
+      };
+      const originalReject = waiter.reject;
+      waiter.reject = (error: Error) => {
+        signal.removeEventListener("abort", onAbort);
+        originalReject(error);
+      };
+      waiters.push(waiter);
+      void drain();
+    });
   };
 }
 
@@ -247,7 +308,10 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
       return new Promise<void>((resolve, reject) => {
         const key = ambientKey(awakening);
         const previous = ambient.get(key);
-        if (previous) previous.reject(new Error(`ambient awakening superseded: ${key}`));
+        if (previous) {
+          ambient.delete(key);
+          previous.reject(new Error(`ambient awakening superseded: ${key}`));
+        }
         ambient.set(key, { key, awakening, resolve, reject });
         while (ambient.size > maxAmbient) {
           const oldest = ambient.values().next().value as AmbientItem | undefined;
@@ -263,8 +327,8 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     const text = [...ambientBatch.map((item) => item.awakening), awakening]
       .map((item) => formatAwakeningForAgent(item))
       .join("\n\n---\n\n");
-    await options.session.input(options.home, text);
     throwIfAborted(options.signal);
+    await options.session.input(options.home, text);
     for (const item of ambientBatch) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();

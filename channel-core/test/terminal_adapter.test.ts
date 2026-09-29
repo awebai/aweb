@@ -60,6 +60,60 @@ describe("terminal channel adapter", () => {
     }
   });
 
+  test("paused readiness does not inspect or deliver until unpaused", async () => {
+    vi.useFakeTimers();
+    try {
+      let paused = true;
+      const session: TerminalSession = {
+        inspect: vi.fn(async () => ({ present: true, state: "idle" })),
+        input: vi.fn(async () => {}),
+      };
+      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, isPaused: () => paused, inspectDelayMs: 5, coalesceMs: 0, rateLimitMs: 0 });
+      let resolved = false;
+      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
+      await flush();
+      await vi.advanceTimersByTimeAsync(20);
+      await flush();
+      expect(resolved).toBe(false);
+      expect(session.inspect).not.toHaveBeenCalled();
+      paused = false;
+      await vi.advanceTimersByTimeAsync(5);
+      await waiting;
+      expect(resolved).toBe(true);
+      expect(session.inspect).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("inspect errors are retried before delivery", async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      const session: TerminalSession = {
+        inspect: vi.fn(async () => {
+          attempts += 1;
+          if (attempts === 1) throw new Error("runtime endpoint unknown");
+          return { present: true, state: "idle" };
+        }),
+        input: vi.fn(async () => {}),
+      };
+      const logs: string[] = [];
+      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, inspectDelayMs: 5, coalesceMs: 0, rateLimitMs: 0, log: (message) => logs.push(message) });
+      let resolved = false;
+      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
+      await flush();
+      expect(resolved).toBe(false);
+      expect(logs[0]).toContain("terminal inspect failed");
+      await vi.advanceTimersByTimeAsync(5);
+      await waiting;
+      expect(session.inspect).toHaveBeenCalledTimes(2);
+      expect(resolved).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("readiness treats stopped after live as inactive", async () => {
     vi.useFakeTimers();
     try {
@@ -78,27 +132,38 @@ describe("terminal channel adapter", () => {
     }
   });
 
-  test("unknown readiness coalesces and rate-limits before fetch", async () => {
+  test("readiness coalesces concurrent callers and rate-limits delivery windows", async () => {
     vi.useFakeTimers();
     try {
       const session: TerminalSession = {
-        inspect: vi.fn(async () => ({ present: true, state: "unknown" })),
+        inspect: vi.fn(async () => ({ present: true, state: "idle" })),
         input: vi.fn(async () => {}),
       };
       const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, coalesceMs: 5, rateLimitMs: 20, inspectDelayMs: 1 });
-      let firstResolved = false;
-      const first = ready("wake", new AbortController().signal).then(() => { firstResolved = true; });
+      const resolved: string[] = [];
+      const firstBurst = ["a", "b", "c"].map((id) => ready("wake", new AbortController().signal).then(() => { resolved.push(id); }));
       await flush();
-      expect(firstResolved).toBe(false);
+      expect(resolved).toEqual([]);
       await vi.advanceTimersByTimeAsync(5);
-      await first;
+      await Promise.all(firstBurst);
+      expect(resolved.sort()).toEqual(["a", "b", "c"]);
 
-      let secondResolved = false;
-      const second = ready("wake", new AbortController().signal).then(() => { secondResolved = true; });
+      const fourth = ready("wake", new AbortController().signal).then(() => { resolved.push("d"); });
+      await vi.advanceTimersByTimeAsync(19);
       await flush();
-      expect(secondResolved).toBe(false);
-      await vi.advanceTimersByTimeAsync(20);
-      await second;
+      expect(resolved).not.toContain("d");
+      await vi.advanceTimersByTimeAsync(1);
+      await fourth;
+      expect(resolved).toContain("d");
+
+      const secondBurst = ["e", "f"].map((id) => ready("wake", new AbortController().signal).then(() => { resolved.push(id); }));
+      await vi.advanceTimersByTimeAsync(19);
+      await flush();
+      expect(resolved).not.toContain("e");
+      expect(resolved).not.toContain("f");
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.all(secondBurst);
+      expect(resolved).toEqual(expect.arrayContaining(["e", "f"]));
     } finally {
       vi.useRealTimers();
     }
@@ -129,6 +194,26 @@ describe("terminal channel adapter", () => {
     expect(handler.status()).toEqual({ ambientQueued: 0, ambientDropped: 1 });
   });
 
+  test("ambient updates refresh recency before overflow", async () => {
+    const inputs: string[] = [];
+    const session: TerminalSession = {
+      inspect: vi.fn(async () => ({ present: true, state: "idle" })),
+      input: vi.fn(async (_home, text) => { inputs.push(text); }),
+    };
+    const handler = createTerminalAwakeningHandler({ home: "/agent", session, maxAmbient: 2 });
+    const t1Old = handler(awakening({ kind: "work", content: "old", deliveryIntent: "ambient", meta: { type: "work", task_id: "t1" } })).catch(() => {});
+    const t2 = handler(awakening({ kind: "work", content: "two", deliveryIntent: "ambient", meta: { type: "work", task_id: "t2" } })).catch(() => {});
+    const t1New = handler(awakening({ kind: "work", content: "new", deliveryIntent: "ambient", meta: { type: "work", task_id: "t1" } })).catch(() => {});
+    const t3 = handler(awakening({ kind: "work", content: "three", deliveryIntent: "ambient", meta: { type: "work", task_id: "t3" } })).catch(() => {});
+    await flush();
+    await handler(awakening({ content: "wake body" }));
+    await Promise.all([t1Old, t2, t1New, t3]);
+    expect(inputs[0]).toContain("new");
+    expect(inputs[0]).toContain("task_id: t1");
+    expect(inputs[0]).toContain("task_id: t3");
+    expect(inputs[0]).not.toContain("task_id: t2");
+  });
+
   test("input failure rejects instead of retrying held text", async () => {
     let attempts = 0;
     const session: TerminalSession = {
@@ -142,6 +227,22 @@ describe("terminal channel adapter", () => {
     await expect(handler(awakening())).rejects.toThrow("backend refused input");
     expect(session.input).toHaveBeenCalledTimes(1);
     expect(attempts).toBe(1);
+  });
+
+  test("abort during successful input still resolves after input acceptance", async () => {
+    const abort = new AbortController();
+    let finishInput: () => void = () => {};
+    const session: TerminalSession = {
+      inspect: vi.fn(async () => ({ present: true, state: "idle" })),
+      input: vi.fn(() => new Promise<void>((resolve) => { finishInput = resolve; })),
+    };
+    const handler = createTerminalAwakeningHandler({ home: "/agent", session, signal: abort.signal });
+    const delivered = handler(awakening());
+    await flush();
+    abort.abort();
+    finishInput();
+    await expect(delivered).resolves.toBeUndefined();
+    expect(session.input).toHaveBeenCalledTimes(1);
   });
 
   test("aborting readiness while inspect is in flight prevents input", async () => {

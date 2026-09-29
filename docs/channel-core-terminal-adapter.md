@@ -3,9 +3,10 @@
 `aweb-abkk` moves terminal wake delivery onto `channel-core` instead of the Go
 hint composer. The Go daemon remains the OATS transport and process supervisor,
 but there is one delivery decision path: channel-core owns readiness gating,
-exact fetch, decrypt/trust, delivered IDs, mail ack and chat read marking. Go
-implements `TerminalSession` (`inspect`/`input` by instance home), process
-supervision and status surfaces only.
+coalescing, rate limiting, exact fetch, decrypt/trust, delivered IDs, mail ack
+and chat read marking. Go implements `TerminalSession` (`inspect`/`input` by
+instance home), registration lifecycle (including pending expiry and retire
+hooks), process supervision and status surfaces only.
 
 Endpoint C remains withdrawn: no `/v1/events/actionable` route and no Go
 read/ack logic.
@@ -34,7 +35,11 @@ read/ack logic.
 
 Claude/Pi do not pass `awaitDeliveryReady`, so their success path is unchanged.
 The retry-on-rejected-awakening path improves them too: a failed notification is
-retried by re-dispatch rather than waiting for a later reconnect/event.
+retried by re-dispatch rather than waiting for a later reconnect/event. The
+bounded retry budget is 100 ms, 250 ms and 500 ms. After it is exhausted the
+event is left for the next event or the next stream re-open snapshot (the server
+stream cycle is up to 300 seconds), preserving at-least-once delivery without
+holding already-fetched terminal content.
 
 ## Readiness before fetch
 
@@ -42,7 +47,7 @@ The terminal readiness gate normalizes backend vocabulary:
 
 | Raw backend state | Adapter state | Wake/steer |
 | --- | --- | --- |
-| `idle`, `done` | `idle` | allowed after confirmed live |
+| `idle`, `done` | `idle` | allowed after confirmed live, coalescing and rate limit |
 | unknown/empty/new words | `unknown` | allowed after confirmed live, coalescing and rate limit |
 | `working`, `busy`, `running` | `working` | defer/retry before fetch |
 | `blocked` | `blocked` | defer/retry before fetch |
@@ -51,11 +56,20 @@ The terminal readiness gate normalizes backend vocabulary:
 | `present:false` after confirmed live | `not-launched` | inactive/status, no input |
 
 Nothing is delivered before the first confirmed live inspect (`present:true`).
-For `unknown` terminals (tmux), channel-core applies the same shape as the Go
-policy: a coalescing delay plus a per-instance rate limit before fetch.
+Pause is an input to the gate (`isPaused`) supplied by the Go bridge; while
+paused, the gate sleeps and continues before fetch. Inspect errors are treated
+like transient OATS failures: they are logged/statused, then the gate sleeps and
+tries again. Every delivery window uses the Go broker defaults: 2 seconds
+coalescing, 30 seconds rate limit and a 2 second inspect/defer poll. The first
+waiting caller opens the window; all callers waiting when the coalesce/rate
+window closes pass together. The window then resets so the next burst coalesces
+again.
 
 After every await in readiness (inspect or delay), abort is checked again. Abort
-while inspect is in flight rejects readiness and no input may occur.
+while inspect is in flight rejects readiness and no input may occur. Once
+terminal `input` has accepted text, a later abort must not turn that accepted
+presentation into a rejection; channel-core may then write delivered IDs and
+mail/chat read acknowledgments.
 
 ## Queue and retry
 
@@ -70,9 +84,14 @@ while inspect is in flight rejects readiness and no input may occur.
 6. If input rejects, channel-core retries the event with bounded backoff and a
    fresh unread exact fetch. The adapter does not retry held text.
 7. Ambient events are stored in a bounded adapter queue (default cap 50, latest
-   per `task_id`/`event_id`). Overflow rejects the oldest ambient item; app
-   events therefore remain undelivered and can return on snapshot, while
-   work/claim have no durable read state.
+   per `task_id`/`event_id`; updating a key refreshes its recency). Overflow
+   rejects the oldest ambient item; app events therefore remain undelivered and
+   can return on snapshot, while work/claim have no durable read state.
+
+The terminal gate reports status data for Go to surface in `aw wake status`:
+last state, last inspect error, paused state supplied by Go, inactive callback,
+and ambient queue depth/drops from the adapter. This is status reporting, not a
+second Go-side delivery decider.
 
 Multi-message fetches are gated once, before the fetch. Items 2..N from the same
 fetch are not re-gated after item 1 is typed. Future implementations may batch
