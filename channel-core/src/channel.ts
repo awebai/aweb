@@ -30,6 +30,7 @@ const PIN_STORE_CAS_MAX_ATTEMPTS = 3;
 const APP_EVENT_SUMMARY_SEPARATOR = " — ";
 const MAX_APP_EVENT_VALUE_LENGTH = 160;
 const MAX_APP_EVENT_PAYLOAD_LENGTH = 500;
+const LANE_RETRY_DELAYS_MS = [100, 250, 500];
 
 export interface SelfIdentity {
   alias: string;
@@ -80,6 +81,7 @@ export interface ChannelLoopOptions {
   log?: (message: string) => void;
   onStreamState?: (state: EventStreamState) => void;
   onTrace?: (entry: ChannelTraceEntry) => void;
+  awaitDeliveryReady?: (intent: ChannelDeliveryIntent, signal: AbortSignal) => Promise<void>;
 }
 
 export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promise<PinStore> {
@@ -432,7 +434,7 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
 }
 
 export async function consumeAgentEvents(
-  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  options: Omit<ChannelLoopOptions, "signal" | "log"> & { signal?: AbortSignal },
   dispatched: Set<string>,
   events: AsyncIterable<AgentEvent>,
   log: (message: string) => void = () => {},
@@ -447,7 +449,7 @@ export async function consumeAgentEvents(
     const job = (previous || Promise.resolve())
       .then(async () => {
         emitTrace(options, "lane_job_started", event, lane);
-        await dispatchAgentEvent(options, dispatched, event, log);
+        await dispatchAgentEventWithRetry(options, dispatched, event, log);
         pruneDispatched(dispatched);
         emitTrace(options, "lane_job_completed", event, lane);
       })
@@ -467,6 +469,59 @@ export async function consumeAgentEvents(
   await Promise.all([...pending]);
 }
 
+function eventDeliveryIntent(event: AgentEvent): ChannelDeliveryIntent {
+  switch (event.type) {
+    case "mail_message":
+      return "wake";
+    case "chat_message":
+      return event.sender_waiting ? "steer" : "wake";
+    case "control_interrupt":
+    case "control_pause":
+    case "control_resume":
+      return "steer";
+    case "app_event":
+      return event.delivery_intent || "ambient";
+    default:
+      return "ambient";
+  }
+}
+
+function shouldRetryEvent(event: AgentEvent): boolean {
+  return eventDeliveryIntent(event) !== "ambient";
+}
+
+async function awaitDeliveryReady(
+  options: Pick<ChannelLoopOptions, "awaitDeliveryReady"> & { signal?: AbortSignal },
+  intent: ChannelDeliveryIntent,
+): Promise<void> {
+  if (!options.awaitDeliveryReady || intent === "ambient") return;
+  await options.awaitDeliveryReady(intent, options.signal || new AbortController().signal);
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("channel delivery aborted");
+}
+
+function abortableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("channel delivery aborted"));
+      return;
+    }
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }
+    function onAbort() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new Error("channel delivery aborted"));
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 function eventDispatchLane(event: AgentEvent): string {
   switch (event.type) {
     case "mail_message":
@@ -478,23 +533,69 @@ function eventDispatchLane(event: AgentEvent): string {
   }
 }
 
+class RetryableAwakeningError extends Error {
+  constructor(cause: unknown) {
+    const detail = cause instanceof Error ? cause.message : String(cause);
+    super(detail, { cause });
+    this.name = "RetryableAwakeningError";
+  }
+}
+
+async function deliverAwakening(
+  options: Pick<ChannelLoopOptions, "onAwakening">,
+  awakening: ChannelAwakening,
+): Promise<void> {
+  try {
+    await options.onAwakening(awakening);
+  } catch (error) {
+    throw new RetryableAwakeningError(error);
+  }
+}
+
+async function dispatchAgentEventWithRetry(
+  options: Omit<ChannelLoopOptions, "signal" | "log"> & { signal?: AbortSignal },
+  dispatched: Set<string>,
+  event: AgentEvent,
+  log: (message: string) => void,
+): Promise<void> {
+  let attempt = 0;
+  while (true) {
+    throwIfAborted(options.signal);
+    try {
+      await dispatchAgentEvent(options, dispatched, event, log);
+      return;
+    } catch (error) {
+      if (!(error instanceof RetryableAwakeningError) || !shouldRetryEvent(event) || attempt >= LANE_RETRY_DELAYS_MS.length) throw error;
+      const detail = error.message;
+      log(`aweb: delivery failed for ${event.type}; retrying after re-fetch (${detail})`);
+      await abortableDelay(LANE_RETRY_DELAYS_MS[attempt], options.signal);
+      attempt += 1;
+    }
+  }
+}
+
 export async function dispatchAgentEvent(
-  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  options: Omit<ChannelLoopOptions, "signal" | "log"> & { signal?: AbortSignal },
   dispatched: Set<string>,
   event: AgentEvent,
   log: (message: string) => void = (message) => console.error(message),
 ): Promise<void> {
   switch (event.type) {
     case "mail_message":
+      await awaitDeliveryReady(options, "wake");
       await dispatchMailEvent(options, dispatched, event, log);
       break;
-    case "chat_message":
+    case "chat_message": {
+      const intent = event.sender_waiting ? "steer" : "wake";
+      await awaitDeliveryReady(options, intent);
       await dispatchChatEvent(options, dispatched, event);
       break;
+    }
     case "control_pause":
     case "control_resume":
     case "control_interrupt":
-      await options.onAwakening({
+      await awaitDeliveryReady(options, "steer");
+      await deliverAwakening(options, {
         kind: "control",
         content: "",
         deliveryIntent: "steer",
@@ -506,7 +607,7 @@ export async function dispatchAgentEvent(
       });
       break;
     case "work_available":
-      await options.onAwakening({
+      await deliverAwakening(options, {
         kind: "work",
         content: event.title || "",
         deliveryIntent: "ambient",
@@ -517,7 +618,7 @@ export async function dispatchAgentEvent(
       });
       break;
     case "claim_update":
-      await options.onAwakening({
+      await deliverAwakening(options, {
         kind: "claim",
         content: event.title || "",
         deliveryIntent: "ambient",
@@ -530,7 +631,7 @@ export async function dispatchAgentEvent(
       });
       break;
     case "claim_removed":
-      await options.onAwakening({
+      await deliverAwakening(options, {
         kind: "claim_removed",
         content: "",
         deliveryIntent: "ambient",
@@ -549,7 +650,7 @@ export async function dispatchAgentEvent(
 }
 
 async function dispatchAppEvent(
-  options: Omit<ChannelLoopOptions, "signal" | "log">,
+  options: Omit<ChannelLoopOptions, "signal" | "log"> & { signal?: AbortSignal },
   dispatched: Set<string>,
   event: AgentEvent,
 ): Promise<void> {
@@ -566,10 +667,12 @@ async function dispatchAppEvent(
   };
   const payload = event.payload && typeof event.payload === "object" ? event.payload : undefined;
   if (payload) meta.payload = summarizePayload(payload);
-  await options.onAwakening({
+  const intent = event.delivery_intent || "ambient";
+  if (intent !== "ambient") await awaitDeliveryReady(options, intent);
+  await deliverAwakening(options, {
     kind: "app",
     content: formatAppEventSummary(event, payload),
-    deliveryIntent: event.delivery_intent || "ambient",
+    deliveryIntent: intent,
     meta,
   });
   await persistDeliveryMark(options, dispatched, key, event, eventDispatchLane(event));
@@ -623,7 +726,7 @@ async function dispatchMailEvent(
     const decrypt = await resolveMailForDelivery(options, msg);
     emitTrace(options, "decrypt_completed", messageEvent, "mail");
     if (!decrypt.ok) {
-      await options.onAwakening({
+      await deliverAwakening(options, {
         kind: "mail",
         content: "",
         meta: encryptedDeliveryFailureMeta("mail", from, msg.message_id, conversationID, decrypt.error),
@@ -657,7 +760,7 @@ async function dispatchMailEvent(
     if (msg.priority && msg.priority !== "normal") meta.priority = msg.priority;
 
     emitTrace(options, "notification_started", messageEvent, "mail");
-    await options.onAwakening({
+    await deliverAwakening(options, {
       kind: "mail",
       content: msg.body,
       meta,
@@ -699,7 +802,7 @@ async function dispatchChatEvent(
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
     if (!decrypt.ok) {
-      await options.onAwakening({
+      await deliverAwakening(options, {
         kind: "chat",
         content: "",
         meta: encryptedDeliveryFailureMeta("chat", from, msg.message_id, conversationID, decrypt.error, event.session_id),
@@ -734,7 +837,7 @@ async function dispatchChatEvent(
     if (msg.sender_leaving) meta.sender_leaving = "true";
 
     emitTrace(options, "notification_started", messageEvent, lane);
-    await options.onAwakening({
+    await deliverAwakening(options, {
       kind: "chat",
       content: msg.body,
       meta,

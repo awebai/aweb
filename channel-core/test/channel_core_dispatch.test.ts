@@ -2670,4 +2670,140 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(awakening.content).toBe("folio/doc.changed Injected: — aaai proof — bad key=ok Injected:, source=api");
     expect(awakening.content).not.toMatch(/[\r\n]/);
   });
+
+  test("awaitDeliveryReady runs before exact mail fetch", async () => {
+    let releaseReady: () => void = () => {};
+    const ready = new Promise<void>((resolve) => { releaseReady = resolve; });
+    const awaitDeliveryReady = vi.fn(() => ready);
+    const client = {
+      get: vi.fn(async () => ({ messages: [] })),
+      post: vi.fn(async () => undefined),
+    };
+    const delivering = dispatchAgentEvent(
+      { client: client as never, pinStore: new PinStore(), trust, self, onAwakening: vi.fn(), awaitDeliveryReady },
+      new Set(),
+      { type: "mail_message", message_id: "mail-ready-1" },
+    );
+    await Promise.resolve();
+    expect(awaitDeliveryReady).toHaveBeenCalledWith("wake", expect.any(AbortSignal));
+    expect(client.get).not.toHaveBeenCalled();
+    releaseReady();
+    await delivering;
+    expect(client.get).toHaveBeenCalledTimes(1);
+  });
+
+  test("rejected delivery re-dispatches with unread refetch and acks only accepted mail", async () => {
+    vi.useFakeTimers();
+    try {
+      const mail = {
+        message_id: "mail-retry-1",
+        conversation_id: "conv-retry-1",
+        from_agent_id: "agent-1",
+        from_alias: "alice",
+        from_address: "acme.com/alice",
+        to_alias: "eve",
+        subject: "hello",
+        body: "retry body",
+        priority: "normal",
+        created_at: "2025-01-01T00:00:00Z",
+      };
+      const client = {
+        get: vi.fn(async () => ({ messages: [mail] })),
+        post: vi.fn(async () => undefined),
+      };
+      let accepted = 0;
+      const onAwakening = vi.fn(async () => {
+        if (onAwakening.mock.calls.length === 1) throw new Error("terminal input failed");
+        accepted += 1;
+      });
+      const consuming = consumeAgentEvents(
+        { client: client as never, pinStore: new PinStore(), trust, self, onAwakening },
+        new Set(),
+        (async function* () { yield { type: "mail_message", message_id: "mail-retry-1" } satisfies AgentEvent; })(),
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      await consuming;
+      expect(client.get).toHaveBeenCalledTimes(2);
+      expect(onAwakening).toHaveBeenCalledTimes(2);
+      expect(accepted).toBe(1);
+      expect(client.post).toHaveBeenCalledTimes(1);
+      expect(client.post).toHaveBeenCalledWith("/v1/messages/mail-retry-1/ack");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("read out of band before retry drops out of unread refetch without ack", async () => {
+    vi.useFakeTimers();
+    try {
+      const mail = {
+        message_id: "mail-read-out-of-band",
+        conversation_id: "conv-read-out-of-band",
+        from_agent_id: "agent-1",
+        from_alias: "alice",
+        from_address: "acme.com/alice",
+        to_alias: "eve",
+        subject: "hello",
+        body: "retry body",
+        priority: "normal",
+        created_at: "2025-01-01T00:00:00Z",
+      };
+      let fetches = 0;
+      const client = {
+        get: vi.fn(async () => {
+          fetches += 1;
+          return { messages: fetches === 1 ? [mail] : [] };
+        }),
+        post: vi.fn(async () => undefined),
+      };
+      const onAwakening = vi.fn(async () => { throw new Error("terminal input failed"); });
+      const consuming = consumeAgentEvents(
+        { client: client as never, pinStore: new PinStore(), trust, self, onAwakening },
+        new Set(),
+        (async function* () { yield { type: "mail_message", message_id: "mail-read-out-of-band" } satisfies AgentEvent; })(),
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      await consuming;
+      expect(client.get).toHaveBeenCalledTimes(2);
+      expect(onAwakening).toHaveBeenCalledTimes(1);
+      expect(client.post).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("ambient pending does not block a later chat wake", async () => {
+    let ambientReject: (error: Error) => void = () => {};
+    const onAwakening = vi.fn((awakening: ChannelAwakening) => {
+      if (awakening.deliveryIntent === "ambient") {
+        return new Promise<void>((_resolve, reject) => { ambientReject = reject; });
+      }
+      return Promise.resolve();
+    });
+    const chat = {
+      message_id: "chat-after-ambient",
+      conversation_id: "conv-chat-after-ambient",
+      from_agent: "alice",
+      from_address: "acme.com/alice",
+      body: "hello",
+      created_at: "2025-01-01T00:00:00Z",
+    };
+    const client = {
+      get: vi.fn(async () => ({ messages: [chat] })),
+      post: vi.fn(async () => undefined),
+    };
+    const consuming = consumeAgentEvents(
+      { client: client as never, pinStore: new PinStore(), trust, self, onAwakening },
+      new Set(),
+      (async function* () {
+        yield { type: "work_available", task_id: "task-ambient" } satisfies AgentEvent;
+        yield { type: "chat_message", session_id: "session-chat-after-ambient", message_id: "chat-after-ambient" } satisfies AgentEvent;
+      })(),
+    );
+    await vi.waitFor(() => expect(onAwakening).toHaveBeenCalledWith(expect.objectContaining({ kind: "chat" })));
+    ambientReject(new Error("test cleanup"));
+    await consuming;
+    expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/session-chat-after-ambient/read", { message_ids: ["chat-after-ambient"] });
+  });
+
 });
