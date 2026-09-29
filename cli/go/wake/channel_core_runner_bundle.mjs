@@ -10225,8 +10225,11 @@ async function start(init) {
       status({ inactive: state });
     },
     log: (message) => {
-      lastError = message;
-      status({ log: message });
+      if (message.includes("terminal delivery is paused")) status({ paused: true, log: message });
+      else {
+        lastError = message;
+        status({ log: message });
+      }
     }
   });
   const handler = createTerminalAwakeningHandler({ home: init.home, session, signal: abort.signal });
@@ -10294,7 +10297,13 @@ async function main() {
           continue;
         }
       }
-      queues.get(msg.binding_id)?.push(msg.event);
+      const queue = queues.get(msg.binding_id);
+      if (!queue) {
+        lastError = `unknown binding_id ${msg.binding_id}`;
+        status({ binding_id: msg.binding_id, error: lastError });
+        continue;
+      }
+      queue.push(msg.event);
     } else if (msg.type === "pause") {
       paused = true;
       status({ paused: true });

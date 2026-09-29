@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -104,10 +105,8 @@ func TestBundledGrantMailReadOnlyUsesManualAckAndDeliveryStore(t *testing.T) {
 	child2 := runner.StartChild(ctx2, reg, channelCoreChildConfig{OatsBin: oats, AWCommand: writeFakeAW(t, root, ""), Coalesce: time.Millisecond, RateLimit: time.Millisecond, InspectDelay: time.Millisecond})
 	waitForStatus(t, child2, func(st ChannelCoreStatus) bool { return st.Running && st.LastError == "" })
 	child2.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"})
-	waitForCond(t, "second exact fetch processed", func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		return fetches >= 2
+	waitForStatus(t, child2, func(st ChannelCoreStatus) bool {
+		return st.TraceStage == "lane_job_completed" && st.TraceMessageID == "mail-1"
 	})
 	child2.Stop()
 	after, _ := os.ReadFile(inputPath)
@@ -209,6 +208,33 @@ func TestChannelCoreStatusPreservesBindingErrorsAndZeroQueueCounts(t *testing.T)
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
 		return st.AmbientQueued == 0 && st.AmbientDropped == 0 && st.BindingErrors["b1"] == "first" && st.BindingErrors["b2"] == "second"
 	})
+}
+
+func TestChannelCoreBindingErrorClearsOnlyOnCompletedTrace(t *testing.T) {
+	reader, writer := io.Pipe()
+	child := &ChannelCoreChild{done: make(chan struct{})}
+	done := make(chan struct{})
+	go func() {
+		child.readStatus(reader, make(chan struct{}))
+		close(done)
+	}()
+	writeLine := func(line string) {
+		t.Helper()
+		if _, err := writer.Write([]byte(line + "\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLine(`{"type":"status","binding_id":"b1","error":"boom"}`)
+	waitForCond(t, "binding error recorded", func() bool { return child.Status().BindingErrors["b1"] == "boom" })
+	writeLine(`{"type":"status","binding_id":"b1","trace_stage":"lane_job_started","trace_message_id":"m1"}`)
+	time.Sleep(50 * time.Millisecond)
+	if got := child.Status().BindingErrors["b1"]; got != "boom" {
+		t.Fatalf("lane_job_started cleared error: %q", got)
+	}
+	writeLine(`{"type":"status","binding_id":"b1","trace_stage":"lane_job_completed","trace_message_id":"m1"}`)
+	waitForCond(t, "binding error cleared", func() bool { _, ok := child.Status().BindingErrors["b1"]; return !ok })
+	_ = writer.Close()
+	<-done
 }
 
 func TestBundledEncryptedSecondaryRootUsesBindingIdentityForDecrypt(t *testing.T) {

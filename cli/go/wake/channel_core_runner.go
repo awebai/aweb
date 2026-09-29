@@ -33,6 +33,8 @@ type ChannelCoreStatus struct {
 	AmbientDropped int               `json:"ambient_dropped"`
 	Evicted        int               `json:"evicted_events"`
 	BindingErrors  map[string]string `json:"binding_errors,omitempty"`
+	Generation     int               `json:"generation,omitempty"`
+	Paused         bool              `json:"paused,omitempty"`
 	TraceStage     string            `json:"trace_stage,omitempty"`
 	TraceBindingID string            `json:"trace_binding_id,omitempty"`
 	TraceMessageID string            `json:"trace_message_id,omitempty"`
@@ -64,6 +66,7 @@ type channelCoreChildConfig struct {
 	AWCommand     string
 	AdmissionSize int
 	Paused        bool
+	Generation    int
 	Log           func(string, ...any)
 	OnInactive    func(string)
 }
@@ -104,6 +107,7 @@ type childStatusLine struct {
 	Stopped        bool   `json:"stopped,omitempty"`
 	Fatal          bool   `json:"fatal,omitempty"`
 	Delivered      bool   `json:"delivered,omitempty"`
+	Paused         *bool  `json:"paused,omitempty"`
 	BindingID      string `json:"binding_id,omitempty"`
 	Error          string `json:"error,omitempty"`
 	TraceStage     string `json:"trace_stage,omitempty"`
@@ -122,6 +126,7 @@ func (r *ChannelCoreRunner) StartChild(ctx context.Context, reg Registration, cf
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	c := &ChannelCoreChild{runner: r, reg: reg.clone(), cfg: cfg, paused: cfg.Paused, in: make(chan childLine, cfg.AdmissionSize), ctl: make(chan childLine, 16), cancel: cancel, done: make(chan struct{})}
+	c.st.Generation = cfg.Generation
 	go c.run(ctx)
 	return c
 }
@@ -351,12 +356,15 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 		if line.AmbientDropped != nil {
 			c.st.AmbientDropped = *line.AmbientDropped
 		}
+		if line.Paused != nil {
+			c.st.Paused = *line.Paused
+		}
 		if line.TraceStage != "" {
 			c.st.TraceStage = line.TraceStage
 			c.st.TraceBindingID = line.BindingID
 			c.st.TraceMessageID = line.TraceMessageID
 			c.st.TraceSessionID = line.TraceSessionID
-			if line.BindingID != "" && (line.TraceStage == "lane_job_completed" || line.TraceStage == "lane_job_started") && c.st.BindingErrors != nil {
+			if line.BindingID != "" && line.TraceStage == "lane_job_completed" && c.st.BindingErrors != nil {
 				delete(c.st.BindingErrors, line.BindingID)
 			}
 		}

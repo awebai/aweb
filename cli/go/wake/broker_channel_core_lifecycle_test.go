@@ -45,7 +45,7 @@ func TestBrokerRestoresPauseBeforeChildDelivery(t *testing.T) {
 	defer cancel()
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
 	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"})
-	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return strings.Contains(inst.ChannelCore.LastError, "paused") })
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Paused && inst.ChannelCore.LastError == "" })
 	assertFileNotContains(t, inputPath, "paused mail")
 	if err := broker.SetPaused(home, false); err != nil {
 		t.Fatal(err)
@@ -87,13 +87,94 @@ func TestBrokerBindingChangeRestartsChild(t *testing.T) {
 	if err := broker.Register(Registration{Home: home, IdentityHome: newHome, Delivery: DeliverySession}); err != nil {
 		t.Fatal(err)
 	}
-	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.IdentityHome == newHome && inst.ChannelCore.Running })
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.IdentityHome == newHome && inst.ChannelCore.Running && inst.ChannelCore.Generation >= 1
+	})
 	broker.dispatch(oldHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "old", ConversationID: "old-conv"})
 	waitForCond(t, "removed binding diagnostic", func() bool { return strings.Contains(logs.all(), "reason=no_registered_binding") })
 	assertFileNotContains(t, inputPath, "old mail")
 	broker.dispatch(newHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "new", ConversationID: "new-conv"})
 	waitForFileContains(t, inputPath, "new mail")
 	assertFileNotContains(t, inputPath, "old mail")
+}
+
+func TestBrokerPauseDuringChildCreationReachesNewChild(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	writeFakeOATS(t, root, inputPath)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	server := mailServer(t, "creation pause mail")
+	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: (&logCapture{}).log})
+	defer cancel()
+	if err := broker.Register(Registration{Home: home, IdentityHome: grantHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.SetPaused(home, true); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "creation-pause", ConversationID: "conv"})
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Paused && inst.ChannelCore.LastError == "" })
+	assertFileNotContains(t, inputPath, "creation pause mail")
+	if err := broker.SetPaused(home, false); err != nil {
+		t.Fatal(err)
+	}
+	waitForFileContains(t, inputPath, "creation pause mail")
+}
+
+func TestBrokerIgnoresStaleInactiveGeneration(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputPath := filepath.Join(root, "input.txt")
+	writeFakeOATS(t, root, inputPath)
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	oldServer := mailServer(t, "old inactive mail")
+	newServer := mailServer(t, "new inactive mail")
+	oldHome := writeGrantHome(t, filepath.Join(root, "old"), oldServer.URL, []string{"events.read", "mail.read", "mail.send"})
+	newHome := writeGrantHome(t, filepath.Join(root, "new"), newServer.URL, []string{"events.read", "mail.read", "mail.send"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	logs := &logCapture{}
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: logs.log})
+	defer cancel()
+	if err := broker.Register(Registration{Home: home, IdentityHome: oldHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	if err := broker.Register(Registration{Home: home, IdentityHome: newHome, Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running && inst.ChannelCore.Generation >= 1 })
+	runner := broker.instances[HomeKey(home)]
+	runner.inactive <- inactiveSignal{generation: 0, state: "stopped"}
+	broker.dispatch(newHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "new-inactive", ConversationID: "conv"})
+	waitForFileContains(t, inputPath, "new inactive mail")
+	if inst := instanceByHome(t, broker, home); inst.Phase == PhaseInactive {
+		t.Fatalf("stale inactive generation made new registration inactive: %#v", inst)
+	}
+	if !strings.Contains(logs.all(), "inactive ignored") {
+		t.Fatalf("missing stale inactive diagnostic: %s", logs.all())
+	}
 }
 
 func TestBrokerInactiveStopsChildAndDropsLaterEvents(t *testing.T) {

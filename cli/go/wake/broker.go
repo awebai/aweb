@@ -462,8 +462,9 @@ func (b *Broker) pruneStreamsLocked() {
 }
 
 type dispatchTarget struct {
-	runner  *instanceRunner
-	binding ReceiveIdentity
+	runner     *instanceRunner
+	binding    ReceiveIdentity
+	generation int
 }
 
 // dispatch fans one identity's event out to every instance registered under
@@ -472,8 +473,8 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 	b.mu.Lock()
 	targets := make([]dispatchTarget, 0, len(b.instances))
 	for _, runner := range b.instances {
-		if binding, ok := runner.bindingForIdentityHome(identityHome); ok {
-			targets = append(targets, dispatchTarget{runner: runner, binding: binding})
+		if binding, generation, ok := runner.bindingForIdentityHome(identityHome); ok {
+			targets = append(targets, dispatchTarget{runner: runner, binding: binding, generation: generation})
 		}
 	}
 	b.mu.Unlock()
@@ -506,7 +507,7 @@ func (b *Broker) dispatch(identityHome string, ev awid.AgentEvent) {
 		if !target.binding.allowsEventClass(class) {
 			continue
 		}
-		target.runner.offerEvent(ev, target.binding)
+		target.runner.offerEvent(ev, target.binding, target.generation)
 	}
 }
 

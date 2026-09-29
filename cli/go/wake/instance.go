@@ -21,9 +21,11 @@ type instanceRunner struct {
 	mu           sync.Mutex
 	state        InstanceState
 	admitted     map[string]bool
+	generation   int
 	events       chan eventOffer
-	restart      chan struct{}
-	inactive     chan string
+	updates      chan Registration
+	inactive     chan inactiveSignal
+	pauses       chan pauseRequest
 	child        *ChannelCoreChild
 	conflictHome string
 	cancel       context.CancelFunc
@@ -37,8 +39,20 @@ type instanceRunner struct {
 }
 
 type eventOffer struct {
-	event   awid.AgentEvent
-	binding ReceiveIdentity
+	event      awid.AgentEvent
+	binding    ReceiveIdentity
+	generation int
+}
+
+type inactiveSignal struct {
+	generation int
+	state      string
+}
+
+type pauseRequest struct {
+	paused bool
+	source string
+	done   chan struct{}
 }
 
 func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instanceRunner {
@@ -48,8 +62,9 @@ func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instan
 		state:    state,
 		admitted: map[string]bool{},
 		events:   make(chan eventOffer, 256),
-		restart:  make(chan struct{}, 1),
-		inactive: make(chan string, 1),
+		updates:  make(chan Registration, 1),
+		inactive: make(chan inactiveSignal, 1),
+		pauses:   make(chan pauseRequest, 16),
 		done:     make(chan struct{}),
 	}
 }
@@ -64,7 +79,29 @@ func (r *instanceRunner) start(ctx context.Context) {
 func (r *instanceRunner) updateRegistration(reg Registration) {
 	r.mu.Lock()
 	changed := !sameReceiveBindings(r.reg.ReceiveBindings(), reg.ReceiveBindings())
+	started := r.cancel != nil
+	if !started || !changed {
+		r.publishRegistrationLocked(reg, changed)
+		r.mu.Unlock()
+		return
+	}
+	r.mu.Unlock()
+	select {
+	case r.updates <- reg:
+	default:
+		select {
+		case <-r.updates:
+		default:
+		}
+		r.updates <- reg
+	}
+}
+
+func (r *instanceRunner) publishRegistrationLocked(reg Registration, bumpGeneration bool) {
 	r.reg = reg
+	if bumpGeneration {
+		r.generation++
+	}
 	if r.admitted == nil {
 		r.admitted = map[string]bool{}
 	}
@@ -76,10 +113,6 @@ func (r *instanceRunner) updateRegistration(reg Registration) {
 		if _, ok := needed[identityHome]; !ok {
 			delete(r.admitted, identityHome)
 		}
-	}
-	r.mu.Unlock()
-	if changed {
-		r.requestRestart()
 	}
 }
 
@@ -96,13 +129,6 @@ func sameReceiveBindings(left, right []ReceiveIdentity) bool {
 		rightKeys = append(rightKeys, bindingID(binding))
 	}
 	return reflect.DeepEqual(leftKeys, rightKeys)
-}
-
-func (r *instanceRunner) requestRestart() {
-	select {
-	case r.restart <- struct{}{}:
-	default:
-	}
 }
 
 func (r *instanceRunner) setConflictHome(home string) {
@@ -125,15 +151,17 @@ func (r *instanceRunner) receiveBindings() []ReceiveIdentity {
 	return r.registrationSnapshot().ReceiveBindings()
 }
 
-func (r *instanceRunner) bindingForIdentityHome(identityHome string) (ReceiveIdentity, bool) {
+func (r *instanceRunner) bindingForIdentityHome(identityHome string) (ReceiveIdentity, int, bool) {
 	r.mu.Lock()
 	if r.conflictHome != "" {
 		r.mu.Unlock()
-		return ReceiveIdentity{}, false
+		return ReceiveIdentity{}, 0, false
 	}
 	reg := r.reg.clone()
+	generation := r.generation
 	r.mu.Unlock()
-	return reg.BindingForIdentityHome(identityHome)
+	binding, ok := reg.BindingForIdentityHome(identityHome)
+	return binding, generation, ok
 }
 
 // stop is safe to call more than once, and safe to call on a runner that was
@@ -160,6 +188,7 @@ func (r *instanceRunner) run(ctx context.Context) {
 		inactive := r.state.Inactive
 		paused := r.state.Paused
 		reg := r.reg.clone()
+		generation := r.generation
 		r.mu.Unlock()
 		if inactive {
 			return
@@ -167,10 +196,10 @@ func (r *instanceRunner) run(ctx context.Context) {
 		awCommand, _ := os.Executable()
 		newChild := r.broker.cfg.ChannelCore.StartChild(ctx, reg, channelCoreChildConfig{
 			Coalesce: r.broker.cfg.Coalesce, RateLimit: r.broker.cfg.RateLimit, InspectDelay: r.broker.cfg.PollInterval,
-			OatsBin: session.DefaultOatsBin, AWCommand: awCommand, AdmissionSize: 256, Paused: paused, Log: r.broker.cfg.Log,
+			OatsBin: session.DefaultOatsBin, AWCommand: awCommand, AdmissionSize: 256, Paused: paused, Generation: generation, Log: r.broker.cfg.Log,
 			OnInactive: func(state string) {
 				select {
-				case r.inactive <- state:
+				case r.inactive <- inactiveSignal{generation: generation, state: state}:
 				default:
 				}
 			},
@@ -199,25 +228,43 @@ func (r *instanceRunner) run(ctx context.Context) {
 		case <-ctx.Done():
 			r.persist()
 			return
-		case state := <-r.inactive:
+		case signal := <-r.inactive:
 			r.mu.Lock()
+			currentGeneration := r.generation
+			if signal.generation != currentGeneration {
+				r.mu.Unlock()
+				r.broker.cfg.Log("inactive ignored home=%s generation=%d current_generation=%d state=%s", r.home(), signal.generation, currentGeneration, signal.state)
+				continue
+			}
 			r.state.Inactive = true
-			r.state.LastState = state
+			r.state.LastState = signal.state
 			r.mu.Unlock()
 			r.persist()
 			stopChild()
-		case <-r.restart:
+		case req := <-r.pauses:
+			r.applyPause(req.paused, req.source, child)
+			close(req.done)
+		case reg := <-r.updates:
 			stopChild()
+			r.mu.Lock()
+			r.publishRegistrationLocked(reg, true)
+			r.mu.Unlock()
 			startChild()
 		case offer := <-r.events:
 			r.mu.Lock()
 			inactive := r.state.Inactive
-			if inactive {
+			currentGeneration := r.generation
+			_, bindingAllowed := r.reg.BindingForIdentityHome(offer.binding.IdentityHome)
+			if inactive || offer.generation != currentGeneration || !bindingAllowed {
 				r.state.Evicted++
 			}
 			r.mu.Unlock()
 			if inactive {
 				r.broker.cfg.Log("event dropped home=%s reason=inactive message_id=%s session_id=%s", r.home(), offer.event.MessageID, offer.event.SessionID)
+				continue
+			}
+			if offer.generation != currentGeneration || !bindingAllowed {
+				r.broker.cfg.Log("event dropped home=%s reason=stale_binding generation=%d current_generation=%d message_id=%s session_id=%s", r.home(), offer.generation, currentGeneration, offer.event.MessageID, offer.event.SessionID)
 				continue
 			}
 			if child != nil {
@@ -228,10 +275,12 @@ func (r *instanceRunner) run(ctx context.Context) {
 }
 
 // offerEvent queues an event for the channel-core child. It never blocks the stream goroutine.
-func (r *instanceRunner) offerEvent(ev awid.AgentEvent, binding ReceiveIdentity) {
+func (r *instanceRunner) offerEvent(ev awid.AgentEvent, binding ReceiveIdentity, generation int) {
 	r.mu.Lock()
 	inactive := r.state.Inactive
-	if inactive {
+	currentGeneration := r.generation
+	_, bindingAllowed := r.reg.BindingForIdentityHome(binding.IdentityHome)
+	if inactive || generation != currentGeneration || !bindingAllowed {
 		r.state.Evicted++
 	}
 	r.mu.Unlock()
@@ -239,8 +288,12 @@ func (r *instanceRunner) offerEvent(ev awid.AgentEvent, binding ReceiveIdentity)
 		r.broker.cfg.Log("event dropped home=%s reason=inactive message_id=%s session_id=%s", r.home(), ev.MessageID, ev.SessionID)
 		return
 	}
+	if generation != currentGeneration || !bindingAllowed {
+		r.broker.cfg.Log("event dropped home=%s reason=stale_binding generation=%d current_generation=%d message_id=%s session_id=%s", r.home(), generation, currentGeneration, ev.MessageID, ev.SessionID)
+		return
+	}
 	select {
-	case r.events <- eventOffer{event: ev, binding: binding}:
+	case r.events <- eventOffer{event: ev, binding: binding, generation: generation}:
 	default:
 		r.mu.Lock()
 		r.state.Evicted++
@@ -250,17 +303,31 @@ func (r *instanceRunner) offerEvent(ev awid.AgentEvent, binding ReceiveIdentity)
 		default:
 		}
 		select {
-		case r.events <- eventOffer{event: ev, binding: binding}:
+		case r.events <- eventOffer{event: ev, binding: binding, generation: generation}:
 		default:
 		}
 	}
 }
 
 func (r *instanceRunner) setPaused(paused bool, source string) {
+	done := make(chan struct{})
+	req := pauseRequest{paused: paused, source: source, done: done}
+	select {
+	case r.pauses <- req:
+		<-done
+		return
+	default:
+	}
+	r.applyPause(paused, source, nil)
+}
+
+func (r *instanceRunner) applyPause(paused bool, source string, child *ChannelCoreChild) {
 	r.mu.Lock()
 	changed := r.state.Paused != paused
 	r.state.Paused = paused
-	child := r.child
+	if child == nil {
+		child = r.child
+	}
 	r.mu.Unlock()
 	if child != nil {
 		child.Pause(paused)
