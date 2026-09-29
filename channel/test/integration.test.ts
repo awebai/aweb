@@ -135,6 +135,14 @@ class NotificationQueue {
     this.waiters = remaining;
   }
 
+  count(): number {
+    return this.items.length;
+  }
+
+  snapshot(): Array<{ content: string; meta: Record<string, string> }> {
+    return [...this.items];
+  }
+
   async waitFor(
     predicate: (item: { content: string; meta: Record<string, string> }) => boolean,
     timeoutMs: number = 20_000,
@@ -243,27 +251,64 @@ describe.sequential("channel integration", () => {
     }
   }, 45_000);
 
-  test("reports a live stream outage once and reconnects with durable catch-up guidance", async () => {
+  test("logs live stream outage and reconnects without transport-only notifications", async () => {
     if (!server.managed) return;
     await startChannelIfNeeded();
+    await delay(750);
 
-    await composeAwebService(server, "stop");
-    const disconnected = await notifications.waitFor(
-      (item) => item.meta.type === "channel_status" && item.meta.stream_state === "disconnected",
-      20_000,
-    );
-    expect(disconnected.content).toMatch(/^aweb: event stream disconnected \([^)]+\) — retrying in \d+s$/);
-    expect(disconnected.content).not.toContain("TypeError");
+    const setupMailBody = `pre-outage channel readiness ${Date.now()}`;
+    const setupMail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", setupMailBody);
+    const setupNotification = await notifications.waitFor(
+      (item) => item.meta.type === "mail" && item.meta.message_id === setupMail.message_id,
+    ).catch((error) => {
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\nchannel stderr:\n${channelStderr}`);
+    });
+    expect(setupNotification.content, JSON.stringify(setupNotification)).toBe(setupMailBody);
 
-    await composeAwebService(server, "start");
+    const notificationsBeforeOutage = notifications.count();
+    const stderrBeforeOutage = channelStderr.length;
+    try {
+      await composeAwebService(server, "stop");
+      await waitUntil(
+        async () => channelStderr.slice(stderrBeforeOutage).includes("aweb: event stream disconnected"),
+        90_000,
+        () => `event stream disconnect was not logged\n${channelStderr.slice(stderrBeforeOutage)}`,
+      );
+      expect(channelStderr.slice(stderrBeforeOutage)).not.toContain("TypeError");
+    } finally {
+      await composeAwebService(server, "start");
+    }
     await waitForHealthyServer(server.awebURL);
-    const reconnected = await notifications.waitFor(
-      (item) => item.meta.type === "channel_status" && item.meta.stream_state === "reconnected",
+    await waitUntil(
+      async () => channelStderr.slice(stderrBeforeOutage).includes("aweb: event stream reconnected; check aw mail inbox and aw chat pending for anything missed"),
       30_000,
+      () => `event stream reconnect was not logged\n${channelStderr.slice(stderrBeforeOutage)}`,
     );
-    expect(reconnected.content).toBe("aweb: event stream reconnected; check aw mail inbox and aw chat pending for anything missed");
     expect(channelStderr).not.toContain("TypeError: fetch failed");
-  }, 120_000);
+
+    const mailBody = `post-reconnect channel mail ${Date.now()}`;
+    const mail = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", mailBody);
+    const mailNotification = await notifications.waitFor(
+      (item) => item.meta.type === "mail" && item.meta.message_id === mail.message_id,
+    );
+    expect(mailNotification.content, JSON.stringify(mailNotification)).toBe(mailBody);
+    expect(mailNotification.meta.from).toBe(alice.address);
+    expect(mailNotification.meta.verified).toBe("true");
+
+    const chatBody = `post-reconnect channel chat ${Date.now()}`;
+    await sendChatViaAW(homeDir, aliceDir, server.awidURL, "bob", chatBody);
+    const chatNotification = await notifications.waitFor(
+      (item) => item.meta.type === "chat" && item.content === chatBody,
+    );
+    expect(chatNotification.meta.from).toBe(alice.address);
+    expect(chatNotification.meta.verified).toBe("true");
+
+    const notificationsDuringCycle = notifications.snapshot().slice(notificationsBeforeOutage);
+    expect(notificationsDuringCycle.map((item) => item.meta.type).sort()).toEqual(["chat", "mail"]);
+    expect(notificationsDuringCycle.some((item) => item.meta.type === "channel_status"
+      || item.meta.stream_state === "disconnected"
+      || item.meta.stream_state === "reconnected")).toBe(false);
+  }, 240_000);
 
   test("bridges live aw mail and chat from certificate workspaces into Claude channel notifications", async () => {
     await startChannelIfNeeded();
@@ -481,6 +526,7 @@ describe.sequential("channel integration", () => {
       env: {
         ...stringEnv(process.env),
         HOME: homeDir,
+        AWEB_DELIVERY: "channel",
         AW_BIN: awBinary,
         AWID_REGISTRY_URL: server.awidURL,
         AWID_SKIP_DNS_VERIFY: "1",
