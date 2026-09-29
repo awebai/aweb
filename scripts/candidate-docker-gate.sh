@@ -270,12 +270,12 @@ socket_gid="$(docker run --rm \
   --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
   -v /var/run/docker.sock:/var/run/docker.sock \
   "$IMAGE" stat -c '%g' /var/run/docker.sock)"
-read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port < <(
+read -r a2a_aweb_port a2a_awid_port a2a_redis_port a2a_pg_port a2a_gateway_port fed_awid_port fed_alpha_port fed_beta_port < <(
   python3 - <<'PY'
 import socket
 sockets=[]
 try:
-    for _ in range(5):
+    for _ in range(8):
         sock=socket.socket()
         sock.bind(("127.0.0.1", 0))
         sockets.append(sock)
@@ -329,6 +329,9 @@ docker run --rm --init \
   -e AWEB_A2A_E2E_REDIS="$a2a_redis_port" \
   -e AWEB_A2A_E2E_PG="$a2a_pg_port" \
   -e A2A_GW_E2E_PORT="$a2a_gateway_port" \
+  -e AWID_FED_E2E_PORT="$fed_awid_port" \
+  -e AWEB_ALPHA_E2E_PORT="$fed_alpha_port" \
+  -e AWEB_BETA_E2E_PORT="$fed_beta_port" \
   -e AWEB_SKEW_PROJECT_TOKEN="${suite_projects[0]}" \
   -e AWEB_E2E_PROJECT="${suite_projects[1]}" \
   -e AWEB_FED_AUTH_PROJECT="${suite_projects[2]}" \
