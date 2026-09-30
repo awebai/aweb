@@ -50,6 +50,7 @@ const (
 // delivery state: it dedupes accepted terminal presentations and is not a proof
 // of completed agent work.
 var wakeReadFile = os.ReadFile
+var wakeRename = os.Rename
 
 type Store struct {
 	dir string
@@ -708,7 +709,7 @@ func writeJSONAtomic(path string, value any) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return wakeRename(tmpName, path)
 }
 
 func readJSON(path string, into any) (bool, error) {

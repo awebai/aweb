@@ -19,6 +19,7 @@ type instanceRunner struct {
 	broker *Broker
 	reg    Registration
 
+	persistMu    sync.Mutex
 	mu           sync.Mutex
 	state        InstanceState
 	admitted     map[string]bool
@@ -511,6 +512,9 @@ func (r *instanceRunner) allStreamsAdmitted() bool {
 }
 
 func (r *instanceRunner) persist() {
+	// Serialize before taking the snapshot, so an old write cannot land last.
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	r.mu.Lock()
 	state := r.state
 	r.mu.Unlock()
