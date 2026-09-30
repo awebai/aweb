@@ -49,6 +49,8 @@ const (
 // message content here. Channel-core's per-binding DeliveryStore is separate
 // delivery state: it dedupes accepted terminal presentations and is not a proof
 // of completed agent work.
+var wakeReadFile = os.ReadFile
+
 type Store struct {
 	dir string
 }
@@ -311,7 +313,7 @@ func effectiveTeamID(identityHome, teamID string) (string, error) {
 	if teamID != "" {
 		return teamID, nil
 	}
-	if data, err := os.ReadFile(filepath.Join(identityHome, "grant.yaml")); err == nil {
+	if data, err := wakeReadFile(filepath.Join(identityHome, "grant.yaml")); err == nil {
 		var grant grantStateYAML
 		if err := yaml.Unmarshal(data, &grant); err != nil {
 			return "", err
@@ -320,7 +322,7 @@ func effectiveTeamID(identityHome, teamID string) (string, error) {
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	data, err := os.ReadFile(filepath.Join(identityHome, "teams.yaml"))
+	data, err := wakeReadFile(filepath.Join(identityHome, "teams.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
@@ -580,11 +582,17 @@ func (s *Store) ListRegistrations() ([]Registration, error) {
 		}
 		var r Registration
 		ok, err := readJSON(filepath.Join(s.dir, "registry.d", entry.Name()), &r)
-		if err != nil || !ok {
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
 			continue
 		}
 		if strings.TrimSpace(r.Home) == "" {
-			continue
+			return nil, fmt.Errorf("%s: registration home is empty", filepath.Join(s.dir, "registry.d", entry.Name()))
+		}
+		if _, err := CanonicalHome(r.Home); err != nil {
+			return nil, fmt.Errorf("%s: %w", filepath.Join(s.dir, "registry.d", entry.Name()), err)
 		}
 		if normalized, normalizeErr := r.normalized(); normalizeErr == nil {
 			r = normalized
@@ -697,7 +705,7 @@ func writeJSONAtomic(path string, value any) error {
 }
 
 func readJSON(path string, into any) (bool, error) {
-	data, err := os.ReadFile(path)
+	data, err := wakeReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil

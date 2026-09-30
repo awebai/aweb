@@ -208,6 +208,12 @@ func (r *instanceRunner) pendingReceiveBindings() []ReceiveIdentity {
 	return r.pendingReg.ReceiveBindings()
 }
 
+func (r *instanceRunner) hasPendingRegistration() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.pendingReg != nil
+}
+
 func (r *instanceRunner) bindingForStreamKey(key string) (ReceiveIdentity, int, bool) {
 	r.mu.Lock()
 	if r.conflictHome != "" {
@@ -261,6 +267,9 @@ func (r *instanceRunner) run(ctx context.Context) {
 		newChild := r.broker.cfg.ChannelCore.StartChild(ctx, reg, channelCoreChildConfig{
 			Coalesce: r.broker.cfg.Coalesce, RateLimit: r.broker.cfg.RateLimit, InspectDelay: r.broker.cfg.PollInterval,
 			OatsBin: session.DefaultOatsBin, AWCommand: awCommand, AdmissionSize: 256, Paused: paused, Generation: generation, Log: r.broker.cfg.Log,
+			OnLiveness: func(at time.Time, state, inspectErr string) {
+				r.recordChildLiveness(generation, at, state, inspectErr)
+			},
 			OnInactive: func(state string) {
 				select {
 				case r.inactive <- inactiveSignal{generation: generation, state: state}:
@@ -405,6 +414,46 @@ func (r *instanceRunner) setPaused(paused bool, source string) {
 		case <-r.done:
 		}
 	case <-r.done:
+	}
+}
+
+func (r *instanceRunner) recordRegistrationError(err error) {
+	if err == nil {
+		return
+	}
+	r.mu.Lock()
+	r.state.LastError = err.Error()
+	r.mu.Unlock()
+	r.persist()
+}
+
+func (r *instanceRunner) recordChildLiveness(generation int, at time.Time, state, inspectErr string) {
+	r.mu.Lock()
+	if generation != r.generation {
+		r.mu.Unlock()
+		return
+	}
+	changed := false
+	if state != "" || inspectErr != "" {
+		r.state.LastInspectAt = at
+		changed = true
+	}
+	if state != "" {
+		r.state.LastState = state
+		if state != "not-launched" && r.state.FirstPresentAt.IsZero() {
+			r.state.FirstPresentAt = at
+		}
+		if inspectErr == "" && r.state.LastError != "" {
+			r.state.LastError = ""
+		}
+	}
+	if inspectErr != "" {
+		r.state.LastError = inspectErr
+		changed = true
+	}
+	r.mu.Unlock()
+	if changed {
+		r.persist()
 	}
 }
 

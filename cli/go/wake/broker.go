@@ -254,14 +254,19 @@ func (b *Broker) reconcileLocked() {
 			continue
 		}
 		reg.Home = canonical
+		key := HomeKey(canonical)
 		if err := reg.Validate(); err != nil {
-			// A file written by the socket fallback gets the same exclusivity
-			// check the command applies; the daemon never trusts the file
-			// because a command wrote it.
-			b.cfg.Log("registration refused home=%s err=%v", canonical, err)
+			// A read/validation failure for an existing durable registration must
+			// not make the reconcile pass forget a running home. Keep the prior
+			// runner/state and retry on the next pass; only an explicitly absent
+			// registration file removes a registration.
+			seen[key] = struct{}{}
+			if runner, ok := b.instanceRunner(canonical); ok {
+				runner.recordRegistrationError(err)
+			}
+			b.cfg.Log("registration refused home=%s err=%v (retained for retry)", canonical, err)
 			continue
 		}
-		key := HomeKey(canonical)
 		seen[key] = struct{}{}
 		conflictHome := ""
 		for _, binding := range reg.ReceiveBindings() {
@@ -562,7 +567,9 @@ func (b *Broker) Register(reg Registration) error {
 	}
 	b.reconcileLocked()
 	if hadExistingRunner || hadExistingRegistration {
-		b.reactivateRunner(reg.Home)
+		if runner, ok := b.instanceRunner(reg.Home); ok && !runner.hasPendingRegistration() {
+			runner.reactivateRegistration()
+		}
 	}
 	return nil
 }
@@ -606,12 +613,6 @@ func (b *Broker) instanceRunner(home string) (*instanceRunner, bool) {
 	runner := b.instances[HomeKey(canonical)]
 	b.mu.Unlock()
 	return runner, runner != nil
-}
-
-func (b *Broker) reactivateRunner(home string) {
-	if runner, ok := b.instanceRunner(home); ok {
-		runner.reactivateRegistration()
-	}
 }
 
 // RegisterInStore applies the daemon-down registration fallback semantics:

@@ -9,8 +9,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -173,6 +175,102 @@ func TestChannelCoreRestartReportsExitAndClearsPerRunStatus(t *testing.T) {
 	if st.TraceStage != "" || st.TraceMessageID != "" || st.ReadinessWaiting != "" || st.ReadinessError != "" || st.AmbientQueued != 0 || st.AmbientDropped != 0 {
 		t.Fatalf("stale per-run status survived restart: %#v", st)
 	}
+}
+
+func TestChannelCoreDrainsFinalInactiveStatusBeforeClosingPipes(t *testing.T) {
+	root := t.TempDir()
+	writeFakeNode(t, root, "#!/bin/sh\nprintf '{\"type\":\"status\",\"inactive\":\"stopped\"}\\n'\nexit 0\n")
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	inactive := make(chan string, 1)
+	child := NewChannelCoreRunner(store).StartChild(context.Background(), Registration{Home: filepath.Join(root, "terminal")}, channelCoreChildConfig{
+		RestartBackoffMin: time.Hour,
+		RestartBackoffMax: time.Hour,
+		OnInactive: func(state string) {
+			inactive <- state
+		},
+	})
+	defer child.Stop()
+	select {
+	case got := <-inactive:
+		if got != "stopped" {
+			t.Fatalf("inactive=%q want stopped", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for final inactive status; status=%#v", child.Status())
+	}
+}
+
+func TestOpenChildPipesClosesPartialAllocationOnFailure(t *testing.T) {
+	baseline, ok := openFDCount(t)
+	if !ok {
+		t.Skip("fd count unavailable on this platform")
+	}
+	origPipe := wakePipe
+	calls := 0
+	wakePipe = func() (*os.File, *os.File, error) {
+		calls++
+		if calls == 2 {
+			return nil, nil, os.ErrPermission
+		}
+		return origPipe()
+	}
+	defer func() { wakePipe = origPipe }()
+	if _, err := openChildPipes(); err == nil {
+		t.Fatal("openChildPipes succeeded; want injected failure")
+	}
+	count, _ := openFDCount(t)
+	if count > baseline+1 {
+		t.Fatalf("partial pipe failure retained descriptors: baseline=%d after=%d", baseline, count)
+	}
+}
+
+func TestChannelCoreCrashLoopBackoffReportsNextRetry(t *testing.T) {
+	root := t.TempDir()
+	writeFakeNode(t, root, "#!/bin/sh\nprintf 'boom\\n' >&2\nexit 42\n")
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	child := NewChannelCoreRunner(store).StartChild(ctx, Registration{Home: filepath.Join(root, "terminal")}, channelCoreChildConfig{
+		RestartBackoffMin: 60 * time.Second,
+		RestartBackoffMax: 60 * time.Second,
+	})
+	defer child.Stop()
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
+		return st.RestartCount == 1 && st.NextRetryAt.After(time.Now().Add(55*time.Second)) && strings.Contains(st.LastExit, "boom")
+	})
+}
+
+func TestChannelCoreCrashLoopDoesNotRetainFDs(t *testing.T) {
+	baseline, ok := openFDCount(t)
+	if !ok {
+		t.Skip("fd count unavailable on this platform")
+	}
+	root := t.TempDir()
+	writeFakeNode(t, root, "#!/bin/sh\nprintf '{\"type\":\"status\",\"ready\":true}\\n'\nexit 42\n")
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root)
+	child := NewChannelCoreRunner(store).StartChild(context.Background(), Registration{Home: filepath.Join(root, "terminal")}, channelCoreChildConfig{
+		RestartBackoffMin: time.Nanosecond,
+		RestartBackoffMax: time.Nanosecond,
+	})
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.RestartCount >= 50 })
+	child.Stop()
+	assertNoZombieChildren(t)
+	waitForCond(t, "fd count returns to baseline", func() bool {
+		count, ok := openFDCount(t)
+		return ok && count <= baseline+2
+	})
 }
 
 func TestBundledGrantChatReadMarksReadWithGrantAuth(t *testing.T) {
@@ -397,6 +495,33 @@ func writeFakeAW(t *testing.T, root, logPath string) string {
 
 func shellQuoteForTest(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func assertNoZombieChildren(t *testing.T) {
+	t.Helper()
+	var status syscall.WaitStatus
+	pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
+	if pid > 0 {
+		t.Fatalf("found unreaped child process pid=%d status=%v", pid, status)
+	}
+	if err != nil && err != syscall.ECHILD {
+		t.Fatalf("checking child process state: %v", err)
+	}
+}
+
+func openFDCount(t *testing.T) (int, bool) {
+	t.Helper()
+	candidates := []string{"/proc/self/fd"}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "freebsd" {
+		candidates = append(candidates, "/dev/fd")
+	}
+	for _, dir := range candidates {
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			return len(entries), true
+		}
+	}
+	return 0, false
 }
 
 func waitForStatus(t *testing.T, child *ChannelCoreChild, cond func(ChannelCoreStatus) bool) {

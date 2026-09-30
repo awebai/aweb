@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 //go:embed channel_core_runner_bundle.mjs
 var channelCoreRunnerFS embed.FS
+var wakePipe = os.Pipe
 
 type ChannelCoreStatus struct {
 	NodePath         string            `json:"node_path,omitempty"`
@@ -41,6 +43,7 @@ type ChannelCoreStatus struct {
 	ReadinessWaiting string            `json:"readiness_waiting,omitempty"`
 	RestartCount     int               `json:"restart_count,omitempty"`
 	LastExit         string            `json:"last_exit,omitempty"`
+	NextRetryAt      time.Time         `json:"next_retry_at,omitempty"`
 	TraceStage       string            `json:"trace_stage,omitempty"`
 	TraceBindingID   string            `json:"trace_binding_id,omitempty"`
 	TraceMessageID   string            `json:"trace_message_id,omitempty"`
@@ -49,6 +52,63 @@ type ChannelCoreStatus struct {
 }
 
 type ChannelCoreRunner struct{ store *Store }
+
+type childPipes struct {
+	stdinWriter  *os.File
+	stdinReader  *os.File
+	stdoutReader *os.File
+	stdoutWriter *os.File
+	stderrReader *os.File
+	stderrWriter *os.File
+}
+
+func openChildPipes() (_ childPipes, err error) {
+	var p childPipes
+	defer func() {
+		if err != nil {
+			p.closeAll()
+		}
+	}()
+	if p.stdinReader, p.stdinWriter, err = wakePipe(); err != nil {
+		return p, err
+	}
+	if p.stdoutReader, p.stdoutWriter, err = wakePipe(); err != nil {
+		return p, err
+	}
+	if p.stderrReader, p.stderrWriter, err = wakePipe(); err != nil {
+		return p, err
+	}
+	return p, nil
+}
+
+func (p childPipes) closeChildEnds() {
+	if p.stdinReader != nil {
+		_ = p.stdinReader.Close()
+	}
+	if p.stdoutWriter != nil {
+		_ = p.stdoutWriter.Close()
+	}
+	if p.stderrWriter != nil {
+		_ = p.stderrWriter.Close()
+	}
+}
+
+func (p childPipes) closeParentEnds() {
+	if p.stdinWriter != nil {
+		_ = p.stdinWriter.Close()
+	}
+	if p.stdoutReader != nil {
+		_ = p.stdoutReader.Close()
+	}
+	if p.stderrReader != nil {
+		_ = p.stderrReader.Close()
+	}
+}
+
+func (p childPipes) closeAll() {
+	p.closeChildEnds()
+	p.closeParentEnds()
+}
 
 type ChannelCoreChild struct {
 	runner *ChannelCoreRunner
@@ -59,6 +119,7 @@ type ChannelCoreChild struct {
 	st         ChannelCoreStatus
 	paused     bool
 	lastStderr string
+	readyAt    time.Time
 	in         chan childLine
 	ctl        chan childLine
 	cancel     context.CancelFunc
@@ -66,16 +127,20 @@ type ChannelCoreChild struct {
 }
 
 type channelCoreChildConfig struct {
-	Coalesce      time.Duration
-	RateLimit     time.Duration
-	InspectDelay  time.Duration
-	OatsBin       string
-	AWCommand     string
-	AdmissionSize int
-	Paused        bool
-	Generation    int
-	Log           func(string, ...any)
-	OnInactive    func(string)
+	Coalesce          time.Duration
+	RateLimit         time.Duration
+	InspectDelay      time.Duration
+	OatsBin           string
+	AWCommand         string
+	AdmissionSize     int
+	Paused            bool
+	Generation        int
+	Log               func(string, ...any)
+	OnInactive        func(string)
+	OnLiveness        func(time.Time, string, string)
+	RestartBackoffMin time.Duration
+	RestartBackoffMax time.Duration
+	RestartReadyReset time.Duration
 }
 
 type childBinding struct {
@@ -126,6 +191,12 @@ type childStatusLine struct {
 	TraceSessionID   string  `json:"trace_session_id,omitempty"`
 	Log              string  `json:"log,omitempty"`
 }
+
+const (
+	defaultChildBackoffMin = 100 * time.Millisecond
+	defaultChildBackoffMax = 60 * time.Second
+	defaultChildReadyReset = 60 * time.Second
+)
 
 func NewChannelCoreRunner(store *Store) *ChannelCoreRunner { return &ChannelCoreRunner{store: store} }
 
@@ -214,26 +285,51 @@ func (c *ChannelCoreChild) Status() ChannelCoreStatus {
 
 func (c *ChannelCoreChild) run(ctx context.Context) {
 	defer close(c.done)
-	backoff := 100 * time.Millisecond
+	minBackoff := c.cfg.RestartBackoffMin
+	if minBackoff <= 0 {
+		minBackoff = defaultChildBackoffMin
+	}
+	maxBackoff := c.cfg.RestartBackoffMax
+	if maxBackoff <= 0 {
+		maxBackoff = defaultChildBackoffMax
+	}
+	if maxBackoff < minBackoff {
+		maxBackoff = minBackoff
+	}
+	readyReset := c.cfg.RestartReadyReset
+	if readyReset <= 0 {
+		readyReset = defaultChildReadyReset
+	}
+	backoff := minBackoff
 	for ctx.Err() == nil {
 		err := c.runOnce(ctx)
 		if ctx.Err() != nil {
 			return
 		}
+		readyFor := c.readyDuration()
 		c.recordExit(err)
 		c.setError(err)
 		if c.cfg.Log != nil {
 			c.cfg.Log("channel-core child exited home=%s err=%v", c.reg.Home, err)
 		}
-		t := time.NewTimer(backoff)
+		if readyFor >= readyReset {
+			backoff = minBackoff
+		}
+		delay := jitteredBackoff(backoff)
+		c.setNextRetry(delay)
+		t := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			t.Stop()
 			return
 		case <-t.C:
 		}
-		if backoff < 2*time.Second {
+		c.clearNextRetry()
+		if backoff < maxBackoff {
 			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
 		}
 	}
 }
@@ -250,32 +346,41 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 		return err
 	}
 	cmd := exec.CommandContext(ctx, node, bundle)
-	stdin, err := cmd.StdinPipe()
+	pipes, err := openChildPipes()
 	if err != nil {
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
+	cmd.Stdin = pipes.stdinReader
+	cmd.Stdout = pipes.stdoutWriter
+	cmd.Stderr = pipes.stderrWriter
 	if err := cmd.Start(); err != nil {
+		pipes.closeAll()
 		c.setNode(node, bundle, err.Error(), false)
 		return err
 	}
+	pipes.closeChildEnds()
 	c.setNode(node, bundle, "", false)
 	doneRead := make(chan struct{})
-	go c.readStatus(stdout, doneRead)
-	go c.readStderr(stderr)
+	go c.readStatus(pipes.stdoutReader, doneRead)
+	doneStderr := make(chan struct{})
+	go func() {
+		defer close(doneStderr)
+		c.readStderr(pipes.stderrReader)
+	}()
 	waitCh := make(chan error, 1)
 	go func() { waitCh <- cmd.Wait() }()
-	enc := json.NewEncoder(stdin)
+	finish := func(err error) error {
+		waitForReaderEOF(doneRead, 2*time.Second)
+		waitForReaderEOF(doneStderr, 2*time.Second)
+		pipes.closeParentEnds()
+		c.setRunning(false)
+		return err
+	}
+	enc := json.NewEncoder(pipes.stdinWriter)
 	if err := enc.Encode(c.initLine()); err != nil {
 		_ = cmd.Process.Kill()
-		return err
+		<-waitCh
+		return finish(err)
 	}
 	for {
 		select {
@@ -283,9 +388,7 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 			if err := enc.Encode(line); err != nil {
 				_ = cmd.Process.Kill()
 				<-waitCh
-				<-doneRead
-				c.setRunning(false)
-				return err
+				return finish(err)
 			}
 			continue
 		default:
@@ -293,33 +396,24 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			_ = enc.Encode(childLine{Type: "shutdown"})
-			_ = stdin.Close()
 			<-waitCh
-			<-doneRead
-			c.setRunning(false)
-			return ctx.Err()
+			return finish(ctx.Err())
 		case err := <-waitCh:
-			<-doneRead
-			c.setRunning(false)
 			if err == nil {
 				err = errors.New("channel-core child exited")
 			}
-			return err
+			return finish(err)
 		case line := <-c.ctl:
 			if err := enc.Encode(line); err != nil {
 				_ = cmd.Process.Kill()
 				<-waitCh
-				<-doneRead
-				c.setRunning(false)
-				return err
+				return finish(err)
 			}
 		case line := <-c.in:
 			if err := enc.Encode(line); err != nil {
 				_ = cmd.Process.Kill()
 				<-waitCh
-				<-doneRead
-				c.setRunning(false)
-				return err
+				return finish(err)
 			}
 		}
 	}
@@ -349,6 +443,9 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 		if err := json.Unmarshal(s.Bytes(), &line); err != nil {
 			continue
 		}
+		now := time.Now().UTC()
+		var livenessState string
+		var livenessError string
 		c.mu.Lock()
 		if line.LastError != "" {
 			c.st.LastError = line.LastError
@@ -360,7 +457,11 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 			}
 		}
 		if line.Ready {
+			if !c.st.Running || c.readyAt.IsZero() {
+				c.readyAt = time.Now().UTC()
+			}
 			c.st.Running = true
+			c.st.NextRetryAt = time.Time{}
 		}
 		if line.AmbientQueued != nil {
 			c.st.AmbientQueued = *line.AmbientQueued
@@ -373,9 +474,11 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 		}
 		if line.ReadinessState != "" {
 			c.st.ReadinessState = line.ReadinessState
+			livenessState = line.ReadinessState
 		}
 		if line.ReadinessError != nil {
 			c.st.ReadinessError = *line.ReadinessError
+			livenessError = *line.ReadinessError
 		}
 		if line.ReadinessPaused != nil {
 			c.st.ReadinessPaused = *line.ReadinessPaused
@@ -399,9 +502,25 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 			c.st.BindingErrors[line.BindingID] = line.Error
 		}
 		c.mu.Unlock()
+		if c.cfg.OnLiveness != nil && (livenessState != "" || livenessError != "") {
+			c.cfg.OnLiveness(now, livenessState, livenessError)
+		}
 		if line.Inactive != "" && c.cfg.OnInactive != nil {
 			c.cfg.OnInactive(line.Inactive)
 		}
+	}
+}
+
+func waitForReaderEOF(done <-chan struct{}, timeout time.Duration) {
+	if timeout <= 0 {
+		<-done
+		return
+	}
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	select {
+	case <-done:
+	case <-t.C:
 	}
 }
 
@@ -425,6 +544,7 @@ func (c *ChannelCoreChild) setNode(node, bundle, err string, running bool) {
 	c.st.LastError = err
 	c.st.LastRunAt = time.Now().UTC()
 	c.st.Running = running
+	c.st.NextRetryAt = time.Time{}
 	if err == "" {
 		c.resetPerRunLocked()
 	}
@@ -442,7 +562,30 @@ func (c *ChannelCoreChild) resetPerRunLocked() {
 	c.st.TraceBindingID = ""
 	c.st.TraceMessageID = ""
 	c.st.TraceSessionID = ""
+	c.readyAt = time.Time{}
 	c.lastStderr = ""
+}
+
+func jitteredBackoff(base time.Duration) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	// Add up to 20% jitter. This avoids synchronized fleet retries without
+	// shortening the configured recovery bound.
+	maxJitter := int64(base / 5)
+	if maxJitter <= 0 {
+		return base
+	}
+	return base + time.Duration(rand.Int63n(maxJitter+1))
+}
+
+func (c *ChannelCoreChild) readyDuration() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.readyAt.IsZero() {
+		return 0
+	}
+	return time.Since(c.readyAt)
 }
 
 func (c *ChannelCoreChild) recordExit(err error) {
@@ -457,6 +600,16 @@ func (c *ChannelCoreChild) recordExit(err error) {
 		text += "; stderr: " + c.lastStderr
 	}
 	c.st.LastExit = text
+}
+func (c *ChannelCoreChild) setNextRetry(delay time.Duration) {
+	c.mu.Lock()
+	c.st.NextRetryAt = time.Now().Add(delay).UTC()
+	c.mu.Unlock()
+}
+func (c *ChannelCoreChild) clearNextRetry() {
+	c.mu.Lock()
+	c.st.NextRetryAt = time.Time{}
+	c.mu.Unlock()
 }
 func (c *ChannelCoreChild) setRunning(running bool) {
 	c.mu.Lock()

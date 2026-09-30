@@ -116,6 +116,12 @@
 
 ### CLI compatibility
 
+- The channel-core wake broker now owns child subprocess pipes explicitly,
+  closes partially allocated descriptors on every error path, backs off
+  crash-looping children with jitter up to a 60-second cap, and records
+  child-reported liveness into the legacy wake state so downgrade rollback does
+  not expire live registrations as never-present. Transient resource/read
+  failures such as EMFILE/ENFILE no longer remove durable wake registrations.
 - `aw wake deregister` now stops the retired wake runner before removing its
   registration/state, so runner shutdown cannot recreate the deleted instance
   state. Explicit same-home registration reactivates an inactive wake home and

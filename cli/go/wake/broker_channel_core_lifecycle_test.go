@@ -45,6 +45,48 @@ func TestInstanceSetPausedBeforeStartAndAfterStopReturns(t *testing.T) {
 	}
 }
 
+func TestBrokerDerivesLiveStateFromChannelCoreReadinessForDowngrade(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFakeNode(t, root, "#!/bin/sh\nprintf '{\"type\":\"status\",\"ready\":true,\"readiness_state\":\"idle\"}\\n'\nwhile IFS= read -r line; do :; done\n")
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	store, err := NewStore(filepath.Join(root, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := mailServer(t, "live-state")
+	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read"})
+	home := filepath.Join(root, "terminal")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registeredAt := time.Now().UTC().Add(-31 * time.Minute)
+	reg := Registration{Home: home, IdentityHome: grantHome, Delivery: DeliverySession, RegisteredAt: registeredAt}
+	if err := store.SaveRegistration(reg); err != nil {
+		t.Fatal(err)
+	}
+	broker, cancel := liveBroker(t, Config{Store: store, Session: session.NewFake(session.Inspection{}), ChannelCore: NewChannelCoreRunner(store), Log: (&logCapture{}).log})
+	defer cancel()
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.Phase == PhaseActive && !inst.LastInspectAt.IsZero() && inst.LastState == "idle"
+	})
+	var state InstanceState
+	waitForCond(t, "persisted child liveness", func() bool {
+		var err error
+		state, err = store.LoadInstance(home)
+		return err == nil && !state.FirstPresentAt.IsZero() && !state.LastInspectAt.IsZero() && state.LastState == "idle"
+	})
+	if state.FirstPresentAt.Sub(registeredAt) <= 0 {
+		t.Fatalf("first_present_at=%s should be newer than registered_at=%s", state.FirstPresentAt, registeredAt)
+	}
+	wouldExpireUnder13614 := state.FirstPresentAt.IsZero() && time.Since(registeredAt) > DefaultPendingExpiry
+	if wouldExpireUnder13614 {
+		t.Fatal("new state would be expired by 1.36.14 pending-expiry rule")
+	}
+}
+
 func TestBrokerRestoresPauseBeforeChildDelivery(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
