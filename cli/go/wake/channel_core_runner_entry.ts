@@ -8,6 +8,7 @@ import {
   createRegistryResolver,
   createTerminalAwakeningHandler,
   createTerminalDeliveryReadinessGate,
+  normalizeTerminalReadiness,
   DeliveryStore,
   loadPinStore,
   SenderTrustManager,
@@ -186,6 +187,17 @@ async function start(init: InitLine): Promise<void> {
       lastError = message;
       status({ binding_id: binding.binding_id, error: message });
     }));
+  }
+  // Quiet homes need one live observation too, so older brokers can retain
+  // their first_present_at after a downgrade. Delivery remains event-driven.
+  try {
+    const inspection = await session.inspect(init.home);
+    status({ readiness_state: normalizeTerminalReadiness(inspection.state, inspection.present ?? true), readiness_error: "" });
+  } catch (error) {
+    if (!abort.signal.aborted) {
+      lastError = error instanceof Error ? error.message : String(error);
+      status({ readiness_error: lastError });
+    }
   }
   status({ ready: true });
 }

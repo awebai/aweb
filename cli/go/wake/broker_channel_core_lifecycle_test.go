@@ -388,7 +388,7 @@ func TestBrokerDeregisterThenSameHomeRegisterStartsFreshAndDelivers(t *testing.T
 		t.Fatal(err)
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
-		return inst.ChannelCore.Running && !inst.Paused && inst.Phase == PhasePending
+		return inst.ChannelCore.Running && !inst.Paused && inst.Phase == PhaseActive
 	})
 	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "reactivated", ConversationID: "conv"})
 	waitForFileContains(t, inputPath, "reactivated mail")
@@ -426,7 +426,7 @@ func TestBrokerExplicitRegisterReactivatesInactiveHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
-		return inst.ChannelCore.Running && inst.Phase == PhasePending && inst.LastState == "" && inst.LastError == ""
+		return inst.ChannelCore.Running && inst.Phase == PhaseActive && inst.LastState == "idle" && inst.LastError == ""
 	})
 	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "explicit-reactivated", ConversationID: "conv"})
 	waitForFileContains(t, inputPath, "explicit reactivate mail")
@@ -462,6 +462,8 @@ func TestBrokerExplicitRegisterFencesStaleInactiveCallback(t *testing.T) {
 	runner.mu.Lock()
 	oldGeneration := runner.generation
 	runner.mu.Unlock()
+	runner.inactive <- inactiveSignal{generation: oldGeneration, state: "stopped"}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
 	if err := broker.Register(reg); err != nil {
 		t.Fatal(err)
 	}

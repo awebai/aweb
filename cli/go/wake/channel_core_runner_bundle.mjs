@@ -10352,6 +10352,15 @@ async function start(init) {
       status({ binding_id: binding.binding_id, error: message });
     }));
   }
+  try {
+    const inspection = await session.inspect(init.home);
+    status({ readiness_state: normalizeTerminalReadiness(inspection.state, inspection.present ?? true), readiness_error: "" });
+  } catch (error) {
+    if (!abort.signal.aborted) {
+      lastError = error instanceof Error ? error.message : String(error);
+      status({ readiness_error: lastError });
+    }
+  }
   status({ ready: true });
 }
 async function main() {

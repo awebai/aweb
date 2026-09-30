@@ -553,17 +553,29 @@ func (b *Broker) Register(reg Registration) error {
 	}
 	_, hadExistingRunner := b.instanceRunner(canonical)
 	hadExistingRegistration := false
+	bindingsChanged := false
 	if existing, ok, _ := b.cfg.Store.LoadRegistration(canonical); ok {
 		// Re-registration keeps the original clock so the pending expiry is
 		// not restarted by a retrying hook.
 		reg.RegisteredAt = existing.RegisteredAt
 		hadExistingRegistration = true
+		bindingsChanged = !sameReceiveBindings(existing.ReceiveBindings(), reg.ReceiveBindings())
 	}
 	if err := b.cfg.Store.SaveRegistration(reg); err != nil {
 		return err
 	}
-	if err := b.cfg.Store.ResetInstanceLifecycle(reg.Home); err != nil {
-		return err
+	// Live runners own their state writes; resetting the file concurrently can
+	// overwrite pause/liveness. Identical active registrations preserve lifecycle.
+	if !hadExistingRunner {
+		state, err := b.cfg.Store.LoadInstance(reg.Home)
+		if err != nil {
+			return err
+		}
+		if state.Inactive || bindingsChanged {
+			if err := b.cfg.Store.ResetInstanceLifecycle(reg.Home); err != nil {
+				return err
+			}
+		}
 	}
 	b.reconcileLocked()
 	if hadExistingRunner || hadExistingRegistration {
