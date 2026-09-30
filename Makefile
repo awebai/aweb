@@ -109,6 +109,7 @@ test: check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-so
 
 test-shipping:
 	python3 scripts/test_shipping.py
+	python3 scripts/test_candidate_cleanup.py
 
 # Editable AWID metadata is repeated in both committed Python locks. Check both
 # without repair, then prove a missing dependent-lock dependency is rejected.

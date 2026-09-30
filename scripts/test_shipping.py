@@ -164,6 +164,7 @@ class SurfaceContractTest(unittest.TestCase):
 
     def test_candidate_gate_has_bounded_host_daemon_controls(self):
         gate = (ROOT / "scripts/candidate-docker-gate.sh").read_text(encoding="utf-8")
+        cleanup = (ROOT / "scripts/candidate-cleanup.sh").read_text(encoding="utf-8")
         wrapper = (ROOT / "candidate-gate/bin/docker").read_text(encoding="utf-8")
 
         # Operator defaults requested for shared-machine runs.
@@ -185,7 +186,7 @@ class SurfaceContractTest(unittest.TestCase):
         ):
             self.assertIn(needle, gate)
 
-        # The initial tool image is built by the bounded persistent BuildKit, and the
+        # The initial tool image is built by the bounded run-owned BuildKit, and the
         # same builder is exported to nested release-image builds.
         self.assertIn('docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids"', gate)
         self.assertIn('docker buildx build --builder "$builder_name" --load --pull', gate)
@@ -210,7 +211,7 @@ class SurfaceContractTest(unittest.TestCase):
         # signal-triggered cleanup, without sweeping unrelated Docker resources.
         self.assertIn("trap 'cleanup 130' INT", gate)
         self.assertIn("trap 'cleanup 143' TERM", gate)
-        self.assertIn('docker ps -aq --filter "label=aweb.candidate-gate=$resource_label"', gate)
+        self.assertIn('filters=("aweb.candidate-gate=$resource_label")', cleanup)
         self.assertIn('memory_swap=%s', gate)
         self.assertIn('resource-limits.tsv', gate)
 

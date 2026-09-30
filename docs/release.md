@@ -36,6 +36,27 @@ SHA.
 
 `main` may move while the gate runs. The tested SHA and its local tags do not.
 
+Each gate owns its builder, BuildKit cache, service data, and workspace volume.
+The checkout and exact Git input snapshots are copied through the Docker API;
+dependency caches stay in Docker storage. Only the Docker socket, run logs, and
+small sibling-container fixtures are bind-mounted from the host. No host
+checkout or dependency-cache tree is mounted. The wrapper records nested
+builders and Compose projects before creation, and cleanup runs on success,
+failure, SIGINT, and SIGTERM. It removes only run-owned resources, verifies
+absence, and removes the temporary root and buildx configuration. It never
+prunes or restarts shared Docker. The suite's existing 10GB prune applies only
+to its own builder during the run; that builder is removed at the end.
+
+Evidence stays in `/tmp/aweb-candidate-gate-<SHA>/`: `owned-resources.tsv`, raw
+host snapshots, `host-before.json`, `host-after.json`, and
+`host-recovery.json`. On macOS, cleanup passes only if both `kern.num_files`
+and Docker VM total `lsof` rows return to at most their baseline plus 5,000.
+Total rows exclude the header; numeric-FD rows are reported separately and do
+not determine acceptance. Missing samples or a changed VM PID fail recovery.
+Other platforms report these macOS-specific measurements as not applicable.
+A cleanup or recovery failure makes the gate fail even when the suite passes;
+an earlier suite failure retains its original exit status.
+
 ## 2. Publish the tested tags
 
 Push the tags explicitly, one command at a time:

@@ -108,6 +108,21 @@ class DockerBoundaryTests(unittest.TestCase):
             self.image, "stat", "-c", "%g", "/var/run/docker.sock",
         ).stdout.strip()
 
+    def test_runner_checkout_is_docker_owned_and_host_binds_are_narrow(self) -> None:
+        runner = os.environ.get("CANDIDATE_RUNNER_NAME")
+        if not runner:
+            self.skipTest("requires the outer candidate runner")
+        inspection = json.loads(run("docker", "inspect", runner).stdout)[0]
+        mounts = inspection["Mounts"]
+        workspace = str(Path(os.environ["CANDIDATE_CHECKOUT_ROOT"]).parent)
+        volumes = [m for m in mounts if m["Type"] == "volume" and m["Destination"] == workspace]
+        self.assertEqual(len(volumes), 1, mounts)
+        volume = json.loads(run("docker", "volume", "inspect", volumes[0]["Name"]).stdout)[0]
+        self.assertEqual(volume["Labels"]["aweb.candidate-gate"], os.environ["AWEB_CANDIDATE_RESOURCE_LABEL"])
+        self.assertEqual({m["Destination"] for m in mounts if m["Type"] == "bind"}, {
+            "/var/run/docker.sock", os.environ["AWEB_DOCKER_BIND_ROOT"], os.environ["CANDIDATE_LOG_DIR"],
+        })
+
     def test_go_module_cache_is_fresh_per_candidate_run(self) -> None:
         source = (
             Path(__file__).resolve().parents[2] / "scripts/candidate-docker-gate.sh"
@@ -116,7 +131,9 @@ class DockerBoundaryTests(unittest.TestCase):
         self.assertIn('mkdir -p "$go_mod_cache"', source)
         self.assertIn('-e GOMODCACHE="$go_mod_cache"', source)
         self.assertIn("-e GOFLAGS=-modcacherw", source)
-        self.assertIn('-v "$go_mod_cache:$go_mod_cache"', source)
+        self.assertIn('-v "$workspace_volume:$work"', source)
+        self.assertNotIn('-v "$go_mod_cache:$go_mod_cache"', source)
+        self.assertNotIn('-v "$checkout:$checkout"', source)
         self.assertNotIn("$CACHE_ROOT/go-mod", source)
         self.assertNotIn("GOMODCACHE=/tmp/go-mod", source)
 

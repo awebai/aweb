@@ -18,7 +18,8 @@ sibling_memory="${AWEB_CANDIDATE_SIBLING_MEMORY:-4g}"
 sibling_pids="${AWEB_CANDIDATE_SIBLING_PIDS:-1024}"
 
 compose_with_limits() {
-  local -a prefix rest services compose_prefix
+  local -a prefix rest services compose_prefix build_services
+  build_services=()
   local has_file=0 project_directory="${PWD}"
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -112,6 +113,14 @@ compose_with_limits() {
     fi
   fi
 
+  if [[ -n "${CANDIDATE_RESOURCE_MANIFEST:-}" ]]; then
+    local project config_json
+    config_json="$("$real" compose "${compose_prefix[@]}" config --format json)"
+    project="$(printf '%s' "$config_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')"
+    mapfile -t build_services < <(printf '%s' "$config_json" | python3 -c 'import json,sys; print("\n".join(k for k,v in json.load(sys.stdin).get("services", {}).items() if "build" in v))')
+    [[ -n "$project" ]] || { printf 'candidate compose project is unknown\n' >&2; exit 2; }
+    printf 'compose-project\t%s\n' "$project" >> "$CANDIDATE_RESOURCE_MANIFEST"
+  fi
   mapfile -t services < <("$real" compose "${compose_prefix[@]}" config --services 2>/dev/null || true)
   if [[ "${#services[@]}" -eq 0 ]]; then
     exec "$real" compose "${prefix[@]}" "${rest[@]}"
@@ -125,6 +134,9 @@ compose_with_limits() {
       printf '  %s:\n' "$service"
       printf '    labels:\n'
       printf '      aweb.candidate-gate: %s\n' "$label"
+      if [[ " ${build_services[*]} " == *" $service "* ]]; then
+        printf '    build:\n      labels:\n        aweb.candidate-gate: %s\n' "$label"
+      fi
       printf '    cpus: "%s"\n' "$sibling_cpus"
       printf '    mem_limit: "%s"\n' "$sibling_memory"
       printf '    pids_limit: %s\n' "$sibling_pids"
@@ -134,22 +146,53 @@ compose_with_limits() {
 }
 
 case "$cmd" in
-  run)
+  run|create)
     if [[ -n "$label" ]]; then
-      exec "$real" run \
+      exec "$real" "$cmd" \
         --label "aweb.candidate-gate=$label" \
         --cpus "$sibling_cpus" \
         --memory "$sibling_memory" \
         --pids-limit "$sibling_pids" \
         "$@"
     fi
-    exec "$real" run "$@"
+    exec "$real" "$cmd" "$@"
     ;;
   build)
     if [[ -n "${BUILDX_BUILDER:-}" ]]; then
-      exec "$real" buildx build --builder "$BUILDX_BUILDER" --load "$@"
+      exec "$real" buildx build --builder "$BUILDX_BUILDER" --load --label "aweb.candidate-gate=$label" "$@"
     fi
     exec "$real" build "$@"
+    ;;
+  volume|network)
+    if [[ -n "$label" && "${1:-}" == create ]]; then
+      shift
+      exec "$real" "$cmd" create --label "aweb.candidate-gate=$label" "$@"
+    fi
+    exec "$real" "$cmd" "$@"
+    ;;
+  buildx)
+    if [[ -n "${CANDIDATE_RESOURCE_MANIFEST:-}" && "${1:-}" == create ]]; then
+      # Record before create so partial bootstrap is cleaned after interruption.
+      name=""
+      previous=""
+      for arg in "$@"; do
+        [[ "$previous" != --name ]] || name="$arg"
+        case "$arg" in --name=*) name="${arg#--name=}" ;; esac
+        previous="$arg"
+      done
+      [[ -n "$name" ]] || { printf 'candidate builders require an explicit name\n' >&2; exit 2; }
+      if "$real" container inspect "buildx_buildkit_${name}0" >/dev/null 2>&1 \
+        || "$real" volume inspect "buildx_buildkit_${name}0_state" >/dev/null 2>&1; then
+        printf 'candidate builder already exists: %s\n' "$name" >&2
+        exit 2
+      fi
+      printf 'builder\t%s\n' "$name" >> "$CANDIDATE_RESOURCE_MANIFEST"
+    fi
+    if [[ -n "$label" && "${1:-}" == build ]]; then
+      shift
+      exec "$real" buildx build --label "aweb.candidate-gate=$label" "$@"
+    fi
+    exec "$real" buildx "$@"
     ;;
   compose)
     compose_with_limits "$@"

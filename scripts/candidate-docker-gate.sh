@@ -22,15 +22,6 @@ canonical_git_input() {
 LIBRARY_E2E_LIBRARY_CONTEXT="$(canonical_git_input library "$LIBRARY_E2E_LIBRARY_CONTEXT")"
 LIBRARY_E2E_BLUEPRINT_SRC="$(canonical_git_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC")"
 LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
-IMAGE="aweb-candidate-gate:${SOURCE_SHA:0:12}"
-
-# Persistent caches, shared across gate runs. The uv lock hash is recorded in
-# inputs.tsv, GOCACHE is content-addressed, and npm retains its existing cache.
-# The extracted Go module cache is deliberately per-run below because an
-# interrupted process can leave it incomplete.
-CACHE_ROOT="${AWEB_CANDIDATE_CACHE:-/tmp/aweb-candidate-cache}"
-mkdir -p "$CACHE_ROOT/uv" "$CACHE_ROOT/go-build" "$CACHE_ROOT/npm"
-
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || refuse "source checkout is dirty or has untracked files"
@@ -50,16 +41,15 @@ fi
 work="$(cd "$work" && pwd -P)"
 go_mod_cache="$work/go-mod"
 mkdir -p "$go_mod_cache"
-owned_containers=()
-owned_network=""
-# The builder and its layer cache persist across gate runs; the suite bounds
-# the cache with a keep-storage prune after the largest build.
-builder_name="aweb-candidate-gate"
-buildx_config="${AWEB_CANDIDATE_BUILDX:-/tmp/aweb-candidate-buildx}"
-docker_bind_root=""
-gate_run_id="aweb-candidate-suite-${SOURCE_SHA:0:12}-$$"
+gate_run_id="$(printf 'aweb-candidate-%s-%s' "${SOURCE_SHA:0:12}" "${work##*.}" | tr '[:upper:]' '[:lower:]')"
 resource_label="$gate_run_id"
 runner_name="$gate_run_id-runner"
+seed_name="$gate_run_id-seed"
+workspace_volume="$gate_run_id-workspace"
+IMAGE="aweb-candidate-gate:$gate_run_id"
+builder_name="$gate_run_id"
+buildx_config="$work/buildx"
+docker_bind_root="$work/docker-bind"
 runner_cpus="${AWEB_CANDIDATE_RUNNER_CPUS:-2}"
 runner_memory="${AWEB_CANDIDATE_RUNNER_MEMORY:-8g}"
 runner_pids="${AWEB_CANDIDATE_RUNNER_PIDS:-2048}"
@@ -80,68 +70,15 @@ suite_projects=(
   "$gate_run_id-channel"
   "$gate_run_id-user"
   "$gate_run_id-fed-auth"
-  "aweb-fed-e2e-${SOURCE_SHA:0:12}$$"
+  "$gate_run_id-fed-e2e"
   "$gate_run_id-library"
 )
-cleanup() {
-  local original_status="${1:-$?}" cleanup_status=0 project resource ids label_ids
-  local -a list remove
-  trap - EXIT
-  set +e
-  for project in "${suite_projects[@]}"; do
-    for resource in container network volume image; do
-      case "$resource" in
-        container) list=(docker ps -aq); remove=(docker rm -f) ;;
-        network) list=(docker network ls -q); remove=(docker network rm) ;;
-        volume) list=(docker volume ls -q); remove=(docker volume rm -f) ;;
-        image) list=(docker images -q); remove=(docker image rm -f) ;;
-      esac
-      ids="$("${list[@]}" --filter "label=com.docker.compose.project=$project" | sort -u)" \
-        || cleanup_status=1
-      [[ -z "$ids" ]] || "${remove[@]}" $ids >/dev/null 2>&1 || cleanup_status=1
-      ids="$("${list[@]}" --filter "label=com.docker.compose.project=$project")" \
-        || cleanup_status=1
-      if [[ -n "$ids" ]]; then
-        printf 'candidate gate cleanup residue: %s %s\n' "$project" "$resource" >&2
-        cleanup_status=1
-      fi
-    done
-  done
-  label_ids="$(docker ps -aq --filter "label=aweb.candidate-gate=$resource_label")" \
-    || cleanup_status=1
-  [[ -z "$label_ids" ]] || docker rm -f $label_ids >/dev/null 2>&1 || cleanup_status=1
-  [[ "${#owned_containers[@]}" -eq 0 ]] \
-    || docker rm -f "${owned_containers[@]}" >/dev/null 2>&1 \
-    || cleanup_status=1
-  [[ -z "$owned_network" ]] || docker network rm "$owned_network" >/dev/null 2>&1 \
-    || cleanup_status=1
-  # Bound the persistent builder's layer cache on every invocation, whatever
-  # tests ran. Best-effort: a failed cleanup prune is not this run's residue.
-  BUILDX_CONFIG="$buildx_config" docker buildx prune --all --force \
-    --keep-storage=10GB --builder "$builder_name" >/dev/null 2>&1 \
-    || printf 'candidate gate: builder cache prune skipped\n' >&2
-  docker image rm "$IMAGE" >/dev/null 2>&1 || true
-  [[ -z "$(docker ps -aq --filter "label=aweb.candidate-gate=$resource_label")" ]] \
-    || cleanup_status=1
-  for ids in "${owned_containers[@]}"; do
-    ! docker container inspect "$ids" >/dev/null 2>&1 || cleanup_status=1
-  done
-  [[ -z "$owned_network" ]] || ! docker network inspect "$owned_network" >/dev/null 2>&1 \
-    || cleanup_status=1
-  ! docker image inspect "$IMAGE" >/dev/null 2>&1 || cleanup_status=1
-  case "$work" in
-    /|"$ROOT"|"$ROOT"/*) cleanup_status=1 ;;
-    */aweb-candidate-work.*) rm -rf -- "$work" || cleanup_status=1 ;;
-    *) cleanup_status=1 ;;
-  esac
-  if [[ "$cleanup_status" -ne 0 ]]; then
-    printf 'candidate gate cleanup FAILED\n' | tee -a "$LOG_DIR/wrapper-verdict.log" >&2
-  else
-    printf 'candidate gate cleanup PASSED\n' | tee -a "$LOG_DIR/wrapper-verdict.log"
-  fi
-  [[ "$original_status" -ne 0 ]] && exit "$original_status"
-  exit "$cleanup_status"
-}
+# Install cleanup before the first Docker allocation. Logs outlive the run.
+[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA" ]] || refuse "unsafe log directory"
+rm -rf -- "$LOG_DIR"
+mkdir -p "$LOG_DIR"
+: > "$LOG_DIR/owned-resources.tsv"
+source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
@@ -155,12 +92,8 @@ git -C "$checkout" diff --quiet && git -C "$checkout" diff --cached --quiet \
 [[ -z "$(git -C "$checkout" status --porcelain --untracked-files=all)" ]] \
   || refuse "cloned checkout contains untracked input"
 
-[[ "$LOG_DIR" == "/tmp/aweb-candidate-gate-$SOURCE_SHA" && "$LOG_DIR" != / && "$LOG_DIR" != "$ROOT" ]] \
-  || refuse "unsafe candidate log directory: $LOG_DIR"
-rm -rf -- "$LOG_DIR"
-mkdir -p "$LOG_DIR"
 record_input() {
-  local name="$1" path="$2" repo sha
+  local name="$1" path="$2" repo sha tree
   repo="$(git -C "$path" rev-parse --show-toplevel 2>/dev/null)" \
     || refuse "$name input is not a git checkout"
   [[ -z "$(git -C "$repo" status --porcelain --untracked-files=all)" ]] \
@@ -168,32 +101,34 @@ record_input() {
   sha="$(git -C "$repo" rev-parse HEAD)"
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || refuse "$name input has no exact SHA"
   printf '%s\n' "$sha" > "$LOG_DIR/$name-sha"
+  repo="$(cd "$repo" && pwd -P)"
+  tree="$sha"
+  [[ "$path" == "$repo" ]] || tree="$sha:${path#"$repo"/}"
+  mkdir -p "$work/inputs/$name"
+  git -C "$repo" archive "$tree" | tar -xf - -C "$work/inputs/$name"
 }
 record_input library "$LIBRARY_E2E_LIBRARY_CONTEXT"
 record_input blueprints "$LIBRARY_E2E_BLUEPRINT_SRC"
+LIBRARY_E2E_LIBRARY_CONTEXT="$work/inputs/library"
+LIBRARY_E2E_BLUEPRINT_SRC="$work/inputs/blueprints"
 printf '%s\n' "$SOURCE_SHA" > "$LOG_DIR/source-sha"
 printf 'NOT RELEVANT: OSS packages do not bundle Library; this input is used only by its activation journey.\n' \
   > "$LOG_DIR/compatibility.txt"
 
+python3 "$ROOT/scripts/candidate-host-pressure.py" capture "$LOG_DIR/host-before.json"
 mkdir -p "$buildx_config"
-# Reuse the persistent builder when it is healthy; recreate it when its
-# container or state has been removed since the last run. All gate builds,
-# including this initial tool image and nested Docker-socket sibling builds,
-# use this builder so the builder container has explicit CPU/memory/PID bounds.
-if ! BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null 2>&1; then
-  BUILDX_CONFIG="$buildx_config" docker buildx rm "$builder_name" >/dev/null 2>&1 || true
-  BUILDX_CONFIG="$buildx_config" docker buildx create \
-    --name "$builder_name" --driver docker-container \
-    "unix:///var/run/docker.sock" --bootstrap >/dev/null 2>&1 || true
-  BUILDX_CONFIG="$buildx_config" docker buildx inspect --bootstrap "$builder_name" >/dev/null \
-    || refuse "could not provision the persistent release builder"
-fi
+printf 'builder\t%s\n' "$builder_name" >> "$LOG_DIR/owned-resources.tsv"
+BUILDX_CONFIG="$buildx_config" docker buildx create \
+  --name "$builder_name" --driver docker-container \
+  "unix:///var/run/docker.sock" --bootstrap >/dev/null \
+  || refuse "could not provision the run-owned release builder"
 builder_container="buildx_buildkit_${builder_name}0"
 docker update --cpus "$builder_cpus" --memory "$builder_memory" --memory-swap "$builder_memory_swap" --pids-limit "$builder_pids" \
   "$builder_container" >/dev/null \
   || refuse "could not apply candidate builder resource limits"
 
 BUILDX_CONFIG="$buildx_config" docker buildx build --builder "$builder_name" --load --pull \
+  --label "aweb.candidate-gate=$resource_label" \
   -f "$checkout/candidate-gate/Dockerfile" -t "$IMAGE" "$checkout/candidate-gate" \
   2>&1 | tee "$LOG_DIR/docker-build.log"
 
@@ -210,22 +145,24 @@ printf 'runner\tcpus=%s\tmemory=%s\tpids=%s\nbuilder\tcpus=%s\tmemory=%s\tmemory
   "$service_cpus" "$service_memory" "$service_pids" \
   "$redis_cpus" "$redis_memory" "$redis_pids" \
   "$sibling_cpus" "$sibling_memory" "$sibling_pids" > "$LOG_DIR/resource-limits.tsv"
-owned_network="aweb-candidate-gate-${SOURCE_SHA:0:12}-$$"
-docker network create "$owned_network" >/dev/null
+owned_network="$gate_run_id-network"
+docker network create --label "aweb.candidate-gate=$resource_label" "$owned_network" >/dev/null
 pg_name="${owned_network}-postgres"
 redis_name="${owned_network}-redis"
+docker volume create --label "aweb.candidate-gate=$resource_label" "$pg_name-data" >/dev/null
+docker volume create --label "aweb.candidate-gate=$resource_label" "$redis_name-data" >/dev/null
 pg_id="$(docker run --detach --network "$owned_network" --name "$pg_name" \
   --label "aweb.candidate-gate=$resource_label" \
   --cpus "$service_cpus" --memory "$service_memory" --pids-limit "$service_pids" \
+  -v "$pg_name-data:/var/lib/postgresql/data" \
   --env POSTGRES_USER=postgres --env POSTGRES_PASSWORD=postgres --env POSTGRES_DB=postgres \
   --health-cmd 'pg_isready -U postgres -d postgres' \
   --health-interval 2s --health-timeout 5s --health-retries 45 postgres:17)"
-owned_containers+=("$pg_id")
 redis_id="$(docker run --detach --network "$owned_network" --name "$redis_name" \
   --label "aweb.candidate-gate=$resource_label" \
   --cpus "$redis_cpus" --memory "$redis_memory" --pids-limit "$redis_pids" \
+  -v "$redis_name-data:/data" \
   --health-cmd 'redis-cli ping' --health-interval 2s --health-timeout 5s --health-retries 45 redis:7)"
-owned_containers+=("$redis_id")
 for container in "$pg_id" "$redis_id"; do
   for _ in $(seq 1 60); do
     [[ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" == healthy ]] && break
@@ -263,7 +200,6 @@ for db in postgres template1; do
   [[ "$ext_schema" == "public" ]] \
     || refuse "pgcrypto pre-provision did not land in public for $db: '$ext_schema'"
 done
-docker_bind_root="$checkout/.candidate-docker-bind"
 mkdir -p "$docker_bind_root" "$checkout/.candidate-home"
 socket_gid="$(docker run --rm \
   --label "aweb.candidate-gate=$resource_label" \
@@ -285,6 +221,18 @@ finally:
         sock.close()
 PY
 )
+
+# Copy the exact checkout and inputs through the Docker API. The host checkout
+# is never mounted into a container; extracted dependency trees stay in Docker.
+docker volume create --label "aweb.candidate-gate=$resource_label" "$workspace_volume" >/dev/null
+docker create --name "$seed_name" --label "aweb.candidate-gate=$resource_label" \
+  --cpus "$runner_cpus" --memory "$runner_memory" --pids-limit "$runner_pids" \
+  -v "$workspace_volume:$work" "$IMAGE" chown -R "$(id -u):$(id -g)" "$work" >/dev/null
+docker cp "$work/." "$seed_name:$work"
+docker start --attach "$seed_name"
+[[ "$(docker inspect --format '{{.State.ExitCode}}' "$seed_name")" == 0 ]] \
+  || refuse "could not initialize Docker-owned workspace permissions"
+docker rm -v "$seed_name" >/dev/null
 
 set +e
 docker run --rm --init \
@@ -308,6 +256,7 @@ docker run --rm --init \
   -e COMPOSE_DOCKER_CLI_BUILD=1 \
   -e COMPOSE_BAKE=true \
   -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
+  -e CANDIDATE_RUNNER_NAME="$runner_name" \
   -e CANDIDATE_CHECKOUT_ROOT="$checkout" \
   -e GIT_CONFIG_COUNT=1 \
   -e GIT_CONFIG_KEY_0=safe.directory \
@@ -317,6 +266,7 @@ docker run --rm --init \
   -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \
   -e LIBRARY_E2E_BLUEPRINT_SRC="$LIBRARY_E2E_BLUEPRINT_SRC" \
   -e CANDIDATE_LOG_DIR="$LOG_DIR" \
+  -e CANDIDATE_RESOURCE_MANIFEST="$LOG_DIR/owned-resources.tsv" \
   -e BUILDX_CONFIG="$buildx_config" \
   -e BUILDX_BUILDER="$builder_name" \
   -e UV_CACHE_DIR=/tmp/uv-cache \
@@ -352,15 +302,9 @@ docker run --rm --init \
   -e REDIS_URL="redis://$redis_name:6379/0" \
   -e CANDIDATE_GATE_IMAGE="$IMAGE" \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v "$buildx_config:$buildx_config" \
-  -v "$CACHE_ROOT/uv:/tmp/uv-cache" \
-  -v "$CACHE_ROOT/go-build:/tmp/go-build" \
-  -v "$go_mod_cache:$go_mod_cache" \
-  -v "$CACHE_ROOT/npm:/tmp/npm-cache" \
-  -v "$checkout:$checkout" \
+  -v "$workspace_volume:$work" \
+  -v "$docker_bind_root:$docker_bind_root" \
   -v "$LOG_DIR:$LOG_DIR" \
-  -v "$LIBRARY_E2E_LIBRARY_CONTEXT:$LIBRARY_E2E_LIBRARY_CONTEXT:ro" \
-  -v "$LIBRARY_E2E_BLUEPRINT_SRC:$LIBRARY_E2E_BLUEPRINT_SRC:ro" \
   -w "$checkout" \
   "$IMAGE" \
   bash scripts/candidate-suite.sh \

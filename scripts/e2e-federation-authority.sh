@@ -12,6 +12,7 @@ DOCKER_BIND_ROOT="${AWEB_DOCKER_BIND_ROOT:-${TMPDIR:-/tmp}}"
   || { echo "AWEB_DOCKER_BIND_ROOT must be an existing absolute directory" >&2; exit 2; }
 RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aweb-fed-auth.XXXXXX")"
 COMPOSE_FILE="$RUNTIME/docker-compose.yml"
+cp "$ROOT/scripts/federation-authority-worker.py" "$RUNTIME/federation-authority-worker.py"
 TLS_DIR="$RUNTIME/tls"
 ARTIFACT_DIR="${AWEB_FED_AUTH_ARTIFACT_DIR:-$ROOT/.cache/federation-authority}"
 AWID_A_PORT="${AWEB_FED_AUTH_AWID_A_PORT:-18410}"
@@ -224,7 +225,7 @@ services:
       AWEB_PUBLIC_ORIGIN: http://aweb-a:8000
       APP_ENV: development
     volumes:
-      - "$ROOT/scripts/federation-authority-worker.py:/harness/federation-authority-worker.py:ro"
+      - "$RUNTIME/federation-authority-worker.py:/harness/federation-authority-worker.py:ro"
       - "$TLS_DIR:/runtime-tls:ro"
     depends_on:
       postgres-a: {condition: service_healthy}
@@ -245,7 +246,7 @@ services:
       AWEB_PUBLIC_ORIGIN: http://aweb-b:8000
       APP_ENV: development
     volumes:
-      - "$ROOT/scripts/federation-authority-worker.py:/harness/federation-authority-worker.py:ro"
+      - "$RUNTIME/federation-authority-worker.py:/harness/federation-authority-worker.py:ro"
       - "$TLS_DIR:/runtime-tls:ro"
     depends_on:
       postgres-b: {condition: service_healthy}
