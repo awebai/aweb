@@ -104,6 +104,38 @@ export function terminalReadyForIntent(state: TerminalReadinessState, intent: Ch
   return state === "idle" || state === "unknown";
 }
 
+function terminalInputSafeText(text: string): string {
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F]/g, "");
+}
+
+function validatedNoticeID(value: string | undefined): string | undefined {
+  const raw = value || "";
+  return /^[0-9a-f]{32}$/i.test(raw) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)
+    ? raw
+    : undefined;
+}
+
+function safeAwakeningNotice(awakening: ChannelAwakening): string {
+  const rawType = awakening.meta.type || awakening.kind;
+  const type = rawType === "mail" || rawType === "chat" ? rawType : "event";
+  const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id || awakening.meta.task_id) || "id-unavailable";
+  if (type === "mail") return `aweb: new mail ${id} waiting — run aw mail show --message-id ${id}`;
+  if (type === "chat") {
+    const sessionID = validatedNoticeID(awakening.meta.session_id);
+    if (sessionID && id !== "id-unavailable") return `aweb: new chat ${id} waiting — run aw chat history --session-id ${sessionID} --message-id ${id}`;
+    if (sessionID) return `aweb: new chat waiting — run aw chat history --session-id ${sessionID}`;
+    return `aweb: new chat ${id} waiting`;
+  }
+  return `aweb: new event ${id} waiting — run aw events stream --json`;
+}
+
+function textForTerminalAwakening(awakening: ChannelAwakening, state: TerminalReadinessState): string {
+  if (state === "unknown") return safeAwakeningNotice(awakening);
+  return terminalInputSafeText(formatAwakeningForAgent(awakening));
+}
+
 function abortError(): TerminalAbortError {
   return new TerminalAbortError();
 }
@@ -349,8 +381,21 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     }
 
     const ambientBatch = [...ambient.values()];
+    let inspection: TerminalInspection;
+    try {
+      inspection = await raceAbort(options.session.inspect(options.home), options.signal);
+    } catch (error) {
+      if (error instanceof TerminalAbortError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`terminal readiness re-inspect failed before input: ${detail}`);
+    }
+    throwIfAborted(options.signal);
+    const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
+    if (!terminalReadyForIntent(state, awakening.deliveryIntent)) {
+      throw new Error(`terminal no longer ready before input (state=${state})`);
+    }
     const text = [...ambientBatch.map((item) => item.awakening), awakening]
-      .map((item) => formatAwakeningForAgent(item))
+      .map((item) => textForTerminalAwakening(item, state))
       .join("\n\n---\n\n");
     throwIfAborted(options.signal);
     await options.session.input(options.home, text);
