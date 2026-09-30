@@ -52,8 +52,14 @@ host snapshots, `host-before.json`, `host-after.json`, and
 `host-recovery.json`. On macOS, cleanup passes only if both `kern.num_files`
 and Docker VM total `lsof` rows return to at most their baseline plus 5,000.
 Total rows exclude the header; numeric-FD rows are reported separately and do
-not determine acceptance. Missing samples or a changed VM PID fail recovery.
+not determine acceptance. Missing samples or a changed VM PID cannot count as passing recovery samples.
 Other platforms report these macOS-specific measurements as not applicable.
+Recovery keeps up to four numbered samples (`host-after-1.json` through
+`host-after-4.json`, with their raw snapshots), 15 seconds apart. It stops at
+the first passing sample and records its number in `host-recovery.json`;
+`host-after.json` mirrors the last sample. Four failures make recovery fail.
+For interruption, signal the gate's process group: a signal sent only to the
+Bash PID can wait for its foreground Docker command before running the trap.
 A cleanup or recovery failure makes the gate fail even when the suite passes;
 an earlier suite failure retains its original exit status.
 

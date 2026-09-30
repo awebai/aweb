@@ -9,6 +9,7 @@ from pathlib import Path
 import platform
 import re
 import subprocess
+import time
 
 
 def command(*argv: str) -> str:
@@ -78,14 +79,44 @@ def compare(before: dict, after: dict) -> dict:
             "same_vm": same_vm, "deltas": deltas, "bounds": {"kern.num_files": 5000, "vm_lsof_rows": 5000}}
 
 
+def settle(before_path: Path, directory: Path) -> dict:
+    """Retain up to four observations with fifteen-second waits between them."""
+    before = json.loads(before_path.read_text())
+    samples = []
+    for attempt in range(1, 5):
+        if attempt > 1:
+            time.sleep(15)
+        sample_path = directory / f"host-after-{attempt}.json"
+        try:
+            after = capture(sample_path)
+            result = compare(before, after)
+        except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+            result = {"status": "failed", "error": str(exc)}
+        samples.append({"sample": attempt, "path": sample_path.name, **result})
+        # Stable alias for evidence consumers; the numbered raw samples remain.
+        if sample_path.exists():
+            (directory / "host-after.json").write_bytes(sample_path.read_bytes())
+        if result["status"] in {"passed", "not_applicable"}:
+            break
+    receipt = {**result, "samples": samples,
+               "passed_sample": attempt if result["status"] == "passed" else None}
+    (directory / "host-recovery.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    return receipt
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=["capture", "compare"])
+    parser.add_argument("operation", choices=["capture", "compare", "settle"])
     parser.add_argument("paths", nargs="+")
     args = parser.parse_args()
     if args.operation == "capture":
         capture(Path(args.paths[0]))
         return 0
+    if args.operation == "settle":
+        before, directory = map(Path, args.paths)
+        result = settle(before, directory)
+        print(json.dumps(result))
+        return int(result["status"] == "failed")
     before, after, output = map(Path, args.paths)
     try:
         result = compare(json.loads(before.read_text()), json.loads(after.read_text()))

@@ -64,10 +64,8 @@ cleanup() {
   [[ ! -e "$work" ]] || cleanup_status=1
   printf 'absence-check\tstatus=%s\n' "$cleanup_status" >> "$LOG_DIR/owned-resources.tsv"
   if [[ -f "$LOG_DIR/host-before.json" ]]; then
-    python3 "$ROOT/scripts/candidate-host-pressure.py" capture "$LOG_DIR/host-after.json" || cleanup_status=1
-    python3 "$ROOT/scripts/candidate-host-pressure.py" compare \
-        "$LOG_DIR/host-before.json" "$LOG_DIR/host-after.json" "$LOG_DIR/host-recovery.json" \
-      || cleanup_status=1
+    python3 "$ROOT/scripts/candidate-host-pressure.py" settle \
+      "$LOG_DIR/host-before.json" "$LOG_DIR" || cleanup_status=1
   else
     cleanup_status=1
   fi

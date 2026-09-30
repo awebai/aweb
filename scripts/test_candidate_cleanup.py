@@ -91,6 +91,30 @@ class HostPressureTests(unittest.TestCase):
                     pressure.capture(dest)
                 self.assertEqual(json.loads(dest.read_text())['status'], 'unavailable')
 
+    def test_settle_retries_preserves_samples_and_reports_the_passing_one(self):
+        for levels, expected in [([16000, 16000, 10000], 'passed'), ([16000] * 4, 'failed')]:
+            with self.subTest(levels=levels), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                baseline = root / 'host-before.json'
+                baseline.write_text(json.dumps(self.sample()))
+                pending = iter(levels)
+                def capture_sample(path):
+                    result = self.sample(**{'kern.num_files': next(pending)})
+                    path.write_text(json.dumps(result))
+                    path.with_suffix('.raw.txt').write_text('retained raw evidence')
+                    return result
+                with mock.patch.object(pressure, 'capture', side_effect=capture_sample), mock.patch.object(pressure.time, 'sleep') as sleep:
+                    receipt = pressure.settle(baseline, root)
+                self.assertEqual(receipt['status'], expected)
+                self.assertEqual(receipt['passed_sample'], 3 if expected == 'passed' else None)
+                self.assertEqual(len(receipt['samples']), len(levels))
+                self.assertEqual(sleep.call_args_list, [mock.call(15)] * (len(levels) - 1))
+                for number in range(1, len(levels) + 1):
+                    self.assertTrue((root / f'host-after-{number}.raw.txt').exists())
+                self.assertEqual((root / 'host-after.json').read_bytes(), (root / f'host-after-{len(levels)}.json').read_bytes())
+                self.assertEqual(json.loads((root / 'host-recovery.json').read_text()), receipt)
+
+
 
 class WrapperTests(unittest.TestCase):
     def test_allocations_are_labelled_and_nested_ownership_recorded_before_create(self):
