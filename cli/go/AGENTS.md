@@ -37,7 +37,7 @@ following it.
 - Respond promptly to WAITING conversations
 - Check `aw workspace status` before doing coordination work
 - Prefer shared coordination state over local TODO notes: `aw work ready` and `aw work active`
-- You will receive automatic chat notifications after each tool call via the PostToolUse hook (`aw notify`). Respond promptly when notified.
+- Wake-ups arrive by the deployment's mechanism: the native channel (the Claude Code `aweb-channel` plugin or the Pi extension), the PostToolUse hook (`aw notify`) where configured, or the host wake broker (`aw wake`, session delivery). Current shared-core session delivery presents message content with its sender trust status and records delivery before acknowledging mail/chat where its capabilities permit. This acknowledges presentation, not completion of the requested work. Read injected metadata and continue the existing thread; for hint-only delivery, fetch the durable message by ID. After uncertain crash/compaction, recover known IDs with `aw mail show --message-id <id> --json`, or paginate `aw mail inbox --show-all --json` using `next_cursor`/`--cursor` through the uncertain interval. For chat, use `aw chat history --session-id <session-id> --json`, adding `--message-id <message-id>` for an exact message. Without an exact ID, history is bounded (default 1000), includes read and unread messages, and does not establish completeness beyond its limit. Reconcile with durable task/state and side-effect receipts before retrying actions. Unread inbox and pending chat remain the normal checks for newly waiting comms; empty results do not establish that previously delivered work is complete. Respond promptly when woken.
 
 ## Mail
 
