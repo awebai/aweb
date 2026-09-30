@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from collections import OrderedDict
+from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -20,8 +21,9 @@ from ..grant_liveness import valid_grant_liveness_by_workspace
 from ..grant_streams import (
     allowed_status_categories,
     clamp_deadline_to_grant,
-    grant_terminal_reason,
+    grant_expiry_reason,
     grant_terminal_sse,
+    require_valid_stream_grant,
     status_event_allowed,
 )
 from ..presence import (
@@ -704,37 +706,35 @@ async def status_stream(
     if allowed_grant_categories is not None:
         event_type_set = (event_type_set or set(VALID_SSE_EVENT_TYPES)) & allowed_grant_categories
 
+    await require_valid_stream_grant(request, db_infra, identity)
+    deadline = clamp_deadline_to_grant(
+        datetime.now(timezone.utc) + timedelta(seconds=300), identity
+    )
+
     async def _grant_guarded_status_stream():
-        deadline = clamp_deadline_to_grant(
-            datetime.now(timezone.utc) + timedelta(minutes=5), identity
-        )
-
-        terminal_reason: str | None = None
-
         async def _disconnected_or_deadline():
-            nonlocal terminal_reason
             if await request.is_disconnected():
                 return True
-            terminal_reason = await grant_terminal_reason(request, db_infra, identity)
-            return terminal_reason is not None or datetime.now(timezone.utc) >= deadline
+            return datetime.now(timezone.utc) >= deadline
 
-        reason = await grant_terminal_reason(request, db_infra, identity)
+        reason = grant_expiry_reason(identity)
         if reason:
             yield grant_terminal_sse(reason)
             return
-        async for item in stream_events_multi(
+        async with aclosing(stream_events_multi(
             redis,
             workspace_ids,
             event_type_set,
+            # Empty-workspace streams otherwise sleep 30s past a near expiry.
+            keepalive_seconds=30 if workspace_ids else 1,
             check_disconnected=_disconnected_or_deadline,
             event_filter=(lambda event: status_event_allowed(identity, event)),
-        ):
-            reason = await grant_terminal_reason(request, db_infra, identity)
-            if reason:
-                yield grant_terminal_sse(reason)
-                return
-            yield item
-        reason = terminal_reason or await grant_terminal_reason(request, db_infra, identity)
+        )) as items:
+            async for item in items:
+                if datetime.now(timezone.utc) >= deadline:
+                    break
+                yield item
+        reason = grant_expiry_reason(identity)
         if reason:
             yield grant_terminal_sse(reason)
 

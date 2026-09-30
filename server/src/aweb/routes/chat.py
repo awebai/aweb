@@ -90,7 +90,14 @@ from aweb.messaging.waiting import (
     register_waiting,
     unregister_waiting,
 )
-from aweb.grant_streams import clamp_deadline_to_grant, grant_terminal_reason, grant_terminal_sse
+from aweb.grant_streams import (
+    GRANT_STREAM_RECHECK_SECONDS,
+    clamp_deadline_to_grant,
+    grant_expiry_reason,
+    grant_terminal_reason,
+    grant_terminal_sse,
+    require_valid_stream_grant,
+)
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -2063,6 +2070,23 @@ async def _sse_events(
     last_keepalive = last_refresh
     last_pubsub_ping = last_refresh
     last_db_poll = last_refresh
+    next_grant_check = time.monotonic() + GRANT_STREAM_RECHECK_SECONDS
+
+    async def _stream_grant_reason():
+        nonlocal next_grant_check
+        reason = grant_expiry_reason(auth)
+        if reason or auth.grant is None:
+            return reason
+        if time.monotonic() < next_grant_check:
+            return None
+        try:
+            reason = await grant_terminal_reason(request, db, auth)
+        except Exception:
+            logger.exception("Chat stream grant verification failed for session %s", session_id_str)
+            return "verification_unavailable"
+        next_grant_check = time.monotonic() + GRANT_STREAM_RECHECK_SECONDS
+        return reason
+
     channel = chat_session_channel_name(session_id_str)
     pubsub: PubSub | None = None
     reconnect_delay_seconds = 0.1
@@ -2106,7 +2130,7 @@ async def _sse_events(
         yield ": keepalive\n\n"
         last_keepalive = time.monotonic()
 
-        reason = await grant_terminal_reason(request, db, auth)
+        reason = await _stream_grant_reason()
         if reason:
             yield grant_terminal_sse(reason)
             return
@@ -2130,6 +2154,12 @@ async def _sse_events(
             sender_dids = [str(r["from_did"]) for r in recent if r.get("from_did")]
             waiting = set(await get_waiting_agents(redis, session_id_str, list(set(sender_dids))))
             identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
+            reason = await _stream_grant_reason()
+            if reason:
+                yield grant_terminal_sse(reason)
+                return
+            if datetime.now(timezone.utc) >= deadline:
+                return
             for row in recent:
                 is_hang_on = bool(row["hang_on"])
                 from_did = (row.get("from_did") or "").strip()
@@ -2170,7 +2200,7 @@ async def _sse_events(
         last_db_poll = time.monotonic()
 
         while datetime.now(timezone.utc) < deadline:
-            reason = await grant_terminal_reason(request, db, auth)
+            reason = await _stream_grant_reason()
             if reason:
                 yield grant_terminal_sse(reason)
                 return
@@ -2216,8 +2246,11 @@ async def _sse_events(
                 else:
                     await asyncio.sleep(wait_timeout)
 
+            if datetime.now(timezone.utc) >= deadline:
+                break
+
             if should_poll:
-                reason = await grant_terminal_reason(request, db, auth)
+                reason = await _stream_grant_reason()
                 if reason:
                     yield grant_terminal_sse(reason)
                     return
@@ -2238,7 +2271,7 @@ async def _sse_events(
                 sender_dids = list({str(row["from_did"]) for row in new_msgs if row.get("from_did")})
                 sender_waiting = set(await get_waiting_agents(redis, session_id_str, sender_dids)) if sender_dids else set()
                 identity_map = await lookup_identity_metadata_by_did(db, sender_dids)
-                reason = await grant_terminal_reason(request, db, auth)
+                reason = await _stream_grant_reason()
                 if reason:
                     yield grant_terminal_sse(reason)
                     return
@@ -2322,7 +2355,7 @@ async def _sse_events(
                         reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
                 yield ": keepalive\n\n"
                 last_keepalive = current_time
-        reason = await grant_terminal_reason(request, db, auth)
+        reason = grant_expiry_reason(auth)
         if reason:
             yield grant_terminal_sse(reason)
     finally:
@@ -2366,6 +2399,7 @@ async def stream(
     deadline_dt = clamp_deadline_to_grant(deadline_dt, auth)
 
     after_dt = _parse_timestamp(after, "after") if after is not None else None
+    await require_valid_stream_grant(request, db, auth)
     await register_waiting(redis, str(session_uuid), actor_did)
 
     return StreamingResponse(

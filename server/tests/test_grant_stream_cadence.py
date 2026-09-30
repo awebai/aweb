@@ -130,6 +130,8 @@ async def test_notification_stream_has_no_grant_reads_after_open(harness, kind):
     assert harness.db.grant_reads == 1
     assert harness.clock.seconds == 300
     assert "verification_unavailable" not in body
+    if kind == "status":
+        assert harness.redis.closed
 
 
 @pytest.mark.asyncio
@@ -188,3 +190,36 @@ async def test_chat_recheck_failure_ends_cleanly(harness, failure, terminal, cap
     assert harness.clock.seconds == 30
     if failure == "fail_at":
         assert "registry unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registry_fails", [False, True])
+async def test_chat_checks_again_after_slow_message_fetch_before_emitting_body(harness, registry_fails):
+    original_fetch = harness.db.fetch_all
+    delivered = False
+
+    async def fetch_all(sql, *args):
+        nonlocal delivered
+        if "FROM {{tables.chat_messages}}" in sql and not delivered:
+            delivered = True
+            harness.clock.seconds = 31
+            return [dict(
+                message_id=uuid4(), from_alias="bob", from_address="example.com/bob",
+                from_did="", body="private content", content_mode="legacy_plaintext_v1",
+                message_version=1, encrypted_envelope=None, created_at=chat.datetime.now(timezone.utc),
+                sender_leaving=False, hang_on=False, reply_to=None, signature=None, signed_payload=None,
+            )]
+        return await original_fetch(sql, *args)
+
+    harness.db.fetch_all = fetch_all
+    response = await harness.open("chat", duration=40)
+    if registry_fails:
+        harness.registry.fail_at = 1
+    body = await collect(response)
+    assert harness.registry.calls == [0, 31]
+    if registry_fails:
+        assert "private content" not in body
+        assert "event: verification_unavailable" in body
+    else:
+        assert "private content" in body
+        assert "verification_unavailable" not in body
