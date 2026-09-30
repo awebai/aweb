@@ -113,3 +113,23 @@ The aw distribution bundles channel-core JavaScript (prefer embedded/extracted
 JS) and runs it with system Node. npm installs already provide Node; standalone
 binary users without Node must get a clear `aw wake status`/log error. aw does
 not ship a Node runtime inside every binary.
+
+## Child process lifecycle
+
+The Go supervisor sends events through a bounded queue to a dedicated pipe
+writer. A stalled reader cannot block supervision or shutdown; overflow drops
+oldest queued events and counts evictions. Unread work can return on the next
+stream snapshot. Fatal child status triggers restart with backoff, and a fatal
+startup error exits the Node process even while its input pipe remains open.
+
+Shutdown requests the protocol shutdown and SIGTERM, allowing up to five
+seconds for in-flight input and delivery marks to complete. The Unix child runs
+in its own process group; final cleanup kills remaining descendants. OATS
+commands have a 30-second timeout. Readiness commands are aborted on shutdown;
+an input already in flight can finish during the grace period. This reduces
+avoidable duplicate delivery without promising exactly-once terminal receipt.
+An `ok:true` input with `submitted:false` remains an ordinary input error: the
+existing bounded retry applies, and failed delivery is neither marked nor acked.
+
+Child stdout/stderr records are bounded to 1 MiB. Oversized records are reported
+and drained to the next newline so subsequent status records still arrive.

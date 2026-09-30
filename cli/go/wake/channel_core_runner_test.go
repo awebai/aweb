@@ -153,7 +153,7 @@ func TestBundledReadinessStatusReportsWaitingReason(t *testing.T) {
 	}
 	waitForFileContains(t, inputPath, "ready mail")
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
-		return st.TraceStage == "lane_job_completed" && st.ReadinessState == "idle" && st.ReadinessError == "" && st.ReadinessWaiting == "ready"
+		return st.TraceStage == "lane_job_completed" && st.ReadinessState == "idle" && st.ReadinessError == "" && st.ReadinessWaiting == "inspect_done"
 	})
 }
 

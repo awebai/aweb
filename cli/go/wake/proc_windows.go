@@ -2,7 +2,10 @@
 
 package wake
 
-import "os"
+import (
+	"os"
+	"os/exec"
+)
 
 // processAlive reports whether pid names a live process. On Windows
 // os.FindProcess fails for a pid that does not exist.
@@ -14,3 +17,7 @@ func processAlive(pid int) bool {
 	_ = proc.Release()
 	return true
 }
+
+func configureChildProcess(cmd *exec.Cmd)       {}
+func terminateChildProcess(cmd *exec.Cmd) error { return cmd.Process.Kill() }
+func killChildProcessGroup(cmd *exec.Cmd)       { _ = cmd.Process.Kill() }

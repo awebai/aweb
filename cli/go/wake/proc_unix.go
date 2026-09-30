@@ -4,6 +4,7 @@ package wake
 
 import (
 	"os"
+	"os/exec"
 	"syscall"
 )
 
@@ -21,3 +22,7 @@ func processAlive(pid int) bool {
 	// EPERM means the process exists and belongs to someone else.
 	return err == syscall.EPERM
 }
+
+func configureChildProcess(cmd *exec.Cmd)       { cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true} }
+func terminateChildProcess(cmd *exec.Cmd) error { return cmd.Process.Signal(syscall.SIGTERM) }
+func killChildProcessGroup(cmd *exec.Cmd)       { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
