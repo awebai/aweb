@@ -10092,6 +10092,7 @@ function createTerminalAwakeningHandler(options) {
   const maxAmbient = options.maxAmbient ?? DEFAULT_MAX_AMBIENT;
   const ambient = /* @__PURE__ */ new Map();
   let ambientDropped = 0;
+  let inputTail = Promise.resolve();
   function rejectAll(error) {
     for (const item of ambient.values()) rejectItem(item, error);
     ambient.clear();
@@ -10120,6 +10121,13 @@ function createTerminalAwakeningHandler(options) {
         }
       });
     }
+    const delivery = inputTail.then(() => present(awakening));
+    inputTail = delivery.catch(() => {
+    });
+    return delivery;
+  });
+  async function present(awakening) {
+    throwIfAborted2(options.signal);
     const ambientBatch = [...ambient.values()];
     let inspection;
     try {
@@ -10141,7 +10149,7 @@ function createTerminalAwakeningHandler(options) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();
     }
-  });
+  }
   handler.status = () => ({ ambientQueued: ambient.size, ambientDropped });
   return handler;
 }

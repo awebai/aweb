@@ -25,6 +25,47 @@ async function flush(): Promise<void> {
   await Promise.resolve();
 }
 
+test("serializes terminal inputs and presents each ambient item once", async () => {
+  let release!: () => void;
+  const firstInput = new Promise<void>((resolve) => { release = resolve; });
+  const inputs: string[] = [];
+  const session: TerminalSession = {
+    inspect: vi.fn(async () => ({ present: true, state: "idle" })),
+    input: vi.fn(async (_home, text) => {
+      inputs.push(text);
+      if (inputs.length === 1) await firstInput;
+    }),
+  };
+  const handler = createTerminalAwakeningHandler({ home: "/agent", session });
+  const ambient = handler(awakening({ content: "ambient-only-once", deliveryIntent: "ambient" }));
+  const first = handler(awakening({ content: "first" }));
+  const second = handler(awakening({ content: "second" }));
+  try {
+    await vi.waitFor(() => expect(inputs.length).toBeGreaterThan(0));
+    expect(inputs).toHaveLength(1);
+    expect(session.inspect).toHaveBeenCalledTimes(1);
+  } finally {
+    release();
+    await Promise.all([ambient, first, second]);
+  }
+  expect(inputs).toHaveLength(2);
+  expect(inputs[0]).toContain("ambient-only-once");
+  expect(inputs[1]).not.toContain("ambient-only-once");
+});
+
+test("failed terminal input releases the next serialized caller", async () => {
+  const session: TerminalSession = {
+    inspect: vi.fn(async () => ({ present: true, state: "idle" })),
+    input: vi.fn().mockRejectedValueOnce(new Error("input refused")).mockResolvedValue(undefined),
+  };
+  const handler = createTerminalAwakeningHandler({ home: "/agent", session });
+  const first = handler(awakening());
+  const second = handler(awakening());
+  await expect(first).rejects.toThrow("input refused");
+  await second;
+  expect(session.input).toHaveBeenCalledTimes(2);
+});
+
 describe("terminal channel adapter", () => {
   test("normalizes readiness with shell as a known defer state", () => {
     expect(normalizeTerminalReadiness("done", true)).toBe("idle");

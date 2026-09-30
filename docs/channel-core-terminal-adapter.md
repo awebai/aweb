@@ -19,9 +19,10 @@ read/ack logic.
   fetch for wake/steer delivery. If the terminal is busy, nothing has been
   fetched yet, so an out-of-band read while waiting is seen by the later
   unread-only fetch and drops out.
-- The terminal `onAwakening` adapter performs no inspect gate and holds no
-  fetched wake/steer content. It formats the awakening and calls terminal
-  `input(home, text)` immediately. It resolves only after input accepts.
+- The terminal `onAwakening` adapter serializes presentation per terminal across
+  delivery lanes. Each caller re-inspects immediately before input, preserving
+  the terminal boundary checks after waiting for a previous caller. It resolves
+  only after input accepts. Ambient items are attached once to that input.
 - If input rejects, `onAwakening` rejects. Channel-core retries the failed event
   lane by re-running the event, including the unread-only exact fetch. Messages
   already acked before a later failure are not re-presented because the refetch
@@ -85,7 +86,8 @@ mail/chat read acknowledgments.
 3. When ready, channel-core performs the usual unread exact fetch. Anything read
    out of band during the wait is absent and is not presented.
 4. Channel-core calls `onAwakening` for fetched messages. The terminal adapter
-   inputs immediately and resolves after `input` accepts.
+   serializes the final readiness re-inspect and input, then resolves after
+   `input` accepts.
 5. Only after `onAwakening` resolves does channel-core write delivered IDs and
    mail/chat read acknowledgments.
 6. If input rejects, channel-core retries the event with bounded backoff and a

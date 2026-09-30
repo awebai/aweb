@@ -338,9 +338,9 @@ function rejectItem(item: AmbientItem, error: Error): void {
 }
 
 /**
- * Terminal presentation adapter. It performs no readiness inspection: readiness
- * belongs to `awaitDeliveryReady`, which runs before exact fetch. Wake/steer
- * awakenings are input immediately and reject on input failure so channel-core
+ * Terminal presentation adapter. The readiness gate runs before exact fetch;
+ * presentation serializes the final re-inspect and input across delivery lanes.
+ * Wake/steer awakenings reject on input failure so channel-core
  * can re-dispatch and re-fetch unread state. Ambient awakenings are bounded and
  * piggyback on the next wake/steer input.
  */
@@ -348,6 +348,7 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
   const maxAmbient = options.maxAmbient ?? DEFAULT_MAX_AMBIENT;
   const ambient = new Map<string, AmbientItem>();
   let ambientDropped = 0;
+  let inputTail: Promise<void> = Promise.resolve();
 
   function rejectAll(error: Error): void {
     for (const item of ambient.values()) rejectItem(item, error);
@@ -380,6 +381,15 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
       });
     }
 
+    const delivery = inputTail.then(() => present(awakening));
+    // A failed input must not poison subsequent callers. Ambient work bypasses
+    // this queue because it settles only when a wake/steer input carries it.
+    inputTail = delivery.catch(() => {});
+    return delivery;
+  }) as TerminalAwakeningHandler;
+
+  async function present(awakening: ChannelAwakening): Promise<void> {
+    throwIfAborted(options.signal);
     const ambientBatch = [...ambient.values()];
     let inspection: TerminalInspection;
     try {
@@ -403,7 +413,7 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();
     }
-  }) as TerminalAwakeningHandler;
+  }
 
   handler.status = () => ({ ambientQueued: ambient.size, ambientDropped });
   return handler;
