@@ -668,16 +668,18 @@ func (c *ChannelCoreChild) resetPerRunLocked() {
 }
 
 func jitteredBackoff(base, cap time.Duration) time.Duration {
+	base = min(base, cap)
 	if base <= 0 {
 		return 0
 	}
-	// Add up to 20% jitter. This avoids synchronized fleet retries without
-	// shortening the configured recovery bound.
-	maxJitter := int64(base / 5)
-	if maxJitter <= 0 {
+	// Shift the 20% jitter range below the cap when necessary, rather than
+	// flattening every capped retry to the same deadline.
+	spread := base / 5
+	if spread <= 0 {
 		return base
 	}
-	return min(base+time.Duration(rand.Int63n(maxJitter+1)), cap)
+	lower := min(base, cap-spread)
+	return lower + time.Duration(rand.Int63n(int64(spread)+1))
 }
 
 func (c *ChannelCoreChild) readyDuration() time.Duration {

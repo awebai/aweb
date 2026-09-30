@@ -571,7 +571,7 @@ func (b *Broker) Register(reg Registration) error {
 		if err != nil {
 			return err
 		}
-		if state.Inactive || bindingsChanged {
+		if !hadExistingRegistration || state.Inactive || bindingsChanged {
 			if err := b.cfg.Store.ResetInstanceLifecycle(reg.Home); err != nil {
 				return err
 			}

@@ -5,6 +5,7 @@ import (
 	"github.com/awebai/aw/wake/session"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -137,6 +138,68 @@ func TestQuietHomeUsesConfiguredOATSAndPersistsStartupLiveness(t *testing.T) {
 			})
 			if _, err := os.Stat(filepath.Join(root, "unexpected-input")); !os.IsNotExist(err) {
 				t.Fatal("startup probe typed input")
+			}
+		})
+	}
+}
+
+func TestFreshRegistrationDiscardsOrphanedLifecycle(t *testing.T) {
+	store := tempStore(t)
+	home := tempHome(t, "terminal")
+	if err := store.SaveInstance(InstanceState{Home: home, FirstPresentAt: time.Now(), LastState: "stopped", LastError: "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	broker, err := NewBroker(Config{Store: store, Session: session.NewFake(session.Inspection{})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := broker.Register(Registration{Home: home, IdentityHome: filepath.Join(home, ".aw"), Delivery: DeliverySession}); err != nil {
+		t.Fatal(err)
+	}
+	state, err := store.LoadInstance(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.FirstPresentAt.IsZero() || state.LastState != "" || state.LastError != "" {
+		t.Fatalf("fresh registration inherited stale lifecycle: %#v", state)
+	}
+	runner, _ := broker.instanceRunner(home)
+	if runner.snapshot().Phase != PhasePending {
+		t.Fatal("fresh registration inherited live phase")
+	}
+}
+
+func TestQuietStartupMarksStoppedAndAbsentSessionsInactive(t *testing.T) {
+	for _, state := range []string{"stopped", "not-launched"} {
+		t.Run(state, func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			store, _ := NewStore(filepath.Join(root, "state"))
+			oats := writeStateOATS(t, root, filepath.Join(root, "unexpected-input"), state)
+			if state == "not-launched" {
+				script, err := os.ReadFile(oats)
+				if err != nil {
+					t.Fatal(err)
+				}
+				script = []byte(strings.ReplaceAll(string(script), `"present":true`, `"present":false`))
+				if err := os.WriteFile(oats, script, 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			server := mailServer(t, "no event offered")
+			grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read"})
+			broker, cancel := liveBroker(t, Config{Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store)})
+			defer cancel()
+			if err := broker.Register(Registration{Home: root, IdentityHome: grantHome, Delivery: DeliverySession}); err != nil {
+				t.Fatal(err)
+			}
+			waitForInstance(t, broker, root, func(inst InstanceStatus) bool {
+				return inst.Phase == PhaseInactive && !inst.ChannelCore.Running && inst.LastState == state
+			})
+			if _, err := os.Stat(filepath.Join(root, "unexpected-input")); !os.IsNotExist(err) {
+				t.Fatal("dead startup typed input")
 			}
 		})
 	}

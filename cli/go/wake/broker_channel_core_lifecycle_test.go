@@ -363,7 +363,7 @@ func TestBrokerDeregisterThenSameHomeRegisterStartsFreshAndDelivers(t *testing.T
 		t.Fatal(err)
 	}
 	inputPath := filepath.Join(root, "input.txt")
-	writeStoppedOATS(t, root, inputPath)
+	writeFakeOATS(t, root, inputPath)
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	server := mailServer(t, "reactivated mail")
 	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
@@ -378,6 +378,7 @@ func TestBrokerDeregisterThenSameHomeRegisterStartsFreshAndDelivers(t *testing.T
 		t.Fatal(err)
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	writeStoppedOATS(t, root, inputPath)
 	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-first", ConversationID: "conv"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
 	if existed, err := broker.Deregister(home); err != nil || !existed {
@@ -404,7 +405,7 @@ func TestBrokerExplicitRegisterReactivatesInactiveHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputPath := filepath.Join(root, "input.txt")
-	writeStoppedOATS(t, root, inputPath)
+	writeFakeOATS(t, root, inputPath)
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	server := mailServer(t, "explicit reactivate mail")
 	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
@@ -419,6 +420,7 @@ func TestBrokerExplicitRegisterReactivatesInactiveHome(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	writeStoppedOATS(t, root, inputPath)
 	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-first", ConversationID: "conv"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
 	writeFakeOATS(t, root, inputPath)
@@ -607,7 +609,7 @@ func TestBrokerInactiveStopsChildAndDropsLaterEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputPath := filepath.Join(root, "input.txt")
-	writeStoppedOATS(t, root, inputPath)
+	writeFakeOATS(t, root, inputPath)
 	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
 	server := mailServer(t, "inactive mail")
 	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
@@ -622,6 +624,7 @@ func TestBrokerInactiveStopsChildAndDropsLaterEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
+	writeStoppedOATS(t, root, inputPath)
 	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "inactive-1", ConversationID: "conv"})
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.Phase == PhaseInactive && !inst.ChannelCore.Running })
 	assertFileNotContains(t, inputPath, "inactive mail")

@@ -49,9 +49,9 @@ successful registration update replaces them. Event routing never re-resolves a
 binding from mutable team files; a transient filesystem failure during refresh
 keeps the last accepted binding usable.
 
-Streams quarantine only HTTP 401, 403 and 404. Other failures, including 408,
-409 and 429, use bounded retry. Child restart jitter is clamped to its configured
-maximum after jitter is applied.
+Streams quarantine only HTTP 401, 403, 404 and 422. Other failures, including 408,
+409 and 429, use bounded retry. Child restart jitter shifts below its configured
+maximum near the cap, keeping both the bound and jitter.
 
 `~/.config/aw/wake/` contains only Go-owned lifecycle/status state:
 
@@ -160,7 +160,8 @@ without `--delivery session` / `AWEB_DELIVERY=session`, because a live native
 channel and the terminal broker are two presentation surfaces on one identity.
 The command writes durably through the running daemon or directly to the state
 directory when the daemon is down. With the daemon running, an identical active
-registration keeps its child and liveness state. An inactive home reactivates;
+registration keeps its child and liveness state. A fresh registration discards
+any orphaned lifecycle state. An inactive home reactivates;
 a changed binding also restarts the child and resets liveness while preserving
 pause. Per-instance persistence serializes snapshot and write so an older write
 cannot overwrite a newer pause.

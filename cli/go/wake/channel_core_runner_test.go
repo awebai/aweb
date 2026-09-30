@@ -244,7 +244,7 @@ func TestChannelCoreCrashLoopBackoffReportsNextRetry(t *testing.T) {
 	})
 	defer child.Stop()
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
-		return st.RestartCount == 1 && st.NextRetryAt.After(time.Now().Add(55*time.Second)) && strings.Contains(st.LastExit, "boom")
+		return st.RestartCount == 1 && st.NextRetryAt.After(time.Now().Add(47*time.Second)) && !st.NextRetryAt.After(time.Now().Add(60*time.Second)) && strings.Contains(st.LastExit, "boom")
 	})
 }
 

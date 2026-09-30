@@ -129,6 +129,7 @@ async function start(init: InitLine): Promise<void> {
       status({ delivered: true });
     },
   };
+  const onInactive = (state: ReturnType<typeof normalizeTerminalReadiness>) => { inactive = state; status({ inactive: state }); };
   const awaitReady = createTerminalDeliveryReadinessGate({
     home: init.home,
     session,
@@ -137,7 +138,7 @@ async function start(init: InitLine): Promise<void> {
     rateLimitMs: init.rateLimitMs,
     inspectDelayMs: init.inspectDelayMs,
     isPaused: () => paused,
-    onInactive: (state) => { inactive = state; status({ inactive: state }); },
+    onInactive,
     onReadinessStatus: (readiness) => status({
       readiness_state: readiness.state,
       readiness_error: readiness.error,
@@ -192,7 +193,9 @@ async function start(init: InitLine): Promise<void> {
   // their first_present_at after a downgrade. Delivery remains event-driven.
   try {
     const inspection = await session.inspect(init.home);
-    status({ readiness_state: normalizeTerminalReadiness(inspection.state, inspection.present ?? true), readiness_error: "" });
+    const state = normalizeTerminalReadiness(inspection.state, inspection.present ?? true);
+    status({ readiness_state: state, readiness_error: "" });
+    if (state === "stopped" || state === "not-launched") onInactive(state);
   } catch (error) {
     if (!abort.signal.aborted) {
       lastError = error instanceof Error ? error.message : String(error);
