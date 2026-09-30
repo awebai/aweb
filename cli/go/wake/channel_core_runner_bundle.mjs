@@ -2060,8 +2060,65 @@ var require_proper_lockfile = __commonJS({
   }
 });
 
+// cli/go/wake/oats_command.ts
+import { spawn } from "node:child_process";
+function runOATS(bin, args, input = "", options = {}) {
+  return new Promise((resolve2, reject) => {
+    const signal = options.signal;
+    if (signal?.aborted) {
+      reject(new Error("oats command aborted"));
+      return;
+    }
+    const hasInput = input.length > 0;
+    const child = spawn(bin, args, { stdio: [hasInput ? "pipe" : "ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    let failure;
+    const stop = (error) => {
+      failure ??= error;
+      child.kill("SIGKILL");
+      child.stdin?.destroy();
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    };
+    const timeoutMs = options.timeoutMs ?? 3e4;
+    const timer = setTimeout(() => stop(new Error(`oats command timed out after ${timeoutMs}ms`)), timeoutMs);
+    const onAbort = () => stop(new Error("oats command aborted"));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    child.on("error", (error) => {
+      failure ??= error;
+    });
+    child.on("close", () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      if (failure) {
+        reject(failure);
+        return;
+      }
+      try {
+        const envelope = JSON.parse(stdout.trim());
+        if (!envelope.ok) throw new Error(`${envelope.error?.code || "E_OATS"}: ${envelope.error?.message || "oats command failed"}`);
+        resolve2(envelope);
+      } catch (error) {
+        reject(new Error((stderr || (error instanceof Error ? error.message : String(error))).trim()));
+      }
+    });
+    if (hasInput && child.stdin) {
+      child.stdin.on("error", stop);
+      child.stdin.end(input);
+    }
+  });
+}
+
 // cli/go/wake/channel_core_runner_entry.ts
-import { spawn as spawn2 } from "node:child_process";
 import { createInterface } from "node:readline";
 
 // channel-core/src/api/client.ts
@@ -8883,7 +8940,7 @@ import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile as readFile4, rename, rm } from "node:fs/promises";
 
 // channel-core/src/local_aw.ts
-import { execFile, spawn } from "node:child_process";
+import { execFile, spawn as spawn2 } from "node:child_process";
 import { promisify } from "node:util";
 var execFileAsync = promisify(execFile);
 var PinStoreCASConflictError = class extends Error {
@@ -8941,7 +8998,7 @@ function createLocalAWDecryptProvider(options) {
 }
 function execFileWithInput(command, args, input, cwd) {
   return new Promise((resolve2, reject) => {
-    const child = spawn(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn2(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     let settled = false;
@@ -10092,6 +10149,7 @@ function createTerminalAwakeningHandler(options) {
   const maxAmbient = options.maxAmbient ?? DEFAULT_MAX_AMBIENT;
   const ambient = /* @__PURE__ */ new Map();
   let ambientDropped = 0;
+  let inputTail = Promise.resolve();
   function rejectAll(error) {
     for (const item of ambient.values()) rejectItem(item, error);
     ambient.clear();
@@ -10120,6 +10178,13 @@ function createTerminalAwakeningHandler(options) {
         }
       });
     }
+    const delivery = inputTail.then(() => present(awakening));
+    inputTail = delivery.catch(() => {
+    });
+    return delivery;
+  });
+  async function present(awakening) {
+    throwIfAborted2(options.signal);
     const ambientBatch = [...ambient.values()];
     let inspection;
     try {
@@ -10141,7 +10206,7 @@ function createTerminalAwakeningHandler(options) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();
     }
-  });
+  }
   handler.status = () => ({ ambientQueued: ambient.size, ambientDropped });
   return handler;
 }
@@ -10205,60 +10270,6 @@ function traceStatus(bindingID, entry) {
     trace_session_id: entry.session_id
   });
 }
-function runOATS(bin, args, input = "") {
-  return new Promise((resolve2, reject) => {
-    const hasInput = input.length > 0;
-    const child = spawn2(bin, args, { stdio: [hasInput ? "pipe" : "ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      abort.signal.removeEventListener("abort", onAbort);
-      reject(error);
-    };
-    const onAbort = () => {
-      child.kill("SIGTERM");
-      fail(new Error("oats command aborted"));
-    };
-    abort.signal.addEventListener("abort", onAbort, { once: true });
-    if (!child.stdout || !child.stderr) {
-      fail(new Error("oats subprocess stdout/stderr unavailable"));
-      return;
-    }
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
-    });
-    child.on("error", fail);
-    child.on("close", () => {
-      if (settled) return;
-      abort.signal.removeEventListener("abort", onAbort);
-      let envelope;
-      try {
-        envelope = JSON.parse(stdout.trim());
-      } catch (error) {
-        fail(new Error((stderr || stdout || (error instanceof Error ? error.message : String(error))).trim()));
-        return;
-      }
-      if (!envelope.ok) {
-        fail(new Error(`${envelope.error?.code || "E_OATS"}: ${envelope.error?.message || "oats command failed"}`));
-        return;
-      }
-      settled = true;
-      resolve2(envelope);
-    });
-    if (hasInput && child.stdin) {
-      child.stdin.on("error", fail);
-      child.stdin.end(input);
-    }
-  });
-}
 async function start(init) {
   paused = Boolean(init.paused);
   const oatsBin = init.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
@@ -10266,7 +10277,7 @@ async function start(init) {
   const session = {
     async inspect(home) {
       status({ readiness_waiting: "inspect_start" });
-      const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"]);
+      const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
       status({ readiness_waiting: "inspect_done" });
       return { present: envelope.result?.present, state: envelope.result?.state, rawState: envelope.result?.state };
     },
@@ -10345,6 +10356,12 @@ async function start(init) {
 }
 async function main() {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+  const shutdown = () => {
+    abort.abort();
+    rl.close();
+    process.stdin.pause();
+  };
+  process.on("SIGTERM", shutdown);
   let initialized = false;
   for await (const line of rl) {
     if (!line.trim()) continue;
@@ -10389,11 +10406,14 @@ async function main() {
   for (const queue of queues.values()) queue.close();
   await Promise.allSettled(consumers);
   status({ stopped: true });
+  process.removeListener("SIGTERM", shutdown);
+  rl.close();
+  process.stdin.pause();
 }
 main().catch((error) => {
   lastError = error instanceof Error ? error.message : String(error);
   status({ fatal: true });
-  process.exitCode = 1;
+  process.stdout.write("", () => process.exit(1));
 });
 /*! Bundled license information:
 
