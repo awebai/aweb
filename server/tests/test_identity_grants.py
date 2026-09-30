@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.routing import APIRoute
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
@@ -1359,7 +1359,7 @@ async def _next_text(aiter) -> str:
 
 
 @pytest.mark.asyncio
-async def test_events_stream_real_handler_emits_grant_revoked_terminal(aweb_cloud_db):
+async def test_events_stream_real_handler_rejects_revoked_grant_on_reopen(aweb_cloud_db):
     app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
     key, did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1381,8 +1381,14 @@ async def test_events_stream_real_handler_emits_grant_revoked_terminal(aweb_clou
         "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
         grant_id,
     )
-    terminal = await _next_text(stream)
-    assert "event: grant_revoked" in terminal
+    await stream.aclose()
+    with pytest.raises(HTTPException) as exc:
+        await events_stream_route(
+            _stream_request(app), deadline=deadline,
+            db=_DbShim(aweb_cloud_db.aweb_db), redis=None, identity=identity,
+        )
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "identity grant revoked"
 
 
 @pytest.mark.asyncio
@@ -1408,7 +1414,7 @@ async def test_events_stream_real_handler_short_client_deadline_has_no_grant_ter
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal(aweb_cloud_db):
+async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal(aweb_cloud_db, monkeypatch):
     app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
     key, did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -1440,7 +1446,15 @@ async def test_chat_stream_real_handler_revoked_and_expired_grants_emit_terminal
         "UPDATE {{tables.identity_session_grants}} SET revoked_at = NOW() WHERE grant_id = $1::UUID",
         grant_id,
     )
+    # Advance only the cadence clock; do not wait 30 real seconds.
+    import time
+    from types import SimpleNamespace
+    from aweb.routes import chat as chat_routes
+    now_mono = time.monotonic()
+    monkeypatch.setattr(chat_routes, "time", SimpleNamespace(monotonic=lambda: now_mono + 31))
     assert "event: grant_revoked" in await _next_text(stream)
+    await stream.aclose()
+    monkeypatch.setattr(chat_routes, "time", time)
 
     expire_key, expire_did = _session_keypair()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

@@ -4,7 +4,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 
 from aweb.auth_context import GrantContext
 from aweb.config import require_registered_certificates
@@ -13,6 +13,7 @@ from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_registered_certific
 GRANT_STREAM_RECHECK_SECONDS = 30
 
 GRANT_TERMINAL_DETAILS = {
+    "verification_unavailable": "identity grant verification unavailable",
     "grant_expired": "identity grant expired",
     "grant_revoked": "identity grant revoked",
     "grant_subject_inactive": "identity grant subject inactive",
@@ -31,6 +32,19 @@ def clamp_deadline_to_grant(deadline: datetime, identity: TeamIdentity) -> datet
 def grant_terminal_sse(reason: str) -> str:
     payload = {"type": reason, "detail": GRANT_TERMINAL_DETAILS.get(reason, reason)}
     return f"event: {reason}\ndata: {json.dumps(payload)}\n\n"
+
+
+def grant_expiry_reason(identity: TeamIdentity) -> str | None:
+    if identity.grant is not None and _as_utc(identity.grant.expires_at) <= datetime.now(timezone.utc):
+        return "grant_expired"
+    return None
+
+
+async def require_valid_stream_grant(request: Request, db, identity: TeamIdentity) -> None:
+    """Check before constructing StreamingResponse, while HTTP errors are legal."""
+    reason = await grant_terminal_reason(request, db, identity)
+    if reason:
+        raise HTTPException(status_code=403, detail=GRANT_TERMINAL_DETAILS[reason])
 
 
 async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) -> str | None:

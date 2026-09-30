@@ -503,3 +503,32 @@ and accepting the relationship are distinct operations.
 - [awid-sot.md](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md) — registry API, signed envelopes, certificate format
 - [identity.md](https://github.com/awebai/aweb/blob/main/docs/identity.md) — identity concepts and TOFU model
 - [identity-key-verification.md](https://github.com/awebai/aweb/blob/main/docs/identity-key-verification.md) — DID key verification rules
+
+
+## Identity grant streams and revocation
+
+Grant-backed agent event and status streams validate the grant before response
+headers and are capped at 300 seconds, or the grant expiry if sooner. They do
+not poll the registry or grant row after opening. Revocation of a grant, its
+subject, or its issuing certificate therefore stops notifications at the next
+open, within the remaining stream lifetime (at most 300 seconds). Message
+fetches remain separate authenticated requests.
+
+Chat session SSE also carries message bodies, so it additionally checks grant
+validity every 30 seconds while open. Message polling retains its existing
+cadence. A revoked grant, inactive subject, or revoked issuer ends the stream
+with its specific terminal event. If a recheck cannot verify the grant, the
+server logs the error, sends a `verification_unavailable` terminal SSE event,
+and closes without sending further content. Before headers, dependency
+failures use the normal HTTP error response (503 for an unavailable registry).
+Grant expiry is checked locally and clamps the deadline; a shorter client
+deadline does not imply `grant_expired`.
+
+These bounds are additional to the registry adapter's revocation freshness.
+For an adapter with a 60-second fresh TTL and stale-while-revalidate data up to
+120 seconds old, issuer-certificate revocation can remain unobserved for up to
+that permitted staleness plus 30 seconds for chat, or plus 300 seconds for an
+already-open notification stream. Locally stored grant revocation does not add
+registry cache staleness. Once the adapter cannot supply sufficiently fresh
+revocation evidence, new streams fail closed and the next chat check terminates
+the stream. The wire protocol does not require a particular cache implementation.

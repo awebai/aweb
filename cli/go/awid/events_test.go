@@ -418,3 +418,13 @@ func TestAgentEventStreamGrantTerminalEventIsDistinctError(t *testing.T) {
 		t.Fatal("terminal grant event must not be returned as a normal event")
 	}
 }
+
+func TestAgentEventStreamVerificationUnavailableIsDistinctError(t *testing.T) {
+	_, ok, err := parseAgentEvent("verification_unavailable", `{"type":"verification_unavailable","detail":"identity grant verification unavailable"}`)
+	if err == nil || err.Error() != "agent event stream closed: identity grant verification unavailable; retry" {
+		t.Fatalf("err=%v, want explicit retryable verification failure", err)
+	}
+	if ok {
+		t.Fatal("verification failure must not be returned as a normal event")
+	}
+}

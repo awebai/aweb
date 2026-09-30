@@ -33,8 +33,9 @@ from aweb.internal_auth import parse_internal_auth_context
 from aweb.grant_streams import (
     agent_event_allowed,
     clamp_deadline_to_grant,
-    grant_terminal_reason,
+    grant_expiry_reason,
     grant_terminal_sse,
+    require_valid_stream_grant,
 )
 from aweb.service_errors import ServiceError
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
@@ -416,7 +417,7 @@ async def _sse_agent_events(
 
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
 
-    reason = await grant_terminal_reason(request, db, identity)
+    reason = grant_expiry_reason(identity)
     if reason:
         yield grant_terminal_sse(reason)
         return
@@ -435,6 +436,13 @@ async def _sse_agent_events(
     previous_mail = _index_events(mail_events, key_field="message_id")
     previous_chat = _index_events(chat_events, key_field="session_id")
     previous_app = _index_events(app_events, key_field="event_id")
+
+    reason = grant_expiry_reason(identity)
+    if reason:
+        yield grant_terminal_sse(reason)
+        return
+    if datetime.now(timezone.utc) >= deadline:
+        return
 
     for evt in mail_events:
         if agent_event_allowed(identity, evt):
@@ -459,7 +467,7 @@ async def _sse_agent_events(
         if datetime.now(timezone.utc) >= deadline:
             break
 
-        reason = await grant_terminal_reason(request, db, identity)
+        reason = grant_expiry_reason(identity)
         if reason:
             yield grant_terminal_sse(reason)
             return
@@ -492,10 +500,13 @@ async def _sse_agent_events(
             key_field="event_id",
         )
 
-        reason = await grant_terminal_reason(request, db, identity)
+        reason = grant_expiry_reason(identity)
         if reason:
             yield grant_terminal_sse(reason)
             return
+
+        if datetime.now(timezone.utc) >= deadline:
+            break
 
         for evt in mail_events:
             if agent_event_allowed(identity, evt):
@@ -522,7 +533,7 @@ async def _sse_agent_events(
         previous_chat = _index_events(current_chat, key_field="session_id")
         previous_app = _index_events(current_app, key_field="event_id")
 
-    reason = await grant_terminal_reason(request, db, identity)
+    reason = grant_expiry_reason(identity)
     if reason:
         yield grant_terminal_sse(reason)
 
@@ -624,6 +635,8 @@ async def event_stream(
     if deadline_dt > max_deadline:
         deadline_dt = max_deadline
     deadline_dt = clamp_deadline_to_grant(deadline_dt, identity)
+
+    await require_valid_stream_grant(request, db, identity)
 
     return StreamingResponse(
         _sse_agent_events(

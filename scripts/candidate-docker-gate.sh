@@ -309,6 +309,9 @@ docker run --rm --init \
   -e COMPOSE_BAKE=true \
   -e CANDIDATE_SOURCE_SHA="$SOURCE_SHA" \
   -e CANDIDATE_CHECKOUT_ROOT="$checkout" \
+  -e GIT_CONFIG_COUNT=1 \
+  -e GIT_CONFIG_KEY_0=safe.directory \
+  -e GIT_CONFIG_VALUE_0="$checkout" \
   -e CLI_VERSION="${CLI_VERSION:-}" \
   -e A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-}" \
   -e LIBRARY_E2E_LIBRARY_CONTEXT="$LIBRARY_E2E_LIBRARY_CONTEXT" \

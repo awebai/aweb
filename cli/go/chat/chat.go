@@ -110,7 +110,7 @@ func streamToChannel(ctx context.Context, stream *awid.SSEStream) (<-chan sseRes
 // parseSSEEvent converts an SSE event to a chat Event.
 func isGrantTerminalEvent(eventType string) bool {
 	switch strings.TrimSpace(eventType) {
-	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked":
+	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
 		return true
 	default:
 		return false
@@ -1118,6 +1118,9 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				}
 				if detail == "" {
 					detail = chatEvent.Type
+				}
+				if chatEvent.Type == "verification_unavailable" {
+					detail = "identity grant verification unavailable; retry"
 				}
 				return nil, fmt.Errorf("chat stream closed: %s", detail)
 			}
