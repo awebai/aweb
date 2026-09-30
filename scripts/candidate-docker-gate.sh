@@ -41,7 +41,8 @@ fi
 work="$(cd "$work" && pwd -P)"
 go_mod_cache="$work/go-mod"
 mkdir -p "$go_mod_cache"
-gate_run_id="$(printf 'aweb-candidate-%s-%s' "${SOURCE_SHA:0:12}" "${work##*.}" | tr '[:upper:]' '[:lower:]')"
+run_suffix="$(printf '%s' "${work##*.}" | tr '[:upper:]' '[:lower:]')"
+gate_run_id="aweb-candidate-${SOURCE_SHA:0:12}-${run_suffix}"
 resource_label="$gate_run_id"
 runner_name="$gate_run_id-runner"
 seed_name="$gate_run_id-seed"
@@ -70,7 +71,7 @@ suite_projects=(
   "$gate_run_id-channel"
   "$gate_run_id-user"
   "$gate_run_id-fed-auth"
-  "$gate_run_id-fed-e2e"
+  "aweb-fed-e2e-${SOURCE_SHA:0:12}${run_suffix}"
   "$gate_run_id-library"
 )
 # Install cleanup before the first Docker allocation. Logs outlive the run.

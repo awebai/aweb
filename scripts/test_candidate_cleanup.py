@@ -152,6 +152,60 @@ class HostPressureTests(unittest.TestCase):
 
 
 
+class SuiteProjectTests(unittest.TestCase):
+    def test_generated_projects_satisfy_consumer_validators(self):
+        gate = (ROOT / 'scripts/candidate-docker-gate.sh').read_text()
+        # Execute the actual producer block, including work-suffix normalization
+        # and suite_projects, without entering Docker allocation or cleanup.
+        producer = gate[gate.index('work="$(cd "$work" && pwd -P)"'):
+                        gate.index('# Install cleanup before the first Docker allocation.')]
+        federation = (ROOT / 'scripts/e2e-oss-federation.sh').read_text()
+        fed_validator = federation[federation.index('[[ "$PROJECT" =~'):
+                                   federation.index('for port in "$AWID_PORT"')]
+        channel = (ROOT / 'channel/test/integration.test.ts').read_text()
+        channel_validator = channel[channel.index('  const projectName = projectSeed'):
+                                    channel.index('  const envFilePath =', channel.index('  const projectName = projectSeed'))]
+
+        def validate_federation(project):
+            return subprocess.run(['bash', '-c', 'PROJECT="$1"\n' + fed_validator, '_', project],
+                                  capture_output=True, text=True)
+
+        def validate_bounded_project(project):
+            return subprocess.run(['node', '-e',
+                'const projectSeed = process.argv[1]; process.env.AWEB_SKEW_PROJECT_TOKEN = projectSeed;\n'
+                + channel_validator, project], capture_output=True, text=True)
+
+        generated = []
+        with tempfile.TemporaryDirectory() as directory:
+            for suffix in ('JdJ9q1', 'AbC123'):
+                work = Path(directory) / ('work.' + suffix)
+                work.mkdir()
+                result = subprocess.run(['bash', '-c',
+                    'set -euo pipefail\nwork="$1"\nSOURCE_SHA="$2"\n' + producer
+                    + "printf '%s\\n' \"${suite_projects[@]}\"\n",
+                    '_', str(work), 'a520521b0c15590f4a5e9f43933bf2adfc1fd75c'],
+                    capture_output=True, text=True, check=True)
+                projects = result.stdout.splitlines()
+                self.assertEqual(len(projects), 5)
+                for project in projects:
+                    checked = validate_bounded_project(project)
+                    self.assertEqual(checked.returncode, 0, checked.stderr)
+                checked = validate_federation(projects[3])
+                self.assertEqual(checked.returncode, 0, checked.stderr)
+                generated.extend(projects)
+        self.assertEqual(len(set(generated)), 10, 'run ownership must remain unique')
+
+        # Execute the real validators on boundary and invalid inputs too.
+        self.assertEqual(validate_bounded_project('a' * 63).returncode, 0)
+        for invalid in ('a' * 64, 'Uppercase', 'bad/project'):
+            self.assertNotEqual(validate_bounded_project(invalid).returncode, 0)
+        for invalid in ('aweb-candidate-a520521b0c15-jdj9q1-fed-e2e',
+                        'aweb-fed-e2e-', 'aweb-fed-e2e-ABC', 'aweb-fed-e2e-a-b'):
+            checked = validate_federation(invalid)
+            self.assertNotEqual(checked.returncode, 0)
+            self.assertIn('AWEB_FED_E2E_PROJECT is invalid', checked.stderr)
+
+
 class WrapperTests(unittest.TestCase):
     def test_allocations_are_labelled_and_nested_ownership_recorded_before_create(self):
         with tempfile.TemporaryDirectory() as directory:
