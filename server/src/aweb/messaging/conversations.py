@@ -276,15 +276,6 @@ async def _equivalent_identity_refs(
     return refs, agent_ids
 
 
-def _identity_address_refs(*values: str | None) -> list[str]:
-    refs: list[str] = []
-    for value in values:
-        normalized = str(value or "").strip()
-        if normalized and normalized not in refs:
-            refs.append(normalized)
-    return refs
-
-
 async def find_active_one_to_one_conversation_between(
     db,
     *,
@@ -319,9 +310,13 @@ async def find_active_one_to_one_conversation_between(
         did_key=did_key_b,
         agent_id=agent_id_b,
     )
-    addresses_a = _identity_address_refs(address_a)
-    addresses_b = _identity_address_refs(address_b)
-    if not (dids_a or agent_ids_a or addresses_a) or not (dids_b or agent_ids_b or addresses_b):
+    # Address is routing/contact metadata, not identity. A later identity that
+    # reuses the same alias/address must not inherit a prior private 1:1 thread;
+    # same-stable-DID/key rotation continuity comes from the DID/agent expansion
+    # above. address_a/address_b remain accepted for callers that already have
+    # routing metadata, but they are not identity equivalence inputs.
+    _ = (address_a, address_b)
+    if not (dids_a or agent_ids_a) or not (dids_b or agent_ids_b):
         return None
 
     aweb_db = db.get_manager("aweb")
@@ -351,21 +346,19 @@ async def find_active_one_to_one_conversation_between(
                     $3::uuid[] = '{}'::uuid[]
                     AND pa.did = ANY($2::text[])
                 )
-             OR ($4::text[] <> '{}'::text[] AND pa.address = ANY($4::text[]))
           )
           AND (
                 (
-                    $6::uuid[] <> '{}'::uuid[]
+                    $5::uuid[] <> '{}'::uuid[]
                     AND (
-                        pb.agent_id = ANY($6::uuid[])
-                        OR (pb.agent_id IS NULL AND pb.did = ANY($5::text[]))
+                        pb.agent_id = ANY($5::uuid[])
+                        OR (pb.agent_id IS NULL AND pb.did = ANY($4::text[]))
                     )
                 )
              OR (
-                    $6::uuid[] = '{}'::uuid[]
-                    AND pb.did = ANY($5::text[])
+                    $5::uuid[] = '{}'::uuid[]
+                    AND pb.did = ANY($4::text[])
                 )
-             OR ($7::text[] <> '{}'::text[] AND pb.address = ANY($7::text[]))
           )
           AND pa.did <> pb.did
           AND (
@@ -379,10 +372,8 @@ async def find_active_one_to_one_conversation_between(
         normalized_type,
         dids_a,
         agent_ids_a,
-        addresses_a,
         dids_b,
         agent_ids_b,
-        addresses_b,
     )
     if not rows:
         return None

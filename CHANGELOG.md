@@ -18,6 +18,13 @@
 
 ### Server compatibility
 
+- One-to-one mail conversation reuse no longer treats a reused alias/address as
+  identity continuity. Existing private threads are matched by concrete
+  participant identity (agent id or DID) only; a replacement identity that
+  reuses an address starts a new thread instead of inheriting the old one.
+  Legacy/self-hosted sparse rows with no authoritative identity also fail safe
+  by starting a new thread rather than matching by address alone.
+
 - The chat mark-read HTTP endpoint and both canonical/legacy MCP tools now
   accept the deployed-client `up_to_message_id` watermark, the upgraded-client
   `message_ids` list, or both. When both are present, the exact ID list takes

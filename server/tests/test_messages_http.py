@@ -882,6 +882,511 @@ async def test_send_message_to_address_reuses_alias_thread(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_reused_alias_new_identity_explicit_id_creates_new_thread(aweb_cloud_db):
+    _, _, old_worker_did_key = _make_keypair()
+    _, _, new_worker_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    old_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=old_worker_did_key,
+        did_aw="did:aw:old-worker",
+        address="acme.com/worker",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _old_worker_auth():
+        return MessagingAuth(
+            did_key=old_worker_did_key,
+            did_aw="did:aw:old-worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=old_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _old_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "old worker thread", "body": "old hello"},
+        )
+    assert first.status_code == 200, first.text
+    old_conversation_id = first.json()["conversation_id"]
+    old_message_id = first.json()["message_id"]
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.agents}}
+        SET status = 'deleted', deleted_at = NOW()
+        WHERE agent_id = $1
+        """,
+        UUID(old_worker_agent_id),
+    )
+    new_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=new_worker_did_key,
+        did_aw="did:aw:new-worker",
+        address="acme.com/worker",
+    )
+
+    async def _new_worker_auth():
+        return MessagingAuth(
+            did_key=new_worker_did_key,
+            did_aw="did:aw:new-worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=new_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _new_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        second = await client.post(
+            "/v1/messages",
+            json={
+                "conversation_id": str(uuid4()),
+                "to_alias": "bob",
+                "subject": "new worker thread explicit",
+                "body": "new hello",
+            },
+        )
+        old_visible = await client.get(f"/v1/messages/{old_message_id}")
+
+    assert second.status_code == 200, second.text
+    assert second.json()["conversation_id"] != old_conversation_id
+    assert old_visible.status_code == 404, old_visible.text
+    participants = await _conversation_participants(aweb_cloud_db.aweb_db, second.json()["conversation_id"])
+    assert {str(participant["agent_id"]) for participant in participants} == {new_worker_agent_id, bob_agent_id}
+
+
+@pytest.mark.asyncio
+async def test_reused_alias_new_identity_without_explicit_id_creates_new_thread(aweb_cloud_db):
+    _, _, old_worker_did_key = _make_keypair()
+    _, _, new_worker_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    old_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=old_worker_did_key,
+        did_aw="did:aw:old-worker",
+        address="acme.com/worker",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _old_worker_auth():
+        return MessagingAuth(
+            did_key=old_worker_did_key,
+            did_aw="did:aw:old-worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=old_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _old_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "old worker no explicit", "body": "old hello"},
+        )
+    assert first.status_code == 200, first.text
+    old_conversation_id = first.json()["conversation_id"]
+
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET status = 'deleted', deleted_at = NOW() WHERE agent_id = $1",
+        UUID(old_worker_agent_id),
+    )
+    new_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=new_worker_did_key,
+        did_aw="did:aw:new-worker",
+        address="acme.com/worker",
+    )
+
+    async def _new_worker_auth():
+        return MessagingAuth(
+            did_key=new_worker_did_key,
+            did_aw="did:aw:new-worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=new_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _new_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        second = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "new worker no explicit", "body": "new hello"},
+        )
+
+    assert second.status_code == 200, second.text
+    assert second.json()["conversation_id"] != old_conversation_id
+    participants = await _conversation_participants(aweb_cloud_db.aweb_db, second.json()["conversation_id"])
+    assert {str(participant["agent_id"]) for participant in participants} == {new_worker_agent_id, bob_agent_id}
+
+
+@pytest.mark.asyncio
+async def test_reused_recipient_alias_new_identity_without_explicit_id_creates_new_thread(aweb_cloud_db):
+    _, _, old_worker_did_key = _make_keypair()
+    _, _, new_worker_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    old_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=old_worker_did_key,
+        did_aw="did:aw:old-worker",
+        address="acme.com/worker",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _old_worker_auth():
+        return MessagingAuth(
+            did_key=old_worker_did_key,
+            did_aw="did:aw:old-worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=old_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _old_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "old worker recipient", "body": "old hello"},
+        )
+    assert first.status_code == 200, first.text
+    old_conversation_id = first.json()["conversation_id"]
+
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET status = 'deleted', deleted_at = NOW() WHERE agent_id = $1",
+        UUID(old_worker_agent_id),
+    )
+    new_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=new_worker_did_key,
+        did_aw="did:aw:new-worker",
+        address="acme.com/worker",
+    )
+
+    async def _bob_auth():
+        return MessagingAuth(
+            did_key=bob_did_key,
+            did_aw="did:aw:bob",
+            address="acme.com/bob",
+            team_id="backend:acme.com",
+            alias="bob",
+            agent_id=bob_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _bob_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        second = await client.post(
+            "/v1/messages",
+            json={"to_alias": "worker", "subject": "bob to new worker", "body": "hello new worker"},
+        )
+
+    assert second.status_code == 200, second.text
+    assert second.json()["conversation_id"] != old_conversation_id
+    participants = await _conversation_participants(aweb_cloud_db.aweb_db, second.json()["conversation_id"])
+    assert {str(participant["agent_id"]) for participant in participants} == {new_worker_agent_id, bob_agent_id}
+    row = await aweb_cloud_db.aweb_db.fetch_one(
+        "SELECT to_did, to_agent_id FROM {{tables.messages}} WHERE subject = 'bob to new worker'"
+    )
+    assert row["to_did"] == "did:aw:new-worker"
+    assert str(row["to_agent_id"]) == new_worker_agent_id
+
+
+@pytest.mark.asyncio
+async def test_agent_deleted_participant_did_not_matched_by_reused_address(aweb_cloud_db):
+    _, _, old_worker_did_key = _make_keypair()
+    _, _, new_worker_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    old_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=old_worker_did_key,
+        did_aw="did:aw:old-worker",
+        address="acme.com/worker",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _old_worker_auth():
+        return MessagingAuth(
+            did_key=old_worker_did_key,
+            did_aw="did:aw:old-worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=old_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _old_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "old deleted worker", "body": "old hello"},
+        )
+    assert first.status_code == 200, first.text
+    old_conversation_id = first.json()["conversation_id"]
+
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.conversation_participants}}
+        SET agent_id = NULL
+        WHERE conversation_id = $1 AND address = 'acme.com/worker'
+        """,
+        UUID(old_conversation_id),
+    )
+    old_participant = await aweb_cloud_db.aweb_db.fetch_one(
+        """
+        SELECT agent_id, did, address
+        FROM {{tables.conversation_participants}}
+        WHERE conversation_id = $1 AND address = 'acme.com/worker'
+        """,
+        UUID(old_conversation_id),
+    )
+    assert old_participant["agent_id"] is None
+    assert old_participant["did"] == "did:aw:old-worker"
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET status = 'deleted', deleted_at = NOW() WHERE agent_id = $1",
+        UUID(old_worker_agent_id),
+    )
+
+    new_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=new_worker_did_key,
+        did_aw="did:aw:new-worker",
+        address="acme.com/worker",
+    )
+
+    async def _new_worker_auth():
+        return MessagingAuth(
+            did_key=new_worker_did_key,
+            did_aw="did:aw:new-worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=new_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _new_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        second = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "new after agent delete", "body": "new hello"},
+        )
+
+    assert second.status_code == 200, second.text
+    assert second.json()["conversation_id"] != old_conversation_id
+    participants = await _conversation_participants(aweb_cloud_db.aweb_db, second.json()["conversation_id"])
+    assert {str(participant["agent_id"]) for participant in participants} == {new_worker_agent_id, bob_agent_id}
+
+
+@pytest.mark.asyncio
+async def test_empty_did_participant_not_matched_by_reused_address(aweb_cloud_db):
+    _, _, new_worker_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    sparse_conversation_id = uuid4()
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversations}} (conversation_id, conversation_type, team_id, created_by_did)
+        VALUES ($1, 'mail', 'backend:acme.com', 'did:aw:legacy')
+        """,
+        sparse_conversation_id,
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        INSERT INTO {{tables.conversation_participants}}
+            (conversation_id, did, agent_id, alias, address, transport_hint, role)
+        VALUES
+            ($1, '', NULL, 'worker', 'acme.com/worker', 'local', 'initiator'),
+            ($1, 'did:aw:bob', $2, 'bob', 'acme.com/bob', 'local', 'participant')
+        """,
+        sparse_conversation_id,
+        UUID(bob_agent_id),
+    )
+    new_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=new_worker_did_key,
+        did_aw="did:aw:new-worker",
+        address="acme.com/worker",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _new_worker_auth():
+        return MessagingAuth(
+            did_key=new_worker_did_key,
+            did_aw="did:aw:new-worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=new_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _new_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "new after empty did", "body": "new hello"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["conversation_id"] != str(sparse_conversation_id)
+    participants = await _conversation_participants(aweb_cloud_db.aweb_db, resp.json()["conversation_id"])
+    assert {str(participant["agent_id"]) for participant in participants} == {new_worker_agent_id, bob_agent_id}
+
+
+@pytest.mark.asyncio
+async def test_same_stable_did_rotation_continues_existing_thread(aweb_cloud_db):
+    _, _, old_worker_did_key = _make_keypair()
+    _, _, rotated_worker_did_key = _make_keypair()
+    _, _, bob_did_key = _make_keypair()
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    old_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=old_worker_did_key,
+        did_aw="did:aw:worker",
+        address="acme.com/worker",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_key=bob_did_key,
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def _old_worker_auth():
+        return MessagingAuth(
+            did_key=old_worker_did_key,
+            did_aw="did:aw:worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=old_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _old_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "old stable worker", "body": "old hello"},
+        )
+    assert first.status_code == 200, first.text
+    conversation_id = first.json()["conversation_id"]
+
+    await aweb_cloud_db.aweb_db.execute(
+        "UPDATE {{tables.agents}} SET status = 'deleted', deleted_at = NOW() WHERE agent_id = $1",
+        UUID(old_worker_agent_id),
+    )
+    await aweb_cloud_db.aweb_db.execute(
+        """
+        UPDATE {{tables.conversation_participants}}
+        SET agent_id = NULL
+        WHERE conversation_id = $1 AND did = 'did:aw:worker'
+        """,
+        UUID(conversation_id),
+    )
+    rotated_worker_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="worker",
+        did_key=rotated_worker_did_key,
+        did_aw="did:aw:worker",
+        address="acme.com/worker",
+    )
+
+    async def _rotated_worker_auth():
+        return MessagingAuth(
+            did_key=rotated_worker_did_key,
+            did_aw="did:aw:worker",
+            address="acme.com/worker",
+            team_id="backend:acme.com",
+            alias="worker",
+            agent_id=rotated_worker_agent_id,
+        )
+
+    app.dependency_overrides[get_messaging_auth] = _rotated_worker_auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        second = await client.post(
+            "/v1/messages",
+            json={"to_alias": "bob", "subject": "rotated stable worker", "body": "still same stable identity"},
+        )
+
+    assert second.status_code == 200, second.text
+    assert second.json()["conversation_id"] == conversation_id
+    participants = await _conversation_participants(aweb_cloud_db.aweb_db, conversation_id)
+    assert {participant["did"] for participant in participants} == {"did:aw:worker", "did:aw:bob"}
+    assert bob_agent_id in {str(participant["agent_id"]) for participant in participants}
+
+
+@pytest.mark.asyncio
 async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db):
     _, _, alice_did_key = _make_keypair()
     _, _, bob_did_key = _make_keypair()

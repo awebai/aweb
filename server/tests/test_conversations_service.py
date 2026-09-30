@@ -499,6 +499,66 @@ async def test_find_active_conversation_matches_multi_team_agent_via_did_fallbac
 
 
 @pytest.mark.asyncio
+async def test_find_active_conversation_does_not_match_different_live_agent_by_did(aweb_cloud_db):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    await _insert_team(aweb_cloud_db.aweb_db)
+    real_alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice",
+        did_aw="did:aw:alice",
+        address="acme.com/alice",
+    )
+    other_alice_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="alice-other",
+        did_aw="did:aw:alice",
+        address="acme.com/alice-other",
+    )
+    bob_agent_id = await _insert_agent(
+        aweb_cloud_db.aweb_db,
+        team_id="backend:acme.com",
+        alias="bob",
+        did_aw="did:aw:bob",
+        address="acme.com/bob",
+    )
+    await create_conversation(
+        db,
+        conversation_type="mail",
+        created_by_did="did:aw:alice",
+        initiator={
+            "did": "did:aw:alice",
+            "agent_id": other_alice_agent_id,
+            "alias": "alice-other",
+            "address": "acme.com/alice-other",
+            "transport_hint": "mail",
+        },
+        recipients=[{
+            "did": "did:aw:bob",
+            "agent_id": bob_agent_id,
+            "alias": "bob",
+            "address": "acme.com/bob",
+            "transport_hint": "mail",
+        }],
+        team_id="backend:acme.com",
+    )
+
+    found = await find_active_one_to_one_conversation_between(
+        db,
+        conversation_type="mail",
+        did_a="did:aw:alice",
+        did_key_a="did:key:z6Mkalice",
+        agent_id_a=real_alice_agent_id,
+        did_b="did:aw:bob",
+        did_key_b="did:key:z6Mkbob",
+        agent_id_b=bob_agent_id,
+    )
+
+    assert found is None
+
+
+@pytest.mark.asyncio
 async def test_find_session_between_matches_multi_team_agent_via_did_fallback(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     alice_a, alice_b, bob_b = await _multi_team_alice_setup(aweb_cloud_db)
