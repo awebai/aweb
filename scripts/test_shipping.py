@@ -222,7 +222,7 @@ class SurfaceContractTest(unittest.TestCase):
             fake = root / "fake-docker.py"
             fake.write_text(
                 "#!/usr/bin/env python3\n"
-                "import pathlib, sys\n"
+                "import json, pathlib, sys\n"
                 "args = sys.argv[1:]\n"
                 "if args[:1] == ['compose'] and args[-2:] == ['config', '--services']:\n"
                 "    print('web')\n"
@@ -233,6 +233,12 @@ class SurfaceContractTest(unittest.TestCase):
                 "    for i in it:\n"
                 "        if args[i] == '-f' and i + 1 < len(args):\n"
                 "            files.append(args[i + 1])\n"
+                "    if args[-3:] == ['config', '--format', 'json']:\n"
+                "        service = {'image': 'nginx:alpine'}\n"
+                "        if any('build:' in pathlib.Path(path).read_text() for path in files):\n"
+                "            service = {'build': {'context': '.'}}\n"
+                "        print(json.dumps({'name': args[args.index('-p') + 1], 'services': {'web': service}}))\n"
+                "        raise SystemExit(0)\n"
                 "    for path in files:\n"
                 "        print(f'--- {path}')\n"
                 "        print(pathlib.Path(path).read_text())\n"
@@ -244,6 +250,7 @@ class SurfaceContractTest(unittest.TestCase):
             env = os.environ.copy()
             env.update(
                 {
+                    "CANDIDATE_RESOURCE_MANIFEST": str(root / "owned-resources.tsv"),
                     "AWEB_CANDIDATE_REAL_DOCKER": str(fake),
                     "AWEB_CANDIDATE_RESOURCE_LABEL": "test-run",
                     "AWEB_CANDIDATE_SIBLING_CPUS": "2",
@@ -282,6 +289,10 @@ class SurfaceContractTest(unittest.TestCase):
             self.assertIn("build:", out)
             self.assertIn("context: .", out)
             self.assertIn("aweb.candidate-gate: test-run", out)
+            self.assertEqual(
+                (root / "owned-resources.tsv").read_text().splitlines(),
+                ["compose-project\tproj", "compose-project\tproj"],
+            )
 
 
 class ReleaseStampContractTest(unittest.TestCase):
