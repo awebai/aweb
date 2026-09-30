@@ -441,8 +441,8 @@ async def _sse_agent_events(
     if reason:
         yield grant_terminal_sse(reason)
         return
-    if datetime.now(timezone.utc) >= deadline:
-        return
+    # The caller deadline bounds polling, not the initial scoped snapshot.
+    # Grant expiry still blocks delivery above, even for an expired deadline.
 
     for evt in mail_events:
         if agent_event_allowed(identity, evt):

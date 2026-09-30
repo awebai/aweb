@@ -5,6 +5,7 @@ import base64
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from dataclasses import asdict
 from unittest.mock import AsyncMock
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,7 @@ from aweb.coordination.routes.tasks import router as tasks_router
 from aweb.coordination.routes.team_instructions import router as instructions_router
 from aweb.coordination.routes.team_roles import router as roles_router
 from aweb.coordination.routes.workspaces import router as workspaces_router
+from aweb.routes import events as events_routes
 from aweb.routes import agents as agents_routes
 from aweb.routes.chat import router as chat_router, stream as chat_stream_route
 from aweb.routes.claims import router as claims_router
@@ -1233,13 +1235,14 @@ def test_direct_team_identity_calls_are_reviewed_root_only_sites():
         ("server/src/aweb/routes/apps.py", "_authorized_team_id", 79),
         ("server/src/aweb/routes/apps.py", "install_app_route", 111),
         ("server/src/aweb/routes/connect.py", "get_team_info", 483),
-        ("server/src/aweb/routes/events.py", "_subscription_read_identity", 140),
-        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 593),
-        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route", 558),
+        ("server/src/aweb/routes/events.py", "_subscription_read_identity", 141),
+        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 604),
+        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route", 569),
     ]
 
 @pytest.mark.asyncio
-async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_db):
+@pytest.mark.parametrize("deadline_offset_ms", [100, 0, -100])
+async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_db, monkeypatch, deadline_offset_ms):
     app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
     events_key, events_did = _session_keypair()
     mail_events_key, mail_events_did = _session_keypair()
@@ -1267,13 +1270,31 @@ async def test_events_stream_filters_mail_by_underlying_grant_scope(aweb_cloud_d
     stream_registry.get_team_revocations = AsyncMock(return_value=set())
     stream_app.state.awid_registry_client = stream_registry
 
+    # Advance only this route's clock at polling; DB/auth work cannot consume
+    # the short deadline. Each request gets an independent deadline; expired
+    # caller deadlines must still receive the initial scope-filtered snapshot.
+    clock = SimpleNamespace(now=datetime.now(timezone.utc))
+
+    class StreamClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock.now
+
+    async def advance_poll(seconds):
+        clock.now += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(events_routes, "datetime", StreamClock)
+    monkeypatch.setattr(events_routes, "asyncio", SimpleNamespace(sleep=advance_poll))
+
     async with AsyncClient(transport=ASGITransport(app=stream_app), base_url="http://test", timeout=5.0) as stream_client:
-        deadline = (datetime.now(timezone.utc) + timedelta(milliseconds=100)).isoformat().replace("+00:00", "Z")
+        deadline = (clock.now + timedelta(milliseconds=deadline_offset_ms)).isoformat().replace("+00:00", "Z")
         path = f"/v1/events/stream?deadline={deadline}"
         events_only = await stream_client.get(
             path,
             headers=_grant_headers(signing_key=events_key, did_key=events_did, grant_id=events_grant, method="GET", path=path),
         )
+        deadline = (clock.now + timedelta(milliseconds=deadline_offset_ms)).isoformat().replace("+00:00", "Z")
+        path = f"/v1/events/stream?deadline={deadline}"
         mail_allowed = await stream_client.get(
             path,
             headers=_grant_headers(signing_key=mail_events_key, did_key=mail_events_did, grant_id=mail_events_grant, method="GET", path=path),
