@@ -18,6 +18,13 @@
 
 ### Server compatibility
 
+- Grant stream opens with an expired, revoked, inactive-subject or revoked-issuer
+  grant now return HTTP 403 before headers, instead of HTTP 200 followed by a
+  terminal SSE event. Go clients treat either form as an error; wake streams
+  quarantine on 403. Chat streams recheck grants every 30 seconds and close with
+  `verification_unavailable` if verification fails. Updated clients surface this
+  as an explicit retryable error instead of a normal wait timeout.
+
 - Server package `1.27.7` accounts for the server changes accumulated since
   `server-v1.27.6`: one-to-one mail reuse is now identity-only, the reserved
   app-id catalog now includes `auth`, and the README contract test follows the

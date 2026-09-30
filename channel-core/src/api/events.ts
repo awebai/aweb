@@ -256,9 +256,28 @@ const KNOWN_TYPES: Set<string> = new Set([
   "actionable_mail", "actionable_chat",
 ]);
 
+class GrantStreamError extends Error {}
+
+const GRANT_TERMINAL_TYPES = new Set([
+  "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked",
+  "verification_unavailable",
+]);
+
 export function parseAgentEvent(eventName: string, data: string): AgentEvent | null {
   eventName = eventName.trim();
   if (!eventName) return null;
+
+  if (GRANT_TERMINAL_TYPES.has(eventName)) {
+    let detail = eventName;
+    try {
+      const payload = JSON.parse(data);
+      if (typeof payload?.detail === "string" && payload.detail.trim()) detail = payload.detail.trim();
+    } catch {
+      // The terminal event name remains authoritative if its payload is malformed.
+    }
+    if (eventName === "verification_unavailable") detail = "identity grant verification unavailable; retry";
+    throw new GrantStreamError(`agent event stream closed: ${detail}`);
+  }
 
   if (!KNOWN_TYPES.has(eventName)) return null;
 
@@ -283,6 +302,7 @@ export function formatEventStreamState(state: EventStreamState): string {
 }
 
 export function streamErrorCause(err: unknown): string {
+  if (err instanceof GrantStreamError) return err.message;
   const error = err instanceof Error ? err : undefined;
   const nested = error?.cause as { code?: unknown; message?: unknown } | undefined;
   const code = typeof nested?.code === "string" ? nested.code.toUpperCase() : "";

@@ -6530,3 +6530,21 @@ func TestParseSSEEventGrantTerminalDetail(t *testing.T) {
 		t.Fatalf("%q should be a grant terminal event", ev.Type)
 	}
 }
+
+func TestSendReturnsVerificationUnavailableStreamError(t *testing.T) {
+	t.Parallel()
+	server := newMockServer(map[string]http.HandlerFunc{
+		"POST /v1/chat/sessions": func(w http.ResponseWriter, _ *http.Request) {
+			jsonResponse(w, awid.ChatCreateSessionResponse{SessionID: "s1", MessageID: "sent", SSEURL: "/v1/chat/sessions/s1/stream"})
+		},
+		"GET /v1/chat/sessions/s1/stream": func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "event: verification_unavailable\ndata: {\"type\":\"verification_unavailable\",\"detail\":\"identity grant verification unavailable\"}\n\n")
+		},
+	})
+	t.Cleanup(server.Close)
+	result, err := Send(context.Background(), mustClient(t, server.URL), "alice", []string{"bob"}, "hello", SendOptions{Wait: 5}, nil)
+	if err == nil || err.Error() != "chat stream closed: identity grant verification unavailable; retry" {
+		t.Fatalf("result=%+v err=%v, want explicit retryable verification failure", result, err)
+	}
+}

@@ -191,6 +191,9 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 		if detail == "" {
 			detail = eventName
 		}
+		if eventName == "verification_unavailable" {
+			detail = "identity grant verification unavailable; retry"
+		}
 		return AgentEvent{}, false, fmt.Errorf("agent event stream closed: %s", detail)
 	}
 
@@ -383,7 +386,7 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 
 func isGrantTerminalAgentEvent(eventName string) bool {
 	switch strings.TrimSpace(eventName) {
-	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked":
+	case "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked", "verification_unavailable":
 		return true
 	default:
 		return false

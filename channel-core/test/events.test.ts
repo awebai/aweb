@@ -493,3 +493,50 @@ describe("parseAgentEvent", () => {
     });
   });
 });
+
+describe("grant terminal events", () => {
+  test.each([
+    "grant_expired", "grant_revoked", "grant_subject_inactive", "grant_issuer_revoked",
+    "verification_unavailable",
+  ])("surfaces %s as a stream error", (type) => {
+    const detail = type === "verification_unavailable"
+      ? "identity grant verification unavailable; retry"
+      : "identity grant ended";
+    let error: unknown;
+    try {
+      parseAgentEvent(type, JSON.stringify({ detail: "identity grant ended" }));
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect(streamErrorCause(error)).toBe(`agent event stream closed: ${detail}`);
+  });
+});
+
+test("terminal verification failure reports disconnect and drops later frames", async () => {
+  const abort = new AbortController();
+  const states: EventStreamState[] = [];
+  const received: AgentEvent[] = [];
+  const client = {
+    openSSE: vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(sseFrame("verification_unavailable", {}));
+        controller.enqueue(sseFrame("actionable_mail", { message_id: "after-terminal" }));
+        controller.close();
+      },
+    }))),
+  };
+  for await (const event of streamAgentEvents(client as never, abort.signal, (state) => {
+    states.push(state);
+    if (state.state === "disconnected") abort.abort();
+  })) {
+    received.push(event);
+  }
+  expect(received).toEqual([]);
+  expect(states).toEqual([{
+    state: "disconnected",
+    cause: "agent event stream closed: identity grant verification unavailable; retry",
+    retryInMs: 1000,
+  }]);
+  expect(client.openSSE).toHaveBeenCalledTimes(1);
+});
