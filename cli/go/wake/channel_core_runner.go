@@ -437,11 +437,10 @@ func (c *ChannelCoreChild) initLine() initLine {
 
 func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 	defer close(done)
-	s := bufio.NewScanner(r)
-	for s.Scan() {
+	c.readChildLines(r, func(data []byte) {
 		var line childStatusLine
-		if err := json.Unmarshal(s.Bytes(), &line); err != nil {
-			continue
+		if err := json.Unmarshal(data, &line); err != nil {
+			return
 		}
 		now := time.Now().UTC()
 		var livenessState string
@@ -508,7 +507,7 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}) {
 		if line.Inactive != "" && c.cfg.OnInactive != nil {
 			c.cfg.OnInactive(line.Inactive)
 		}
-	}
+	})
 }
 
 func waitForReaderEOF(done <-chan struct{}, timeout time.Duration) {
@@ -525,14 +524,55 @@ func waitForReaderEOF(done <-chan struct{}, timeout time.Duration) {
 }
 
 func (c *ChannelCoreChild) readStderr(r io.Reader) {
-	s := bufio.NewScanner(r)
-	for s.Scan() {
-		line := s.Text()
+	c.readChildLines(r, func(data []byte) {
+		line := string(data)
 		c.mu.Lock()
 		c.lastStderr = line
 		c.mu.Unlock()
 		if c.cfg.Log != nil {
 			c.cfg.Log("channel-core child stderr home=%s: %s", c.reg.Home, line)
+		}
+	})
+}
+
+// readChildLines bounds memory per record while continuing to drain an
+// oversized record. A scanner stops on overflow and can wedge the child writer.
+func (c *ChannelCoreChild) readChildLines(r io.Reader, consume func([]byte)) {
+	const maxLine = 1024 * 1024
+	reader := bufio.NewReaderSize(r, 32*1024)
+	var line []byte
+	dropping := false
+	for {
+		part, err := reader.ReadSlice('\n')
+		if !dropping {
+			if len(line)+len(part) > maxLine {
+				dropping = true
+				line = nil
+				c.mu.Lock()
+				c.st.LastError = "channel-core child output line exceeds 1 MiB; discarded"
+				c.mu.Unlock()
+				if c.cfg.Log != nil {
+					c.cfg.Log("channel-core child output line exceeds 1 MiB home=%s; discarded", c.reg.Home)
+				}
+			} else {
+				line = append(line, part...)
+			}
+		}
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		if !dropping && len(line) > 0 {
+			consume([]byte(strings.TrimSuffix(strings.TrimSuffix(string(line), "\n"), "\r")))
+		}
+		line = line[:0]
+		dropping = false
+		if err != nil {
+			if err != io.EOF {
+				c.mu.Lock()
+				c.st.LastError = "channel-core child output read: " + err.Error()
+				c.mu.Unlock()
+			}
+			return
 		}
 	}
 }
