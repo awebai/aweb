@@ -18,6 +18,11 @@
 
 ### Server compatibility
 
+- Server package `1.27.7` accounts for the server changes accumulated since
+  `server-v1.27.6`: one-to-one mail reuse is now identity-only, the reserved
+  app-id catalog now includes `auth`, and the README contract test follows the
+  current explicit `aw init --new-account` flow. The accompanying CLI release
+  carries the wake lifecycle/resource hardening described below.
 - One-to-one mail conversation reuse no longer treats a reused alias/address as
   identity continuity. Existing private threads are matched by concrete
   participant identity (agent id or DID) only; a replacement identity that
@@ -117,11 +122,17 @@
 ### CLI compatibility
 
 - The channel-core wake broker now owns child subprocess pipes explicitly,
-  closes partially allocated descriptors on every error path, backs off
-  crash-looping children with jitter up to a 60-second cap, and records
-  child-reported liveness into the legacy wake state so downgrade rollback does
-  not expire live registrations as never-present. Transient resource/read
-  failures such as EMFILE/ENFILE no longer remove durable wake registrations.
+  closes partially allocated descriptors on every error path, drains final
+  child status before closing parent readers, backs off crash-looping children
+  with jitter up to a 60-second cap, and records child-reported liveness into
+  the legacy wake state so downgrade rollback does not expire live
+  registrations as never-present. Transient resource/read/validation failures
+  no longer remove existing durable wake registrations: invalid new
+  registrations still never start, while an existing runner whose registration
+  file becomes invalid keeps running on its last good configuration until the
+  file is corrected or the home is explicitly deregistered. These are bounded
+  fixes for measured pipe, retry, retention, and liveness amplification paths;
+  the original 491,520-FD owner remains unknown.
 - `aw wake deregister` now stops the retired wake runner before removing its
   registration/state, so runner shutdown cannot recreate the deleted instance
   state. Explicit same-home registration reactivates an inactive wake home and
