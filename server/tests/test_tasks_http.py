@@ -508,3 +508,49 @@ async def test_list_blocked_tasks_allows_null_updated_at(aweb_cloud_db):
     assert len(tasks) == 1
     assert tasks[0]["task_id"] == str(blocked_id)
     assert tasks[0]["updated_at"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", ["root_moved_in", "foreign_child_moved_in", "child_moved_out", "deleted_child", "nested_parent", "descendant_refs"])
+async def test_create_child_keeps_reference_namespace_after_reparenting(aweb_cloud_db, scenario):
+    db = aweb_cloud_db.aweb_db
+    await _seed_team(db)
+    app = _build_tasks_app(db)
+    async with AsyncClient(transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test") as client:
+        async def create(title, parent=None):
+            response = await client.post("/v1/tasks", json={"title": title, "parent_task_id": parent})
+            assert response.status_code == 200, response.text
+            return response.json()["task_ref"]
+
+        async def move(task, parent):
+            response = await client.patch(f"/v1/tasks/{task}", json={"parent_task_id": parent})
+            assert response.status_code == 200, response.text
+            assert response.json()["task_ref"] == task
+
+        parent = await create("Parent")
+        other = await create("Other")
+        expected_index = 1
+        if scenario == "nested_parent":
+            parent = await create("Nested parent", parent)
+        if scenario in {"root_moved_in", "nested_parent"}:
+            await move(other, parent)
+        elif scenario == "foreign_child_moved_in":
+            await create("Foreign first", other)
+            imported = await create("Foreign second", other)
+            await move(imported, parent)
+        else:
+            child = await create("Original child", parent)
+            if scenario == "descendant_refs":
+                for index in range(3):
+                    await create(f"Grandchild {index}", child)
+            elif scenario == "child_moved_out":
+                await move(child, other)
+            else:
+                response = await client.delete(f"/v1/tasks/{child}")
+                assert response.status_code == 200, response.text
+            expected_index = 2
+
+        first = await create("New child", parent)
+        second = await create("Next child", parent)
+        assert first == f"{parent}.{expected_index}"
+        assert second == f"{parent}.{expected_index + 1}"

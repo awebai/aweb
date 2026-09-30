@@ -229,13 +229,22 @@ async def create_task(
             if not parent_row:
                 raise ValidationError("Parent task not found in this team")
 
+            # References survive reparenting and soft deletion. Reserve every
+            # direct numeric suffix in this parent's namespace, wherever its
+            # task now lives; imported children must not affect the sequence.
+            child_ref_prefix = f"{parent_row['task_ref_suffix']}."
             max_sibling_index = await tx.fetch_value(
                 """
-                SELECT COALESCE(MAX(CAST(regexp_replace(task_ref_suffix, '^.*\\.', '') AS INTEGER)), 0)
-                FROM {{tables.tasks}}
-                WHERE parent_task_id = $1
+                SELECT COALESCE(MAX(CASE WHEN suffix ~ '^[0-9]+$'
+                                        THEN CAST(suffix AS INTEGER) END), 0)
+                FROM (
+                    SELECT SUBSTRING(task_ref_suffix FROM LENGTH($2) + 1) AS suffix
+                    FROM {{tables.tasks}}
+                    WHERE team_id = $1 AND LEFT(task_ref_suffix, LENGTH($2)) = $2
+                ) AS child_refs
                 """,
-                resolved_parent_task_id,
+                team_id,
+                child_ref_prefix,
             )
             root_task_seq = parent_row["root_task_seq"]
             task_ref_suffix = f"{parent_row['task_ref_suffix']}.{int(max_sibling_index) + 1}"
