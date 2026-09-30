@@ -78,6 +78,9 @@ type registryTeamMemberCacheValue struct {
 }
 
 type RegistryResolver struct {
+	// TeamReadSigningKey optionally authenticates team-member reads as a member
+	// or controller. Configure before first use; caches belong to this caller.
+	TeamReadSigningKey  ed25519.PrivateKey
 	HTTPClient          *http.Client
 	DNSResolver         TXTResolver
 	Now                 func() time.Time
@@ -520,14 +523,15 @@ func (r *RegistryResolver) resolveTeamMemberFresh(ctx context.Context, teamID, a
 	}
 	var resp registryTeamMemberResponse
 	memberPath := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/members/" + urlPathEscape(alias)
-	var fetchErr error
+	headers := optionalSignedPathHeaders(http.MethodGet, memberPath, r.TeamReadSigningKey)
 	if forceRefresh {
-		fetchErr = r.getJSONWithHeaders(ctx, authority.RegistryURL, memberPath, map[string]string{"Cache-Control": "no-cache"}, &resp)
-	} else {
-		fetchErr = r.getJSON(ctx, authority.RegistryURL, memberPath, &resp)
+		if headers == nil {
+			headers = make(map[string]string)
+		}
+		headers["Cache-Control"] = "no-cache"
 	}
-	if fetchErr != nil {
-		return nil, fetchErr
+	if err := r.getJSONWithHeaders(ctx, authority.RegistryURL, memberPath, headers, &resp); err != nil {
+		return nil, err
 	}
 	value := &registryTeamMemberCacheValue{
 		authority: authority,

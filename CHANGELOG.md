@@ -133,6 +133,11 @@
 
 ### CLI compatibility
 
+- Registry-backed `team:domain/alias` member reads now use the caller's signing
+  key in the CLI and A2A gateway, allowing authorized reads of private teams.
+  Forced refreshes remain signed and bypass caches; unsigned and non-member
+  reads remain subject to the registry's visibility rules.
+
 - The channel-core wake broker now owns child subprocess pipes explicitly,
   closes partially allocated descriptors on every error path, drains final
   child status before closing parent readers, backs off crash-looping children

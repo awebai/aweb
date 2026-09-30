@@ -1344,6 +1344,7 @@ func workspaceMailClient(workspaceDir, teamIDOverride, registryURLOverride, gate
 	client.SetStableID(strings.TrimSpace(cert.MemberDIDAW))
 	client.SetRequireRecipientBindingForDirectAddresses(true)
 	resolver := awid.NewRegistryResolver(client.HTTPClient(), nil)
+	resolver.TeamReadSigningKey = client.SigningKey()
 	if registryURL := firstNonEmpty(registryURLOverride, teamMembership.RegistryURL); registryURL != "" {
 		if err := resolver.SetFallbackRegistryURL(registryURL); err != nil {
 			return nil, "", fmt.Errorf("registry_url: %w", err)

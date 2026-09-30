@@ -714,6 +714,7 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	if err != nil {
 		return err
 	}
+	registry.TeamReadSigningKey = c.SigningKey()
 	c.SetResolver(&awid.ChainResolver{
 		DIDKey:   &awid.DIDKeyResolver{},
 		Registry: registry,
