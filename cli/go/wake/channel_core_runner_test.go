@@ -554,3 +554,18 @@ func waitForCond(t *testing.T, what string, cond func() bool) {
 	}
 	t.Fatalf("timed out waiting for %s", what)
 }
+
+func TestFreshChildStatusIncludesZeroRestartCount(t *testing.T) {
+	child := &ChannelCoreChild{}
+	data, err := json.Marshal(child.Status())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(fields["restart_count"]); got != "0" {
+		t.Fatalf("restart_count=%q, want explicit 0 in fresh child status: %s", got, data)
+	}
+}

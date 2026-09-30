@@ -41,7 +41,7 @@ type ChannelCoreStatus struct {
 	ReadinessError   string            `json:"readiness_error,omitempty"`
 	ReadinessPaused  bool              `json:"readiness_paused,omitempty"`
 	ReadinessWaiting string            `json:"readiness_waiting,omitempty"`
-	RestartCount     int               `json:"restart_count,omitempty"`
+	RestartCount     int               `json:"restart_count"`
 	LastExit         string            `json:"last_exit,omitempty"`
 	NextRetryAt      time.Time         `json:"next_retry_at,omitempty"`
 	TraceStage       string            `json:"trace_stage,omitempty"`
