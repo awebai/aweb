@@ -25,41 +25,60 @@ def lsof_counts(raw: str) -> tuple[int, int]:
     return len(rows), numeric
 
 
-def _capture(destination: Path) -> dict:
-    result = {"timestamp": datetime.now(timezone.utc).isoformat(), "platform": platform.system()}
+def docker_data_paths(raw: str) -> list[str]:
+    # lsof's NAME column may contain spaces (notably "Group Containers").
+    docker_root = re.compile(r"/Library/(?:Containers/com\.docker\.docker|Group Containers/(?:group\.com\.docker(?:\.docker)?|com\.docker\.docker))/")
+    paths = []
+    for line in raw.splitlines()[1:]:
+        fields = line.split(None, 8)
+        if len(fields) == 9 and docker_root.search(fields[8]):
+            paths.append(fields[8])
+    return sorted(set(paths))
+
+
+def _capture(destination: Path, result: dict) -> dict:
     if result["platform"] != "Darwin":
         result["status"] = "not_applicable"
     else:
         raw_kernel = command("sysctl", "-n", "kern.num_files")
         destination.with_suffix(".kernel.txt").write_text(raw_kernel)
-        processes = command("ps", "-axo", "pid=,comm=")
+        result["kern.num_files"] = int(raw_kernel.strip())
+        processes = command("ps", "-axo", "pid=,ppid=,comm=")
         destination.with_suffix(".processes.txt").write_text(processes)
-        pids = [int(parts[0]) for line in processes.splitlines()
-                if len(parts := line.strip().split(None, 1)) == 2
-                and Path(parts[1]).name in {"com.docker.virtualization", "com.docker.hyperkit"}]
-        if not pids:
-            raise RuntimeError("Docker VM process not found; cannot measure recovery")
-        rows = numeric = 0
-        for pid in pids:
-            raw = command("lsof", "-nP", "-p", str(pid))
-            destination.with_suffix(f".vm-{pid}.lsof.txt").write_text(raw)
-            count, fd_count = lsof_counts(raw)
-            rows += count
-            numeric += fd_count
-        result.update(status="measured", vm_pids=sorted(pids), **{
-            "kern.num_files": int(raw_kernel.strip()), "vm_lsof_rows": rows,
-            "vm_numeric_fd_rows": numeric,
-        })
+        candidates = result["vm_candidates"] = []
+        for line in processes.splitlines():
+            fields = line.strip().split(None, 2)
+            if len(fields) != 3 or Path(fields[2]).name not in {
+                "com.apple.Virtualization.VirtualMachine", "com.docker.hyperkit",
+            }:
+                continue
+            candidate = {"pid": int(fields[0]), "ppid": int(fields[1]),
+                         "command": fields[2], "matched_docker_paths": []}
+            candidates.append(candidate)
+            try:
+                raw = command("lsof", "-nP", "-p", str(candidate["pid"]))
+                destination.with_suffix(f".vm-{candidate['pid']}.lsof.txt").write_text(raw)
+                rows, numeric = lsof_counts(raw)
+                candidate.update(matched_docker_paths=docker_data_paths(raw),
+                                 vm_lsof_rows=rows, vm_numeric_fd_rows=numeric)
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                candidate["error"] = str(exc)
+        matches = [item for item in candidates if item["matched_docker_paths"]]
+        if len(matches) != 1 or any("error" in item for item in candidates):
+            raise RuntimeError(f"Docker VM identity unavailable: {len(matches)} Docker-data matches among {len(candidates)} candidates; exactly one fully observed match required")
+        vm = matches[0]
+        result.update(status="measured", vm_pids=[vm["pid"]], vm_identity=vm,
+                      vm_lsof_rows=vm["vm_lsof_rows"], vm_numeric_fd_rows=vm["vm_numeric_fd_rows"])
     destination.write_text(json.dumps(result, indent=2) + "\n")
     return result
 
 
 def capture(destination: Path) -> dict:
+    result = {"timestamp": datetime.now(timezone.utc).isoformat(), "platform": platform.system()}
     try:
-        return _capture(destination)
+        return _capture(destination, result)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        result = {"timestamp": datetime.now(timezone.utc).isoformat(),
-                  "platform": platform.system(), "status": "unavailable", "error": str(exc)}
+        result.update(status="unavailable", error=str(exc))
         destination.write_text(json.dumps(result, indent=2) + "\n")
         raise
 

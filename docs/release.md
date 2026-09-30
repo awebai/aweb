@@ -51,6 +51,11 @@ Evidence stays in `/tmp/aweb-candidate-gate-<SHA>/`: `owned-resources.tsv`, raw
 host snapshots, `host-before.json`, `host-after.json`, and
 `host-recovery.json`. On macOS, cleanup passes only if both `kern.num_files`
 and Docker VM total `lsof` rows return to at most their baseline plus 5,000.
+The measured process must be exactly one Apple `VirtualMachine` or legacy
+`hyperkit` process whose open files include Docker's container/group-container
+data. The launcher is excluded. Zero, multiple, or incompletely observed
+candidates make the sample unavailable; candidate PIDs, commands, matched
+Docker paths, and raw observations are retained as identity evidence.
 Total rows exclude the header; numeric-FD rows are reported separately and do
 not determine acceptance. Missing samples or a changed VM PID cannot count as passing recovery samples.
 Other platforms report these macOS-specific measurements as not applicable.

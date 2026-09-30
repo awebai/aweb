@@ -83,13 +83,49 @@ class HostPressureTests(unittest.TestCase):
     def test_capture_raw_snapshots_and_failure_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             dest = Path(directory) / 'host.json'
-            with mock.patch.object(pressure.platform, 'system', return_value='Darwin'), mock.patch.object(pressure, 'command', side_effect=['10000\n', '12 /Docker/com.docker.virtualization\n', 'COMMAND PID USER FD TYPE\nvm 12 me 3u REG\n']):
+            with mock.patch.object(pressure.platform, 'system', return_value='Darwin'), mock.patch.object(pressure, 'command', side_effect=['10000\n', '12 1 /Docker/com.docker.hyperkit\n', 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nvm 12 me 3u REG 1,17 1000 99 /Users/operator/Library/Group Containers/group.com.docker/vms/Docker.raw\n']):
                 self.assertEqual(pressure.capture(dest)['vm_lsof_rows'], 1)
                 self.assertTrue(dest.with_suffix('.vm-12.lsof.txt').exists())
             with mock.patch.object(pressure.platform, 'system', return_value='Darwin'), mock.patch.object(pressure, 'command', side_effect=['10000\n', '']):
                 with self.assertRaises(RuntimeError):
                     pressure.capture(dest)
                 self.assertEqual(json.loads(dest.read_text())['status'], 'unavailable')
+
+    def test_actual_docker_vm_is_selected_by_disk_path_not_launcher_or_parent(self):
+        # Sanitized shape from the coordinator's 2026-09-30 process snapshot:
+        # Apple's VM helper is reparented to launchd, not the Docker launcher.
+        processes = """45655 45614 /Applications/Docker.app/Contents/MacOS/com.docker.virtualization
+45661 1 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine
+50000 1 /System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine
+"""
+        docker_path = '/Users/operator/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw'
+        def lsof(path):
+            return 'COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nvm 45661 operator cwd DIR 1,17 736 2 /\nvm 45661 operator 6u REG 1,17 1000 999 ' + path + '\n'
+        for mode in ('one', 'ambiguous', 'missing'):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                dest = Path(directory) / 'host.json'
+                queried = []
+                def command(*args):
+                    if args[0] == 'sysctl': return '10000\n'
+                    if args[0] == 'ps': return processes
+                    self.assertEqual(args[0], 'lsof')
+                    queried.append(int(args[-1]))
+                    is_docker = mode == 'ambiguous' or (mode == 'one' and args[-1] == '45661')
+                    return lsof(docker_path if is_docker else '/Users/operator/OtherVM/disk.img')
+                with mock.patch.object(pressure.platform, 'system', return_value='Darwin'), mock.patch.object(pressure, 'command', side_effect=command):
+                    if mode == 'one':
+                        result = pressure.capture(dest)
+                        self.assertEqual(result['vm_pids'], [45661])
+                        self.assertEqual(result['vm_lsof_rows'], 2)
+                        self.assertEqual(result['vm_numeric_fd_rows'], 1)
+                        self.assertEqual(result['vm_identity']['matched_docker_paths'], [docker_path])
+                    else:
+                        with self.assertRaises(RuntimeError): pressure.capture(dest)
+                        result = json.loads(dest.read_text())
+                        self.assertEqual(result['status'], 'unavailable')
+                    self.assertEqual([v['pid'] for v in result['vm_candidates']], [45661, 50000])
+                    self.assertEqual(queried, [45661, 50000])
+                    self.assertTrue(dest.with_suffix('.vm-50000.lsof.txt').exists())
 
     def test_settle_retries_preserves_samples_and_reports_the_passing_one(self):
         for levels, expected in [([16000, 16000, 10000], 'passed'), ([16000] * 4, 'failed')]:
