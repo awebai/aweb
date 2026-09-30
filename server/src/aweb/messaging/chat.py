@@ -150,9 +150,8 @@ async def find_session_between(
         dids_b, agent_ids_b = await _equivalent_identity_refs(
             db, did_b, did_key=did_key_b, agent_id=agent_id_b
         )
-        addresses_a = [value for value in (address_a,) if str(value or "").strip()]
-        addresses_b = [value for value in (address_b,) if str(value or "").strip()]
-        if not (dids_a or agent_ids_a or addresses_a) or not (dids_b or agent_ids_b or addresses_b):
+        # Addresses can be reassigned; they do not establish identity continuity.
+        if not (dids_a or agent_ids_a) or not (dids_b or agent_ids_b):
             return None
         aweb_db = db.get_manager("aweb")
         rows = await aweb_db.fetch_all(
@@ -166,12 +165,10 @@ async def find_session_between(
             WHERE (
                     ($2::uuid[] <> '{}'::uuid[] AND pa.agent_id = ANY($2::uuid[]))
                  OR ($2::uuid[] = '{}'::uuid[] AND pa.did = ANY($1::text[]))
-                 OR ($3::text[] <> '{}'::text[] AND pa.address = ANY($3::text[]))
               )
               AND (
-                    ($5::uuid[] <> '{}'::uuid[] AND pb.agent_id = ANY($5::uuid[]))
-                 OR ($5::uuid[] = '{}'::uuid[] AND pb.did = ANY($4::text[]))
-                 OR ($6::text[] <> '{}'::text[] AND pb.address = ANY($6::text[]))
+                    ($4::uuid[] <> '{}'::uuid[] AND pb.agent_id = ANY($4::uuid[]))
+                 OR ($4::uuid[] = '{}'::uuid[] AND pb.did = ANY($3::text[]))
               )
               AND pa.did <> pb.did
               AND (
@@ -184,10 +181,8 @@ async def find_session_between(
             """,
             dids_a,
             agent_ids_a,
-            addresses_a,
             dids_b,
             agent_ids_b,
-            addresses_b,
         )
         if not rows:
             return None

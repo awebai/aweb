@@ -145,6 +145,95 @@ async def test_ensure_session_idempotent(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("replaced_index", [0, 1], ids=["sender", "recipient"])
+async def test_ensure_session_isolates_reused_alias(aweb_cloud_db, replaced_index):
+    aweb_db = aweb_cloud_db.aweb_db
+    db = _DbShim(aweb_db)
+    participants = list(await _setup_team_and_agents(aweb_db))
+    for participant in participants:
+        participant["address"] = f"acme.com/{participant['alias']}"
+    original_ids = {participant["agent_id"] for participant in participants}
+    old_session = await ensure_session(
+        db, team_id="backend:acme.com",
+        participant_rows=participants, created_by="alice",
+    )
+    await send_in_session(
+        db, session_id=old_session, sender_did=participants[0]["did_aw"],
+        body="Original private history",
+    )
+
+    old = participants[replaced_index]
+    await aweb_db.execute(
+        "UPDATE {{tables.agents}} SET deleted_at = NOW() WHERE agent_id = $1",
+        old["agent_id"],
+    )
+    replacement = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.agents}} (team_id, did_key, did_aw, alias, address, identity_scope)
+        VALUES ($1, $2, $3, $4, $5, 'global')
+        RETURNING *
+        """,
+        old["team_id"], _make_did_key(), "did:aw:replacement",
+        old["alias"], old["address"],
+    )
+    participants[replaced_index] = dict(replacement)
+    new_session = await ensure_session(
+        db, team_id="backend:acme.com",
+        participant_rows=participants, created_by="alice",
+    )
+
+    assert new_session != old_session
+    for table in ("chat_participants", "conversation_participants"):
+        id_column = "session_id" if table == "chat_participants" else "conversation_id"
+        rows = await aweb_db.fetch_all(
+            f"SELECT agent_id FROM {{{{tables.{table}}}}} WHERE {id_column} = $1",
+            old_session,
+        )
+        assert len(rows) == 2
+        assert {row["agent_id"] for row in rows} == original_ids
+    assert await get_message_history(
+        db, session_id=new_session, participant_did=replacement["did_aw"],
+    ) == []
+    assert await send_in_session(
+        db, session_id=new_session, sender_did=replacement["did_aw"],
+        body="New identity can send",
+    ) is not None
+
+
+@pytest.mark.asyncio
+async def test_legacy_session_survives_key_rotation(aweb_cloud_db):
+    aweb_db = aweb_cloud_db.aweb_db
+    alice, bob = await _setup_team_and_agents(aweb_db)
+    # No conversations row: exercise the legacy lookup, using changed DIDs
+    # and no addresses so only the retained agent_id can establish continuity.
+    session = await aweb_db.fetch_one(
+        """
+        INSERT INTO {{tables.chat_sessions}} (team_id, created_by)
+        VALUES ('backend:acme.com', 'alice') RETURNING session_id
+        """
+    )
+    for participant in (alice, bob):
+        await aweb_db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias)
+            VALUES ($1, $2, $3, $4)
+            """,
+            session["session_id"], participant["did_key"],
+            participant["agent_id"], participant["alias"],
+        )
+        participant["did_key"] = _make_did_key()
+        participant["did_aw"] = None
+        await aweb_db.execute(
+            "UPDATE {{tables.agents}} SET did_key = $2, did_aw = NULL WHERE agent_id = $1",
+            participant["agent_id"], participant["did_key"],
+        )
+    assert await ensure_session(
+        _DbShim(aweb_db), team_id="backend:acme.com",
+        participant_rows=[alice, bob], created_by="alice",
+    ) == session["session_id"]
+
+
+@pytest.mark.asyncio
 async def test_ensure_session_backfills_conversation_for_existing_chat_session(aweb_cloud_db):
     db_shim = _DbShim(aweb_cloud_db.aweb_db)
     alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)

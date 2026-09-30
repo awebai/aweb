@@ -19,6 +19,7 @@ type instanceRunner struct {
 	broker *Broker
 	reg    Registration
 
+	persistMu    sync.Mutex
 	mu           sync.Mutex
 	state        InstanceState
 	admitted     map[string]bool
@@ -94,6 +95,9 @@ func (r *instanceRunner) updateRegistration(reg Registration) bool {
 	if !started || !changed {
 		r.publishRegistrationLocked(reg, changed)
 		r.mu.Unlock()
+		if changed {
+			r.persist()
+		}
 		return false
 	}
 	pending := reg.clone()
@@ -114,6 +118,7 @@ func (r *instanceRunner) updateRegistration(reg Registration) bool {
 func (r *instanceRunner) publishRegistrationLocked(reg Registration, bumpGeneration bool) {
 	r.reg = reg
 	if bumpGeneration {
+		r.resetLifecycleLocked()
 		r.generation++
 	}
 	if r.admitted == nil {
@@ -155,6 +160,12 @@ func (r *instanceRunner) setConflictHome(home string) {
 
 func (r *instanceRunner) reactivateRegistration() {
 	r.mu.Lock()
+	// Binding updates reactivate when published. An identical active hook retry
+	// must not interrupt input or reset liveness.
+	if !r.state.Inactive || r.pendingReg != nil {
+		r.mu.Unlock()
+		return
+	}
 	started := r.cancel != nil
 	if !started {
 		r.resetLifecycleLocked()
@@ -225,9 +236,6 @@ func (r *instanceRunner) bindingForStreamKey(key string) (ReceiveIdentity, int, 
 	r.mu.Unlock()
 	for _, binding := range reg.ReceiveBindings() {
 		if got, err := bindingKey(binding.IdentityHome, binding.TeamID); err == nil && got == key {
-			if teamID, err := effectiveTeamID(binding.IdentityHome, binding.TeamID); err == nil {
-				binding.TeamID = teamID
-			}
 			return binding, generation, true
 		}
 	}
@@ -264,9 +272,13 @@ func (r *instanceRunner) run(ctx context.Context) {
 			return
 		}
 		awCommand, _ := os.Executable()
+		oatsBin := (&session.ExecClient{}).ResolveBin()
+		if resolver, ok := r.broker.cfg.Session.(interface{ ResolveBin() string }); ok {
+			oatsBin = resolver.ResolveBin()
+		}
 		newChild := r.broker.cfg.ChannelCore.StartChild(ctx, reg, channelCoreChildConfig{
 			Coalesce: r.broker.cfg.Coalesce, RateLimit: r.broker.cfg.RateLimit, InspectDelay: r.broker.cfg.PollInterval,
-			OatsBin: session.DefaultOatsBin, AWCommand: awCommand, AdmissionSize: 256, Paused: paused, Generation: generation, Log: r.broker.cfg.Log,
+			OatsBin: oatsBin, AWCommand: awCommand, AdmissionSize: 256, Paused: paused, Generation: generation, Log: r.broker.cfg.Log,
 			OnLiveness: func(at time.Time, state, inspectErr string) {
 				r.recordChildLiveness(generation, at, state, inspectErr)
 			},
@@ -318,6 +330,13 @@ func (r *instanceRunner) run(ctx context.Context) {
 			r.applyPause(req.paused, req.source, child)
 			close(req.done)
 		case req := <-r.reactivate:
+			r.mu.Lock()
+			inactive := r.state.Inactive
+			r.mu.Unlock()
+			if !inactive {
+				close(req.done)
+				continue
+			}
 			stopChild()
 			r.mu.Lock()
 			r.resetLifecycleLocked()
@@ -333,6 +352,7 @@ func (r *instanceRunner) run(ctx context.Context) {
 			r.publishRegistrationLocked(reg, true)
 			r.pendingReg = nil
 			r.mu.Unlock()
+			r.persist()
 			startChild()
 			go func() {
 				r.broker.admitRunnerStreams(r)
@@ -514,6 +534,9 @@ func (r *instanceRunner) allStreamsAdmitted() bool {
 }
 
 func (r *instanceRunner) persist() {
+	// Serialize before taking the snapshot, so an old write cannot land last.
+	r.persistMu.Lock()
+	defer r.persistMu.Unlock()
 	r.mu.Lock()
 	state := r.state
 	r.mu.Unlock()

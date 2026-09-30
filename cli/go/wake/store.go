@@ -50,6 +50,7 @@ const (
 // delivery state: it dedupes accepted terminal presentations and is not a proof
 // of completed agent work.
 var wakeReadFile = os.ReadFile
+var wakeRename = os.Rename
 
 type Store struct {
 	dir string
@@ -124,6 +125,9 @@ type ReceiveIdentity struct {
 // IdentityHome with Delivery=session. The multi-identity shape keeps the same
 // instance Home and supplies explicit broker-owned receive identities.
 type Registration struct {
+	// True only for an accepted normalized in-memory snapshot. Reconciliation
+	// validates fresh disk state; dispatch must retain this last-good snapshot.
+	bindingsNormalized  bool
 	Home                string            `json:"home"`
 	IdentityHome        string            `json:"identity_home"`
 	Delivery            string            `json:"delivery"`
@@ -210,6 +214,7 @@ func (r Registration) normalized() (Registration, error) {
 			DeliveryOwner: ReceiveOwnerSessionHints,
 			Controls:      true,
 		}}
+		r.bindingsNormalized = true
 		return r, nil
 	}
 
@@ -297,6 +302,7 @@ func (r Registration) normalized() (Registration, error) {
 	if strings.TrimSpace(r.IdentityHome) == "" && len(r.ReceiveIdentities) > 0 {
 		r.IdentityHome = r.ReceiveIdentities[0].IdentityHome
 	}
+	r.bindingsNormalized = true
 	return r, nil
 }
 
@@ -340,12 +346,10 @@ func effectiveTeamID(identityHome, teamID string) (string, error) {
 	return teamID, nil
 }
 
+// bindingKey uses the team pinned by registration normalization, including an
+// explicitly empty team. It must never consult mutable identity-home state.
 func bindingKey(identityHome, teamID string) (string, error) {
-	team, err := effectiveTeamID(identityHome, teamID)
-	if err != nil {
-		return "", err
-	}
-	return identityHome + "\x00" + team, nil
+	return identityHome + "\x00" + strings.TrimSpace(teamID), nil
 }
 
 func splitBindingKey(key string) (string, string) {
@@ -419,9 +423,13 @@ func (r Registration) clone() Registration {
 }
 
 func (r Registration) ReceiveBindings() []ReceiveIdentity {
-	normalized, err := r.normalized()
-	if err != nil {
-		return nil
+	normalized := r
+	if !r.bindingsNormalized {
+		var err error
+		normalized, err = r.normalized()
+		if err != nil {
+			return nil
+		}
 	}
 	out := make([]ReceiveIdentity, len(normalized.ReceiveIdentities))
 	for i, binding := range normalized.ReceiveIdentities {
@@ -701,7 +709,7 @@ func writeJSONAtomic(path string, value any) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return wakeRename(tmpName, path)
 }
 
 func readJSON(path string, into any) (bool, error) {

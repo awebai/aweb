@@ -133,3 +133,11 @@ existing bounded retry applies, and failed delivery is neither marked nor acked.
 
 Child stdout/stderr records are bounded to 1 MiB. Oversized records are reported
 and drained to the next newline so subsequent status records still arrive.
+
+At child startup, one bounded inspect reports readiness even if no event is
+waiting. A stopped or not-launched result marks the instance inactive through
+the same callback used by the delivery readiness gate. A successful present observation persists `first_present_at`, so a
+quiet home retains its confirmed-live state when an older broker reads the
+store. Startup inspect failure is reported; later events use the normal
+readiness retry gate. There is no extra periodic idle probe. The child receives
+the OATS executable resolved from `--oats-bin`, then `AW_WAKE_OATS_BIN`, then PATH.

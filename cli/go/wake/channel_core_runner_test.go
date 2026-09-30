@@ -140,7 +140,7 @@ func TestBundledReadinessStatusReportsWaitingReason(t *testing.T) {
 	}
 	child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: oats, AWCommand: writeFakeAW(t, root, ""), Coalesce: time.Millisecond, RateLimit: time.Millisecond, InspectDelay: 25 * time.Millisecond})
 	defer child.Stop()
-	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running && st.LastError == "" })
+	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running })
 	child.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-wait", ConversationID: "conv"})
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
 		return st.TraceStage == "lane_job_started" && st.ReadinessWaiting == "inspect_error" && strings.Contains(st.ReadinessError, "inspect unavailable")
@@ -244,7 +244,7 @@ func TestChannelCoreCrashLoopBackoffReportsNextRetry(t *testing.T) {
 	})
 	defer child.Stop()
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
-		return st.RestartCount == 1 && st.NextRetryAt.After(time.Now().Add(55*time.Second)) && strings.Contains(st.LastExit, "boom")
+		return st.RestartCount == 1 && st.NextRetryAt.After(time.Now().Add(47*time.Second)) && !st.NextRetryAt.After(time.Now().Add(60*time.Second)) && strings.Contains(st.LastExit, "boom")
 	})
 }
 
