@@ -180,7 +180,7 @@ func (s *streamRunner) run(ctx context.Context) {
 		source, err := s.open(streamCtx, deadline)
 		if err != nil {
 			cancel()
-			if code, ok := awid.HTTPStatusCode(err); ok && code >= 400 && code < 500 {
+			if code, ok := awid.HTTPStatusCode(err); ok && (code == 401 || code == 403 || code == 404) {
 				// One identity is quarantined and reported; the daemon and
 				// every other stream keep running (§4).
 				s.setPhase(StreamQuarantined, err.Error())

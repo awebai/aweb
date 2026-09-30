@@ -325,7 +325,7 @@ func (c *ChannelCoreChild) run(ctx context.Context) {
 		if readyFor >= readyReset {
 			backoff = minBackoff
 		}
-		delay := jitteredBackoff(backoff)
+		delay := jitteredBackoff(backoff, maxBackoff)
 		c.setNextRetry(delay)
 		t := time.NewTimer(delay)
 		select {
@@ -674,7 +674,7 @@ func (c *ChannelCoreChild) resetPerRunLocked() {
 	c.lastStderr = ""
 }
 
-func jitteredBackoff(base time.Duration) time.Duration {
+func jitteredBackoff(base, cap time.Duration) time.Duration {
 	if base <= 0 {
 		return 0
 	}
@@ -684,7 +684,7 @@ func jitteredBackoff(base time.Duration) time.Duration {
 	if maxJitter <= 0 {
 		return base
 	}
-	return base + time.Duration(rand.Int63n(maxJitter+1))
+	return min(base+time.Duration(rand.Int63n(maxJitter+1)), cap)
 }
 
 func (c *ChannelCoreChild) readyDuration() time.Duration {
