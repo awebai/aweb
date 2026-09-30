@@ -225,9 +225,6 @@ func (r *instanceRunner) bindingForStreamKey(key string) (ReceiveIdentity, int, 
 	r.mu.Unlock()
 	for _, binding := range reg.ReceiveBindings() {
 		if got, err := bindingKey(binding.IdentityHome, binding.TeamID); err == nil && got == key {
-			if teamID, err := effectiveTeamID(binding.IdentityHome, binding.TeamID); err == nil {
-				binding.TeamID = teamID
-			}
 			return binding, generation, true
 		}
 	}

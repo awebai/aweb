@@ -234,9 +234,6 @@ func (c *ChannelCoreChild) Pause(paused bool) {
 }
 
 func (c *ChannelCoreChild) Offer(binding ReceiveIdentity, ev awid.AgentEvent) {
-	if teamID, err := effectiveTeamID(binding.IdentityHome, binding.TeamID); err == nil {
-		binding.TeamID = teamID
-	}
 	c.offer(childLine{Type: "event", BindingID: bindingID(binding), Event: agentEventForChannelCore(ev)})
 }
 
@@ -480,11 +477,7 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 func (c *ChannelCoreChild) initLine() initLine {
 	bindings := []childBinding{}
 	for _, b := range c.reg.ReceiveBindings() {
-		teamID, err := effectiveTeamID(b.IdentityHome, b.TeamID)
-		if err != nil {
-			teamID = b.TeamID
-		}
-		b.TeamID = teamID
+		teamID := b.TeamID
 		bindings = append(bindings, childBinding{BindingID: bindingID(b), IdentityHome: b.IdentityHome, TeamID: teamID, DeliveryStorePath: filepath.Join(b.IdentityHome, "channel-delivered-ids-"+safeTeamID(teamID)+".json")})
 	}
 	c.mu.Lock()

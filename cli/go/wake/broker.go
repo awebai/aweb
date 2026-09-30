@@ -381,7 +381,7 @@ func (b *Broker) ensureStream(binding ReceiveIdentity) bool {
 	if err != nil || strings.TrimSpace(binding.IdentityHome) == "" {
 		return false
 	}
-	teamID, _ := effectiveTeamID(binding.IdentityHome, binding.TeamID)
+	teamID := binding.TeamID
 	b.mu.Lock()
 	if _, ok := b.streams[key]; ok {
 		b.mu.Unlock()
