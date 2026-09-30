@@ -38,7 +38,10 @@ class AwidDatabaseInfra:
 
             if shared_pool is None:
                 settings = get_settings()
-                config = build_database_config(connection_string=settings.database_url)
+                config = build_database_config(
+                    connection_string=settings.database_url,
+                    shared_pool_search_path=None,
+                )
                 shared_pool = await AsyncDatabaseManager.create_shared_pool(config)
                 self._owns_pool = True
             else:

@@ -107,6 +107,11 @@
   120-second stale-while-revalidate window, and every other cache tier's
   retention are unchanged; the fifteen-minute bound is a pinned constant with
   no configuration knob.
+- awid service `0.5.20`: the service-owned shared PostgreSQL pool no longer
+  pins `search_path` during startup. Schema isolation still comes from explicit
+  schema-qualified database managers/table names, matching the live 0.5.15
+  behavior and avoiding startup failure behind deployments that drop or ignore
+  the shared-pool startup parameter.
 - awid service: team visibility is now enforced on the read side. For teams
   not marked `public`, team get, certificate list, member resolve, and
   revocation list require a same-team path-signature (the certificate

@@ -14,6 +14,7 @@ def build_database_config(
     max_connections: int | None = None,
     server_settings: dict[str, str] | None = None,
     statement_cache_size: int | None = None,
+    shared_pool_search_path: str | None = "pg_catalog",
     uses_transaction_pooler: bool = False,
 ) -> DatabaseConfig:
     kwargs: dict[str, object] = {
@@ -42,5 +43,6 @@ def build_database_config(
         kwargs["statement_cache_size"] = statement_cache_size
     elif uses_transaction_pooler:
         kwargs["statement_cache_size"] = 0
+    kwargs["shared_pool_search_path"] = shared_pool_search_path
 
     return DatabaseConfig(**kwargs)

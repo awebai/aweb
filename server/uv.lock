@@ -139,7 +139,7 @@ dev = [
 
 [[package]]
 name = "awid-service"
-version = "0.5.19"
+version = "0.5.20"
 source = { editable = "../awid" }
 dependencies = [
     { name = "base58" },
