@@ -18,6 +18,12 @@
 
 ### Server compatibility
 
+- Server package `1.27.8` includes bounded grant-stream verification and clean
+  termination on verification failure, fixes child-task reference allocation
+  after re-parenting, and keeps legacy chat session reuse scoped to participant
+  identity. Reused addresses no longer grant access to an earlier identity's
+  private chat session.
+
 - Grant stream opens with an expired, revoked, inactive-subject or revoked-issuer
   grant now return HTTP 403 before headers, instead of HTTP 200 followed by a
   terminal SSE event. Go clients treat either form as an error; wake streams
