@@ -166,7 +166,7 @@ func (s *streamRunner) jittered(base time.Duration) time.Duration {
 }
 
 // Coalesce exhausted-delivery requests into one fresh snapshot. Resume can
-// advance that request immediately. Persistent refusal backs off independently
+// advance that request immediately. Repeated refusal backs off independently
 // of transport reconnects, and coalesced requests do not advance the backoff.
 func (s *streamRunner) requestSnapshot(delay time.Duration) {
 	s.mu.Lock()
