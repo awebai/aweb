@@ -1,0 +1,45 @@
+schemaVersion: 2
+name: aweb
+
+# The aweb OSS workspace (OATS workspace model v2). This repository hosts the
+# workspace and is its only member: it backlinks here with its own
+# oats-membership.yaml, and its souls/ are discovered at the latest state of its
+# default branch. Each machine realizes the workspace with its own deployment
+# directory and oats-local.yaml (docs/oats-workspace.md).
+members:
+  - git:github.com/awebai/aweb          # the host is a member too
+
+# The only versioned things. Bare versions resolve through the official OATS
+# catalog. Declaring a package here is the decision to trust it; each machine's
+# oats-lock.json records its commit and integrity.
+packages:
+  oats.framework: v1.4.1
+  oats.okf: v4.0.5
+  oats.aweb: v1.17.3
+
+# Shared teams (team model v2; needs OATS 0.30 on every deployment). Which team
+# is each deployment's default lives in its own oats-local.yaml
+# (defaultTeam: aweb).
+teams:
+  aweb: { description: The aweb OSS team, team: "aweb:juan.aweb.ai" }
+
+# Every soul consumes the official core, knowledge and messaging providers as
+# packages. Every soul gets messaging: reviews, hand-offs and coordination
+# arrive by mail. Tasks stay on the aweb board of team aweb, used with `aw task`
+# from each instance home, so the OATS tasks slot is empty.
+defaults:
+  capabilities:
+    oats.core: { from: package }
+  knowledge: { oats.okf: { from: package } }
+  messaging: { oats.aweb: { from: package } }
+  tasks: none
+
+# Knowledge stores. The provider does not read this block; each machine binds
+# the base in its knowledge bindings file. The store name below is also the
+# BASE ALIAS the souls' okf.json files commit to ("aweb/<node>"), so every
+# machine must bind it under exactly this name:
+#   aweb → this repository's knowledge base (root knowledge/, accepted branch main, id aweb-oss-knowledge)
+# The binding's "id" must equal the id in knowledge/okf-base.json, or every read
+# of the base fails with E_BASE.
+stores:
+  aweb: git:github.com/awebai/aweb
