@@ -18,6 +18,12 @@
 
 ### Server compatibility
 
+- Server package `1.27.9` fixes the first mail after a one-to-one conversation
+  expires: automatic reuse skips time-expired conversations and the send starts
+  a new thread immediately. Chat reuse also excludes expired or closed canonical
+  conversations from the legacy-session fallback; genuine legacy-only sessions
+  remain reusable.
+
 - Server package `1.27.8` includes bounded grant-stream verification and clean
   termination on verification failure, fixes child-task reference allocation
   after re-parenting, and keeps legacy chat session reuse scoped to participant
