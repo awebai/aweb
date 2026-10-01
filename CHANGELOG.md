@@ -145,6 +145,10 @@
 
 ### CLI compatibility
 
+- `aw version` respects `AW_NO_UPDATE_CHECK` and skips the update request when
+  stdout is not a terminal or `--json` is set. Interactive version checks still
+  report available upgrades.
+
 - Registry-backed `team:domain/alias` member reads now use the caller's signing
   key in the CLI and A2A gateway, allowing authorized reads of private teams.
   Forced refreshes remain signed and bypass caches; unsigned and non-member

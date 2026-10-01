@@ -128,12 +128,16 @@ func defaultUpdateCheckCachePath() string {
 	return filepath.Join(configHome, "aw", "update-check.json")
 }
 
+func automaticUpdateCheckEnabled() bool {
+	return !jsonFlag && strings.TrimSpace(os.Getenv("AW_NO_UPDATE_CHECK")) == "" && updateCheckStdoutIsTTY()
+}
+
 func maybeCheckLatestVersion(cmd *cobra.Command) {
 	currentVersion := strings.TrimPrefix(version, "v")
 	if currentVersion == "dev" || currentVersion == "" {
 		return
 	}
-	if jsonFlag || strings.TrimSpace(os.Getenv("AW_NO_UPDATE_CHECK")) != "" || !updateCheckStdoutIsTTY() {
+	if !automaticUpdateCheckEnabled() {
 		return
 	}
 	if shouldSkipUpdateCheck(cmd) {

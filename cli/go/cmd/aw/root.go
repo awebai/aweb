@@ -77,7 +77,9 @@ var versionCmd = &cobra.Command{
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Print(versionReport())
-		checkLatestVersion(os.Stderr, "")
+		if automaticUpdateCheckEnabled() {
+			checkLatestVersion(os.Stderr, "")
+		}
 	},
 }
 
