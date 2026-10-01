@@ -133,6 +133,7 @@ type channelCoreChildConfig struct {
 	Paused            bool
 	Generation        int
 	Log               func(string, ...any)
+	OnSnapshotRequest func(string, bool)
 	OnInactive        func(string)
 	OnLiveness        func(time.Time, string, string)
 	RestartBackoffMin time.Duration
@@ -164,27 +165,29 @@ type childLine struct {
 }
 
 type childStatusLine struct {
-	Type             string  `json:"type"`
-	Inactive         string  `json:"inactive,omitempty"`
-	LastInputAt      string  `json:"last_input_at,omitempty"`
-	LastError        string  `json:"last_error,omitempty"`
-	AmbientQueued    *int    `json:"ambient_queued,omitempty"`
-	AmbientDropped   *int    `json:"ambient_dropped,omitempty"`
-	Ready            bool    `json:"ready,omitempty"`
-	Stopped          bool    `json:"stopped,omitempty"`
-	Fatal            bool    `json:"fatal,omitempty"`
-	Delivered        bool    `json:"delivered,omitempty"`
-	Paused           *bool   `json:"paused,omitempty"`
-	BindingID        string  `json:"binding_id,omitempty"`
-	Error            string  `json:"error,omitempty"`
-	ReadinessState   string  `json:"readiness_state,omitempty"`
-	ReadinessError   *string `json:"readiness_error,omitempty"`
-	ReadinessPaused  *bool   `json:"readiness_paused,omitempty"`
-	ReadinessWaiting string  `json:"readiness_waiting,omitempty"`
-	TraceStage       string  `json:"trace_stage,omitempty"`
-	TraceMessageID   string  `json:"trace_message_id,omitempty"`
-	TraceSessionID   string  `json:"trace_session_id,omitempty"`
-	Log              string  `json:"log,omitempty"`
+	RequestSnapshot   bool    `json:"request_snapshot,omitempty"`
+	SnapshotImmediate bool    `json:"snapshot_immediate,omitempty"`
+	Type              string  `json:"type"`
+	Inactive          string  `json:"inactive,omitempty"`
+	LastInputAt       string  `json:"last_input_at,omitempty"`
+	LastError         string  `json:"last_error,omitempty"`
+	AmbientQueued     *int    `json:"ambient_queued,omitempty"`
+	AmbientDropped    *int    `json:"ambient_dropped,omitempty"`
+	Ready             bool    `json:"ready,omitempty"`
+	Stopped           bool    `json:"stopped,omitempty"`
+	Fatal             bool    `json:"fatal,omitempty"`
+	Delivered         bool    `json:"delivered,omitempty"`
+	Paused            *bool   `json:"paused,omitempty"`
+	BindingID         string  `json:"binding_id,omitempty"`
+	Error             string  `json:"error,omitempty"`
+	ReadinessState    string  `json:"readiness_state,omitempty"`
+	ReadinessError    *string `json:"readiness_error,omitempty"`
+	ReadinessPaused   *bool   `json:"readiness_paused,omitempty"`
+	ReadinessWaiting  string  `json:"readiness_waiting,omitempty"`
+	TraceStage        string  `json:"trace_stage,omitempty"`
+	TraceMessageID    string  `json:"trace_message_id,omitempty"`
+	TraceSessionID    string  `json:"trace_session_id,omitempty"`
+	Log               string  `json:"log,omitempty"`
 }
 
 const (
@@ -558,6 +561,9 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}, fatalCh
 		c.mu.Unlock()
 		if c.cfg.OnLiveness != nil && (livenessState != "" || livenessError != "") {
 			c.cfg.OnLiveness(now, livenessState, livenessError)
+		}
+		if line.RequestSnapshot && c.cfg.OnSnapshotRequest != nil {
+			c.cfg.OnSnapshotRequest(line.BindingID, line.SnapshotImmediate)
 		}
 		if line.Inactive != "" && c.cfg.OnInactive != nil {
 			c.cfg.OnInactive(line.Inactive)

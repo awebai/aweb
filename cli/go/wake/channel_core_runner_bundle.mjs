@@ -9304,6 +9304,9 @@ async function consumeAgentEvents(options, dispatched, events, log = () => {
       emitTrace(options, "lane_job_completed", event, lane);
     }).catch((error) => {
       emitTrace(options, "lane_job_failed", event, lane);
+      if (error instanceof RetryableAwakeningError && (event.type === "mail_message" || event.type === "chat_message") && !options.signal?.aborted) {
+        emitTrace(options, "delivery_retry_exhausted", event, lane);
+      }
       const detail = error instanceof Error ? error.message : String(error);
       log(`aweb: could not process an incoming event: ${detail}; it remains pending`);
     });
@@ -9921,6 +9924,7 @@ function normalizeTerminalReadiness(raw, present = true) {
     case "shell":
     case "generic shell":
     case "generic-shell":
+    case "generic_shell":
       return "shell";
     case "stopped":
       return "stopped";
@@ -10124,6 +10128,10 @@ function status(extra = {}) {
   });
 }
 function traceStatus(bindingID, entry) {
+  if (entry.stage === "delivery_retry_exhausted") {
+    status({ binding_id: bindingID, request_snapshot: true });
+    return;
+  }
   emit({
     type: "status",
     binding_id: bindingID,
@@ -10250,8 +10258,12 @@ async function main() {
       paused = true;
       status({ paused: true });
     } else if (msg.type === "resume") {
+      const wasPaused = paused;
       paused = false;
       status({ paused: false });
+      if (wasPaused) {
+        for (const bindingID of queues.keys()) status({ binding_id: bindingID, request_snapshot: true, snapshot_immediate: true });
+      }
     } else if (msg.type === "shutdown") {
       break;
     }

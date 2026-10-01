@@ -77,6 +77,7 @@ export function normalizeTerminalReadiness(raw: string | undefined, present = tr
     case "shell":
     case "generic shell":
     case "generic-shell":
+    case "generic_shell":
       return "shell";
     case "stopped":
       return "stopped";

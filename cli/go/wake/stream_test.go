@@ -443,3 +443,35 @@ func TestReconnectAfterAnOutageDeliversOnlySnapshotItems(t *testing.T) {
 		t.Fatal("an outage stopped the daemon")
 	}
 }
+
+func TestSnapshotRequestsCoalesceAndStopWithStream(t *testing.T) {
+	server := newRecordingServer(t, sseEvent("connected", `{"agent_id":"self"}`))
+	stream := newStreamRunner("test", "/identity", "team", openerFor(t, server.URL), func(awid.AgentEvent) {}, func(string, ...any) {}, time.Now, time.Minute, time.Millisecond, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream.start(ctx)
+	defer stream.stop()
+	waitFor(t, "initial stream", func() bool { return server.openCount() == 1 })
+	for i := 0; i < 50; i++ {
+		stream.requestSnapshot(100 * time.Millisecond)
+	}
+	waitFor(t, "coalesced snapshot", func() bool { return server.openCount() == 2 })
+	time.Sleep(150 * time.Millisecond)
+	if got := server.openCount(); got != 2 {
+		t.Fatalf("request burst reopened %d streams", got)
+	}
+	stream.requestSnapshot(time.Second)
+	stream.requestSnapshot(0)
+	waitFor(t, "resume snapshot", func() bool { return server.openCount() == 3 })
+	stream.requestSnapshot(50 * time.Millisecond)
+	stream.stop()
+	time.Sleep(100 * time.Millisecond)
+	if got := server.openCount(); got != 3 {
+		t.Fatalf("stopped stream reopened: %d", got)
+	}
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if stream.snapshotTimer != nil || stream.streamCancel != nil {
+		t.Fatal("snapshot timer/attempt retained after stop")
+	}
+}

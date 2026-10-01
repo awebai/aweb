@@ -281,6 +281,9 @@ func (r *instanceRunner) run(ctx context.Context) {
 			OnLiveness: func(at time.Time, state, inspectErr string) {
 				r.recordChildLiveness(generation, at, state, inspectErr)
 			},
+			OnSnapshotRequest: func(bindingID string, immediate bool) {
+				r.requestSnapshot(generation, bindingID, immediate)
+			},
 			OnInactive: func(state string) {
 				select {
 				case r.inactive <- inactiveSignal{generation: generation, state: state}:
@@ -596,4 +599,33 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 		status.ChannelCore = child.Status()
 	}
 	return status
+}
+
+// A request carries only binding identity, never held message content. Fence
+// old child generations before asking the currently admitted stream to reopen.
+func (r *instanceRunner) requestSnapshot(generation int, id string, immediate bool) {
+	r.broker.mu.Lock()
+	defer r.broker.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.generation != generation || r.state.Inactive || r.broker.instances[HomeKey(r.reg.Home)] != r {
+		return
+	}
+	for _, binding := range r.reg.ReceiveBindings() {
+		if bindingID(binding) != id {
+			continue
+		}
+		key, err := bindingKey(binding.IdentityHome, binding.TeamID)
+		if err != nil {
+			return
+		}
+		if stream := r.broker.streams[key]; stream != nil {
+			delay := 5 * time.Second
+			if immediate {
+				delay = 0
+			}
+			stream.requestSnapshot(delay)
+		}
+		return
+	}
 }

@@ -53,11 +53,13 @@ type streamRunner struct {
 	backoffMin   time.Duration
 	backoffMax   time.Duration
 
-	mu          sync.Mutex
-	phase       StreamPhase
-	lastError   string
-	unread      int
-	connectedAt time.Time
+	mu            sync.Mutex
+	phase         StreamPhase
+	lastError     string
+	unread        int
+	connectedAt   time.Time
+	streamCancel  context.CancelFunc
+	snapshotTimer *time.Timer
 
 	randMu sync.Mutex
 	rng    *rand.Rand
@@ -160,10 +162,53 @@ func (s *streamRunner) jittered(base time.Duration) time.Duration {
 	return half + extra
 }
 
+// Coalesce exhausted-delivery requests into one fresh snapshot. Resume can
+// advance that request immediately; repeated refusals wait for another window.
+func (s *streamRunner) requestSnapshot(delay time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.streamCancel == nil {
+		return
+	} // no live attempt (or quarantined/stopped)
+	if s.snapshotTimer != nil {
+		if delay > 0 {
+			return
+		}
+		s.snapshotTimer.Stop()
+		s.snapshotTimer = nil
+	}
+	if delay <= 0 {
+		s.streamCancel()
+		return
+	}
+	var timer *time.Timer
+	timer = time.AfterFunc(delay, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.snapshotTimer != timer {
+			return
+		}
+		s.snapshotTimer = nil
+		if s.streamCancel != nil {
+			s.streamCancel()
+		}
+	})
+	s.snapshotTimer = timer
+}
+
+func (s *streamRunner) clearSnapshotLocked() {
+	if s.snapshotTimer != nil {
+		s.snapshotTimer.Stop()
+		s.snapshotTimer = nil
+	}
+	s.streamCancel = nil
+}
+
 func (s *streamRunner) run(ctx context.Context) {
 	defer close(s.done)
 	defer func() {
 		s.mu.Lock()
+		s.clearSnapshotLocked()
 		if s.phase != StreamQuarantined {
 			s.phase = StreamStopped
 		}
@@ -177,9 +222,20 @@ func (s *streamRunner) run(ctx context.Context) {
 	for ctx.Err() == nil {
 		deadline := s.now().Add(s.ttl)
 		streamCtx, cancel := context.WithDeadline(ctx, deadline)
+		s.mu.Lock()
+		s.clearSnapshotLocked()
+		s.streamCancel = cancel
+		s.mu.Unlock()
 		source, err := s.open(streamCtx, deadline)
 		if err != nil {
+			plannedClose := streamCtx.Err() != nil && ctx.Err() == nil
 			cancel()
+			s.mu.Lock()
+			s.clearSnapshotLocked()
+			s.mu.Unlock()
+			if plannedClose {
+				continue
+			}
 			if code, ok := awid.HTTPStatusCode(err); ok && (code == 401 || code == 403 || code == 404 || code == 422) {
 				// One identity is quarantined and reported; the daemon and
 				// every other stream keep running (§4).
@@ -220,6 +276,9 @@ func (s *streamRunner) run(ctx context.Context) {
 		plannedClose := streamCtx.Err() != nil && ctx.Err() == nil
 		_ = source.Close()
 		cancel()
+		s.mu.Lock()
+		s.clearSnapshotLocked()
+		s.mu.Unlock()
 
 		if ctx.Err() != nil {
 			return

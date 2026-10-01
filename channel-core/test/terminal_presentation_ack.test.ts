@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import {
-  createTerminalAwakeningHandler, dispatchAgentEvent, PinStore,
+  createTerminalAwakeningHandler, consumeAgentEvents, dispatchAgentEvent, PinStore,
   type SenderTrustManager,
 } from "../src/index.js";
 
@@ -23,7 +23,7 @@ function fixture(kind: "mail" | "chat", state: string, input: (home: string, tex
     onAwakening: createTerminalAwakeningHandler({ home: "/agent", session: { inspect: async () => ({ present: true, state }), input } }),
     mailAcknowledgment: "delivery" as const,
   };
-  return { client, deliver: () => dispatchAgentEvent(options, new Set(), { type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID }) };
+  return { client, options, deliver: () => dispatchAgentEvent(options, new Set(), { type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID }) };
 }
 
 describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgment", (kind) => {
@@ -58,11 +58,31 @@ describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgmen
     expect(client.post).not.toHaveBeenCalled();
   });
 
-  test.each(["shell", "generic shell", "generic-shell", "stopped", "not-launched"])("%s never types or acknowledges", async (state) => {
+  test.each(["shell", "generic shell", "generic-shell", "generic_shell", "stopped", "not-launched"])("%s never types or acknowledges", async (state) => {
     const input = vi.fn(async () => {});
     const { client, deliver } = fixture(kind, state, input);
     await expect(deliver()).rejects.toThrow("terminal");
     expect(input).not.toHaveBeenCalled();
     expect(client.post).not.toHaveBeenCalled();
+  });
+});
+
+
+describe.each(["mail", "chat"] as const)("exhausted %s presentation", (kind) => {
+  test("requests one snapshot only after the four refused attempts", async () => {
+    vi.useFakeTimers();
+    try {
+      const input = vi.fn(async () => { throw new Error("refused"); });
+      const { client, options } = fixture(kind, "working", input);
+      const onTrace = vi.fn();
+      const pending = consumeAgentEvents({ ...options, onTrace }, new Set(), (async function* () {
+        yield { type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID };
+      })());
+      await vi.advanceTimersByTimeAsync(850);
+      await pending;
+      expect(input).toHaveBeenCalledTimes(4);
+      expect(client.post).not.toHaveBeenCalled();
+      expect(onTrace.mock.calls.filter(([entry]) => entry.stage === "delivery_retry_exhausted")).toHaveLength(1);
+    } finally { vi.useRealTimers(); }
   });
 });

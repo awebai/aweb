@@ -74,13 +74,14 @@ options are accepted but ignored.
 
 The serialized terminal adapter inspects only for safety before input. A raw
 shell, stopped/not-launched harness, `present:false`, or failed inspect refuses
-input and leaves the message unread for normal bounded retry/event/snapshot
-recovery. Stopped/not-launched observations also mark the instance inactive.
+input and leaves the message unread for bounded retry and fresh-snapshot recovery. Exhausted mail/chat presentation
+requests one coalesced stream re-open after five seconds. Stopped/not-launched observations also mark the instance inactive.
 Full sanitized content includes sender/trust metadata and a recovery footer for
 multiple receiving identities; no ID-only notice substitutes for mail/chat.
 
 Pause is durable operator control, independent of readiness. While paused,
-channel-core rejects input; resume allows later events/snapshots to deliver.
+channel-core rejects input; after applying resume it immediately requests a
+stream re-open so the fresh snapshot re-offers unread content.
 There is no held-text readiness queue or timer.
 
 ## Reconnect and crash windows
@@ -89,7 +90,8 @@ The event stream has no resumable cursor. On reconnect the server snapshot
 raises actionable unread mail and pending chat. That means:
 
 - if input/presentation fails before read marking, the item remains unread and a
-  later event/snapshot can raise it again;
+  a requested fresh snapshot raises it again (an unrelated exact-ID event does
+  not recover that message);
 - if terminal input is accepted and read marking succeeds, the server row is read
   and unread-only reconnect will not raise it again;
 - if the child dies after accepting input but before the local delivered mark or

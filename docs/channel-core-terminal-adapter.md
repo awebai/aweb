@@ -23,8 +23,8 @@ are stripped. Multiple receive bindings add a safely quoted `--identity-home`
 recovery command as a footer; invalid recovery context never replaces content.
 
 Explicit operator pause remains independent of readiness. Paused input rejects
-without typing, including if pause arrives during the safety inspection. Resume
-allows subsequent events or snapshots to deliver; no held-text retry queue is
+without typing, including if pause arrives during the safety inspection. Resume requests an immediate stream re-open after applying the control, so
+a fresh unread snapshot re-offers refused messages; no held-text retry queue is
 created. Legacy `--coalesce` and `--rate-limit` flags remain accepted but ignored.
 
 ## Acceptance and retry
@@ -35,8 +35,12 @@ created. Legacy `--coalesce` and `--rate-limit` flags remain accepted but ignore
 3. Only after acceptance does channel-core record durable delivered IDs and
    acknowledge mail or mark chat read, where the identity's capabilities permit.
 4. Rejected input retries the event after 100 ms, 250 ms and 500 ms, including a
-   fresh unread fetch each time. Exhausted events remain for the next event or
-   stream snapshot (the stream cycle is up to 300 seconds).
+   fresh unread fetch each time. After a mail/chat presentation exhausts these
+   attempts, the child requests a stream re-open after five seconds. Requests
+   coalesce into one timer per admitted binding stream, and a natural reconnect
+   or resume replaces that timer. Repeated refusals get another bounded window.
+   A later unrelated exact-ID event cannot recover a refused message; the fresh
+   unread snapshot does. No message IDs or bodies are held for replay.
 
 A read-only mail grant cannot acknowledge server mail. Its accepted input can
 still record a local delivery mark. Presentation acknowledges content reaching

@@ -97,6 +97,10 @@ function status(extra: Record<string, unknown> = {}): void {
 }
 
 function traceStatus(bindingID: string, entry: { stage?: string; message_id?: string; session_id?: string }): void {
+  if (entry.stage === "delivery_retry_exhausted") {
+    status({ binding_id: bindingID, request_snapshot: true });
+    return;
+  }
   emit({
     type: "status",
     binding_id: bindingID,
@@ -226,8 +230,12 @@ async function main(): Promise<void> {
       paused = true;
       status({ paused: true });
     } else if (msg.type === "resume") {
+      const wasPaused = paused;
       paused = false;
       status({ paused: false });
+      if (wasPaused) {
+        for (const bindingID of queues.keys()) status({ binding_id: bindingID, request_snapshot: true, snapshot_immediate: true });
+      }
     } else if (msg.type === "shutdown") {
       break;
     }

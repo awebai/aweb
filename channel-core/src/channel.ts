@@ -458,6 +458,9 @@ export async function consumeAgentEvents(
       })
       .catch((error) => {
         emitTrace(options, "lane_job_failed", event, lane);
+        if (error instanceof RetryableAwakeningError && (event.type === "mail_message" || event.type === "chat_message") && !options.signal?.aborted) {
+          emitTrace(options, "delivery_retry_exhausted", event, lane);
+        }
         const detail = error instanceof Error ? error.message : String(error);
         log(`aweb: could not process an incoming event: ${detail}; it remains pending`);
       });
