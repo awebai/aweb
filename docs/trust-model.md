@@ -196,6 +196,29 @@ boundary between awid authority and aweb local routing state, see
 
 ---
 
+## Trusted AWID service reads
+
+An aweb service and its configured home AWID registry share a high-entropy
+`AWID_SERVICE_TOKEN` (at least 32 bytes). The service sends it in
+`X-AWID-Service-Token` only to that registry, never to a registry discovered
+through DNS. Matching uses constant-time comparison.
+
+This confidential, same-operator credential lets the service read private-team
+metadata, certificate history, member references and revocations. It also
+bypasses per-IP rate limits on all 16 registry GET read buckets, so a service's
+users do not exhaust one shared public-IP budget. It does not replace the
+separate authentication for identity-private reads or certificate blobs, and
+does not authorize writes or exempt write rate limits. Missing, wrong, or
+unconfigured credentials retain the normal visibility and per-IP rules.
+
+Positive telemetry uses `event=awid_service_exempt` with only a fixed bucket
+name and cumulative process-local count, logged at counts 1, 2, 4, 8 and later
+powers of two. Counts reset on restart and are separate per worker. Rejected
+credentials emit `awid_service_credential_rejected`; neither event includes
+the credential. Keep this token between the services, never in client config.
+See [the AWID contract](https://github.com/awebai/aweb/blob/main/docs/awid-sot.md)
+for the read buckets and authentication boundaries.
+
 ## Key Storage Summary
 
 ### Self-controlled (BYOT / CLI)

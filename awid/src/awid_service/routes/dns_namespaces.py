@@ -347,7 +347,7 @@ async def reverify_namespace(
 @router.get(
     "/{domain}",
     response_model=NamespaceResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_get"))],
+    dependencies=[Depends(rate_limit_dep("namespace_get", allow_trusted_service=True))],
 )
 async def get_namespace(domain: str, db_infra=Depends(get_db)) -> NamespaceResponse:
     """Query a namespace's status by domain."""
@@ -520,7 +520,7 @@ async def rotate_namespace_controller(
 @router.get(
     "",
     response_model=NamespaceListResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_list"))],
+    dependencies=[Depends(rate_limit_dep("namespace_list", allow_trusted_service=True))],
 )
 async def list_namespaces(
     controller_did: Optional[str] = Query(default=None),

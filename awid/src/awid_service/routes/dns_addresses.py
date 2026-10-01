@@ -942,7 +942,7 @@ async def claim_identity_address(
 @router.get(
     "/{name}",
     response_model=AddressResponse,
-    dependencies=[Depends(rate_limit_dep("address_get"))],
+    dependencies=[Depends(rate_limit_dep("address_get", allow_trusted_service=True))],
 )
 async def get_address(
     request: Request,
@@ -977,7 +977,7 @@ async def get_address(
 @router.get(
     "",
     response_model=AddressListResponse,
-    dependencies=[Depends(rate_limit_dep("address_list"))],
+    dependencies=[Depends(rate_limit_dep("address_list", allow_trusted_service=True))],
 )
 async def list_addresses(
     request: Request,

@@ -113,7 +113,7 @@ async def test_namespace_and_address_read_routes_use_redis_rate_limiter(client, 
 
 
 @pytest.mark.asyncio
-async def test_trusted_service_token_bypasses_only_identity_auth_read_limits(
+async def test_trusted_service_token_uses_constant_time_comparison_for_reads(
     awid_db_infra, fake_redis, fake_domain_verifier, monkeypatch
 ):
     token = "trusted-service-token-with-at-least-32-bytes"
@@ -146,11 +146,10 @@ async def test_trusted_service_token_bypasses_only_identity_auth_read_limits(
     assert addresses_response.status_code == 200
     assert namespace_response.status_code == 200
     assert write_response.status_code == 422
-    assert len(fake_redis.eval_calls) == 2
+    assert len(fake_redis.eval_calls) == 1
     rate_keys = [call[0][2] for call in fake_redis.eval_calls]
-    assert any(":namespace_list:" in key for key in rate_keys)
     assert any(":did_register:" in key for key in rate_keys)
-    assert compared == [(token.encode(), token.encode()), (token.encode(), token.encode())]
+    assert compared == [(token.encode(), token.encode())] * 3
 
 
 @pytest.mark.asyncio
@@ -253,3 +252,155 @@ async def test_trusted_service_token_bypasses_revocation_list_limit(
             assert anonymous.status_code == 404
             rate_keys = [call[0][2] for call in fake_redis.eval_calls]
             assert any(":revocation_list:" in key for key in rate_keys)
+
+
+# All rate-limited registry reads, including those which still require a path
+# signature after a service credential has exempted the per-IP rate limit.
+_READ_LIMIT_ROUTES = [
+    ("did_key", "/v1/did/{did}/key", 404),
+    ("did_addresses", "/v1/did/{did}/addresses", 200),
+    ("did_head", "/v1/did/{did}/head", 404),
+    ("did_full", "/v1/did/{did}/full", 401),
+    ("did_log", "/v1/did/{did}/log", 200),
+    ("namespace_get", "/v1/namespaces/example.com", 404),
+    ("namespace_list", "/v1/namespaces", 200),
+    ("address_get", "/v1/namespaces/example.com/addresses/alice", 404),
+    ("address_list", "/v1/namespaces/example.com/addresses", 404),
+    ("a2a_publication_get", "/v1/namespaces/example.com/addresses/alice/a2a", 404),
+    ("team_list", "/v1/namespaces/example.com/teams", 200),
+    ("team_get", "/v1/namespaces/example.com/teams/ops", 404),
+    ("certificate_list", "/v1/namespaces/example.com/teams/ops/certificates", 404),
+    ("team_member_get", "/v1/namespaces/example.com/teams/ops/members/alice", 404),
+    ("certificate_fetch", "/v1/namespaces/example.com/teams/ops/certificates/missing", 401),
+    ("revocation_list", "/v1/namespaces/example.com/teams/ops/revocations", 404),
+]
+
+_WRITE_LIMIT_ROUTES = [
+    ("did_register", "POST", "/v1/did"),
+    ("did_update", "PUT", "/v1/did/{did}"),
+    ("did_encryption_key_publish", "POST", "/v1/did/{did}/encryption-key"),
+    ("namespace_register", "POST", "/v1/namespaces"),
+    ("namespace_reverify", "POST", "/v1/namespaces/example.com/reverify"),
+    ("namespace_update", "PATCH", "/v1/namespaces/example.com"),
+    ("namespace_rotate", "PUT", "/v1/namespaces/example.com"),
+    ("namespace_delete", "DELETE", "/v1/namespaces/example.com"),
+    ("address_register", "POST", "/v1/namespaces/example.com/addresses"),
+    ("address_atomic_claim", "POST", "/v1/namespaces/example.com/addresses/claims"),
+    ("address_update", "PUT", "/v1/namespaces/example.com/addresses/alice"),
+    ("address_delete", "DELETE", "/v1/namespaces/example.com/addresses/alice"),
+    ("address_reassign", "POST", "/v1/namespaces/example.com/addresses/alice/reassign"),
+    ("a2a_delegation_publish", "POST", "/v1/a2a/delegations"),
+    ("a2a_publication_publish", "POST", "/v1/a2a/publications"),
+    ("team_create", "POST", "/v1/namespaces/example.com/teams"),
+    ("team_delete", "DELETE", "/v1/namespaces/example.com/teams/ops"),
+    ("team_rotate", "POST", "/v1/namespaces/example.com/teams/ops/rotate"),
+    ("team_update", "POST", "/v1/namespaces/example.com/teams/ops/visibility"),
+    ("certificate_register", "POST", "/v1/namespaces/example.com/teams/ops/certificates"),
+    ("certificate_revoke", "POST", "/v1/namespaces/example.com/teams/ops/certificates/revoke"),
+]
+
+
+def _missing_did_path(path):
+    _, public_key = generate_keypair()
+    return path.format(did=stable_id_from_did_key(did_from_public_key(public_key)))
+
+
+def _assert_limited(response):
+    assert response.status_code == 429, response.text
+    assert response.json()["detail"] == "rate limit exceeded"
+    assert response.headers["X-RateLimit-Remaining"] == "0"
+    assert "Retry-After" in response.headers
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bucket,path,status", _READ_LIMIT_ROUTES, ids=[r[0] for r in _READ_LIMIT_ROUTES])
+async def test_every_read_bucket_trusted_exemption(
+    client, fake_redis, monkeypatch, caplog, bucket, path, status
+):
+    token = "trusted-service-token-with-at-least-32-bytes"
+    wrong = "wrong-service-token-with-at-least-32-bytes"
+    app = client._transport.app
+    monkeypatch.setattr(app.state, "awid_service_token", token)
+    # Short budget, long fixed window: test exhaustion without hundreds of
+    # requests or minute-boundary flakes. The actual Redis limiter still runs.
+    monkeypatch.setitem(ratelimit_module._BUCKET_DEFAULTS, bucket, (2, 2**31))
+    path = _missing_did_path(path)
+    for remaining in (1, 0):
+        response = await client.get(path)
+        assert response.status_code == status, response.text
+        # HTTPExceptions replace response headers, so the limiter's Redis
+        # calls below establish that those endpoints consumed the budget too.
+        if status == 200:
+            assert response.headers["X-RateLimit-Remaining"] == str(remaining)
+    _assert_limited(await client.get(path))
+    assert len(fake_redis.eval_calls) == 3
+    assert all(f":{bucket}:" in call[0][2] for call in fake_redis.eval_calls)
+
+    response = await client.get(path, headers={"X-AWID-Service-Token": token})
+    assert response.status_code == status, response.text
+    assert "X-RateLimit-Limit" not in response.headers
+    assert len(fake_redis.eval_calls) == 3  # exemption never hits the limiter
+    assert f"value=1 bucket={bucket}" in caplog.text
+    caplog.clear()
+
+    _assert_limited(await client.get(path))
+    assert "awid_service_credential_rejected" not in caplog.text
+    _assert_limited(await client.get(path, headers={"X-AWID-Service-Token": wrong}))
+    rejected = caplog.text
+    assert f"event=awid_service_credential_rejected metric=awid_service_credential_rejected value=1 bucket={bucket}" in rejected
+    assert token not in rejected and wrong not in rejected
+    caplog.clear()
+
+    # Even an otherwise valid token cannot exempt an unconfigured deployment.
+    monkeypatch.setattr(app.state, "awid_service_token", None)
+    _assert_limited(await client.get(path, headers={"X-AWID-Service-Token": token}))
+    rejected = caplog.text
+    assert "event=awid_service_credential_rejected" in rejected
+    assert "event=awid_service_exempt" not in rejected
+    assert token not in rejected
+    assert len(fake_redis.eval_calls) == 6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bucket,method,path", _WRITE_LIMIT_ROUTES, ids=[r[0] for r in _WRITE_LIMIT_ROUTES])
+async def test_service_token_never_exempts_write_buckets(
+    client, fake_redis, monkeypatch, caplog, bucket, method, path
+):
+    token = "trusted-service-token-with-at-least-32-bytes"
+    monkeypatch.setattr(client._transport.app.state, "awid_service_token", token)
+    monkeypatch.setitem(ratelimit_module._BUCKET_DEFAULTS, bucket, (2, 2**31))
+    path = _missing_did_path(path)
+    for attempt in range(3):
+        response = await client.request(method, path, json={}, headers={"X-AWID-Service-Token": token})
+        if attempt < 2:
+            assert response.status_code in (401, 404, 422), response.text
+        else:
+            _assert_limited(response)
+    assert len(fake_redis.eval_calls) == 3
+    assert all(f":{bucket}:" in call[0][2] for call in fake_redis.eval_calls)
+    assert "event=awid_service_exempt" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_service_exemption_telemetry_is_aggregated_per_bucket(client, fake_redis, monkeypatch, caplog):
+    token = "trusted-service-token-with-at-least-32-bytes"
+    monkeypatch.setattr(client._transport.app.state, "awid_service_token", token)
+    path = _missing_did_path("/v1/did/{did}")
+    caplog.clear()
+    for bucket, suffix, count, status in (("did_key", "key", 9, 404), ("did_addresses", "addresses", 3, 200)):
+        for n in range(1, count + 1):
+            response = await client.get(f"{path}/{suffix}", headers={"X-AWID-Service-Token": token})
+            assert response.status_code == status
+            events = [
+                record.getMessage()
+                for record in caplog.records
+                if record.name == "awid.ratelimit"
+            ]
+            caplog.clear()
+            expected = (
+                [f"event=awid_service_exempt metric=awid_service_exempt value={n} bucket={bucket}"]
+                if n in (1, 2, 4, 8) else []
+            )
+            assert events == expected
+            assert all(token not in event and "testserver" not in event and path not in event for event in events)
+    assert fake_redis.eval_calls == []

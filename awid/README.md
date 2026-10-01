@@ -29,7 +29,11 @@ Optional environment:
 - `AWID_RATE_LIMIT_BACKEND` default `redis`
 - `AWID_SERVICE_TOKEN` optional for standalone AWID, but required when AWID
   serves an aweb deployment. Configure the same >=32-byte value on both so
-  aweb can read private-team keys and revocations.
+  aweb can read private-team keys and revocations and bypass the public-IP
+  rate limits on all registry reads. Write limits and identity-private/blob
+  authentication still apply. `awid_service_exempt` logs cumulative per-bucket,
+  process-local exemption counts at 1, 2, 4, 8 and later powers of two; the token
+  is never logged. See [the trust model](../docs/trust-model.md#trusted-awid-service-reads).
 
 ## Docker
 

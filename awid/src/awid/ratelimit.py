@@ -261,6 +261,24 @@ async def enforce_rate_limit(
     )
 
 
+def _record_trusted_service_exemption(request: Request, bucket: str) -> None:
+    counts = getattr(request.app.state, "awid_service_exempt_counts", None)
+    if counts is None:
+        counts = {}
+        request.app.state.awid_service_exempt_counts = counts
+    count = int(counts.get(bucket, 0)) + 1
+    counts[bucket] = count
+    # Low-cardinality, aggregated positive signal: first exemption for a bucket,
+    # then powers of two, avoids per-request log spam while proving the token is
+    # actively matching in production.
+    if count == 1 or count & (count - 1) == 0:
+        logger.info(
+            "event=awid_service_exempt metric=awid_service_exempt value=%s bucket=%s",
+            count,
+            bucket,
+        )
+
+
 def rate_limit_dep(
     bucket: str,
     *,
@@ -278,6 +296,7 @@ def rate_limit_dep(
             if expected and presented and secrets.compare_digest(
                 expected.encode("utf-8"), presented.encode("utf-8")
             ):
+                _record_trusted_service_exemption(request, bucket)
                 return
             if presented:
                 logger.warning(

@@ -552,7 +552,7 @@ async def list_did_addresses(
 @router.get(
     "/{did_aw}/head",
     response_model=DidHeadResponse,
-    dependencies=[Depends(rate_limit_dep("did_head"))],
+    dependencies=[Depends(rate_limit_dep("did_head", allow_trusted_service=True))],
 )
 async def get_head(request: Request, did_aw: str) -> DidHeadResponse:
     try:
@@ -601,7 +601,7 @@ async def get_head(request: Request, did_aw: str) -> DidHeadResponse:
 @router.get(
     "/{did_aw}/full",
     response_model=DidFullResponse,
-    dependencies=[Depends(rate_limit_dep("did_full"))],
+    dependencies=[Depends(rate_limit_dep("did_full", allow_trusted_service=True))],
 )
 async def get_full(request: Request, did_aw: str, authorization: str | None = Header(default=None)):
     try:
@@ -642,7 +642,7 @@ async def get_full(request: Request, did_aw: str, authorization: str | None = He
 @router.get(
     "/{did_aw}/log",
     response_model=list[DidLogEntry],
-    dependencies=[Depends(rate_limit_dep("did_log"))],
+    dependencies=[Depends(rate_limit_dep("did_log", allow_trusted_service=True))],
 )
 async def get_log(request: Request, did_aw: str) -> list[DidLogEntry]:
     try:

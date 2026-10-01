@@ -572,7 +572,7 @@ async def create_team(
 @router.get(
     "",
     response_model=TeamListResponse,
-    dependencies=[Depends(rate_limit_dep("team_list"))],
+    dependencies=[Depends(rate_limit_dep("team_list", allow_trusted_service=True))],
 )
 async def list_teams(
     request: Request,
@@ -652,7 +652,7 @@ async def list_teams(
 @router.get(
     "/{name}",
     response_model=TeamResponse,
-    dependencies=[Depends(rate_limit_dep("team_get"))],
+    dependencies=[Depends(rate_limit_dep("team_get", allow_trusted_service=True))],
 )
 async def get_team(
     request: Request,
@@ -898,7 +898,7 @@ async def set_team_visibility(
 @router.get(
     "/{name}/certificates",
     response_model=CertificateListResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_list"))],
+    dependencies=[Depends(rate_limit_dep("certificate_list", allow_trusted_service=True))],
 )
 async def list_certificates(
     request: Request,
@@ -994,7 +994,7 @@ async def list_certificates(
 @router.get(
     "/{name}/members/{alias}",
     response_model=TeamMemberReferenceResponse,
-    dependencies=[Depends(rate_limit_dep("team_member_get"))],
+    dependencies=[Depends(rate_limit_dep("team_member_get", allow_trusted_service=True))],
 )
 async def get_team_member(
     request: Request,
@@ -1052,7 +1052,7 @@ async def get_team_member(
 @router.get(
     "/{name}/certificates/{certificate_id}",
     response_model=CertificateFetchResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_fetch"))],
+    dependencies=[Depends(rate_limit_dep("certificate_fetch", allow_trusted_service=True))],
 )
 async def fetch_certificate(
     request: Request,

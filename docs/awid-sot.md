@@ -124,12 +124,25 @@ uses constant-time comparison. A matching credential is a confidential
 same-operator read capability: it may read and enumerate private-team metadata,
 certificate history, member references, and revocations so the aweb server can
 verify and reconcile memberships without holding every member key. It also
-exempts the `did_key`, `did_addresses`, and `revocation_list` read buckets from
-public-IP rate limits. It never authorizes a write, and must not be shared with
+exempts all 16 registry GET read buckets from public-IP rate limits: DID key,
+addresses, head, full and log; namespace get/list; address get/list; A2A
+publication get; team get/list and member lookup; certificate list/fetch; and
+revocations. The exemption does not change identity-private or certificate-blob
+authentication. Write buckets remain rate-limited even with a matching token.
+It never authorizes a write, and must not be shared with
 clients or sent to a discovered external registry. Missing credentials use the
 normal visibility and public-IP rules. A wrong presented credential grants no
 private read access, uses those limits, and emits the stable
 `awid_service_credential_rejected` telemetry event without logging the secret.
+An unconfigured deployment accepts no token and keeps the public-IP limits.
+
+Each exempted request increments a process-local counter for its fixed bucket
+name. AWID emits `event=awid_service_exempt metric=awid_service_exempt
+value=<count> bucket=<name>` at counts 1, 2, 4, 8 and subsequent powers of two,
+providing positive evidence that the shared credential matches without logging
+every request. Values are cumulative per bucket for that application process
+and reset on restart; they are not per-event increments or a cross-worker total.
+The event contains no credential, client IP or identity.
 
 ---
 

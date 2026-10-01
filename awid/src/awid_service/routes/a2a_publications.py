@@ -825,7 +825,7 @@ async def publish_a2a_route(
     "/namespaces/{domain}/addresses/{name}/a2a",
     response_model=A2AAddressDirectoryResponse,
     response_model_exclude_none=True,
-    dependencies=[Depends(rate_limit_dep("a2a_publication_get"))],
+    dependencies=[Depends(rate_limit_dep("a2a_publication_get", allow_trusted_service=True))],
 )
 async def get_a2a_publication(
     request: Request,
