@@ -28,7 +28,7 @@ from aweb.app_events import (
 from aweb.deps import get_db, get_redis
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.messaging.chat import get_pending_conversations
-from aweb.messaging.waiting import get_waiting_agents
+from aweb.messaging.waiting import get_waiting_agents, get_waiting_agents_by_session
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.grant_streams import (
     agent_event_allowed,
@@ -251,7 +251,15 @@ async def _current_actionable_chat(
             + ([(item.get("last_from_did") or "").strip()] if item.get("last_from_did") else [])
         ],
     )
+    recipient_waiting = await get_waiting_agents_by_session(
+        redis,
+        {session_id: participant_dids for session_id in pending_by_session},
+    )
     for item in pending_by_session.values():
+        # A recipient already waiting in this session receives chat in-process.
+        # Leave unread state untouched so a later poll can wake after they leave.
+        if recipient_waiting.get(item["session_id"]):
+            continue
         other_dids = [
             did for did in item.get("participant_dids", []) if did not in viewer_did_set
         ]

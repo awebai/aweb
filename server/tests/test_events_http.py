@@ -133,7 +133,7 @@ async def _create_test_event_recipient(aweb_db):
     return agent_id
 
 
-async def _open_test_event_stream(aweb_db, agent_id, monkeypatch):
+async def _open_test_event_stream(aweb_db, agent_id, monkeypatch, *, redis=None):
     class _DbShim:
         def get_manager(self, name="aweb"):
             assert name == "aweb"
@@ -148,7 +148,7 @@ async def _open_test_event_stream(aweb_db, agent_id, monkeypatch):
     stream = events_module._sse_agent_events(
         request=_ConnectedRequest(),
         db=_DbShim(),
-        redis=None,
+        redis=redis,
         team_id="backend:acme.com",
         agent_id=str(agent_id),
         identity=TeamIdentity(
@@ -919,3 +919,115 @@ async def test_events_stream_signals_last_unread_count_reaching_zero(
     assert zero_update_frame.startswith("event:")
     zero_update = json.loads(zero_update_frame.split("data: ", 1)[1])
     assert zero_update["unread_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recipient_did", ["did:aw:bob", "did:key:z6MkBob"])
+@pytest.mark.parametrize("sender_waiting", [False, True])
+@pytest.mark.parametrize("release_wait", ["unregister", "stale"])
+async def test_events_stream_defers_recipient_wait_until_next_poll(
+    aweb_cloud_db, monkeypatch, recipient_did, sender_waiting, release_wait
+):
+    from types import SimpleNamespace
+    import aweb.messaging.waiting as waiting_module
+
+    # Exercise the production waiting helpers without a Redis process. The
+    # fake stores sorted-set scores; it does not decide who is waiting.
+    class WaitingRedis:
+        def __init__(self):
+            self.scores = {}
+
+        def pipeline(self):
+            redis = self
+
+            class Pipeline:
+                def __init__(self):
+                    self.commands = []
+
+                def zadd(self, key, values):
+                    self.commands.append(("zadd", key, values))
+
+                def expire(self, key, ttl):
+                    self.commands.append(("expire", key, ttl))
+
+                def zscore(self, key, member):
+                    self.commands.append(("zscore", key, member))
+
+                async def execute(self):
+                    results = []
+                    for command, key, value in self.commands:
+                        if command == "zadd":
+                            redis.scores.setdefault(key, {}).update(value)
+                            results.append(1)
+                        elif command == "zscore":
+                            results.append(redis.scores.get(key, {}).get(value))
+                        else:
+                            results.append(True)
+                    return results
+
+            return Pipeline()
+
+        async def zrem(self, key, member):
+            self.scores.get(key, {}).pop(member, None)
+
+    now = [1000.0]
+    monkeypatch.setattr(waiting_module, "time", SimpleNamespace(time=lambda: now[0]))
+    redis = WaitingRedis()
+    db = aweb_cloud_db.aweb_db
+    agent_id = await _create_test_event_recipient(db)
+    engaged, other = uuid4(), uuid4()
+    for session_id in (engaged, other):
+        await db.execute(
+            """
+            INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+            VALUES ($1, 'backend:acme.com', 'did:aw:alice')
+            """, session_id,
+        )
+        await db.execute(
+            """
+            INSERT INTO {{tables.chat_participants}} (session_id, did, alias)
+            VALUES ($1, 'did:aw:bob', 'bob'), ($1, 'did:aw:alice', 'alice')
+            """, session_id,
+        )
+        await db.execute(
+            """
+            INSERT INTO {{tables.chat_messages}} (session_id, from_did, from_alias, body)
+            VALUES ($1, 'did:aw:alice', 'alice', 'unread message')
+            """, session_id,
+        )
+        if sender_waiting:
+            await waiting_module.register_waiting(redis, str(session_id), "did:aw:alice")
+    await waiting_module.register_waiting(redis, str(engaged), recipient_did)
+    stream = await _open_test_event_stream(db, agent_id, monkeypatch, redis=redis)
+    try:
+        initial_chat = []
+        # Drain the snapshot through its first keepalive, proving S is absent
+        # regardless of database ordering, while the other session is delivered.
+        while True:
+            chunk = await anext(stream)
+            if chunk.startswith(": keepalive"):
+                break
+            if chunk.startswith("event: actionable_chat\n"):
+                initial_chat.append(json.loads(chunk.split("data: ", 1)[1]))
+        assert [e["session_id"] for e in initial_chat] == [str(other)]
+        assert initial_chat[0]["sender_waiting"] is sender_waiting
+        assert initial_chat[0]["wake_mode"] == ("interrupt" if sender_waiting else "prompt")
+
+        if release_wait == "unregister":
+            await waiting_module.unregister_waiting(redis, str(engaged), recipient_did)
+        else:
+            now[0] += 91  # Beyond the real helper's freshness window, no sleep.
+            if sender_waiting:
+                for session_id in (engaged, other):
+                    await waiting_module.register_waiting(redis, str(session_id), "did:aw:alice")
+
+        resumed = json.loads((await anext(stream)).split("data: ", 1)[1])
+        assert resumed["type"] == "actionable_chat"
+        assert resumed["session_id"] == str(engaged)
+        assert resumed["unread_count"] == 1
+        assert resumed["sender_waiting"] is sender_waiting
+        assert resumed["wake_mode"] == ("interrupt" if sender_waiting else "prompt")
+        # Unchanged other-session state must not be re-emitted on this poll.
+        assert (await anext(stream)).startswith(": keepalive")
+    finally:
+        await stream.aclose()
