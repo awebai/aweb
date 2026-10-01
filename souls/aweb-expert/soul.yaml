@@ -1,0 +1,11 @@
+schemaVersion: 2
+name: aweb-expert
+description: OSS aweb direction, architecture, adoption and integration judgment; takes coordination, implementation, review and investigation assignments as task-purpose instances.
+# workspace by default; an implementation assignment is spawned with
+# `--work worktree` (AGENTS.md, Assignments).
+work: workspace
+# oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
+# soul owns and reads in the aweb knowledge base is okf.json beside this file.
+# TODO(decide): the model. The classic soul recorded only the harness (claude),
+# so this runs on the harness's own default model until a model is chosen.
+launch: { harness: claude }   # the role's preference; each machine may override it

@@ -1,0 +1,9 @@
+schemaVersion: 2
+name: aweb-protocol-expert
+description: The open aweb protocol contracts (identity, teams, federation, messaging, events, the aw CLI and runtime integrations); implements and reviews protocol changes as task-purpose instances.
+work: worktree
+# oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
+# soul owns and reads in the aweb knowledge base is okf.json beside this file.
+# TODO(decide): the model. The classic soul recorded only the harness (claude),
+# so this runs on the harness's own default model until a model is chosen.
+launch: { harness: claude }   # the role's preference; each machine may override it
