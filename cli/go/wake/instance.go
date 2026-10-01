@@ -345,7 +345,7 @@ func (r *instanceRunner) run(ctx context.Context) {
 			r.persist()
 			startChild()
 			close(req.done)
-			go r.broker.admitRunnerStreams(r)
+			go r.broker.admitCurrentRunnerStreams(r)
 		case reg := <-r.updates:
 			stopChild()
 			r.mu.Lock()
@@ -355,7 +355,7 @@ func (r *instanceRunner) run(ctx context.Context) {
 			r.persist()
 			startChild()
 			go func() {
-				r.broker.admitRunnerStreams(r)
+				r.broker.admitCurrentRunnerStreams(r)
 				r.broker.pruneStreams()
 			}()
 		case offer := <-r.events:
