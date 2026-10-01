@@ -23,6 +23,11 @@ read/ack logic.
   delivery lanes. Each caller re-inspects immediately before input, preserving
   the terminal boundary checks after waiting for a previous caller. It resolves
   only after input accepts. Ambient items are attached once to that input.
+- At both `idle` and `unknown` readiness, mail and chat present the full
+  `formatAwakeningForAgent` text, including sender/trust metadata and message
+  body, with terminal controls stripped. An ID-only notice is not presentation.
+  Multiple receive bindings add a safely quoted `--identity-home` recovery
+  command as a footer; invalid recovery context never replaces the message.
 - If input rejects, `onAwakening` rejects. Channel-core retries the failed event
   lane by re-running the event, including the unread-only exact fetch. Messages
   already acked before a later failure are not re-presented because the refetch

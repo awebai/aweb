@@ -127,26 +127,34 @@ function quotedIdentityHome(home: string): string | undefined {
   return "'" + home.replace(/'/g, "'\\''") + "'";
 }
 
-function safeAwakeningNotice(awakening: ChannelAwakening, awCommand = "aw"): string {
-  const rawType = awakening.meta.type || awakening.kind;
-  const type = rawType === "mail" || rawType === "chat" ? rawType : "event";
-  const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id || awakening.meta.task_id) || "id-unavailable";
-  if (type === "mail") return `aweb: new mail ${id} waiting — run ${awCommand} mail show --message-id ${id}`;
-  if (type === "chat") {
+function messageRecoveryCommand(awakening: ChannelAwakening, awCommand: string): string | undefined {
+  const id = validatedNoticeID(awakening.meta.message_id);
+  if (awakening.kind === "mail" && id) return `${awCommand} mail show --message-id ${id}`;
+  if (awakening.kind === "chat") {
     const sessionID = validatedNoticeID(awakening.meta.session_id);
-    if (sessionID && id !== "id-unavailable") return `aweb: new chat ${id} waiting — run ${awCommand} chat history --session-id ${sessionID} --message-id ${id}`;
-    if (sessionID) return `aweb: new chat waiting — run ${awCommand} chat history --session-id ${sessionID}`;
-    return `aweb: new chat ${id} waiting`;
+    if (sessionID && id) return `${awCommand} chat history --session-id ${sessionID} --message-id ${id}`;
+    if (sessionID) return `${awCommand} chat history --session-id ${sessionID}`;
   }
+  return undefined;
+}
+
+function safeAwakeningNotice(awakening: ChannelAwakening, awCommand = "aw"): string {
+  const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id || awakening.meta.task_id) || "id-unavailable";
   return `aweb: new event ${id} waiting — run ${awCommand} events stream --json`;
 }
 
 function textForTerminalAwakening(awakening: ChannelAwakening, state: TerminalReadinessState, receivingIdentityHome?: string): string {
   const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
+  const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
+  // Unknown is eligible harness readiness too: mail/chat must present the
+  // actual content before their accepted-input receipt can mark it read.
+  if (awakening.kind === "mail" || awakening.kind === "chat") {
+    const recovery = quotedHome ? messageRecoveryCommand(awakening, `aw --identity-home ${quotedHome}`) : undefined;
+    return recovery ? `${richText}\n\nRecovery: ${recovery}` : richText;
+  }
   if (receivingIdentityHome !== undefined && quotedHome === undefined) return safeAwakeningNotice(awakening);
   const notice = safeAwakeningNotice(awakening, quotedHome ? `aw --identity-home ${quotedHome}` : "aw");
   if (state === "unknown") return notice;
-  const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
   return quotedHome ? `${notice}\n\n${richText}` : richText;
 }
 

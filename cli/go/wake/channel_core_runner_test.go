@@ -426,7 +426,7 @@ func TestBundledEncryptedSecondaryRootUsesBindingIdentityForDecrypt(t *testing.T
 	}
 }
 
-func TestBundledSecondaryIdentityNotice(t *testing.T) {
+func TestBundledSecondaryIdentityFullMessage(t *testing.T) {
 	for _, kind := range []string{"mail", "chat"} {
 		for _, state := range []string{"unknown", "idle"} {
 			t.Run(kind+"/"+state, func(t *testing.T) {
@@ -439,17 +439,22 @@ func TestBundledSecondaryIdentityNotice(t *testing.T) {
 					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
 				}))
 				defer primaryServer.Close()
+				var ackMu sync.Mutex
+				acks := 0
 				secondaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if r.Method == http.MethodPost {
+						ackMu.Lock()
+						acks++
+						ackMu.Unlock()
 						_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 						return
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{
-						"message_id": messageID, "from_alias": "bob", "from_agent": "bob", "body": "secondary private message", "subject": "secondary mail", "priority": "normal", "created_at": "2026-01-01T00:00:00Z", "timestamp": "2026-01-01T00:00:00Z",
+						"message_id": messageID, "from_alias": "bob", "from_agent": "bob", "body": "secondary private\u001b\u0007 message", "subject": "secondary mail", "priority": "normal", "created_at": "2026-01-01T00:00:00Z", "timestamp": "2026-01-01T00:00:00Z",
 					}}})
 				}))
 				defer secondaryServer.Close()
-				scopes := []string{"events.read", "mail.read", "chat.read"}
+				scopes := []string{"events.read", "mail.read", "mail.send", "chat.read"}
 				primary := writeGrantHome(t, filepath.Join(root, "primary"), primaryServer.URL, scopes)
 				secondary := writeGrantHome(t, filepath.Join(root, "secondary identity's home"), secondaryServer.URL, scopes)
 				reg := Registration{Home: filepath.Join(root, "terminal"), Delivery: DeliverySession, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{
@@ -475,6 +480,17 @@ func TestBundledSecondaryIdentityNotice(t *testing.T) {
 				child.Offer(reg.ReceiveBindings()[1], event)
 				waitForFileContains(t, inputPath, messageID)
 				data, _ := os.ReadFile(inputPath)
+				if !strings.Contains(string(data), "secondary private message") || !strings.Contains(string(data), "trust_status:") {
+					t.Fatalf("missing full sanitized message/trust: %s", data)
+				}
+				if strings.ContainsAny(string(data), "\x1b\x07") || strings.Contains(string(data), "waiting — run") {
+					t.Fatalf("unsafe or ID-only notice: %s", data)
+				}
+				waitForCond(t, "accepted full message marked read", func() bool {
+					ackMu.Lock()
+					defer ackMu.Unlock()
+					return acks == 1
+				})
 				canonicalSecondary, _ := filepath.EvalSymlinks(secondary)
 				command := "aw --identity-home " + shellQuoteForTest(canonicalSecondary)
 				if kind == "mail" {
@@ -482,7 +498,7 @@ func TestBundledSecondaryIdentityNotice(t *testing.T) {
 				} else {
 					command += " chat history --session-id " + sessionID + " --message-id " + messageID
 				}
-				if !strings.Contains(string(data), command) {
+				if !strings.HasSuffix(strings.TrimSpace(string(data)), "Recovery: "+command) {
 					t.Fatalf("missing receiving-binding command %q in %s", command, data)
 				}
 				if strings.Contains(string(data), primary) {
