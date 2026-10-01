@@ -4,11 +4,8 @@ description: The open aweb protocol contracts (identity, teams, federation, mess
 work: worktree
 # oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
 # soul owns and reads in the aweb knowledge base is okf.json beside this file.
-# Lead's rule: a successor keeps exactly the harness and model its current
-# execution runs. The predecessor executions differed:
-#   grant-fixes ran pi with openai-codex/gpt-5.5:high;
-#   server-cli-stability and wake-stability ran Codex with its native default.
-# The lead decided that the single successor uses server-cli-stability's
-# recorded launch: Codex with its own default model, no model pin. It still
-# inherits grant-fixes' preserved work. Yolo is a host launch setting.
-launch: { harness: codex }   # Codex's own default model, as server-cli-stability runs today
+# The launch preserves the current execution's harness and model override
+# (codex, no model override: the harness resolves the model). The record of
+# the predecessor executions is in the workspace host's hand-over record.
+# Yolo is a host launch setting.
+launch: { harness: codex }

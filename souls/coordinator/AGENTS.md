@@ -92,11 +92,12 @@ You are the only agent that spawns or retires aweb instances. Run every
 `oats` command from your home:
 
 - **Launch prerequisite.** Spawn an expert soul only when its `soul.yaml`
-  carries a `launch` recorded from the current execution the new instance
-  continues (harness and model, with any thinking level), and that record is
-  approved. Refuse the spawn, and say why, when the record is absent. Never
-  pass `--harness`, `--model` or a launch configuration that departs from the
-  recorded launch, and never rely on a host default.
+  carries an approved `launch` that preserves the harness and model override
+  of the current execution the new instance continues, including a null model
+  override: null deliberately leaves the model to the harness's own
+  resolution. Refuse the spawn, and say why, when no approved launch is
+  recorded. Never pass `--harness`, `--model` or a launch configuration that
+  departs from the recorded launch, and never invent a model or thinking pin.
   - aweb-protocol-expert has a recorded launch.
   - aweb-expert has none, so it is not spawned. Deployments keep it in
     `souls.disabled` until its launch is recorded and approved.
