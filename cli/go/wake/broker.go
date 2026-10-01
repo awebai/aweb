@@ -22,18 +22,12 @@ const (
 	// silently dropped (§4).
 	DefaultMaxStreams = 128
 
-	// DefaultCoalesce is the short window over which a burst of hints for one
-	// instance collapses into one submission.
-	DefaultCoalesce = 2 * time.Second
-
-	// DefaultRateLimit is the floor between two submission attempts for one
-	// instance. The note fixes no number; it requires that reminders be
-	// rate-limited per instance, and that `unknown` be bounded by coalescing
-	// plus a rate limit rather than by a delay.
+	// Deprecated compatibility defaults. Terminal delivery no longer coalesces
+	// or waits between inputs; Config still accepts these legacy fields.
+	DefaultCoalesce  = 2 * time.Second
 	DefaultRateLimit = 30 * time.Second
 
-	// DefaultPollInterval is the inspect poll. Deferred hints are re-evaluated
-	// on each poll with an unbounded wait (§4).
+	// DefaultPollInterval controls broker status persistence.
 	DefaultPollInterval = 2 * time.Second
 
 	// DefaultIdleProbe is how often an instance with nothing pending is still
@@ -65,8 +59,8 @@ type Config struct {
 	OpenStream func(identityHome, teamID string) (run.EventStreamOpener, error)
 
 	MaxStreams    int
-	Coalesce      time.Duration
-	RateLimit     time.Duration
+	Coalesce      time.Duration // Deprecated: ignored.
+	RateLimit     time.Duration // Deprecated: ignored.
 	PollInterval  time.Duration
 	IdleProbe     time.Duration
 	PendingExpiry time.Duration
@@ -87,12 +81,6 @@ type Config struct {
 func (c *Config) applyDefaults() {
 	if c.MaxStreams <= 0 {
 		c.MaxStreams = DefaultMaxStreams
-	}
-	if c.Coalesce <= 0 {
-		c.Coalesce = DefaultCoalesce
-	}
-	if c.RateLimit <= 0 {
-		c.RateLimit = DefaultRateLimit
 	}
 	if c.PollInterval <= 0 {
 		c.PollInterval = DefaultPollInterval

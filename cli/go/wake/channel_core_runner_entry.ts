@@ -7,13 +7,11 @@ import {
   createLocalAWPinStoreWriter,
   createRegistryResolver,
   createTerminalAwakeningHandler,
-  createTerminalDeliveryReadinessGate,
   normalizeTerminalReadiness,
   DeliveryStore,
   loadPinStore,
   SenderTrustManager,
   type AgentEvent,
-  type ChannelDeliveryIntent,
   type TerminalInspection,
   resolveConfig,
 } from "../../../channel-core/src/index.js";
@@ -23,9 +21,6 @@ interface InitLine {
   home: string;
   oatsBin?: string;
   awCommand?: string;
-  coalesceMs?: number;
-  rateLimitMs?: number;
-  inspectDelayMs?: number;
   paused?: boolean;
   bindings: BindingConfig[];
 }
@@ -91,6 +86,7 @@ function emit(payload: Record<string, unknown>): void {
 function status(extra: Record<string, unknown> = {}): void {
   emit({
     type: "status",
+    paused,
     inactive,
     last_input_at: lastInputAt,
     last_error: lastError,
@@ -118,9 +114,16 @@ async function start(init: InitLine): Promise<void> {
   const session = {
     async inspect(home: string): Promise<TerminalInspection> {
       status({ readiness_waiting: "inspect_start" });
-      const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
-      status({ readiness_waiting: "inspect_done" });
-      return { present: envelope.result?.present, state: envelope.result?.state, rawState: envelope.result?.state };
+      try {
+        const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
+        const state = normalizeTerminalReadiness(envelope.result?.state, envelope.result?.present ?? true);
+        status({ readiness_waiting: "inspect_done", readiness_state: state, readiness_error: "" });
+        if (state === "stopped" || state === "not-launched") onInactive(state);
+        return { present: envelope.result?.present, state };
+      } catch (error) {
+        status({ readiness_waiting: "inspect_error", readiness_error: error instanceof Error ? error.message : String(error) });
+        throw error;
+      }
     },
     async input(home: string, text: string): Promise<void> {
       const envelope = await runOATS(oatsBin, ["session", "input", "--home", home, "--json"], text);
@@ -130,27 +133,7 @@ async function start(init: InitLine): Promise<void> {
     },
   };
   const onInactive = (state: ReturnType<typeof normalizeTerminalReadiness>) => { inactive = state; status({ inactive: state }); };
-  const awaitReady = createTerminalDeliveryReadinessGate({
-    home: init.home,
-    session,
-    signal: abort.signal,
-    coalesceMs: init.coalesceMs,
-    rateLimitMs: init.rateLimitMs,
-    inspectDelayMs: init.inspectDelayMs,
-    isPaused: () => paused,
-    onInactive,
-    onReadinessStatus: (readiness) => status({
-      readiness_state: readiness.state,
-      readiness_error: readiness.error,
-      readiness_paused: readiness.paused,
-      readiness_waiting: readiness.waiting,
-    }),
-    log: (message) => {
-      if (message.includes("terminal delivery is paused")) status({ paused: true, log: message });
-      else { lastError = message; status({ log: message }); }
-    },
-  });
-  const handler = createTerminalAwakeningHandler({ home: init.home, session, signal: abort.signal });
+  const handler = createTerminalAwakeningHandler({ home: init.home, session, signal: abort.signal, isPaused: () => paused });
   const onAwakening = async (awakening: Parameters<typeof handler>[0], receivingIdentityHome?: string) => {
     await handler(awakening, receivingIdentityHome);
     handlerStatus = handler.status();
@@ -181,7 +164,6 @@ async function start(init: InitLine): Promise<void> {
       workdir: init.home,
       awCommand,
       onAwakening: (awakening) => onAwakening(awakening, init.bindings.length > 1 ? binding.identity_home : undefined),
-      awaitDeliveryReady: (intent: ChannelDeliveryIntent, signal: AbortSignal) => awaitReady(intent, signal),
       mailAcknowledgment: config.authMode === "grant" && !grantScopes.has("mail.send") ? "manual" : "delivery",
       onTrace: (entry) => traceStatus(binding.binding_id, entry),
     }, new Set<string>(), queue, (message) => {
@@ -192,10 +174,7 @@ async function start(init: InitLine): Promise<void> {
   // Quiet homes need one live observation too, so older brokers can retain
   // their first_present_at after a downgrade. Delivery remains event-driven.
   try {
-    const inspection = await session.inspect(init.home);
-    const state = normalizeTerminalReadiness(inspection.state, inspection.present ?? true);
-    status({ readiness_state: state, readiness_error: "" });
-    if (state === "stopped" || state === "not-launched") onInactive(state);
+    await session.inspect(init.home);
   } catch (error) {
     if (!abort.signal.aborted) {
       lastError = error instanceof Error ? error.message : String(error);

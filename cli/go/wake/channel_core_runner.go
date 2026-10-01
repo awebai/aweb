@@ -127,9 +127,6 @@ type ChannelCoreChild struct {
 }
 
 type channelCoreChildConfig struct {
-	Coalesce          time.Duration
-	RateLimit         time.Duration
-	InspectDelay      time.Duration
 	OatsBin           string
 	AWCommand         string
 	AdmissionSize     int
@@ -152,15 +149,12 @@ type childBinding struct {
 }
 
 type initLine struct {
-	Type           string         `json:"type"`
-	Home           string         `json:"home"`
-	OatsBin        string         `json:"oatsBin,omitempty"`
-	AWCommand      string         `json:"awCommand,omitempty"`
-	CoalesceMs     int            `json:"coalesceMs,omitempty"`
-	RateLimitMs    int            `json:"rateLimitMs,omitempty"`
-	InspectDelayMs int            `json:"inspectDelayMs,omitempty"`
-	Paused         bool           `json:"paused,omitempty"`
-	Bindings       []childBinding `json:"bindings"`
+	Type      string         `json:"type"`
+	Home      string         `json:"home"`
+	OatsBin   string         `json:"oatsBin,omitempty"`
+	AWCommand string         `json:"awCommand,omitempty"`
+	Paused    bool           `json:"paused,omitempty"`
+	Bindings  []childBinding `json:"bindings"`
 }
 
 type childLine struct {
@@ -483,7 +477,7 @@ func (c *ChannelCoreChild) initLine() initLine {
 	c.mu.Lock()
 	paused := c.paused
 	c.mu.Unlock()
-	return initLine{Type: "init", Home: c.reg.Home, OatsBin: c.cfg.OatsBin, AWCommand: c.cfg.AWCommand, CoalesceMs: millis(c.cfg.Coalesce), RateLimitMs: millis(c.cfg.RateLimit), InspectDelayMs: millis(c.cfg.InspectDelay), Paused: paused, Bindings: bindings}
+	return initLine{Type: "init", Home: c.reg.Home, OatsBin: c.cfg.OatsBin, AWCommand: c.cfg.AWCommand, Paused: paused, Bindings: bindings}
 }
 
 func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}, fatalChannels ...chan<- error) {
@@ -754,12 +748,6 @@ func (r *ChannelCoreRunner) bundlePath() (string, error) {
 	return path, nil
 }
 
-func millis(d time.Duration) int {
-	if d <= 0 {
-		return 0
-	}
-	return int(d / time.Millisecond)
-}
 func bindingID(b ReceiveIdentity) string { return b.IdentityHome + "|" + b.TeamID }
 func safeTeamID(team string) string {
 	s := strings.NewReplacer("/", "_", ":", "_", "\\", "_").Replace(team)

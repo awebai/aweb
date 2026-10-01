@@ -11,7 +11,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 )
 
 func TestBundledSubmittedFalseUsesBoundedRetryWithoutAcknowledgment(t *testing.T) {
@@ -35,7 +34,7 @@ func TestBundledSubmittedFalseUsesBoundedRetryWithoutAcknowledgment(t *testing.T
 	defer server.Close()
 	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read", "mail.send"})
 	reg := Registration{Home: root, IdentityHome: grantHome, Delivery: DeliverySession}
-	child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: oats, AWCommand: writeFakeAW(t, root, ""), Coalesce: time.Millisecond, RateLimit: time.Millisecond, InspectDelay: time.Millisecond})
+	child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: oats, AWCommand: writeFakeAW(t, root, "")})
 	defer child.Stop()
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running })
 	child.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-false"})

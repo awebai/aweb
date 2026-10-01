@@ -131,7 +131,7 @@ func TestBundledStopFinishesAcceptedInputAndDeliveryMark(t *testing.T) {
 	server := mailServer(t, "finish accepted input")
 	grantHome := writeGrantHome(t, root, server.URL, []string{"events.read", "mail.read"})
 	reg := Registration{Home: root, IdentityHome: grantHome, Delivery: DeliverySession}
-	child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: oats, AWCommand: writeFakeAW(t, root, ""), Coalesce: time.Millisecond, RateLimit: time.Millisecond, InspectDelay: time.Millisecond})
+	child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: oats, AWCommand: writeFakeAW(t, root, "")})
 	defer child.Stop()
 	waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.Running })
 	child.Offer(reg.ReceiveBindings()[0], awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1"})

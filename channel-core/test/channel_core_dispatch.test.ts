@@ -2671,27 +2671,6 @@ describe("channel-core dispatchAgentEvent", () => {
     expect(awakening.content).not.toMatch(/[\r\n]/);
   });
 
-  test("awaitDeliveryReady runs before exact mail fetch", async () => {
-    let releaseReady: () => void = () => {};
-    const ready = new Promise<void>((resolve) => { releaseReady = resolve; });
-    const awaitDeliveryReady = vi.fn(() => ready);
-    const client = {
-      get: vi.fn(async () => ({ messages: [] })),
-      post: vi.fn(async () => undefined),
-    };
-    const delivering = dispatchAgentEvent(
-      { client: client as never, pinStore: new PinStore(), trust, self, onAwakening: vi.fn(), awaitDeliveryReady },
-      new Set(),
-      { type: "mail_message", message_id: "mail-ready-1" },
-    );
-    await Promise.resolve();
-    expect(awaitDeliveryReady).toHaveBeenCalledWith("wake", expect.any(AbortSignal));
-    expect(client.get).not.toHaveBeenCalled();
-    releaseReady();
-    await delivering;
-    expect(client.get).toHaveBeenCalledTimes(1);
-  });
-
   test("rejected delivery re-dispatches with unread refetch and acks only accepted mail", async () => {
     vi.useFakeTimers();
     try {
@@ -2834,16 +2813,16 @@ describe("channel-core dispatchAgentEvent", () => {
         self,
         deliveryStore: await DeliveryStore.load(storePath),
         signal: firstAbort.signal,
-        awaitDeliveryReady: vi.fn(async () => {
+        onAwakening: vi.fn(async () => {
           firstAbort.abort();
           throw new Error("session stopped before input");
         }),
-        onAwakening: vi.fn(),
       },
       new Set(),
       (async function* () { yield { type: "mail_message", message_id: "mail-restart-before-input" } satisfies AgentEvent; })(),
     );
-    expect(firstClient.get).not.toHaveBeenCalled();
+    expect(firstClient.get).toHaveBeenCalledTimes(1);
+    expect(firstClient.post).not.toHaveBeenCalled();
 
     const secondClient = {
       get: vi.fn(async () => ({ messages: [mail] })),

@@ -12,7 +12,7 @@ weight: 59
 `aw wake` is a host daemon for OATS-launched terminal sessions. Go owns the
 host lifecycle surface: registration, deregistration, status, stream admission,
 process supervision, pause/resume and the OATS `session inspect|input` transport.
-A long-lived channel-core child owns delivery: readiness gating, exact fetch,
+A long-lived channel-core child owns delivery: immediate exact fetch,
 local decrypt/trust, formatting, terminal input, durable delivered IDs, mail
 acknowledgement and chat read marking.
 
@@ -22,8 +22,7 @@ The boundary is intentionally the same one documented in
 - **Go never fetches, decrypts, formats message bodies, marks delivery, or marks
   mail/chat read.** It starts and supervises channel-core and reports lifecycle
   and readiness status.
-- **Channel-core presents content.** For mail/chat wake and steer events it waits
-  for terminal readiness, fetches the exact unread item(s), decrypts/verifies,
+- **Channel-core presents content.** For mail/chat wake and steer events it immediately fetches the exact unread item(s), decrypts/verifies,
   formats the awakening and calls the terminal adapter. The terminal adapter
   calls OATS `input(home, text)` and resolves only after OATS accepts the input.
 - **Accepted terminal presentation is the read point.** After the terminal input
@@ -66,31 +65,23 @@ dropped. They are not replayed, composed or injected. Channel-core's delivered-I
 store is separate delivery state. It dedupes accepted presentations; it is not a
 proof that the agent completed the work.
 
-## Readiness and presentation
+## Immediate presentation and safety
 
-Terminal readiness is evaluated before exact fetch. The normalized readiness
-states are:
+Mail and chat are delivered on arrival, including while the harness reports
+working, blocked or unknown. Readiness gating, coalescing and rate limiting were
+removed pending an architecture rethink. Legacy `--coalesce` and `--rate-limit`
+options are accepted but ignored.
 
-| Raw/backend state | Normalized | Wake/steer |
-| --- | --- | --- |
-| `idle`, `done` | `idle` | allowed after confirmed live, coalescing and rate limit |
-| unknown/empty/new words | `unknown` | allowed after confirmed live, coalescing and rate limit |
-| `working`, `busy`, `running` | `working` | defer before fetch |
-| `blocked` | `blocked` | defer before fetch |
-| `shell`, `generic shell` | `shell` | defer before fetch; never type message text into a bare shell |
-| `stopped` after confirmed live | `stopped` | inactive/status, no input |
-| `present:false` after confirmed live | `not-launched` | inactive/status, no input |
+The serialized terminal adapter inspects only for safety before input. A raw
+shell, stopped/not-launched harness, `present:false`, or failed inspect refuses
+input and leaves the message unread for normal bounded retry/event/snapshot
+recovery. Stopped/not-launched observations also mark the instance inactive.
+Full sanitized content includes sender/trust metadata and a recovery footer for
+multiple receiving identities; no ID-only notice substitutes for mail/chat.
 
-Nothing is delivered before the first confirmed live inspect (`present:true`). A
-pending home may report the typed OATS error `E_RUNTIME_ENDPOINT_UNKNOWN`; before
-first live inspect, that and every other pending state/error are tolerated until
-the pending-expiry bound. After a confirmed live observation, `stopped` or
-`not-launched` marks the registration inactive and waits for the retire hook to
-call `aw wake deregister`.
-
-Pause is durable Go state. While paused, channel-core waits before fetch; it
-holds no already-fetched wake content. Resume lets the next readiness pass fetch
-and present.
+Pause is durable operator control, independent of readiness. While paused,
+channel-core rejects input; resume allows later events/snapshots to deliver.
+There is no held-text readiness queue or timer.
 
 ## Reconnect and crash windows
 

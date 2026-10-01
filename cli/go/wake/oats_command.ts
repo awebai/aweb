@@ -8,7 +8,7 @@ export interface OATSEnvelope {
 
 
 // Await close even on timeout/abort: callers must not accumulate live commands
-// or open pipes while the readiness gate retries.
+// or open pipes while delivery retries.
 export function runOATS(bin: string, args: string[], input = "", options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<OATSEnvelope> {
   return new Promise((resolve, reject) => {
     const signal = options.signal;

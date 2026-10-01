@@ -27,12 +27,13 @@ function fixture(kind: "mail" | "chat", state: string, input: (home: string, tex
 }
 
 describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgment", (kind) => {
-  test.each(["idle", "unknown"])("%s delivers full sanitized text and acknowledges only accepted input", async (state) => {
+  test.each(["idle", "working", "blocked", "unknown"])("%s delivers full sanitized text and acknowledges only accepted input", async (state) => {
     let accept!: () => void;
     const accepted = new Promise<void>((resolve) => { accept = resolve; });
     const input = vi.fn(async (_home: string, _text: string) => accepted);
     const { client, deliver } = fixture(kind, state, input);
     const pending = deliver();
+    void pending.catch(() => {});
     try {
       await vi.waitFor(() => expect(input).toHaveBeenCalledOnce());
       const text = input.mock.calls[0][1];
@@ -57,10 +58,10 @@ describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgmen
     expect(client.post).not.toHaveBeenCalled();
   });
 
-  test.each(["working", "blocked", "shell", "stopped"])("%s never types or acknowledges", async (state) => {
+  test.each(["shell", "generic shell", "generic-shell", "stopped", "not-launched"])("%s never types or acknowledges", async (state) => {
     const input = vi.fn(async () => {});
     const { client, deliver } = fixture(kind, state, input);
-    await expect(deliver()).rejects.toThrow("terminal no longer ready");
+    await expect(deliver()).rejects.toThrow("terminal");
     expect(input).not.toHaveBeenCalled();
     expect(client.post).not.toHaveBeenCalled();
   });

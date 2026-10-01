@@ -18,12 +18,9 @@ export { CHANNEL_CORE_SECURITY_CONTRACT } from "./contract.js";
 export { loadSigningKey } from "./identity/keys.js";
 export {
   createTerminalAwakeningHandler,
-  createTerminalDeliveryReadinessGate,
   normalizeTerminalReadiness,
-  terminalReadyForIntent,
   TerminalInactiveError,
   type TerminalAwakeningHandlerOptions,
-  type TerminalReadinessGateOptions,
   type TerminalInspection,
   type TerminalReadinessState,
   type TerminalSession,

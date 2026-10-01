@@ -2496,7 +2496,7 @@ Terminal wake broker.
 
 One daemon per host supervises registered instance homes and one channel-core
 delivery child per active registration. Go owns registration, lifecycle, status
-and stream admission; channel-core owns readiness gating, exact fetch, decrypt/
+and stream admission; channel-core owns immediate delivery, exact fetch, decrypt/
 trust, terminal presentation, delivered IDs, and mail/chat read acknowledgement.
 
 A mail/chat item is marked read after accepted terminal presentation, not after
@@ -2606,11 +2606,11 @@ mail history commands, not unread-only wake replay. A second start exits 0
 reporting the running daemon.
 
 Flags:
-- `--coalesce int Coalescing window in milliseconds (default 2000)`
+- `--coalesce int Deprecated compatibility option; delivery is immediate (default 2000)`
 - `-h, --help help for run`
 - `--max-streams int Maximum concurrent identity event streams (default 128)`
 - `--oats-bin oats OATS executable to run (default $AW_WAKE_OATS_BIN, else oats from PATH)`
-- `--rate-limit int Minimum milliseconds between submission attempts per instance (default 30000)`
+- `--rate-limit int Deprecated compatibility option; delivery is immediate (default 30000)`
 - `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
 
 ## `wake status`

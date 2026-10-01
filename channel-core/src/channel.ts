@@ -81,7 +81,6 @@ export interface ChannelLoopOptions {
   log?: (message: string) => void;
   onStreamState?: (state: EventStreamState) => void;
   onTrace?: (entry: ChannelTraceEntry) => void;
-  awaitDeliveryReady?: (intent: ChannelDeliveryIntent, signal: AbortSignal) => Promise<void>;
 }
 
 export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promise<PinStore> {
@@ -494,14 +493,6 @@ function shouldRetryEvent(event: AgentEvent): boolean {
   return eventDeliveryIntent(event) !== "ambient";
 }
 
-async function awaitDeliveryReady(
-  options: Pick<ChannelLoopOptions, "awaitDeliveryReady"> & { signal?: AbortSignal },
-  intent: ChannelDeliveryIntent,
-): Promise<void> {
-  if (!options.awaitDeliveryReady || intent === "ambient") return;
-  await options.awaitDeliveryReady(intent, options.signal || new AbortController().signal);
-}
-
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new Error("channel delivery aborted");
 }
@@ -586,19 +577,15 @@ export async function dispatchAgentEvent(
 ): Promise<void> {
   switch (event.type) {
     case "mail_message":
-      await awaitDeliveryReady(options, "wake");
       await dispatchMailEvent(options, dispatched, event, log);
       break;
     case "chat_message": {
-      const intent = event.sender_waiting ? "steer" : "wake";
-      await awaitDeliveryReady(options, intent);
       await dispatchChatEvent(options, dispatched, event);
       break;
     }
     case "control_pause":
     case "control_resume":
     case "control_interrupt":
-      await awaitDeliveryReady(options, "steer");
       await deliverAwakening(options, {
         kind: "control",
         content: "",
@@ -672,7 +659,6 @@ async function dispatchAppEvent(
   const payload = event.payload && typeof event.payload === "object" ? event.payload : undefined;
   if (payload) meta.payload = summarizePayload(payload);
   const intent = event.delivery_intent || "ambient";
-  if (intent !== "ambient") await awaitDeliveryReady(options, intent);
   await deliverAwakening(options, {
     kind: "app",
     content: formatAppEventSummary(event, payload),

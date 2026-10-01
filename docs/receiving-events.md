@@ -39,7 +39,7 @@ all. One daemon per host supervises registered OATS instance homes and a
 channel-core delivery child per active registration.
 
 Go owns registration, lifecycle, status and stream admission. Channel-core owns
-readiness gating, exact fetch, local decrypt/trust, terminal presentation,
+immediate delivery, exact fetch, local decrypt/trust, terminal presentation,
 delivered IDs, and mail/chat read acknowledgement. Current shared-core session
 delivery presents message content with sender trust status and records delivery
 before acknowledging mail/chat where its capabilities permit. This acknowledges

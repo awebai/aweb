@@ -23,7 +23,7 @@ import (
 
 // The terminal wake broker: one reconnecting event stream per authorized
 // receive binding on a host, with a long-lived channel-core child per instance
-// handling readiness, exact fetch, decrypt/trust, terminal presentation and
+// handling exact fetch, decrypt/trust, terminal presentation and
 // delivery/read acknowledgements through the OATS input operation.
 //
 // docs/terminal-wake-broker.md and docs/channel-core-terminal-adapter.md are
@@ -60,7 +60,7 @@ var wakeCmd = &cobra.Command{
 	Long: "Terminal wake broker.\n\n" +
 		"One daemon per host supervises registered instance homes and one channel-core\n" +
 		"delivery child per active registration. Go owns registration, lifecycle, status\n" +
-		"and stream admission; channel-core owns readiness gating, exact fetch, decrypt/\n" +
+		"and stream admission; channel-core owns immediate delivery, exact fetch, decrypt/\n" +
 		"trust, terminal presentation, delivered IDs, and mail/chat read acknowledgement.\n\n" +
 		"A mail/chat item is marked read after accepted terminal presentation, not after\n" +
 		"task completion. Read-only mail grants record local delivery but cannot call the\n" +
@@ -100,8 +100,6 @@ var wakeRunCmd = &cobra.Command{
 			ChannelCore: wake.NewChannelCoreRunner(store),
 			OpenStream:  wakeStreamOpener,
 			MaxStreams:  wakeMaxStreams,
-			Coalesce:    millis(wakeCoalesceMS),
-			RateLimit:   millis(wakeRateLimitMS),
 			Version:     version,
 			Commit:      daemonCommitForStatus(),
 			Log:         wakeLogger(),
@@ -559,8 +557,8 @@ func init() {
 	}
 
 	wakeRunCmd.Flags().IntVar(&wakeMaxStreams, "max-streams", wake.DefaultMaxStreams, "Maximum concurrent identity event streams")
-	wakeRunCmd.Flags().IntVar(&wakeCoalesceMS, "coalesce", int(wake.DefaultCoalesce/time.Millisecond), "Coalescing window in milliseconds")
-	wakeRunCmd.Flags().IntVar(&wakeRateLimitMS, "rate-limit", int(wake.DefaultRateLimit/time.Millisecond), "Minimum milliseconds between submission attempts per instance")
+	wakeRunCmd.Flags().IntVar(&wakeCoalesceMS, "coalesce", int(wake.DefaultCoalesce/time.Millisecond), "Deprecated compatibility option; delivery is immediate")
+	wakeRunCmd.Flags().IntVar(&wakeRateLimitMS, "rate-limit", int(wake.DefaultRateLimit/time.Millisecond), "Deprecated compatibility option; delivery is immediate")
 	wakeRunCmd.Flags().StringVar(&wakeOatsBin, "oats-bin", "", "OATS executable to run (default $"+session.OatsBinEnv+", else `oats` from PATH)")
 
 	wakeRegisterCmd.Flags().StringVar(&wakeRegisterHome, "home", "", "Absolute instance home path")

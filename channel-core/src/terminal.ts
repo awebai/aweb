@@ -1,4 +1,4 @@
-import { formatAwakeningForAgent, type ChannelAwakening, type ChannelDeliveryIntent } from "./channel.js";
+import { formatAwakeningForAgent, type ChannelAwakening } from "./channel.js";
 
 export type TerminalReadinessState = "idle" | "working" | "blocked" | "shell" | "unknown" | "stopped" | "not-launched";
 
@@ -18,18 +18,6 @@ export interface TerminalAwakeningHandlerOptions {
   session: TerminalSession;
   signal?: AbortSignal;
   maxAmbient?: number;
-  log?: (message: string) => void;
-}
-
-export interface TerminalReadinessGateOptions {
-  home: string;
-  session: TerminalSession;
-  signal?: AbortSignal;
-  coalesceMs?: number;
-  rateLimitMs?: number;
-  inspectDelayMs?: number;
-  onInactive?: (state: TerminalReadinessState) => void;
-  onReadinessStatus?: (status: { state?: TerminalReadinessState; error?: string; paused?: boolean; waiting?: string }) => void;
   isPaused?: () => boolean;
   log?: (message: string) => void;
 }
@@ -53,9 +41,6 @@ interface AmbientItem {
   reject: (error: Error) => void;
 }
 
-const DEFAULT_TERMINAL_COALESCE_MS = 2_000;
-const DEFAULT_TERMINAL_RATE_LIMIT_MS = 30_000;
-const DEFAULT_TERMINAL_INSPECT_DELAY_MS = 2_000;
 const DEFAULT_MAX_AMBIENT = 50;
 
 export class TerminalInactiveError extends Error {
@@ -91,6 +76,7 @@ export function normalizeTerminalReadiness(raw: string | undefined, present = tr
       return "blocked";
     case "shell":
     case "generic shell":
+    case "generic-shell":
       return "shell";
     case "stopped":
       return "stopped";
@@ -100,11 +86,6 @@ export function normalizeTerminalReadiness(raw: string | undefined, present = tr
     default:
       return "unknown";
   }
-}
-
-export function terminalReadyForIntent(state: TerminalReadinessState, intent: ChannelDeliveryIntent): boolean {
-  if (intent === "ambient") return false;
-  return state === "idle" || state === "unknown";
 }
 
 function terminalInputSafeText(text: string): string {
@@ -143,18 +124,17 @@ function safeAwakeningNotice(awakening: ChannelAwakening, awCommand = "aw"): str
   return `aweb: new event ${id} waiting — run ${awCommand} events stream --json`;
 }
 
-function textForTerminalAwakening(awakening: ChannelAwakening, state: TerminalReadinessState, receivingIdentityHome?: string): string {
+function textForTerminalAwakening(awakening: ChannelAwakening, receivingIdentityHome?: string): string {
   const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
   const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
-  // Unknown is eligible harness readiness too: mail/chat must present the
-  // actual content before their accepted-input receipt can mark it read.
+  // Mail/chat present actual content before their accepted-input receipt
+  // can mark them read, regardless of harness readiness.
   if (awakening.kind === "mail" || awakening.kind === "chat") {
     const recovery = quotedHome ? messageRecoveryCommand(awakening, `aw --identity-home ${quotedHome}`) : undefined;
     return recovery ? `${richText}\n\nRecovery: ${recovery}` : richText;
   }
   if (receivingIdentityHome !== undefined && quotedHome === undefined) return safeAwakeningNotice(awakening);
   const notice = safeAwakeningNotice(awakening, quotedHome ? `aw --identity-home ${quotedHome}` : "aw");
-  if (state === "unknown") return notice;
   return quotedHome ? `${notice}\n\n${richText}` : richText;
 }
 
@@ -164,27 +144,6 @@ function abortError(): TerminalAbortError {
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw abortError();
-}
-
-function sleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(abortError());
-      return;
-    }
-    const timer = setTimeout(done, ms);
-    function done() {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }
-    function onAbort() {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      reject(abortError());
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
@@ -209,148 +168,6 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Pro
   });
 }
 
-/**
- * Create channel-core's terminal readiness gate. This runs before exact fetch,
- * so messages read out of band while the terminal is busy are dropped by the
- * later unread-only fetch instead of being held as already-fetched content.
- */
-interface ReadinessWaiter {
-  intent: ChannelDeliveryIntent;
-  signal?: AbortSignal;
-  enqueuedAt: number;
-  resolve: () => void;
-  reject: (error: Error) => void;
-}
-
-export function createTerminalDeliveryReadinessGate(options: TerminalReadinessGateOptions) {
-  const coalesceMs = options.coalesceMs ?? DEFAULT_TERMINAL_COALESCE_MS;
-  const rateLimitMs = options.rateLimitMs ?? DEFAULT_TERMINAL_RATE_LIMIT_MS;
-  const inspectDelayMs = options.inspectDelayMs ?? DEFAULT_TERMINAL_INSPECT_DELAY_MS;
-  let confirmedLive = false;
-  let lastDeliveryAt = 0;
-  let draining = false;
-  const waiters: ReadinessWaiter[] = [];
-
-  const rejectWaiters = (error: Error) => {
-    const batch = waiters.splice(0, waiters.length);
-    for (const waiter of batch) waiter.reject(error);
-  };
-
-  const removeWaiter = (waiter: ReadinessWaiter) => {
-    const index = waiters.indexOf(waiter);
-    if (index >= 0) waiters.splice(index, 1);
-  };
-
-  const drain = async (): Promise<void> => {
-    if (draining) return;
-    draining = true;
-    try {
-      while (waiters.length > 0) {
-        throwIfAborted(options.signal);
-        const now = Date.now();
-        const firstWaiterAt = waiters.reduce((oldest, waiter) => Math.min(oldest, waiter.enqueuedAt), waiters[0].enqueuedAt);
-        const coalesceDelay = coalesceMs - (now - firstWaiterAt);
-        const rateDelay = lastDeliveryAt === 0 ? 0 : rateLimitMs - (now - lastDeliveryAt);
-        const windowDelay = Math.max(0, coalesceDelay, rateDelay);
-        if (windowDelay > 0) {
-          const waitReason = rateDelay > coalesceDelay ? "rate_limit" : "coalesce";
-          options.onReadinessStatus?.({ waiting: waitReason });
-          await sleep(windowDelay, options.signal);
-          options.onReadinessStatus?.({ waiting: `${waitReason}_done` });
-          continue;
-        }
-        if (options.isPaused?.()) {
-          options.onReadinessStatus?.({ paused: true, waiting: "paused" });
-          options.log?.("aweb: terminal delivery is paused; delivery waits before fetch");
-          await sleep(inspectDelayMs, options.signal);
-          continue;
-        }
-
-        let inspection: TerminalInspection;
-        try {
-          inspection = await raceAbort(options.session.inspect(options.home), options.signal);
-        } catch (error) {
-          if (error instanceof TerminalAbortError) throw error;
-          const detail = error instanceof Error ? error.message : String(error);
-          options.onReadinessStatus?.({ error: detail, waiting: "inspect_error" });
-          options.log?.(`aweb: terminal inspect failed; delivery waits before fetch: ${detail}`);
-          await sleep(inspectDelayMs, options.signal);
-          continue;
-        }
-        throwIfAborted(options.signal);
-        const present = inspection.present ?? true;
-        if (present) confirmedLive = true;
-        const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, present);
-        options.onReadinessStatus?.({ state, error: "", paused: false });
-        if (confirmedLive && (state === "stopped" || state === "not-launched")) {
-          options.onReadinessStatus?.({ state, waiting: "inactive" });
-          options.onInactive?.(state);
-          rejectWaiters(new TerminalInactiveError(state));
-          return;
-        }
-        if (!confirmedLive) {
-          options.onReadinessStatus?.({ state, waiting: "not_confirmed_live" });
-          options.log?.("aweb: terminal has not confirmed live yet; delivery waits before fetch");
-          await sleep(inspectDelayMs, options.signal);
-          continue;
-        }
-        const leadIntent = waiters.find((waiter) => waiter.intent !== "ambient")?.intent || "wake";
-        if (!terminalReadyForIntent(state, leadIntent)) {
-          options.onReadinessStatus?.({ state, waiting: `not_ready:${leadIntent}` });
-          options.log?.(`aweb: terminal not ready for ${leadIntent} delivery (state=${state}); delivery waits before fetch`);
-          await sleep(inspectDelayMs, options.signal);
-          continue;
-        }
-
-        throwIfAborted(options.signal);
-        if (options.isPaused?.()) {
-          options.onReadinessStatus?.({ state, paused: true, waiting: "paused_after_inspect" });
-          options.log?.("aweb: terminal delivery is paused after inspect; delivery waits before fetch");
-          await sleep(inspectDelayMs, options.signal);
-          continue;
-        }
-        options.onReadinessStatus?.({ state, error: "", paused: false, waiting: "ready" });
-        const batch = waiters.splice(0, waiters.length);
-        lastDeliveryAt = Date.now();
-        for (const waiter of batch) waiter.resolve();
-      }
-    } catch (error) {
-      rejectWaiters(error instanceof Error ? error : new Error(String(error)));
-    } finally {
-      draining = false;
-      if (waiters.length > 0) void drain();
-    }
-  };
-
-  return async (intent: ChannelDeliveryIntent, signal: AbortSignal = options.signal ?? new AbortController().signal): Promise<void> => {
-    if (intent === "ambient") return;
-    throwIfAborted(options.signal);
-    throwIfAborted(signal);
-    return new Promise<void>((resolve, reject) => {
-      const waiter: ReadinessWaiter = { intent, signal, enqueuedAt: Date.now(), resolve, reject };
-      const onAbort = () => {
-        signal.removeEventListener("abort", onAbort);
-        removeWaiter(waiter);
-        reject(abortError());
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      const originalResolve = waiter.resolve;
-      waiter.resolve = () => {
-        signal.removeEventListener("abort", onAbort);
-        originalResolve();
-      };
-      const originalReject = waiter.reject;
-      waiter.reject = (error: Error) => {
-        signal.removeEventListener("abort", onAbort);
-        originalReject(error);
-      };
-      waiters.push(waiter);
-      options.onReadinessStatus?.({ waiting: "queued" });
-      void drain();
-    });
-  };
-}
-
 function ambientKey(awakening: ChannelAwakening): string {
   return awakening.meta.event_id || awakening.meta.task_id || awakening.meta.message_id || `${awakening.kind}:${awakening.meta.type || "ambient"}`;
 }
@@ -360,8 +177,8 @@ function rejectItem(item: AmbientItem, error: Error): void {
 }
 
 /**
- * Terminal presentation adapter. The readiness gate runs before exact fetch;
- * presentation serializes the final re-inspect and input across delivery lanes.
+ * Terminal presentation adapter. Presentation is immediate and serialized
+ * across delivery lanes; inspect only guards against typing into a bare shell.
  * Wake/steer awakenings reject on input failure so channel-core
  * can re-dispatch and re-fetch unread state. Ambient awakenings are bounded and
  * piggyback on the next wake/steer input.
@@ -412,6 +229,7 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
 
   async function present(awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> {
     throwIfAborted(options.signal);
+    if (options.isPaused?.()) throw new Error("terminal delivery is paused");
     const ambientBatch = [...ambient.values()];
     let inspection: TerminalInspection;
     try {
@@ -419,15 +237,16 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     } catch (error) {
       if (error instanceof TerminalAbortError) throw error;
       const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`terminal readiness re-inspect failed before input: ${detail}`);
+      throw new Error(`terminal safety inspect failed before input: ${detail}`);
     }
     throwIfAborted(options.signal);
     const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
-    if (!terminalReadyForIntent(state, awakening.deliveryIntent)) {
-      throw new Error(`terminal no longer ready before input (state=${state})`);
+    if (state === "shell" || state === "stopped" || state === "not-launched") {
+      throw new TerminalInactiveError(state);
     }
+    if (options.isPaused?.()) throw new Error("terminal delivery is paused");
     const text = [...ambientBatch, { awakening, receivingIdentityHome }]
-      .map((item) => textForTerminalAwakening(item.awakening, state, item.receivingIdentityHome))
+      .map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome))
       .join("\n\n---\n\n");
     throwIfAborted(options.signal);
     await options.session.input(options.home, text);

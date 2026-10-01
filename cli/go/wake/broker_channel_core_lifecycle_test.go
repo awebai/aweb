@@ -117,11 +117,16 @@ func TestBrokerRestoresPauseBeforeChildDelivery(t *testing.T) {
 	defer cancel()
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
 	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"})
-	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Paused && inst.ChannelCore.LastError == "" })
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.ChannelCore.Paused && inst.ChannelCore.TraceStage == "lane_job_failed" && strings.Contains(inst.ChannelCore.LastError, "paused")
+	})
 	assertFileNotContains(t, inputPath, "paused mail")
 	if err := broker.SetPaused(home, false); err != nil {
 		t.Fatal(err)
 	}
+	// No readiness queue retains this event; a normal subsequent offer retries it.
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return !inst.ChannelCore.Paused })
+	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"})
 	waitForFileContains(t, inputPath, "paused mail")
 	data, _ := os.ReadFile(inputPath)
 	if got := strings.Count(string(data), "paused mail"); got != 1 {
@@ -264,11 +269,15 @@ func TestBrokerPauseDuringChildCreationReachesNewChild(t *testing.T) {
 	}
 	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Running })
 	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "creation-pause", ConversationID: "conv"})
-	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return inst.ChannelCore.Paused && inst.ChannelCore.LastError == "" })
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool {
+		return inst.ChannelCore.Paused && inst.ChannelCore.TraceStage == "lane_job_failed" && strings.Contains(inst.ChannelCore.LastError, "paused")
+	})
 	assertFileNotContains(t, inputPath, "creation pause mail")
 	if err := broker.SetPaused(home, false); err != nil {
 		t.Fatal(err)
 	}
+	waitForInstance(t, broker, home, func(inst InstanceStatus) bool { return !inst.ChannelCore.Paused })
+	broker.dispatch(grantHome, awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "creation-pause", ConversationID: "conv"})
 	waitForFileContains(t, inputPath, "creation pause mail")
 }
 

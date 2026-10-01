@@ -2,12 +2,8 @@ import { describe, expect, test, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import {
   createTerminalAwakeningHandler,
-  createTerminalDeliveryReadinessGate,
   normalizeTerminalReadiness,
-  terminalReadyForIntent,
-  TerminalInactiveError,
   type ChannelAwakening,
-  type TerminalInspection,
   type TerminalSession,
 } from "../src/index.js";
 
@@ -111,231 +107,12 @@ test("failed terminal input releases the next serialized caller", async () => {
 });
 
 describe("terminal channel adapter", () => {
-  test("normalizes readiness with shell as a known defer state", () => {
+  test("normalizes harness state for safety checks", () => {
     expect(normalizeTerminalReadiness("done", true)).toBe("idle");
     expect(normalizeTerminalReadiness("working", true)).toBe("working");
     expect(normalizeTerminalReadiness("shell", true)).toBe("shell");
     expect(normalizeTerminalReadiness("surprise", true)).toBe("unknown");
     expect(normalizeTerminalReadiness("idle", false)).toBe("not-launched");
-    expect(terminalReadyForIntent("unknown", "wake")).toBe(true);
-    expect(terminalReadyForIntent("unknown", "steer")).toBe(true);
-    expect(terminalReadyForIntent("unknown", "ambient")).toBe(false);
-    expect(terminalReadyForIntent("shell", "wake")).toBe(false);
-    expect(terminalReadyForIntent("working", "wake")).toBe(false);
-  });
-
-  test("readiness confirms live before delivery", async () => {
-    vi.useFakeTimers();
-    try {
-      const inspections = [{ present: false, state: "idle" }, { present: true, state: "idle" }];
-      const session: TerminalSession = {
-        inspect: vi.fn(async () => inspections.shift() || { present: true, state: "idle" }),
-        input: vi.fn(async () => {}),
-      };
-      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, inspectDelayMs: 5, coalesceMs: 0, rateLimitMs: 0 });
-      let resolved = false;
-      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
-      await flush();
-      expect(resolved).toBe(false);
-      await vi.advanceTimersByTimeAsync(5);
-      await waiting;
-      expect(resolved).toBe(true);
-      expect(session.inspect).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("paused readiness does not inspect or deliver until unpaused", async () => {
-    vi.useFakeTimers();
-    try {
-      let paused = true;
-      const session: TerminalSession = {
-        inspect: vi.fn(async () => ({ present: true, state: "idle" })),
-        input: vi.fn(async () => {}),
-      };
-      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, isPaused: () => paused, inspectDelayMs: 5, coalesceMs: 0, rateLimitMs: 0 });
-      let resolved = false;
-      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
-      await flush();
-      await vi.advanceTimersByTimeAsync(20);
-      await flush();
-      expect(resolved).toBe(false);
-      expect(session.inspect).not.toHaveBeenCalled();
-      paused = false;
-      await vi.advanceTimersByTimeAsync(5);
-      await waiting;
-      expect(resolved).toBe(true);
-      expect(session.inspect).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("inspect errors are retried before delivery", async () => {
-    vi.useFakeTimers();
-    try {
-      let attempts = 0;
-      const session: TerminalSession = {
-        inspect: vi.fn(async () => {
-          attempts += 1;
-          if (attempts === 1) throw new Error("runtime endpoint unknown");
-          return { present: true, state: "idle" };
-        }),
-        input: vi.fn(async () => {}),
-      };
-      const logs: string[] = [];
-      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, inspectDelayMs: 5, coalesceMs: 0, rateLimitMs: 0, log: (message) => logs.push(message) });
-      let resolved = false;
-      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
-      await flush();
-      expect(resolved).toBe(false);
-      expect(logs[0]).toContain("terminal inspect failed");
-      await vi.advanceTimersByTimeAsync(5);
-      await waiting;
-      expect(session.inspect).toHaveBeenCalledTimes(2);
-      expect(resolved).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("readiness treats stopped after live as inactive", async () => {
-    vi.useFakeTimers();
-    try {
-      const inactive = vi.fn();
-      const inspections = [{ present: true, state: "idle" }, { present: true, state: "stopped" }];
-      const session: TerminalSession = {
-        inspect: vi.fn(async () => inspections.shift() || { present: true, state: "stopped" }),
-        input: vi.fn(async () => {}),
-      };
-      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, onInactive: inactive, inspectDelayMs: 5, coalesceMs: 0, rateLimitMs: 0 });
-      await ready("wake", new AbortController().signal);
-      await expect(ready("wake", new AbortController().signal)).rejects.toBeInstanceOf(TerminalInactiveError);
-      expect(inactive).toHaveBeenCalledWith("stopped");
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("readiness coalesces concurrent callers and rate-limits delivery windows", async () => {
-    vi.useFakeTimers();
-    try {
-      const session: TerminalSession = {
-        inspect: vi.fn(async () => ({ present: true, state: "idle" })),
-        input: vi.fn(async () => {}),
-      };
-      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, coalesceMs: 5, rateLimitMs: 20, inspectDelayMs: 1 });
-      const resolved: string[] = [];
-      const firstBurst = ["a", "b", "c"].map((id) => ready("wake", new AbortController().signal).then(() => { resolved.push(id); }));
-      await flush();
-      expect(resolved).toEqual([]);
-      await vi.advanceTimersByTimeAsync(5);
-      await Promise.all(firstBurst);
-      expect(resolved.sort()).toEqual(["a", "b", "c"]);
-
-      const fourth = ready("wake", new AbortController().signal).then(() => { resolved.push("d"); });
-      await vi.advanceTimersByTimeAsync(19);
-      await flush();
-      expect(resolved).not.toContain("d");
-      await vi.advanceTimersByTimeAsync(1);
-      await fourth;
-      expect(resolved).toContain("d");
-
-      const secondBurst = ["e", "f"].map((id) => ready("wake", new AbortController().signal).then(() => { resolved.push(id); }));
-      await vi.advanceTimersByTimeAsync(19);
-      await flush();
-      expect(resolved).not.toContain("e");
-      expect(resolved).not.toContain("f");
-      await vi.advanceTimersByTimeAsync(1);
-      await Promise.all(secondBurst);
-      expect(resolved).toEqual(expect.arrayContaining(["e", "f"]));
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("readiness is rechecked after the rate-limit wait", async () => {
-    vi.useFakeTimers();
-    try {
-      let state = "idle";
-      const session: TerminalSession = {
-        inspect: vi.fn(async () => ({ present: true, state })),
-        input: vi.fn(async () => {}),
-      };
-      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, coalesceMs: 0, rateLimitMs: 20, inspectDelayMs: 5 });
-      await ready("wake", new AbortController().signal);
-
-      let resolved = false;
-      const second = ready("wake", new AbortController().signal).then(() => { resolved = true; });
-      await flush();
-      state = "working";
-      await vi.advanceTimersByTimeAsync(20);
-      await flush();
-      expect(resolved).toBe(false);
-      state = "idle";
-      await vi.advanceTimersByTimeAsync(5);
-      await second;
-      expect(resolved).toBe(true);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("pause is rechecked after the coalesce wait", async () => {
-    vi.useFakeTimers();
-    try {
-      let paused = false;
-      const session: TerminalSession = {
-        inspect: vi.fn(async () => ({ present: true, state: "idle" })),
-        input: vi.fn(async () => {}),
-      };
-      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, isPaused: () => paused, coalesceMs: 10, rateLimitMs: 0, inspectDelayMs: 5 });
-      let resolved = false;
-      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
-      await flush();
-      paused = true;
-      await vi.advanceTimersByTimeAsync(10);
-      await flush();
-      expect(resolved).toBe(false);
-      expect(session.inspect).not.toHaveBeenCalled();
-      paused = false;
-      await vi.advanceTimersByTimeAsync(5);
-      await waiting;
-      expect(resolved).toBe(true);
-      expect(session.inspect).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test("pause is rechecked after inspect before release", async () => {
-    vi.useFakeTimers();
-    try {
-      let paused = false;
-      let resolveInspect: ((inspection: TerminalInspection) => void) | undefined;
-      const session: TerminalSession = {
-        inspect: vi.fn(() => new Promise<TerminalInspection>((resolve) => { resolveInspect = resolve; })),
-        input: vi.fn(async () => {}),
-      };
-      const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, isPaused: () => paused, coalesceMs: 0, rateLimitMs: 0, inspectDelayMs: 5 });
-      let resolved = false;
-      const waiting = ready("wake", new AbortController().signal).then(() => { resolved = true; });
-      await flush();
-      expect(session.inspect).toHaveBeenCalledTimes(1);
-      paused = true;
-      resolveInspect?.({ present: true, state: "idle" });
-      await flush();
-      expect(resolved).toBe(false);
-      paused = false;
-      await vi.advanceTimersByTimeAsync(5);
-      resolveInspect?.({ present: true, state: "idle" });
-      await waiting;
-      expect(resolved).toBe(true);
-      expect(session.inspect).toHaveBeenCalledTimes(2);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   test("ambient awakenings are bounded and piggyback without initiating input", async () => {
@@ -419,13 +196,13 @@ describe("terminal channel adapter", () => {
     expect(inputs[0]).not.toContain("waiting — run");
   });
 
-  test("terminal is re-inspected before input and rejects if it became a shell", async () => {
+  test("terminal safety inspect rejects a raw shell", async () => {
     const session: TerminalSession = {
       inspect: vi.fn(async () => ({ present: true, state: "shell" })),
       input: vi.fn(async () => {}),
     };
     const handler = createTerminalAwakeningHandler({ home: "/agent", session });
-    await expect(handler(awakening())).rejects.toThrow("terminal no longer ready before input");
+    await expect(handler(awakening())).rejects.toThrow("terminal is inactive");
     expect(session.input).not.toHaveBeenCalled();
   });
 
@@ -460,19 +237,38 @@ describe("terminal channel adapter", () => {
     expect(session.input).toHaveBeenCalledTimes(1);
   });
 
-  test("aborting readiness while inspect is in flight prevents input", async () => {
+  test("aborting the safety inspect prevents input", async () => {
     const abort = new AbortController();
     let finishInspect: (value: { present: boolean; state: string }) => void = () => {};
     const session: TerminalSession = {
       inspect: vi.fn(() => new Promise((resolve) => { finishInspect = resolve; })),
       input: vi.fn(async () => {}),
     };
-    const ready = createTerminalDeliveryReadinessGate({ home: "/agent", session, coalesceMs: 0, rateLimitMs: 0 });
-    const waiting = ready("wake", abort.signal);
+    const handler = createTerminalAwakeningHandler({ home: "/agent", session, signal: abort.signal });
+    const waiting = handler(awakening());
     await flush();
     abort.abort();
     finishInspect({ present: true, state: "idle" });
     await expect(waiting).rejects.toThrow("terminal delivery aborted");
     expect(session.input).not.toHaveBeenCalled();
   });
+});
+
+test("explicit pause rejects input even if set during the safety inspect", async () => {
+  let paused = false;
+  const input = vi.fn(async () => {});
+  const handler = createTerminalAwakeningHandler({ home: "/agent", isPaused: () => paused, session: {
+    inspect: async () => { paused = true; return { present: true, state: "working" }; }, input,
+  } });
+  await expect(handler(awakening())).rejects.toThrow("terminal delivery is paused");
+  expect(input).not.toHaveBeenCalled();
+});
+
+test("absent harness leaves input pending even with idle state", async () => {
+  const input = vi.fn(async () => {});
+  const handler = createTerminalAwakeningHandler({ home: "/agent", session: {
+    inspect: async () => ({ present: false, state: "idle" }), input,
+  } });
+  await expect(handler(awakening())).rejects.toThrow("not-launched");
+  expect(input).not.toHaveBeenCalled();
 });
