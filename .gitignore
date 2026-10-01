@@ -48,6 +48,9 @@ pi-extension/skills/
 # config are not.
 /agents/instances/
 /agents/*/instances/
+# The OATS knowledge migration stages legacy bundles here; a committed one
+# breaks every spawn of the soul.
+/souls/*/knowledge/
 /cli/agents/instances/
 /oats/agents/*/instances/
 .release-runs/

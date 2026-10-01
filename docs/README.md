@@ -11,8 +11,8 @@ The [repository README](../README.md) has install and server-start commands.
 Use this page to find the document you need, and to see which documents carry
 authority over shipped behavior.
 
-The baseline contains 72 tracked Markdown documents. This front door does not
-self-link. The remaining 71 public Markdown paths appear below exactly once.
+The baseline contains 74 tracked Markdown documents. This front door does not
+self-link. The remaining 73 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -227,6 +227,9 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   cross-repository maintainer harness; unrelated to encrypted messaging.
 - [Per-team agent tmux cutover](agent-tmux-cutover.md) — specialized reviewed
   runtime migration procedure.
+- [This repository in an OATS workspace](oats-workspace.md) — the maintainers'
+  agent souls and knowledge base kept here, and the standalone view for
+  contributors who cannot read the workspace host.
 - [Beads mail delegate design record](beads-mail-delegate.md) — the decided
   verb surface, identity, threading, retention, and instrumentation choices
   behind `aw beads-mail`.

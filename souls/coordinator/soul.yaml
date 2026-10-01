@@ -1,0 +1,10 @@
+schemaVersion: 2
+name: coordinator
+description: Cross-repository coordinator of the aweb OSS team; routes work and review, integrates reviewed combinations and staffs the team.
+# workspace: ./work is the whole deployment. Member repositories are read
+# context; integration happens in detached worktrees created for one landing
+# and removed after it (AGENTS.md).
+work: workspace
+# oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
+# soul owns and reads in the aweb knowledge base is okf.json beside this file.
+launch: { harness: codex }   # the harness's own default model; yolo is a host fact (docs/oats-workspace.md)
