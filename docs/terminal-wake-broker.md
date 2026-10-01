@@ -75,7 +75,9 @@ options are accepted but ignored.
 The serialized terminal adapter inspects only for safety before input. A raw
 shell, stopped/not-launched harness, `present:false`, or failed inspect refuses
 input and leaves the message unread for bounded retry and fresh-snapshot recovery. Exhausted mail/chat presentation
-requests one coalesced stream re-open after five seconds. Stopped/not-launched observations also mark the instance inactive.
+requests one coalesced stream re-open after five seconds. Stopped/not-launched observations mark the instance inactive only after the
+child has observed `present:true`; a prelaunch home stays pending and retries
+through unread snapshots without needing re-registration.
 Full sanitized content includes sender/trust metadata and a recovery footer for
 multiple receiving identities; no ID-only notice substitutes for mail/chat.
 

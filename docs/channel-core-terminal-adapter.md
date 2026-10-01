@@ -87,8 +87,10 @@ Child stdout/stderr records are bounded to 1 MiB. Oversized records are reported
 and drained to the next newline so subsequent status records still arrive.
 
 At child startup, one bounded inspect reports readiness even if no event is
-waiting. A stopped or not-launched result marks the instance inactive through
-the same callback used by the delivery safety check. A successful present observation persists `first_present_at`, so a
+waiting. Stopped/not-launched marks the instance inactive only after this child
+has observed `present:true`. Before that, safety checks still refuse input, but
+the registration stays pending and coalesced unread snapshots retry delivery
+once the harness launches, without re-registration. A successful present observation persists `first_present_at`, so a
 quiet home retains its confirmed-live state when an older broker reads the
 store. Startup inspect failure is reported; later events use the normal
 bounded delivery retry path. There is no extra periodic idle probe. The child receives

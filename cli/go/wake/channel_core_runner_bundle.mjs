@@ -10144,14 +10144,16 @@ async function start(init) {
   paused = Boolean(init.paused);
   const oatsBin = init.oatsBin || process.env.AW_WAKE_OATS_BIN || "oats";
   const awCommand = init.awCommand || "aw";
+  let confirmedLive = false;
   const session = {
     async inspect(home) {
       status({ readiness_waiting: "inspect_start" });
       try {
         const envelope = await runOATS(oatsBin, ["session", "inspect", "--home", home, "--json"], "", { signal: abort.signal });
+        if (envelope.result?.present === true) confirmedLive = true;
         const state = normalizeTerminalReadiness(envelope.result?.state, envelope.result?.present ?? true);
         status({ readiness_waiting: "inspect_done", readiness_state: state, readiness_error: "" });
-        if (state === "stopped" || state === "not-launched") onInactive(state);
+        if (confirmedLive && (state === "stopped" || state === "not-launched")) onInactive(state);
         return { present: envelope.result?.present, state };
       } catch (error) {
         status({ readiness_waiting: "inspect_error", readiness_error: error instanceof Error ? error.message : String(error) });

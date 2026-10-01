@@ -169,7 +169,7 @@ func TestFreshRegistrationDiscardsOrphanedLifecycle(t *testing.T) {
 	}
 }
 
-func TestQuietStartupMarksStoppedAndAbsentSessionsInactive(t *testing.T) {
+func TestQuietStartupDistinguishesPresentStoppedFromNeverLaunched(t *testing.T) {
 	for _, state := range []string{"stopped", "not-launched"} {
 		t.Run(state, func(t *testing.T) {
 			root, err := filepath.EvalSymlinks(t.TempDir())
@@ -196,6 +196,9 @@ func TestQuietStartupMarksStoppedAndAbsentSessionsInactive(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitForInstance(t, broker, root, func(inst InstanceStatus) bool {
+				if state == "not-launched" {
+					return inst.Phase == PhasePending && inst.ChannelCore.Running && inst.LastState == state
+				}
 				return inst.Phase == PhaseInactive && !inst.ChannelCore.Running && inst.LastState == state
 			})
 			if _, err := os.Stat(filepath.Join(root, "unexpected-input")); !os.IsNotExist(err) {
