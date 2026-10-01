@@ -237,6 +237,9 @@ The live REST route inventory is the FastAPI `/docs` OpenAPI viewer produced by
   stream per identity on a host, coalesced wakes typed into the original
   terminal through the OATS input operation; decided process model, state,
   registration, ack point, and the interface contract (aweb-abil).
+- [Channel-core terminal wake adapter contract](channel-core-terminal-adapter.md) —
+  channel-core owns terminal wake delivery (readiness gating, exact fetch,
+  delivered ids, acks); the Go daemon supervises sessions and registrations.
 - [Gas City mail provider design record](gascity-mail-provider.md) — the exec
   contract verified against pinned Gas City source and the operation mapping
   behind `aw gc-mail`.
