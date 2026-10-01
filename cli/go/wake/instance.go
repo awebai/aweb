@@ -90,8 +90,17 @@ func (r *instanceRunner) start(ctx context.Context) {
 
 func (r *instanceRunner) updateRegistration(reg Registration) bool {
 	r.mu.Lock()
-	changed := !sameReceiveBindings(r.reg.ReceiveBindings(), reg.ReceiveBindings())
+	current := r.reg
+	if r.pendingReg != nil {
+		current = *r.pendingReg
+	}
+	changed := !sameReceiveBindings(current.ReceiveBindings(), reg.ReceiveBindings())
 	started := r.cancel != nil
+	if started && !changed && r.pendingReg != nil {
+		// Keep the pending apply boundary; do not queue or publish it twice.
+		r.mu.Unlock()
+		return true
+	}
 	if !started || !changed {
 		r.publishRegistrationLocked(reg, changed)
 		r.mu.Unlock()
