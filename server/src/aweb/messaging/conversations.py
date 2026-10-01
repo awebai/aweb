@@ -297,6 +297,7 @@ async def find_active_one_to_one_conversation_between(
     remains available; creating duplicates is a data invariant violation, but
     refusing to route strands the participants.
     """
+    effective_now = _now_utc()
     normalized_type = _normalize_type(conversation_type)
     dids_a, agent_ids_a = await _equivalent_identity_refs(
         db,
@@ -334,6 +335,7 @@ async def find_active_one_to_one_conversation_between(
           ON pb.conversation_id = c.conversation_id
         WHERE c.conversation_type = $1
           AND c.status = 'active'
+          AND (c.expires_at IS NULL OR c.expires_at > $6)
           AND (
                 (
                     $3::uuid[] <> '{}'::uuid[]
@@ -374,6 +376,7 @@ async def find_active_one_to_one_conversation_between(
         agent_ids_a,
         dids_b,
         agent_ids_b,
+        effective_now,
     )
     if not rows:
         return None

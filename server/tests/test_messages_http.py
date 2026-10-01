@@ -9028,3 +9028,56 @@ async def test_send_message_to_private_address_rejects_unverified_client_recipie
 
     assert resp.status_code == 404, resp.text
     assert "Recipient address not found" in resp.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("expiry_seconds", [-1, 0, 1, None])
+async def test_first_mail_skips_time_expired_active_conversation(aweb_cloud_db, monkeypatch, expiry_seconds):
+    from aweb.messaging import conversations
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(conversations, "_now_utc", lambda: now)
+    await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
+    _, _, alice_key = _make_keypair()
+    _, _, bob_key = _make_keypair()
+    alice_id = await _insert_agent(
+        aweb_cloud_db.aweb_db, team_id="backend:acme.com", alias="alice",
+        did_key=alice_key, did_aw="did:aw:alice", address="acme.com/alice",
+    )
+    await _insert_agent(
+        aweb_cloud_db.aweb_db, team_id="backend:acme.com", alias="bob",
+        did_key=bob_key, did_aw="did:aw:bob", address="acme.com/bob",
+    )
+    app = _build_test_app(aweb_cloud_db.aweb_db, AsyncMock())
+
+    async def auth():
+        return MessagingAuth(did_key=alice_key, did_aw="did:aw:alice", address="acme.com/alice",
+                             team_id="backend:acme.com", alias="alice", agent_id=alice_id)
+
+    app.dependency_overrides[get_messaging_auth] = auth
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/v1/messages", json={"to_alias": "bob", "subject": "before expiry", "body": "hello"})
+        assert first.status_code == 200, first.text
+        old_id = first.json()["conversation_id"]
+        expiry = None if expiry_seconds is None else now + timedelta(seconds=expiry_seconds)
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.conversations}} SET expires_at = $2 WHERE conversation_id = $1",
+            UUID(old_id), expiry,
+        )
+        assert await aweb_cloud_db.aweb_db.fetch_value(
+            "SELECT status FROM {{tables.conversations}} WHERE conversation_id = $1", UUID(old_id),
+        ) == "active"
+        # No retry: the first send after expiry must succeed on a new thread.
+        sent = await client.post("/v1/messages", json={"to_alias": "bob", "subject": "after expiry", "body": "hello again"})
+        assert sent.status_code == 200, sent.text
+        new_id = sent.json()["conversation_id"]
+        if expiry_seconds is not None and expiry_seconds <= 0:
+            assert new_id != old_id
+        else:
+            assert new_id == old_id
+        stored = await aweb_cloud_db.aweb_db.fetch_one(
+            "SELECT conversation_id, to_did FROM {{tables.messages}} WHERE message_id = $1",
+            UUID(sent.json()["message_id"]),
+        )
+        assert str(stored["conversation_id"]) == new_id
+        assert stored["to_did"] == "did:aw:bob"
