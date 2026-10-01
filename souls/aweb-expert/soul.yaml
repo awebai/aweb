@@ -6,8 +6,11 @@ description: OSS aweb direction, architecture, adoption and integration judgment
 work: workspace
 # oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
 # soul owns and reads in the aweb knowledge base is okf.json beside this file.
-# TODO(decide): the harness and the model. Neither is decided for OATS v2.
-# The harness below is what the classic soul recorded (runtime: claude); it
-# recorded no model, so until one is chosen the harness's own default model
-# applies. Decide both, then replace this comment.
-launch: { harness: claude }   # TODO(decide): harness and model
+# No launch: this soul has no current execution, so no harness or model is
+# recorded. Recording them from the execution the instance continues, and
+# their approval, is a prerequisite for any spawn of this soul. A soul cannot
+# make the kernel refuse a spawn, and without a launch the kernel would fall
+# back to a host default, so the refusal is explicit instead: deployments list
+# aweb-expert in oats-local.yaml souls.disabled (a spawn fails with
+# E_SOUL_DISABLED) until the recorded launch lands here, and the coordinator
+# does not spawn it.

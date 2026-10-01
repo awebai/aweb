@@ -91,11 +91,22 @@ report the conflict rather than choosing silently.
 You are the only agent that spawns or retires aweb instances. Run every
 `oats` command from your home:
 
+- **Launch prerequisite.** Spawn an expert soul only when its `soul.yaml`
+  carries a `launch` recorded from the current execution the new instance
+  continues (harness and model, with any thinking level), and that record is
+  approved. Refuse the spawn, and say why, when the record is absent. Never
+  pass `--harness`, `--model` or a launch configuration that departs from the
+  recorded launch, and never rely on a host default.
+  - aweb-protocol-expert has a recorded launch.
+  - aweb-expert has none, so it is not spawned. Deployments keep it in
+    `souls.disabled` until its launch is recorded and approved.
 - Task-purpose instances:
-  `oats spawn aweb-protocol-expert --purpose <slug> --task-file <brief>`, or
+  `oats spawn aweb-protocol-expert --purpose <slug> --task-file <brief>`. Once
+  aweb-expert's launch is recorded and approved:
   `oats spawn aweb-expert --purpose <slug> [--work worktree] --task-file <brief>`.
   An aweb-expert implementation assignment takes `--work worktree`.
-- Standing seats: `oats spawn <soul> --name <instance>`.
+- Standing seats: `oats spawn <soul> --name <instance>`, under the same
+  prerequisite.
 - Before any spawn, confirm that the name has no live instance on any machine
   (`oats status`, `oats aweb roster`).
 - Retire an instance with `oats retire <instance>` only once its work has

@@ -4,8 +4,9 @@ description: The open aweb protocol contracts (identity, teams, federation, mess
 work: worktree
 # oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
 # soul owns and reads in the aweb knowledge base is okf.json beside this file.
-# TODO(decide): the harness and the model. Neither is decided for OATS v2.
-# The harness below is what the classic soul recorded (runtime: claude); it
-# recorded no model, so until one is chosen the harness's own default model
-# applies. Decide both, then replace this comment.
-launch: { harness: claude }   # TODO(decide): harness and model
+# The launch is the one the current execution runs, recorded from the live
+# seat whose work the successor inherits: harness pi, model
+# openai-codex/gpt-5.5, thinking high. pi takes the thinking level as the
+# model's ":<level>" suffix (pi --model "provider/id:<thinking>"). Yolo is a
+# host launch setting, not a soul's.
+launch: { harness: pi, model: "openai-codex/gpt-5.5:high" }
