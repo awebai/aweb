@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "owner": "76049864-bffc-4bd1-b6b8-f874d1b10cff",
+  "owns": [
+    "aweb/coordinator"
+  ],
+  "reads": [
+    "aweb/coordinator",
+    "aweb/aweb-expert",
+    "aweb/aweb-protocol-expert"
+  ]
+}

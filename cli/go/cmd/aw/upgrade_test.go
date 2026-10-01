@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,80 @@ import (
 
 	"github.com/spf13/cobra"
 )
+
+type versionCheckTransport func(*http.Request) (*http.Response, error)
+
+func (f versionCheckTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestVersionCommandUpdateCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		disable  string
+		tty      bool
+		json     bool
+		wantCall bool
+	}{
+		{name: "disabled", disable: "1", tty: true},
+		{name: "nonempty_opt_out", disable: " 0 ", tty: true},
+		{name: "non_tty"},
+		{name: "json", tty: true, json: true},
+		{name: "interactive", tty: true, wantCall: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var unused bytes.Buffer
+			resetUpdateCheckTestState(t, "1.0.0", "", &unused, tc.tty)
+			t.Setenv("AW_NO_UPDATE_CHECK", tc.disable)
+			jsonFlag = tc.json
+			output, err := os.CreateTemp(t.TempDir(), "version-output")
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldStdout, oldStderr, oldTransport := os.Stdout, os.Stderr, http.DefaultTransport
+			os.Stdout, os.Stderr = output, output
+			t.Cleanup(func() {
+				os.Stdout, os.Stderr, http.DefaultTransport = oldStdout, oldStderr, oldTransport
+				output.Close()
+			})
+			calls := 0
+			http.DefaultTransport = versionCheckTransport(func(r *http.Request) (*http.Response, error) {
+				calls++
+				if r.URL.String() != "https://api.github.com/repos/awebai/aw/releases/latest" {
+					t.Errorf("unexpected update URL: %s", r.URL)
+				}
+				if !tc.wantCall {
+					// Offline stand-in for a slow network. Skipped checks must never wait here.
+					time.Sleep(time.Second)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"tag_name":"v2.0.0"}`)), Header: make(http.Header)}, nil
+			})
+			start := time.Now()
+			versionCmd.Run(versionCmd, nil)
+			elapsed := time.Since(start)
+			if !tc.wantCall && elapsed >= 500*time.Millisecond {
+				t.Errorf("version took %s with update checks disabled; want under 500ms", elapsed)
+			}
+			wantCalls := 0
+			if tc.wantCall {
+				wantCalls = 1
+			}
+			if calls != wantCalls {
+				t.Errorf("release requests=%d, want %d", calls, wantCalls)
+			}
+			data, err := os.ReadFile(output.Name())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(string(data), "aw 1.0.0\n") {
+				t.Errorf("missing version output: %q", data)
+			}
+			if gotHint := strings.Contains(string(data), "Upgrade available"); gotHint != tc.wantCall {
+				t.Errorf("upgrade hint=%t, want %t: %q", gotHint, tc.wantCall, data)
+			}
+		})
+	}
+}
 
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
