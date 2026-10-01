@@ -80,6 +80,9 @@ clarification. The team is aweb team `aweb:juan.aweb.ai`; the coordinator seat
 - **Tasks** live on the aweb board of team aweb: run `aw task …` from your home.
 - Only the coordinator spawns or retires aweb instances. Ask it when your
   assignment needs another one.
+- You run on the launch `soul.yaml` records: Codex with its own default model,
+  the launch the lead chose from your predecessors' executions. A spawn that
+  overrides it departs from the record; tell the coordinator if you find one.
 
 ## Verification and authority
 
