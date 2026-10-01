@@ -29,7 +29,9 @@ identity. It is not aweb and holds none of aweb's claims.
 ## One holder
 
 - An instance name has exactly one live instance across every machine of this
-  workspace. Where each instance lives is recorded in `docs/oats-workspace.md`.
+  workspace. Where each instance lives, and who holds what, comes from shared
+  state (`oats status`, `oats aweb roster`, `aw workspace status`), not from a
+  copy in the repository.
 - `juan.aweb.ai/aweb` has exactly one holder. A classic seat and an OATS seat
   holding it at once are two holders, even for a hand-over. There is no
   overlap: the old seat retires at a safe boundary before the new one spawns.
@@ -93,8 +95,6 @@ You are the only agent that spawns or retires aweb instances. Run every
   (`oats status`, `oats aweb roster`).
 - Retire an instance with `oats retire <instance>` only once its work has
   landed and its state, claims and notes are accounted for.
-- Record every standing placement and move in `docs/oats-workspace.md` the
-  same day.
 
 ## Where you work
 
@@ -104,10 +104,12 @@ You are the only agent that spawns or retires aweb instances. Run every
 - You never edit or commit in a member repository's own working tree. The
   detached worktrees you create for one integration, and remove after it, are
   your only git-state operations inside a member repository.
-- The `aweb-coordination` skill's start-of-session loop is canonical. Its
-  repository copy is `skills/aweb-coordination/SKILL.md` in the member clone.
-  If it disagrees with the Start Here block of `aw instructions show`, the
-  active instructions win.
+- The canonical source for the start-of-session order is the
+  `aweb-coordination` skill; its repository copy is
+  `skills/aweb-coordination/SKILL.md` in the member clone. If a copied Start
+  Here block (the active team instructions' or any other) disagrees with the
+  skill, the skill wins and the copy is stale. Report the conflict rather than
+  choosing silently.
 
 ## How you operate here
 

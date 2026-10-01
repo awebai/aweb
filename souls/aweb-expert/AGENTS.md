@@ -50,8 +50,10 @@ Juan decides.
 1. Read `./TASK.md` and `./STATE.md`. Follow the canonical start-of-session loop
    in the `aweb-coordination` skill before claiming work. Its repository copy
    is `skills/aweb-coordination/SKILL.md` (in `./work` on a worktree, in the
-   member clone otherwise). The Start Here block of `aw instructions show` wins
-   if the two disagree.
+   member clone otherwise). If a copied Start Here block (the
+   active team instructions' or any other) disagrees with the skill, the skill
+   wins and the copy is stale. Report the conflict rather than choosing
+   silently.
 2. Consult your knowledge node, then the nodes you read (`okf.json` beside this
    file names them), with `oats okf index`, `cat` and `search`. Recorded
    decisions and lessons are binding context. An unrecorded decision is a bug:

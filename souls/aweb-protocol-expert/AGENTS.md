@@ -36,8 +36,10 @@ clarification. The team is aweb team `aweb:juan.aweb.ai`; the coordinator seat
 
 1. Read `./TASK.md` and `./STATE.md`. Follow the canonical start-of-session loop
    in the `aweb-coordination` skill; its repository copy is
-   `./work/skills/aweb-coordination/SKILL.md`. The Start Here block of
-   `aw instructions show` wins if the two disagree.
+   `./work/skills/aweb-coordination/SKILL.md`. If a copied Start Here block (the
+   active team instructions' or any other) disagrees with the skill, the skill
+   wins and the copy is stale. Report the conflict rather than choosing
+   silently.
 2. Consult your knowledge node, then the nodes you read (`okf.json` beside this
    file names them), with `oats okf index`, `cat` and `search`. Prior decisions
    are binding until superseded on the record.

@@ -6,6 +6,8 @@ description: OSS aweb direction, architecture, adoption and integration judgment
 work: workspace
 # oats.core, oats.okf and oats.aweb come from the workspace defaults. What this
 # soul owns and reads in the aweb knowledge base is okf.json beside this file.
-# TODO(decide): the model. The classic soul recorded only the harness (claude),
-# so this runs on the harness's own default model until a model is chosen.
-launch: { harness: claude }   # the role's preference; each machine may override it
+# TODO(decide): the harness and the model. Neither is decided for OATS v2.
+# The harness below is what the classic soul recorded (runtime: claude); it
+# recorded no model, so until one is chosen the harness's own default model
+# applies. Decide both, then replace this comment.
+launch: { harness: claude }   # TODO(decide): harness and model
