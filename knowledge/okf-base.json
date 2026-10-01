@@ -9,6 +9,10 @@
     "aweb-protocol-expert": {
       "path": "aweb-protocol-expert",
       "owner": "1913b77b-deac-491b-bdfb-79bbae2b7224"
+    },
+    "coordinator": {
+      "path": "coordinator",
+      "owner": "76049864-bffc-4bd1-b6b8-f874d1b10cff"
     }
   }
 }
