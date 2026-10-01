@@ -228,6 +228,13 @@ with no certificate IDs or issued/revoked metadata. Grant roster reads reject
 `--include-revoked`, `--registry`, and conflicting team selectors; a returned
 roster for a different team is refused.
 
+`aw lock list`, `aw lock acquire`, `aw lock renew`, and `aw lock release` use the selected
+identity home's team and credentials, including grant session credentials.
+`lock list --mine` filters by that principal's alias. A conflicting team or
+missing selected credential is refused without using the instance's identity;
+server authorization errors are returned. Grant lock reads require `coord.read`
+and mutations require `coord.write`, enforced by the service.
+
 ## CLI Reference
 
 ### Identity and workspace
