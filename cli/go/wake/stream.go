@@ -25,9 +25,11 @@ import (
 // stream *source* is reused unchanged through run.EventStreamOpener, and
 // `aw run` is not touched.
 const (
-	DefaultStreamTTL  = 4 * time.Minute
-	DefaultBackoffMin = 1 * time.Second
-	DefaultBackoffMax = 15 * time.Second
+	DefaultStreamTTL   = 4 * time.Minute
+	DefaultBackoffMin  = 1 * time.Second
+	DefaultBackoffMax  = 15 * time.Second
+	snapshotBackoffMin = 5 * time.Second
+	snapshotBackoffMax = 5 * time.Minute
 )
 
 // StreamPhase is a stream's reported condition.
@@ -53,13 +55,14 @@ type streamRunner struct {
 	backoffMin   time.Duration
 	backoffMax   time.Duration
 
-	mu            sync.Mutex
-	phase         StreamPhase
-	lastError     string
-	unread        int
-	connectedAt   time.Time
-	streamCancel  context.CancelFunc
-	snapshotTimer *time.Timer
+	mu              sync.Mutex
+	phase           StreamPhase
+	lastError       string
+	unread          int
+	connectedAt     time.Time
+	streamCancel    context.CancelFunc
+	snapshotTimer   *time.Timer
+	snapshotBackoff time.Duration
 
 	randMu sync.Mutex
 	rng    *rand.Rand
@@ -163,10 +166,14 @@ func (s *streamRunner) jittered(base time.Duration) time.Duration {
 }
 
 // Coalesce exhausted-delivery requests into one fresh snapshot. Resume can
-// advance that request immediately; repeated refusals wait for another window.
+// advance that request immediately. Persistent refusal backs off independently
+// of transport reconnects, and coalesced requests do not advance the backoff.
 func (s *streamRunner) requestSnapshot(delay time.Duration) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if delay <= 0 {
+		s.snapshotBackoff = 0
+	}
 	if s.streamCancel == nil {
 		return
 	} // no live attempt (or quarantined/stopped)
@@ -181,6 +188,13 @@ func (s *streamRunner) requestSnapshot(delay time.Duration) {
 		s.streamCancel()
 		return
 	}
+	if s.snapshotBackoff > delay {
+		delay = s.snapshotBackoff
+	}
+	if delay > snapshotBackoffMax {
+		delay = snapshotBackoffMax
+	}
+	s.snapshotBackoff = doubleUpTo(delay, snapshotBackoffMax)
 	var timer *time.Timer
 	timer = time.AfterFunc(delay, func() {
 		s.mu.Lock()
@@ -194,6 +208,22 @@ func (s *streamRunner) requestSnapshot(delay time.Duration) {
 		}
 	})
 	s.snapshotTimer = timer
+}
+
+// Successful input restores the initial retry window. If another refused
+// message already scheduled a snapshot, keep that recovery but bring it forward.
+func (s *streamRunner) resetSnapshotBackoff() {
+	s.mu.Lock()
+	s.snapshotBackoff = 0
+	pending := s.snapshotTimer != nil
+	if pending {
+		s.snapshotTimer.Stop()
+		s.snapshotTimer = nil
+	}
+	s.mu.Unlock()
+	if pending {
+		s.requestSnapshot(snapshotBackoffMin)
+	}
 }
 
 func (s *streamRunner) clearSnapshotLocked() {

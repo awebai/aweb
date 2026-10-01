@@ -78,6 +78,15 @@ input and leaves the message unread for bounded retry and fresh-snapshot recover
 requests one coalesced stream re-open after five seconds. Stopped/not-launched observations mark the instance inactive only after the
 child has observed `present:true`; a prelaunch home stays pending and retries
 through unread snapshots without needing re-registration.
+
+Persistent refusal backs off the coalesced snapshot re-open per stream: five
+seconds, ten seconds, twenty seconds, doubling to a five-minute cap. Requests
+within one pending window coalesce without advancing that backoff. Accepted
+terminal input resets the receiving stream's window; resume resets it and
+re-opens immediately. Transport reconnects retain the refusal backoff. A newly
+launched terminal recovers on the next unread snapshot; no re-registration is
+required, though a long-refused home can wait for its current backoff window.
+
 Full sanitized content includes sender/trust metadata and a recovery footer for
 multiple receiving identities; no ID-only notice substitutes for mail/chat.
 

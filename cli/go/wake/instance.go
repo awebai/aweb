@@ -290,6 +290,9 @@ func (r *instanceRunner) run(ctx context.Context) {
 			OnLiveness: func(at time.Time, state, inspectErr string) {
 				r.recordChildLiveness(generation, at, state, inspectErr)
 			},
+			OnInputAccepted: func(bindingID string) {
+				r.withBindingStream(generation, bindingID, (*streamRunner).resetSnapshotBackoff)
+			},
 			OnSnapshotRequest: func(bindingID string, immediate bool) {
 				r.requestSnapshot(generation, bindingID, immediate)
 			},
@@ -613,6 +616,16 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 // A request carries only binding identity, never held message content. Fence
 // old child generations before asking the currently admitted stream to reopen.
 func (r *instanceRunner) requestSnapshot(generation int, id string, immediate bool) {
+	r.withBindingStream(generation, id, func(stream *streamRunner) {
+		delay := snapshotBackoffMin
+		if immediate {
+			delay = 0
+		}
+		stream.requestSnapshot(delay)
+	})
+}
+
+func (r *instanceRunner) withBindingStream(generation int, id string, apply func(*streamRunner)) {
 	r.broker.mu.Lock()
 	defer r.broker.mu.Unlock()
 	r.mu.Lock()
@@ -629,11 +642,7 @@ func (r *instanceRunner) requestSnapshot(generation int, id string, immediate bo
 			return
 		}
 		if stream := r.broker.streams[key]; stream != nil {
-			delay := 5 * time.Second
-			if immediate {
-				delay = 0
-			}
-			stream.requestSnapshot(delay)
+			apply(stream)
 		}
 		return
 	}

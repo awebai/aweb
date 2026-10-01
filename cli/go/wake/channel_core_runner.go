@@ -134,6 +134,7 @@ type channelCoreChildConfig struct {
 	Generation        int
 	Log               func(string, ...any)
 	OnSnapshotRequest func(string, bool)
+	OnInputAccepted   func(string)
 	OnInactive        func(string)
 	OnLiveness        func(time.Time, string, string)
 	RestartBackoffMin time.Duration
@@ -561,6 +562,9 @@ func (c *ChannelCoreChild) readStatus(r io.Reader, done chan<- struct{}, fatalCh
 		c.mu.Unlock()
 		if c.cfg.OnLiveness != nil && (livenessState != "" || livenessError != "") {
 			c.cfg.OnLiveness(now, livenessState, livenessError)
+		}
+		if line.TraceStage == "notification_accepted" && c.cfg.OnInputAccepted != nil {
+			c.cfg.OnInputAccepted(line.BindingID)
 		}
 		if line.RequestSnapshot && c.cfg.OnSnapshotRequest != nil {
 			c.cfg.OnSnapshotRequest(line.BindingID, line.SnapshotImmediate)

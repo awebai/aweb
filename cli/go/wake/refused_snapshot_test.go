@@ -136,6 +136,10 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			}
 			start := time.Now()
 			deadline := start.Add(8 * time.Second)
+			if refusal == "shell" {
+				// The second exhausted refusal now waits a10s backoff window.
+				deadline = start.Add(12 * time.Second)
+			}
 			for time.Now().Before(deadline) {
 				data, _ := os.ReadFile(inputPath)
 				if len(data) > 0 {
@@ -154,6 +158,19 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				t.Fatalf("missing full content: %s", data)
 			}
 			waitForCond(t, "accepted input acknowledged", func() bool { return acks.Load() == 1 })
+			waitForCond(t, "accepted input resets refusal backoff", func() bool {
+				broker.mu.Lock()
+				defer broker.mu.Unlock()
+				for _, stream := range broker.streams {
+					stream.mu.Lock()
+					backoff := stream.snapshotBackoff
+					stream.mu.Unlock()
+					if backoff != 0 {
+						return false
+					}
+				}
+				return true
+			})
 			if prelaunch {
 				t.Logf("launch after %s; snapshot delivery after launch=%s; opens=%d", start.Sub(registeredAt), time.Since(start), openCount())
 			}

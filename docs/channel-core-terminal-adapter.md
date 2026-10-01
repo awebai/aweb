@@ -95,3 +95,11 @@ quiet home retains its confirmed-live state when an older broker reads the
 store. Startup inspect failure is reported; later events use the normal
 bounded delivery retry path. There is no extra periodic idle probe. The child receives
 the OATS executable resolved from `--oats-bin`, then `AW_WAKE_OATS_BIN`, then PATH.
+
+Persistent refusal backs off the coalesced snapshot re-open per stream: five
+seconds, ten seconds, twenty seconds, doubling to a five-minute cap. Requests
+within one pending window coalesce without advancing that backoff. Accepted
+terminal input resets the receiving stream's window; resume resets it and
+re-opens immediately. Transport reconnects retain the refusal backoff. A newly
+launched terminal recovers on the next unread snapshot; no re-registration is
+required, though a long-refused home can wait for its current backoff window.
