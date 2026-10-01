@@ -137,8 +137,9 @@ You are the only agent that spawns or retires aweb instances. Run every
   read (`okf.json` beside this file names them) with `oats okf index`, `cat`
   and `search`. Capture what you learn in `./notes/` for harvest, and never
   edit accepted knowledge directly. The pre-OATS coordinator record
-  (`agents/coordinator/` in the repository) is historical evidence until the
-  knowledge migration promotes it into your node.
+  (`agents/coordinator/decisions/`, `docs/` and `memory/` in the repository)
+  is historical evidence, not converted to OKF: consult it selectively. Its
+  durable lessons enter your node only through reviewed harvest.
 - **Authority.** The harness permission flag controls prompts, not authority.
   Production, customer data, billing and external sends follow Juan's
   per-action boundaries. Complete authorized preparation without asking again
