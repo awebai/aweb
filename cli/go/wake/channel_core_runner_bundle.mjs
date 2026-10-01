@@ -9953,22 +9953,32 @@ function validatedNoticeID(value) {
   const raw = value || "";
   return /^[0-9a-f]{32}$/i.test(raw) || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw) ? raw : void 0;
 }
-function safeAwakeningNotice(awakening) {
+function quotedIdentityHome(home) {
+  if (!home.startsWith("/") || /[\x00-\x1F\x7F-\u009F\u2028\u2029]/.test(home)) return void 0;
+  return "'" + home.replace(/'/g, "'\\''") + "'";
+}
+function safeAwakeningNotice(awakening, awCommand = "aw") {
   const rawType = awakening.meta.type || awakening.kind;
   const type2 = rawType === "mail" || rawType === "chat" ? rawType : "event";
   const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id || awakening.meta.task_id) || "id-unavailable";
-  if (type2 === "mail") return `aweb: new mail ${id} waiting \u2014 run aw mail show --message-id ${id}`;
+  if (type2 === "mail") return `aweb: new mail ${id} waiting \u2014 run ${awCommand} mail show --message-id ${id}`;
   if (type2 === "chat") {
     const sessionID = validatedNoticeID(awakening.meta.session_id);
-    if (sessionID && id !== "id-unavailable") return `aweb: new chat ${id} waiting \u2014 run aw chat history --session-id ${sessionID} --message-id ${id}`;
-    if (sessionID) return `aweb: new chat waiting \u2014 run aw chat history --session-id ${sessionID}`;
+    if (sessionID && id !== "id-unavailable") return `aweb: new chat ${id} waiting \u2014 run ${awCommand} chat history --session-id ${sessionID} --message-id ${id}`;
+    if (sessionID) return `aweb: new chat waiting \u2014 run ${awCommand} chat history --session-id ${sessionID}`;
     return `aweb: new chat ${id} waiting`;
   }
-  return `aweb: new event ${id} waiting \u2014 run aw events stream --json`;
+  return `aweb: new event ${id} waiting \u2014 run ${awCommand} events stream --json`;
 }
-function textForTerminalAwakening(awakening, state) {
-  if (state === "unknown") return safeAwakeningNotice(awakening);
-  return terminalInputSafeText(formatAwakeningForAgent(awakening));
+function textForTerminalAwakening(awakening, state, receivingIdentityHome) {
+  const quotedHome = receivingIdentityHome === void 0 ? void 0 : quotedIdentityHome(receivingIdentityHome);
+  if (receivingIdentityHome !== void 0 && quotedHome === void 0) return safeAwakeningNotice(awakening);
+  const notice = safeAwakeningNotice(awakening, quotedHome ? `aw --identity-home ${quotedHome}` : "aw");
+  if (state === "unknown") return notice;
+  const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
+  return quotedHome ? `${notice}
+
+${richText}` : richText;
 }
 function abortError() {
   return new TerminalAbortError();
@@ -10158,7 +10168,7 @@ function createTerminalAwakeningHandler(options) {
     if (options.signal.aborted) rejectAll(abortError());
     options.signal.addEventListener("abort", () => rejectAll(abortError()), { once: true });
   }
-  const handler = (async (awakening) => {
+  const handler = (async (awakening, receivingIdentityHome) => {
     throwIfAborted2(options.signal);
     if (awakening.deliveryIntent === "ambient") {
       return new Promise((resolve2, reject) => {
@@ -10168,7 +10178,7 @@ function createTerminalAwakeningHandler(options) {
           ambient.delete(key);
           previous.reject(new Error(`ambient awakening superseded: ${key}`));
         }
-        ambient.set(key, { key, awakening, resolve: resolve2, reject });
+        ambient.set(key, { key, awakening, receivingIdentityHome, resolve: resolve2, reject });
         while (ambient.size > maxAmbient) {
           const oldest = ambient.values().next().value;
           if (!oldest) break;
@@ -10178,12 +10188,12 @@ function createTerminalAwakeningHandler(options) {
         }
       });
     }
-    const delivery = inputTail.then(() => present(awakening));
+    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome));
     inputTail = delivery.catch(() => {
     });
     return delivery;
   });
-  async function present(awakening) {
+  async function present(awakening, receivingIdentityHome) {
     throwIfAborted2(options.signal);
     const ambientBatch = [...ambient.values()];
     let inspection;
@@ -10199,7 +10209,7 @@ function createTerminalAwakeningHandler(options) {
     if (!terminalReadyForIntent(state, awakening.deliveryIntent)) {
       throw new Error(`terminal no longer ready before input (state=${state})`);
     }
-    const text = [...ambientBatch.map((item) => item.awakening), awakening].map((item) => textForTerminalAwakening(item, state)).join("\n\n---\n\n");
+    const text = [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, state, item.receivingIdentityHome)).join("\n\n---\n\n");
     throwIfAborted2(options.signal);
     await options.session.input(options.home, text);
     for (const item of ambientBatch) {
@@ -10316,8 +10326,8 @@ async function start(init) {
     }
   });
   const handler = createTerminalAwakeningHandler({ home: init.home, session, signal: abort.signal });
-  const onAwakening = async (awakening) => {
-    await handler(awakening);
+  const onAwakening = async (awakening, receivingIdentityHome) => {
+    await handler(awakening, receivingIdentityHome);
     handlerStatus = handler.status();
     status();
   };
@@ -10344,7 +10354,7 @@ async function start(init) {
       teamID: config.teamID,
       workdir: init.home,
       awCommand,
-      onAwakening,
+      onAwakening: (awakening) => onAwakening(awakening, init.bindings.length > 1 ? binding.identity_home : void 0),
       awaitDeliveryReady: (intent, signal) => awaitReady(intent, signal),
       mailAcknowledgment: config.authMode === "grant" && !grantScopes.has("mail.send") ? "manual" : "delivery",
       onTrace: (entry) => traceStatus(binding.binding_id, entry)

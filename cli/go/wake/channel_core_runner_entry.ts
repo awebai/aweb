@@ -151,8 +151,8 @@ async function start(init: InitLine): Promise<void> {
     },
   });
   const handler = createTerminalAwakeningHandler({ home: init.home, session, signal: abort.signal });
-  const onAwakening = async (awakening: Parameters<typeof handler>[0]) => {
-    await handler(awakening);
+  const onAwakening = async (awakening: Parameters<typeof handler>[0], receivingIdentityHome?: string) => {
+    await handler(awakening, receivingIdentityHome);
     handlerStatus = handler.status();
     status();
   };
@@ -180,7 +180,7 @@ async function start(init: InitLine): Promise<void> {
       teamID: config.teamID,
       workdir: init.home,
       awCommand,
-      onAwakening,
+      onAwakening: (awakening) => onAwakening(awakening, init.bindings.length > 1 ? binding.identity_home : undefined),
       awaitDeliveryReady: (intent: ChannelDeliveryIntent, signal: AbortSignal) => awaitReady(intent, signal),
       mailAcknowledgment: config.authMode === "grant" && !grantScopes.has("mail.send") ? "manual" : "delivery",
       onTrace: (entry) => traceStatus(binding.binding_id, entry),

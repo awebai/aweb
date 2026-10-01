@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import {
   createTerminalAwakeningHandler,
   createTerminalDeliveryReadinessGate,
@@ -24,6 +25,46 @@ async function flush(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
+
+describe("receiving identity context", () => {
+  const messageID = "12345678-1234-1234-1234-123456789abc";
+  const sessionID = "87654321-4321-4321-4321-cba987654321";
+  const identityHome = "/secondary identity's $(printf injected) `printf bad` home";
+
+  test.each(["mail", "chat"] as const)("quotes the registered home in %s commands", async (kind) => {
+    const input = vi.fn(async (_home: string, _text: string) => {});
+    const handler = createTerminalAwakeningHandler({ home: "/terminal", session: {
+      inspect: async () => ({ state: "unknown" }), input,
+    } });
+    await handler(awakening({ kind, meta: { type: kind, message_id: messageID, session_id: sessionID, identity_home: "/forged" } }), identityHome);
+    const text = input.mock.calls[0][1];
+    const command = text.split(" — run ")[1];
+    expect(command).toContain("--identity-home '");
+    const args = execFileSync("/bin/sh", ["-c", 'aw() { printf "%s\\n" "$@"; }; ' + command], { encoding: "utf8" }).trimEnd().split("\n");
+    expect(args).toEqual(["--identity-home", identityHome, ...(kind === "mail"
+      ? ["mail", "show", "--message-id", messageID]
+      : ["chat", "history", "--session-id", sessionID, "--message-id", messageID])]);
+    expect(text).not.toContain("/forged");
+  });
+
+  test.each(["/bad\nhome", "/bad\rhome", "/bad\thome", "/bad\x1bhome", "/bad\u0085home", "relative/home"])("refuses unsafe home %j", async (identityHome) => {
+    const input = vi.fn(async (_home: string, _text: string) => {});
+    const handler = createTerminalAwakeningHandler({ home: "/terminal", session: {
+      inspect: async () => ({ state: "unknown" }), input,
+    } });
+    await handler(awakening({ kind: "mail", meta: { type: "mail", message_id: messageID } }), identityHome);
+    expect(input.mock.calls[0][1]).toBe(`aweb: new mail ${messageID} waiting — run aw mail show --message-id ${messageID}`);
+  });
+
+  test("keeps single-binding output and ignores untrusted context metadata", async () => {
+    const input = vi.fn(async (_home: string, _text: string) => {});
+    const handler = createTerminalAwakeningHandler({ home: "/terminal", session: {
+      inspect: async () => ({ state: "unknown" }), input,
+    } });
+    await handler(awakening({ kind: "mail", meta: { type: "mail", message_id: messageID, identity_home: "/forged" } }));
+    expect(input.mock.calls[0][1]).toBe(`aweb: new mail ${messageID} waiting — run aw mail show --message-id ${messageID}`);
+  });
+});
 
 test("serializes terminal inputs and presents each ambient item once", async () => {
   let release!: () => void;

@@ -426,6 +426,73 @@ func TestBundledEncryptedSecondaryRootUsesBindingIdentityForDecrypt(t *testing.T
 	}
 }
 
+func TestBundledSecondaryIdentityNotice(t *testing.T) {
+	for _, kind := range []string{"mail", "chat"} {
+		for _, state := range []string{"unknown", "idle"} {
+			t.Run(kind+"/"+state, func(t *testing.T) {
+				root := t.TempDir()
+				store, _ := NewStore(filepath.Join(root, "state"))
+				inputPath := filepath.Join(root, "input.txt")
+				messageID := "12345678-1234-1234-1234-123456789abc"
+				sessionID := "87654321-4321-4321-4321-cba987654321"
+				primaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []any{}})
+				}))
+				defer primaryServer.Close()
+				secondaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Method == http.MethodPost {
+						_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+						return
+					}
+					_ = json.NewEncoder(w).Encode(map[string]any{"messages": []map[string]any{{
+						"message_id": messageID, "from_alias": "bob", "from_agent": "bob", "body": "secondary private message", "subject": "secondary mail", "priority": "normal", "created_at": "2026-01-01T00:00:00Z", "timestamp": "2026-01-01T00:00:00Z",
+					}}})
+				}))
+				defer secondaryServer.Close()
+				scopes := []string{"events.read", "mail.read", "chat.read"}
+				primary := writeGrantHome(t, filepath.Join(root, "primary"), primaryServer.URL, scopes)
+				secondary := writeGrantHome(t, filepath.Join(root, "secondary identity's home"), secondaryServer.URL, scopes)
+				reg := Registration{Home: filepath.Join(root, "terminal"), Delivery: DeliverySession, RuntimeDelivery: RuntimeDeliveryExternalSession, ReceiveIdentities: []ReceiveIdentity{
+					{IdentityHome: primary, TeamID: "backend:acme.com", DeliveryOwner: ReceiveOwnerSessionHints},
+					{IdentityHome: secondary, TeamID: "backend:acme.com", DeliveryOwner: ReceiveOwnerSessionHints},
+				}}
+				_ = os.MkdirAll(reg.Home, 0o700)
+				child := NewChannelCoreRunner(store).StartChild(context.Background(), reg, channelCoreChildConfig{OatsBin: writeStateOATS(t, root, inputPath, state), AWCommand: writeFakeAW(t, root, ""), Coalesce: time.Millisecond, RateLimit: time.Millisecond, InspectDelay: time.Millisecond})
+				defer child.Stop()
+				waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.ReadinessState != "" })
+				event := awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: messageID}
+				if kind == "chat" {
+					event.Type = awid.AgentEventActionableChat
+					event.SessionID = sessionID
+				}
+				child.Offer(reg.ReceiveBindings()[0], event)
+				waitForStatus(t, child, func(st ChannelCoreStatus) bool { return st.TraceStage == "lane_job_completed" })
+				if data, err := os.ReadFile(inputPath); err == nil {
+					t.Fatalf("empty primary inbox produced terminal input: %s", data)
+				} else if !os.IsNotExist(err) {
+					t.Fatal(err)
+				}
+				child.Offer(reg.ReceiveBindings()[1], event)
+				waitForFileContains(t, inputPath, messageID)
+				data, _ := os.ReadFile(inputPath)
+				canonicalSecondary, _ := filepath.EvalSymlinks(secondary)
+				command := "aw --identity-home " + shellQuoteForTest(canonicalSecondary)
+				if kind == "mail" {
+					command += " mail show --message-id " + messageID
+				} else {
+					command += " chat history --session-id " + sessionID + " --message-id " + messageID
+				}
+				if !strings.Contains(string(data), command) {
+					t.Fatalf("missing receiving-binding command %q in %s", command, data)
+				}
+				if strings.Contains(string(data), primary) {
+					t.Fatalf("notice selected primary identity: %s", data)
+				}
+			})
+		}
+	}
+}
+
 func writeGrantHome(t *testing.T, root, serverURL string, scopes []string) string {
 	t.Helper()
 	home := filepath.Join(root, "grant-"+strings.ReplaceAll(strings.Join(scopes, "-"), ".", "_"))

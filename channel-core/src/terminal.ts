@@ -39,13 +39,16 @@ export interface TerminalAwakeningStatus {
   ambientDropped: number;
 }
 
-export type TerminalAwakeningHandler = ((awakening: ChannelAwakening) => Promise<void>) & {
+// Receiving context is supplied separately by the locally trusted registration
+// owner, never read from the awakening's message or metadata.
+export type TerminalAwakeningHandler = ((awakening: ChannelAwakening, receivingIdentityHome?: string) => Promise<void>) & {
   status: () => TerminalAwakeningStatus;
 };
 
 interface AmbientItem {
   key: string;
   awakening: ChannelAwakening;
+  receivingIdentityHome?: string;
   resolve: () => void;
   reject: (error: Error) => void;
 }
@@ -117,23 +120,34 @@ function validatedNoticeID(value: string | undefined): string | undefined {
     : undefined;
 }
 
-function safeAwakeningNotice(awakening: ChannelAwakening): string {
+function quotedIdentityHome(home: string): string | undefined {
+  // Do not strip a path into a different valid path. Refuse terminal controls
+  // (including line separators) before shell quoting the exact absolute path.
+  if (!home.startsWith("/") || /[\x00-\x1F\x7F-\u009F\u2028\u2029]/.test(home)) return undefined;
+  return "'" + home.replace(/'/g, "'\\''") + "'";
+}
+
+function safeAwakeningNotice(awakening: ChannelAwakening, awCommand = "aw"): string {
   const rawType = awakening.meta.type || awakening.kind;
   const type = rawType === "mail" || rawType === "chat" ? rawType : "event";
   const id = validatedNoticeID(awakening.meta.message_id || awakening.meta.event_id || awakening.meta.task_id) || "id-unavailable";
-  if (type === "mail") return `aweb: new mail ${id} waiting — run aw mail show --message-id ${id}`;
+  if (type === "mail") return `aweb: new mail ${id} waiting — run ${awCommand} mail show --message-id ${id}`;
   if (type === "chat") {
     const sessionID = validatedNoticeID(awakening.meta.session_id);
-    if (sessionID && id !== "id-unavailable") return `aweb: new chat ${id} waiting — run aw chat history --session-id ${sessionID} --message-id ${id}`;
-    if (sessionID) return `aweb: new chat waiting — run aw chat history --session-id ${sessionID}`;
+    if (sessionID && id !== "id-unavailable") return `aweb: new chat ${id} waiting — run ${awCommand} chat history --session-id ${sessionID} --message-id ${id}`;
+    if (sessionID) return `aweb: new chat waiting — run ${awCommand} chat history --session-id ${sessionID}`;
     return `aweb: new chat ${id} waiting`;
   }
-  return `aweb: new event ${id} waiting — run aw events stream --json`;
+  return `aweb: new event ${id} waiting — run ${awCommand} events stream --json`;
 }
 
-function textForTerminalAwakening(awakening: ChannelAwakening, state: TerminalReadinessState): string {
-  if (state === "unknown") return safeAwakeningNotice(awakening);
-  return terminalInputSafeText(formatAwakeningForAgent(awakening));
+function textForTerminalAwakening(awakening: ChannelAwakening, state: TerminalReadinessState, receivingIdentityHome?: string): string {
+  const quotedHome = receivingIdentityHome === undefined ? undefined : quotedIdentityHome(receivingIdentityHome);
+  if (receivingIdentityHome !== undefined && quotedHome === undefined) return safeAwakeningNotice(awakening);
+  const notice = safeAwakeningNotice(awakening, quotedHome ? `aw --identity-home ${quotedHome}` : "aw");
+  if (state === "unknown") return notice;
+  const richText = terminalInputSafeText(formatAwakeningForAgent(awakening));
+  return quotedHome ? `${notice}\n\n${richText}` : richText;
 }
 
 function abortError(): TerminalAbortError {
@@ -360,7 +374,7 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     options.signal.addEventListener("abort", () => rejectAll(abortError()), { once: true });
   }
 
-  const handler = (async (awakening: ChannelAwakening): Promise<void> => {
+  const handler = (async (awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> => {
     throwIfAborted(options.signal);
     if (awakening.deliveryIntent === "ambient") {
       return new Promise<void>((resolve, reject) => {
@@ -370,7 +384,7 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
           ambient.delete(key);
           previous.reject(new Error(`ambient awakening superseded: ${key}`));
         }
-        ambient.set(key, { key, awakening, resolve, reject });
+        ambient.set(key, { key, awakening, receivingIdentityHome, resolve, reject });
         while (ambient.size > maxAmbient) {
           const oldest = ambient.values().next().value as AmbientItem | undefined;
           if (!oldest) break;
@@ -381,14 +395,14 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
       });
     }
 
-    const delivery = inputTail.then(() => present(awakening));
+    const delivery = inputTail.then(() => present(awakening, receivingIdentityHome));
     // A failed input must not poison subsequent callers. Ambient work bypasses
     // this queue because it settles only when a wake/steer input carries it.
     inputTail = delivery.catch(() => {});
     return delivery;
   }) as TerminalAwakeningHandler;
 
-  async function present(awakening: ChannelAwakening): Promise<void> {
+  async function present(awakening: ChannelAwakening, receivingIdentityHome?: string): Promise<void> {
     throwIfAborted(options.signal);
     const ambientBatch = [...ambient.values()];
     let inspection: TerminalInspection;
@@ -404,8 +418,8 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     if (!terminalReadyForIntent(state, awakening.deliveryIntent)) {
       throw new Error(`terminal no longer ready before input (state=${state})`);
     }
-    const text = [...ambientBatch.map((item) => item.awakening), awakening]
-      .map((item) => textForTerminalAwakening(item, state))
+    const text = [...ambientBatch, { awakening, receivingIdentityHome }]
+      .map((item) => textForTerminalAwakening(item.awakening, state, item.receivingIdentityHome))
       .join("\n\n---\n\n");
     throwIfAborted(options.signal);
     await options.session.input(options.home, text);
