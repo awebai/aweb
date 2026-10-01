@@ -18,6 +18,12 @@
 
 ### Server compatibility
 
+- Server package `1.27.10` suppresses actionable chat wake events for a session
+  while the recipient is already waiting in its chat stream. Other sessions
+  remain actionable, and still-unread chat becomes actionable on the next poll
+  after the wait ends or its registration becomes stale. Sender waiting and
+  read-receipt semantics are unchanged.
+
 - Server package `1.27.9` fixes the first mail after a one-to-one conversation
   expires: automatic reuse skips time-expired conversations and the send starts
   a new thread immediately. Chat reuse also excludes expired or closed canonical

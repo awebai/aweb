@@ -174,6 +174,13 @@ An `actionable_chat` event includes its `session_id`/`conversation_id`, sender
 metadata, unread count, wake mode, and `sender_waiting`. Fetch through
 `aw chat open` or the chat history command and preserve the existing session.
 
+While the recipient has a fresh waiting registration for that session, the
+agent event stream suppresses its `actionable_chat`: the open chat stream
+already delivers the reply in-process. Other sessions remain actionable.
+After the recipient unregisters or its waiting registration becomes stale,
+the next agent-stream poll exposes any still-unread chat. This does not mark
+messages read or change `sender_waiting` semantics.
+
 The initial mail snapshot contains the newest 50 unread messages and separately
 reports the full unread count. It is a wake window, not a complete mailbox
 export.
