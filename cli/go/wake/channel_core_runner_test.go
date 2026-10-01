@@ -158,22 +158,31 @@ func TestBundledReadinessStatusReportsWaitingReason(t *testing.T) {
 }
 
 func TestChannelCoreRestartReportsExitAndClearsPerRunStatus(t *testing.T) {
-	root := t.TempDir()
-	marker := filepath.Join(root, "crashed-once")
-	writeFakeNode(t, root, "#!/bin/sh\nif [ ! -f "+shellQuoteForTest(marker)+" ]; then\n  printf '{\"type\":\"status\",\"ready\":true,\"trace_stage\":\"lane_job_started\",\"trace_message_id\":\"dead\",\"readiness_waiting\":\"inspect_start\",\"readiness_error\":\"dead readiness\",\"ambient_queued\":7,\"ambient_dropped\":8}\n'\n  printf 'uncaught Error: write EPIPE\n' >&2\n  printf x > "+shellQuoteForTest(marker)+"\n  exit 42\nfi\nprintf '{\"type\":\"status\",\"ready\":true}\n'\nwhile IFS= read -r line; do :; done\n")
-	store, err := NewStore(filepath.Join(root, "state"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", root)
-	child := NewChannelCoreRunner(store).StartChild(context.Background(), Registration{Home: filepath.Join(root, "terminal")}, channelCoreChildConfig{})
-	defer child.Stop()
-	waitForStatus(t, child, func(st ChannelCoreStatus) bool {
-		return st.Running && st.RestartCount == 1 && strings.Contains(st.LastExit, "exit status 42") && strings.Contains(st.LastExit, "write EPIPE")
-	})
-	st := child.Status()
-	if st.TraceStage != "" || st.TraceMessageID != "" || st.ReadinessWaiting != "" || st.ReadinessError != "" || st.AmbientQueued != 0 || st.AmbientDropped != 0 {
-		t.Fatalf("stale per-run status survived restart: %#v", st)
+	for _, tc := range []struct{ name, awCommand string }{
+		{"default-init", ""},
+		{"pipe-spanning-init", strings.Repeat("x", 1<<20)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			marker := filepath.Join(root, "crashed-once")
+			// Consume init before crashing so this exercises process exit42,
+			// not a race between an unread init pipe and the process wait.
+			writeFakeNode(t, root, "#!/bin/sh\nIFS= read -r init || exit 1\nif [ ! -f "+shellQuoteForTest(marker)+" ]; then\n  printf '{\"type\":\"status\",\"ready\":true,\"trace_stage\":\"lane_job_started\",\"trace_message_id\":\"dead\",\"readiness_waiting\":\"inspect_start\",\"readiness_error\":\"dead readiness\",\"ambient_queued\":7,\"ambient_dropped\":8}\n'\n  printf 'uncaught Error: write EPIPE\n' >&2\n  printf x > "+shellQuoteForTest(marker)+"\n  exit 42\nfi\nprintf '{\"type\":\"status\",\"ready\":true}\n'\nwhile IFS= read -r line; do :; done\n")
+			store, err := NewStore(filepath.Join(root, "state"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", root)
+			child := NewChannelCoreRunner(store).StartChild(context.Background(), Registration{Home: filepath.Join(root, "terminal")}, channelCoreChildConfig{AWCommand: tc.awCommand})
+			defer child.Stop()
+			waitForStatus(t, child, func(st ChannelCoreStatus) bool {
+				return st.Running && st.RestartCount == 1 && strings.Contains(st.LastExit, "exit status 42") && strings.Contains(st.LastExit, "write EPIPE")
+			})
+			st := child.Status()
+			if st.TraceStage != "" || st.TraceMessageID != "" || st.ReadinessWaiting != "" || st.ReadinessError != "" || st.AmbientQueued != 0 || st.AmbientDropped != 0 {
+				t.Fatalf("stale per-run status survived restart: %#v", st)
+			}
+		})
 	}
 }
 
@@ -609,6 +618,11 @@ func openFDCount(t *testing.T) (int, bool) {
 
 func waitForStatus(t *testing.T, child *ChannelCoreChild, cond func(ChannelCoreStatus) bool) {
 	t.Helper()
+	defer func() {
+		if t.Failed() {
+			t.Logf("last channel-core status: %+v", child.Status())
+		}
+	}()
 	waitForCond(t, "channel-core status", func() bool { return cond(child.Status()) })
 }
 
