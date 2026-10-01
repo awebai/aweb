@@ -226,10 +226,14 @@ func formatTeamList(v any) string {
 
 func formatTeamMembers(v any) string {
 	out := v.(teamMembersOutput)
-	if len(out.Members) == 0 {
-		return fmt.Sprintf("No members found for %s.\n", strings.TrimSpace(out.TeamID))
-	}
 	var sb strings.Builder
+	if out.Source != "" {
+		fmt.Fprintf(&sb, "Source: %s — %s\n", out.Source, out.Limitations)
+	}
+	if len(out.Members) == 0 {
+		fmt.Fprintf(&sb, "No members found for %s.\n", strings.TrimSpace(out.TeamID))
+		return sb.String()
+	}
 	sb.WriteString(fmt.Sprintf("Team: %s\n", strings.TrimSpace(out.TeamID)))
 	tw := tabwriter.NewWriter(&sb, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tMEMBER\tDID\tIDENTITY\tISSUED\tREVOKED\tCERTIFICATE")

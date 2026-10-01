@@ -105,9 +105,13 @@ type teamMemberItem struct {
 }
 
 type teamMembersOutput struct {
-	TeamID  string           `json:"team_id"`
-	Members []teamMemberItem `json:"members"`
+	TeamID      string           `json:"team_id"`
+	Members     []teamMemberItem `json:"members"`
+	Source      string           `json:"source,omitempty"`
+	Limitations string           `json:"limitations,omitempty"`
 }
+
+const grantRosterLimitations = "agents only (no humans); no certificate IDs or issued/revoked metadata"
 
 type teamImportRequestOutput struct {
 	Status              string         `json:"status"`
@@ -447,7 +451,10 @@ var teamMembersCmd = &cobra.Command{
 	Long: "List a team's members from AWID certificates.\n\n" +
 		"Membership is represented by team certificates, so this identity-level\n" +
 		"command lists the certificate roster for the selected team. By default it\n" +
-		"shows active certificates; pass --include-revoked to include revoked rows.",
+		"shows active certificates; pass --include-revoked to include revoked rows.\n\n" +
+		"Grant homes read their bound team's service roster: agents only (no humans),\n" +
+		"without certificate IDs or issued/revoked metadata. --include-revoked and\n" +
+		"--registry are not supported in grant homes.",
 	RunE: runTeamMembers,
 }
 
@@ -1194,6 +1201,13 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	if awconfig.IsGrantHome(home.Root) {
+		return runGrantTeamMembers(cmd, workingDir, home)
+	}
 	domain, team, teamID, registryURL, err := resolveTeamMembersTarget(workingDir)
 	if err != nil {
 		return err
@@ -1235,16 +1249,94 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 			RevokedAt:     strings.TrimSpace(cert.RevokedAt),
 		})
 	}
+	printTeamMembers(teamMembersOutput{TeamID: teamID, Members: items})
+	return nil
+}
+
+func runGrantTeamMembers(cmd *cobra.Command, workingDir string, home awconfig.IdentityHome) error {
+	if teamMembersIncludeRevoked || cmd.Flags().Changed("include-revoked") {
+		return usageError("--include-revoked is not supported in a grant home: the service roster has no revoked-certificate records")
+	}
+	if strings.TrimSpace(teamMembersRegistryURL) != "" || cmd.Flags().Changed("registry") {
+		return usageError("--registry is not supported in a grant home: the roster is read from the grant's bound service")
+	}
+	if strings.TrimSpace(teamMembersTeamID) != "" && (strings.TrimSpace(teamMembersTeam) != "" || strings.TrimSpace(teamMembersNamespace) != "") {
+		return usageError("--team-id cannot be combined with --team or --namespace")
+	}
+	client, selection, err := resolveGrantClientSelection(workingDir, home)
+	if err != nil {
+		return err
+	}
+	domain, team, err := awid.ParseTeamID(selection.TeamID)
+	if err != nil {
+		return err
+	}
+	requested := selection.TeamID
+	if strings.TrimSpace(teamMembersTeamID) != "" {
+		requestedDomain, requestedTeam, err := awid.ParseTeamID(strings.TrimSpace(teamMembersTeamID))
+		if err != nil {
+			return err
+		}
+		requested = awid.BuildTeamID(requestedDomain, requestedTeam)
+	} else {
+		if strings.TrimSpace(teamMembersTeam) != "" {
+			team = strings.ToLower(strings.TrimSpace(teamMembersTeam))
+		}
+		if strings.TrimSpace(teamMembersNamespace) != "" {
+			domain = awconfig.NormalizeDomain(teamMembersNamespace)
+		}
+		requested = awid.BuildTeamID(domain, team)
+	}
+	if requested != selection.TeamID {
+		return usageError("grant home is bound to team %s; requested team %s conflicts", selection.TeamID, requested)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// Use the existing grant-authorized roster. A session key is not an AWID
+	// member key; never fall back to root/controller credentials on a refusal.
+	roster, err := client.ListAgents(ctx)
+	if err != nil {
+		return fmt.Errorf("list service roster for %s: %w", selection.TeamID, err)
+	}
+	if strings.TrimSpace(roster.TeamID) != selection.TeamID {
+		return fmt.Errorf("roster response does not match the grant's bound team %s (got %q)", selection.TeamID, roster.TeamID)
+	}
+	items := make([]teamMemberItem, 0, len(roster.Agents))
+	for _, agent := range roster.Agents {
+		items = append(items, teamMemberItem{
+			TeamID:        selection.TeamID,
+			Alias:         strings.TrimSpace(agent.Alias),
+			MemberAddress: strings.TrimSpace(agent.Address),
+			MemberDIDKey:  strings.TrimSpace(agent.DIDKey),
+			MemberDIDAW:   strings.TrimSpace(agent.DIDAW),
+			IdentityScope: awid.NormalizeIdentityScope(agent.IdentityScope),
+		})
+	}
+	printTeamMembers(teamMembersOutput{TeamID: selection.TeamID, Members: items, Source: "service-roster", Limitations: grantRosterLimitations})
+	return nil
+}
+
+func printTeamMembers(out teamMembersOutput) {
+	items := out.Members
 	sort.SliceStable(items, func(i, j int) bool {
 		left := strings.ToLower(firstNonEmpty(items[i].Alias, items[i].MemberAddress, items[i].MemberDIDAW, items[i].MemberDIDKey, items[i].CertificateID))
 		right := strings.ToLower(firstNonEmpty(items[j].Alias, items[j].MemberAddress, items[j].MemberDIDAW, items[j].MemberDIDKey, items[j].CertificateID))
 		return left < right
 	})
-	printOutput(teamMembersOutput{TeamID: teamID, Members: items}, formatTeamMembers)
-	return nil
+	printOutput(out, formatTeamMembers)
 }
 
 func resolveTeamMembersTarget(workingDir string) (domain, team, teamID, registryURL string, err error) {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	loadState := func() (*awconfig.TeamState, error) {
+		if home.External() {
+			return awconfig.LoadTeamStateFromIdentityHome(home.Root)
+		}
+		return awconfig.LoadTeamState(workingDir)
+	}
 	if strings.TrimSpace(teamMembersTeamID) != "" {
 		if strings.TrimSpace(teamMembersTeam) != "" || strings.TrimSpace(teamMembersNamespace) != "" {
 			return "", "", "", "", usageError("--team-id cannot be combined with --team or --namespace")
@@ -1256,7 +1348,7 @@ func resolveTeamMembersTarget(workingDir string) (domain, team, teamID, registry
 		teamID = awid.BuildTeamID(domain, team)
 		registryURL = strings.TrimSpace(teamMembersRegistryURL)
 		if registryURL == "" {
-			if state, stateErr := awconfig.LoadTeamState(workingDir); stateErr == nil && state != nil {
+			if state, stateErr := loadState(); stateErr == nil && state != nil {
 				if membership := state.Membership(teamID); membership != nil {
 					registryURL = registryURLForTeamMembersMembership(membership)
 				}
@@ -1268,7 +1360,7 @@ func resolveTeamMembersTarget(workingDir string) (domain, team, teamID, registry
 	domain = awconfig.NormalizeDomain(teamMembersNamespace)
 	var state *awconfig.TeamState
 	if team == "" || domain == "" || strings.TrimSpace(teamMembersRegistryURL) == "" {
-		if loaded, stateErr := awconfig.LoadTeamState(workingDir); stateErr == nil {
+		if loaded, stateErr := loadState(); stateErr == nil {
 			state = loaded
 		} else if team == "" || domain == "" {
 			return "", "", "", "", usageError("--team-id or both --team and --namespace are required when no active team can be inferred from this workspace: %v", stateErr)

@@ -993,6 +993,10 @@ Membership is represented by team certificates, so this identity-level
 command lists the certificate roster for the selected team. By default it
 shows active certificates; pass --include-revoked to include revoked rows.
 
+Grant homes read their bound team's service roster: agents only (no humans),
+without certificate IDs or issued/revoked metadata. --include-revoked and
+--registry are not supported in grant homes.
+
 Flags:
 - `-h, --help help for members`
 - `--include-revoked Include revoked membership certificates`

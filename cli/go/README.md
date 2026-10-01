@@ -218,6 +218,16 @@ root for previously accepted local identities, and hosted external local
 passes the canonical resolved `AWEB_IDENTITY_HOME` to its provider and service
 children so nested `aw` commands keep the same identity.
 
+`aw instructions show` and `aw id team members` also honor the selected
+identity home. Instructions use its authenticated service client; grant reads
+remain subject to the service's `coord.read` check. Native identities continue
+to read team certificates from AWID. Grant homes instead read their bound
+team's existing service roster, available to any valid grant. This output is
+marked `source: service-roster` with a limitations note: agents only (no humans),
+with no certificate IDs or issued/revoked metadata. Grant roster reads reject
+`--include-revoked`, `--registry`, and conflicting team selectors; a returned
+roster for a different team is refused.
+
 ## CLI Reference
 
 ### Identity and workspace
