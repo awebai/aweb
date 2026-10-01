@@ -57,7 +57,7 @@ material is the classic coordinator's bundle, and the knowledge migration
 promotes it later. Once it holds accepted lessons, adding the node to an
 expert's `reads` is a one-line change.
 
-## The antares deployment: `~/Agents/aweb`
+## Each machine's deployment: `~/Agents/aweb`
 
 Instance homes live outside the repository, in a deployment directory on each
 machine. The deployment points at the machine's aweb checkout through
@@ -81,7 +81,7 @@ schemaVersion: 2
 workspace: git:github.com/awebai/aweb
 
 clones:
-  github.com/awebai/aweb: /Users/juanre/awebai/aweb/aweb-oss
+  github.com/awebai/aweb: <path to your awebai/aweb checkout>
 
 defaultTeam: aweb                                 # the shared team: aweb:juan.aweb.ai
 
@@ -91,14 +91,14 @@ settings:
     # root: written by `oats aweb setup`, a minting root for team aweb. Never the
     # coordinator's retained identity directory: that identity has one holder.
   oats.okf:
-    bindings-file: /Users/juanre/Agents/aweb/okf/bindings.json
+    bindings-file: <absolute path of ~/Agents/aweb>/okf/bindings.json
 
 launch-configs:                                   # yolo for every launch of each harness (0.32)
   codex:  { harness: codex,  default: true, yolo: true }
   claude: { harness: claude, default: true, yolo: true }
 
 host:
-  name: antares
+  name: <this machine's name>
 ```
 
 The `default: true` launch configurations need kernel 0.32. On an older kernel,
@@ -112,7 +112,7 @@ that alias does not carry over. The binding's `id` must equal the one in
 ```json
 {
   "version": 1,
-  "stateDir": "/Users/juanre/Agents/aweb/okf/state",
+  "stateDir": "<absolute path of ~/Agents/aweb>/okf/state",
   "bases": {
     "aweb": {
       "id": "aweb-oss-knowledge",
@@ -158,7 +158,7 @@ workspace, and the table below records where it lives.
 
 | Instance | Soul | Machine | Live |
 |---|---|---|---|
-| aweb | coordinator | antares | the classic seat holds the identity; the OATS seat is not yet spawned |
+| aweb | coordinator | the classic seat's machine | the classic seat holds the identity; the OATS seat is not yet spawned |
 
 Task-purpose instances are recorded here only while they run.
 
@@ -200,7 +200,7 @@ comment, a push, a tag), the instance checks that effect's receipt.
 
 ## Hand-over from the classic seats
 
-The classic seats run from the classic deployment (`/Users/juanre/awebai/aweb`,
+The classic seats run from the classic deployment (`<classic deployment root>`,
 OATS workspace model v1). At drafting time (2026-09-30) its homes were the
 coordinator seat `coordinator-aweb` and three task-purpose runs of
 aweb-protocol-expert: `grant-fixes`, `wake-stability` and
@@ -236,13 +236,14 @@ or in this document for the coordinator, before `oats retire` runs.
      migration time.
 4. **The coordinator, moved by Juan.** At the safe boundary, retire
    `coordinator-aweb` from the classic deployment. That releases the seat lock
-   beside `/Users/juanre/awebai/aweb/.aw` and leaves the identity untouched.
+   beside `<home of the retained coordinator identity>/.aw` and leaves the
+   identity untouched.
    Confirm that the classic home and the lock are gone. Then, from
    `~/Agents/aweb`:
 
    ```bash
    oats spawn coordinator --name aweb \
-     --provider oats.aweb identity.source=/Users/juanre/awebai/aweb/.aw \
+     --provider oats.aweb identity.source="<home of the retained coordinator identity>/.aw" \
      --provider oats.aweb delivery=channel
    ```
 
