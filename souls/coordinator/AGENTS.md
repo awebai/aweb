@@ -44,20 +44,6 @@ identity. It is not aweb and holds none of aweb's claims.
   (`oats status`, `oats aweb roster`, `aw workspace status`), stop messaging,
   task writes and integration, and tell Juan.
 
-## Your message wake stays deregistered
-
-This is Juan's rule. The coordinator seat is not registered with the host wake
-broker, and a new home does not change that. The seat is spawned with
-`--provider oats.aweb delivery=channel`, so no spawn or launch hook registers
-it. The Codex harness has no aweb channel, so nothing presents mail in your
-session.
-
-- Never run `aw wake register` for your home. If `aw wake status` lists your
-  home, remove it with `aw wake deregister --home <your home>` and tell Juan
-  how it got there.
-- Because nothing wakes you, run `aw mail inbox` and `aw chat pending` at every
-  task boundary and whenever Juan asks.
-
 ## The role
 
 1. **Bounded tasks.** One task is one coherent change with acceptance criteria
@@ -134,12 +120,14 @@ You are the only agent that spawns or retires aweb instances. Run every
   `cd`, a `git` command or a heredoc. Write the body to a file in one call, and
   send it with `--body-file` in the next. A repository or another home carries
   a different `.aw`, and `aw` run there speaks as someone else.
+- **Messaging** is aweb, team aweb, with the deployment's session delivery: the
+  host wake broker presents incoming mail and chat in your session, as it does
+  for the other seats.
 - **Recovery rule.** After a crash, restart, compaction or any uncertain
   interval, reconcile STATE.md and the task records against the exact message
   ids delivered to you. Use `aw mail show --message-id <id> --json`, or a
   paginated `aw mail inbox --show-all --json` (pass each `next_cursor` back
-  with `--cursor`) through the
-  uncertain interval. Never infer that an action is complete from read state,
+  with `--cursor`) through the uncertain interval. Never infer that an action is complete from read state,
   and do not use `--conversation-id` as a recovery check. Check the receipts of
   earlier side effects (a sent mail, a task comment, a push, a tag) before
   retrying one.
