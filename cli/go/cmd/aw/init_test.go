@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -433,40 +434,109 @@ func TestRequireInitOutcomeTTYUnavailableDiscoveryEntryReportsReason(t *testing.
 }
 
 func TestRequireInitOutcomeTTYWorkspaceTeamPromptsIdentityHome(t *testing.T) {
-	// Uses globals/stdin; do not mark parallel.
-	oldWorkspaceTeam, oldWorkspaceKey, oldHome := initWorkspaceTeam, initWorkspaceKey, activeIdentityHome
-	oldStdin, oldStderr := os.Stdin, os.Stderr
-	t.Cleanup(func() {
-		initWorkspaceTeam, initWorkspaceKey, activeIdentityHome = oldWorkspaceTeam, oldWorkspaceKey, oldHome
-		os.Stdin, os.Stderr = oldStdin, oldStderr
-	})
-	identityHome := filepath.Join(t.TempDir(), "principal")
-	inR, inW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer inR.Close()
-	defer outR.Close()
-	os.Stdin, os.Stderr = inR, outW
-	if _, err := inW.WriteString("workspace-team\n" + identityHome + "\noats/workspace/test\n"); err != nil {
-		t.Fatal(err)
-	}
-	inW.Close()
-
-	if err := requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account"); err != nil {
-		t.Fatalf("prompt outcome: %v", err)
-	}
-	outW.Close()
-	promptBytes, _ := io.ReadAll(outR)
-	if !initWorkspaceTeam || initWorkspaceKey != "oats/workspace/test" || activeIdentityHome.Root != identityHome || activeIdentityHome.Source != awconfig.IdentityHomeFlag {
-		t.Fatalf("workspace-team selection workspace_team=%v key=%q home=%+v", initWorkspaceTeam, initWorkspaceKey, activeIdentityHome)
-	}
-	if !strings.Contains(string(promptBytes), "explicit identity home "+identityHome) {
-		t.Fatalf("missing workspace-team confirmation: %s", promptBytes)
+	// Uses HOME/globals/stdin; do not mark parallel.
+	for _, tc := range []struct {
+		name       string
+		workspaces int
+	}{
+		{name: "empty-index"},
+		{name: "large-index", workspaces: 512},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmp, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("HOME", tmp)
+			t.Setenv(awconfig.IdentityHomeEnv, "")
+			oldWorkspaceTeam, oldWorkspaceKey, oldHome := initWorkspaceTeam, initWorkspaceKey, activeIdentityHome
+			oldStdin, oldStderr := os.Stdin, os.Stderr
+			initWorkspaceTeam, initWorkspaceKey, activeIdentityHome = false, "", awconfig.IdentityHome{}
+			t.Cleanup(func() {
+				initWorkspaceTeam, initWorkspaceKey, activeIdentityHome = oldWorkspaceTeam, oldWorkspaceKey, oldHome
+				os.Stdin, os.Stderr = oldStdin, oldStderr
+			})
+			// JSON is also valid YAML. Write a controlled discovery index once;
+			// every entry names an unavailable path in this test's own home.
+			entries := make([]map[string]string, 0, tc.workspaces)
+			for i := 0; i < tc.workspaces; i++ {
+				entries = append(entries, map[string]string{
+					"path":    filepath.Join(tmp, fmt.Sprintf("workspace-%04d", i)),
+					"team_id": "backend:acme.com", "alias": "fixture",
+					"server_url": "https://service.example",
+				})
+			}
+			indexPath, err := awconfig.DefaultMachineWorkspaceIndexPath()
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := json.Marshal(map[string]any{"version": 1, "workspaces": entries})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(indexPath), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(indexPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			guidanceBytes := len(initWorkspaceDiscoveryGuidance())
+			t.Logf("controlled discovery output: %d bytes", guidanceBytes)
+			if tc.workspaces > 0 && guidanceBytes <= 64*1024 {
+				t.Fatal("large discovery fixture must exceed 64 KiB")
+			}
+			identityHome := filepath.Join(tmp, "principal")
+			inR, inW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			outR, outW, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer inR.Close()
+			defer inW.Close()
+			defer outR.Close()
+			defer outW.Close()
+			type promptResult struct {
+				data []byte
+				err  error
+			}
+			promptRead := make(chan promptResult, 1)
+			// Drain while the prompt writes: discovery output can exceed a pipe's
+			// capacity, so waiting until the prompt returns would deadlock.
+			go func() {
+				data, err := io.ReadAll(outR)
+				promptRead <- promptResult{data, err}
+			}()
+			os.Stdin, os.Stderr = inR, outW
+			if _, err := inW.WriteString("workspace-team\n" + identityHome + "\noats/workspace/test\n"); err != nil {
+				t.Fatal(err)
+			}
+			inW.Close()
+			promptErr := requireOrPromptInitOutcome(true, "create a new hosted account", "--new-account")
+			outW.Close()
+			result := <-promptRead
+			if promptErr != nil {
+				t.Fatalf("prompt outcome: %v", promptErr)
+			}
+			if result.err != nil {
+				t.Fatal(result.err)
+			}
+			promptBytes := result.data
+			if !initWorkspaceTeam || initWorkspaceKey != "oats/workspace/test" || activeIdentityHome.Root != identityHome || activeIdentityHome.Source != awconfig.IdentityHomeFlag {
+				t.Fatalf("workspace-team selection workspace_team=%v key=%q home=%+v", initWorkspaceTeam, initWorkspaceKey, activeIdentityHome)
+			}
+			if !strings.Contains(string(promptBytes), "explicit identity home "+identityHome) {
+				t.Fatalf("missing workspace-team confirmation: %s", promptBytes)
+			}
+			if tc.workspaces == 0 && strings.Contains(string(promptBytes), "Existing workspace discovery index") {
+				t.Fatal("empty fixture leaked discovery choices")
+			}
+			if tc.workspaces > 0 && !strings.Contains(string(promptBytes), "workspace-0511") {
+				t.Fatal("large discovery output was truncated")
+			}
+		})
 	}
 }
 
