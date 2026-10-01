@@ -171,6 +171,10 @@ async def find_session_between(
                  OR ($4::uuid[] = '{}'::uuid[] AND pb.did = ANY($3::text[]))
               )
               AND pa.did <> pb.did
+              AND NOT EXISTS (
+                    SELECT 1 FROM {{tables.conversations}} c
+                    WHERE c.conversation_id = s.session_id
+                  )
               AND (
                     SELECT COUNT(*)::int
                     FROM {{tables.chat_participants}} cp

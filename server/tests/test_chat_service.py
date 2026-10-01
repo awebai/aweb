@@ -520,3 +520,37 @@ async def test_ensure_session_does_not_merge_different_agents_sharing_did_aw(awe
     )
 
     assert new_session != old_session
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["time_expired", "closed", "expired", "active", "legacy_only"])
+async def test_session_reuse_respects_canonical_conversation_lifecycle(aweb_cloud_db, state):
+    db = _DbShim(aweb_cloud_db.aweb_db)
+    alice, bob = await _setup_team_and_agents(aweb_cloud_db.aweb_db)
+    old_id = await ensure_session(
+        db, team_id="backend:acme.com", participant_rows=[alice, bob], created_by="alice",
+    )
+    if state == "legacy_only":
+        await aweb_cloud_db.aweb_db.execute(
+            "DELETE FROM {{tables.conversations}} WHERE conversation_id = $1", old_id,
+        )
+    elif state == "time_expired":
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.conversations}} SET expires_at = NOW() - INTERVAL '1 day' WHERE conversation_id = $1",
+            old_id,
+        )
+    elif state in {"closed", "expired"}:
+        await aweb_cloud_db.aweb_db.execute(
+            "UPDATE {{tables.conversations}} SET status = $2 WHERE conversation_id = $1", old_id, state,
+        )
+
+    new_id = await ensure_session(
+        db, team_id="backend:acme.com", participant_rows=[alice, bob], created_by="alice",
+    )
+    if state in {"active", "legacy_only"}:
+        assert new_id == old_id
+    else:
+        assert new_id != old_id
+    assert await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT status FROM {{tables.conversations}} WHERE conversation_id = $1", new_id,
+    ) == "active"
