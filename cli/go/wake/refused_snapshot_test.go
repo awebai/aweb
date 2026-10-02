@@ -20,7 +20,7 @@ import (
 )
 
 func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
-	for _, refusal := range []string{"paused", "shell", "prelaunch-not-launched", "prelaunch-stopped"} {
+	for _, refusal := range []string{"paused", "shell", "blocked", "prelaunch-not-launched", "prelaunch-stopped"} {
 		t.Run(refusal, func(t *testing.T) {
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			store, err := NewStore(filepath.Join(root, "state"))
@@ -37,8 +37,8 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				}
 			}
 			setState("working")
-			if refusal == "shell" {
-				setState("shell")
+			if refusal == "shell" || refusal == "blocked" {
+				setState(refusal)
 			}
 			if prelaunch {
 				setState(strings.TrimPrefix(refusal, "prelaunch-"))
@@ -102,6 +102,12 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				waitForInstance(t, broker, home, func(st InstanceStatus) bool { return st.ChannelCore.TraceStage == "lane_job_failed" })
 				assertFileNotContains(t, inputPath, "snapshot recovery mail")
 			}
+			if acks.Load() != 0 {
+				t.Fatal("refused message was acknowledged")
+			}
+			if data, _ := os.ReadFile(filepath.Join(identity, "channel-delivered-ids-backend_acme.com.json")); strings.Contains(string(data), "mail-1") {
+				t.Fatal("refused message was marked delivered")
+			}
 			if prelaunch {
 				// The ordinary spawn order registers before launching. Keep the
 				// home absent for ten seconds and never register it again.
@@ -124,11 +130,11 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 					t.Fatal("prelaunch message was acknowledged")
 				}
 				setState("working")
-			} else if refusal == "shell" {
+			} else if refusal == "shell" || refusal == "blocked" {
 				if inst := instanceByHome(t, broker, home); inst.Phase == PhaseInactive {
 					t.Fatal("shell became inactive")
 				}
-				setState("working")
+				setState("idle")
 			} else {
 				if err := broker.SetPaused(home, false); err != nil {
 					t.Fatal(err)
@@ -136,7 +142,7 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			}
 			start := time.Now()
 			deadline := start.Add(8 * time.Second)
-			if refusal == "shell" {
+			if refusal == "shell" || refusal == "blocked" {
 				// The second exhausted refusal now waits a10s backoff window.
 				deadline = start.Add(12 * time.Second)
 			}

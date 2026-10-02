@@ -10060,7 +10060,7 @@ function createTerminalAwakeningHandler(options) {
     }
     throwIfAborted2(options.signal);
     const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
-    if (state === "shell" || state === "stopped" || state === "not-launched") {
+    if (state === "blocked" || state === "shell" || state === "stopped" || state === "not-launched") {
       throw new TerminalInactiveError(state);
     }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");

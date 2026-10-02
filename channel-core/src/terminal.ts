@@ -179,7 +179,8 @@ function rejectItem(item: AmbientItem, error: Error): void {
 
 /**
  * Terminal presentation adapter. Presentation is immediate and serialized
- * across delivery lanes; inspect only guards against typing into a bare shell.
+ * across delivery lanes; inspect guards against typing into a bare shell or
+ * a blocked harness whose modal could consume the text as an answer.
  * Wake/steer awakenings reject on input failure so channel-core
  * can re-dispatch and re-fetch unread state. Ambient awakenings are bounded and
  * piggyback on the next wake/steer input.
@@ -242,7 +243,7 @@ export function createTerminalAwakeningHandler(options: TerminalAwakeningHandler
     }
     throwIfAborted(options.signal);
     const state = normalizeTerminalReadiness(inspection.state ?? inspection.rawState, inspection.present ?? true);
-    if (state === "shell" || state === "stopped" || state === "not-launched") {
+    if (state === "blocked" || state === "shell" || state === "stopped" || state === "not-launched") {
       throw new TerminalInactiveError(state);
     }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");

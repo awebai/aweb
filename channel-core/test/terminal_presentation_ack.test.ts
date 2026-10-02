@@ -7,7 +7,7 @@ import {
 const messageID = "12345678-1234-1234-1234-123456789abc";
 const sessionID = "87654321-4321-4321-4321-cba987654321";
 
-function fixture(kind: "mail" | "chat", state: string, input: (home: string, text: string) => Promise<void>) {
+function fixture(kind: "mail" | "chat", state: string | (() => string), input: (home: string, text: string) => Promise<void>) {
   const client = {
     get: vi.fn().mockResolvedValue({ messages: [{
       message_id: messageID, from_alias: "alice", from_agent: "alice", from_address: "acme.com/alice",
@@ -20,14 +20,14 @@ function fixture(kind: "mail" | "chat", state: string, input: (home: string, tex
     client: client as never, pinStore: new PinStore(),
     trust: { normalizeResolvedTrust: vi.fn(async () => ({ status: "verified", stored: false })) } as unknown as SenderTrustManager,
     self: { alias: "eve", address: "acme.com/eve", did: "did:key:self", stableID: "" },
-    onAwakening: createTerminalAwakeningHandler({ home: "/agent", session: { inspect: async () => ({ present: true, state }), input } }),
+    onAwakening: createTerminalAwakeningHandler({ home: "/agent", session: { inspect: async () => ({ present: true, state: typeof state === "function" ? state() : state }), input } }),
     mailAcknowledgment: "delivery" as const,
   };
   return { client, options, deliver: () => dispatchAgentEvent(options, new Set(), { type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID }) };
 }
 
 describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgment", (kind) => {
-  test.each(["idle", "working", "blocked", "unknown"])("%s delivers full sanitized text and acknowledges only accepted input", async (state) => {
+  test.each(["idle", "working", "unknown"])("%s delivers full sanitized text and acknowledges only accepted input", async (state) => {
     let accept!: () => void;
     const accepted = new Promise<void>((resolve) => { accept = resolve; });
     const input = vi.fn(async (_home: string, _text: string) => accepted);
@@ -52,13 +52,43 @@ describe.each(["mail", "chat"] as const)("terminal %s presentation acknowledgmen
     else expect(client.post).toHaveBeenCalledWith(`/v1/chat/sessions/${sessionID}/read`, { message_ids: [messageID] });
   });
 
+  test.each(["idle", "unknown"])("blocked remains unmarked and unread until a later %s snapshot", async (nextState) => {
+    vi.useFakeTimers();
+    try {
+      let state = "blocked";
+      const input = vi.fn(async () => {});
+      const { client, options } = fixture(kind, () => state, input);
+      const onTrace = vi.fn();
+      const dispatched = new Set<string>();
+      const event = { type: kind === "mail" ? "mail_message" : "chat_message", message_id: messageID, session_id: sessionID };
+      const snapshot = () => consumeAgentEvents({ ...options, onTrace }, dispatched, (async function* () { yield event; })());
+      const refused = snapshot();
+      await vi.advanceTimersByTimeAsync(850);
+      await refused;
+      expect(client.get).toHaveBeenCalledTimes(4);
+      expect(input).not.toHaveBeenCalled();
+      expect(client.post).not.toHaveBeenCalled();
+      expect(dispatched.size).toBe(0);
+      const stages = onTrace.mock.calls.map(([entry]) => entry.stage);
+      expect(stages.filter((stage) => stage === "delivery_retry_exhausted")).toHaveLength(1);
+      expect(stages).not.toContain("durable_mark_started");
+      state = nextState;
+      await snapshot();
+      expect(input).toHaveBeenCalledOnce();
+      expect(client.post).toHaveBeenCalledOnce();
+      expect(dispatched.size).toBe(1);
+      await snapshot();
+      expect(input).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
   test("input failure leaves source unread", async () => {
     const { client, deliver } = fixture(kind, "unknown", async () => { throw new Error("input refused"); });
     await expect(deliver()).rejects.toThrow("input refused");
     expect(client.post).not.toHaveBeenCalled();
   });
 
-  test.each(["shell", "generic shell", "generic-shell", "generic_shell", "stopped", "not-launched"])("%s never types or acknowledges", async (state) => {
+  test.each(["blocked", "shell", "generic shell", "generic-shell", "generic_shell", "stopped", "not-launched"])("%s never types or acknowledges", async (state) => {
     const input = vi.fn(async () => {});
     const { client, deliver } = fixture(kind, state, input);
     await expect(deliver()).rejects.toThrow("terminal");

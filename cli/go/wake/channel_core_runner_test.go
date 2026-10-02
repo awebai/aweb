@@ -434,7 +434,7 @@ func TestBundledEncryptedSecondaryRootUsesBindingIdentityForDecrypt(t *testing.T
 
 func TestBundledSecondaryIdentityFullMessage(t *testing.T) {
 	for _, kind := range []string{"mail", "chat"} {
-		for _, state := range []string{"unknown", "idle", "working", "blocked"} {
+		for _, state := range []string{"unknown", "idle", "working"} {
 			t.Run(kind+"/"+state, func(t *testing.T) {
 				root := t.TempDir()
 				store, _ := NewStore(filepath.Join(root, "state"))

@@ -8,13 +8,16 @@ durable delivered IDs, mail acknowledgment and chat read marking. Go implements
 ## Immediate presentation
 
 Mail and chat are delivered on arrival. Readiness gating was removed pending an
-architecture rethink: working, blocked and unknown states do not delay delivery.
+architecture rethink: working and unknown states do not delay delivery.
 There is no readiness queue, coalescing window, rate limit or readiness polling.
 
 The terminal adapter serializes input across delivery lanes. Each caller checks
 only terminal safety before input: `shell` (including `generic shell`), `stopped`,
 `not-launched` and `present:false` refuse input, because there is no running
-harness to receive it. A failed safety inspect also refuses input. These failures
+harness to receive it. `blocked` also refuses input: a modal such as a permission
+prompt or AskUserQuestion can consume message text and Enter as an answer rather
+than accept a message. This is a safety refusal, independent of ordinary busy
+readiness. A failed safety inspect also refuses input. These failures
 use the normal bounded delivery retry and leave the source unread.
 
 Mail and chat present full `formatAwakeningForAgent` text, including sender/trust
@@ -31,8 +34,8 @@ created. Legacy `--coalesce` and `--rate-limit` flags remain accepted but ignore
 
 1. Channel-core fetches the exact unread message and decrypts/verifies it.
 2. The terminal adapter serializes the safety check and input, then resolves
-   after input accepts.
-3. Only after acceptance does channel-core record durable delivered IDs and
+   after OATS reports `submitted:true`.
+3. Only after submission does channel-core record durable delivered IDs and
    acknowledge mail or mark chat read, where the identity's capabilities permit.
 4. Rejected input retries the event after 100 ms, 250 ms and 500 ms, including a
    fresh unread fetch each time. After a mail/chat presentation exhausts these
@@ -43,9 +46,18 @@ created. Legacy `--coalesce` and `--rate-limit` flags remain accepted but ignore
    unread snapshot does. No message IDs or bodies are held for replay.
 
 A read-only mail grant cannot acknowledge server mail. Its accepted input can
-still record a local delivery mark. Presentation acknowledges content reaching
-the terminal, not completion of the agent's work. A crash between accepted input
+still record a local delivery mark. The read point is terminal submission:
+tmux accepted paste and Enter, not necessarily a harness queue or intended turn.
+This preserves the at-least-once contract and does not prove model consumption
+or completion of the agent's work. A crash between submitted input
 and durable delivery/read marks can cause duplicate presentation.
+
+This guard depends on the harness inspection reporting `blocked`. A modal
+reported as `unknown`, or one opened between inspect and input, is not caught by
+this check. The OATS transport currently supplies `submitted:true` as the input
+receipt; it does not prove model consumption. Authoritative modal detection and
+input safety belong to the session/harness transport. The `blocked` guard does
+not add a harness-acceptance receipt or change the read point.
 
 Abort during the safety inspection prevents input. Once input has accepted,
 a later abort does not turn acceptance into rejection; delivery/read marks may

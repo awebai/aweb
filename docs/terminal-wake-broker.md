@@ -24,11 +24,13 @@ The boundary is intentionally the same one documented in
   and readiness status.
 - **Channel-core presents content.** For mail/chat wake and steer events it immediately fetches the exact unread item(s), decrypts/verifies,
   formats the awakening and calls the terminal adapter. The terminal adapter
-  calls OATS `input(home, text)` and resolves only after OATS accepts the input.
-- **Accepted terminal presentation is the read point.** After the terminal input
-  is accepted, channel-core writes its durable delivery mark and marks mail/chat
-  read where the identity's capabilities permit. This acknowledges presentation,
-  not completion of the requested task.
+  calls OATS `input(home, text)` and resolves after OATS reports `submitted:true`.
+- **Terminal submission is the read point.** After OATS reports submission,
+  channel-core writes its durable delivery mark and marks mail/chat read where
+  the identity's capabilities permit. Today this means tmux accepted paste and
+  Enter, not that a harness queue or intended turn accepted the message. The
+  at-least-once contract remains; this receipt proves neither model consumption
+  nor completion of the requested task. The `blocked` guard does not change it.
 - **Read-only mail grants are capability-limited.** A grant with `mail.read` but
   not `mail.send` can fetch and present mail and can record the local
   `DeliveryStore` mark after accepted input, but it cannot call the server mail
@@ -68,16 +70,23 @@ proof that the agent completed the work.
 ## Immediate presentation and safety
 
 Mail and chat are delivered on arrival, including while the harness reports
-working, blocked or unknown. Readiness gating, coalescing and rate limiting were
+working or unknown. Readiness gating, coalescing and rate limiting were
 removed pending an architecture rethink. Legacy `--coalesce` and `--rate-limit`
 options are accepted but ignored.
 
 The serialized terminal adapter inspects only for safety before input. A raw
-shell, stopped/not-launched harness, `present:false`, or failed inspect refuses
+shell, `blocked` modal, stopped/not-launched harness, `present:false`, or failed inspect refuses
 input and leaves the message unread for bounded retry and fresh-snapshot recovery. Exhausted mail/chat presentation
 requests one coalesced stream re-open after five seconds. Stopped/not-launched observations mark the instance inactive only after the
 child has observed `present:true`; a prelaunch home stays pending and retries
 through unread snapshots without needing re-registration.
+
+The `blocked` refusal prevents wake text and Enter from answering a modal such
+as a permission prompt or AskUserQuestion. It does not defer ordinary working
+sessions. It relies on inspection identifying the modal; `unknown` still
+delivers, and a modal appearing between inspection and input requires protection
+in the session/harness transport. A submitted-input receipt is not evidence of
+model consumption.
 
 Persistent refusal backs off the coalesced snapshot re-open per stream: five
 seconds, ten seconds, twenty seconds, doubling to a five-minute cap. Requests
