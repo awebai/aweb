@@ -362,9 +362,11 @@ var teamCreateCmd = &cobra.Command{
 	Long: `Create a hosted sibling team using the selected team certificate, or create
 a customer-controlled AWID team using a local namespace controller key.
 
-Without --namespace, creation is hosted. With --namespace and a local controller
-key, the existing BYOT path is used. --hosted explicitly selects hosted creation;
-a namespace supplied in that mode must match the selected source team.
+Without --namespace, creation is hosted. An explicit --namespace selects BYOT
+and requires a local controller key and a native identity home. BYOT refuses
+--team. --hosted explicitly selects hosted creation; a namespace supplied in
+that mode must match the selected source team. The hosted service URL is printed
+to stderr before the request.
 Hosted authorization is decided by the service; no human login is performed.
 
 Hosted creation generates a request UUID. Replay with the same --request-id and
@@ -650,10 +652,26 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 		return runHostedTeamCreate(cmd, name, domain)
 	}
 
-	// Load namespace controller key for auth
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	home, err := identityHomeForDir(wd)
+	if err != nil {
+		return err
+	}
+	if home.External() {
+		return usageError("BYOT team creation does not support an external identity home; use --hosted for a hosted sibling, or run BYOT from a native home with the namespace controller key")
+	}
+	if cmd.Flags().Changed("team") {
+		return usageError("--team is only supported for hosted creation; pass --hosted or remove --team for BYOT")
+	}
+
+	// An explicit namespace selects controller authority unless --hosted was
+	// also explicit. A missing controller must not silently switch authority.
 	controllerKey, err := awconfig.LoadControllerKey(domain)
 	if errors.Is(err, os.ErrNotExist) {
-		return runHostedTeamCreate(cmd, name, domain)
+		return usageError("no local controller key for --namespace %s; pass --hosted for a hosted sibling, or install the namespace controller key for BYOT (aw id namespace prepare-controller --domain %s)", domain, domain)
 	}
 	if err != nil {
 		return fmt.Errorf("load controller key for %s: %w (run `aw id namespace prepare-controller --domain %s` first)", domain, err, domain)

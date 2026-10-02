@@ -53,11 +53,14 @@ facts and identity-signed assertions, never private keys.
 
 A service supporting hosted sibling teams exposes `POST /api/v1/teams/sibling`
 on its HTTP origin. `aw id team create --name <name> --json` uses that operation
-when no `--namespace` is supplied. With `--namespace`, a local namespace
-controller selects the existing BYOT operation; an absent controller selects
-hosted creation only when the namespace matches the selected source team.
-A corrupt or unreadable controller key is an error, not a reason to switch
-authority. `--hosted` explicitly selects the hosted operation.
+when no `--namespace` is supplied. An explicit `--namespace` selects the existing
+BYOT operation and requires a local namespace controller key. A missing, corrupt,
+or unreadable key is an error, never a reason to switch authority. BYOT refuses
+external identity homes and `--team`; it operates from a native home using the
+operator's namespace controller. `--hosted` explicitly selects the hosted
+operation, including with an external identity home; a supplied namespace must
+then match the selected source team. Before a hosted request, the CLI prints
+`hosted sibling via <server>` to stderr (JSON stdout stays machine-readable).
 
 Hosted creation uses the selected native identity's team certificate and DIDKey
 signature over `{body_sha256, team_id, timestamp}`, including when selected with
@@ -86,8 +89,9 @@ invite; the previous token is no longer usable. The service can refuse a
 replay after expiry, invite consumption, or an authority change.
 
 The invite token is secret. JSON includes it; text only includes it with
-`--show-token`. HTTP tracing suppresses this route's response body. The caller
-is not enrolled, and its identity and workspace files are not changed. Accept
+`--show-token`. HTTP tracing suppresses this route's response body, including
+under service URL path prefixes such as `/aweb/api`. The caller is not enrolled,
+and its identity and workspace files are not changed. Accept
 into a fresh external home, then connect explicitly:
 
 ```bash

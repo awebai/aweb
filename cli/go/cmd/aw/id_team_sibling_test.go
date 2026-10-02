@@ -63,9 +63,13 @@ func TestHostedSiblingCreateBinary(t *testing.T) {
 				var seenID string
 				var expectedSource string
 				secret := "aw_inv_sibling_secret"
+				prefix := ""
+				if source == "environment" && !shadow {
+					prefix = "/aweb"
+				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					n := calls.Add(1)
-					if r.Method != "POST" || r.URL.Path != "/api/v1/teams/sibling" {
+					if r.Method != "POST" || r.URL.Path != prefix+"/api/v1/teams/sibling" {
 						t.Errorf("unexpected request %s %s", r.Method, r.URL)
 						http.NotFound(w, r)
 						return
@@ -98,7 +102,7 @@ func TestHostedSiblingCreateBinary(t *testing.T) {
 					json.NewEncoder(w).Encode(map[string]any{"team_id": "sibling-server-id", "canonical_team_id": "sibling:aweb.test", "namespace": "aweb.test", "org_handle": "example", "reused": n > 1, "token": secret, "invite_id": "invite-id", "token_prefix": "aw_inv_", "expires_at": "2099-01-01T00:00:00Z", "max_uses": 1, "server_url": "https://service.example/api"})
 				}))
 				defer server.Close()
-				writeMessagingPrincipalForTest(t, principalRoot, server.URL+"/api", "alice", awid.ComputeDIDKey(pub), key)
+				writeMessagingPrincipalForTest(t, principalRoot, server.URL+prefix+"/api", "alice", awid.ComputeDIDKey(pub), key)
 				if shadow {
 					writeTestConfig(t, cwd, "http://127.0.0.1:1")
 				}
@@ -106,7 +110,7 @@ func TestHostedSiblingCreateBinary(t *testing.T) {
 				beforeCWD := fileDigestsForTest(t, cwd)
 				base := []string{"id", "team", "create", "--name", " Sibling ", "--display-name", "Sibling Team"}
 				if source == "flag" && shadow {
-					base = append(base, "--namespace", "aweb.test")
+					base = append(base, "--namespace", "aweb.test", "--hosted")
 				}
 				if source == "environment" && shadow {
 					_, controller, err := awid.GenerateKeypair()
@@ -129,6 +133,11 @@ func TestHostedSiblingCreateBinary(t *testing.T) {
 				}
 				if strings.Contains(trace, secret) {
 					t.Fatal("trace leaked invite token")
+				}
+
+				notice := "hosted sibling via " + server.URL + prefix + "/api\n"
+				if strings.Count(trace, notice) != 1 {
+					t.Fatalf("missing or repeated hosted-path notice: %s", trace)
 				}
 				expectedSource = "runtime:aweb.test"
 				replay := append(base, "--hosted", "--team", expectedSource, "--request-id", seenID)
@@ -208,6 +217,7 @@ func TestHostedSiblingCreateRefusalsBinary(t *testing.T) {
 			writeMessagingPrincipalForTest(t, cwd, server.URL, "shadow", awid.ComputeDIDKey(pub), key)
 			writeMessagingPrincipalForTest(t, principal, server.URL, "alice", awid.ComputeDIDKey(pub), key)
 			args := []string{"id", "team", "create", "--name", "sibling", "--json"}
+			selectionSource := "flag"
 			switch kind {
 			case "grant":
 				principal = filepath.Join(dir, "grant")
@@ -219,12 +229,13 @@ func TestHostedSiblingCreateRefusalsBinary(t *testing.T) {
 			case "missing-teams":
 				os.Remove(filepath.Join(principal, ".aw", "teams.yaml"))
 			case "namespace-mismatch":
-				args = append(args, "--namespace", "wrong.test")
+				args = append(args, "--namespace", "wrong.test", "--hosted")
 			case "registry":
 				args = append(args, "--registry", server.URL)
 			case "bad-request-id":
 				args = append(args, "--request-id", "not-a-uuid")
 			case "corrupt-controller":
+				selectionSource = "cwd"
 				writeControllerKeyForTest(t, dir, "aweb.test", key)
 				// A corrupt controller is not permission to switch authorities.
 				controllerPath := filepath.Join(dir, ".awid", "controllers", "aweb.test.key")
@@ -233,15 +244,22 @@ func TestHostedSiblingCreateRefusalsBinary(t *testing.T) {
 				}
 				args = append(args, "--namespace", "aweb.test")
 			}
-			out, trace, err := runSiblingBinary(ctx, bin, cwd, dir, filepath.Join(principal, ".aw"), "flag", args...)
+			out, trace, err := runSiblingBinary(ctx, bin, cwd, dir, filepath.Join(principal, ".aw"), selectionSource, args...)
 			if err == nil {
 				t.Fatalf("refusal succeeded: %s %s", out, trace)
 			}
 			if strings.Contains(trace, "unknown flag") || strings.Contains(trace, "does not support --identity-home") {
 				t.Fatalf("refusal did not reach identity/scope checks: %s", trace)
 			}
-			if kind == "grant" && !strings.Contains(trace, "team_key_required") {
-				t.Fatalf("grant refusal unclear: %s", trace)
+
+			want := map[string]string{
+				"grant": "team_key_required", "wrong-team": `team "wrong:aweb.test" is not present in workspace memberships`, "missing-key": "signing key missing",
+				"missing-teams": "teams.yaml", "namespace-mismatch": "does not match selected source team",
+				"registry": "--registry is a BYOT option", "bad-request-id": "--request-id must be a UUID",
+				"corrupt-controller": "no PEM block in controller key",
+			}[kind]
+			if !strings.Contains(trace, want) {
+				t.Fatalf("expected refusal %q: %s", want, trace)
 			}
 			if calls.Load() != 0 {
 				t.Errorf("refusal made %d requests", calls.Load())
@@ -405,5 +423,67 @@ func TestHostedSiblingAmbiguousFailureDoesNotRetry(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Errorf("ambiguous POST retried: %d calls", calls.Load())
+	}
+}
+
+func TestTeamCreateAuthoritySelectionRefusalsBinary(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	for _, tc := range []struct {
+		name, source, want string
+		controller, team   bool
+	}{
+		{name: "explicit namespace without controller", source: "cwd", want: "no local controller key"},
+		{name: "external flag with controller", source: "flag", controller: true, want: "BYOT team creation does not support an external identity home"},
+		{name: "external environment with controller", source: "environment", controller: true, want: "BYOT team creation does not support an external identity home"},
+		{name: "BYOT team selector", source: "cwd", controller: true, team: true, want: "--team is only supported for hosted creation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cwd := filepath.Join(dir, "cwd")
+			principal := filepath.Join(dir, "principal")
+			if err := os.MkdirAll(cwd, 0700); err != nil {
+				t.Fatal(err)
+			}
+			pub, key, err := awid.GenerateKeypair()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var calls atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				http.Error(w, "unexpected authority call", 500)
+			}))
+			defer server.Close()
+			writeMessagingPrincipalForTest(t, cwd, server.URL, "alice", awid.ComputeDIDKey(pub), key)
+			writeMessagingPrincipalForTest(t, principal, server.URL, "selected", awid.ComputeDIDKey(pub), key)
+			if tc.controller {
+				writeControllerKeyForTest(t, dir, "aweb.test", key)
+			}
+			before := fileDigestsForTest(t, dir)
+			args := []string{"id", "team", "create", "--name", "sibling", "--namespace", "aweb.test", "--json"}
+			if tc.controller {
+				args = append(args, "--registry", server.URL)
+			}
+			if tc.team {
+				args = append(args, "--team", "runtime:aweb.test")
+			}
+			out, stderr, err := runSiblingBinary(ctx, bin, cwd, dir, filepath.Join(principal, ".aw"), tc.source, args...)
+			if err == nil || !strings.Contains(stderr, tc.want) {
+				t.Errorf("expected refusal %q: err=%v\n%s\n%s", tc.want, err, out, stderr)
+			}
+			if tc.name == "explicit namespace without controller" && (!strings.Contains(stderr, "--hosted") || !strings.Contains(stderr, "BYOT")) {
+				t.Errorf("missing authority recovery choices: %s", stderr)
+			}
+			if calls.Load() != 0 {
+				t.Errorf("authority refusal made %d requests", calls.Load())
+			}
+			if !reflect.DeepEqual(before, fileDigestsForTest(t, dir)) {
+				t.Error("authority refusal changed local state")
+			}
+		})
 	}
 }

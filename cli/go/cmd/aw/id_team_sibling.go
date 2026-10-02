@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -96,6 +97,10 @@ func runHostedTeamCreate(cmd *cobra.Command, name, domain string) error {
 	req := hostedSiblingRequest{RequestID: requestID, Name: name, DisplayName: strings.TrimSpace(teamCreateDisplayName), SourceTeamID: strings.TrimSpace(teamFlag)}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
 	defer cancel()
+	// Show the selected service without echoing any URL userinfo.
+	displayURL, _ := url.Parse(baseURL) // cleanBaseURL already validated it.
+	displayURL.User = nil
+	fmt.Fprintf(cmd.ErrOrStderr(), "hosted sibling via %s\n", displayURL.String())
 	var out hostedSiblingOutput
 	if err := client.Post(ctx, "/api/v1/teams/sibling", req, &out); err != nil {
 		return fmt.Errorf("hosted team create (request_id=%s; replay with the same --request-id and parameters): %w", requestID, err)

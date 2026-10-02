@@ -891,9 +891,11 @@ Flags:
 Create a hosted sibling team using the selected team certificate, or create
 a customer-controlled AWID team using a local namespace controller key.
 
-Without --namespace, creation is hosted. With --namespace and a local controller
-key, the existing BYOT path is used. --hosted explicitly selects hosted creation;
-a namespace supplied in that mode must match the selected source team.
+Without --namespace, creation is hosted. An explicit --namespace selects BYOT
+and requires a local controller key and a native identity home. BYOT refuses
+--team. --hosted explicitly selects hosted creation; a namespace supplied in
+that mode must match the selected source team. The hosted service URL is printed
+to stderr before the request.
 Hosted authorization is decided by the service; no human login is performed.
 
 Hosted creation generates a request UUID. Replay with the same --request-id and
