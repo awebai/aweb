@@ -180,7 +180,8 @@ async def list_conversations(
                 newest.from_did,
                 newest.subject,
                 p.unread_count,
-                c.status,
+                CASE WHEN c.status = 'active' AND c.expires_at <= CURRENT_TIMESTAMP
+                     THEN 'expired' ELSE c.status END AS status,
                 labels.participants
             FROM page p
             JOIN LATERAL (

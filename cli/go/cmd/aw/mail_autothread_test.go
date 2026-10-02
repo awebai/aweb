@@ -30,13 +30,13 @@ func TestAwMailSendOpportunisticThreading(t *testing.T) {
 	pair := func(id, ts string) awid.ConversationItem {
 		return awid.ConversationItem{ConversationType: "mail", ConversationID: id, Status: "active", ParticipantDIDs: []string{self, peer}, ParticipantAddresses: []string{"test.local/gsk", "test.local/alice"}, LastMessageAt: ts}
 	}
-	older, newer := pair(old, "2026-10-01T10:00:00Z"), pair(recent, "2026-10-01T12:00:00+01:00")
+	older, newer := pair(old, "2026-10-01T12:00:00+03:00"), pair(recent, "2026-10-01T12:00:00+01:00")
 	grouped := pair(group, "2026-10-02T00:00:00Z")
 	grouped.ParticipantDIDs = append(grouped.ParticipantDIDs, "did:key:third")
 	grouped.ParticipantAddresses = append(grouped.ParticipantAddresses, "test.local/third")
 	anotherGroup := grouped
 	anotherGroup.ConversationID = old
-	tied := pair(old, newer.LastMessageAt)
+	tied := pair(old, "2026-10-01T11:00:00Z")
 	noSelf := pair(old, newer.LastMessageAt)
 	noSelf.ParticipantDIDs = []string{"did:key:stranger", peer}
 	noSelf.ParticipantAddresses = []string{"test.local/stranger", "test.local/alice"}

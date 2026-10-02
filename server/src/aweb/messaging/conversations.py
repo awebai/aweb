@@ -159,16 +159,12 @@ async def _get_active_conversation(
 ) -> dict[str, Any]:
     effective_now = now or _now_utc()
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
-    conversation = await get_conversation(db, conversation_id=conversation_uuid)
+    conversation = await get_conversation(db, conversation_id=conversation_uuid, now=effective_now)
     if conversation is None:
         raise NotFoundError("Conversation not found")
     if conversation["status"] == "closed":
         raise ForbiddenError("Conversation is closed")
     if conversation["status"] == "expired":
-        raise ForbiddenError("Conversation is expired")
-    expires_at = conversation.get("expires_at")
-    if expires_at is not None and expires_at <= effective_now:
-        await expire_conversation(db, conversation_id=conversation_uuid)
         raise ForbiddenError("Conversation is expired")
     return conversation
 
@@ -468,8 +464,25 @@ async def create_conversation(
     return conversation
 
 
-async def get_conversation(db, *, conversation_id: str | UUID) -> dict[str, Any] | None:
+async def get_conversation(
+    db, *, conversation_id: str | UUID, now: datetime | None = None,
+) -> dict[str, Any] | None:
     aweb_db = db.get_manager("aweb")
+    conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
+    # Persist lazy expiry before continuation validation can raise. The HTTP
+    # mail path uses the manager's autocommitted statements, not a request-wide
+    # transaction. The predicate also prevents closing/renewal races from
+    # expiring a row that no longer meets the deadline.
+    await aweb_db.execute(
+        """
+        UPDATE {{tables.conversations}}
+        SET status = 'expired', updated_at = $2
+        WHERE conversation_id = $1 AND status = 'active'
+          AND expires_at <= $2
+        """,
+        conversation_uuid,
+        now or _now_utc(),
+    )
     row = await aweb_db.fetch_one(
         """
         SELECT conversation_id, conversation_type, status, team_id, created_by_did,
@@ -477,7 +490,7 @@ async def get_conversation(db, *, conversation_id: str | UUID) -> dict[str, Any]
         FROM {{tables.conversations}}
         WHERE conversation_id = $1
         """,
-        _parse_uuid(conversation_id, field_name="conversation_id"),
+        conversation_uuid,
     )
     return None if not row else _conversation_dict(dict(row))
 

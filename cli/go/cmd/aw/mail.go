@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -97,12 +99,58 @@ func uniqueMailConversationTarget(conversations map[string]mailConversationTarge
 		return mailConversationTarget{}, nil
 	}
 	if len(conversations) != 1 {
-		return mailConversationTarget{}, fmt.Errorf("multiple mail conversations match %s; use --conversation-id to choose one", targetValue)
+		// An inbox sample cannot establish exact group membership.
+		return mailConversationTarget{}, nil
 	}
 	for _, target := range conversations {
 		return target, nil
 	}
 	return mailConversationTarget{}, nil
+}
+
+// mailConversationIsExactPair requires both self and target, not merely a
+// shared peer in a group. Participant aliases are display metadata only.
+func mailConversationIsExactPair(c *awid.Client, conv awid.ConversationItem, kind, value string) bool {
+	if c == nil || len(conv.ParticipantDIDs) > 2 || len(conv.ParticipantAddresses) > 2 {
+		return false
+	}
+	var participants, self []string
+	if kind == "did" {
+		participants, self = conv.ParticipantDIDs, []string{c.DID(), c.StableID()}
+	} else {
+		participants, self = conv.ParticipantAddresses, []string{c.Address()}
+	}
+	if len(participants) != 2 {
+		return false
+	}
+	for i, participant := range participants {
+		if !strings.EqualFold(strings.TrimSpace(participant), strings.TrimSpace(value)) {
+			continue
+		}
+		other := strings.TrimSpace(participants[1-i])
+		if strings.EqualFold(other, strings.TrimSpace(value)) {
+			continue
+		}
+		for _, own := range self {
+			if own != "" && strings.EqualFold(other, own) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Only the send endpoint's exact expiry refusal permits a fresh-conversation
+// retry. Transport ambiguity and other authorization failures do not.
+func mailConversationExpired(err error) bool {
+	var apiErr *awid.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusForbidden {
+		return false
+	}
+	var body struct {
+		Detail string `json:"detail"`
+	}
+	return json.Unmarshal([]byte(apiErr.Body), &body) == nil && body.Detail == "Conversation is expired"
 }
 
 type mailConversationTarget struct {
@@ -317,12 +365,26 @@ func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, ta
 	conversationsResp, err := c.ListConversationsWithParams(ctx, params)
 	if err == nil {
 		conversations := map[string]mailConversationTarget{}
+		var newest mailConversationTarget
+		var newestTime time.Time
 		for _, conv := range conversationsResp.Conversations {
 			conversationID := strings.TrimSpace(conv.ConversationID)
 			if conversationID == "" || !mailConversationMatchesTarget(conv, targetKind, targetValue) {
 				continue
 			}
 			conversations[conversationID] = mailConversationParticipantTarget(c.Client, conv, targetKind, targetValue)
+			if mailConversationIsExactPair(c.Client, conv, targetKind, targetValue) {
+				// RFC3339 offsets/fractions compare as instants, not lexical strings.
+				// Missing/invalid timestamps sort oldest; ties use descending ID, as the
+				// server's mail index does, independently of response or map order.
+				at, _ := time.Parse(time.RFC3339Nano, conv.LastMessageAt)
+				if newest.conversationID == "" || at.After(newestTime) || (at.Equal(newestTime) && conversationID > newest.conversationID) {
+					newest, newestTime = conversations[conversationID], at
+				}
+			}
+		}
+		if len(conversations) > 1 {
+			return newest, nil
 		}
 		if conversation, err := uniqueMailConversationTarget(conversations, targetValue); err != nil || conversation.conversationID != "" {
 			return conversation, err
@@ -497,6 +559,16 @@ var mailSendCmd = &cobra.Command{
 			resp, err = c.SendMessage(ctx, req)
 		} else {
 			resp, err = c.SendMessageByIdentity(ctx, req)
+		}
+
+		if err != nil && strings.TrimSpace(mailSendConversationID) == "" && req.ConversationID != "" && mailConversationExpired(err) {
+			// The rejected request was not accepted. Keep its resolved recipient and
+			// selected identity, but let the library generate and sign fresh IDs.
+			req.ConversationID = ""
+			resp, err = c.SendMessageByIdentity(ctx, req)
+			if err == nil {
+				targetValue = resp.ConversationID
+			}
 		}
 		if err != nil {
 			if targetKind == "conversation" {
