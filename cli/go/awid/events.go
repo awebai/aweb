@@ -170,7 +170,7 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body := ReadErrorExcerpt(resp.Body)
 		_ = resp.Body.Close()
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: body}
+		return nil, newAPIError(resp, body)
 	}
 	return newAgentEventStream(resp.Body), nil
 }

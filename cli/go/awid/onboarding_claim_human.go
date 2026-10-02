@@ -86,7 +86,7 @@ func (c *Client) ClaimHuman(ctx context.Context, req *ClaimHumanRequest) (*Claim
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: ReadErrorExcerpt(resp.Body)}
+		return nil, newAPIError(resp, ReadErrorExcerpt(resp.Body))
 	}
 	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {

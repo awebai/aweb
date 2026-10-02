@@ -528,6 +528,9 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/v1/namespaces/aweb/addresses/merlin":
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"detail": "Target not found"})
 		case "/api/v1/conversations":
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{})
 		case "/api/v1/messages/inbox":
@@ -558,10 +561,11 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 
-	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
+	// Pin resolution to the disposable registry as well as the service.
+	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "aweb")
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "aweb/merlin", "--body", "hello", "--subject", "test")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL, "HTTPS_PROXY=http://127.0.0.1:1", "HTTP_PROXY=http://127.0.0.1:1", "NO_PROXY=127.0.0.1,localhost")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {

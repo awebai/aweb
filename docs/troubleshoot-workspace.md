@@ -58,6 +58,19 @@ certificate.
 
 ## 3. Separate durable delivery from wake-up
 
+An aweb API error exits nonzero. For HTML or other non-JSON error responses,
+the normal error display is limited to 1,024 bytes and omits the body. It shows
+the HTTP status and supplied `x-request-id`, `cf-ray`, and `cf-mitigated` headers;
+each header value is sanitized and limited to 128 ASCII bytes. Ordinary JSON
+error detail remains visible. Non-JSON error bodies are also omitted from
+response traces.
+
+A recognized page title (`Blocked` or `Just a moment...`) or
+`cf-mitigated: challenge` describes the response received. A generic HTML 403
+does not establish which provider or policy refused the request. Retain the
+status, identifiers, endpoint and time for the service operator; the CLI adds
+no retry or alternate delivery path for these refusals.
+
 On the recipient:
 
 ```bash

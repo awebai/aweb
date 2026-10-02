@@ -135,7 +135,8 @@ func TestChatMarkReadMalformedIDReachesServerWithoutFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = client.ChatMarkRead(context.Background(), "session-bad", &ChatMarkReadRequest{MessageIDs: []string{"not-a-uuid"}})
-	if err == nil || !strings.Contains(err.Error(), "authoritative malformed uuid") {
+	body, ok := HTTPErrorBody(err)
+	if err == nil || !ok || !strings.Contains(body, "authoritative malformed uuid") {
 		t.Fatalf("error=%v, want original server validation error", err)
 	}
 	if calls != 1 {
@@ -167,7 +168,8 @@ func TestChatMarkReadFailedFallbackPreservesOriginal4xx(t *testing.T) {
 	if !ok || status != http.StatusForbidden {
 		t.Fatalf("status=(%d,%v), want original 403", status, ok)
 	}
-	if !strings.Contains(err.Error(), "original permission error") || strings.Contains(err.Error(), "fallback failed") {
+	body, bodyOK := HTTPErrorBody(err)
+	if !bodyOK || !strings.Contains(body, "original permission error") || strings.Contains(body, "fallback failed") {
 		t.Fatalf("error=%q, want only original failure", err)
 	}
 	if calls != 2 {

@@ -665,7 +665,7 @@ func (r *RegistryResolver) getJSONWithHeaders(ctx context.Context, baseURL, path
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{StatusCode: resp.StatusCode, Body: readBodyString(resp)}
+		return newAPIError(resp, readBodyString(resp))
 	}
 	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {

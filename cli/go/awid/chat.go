@@ -963,7 +963,7 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body := ReadErrorExcerpt(resp.Body)
 		_ = resp.Body.Close()
-		return nil, &APIError{StatusCode: resp.StatusCode, Body: body}
+		return nil, newAPIError(resp, body)
 	}
 	return NewSSEStream(resp.Body), nil
 }

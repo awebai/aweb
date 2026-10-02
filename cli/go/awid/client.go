@@ -1233,16 +1233,29 @@ func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, 
 
 // APIError represents an HTTP error from the aweb API.
 type APIError struct {
-	StatusCode int
-	Body       string
-	RequestID  string
+	StatusCode      int
+	Body            string
+	RequestID       string
+	CfRay           string
+	CfMitigated     string
+	responseSummary string
 }
 
 func (e *APIError) Error() string {
-	requestID := strings.TrimSpace(e.RequestID)
+	var metadata []string
+	for _, header := range []struct{ name, value string }{
+		{"x-request-id", e.RequestID}, {"cf-ray", e.CfRay}, {"cf-mitigated", e.CfMitigated},
+	} {
+		if value := errorHeaderValue(header.value); value != "" {
+			metadata = append(metadata, header.name+": "+value)
+		}
+	}
 	suffix := ""
-	if requestID != "" {
-		suffix = fmt.Sprintf(" (x-request-id: %s)", requestID)
+	if len(metadata) > 0 {
+		suffix = " (" + strings.Join(metadata, ", ") + ")"
+	}
+	if e.responseSummary != "" {
+		return fmt.Sprintf("aweb: http %d%s: %s", e.StatusCode, suffix, e.responseSummary)
 	}
 	if e.Body == "" {
 		return fmt.Sprintf("aweb: http %d%s", e.StatusCode, suffix)
@@ -1324,7 +1337,7 @@ func (c *Client) DoWithHeaders(ctx context.Context, method, path string, in any,
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return &APIError{StatusCode: resp.StatusCode, Body: ReadErrorExcerpt(resp.Body), RequestID: resp.Header.Get("X-Request-ID")}
+		return newAPIError(resp, ReadErrorExcerpt(resp.Body))
 	}
 	data, err := ReadAllBounded(resp.Body, MaxResponseSize)
 	if err != nil {
@@ -1592,7 +1605,13 @@ func TraceHTTPResponse(resp *http.Response) error {
 		return fmt.Errorf("close traced HTTP response body: %w", err)
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(data))
-	fmt.Fprintf(os.Stderr, "AW TRACE response body: %s\n", string(data))
+	traceBody := string(data)
+	if resp.StatusCode >= 300 {
+		if summary := nonJSONErrorSummary(traceBody, resp.Header.Get("Content-Type"), resp.Header.Get("Cf-Mitigated")); summary != "" {
+			traceBody = summary
+		}
+	}
+	fmt.Fprintf(os.Stderr, "AW TRACE response body: %s\n", traceBody)
 	return nil
 }
 
