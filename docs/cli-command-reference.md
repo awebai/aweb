@@ -809,6 +809,10 @@ Flags:
 
 Accept a team invite and receive a membership certificate.
 
+Pass the token positionally or use --token-stdin (never both). Stdin is read
+to EOF, up to 65536 bytes, and must contain one token line; surrounding
+whitespace is trimmed. Close the pipe after writing the token.
+
 Scope is explicit: --local is the default, and --global reuses the existing
 self-custodial global identity in this workspace. --address never selects
 global scope; pass --global when presenting an existing owned address.
@@ -840,6 +844,7 @@ Flags:
 - `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
+- `--token-stdin Read one invite token from stdin through EOF (max 65536 bytes)`
 
 ## `id team add-member`
 

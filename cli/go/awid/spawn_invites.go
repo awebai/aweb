@@ -3,6 +3,7 @@ package awid
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -116,6 +117,14 @@ func (c *Client) AcceptSpawnInvite(ctx context.Context, req *SpawnAcceptInviteRe
 
 	var out SpawnAcceptInviteResponse
 	if err := postJSONWithHeaders(ctx, c.baseURL, spawnAcceptInvitePath, bodyBytes, headers, &out); err != nil {
+		// A rejected token can be echoed by a service. Preserve status/diagnostics
+		// without exposing the submitted credential to CLI errors or callers.
+		var registryErr *RegistryError
+		if errors.As(err, &registryErr) {
+			redacted := *registryErr
+			redacted.Detail = strings.ReplaceAll(redacted.Detail, req.Token, "<redacted>")
+			return nil, &redacted
+		}
 		return nil, err
 	}
 	return &out, nil

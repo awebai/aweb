@@ -1318,7 +1318,9 @@ func TestBootstrapFirstLocalTeamMemberCreatesTeamAndRegistersCertificate(t *test
 	}
 }
 
-func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
+func TestTeamInviteAndAcceptInviteFlow(t *testing.T)      { testTeamInviteAndAcceptInviteFlow(t, false) }
+func TestTeamInviteAndAcceptInviteFlowStdin(t *testing.T) { testTeamInviteAndAcceptInviteFlow(t, true) }
+func testTeamInviteAndAcceptInviteFlow(t *testing.T, tokenStdin bool) {
 	t.Parallel()
 
 	var encryptionKeyPublished atomic.Bool
@@ -1415,13 +1417,23 @@ func TestTeamInviteAndAcceptInviteFlow(t *testing.T) {
 	// but no namespace-controller authority, so global reuse must suppress the
 	// default team-domain address claim explicitly.
 	runAccept := exec.CommandContext(ctx, bin, "id", "team", "accept-invite", token, "--global", "--no-address", "--json")
+	if tokenStdin {
+		runAccept.Args = []string{bin, "id", "team", "accept-invite", "--token-stdin", "--global", "--no-address", "--json"}
+		runAccept.Stdin = strings.NewReader("  " + token + "\r\n")
+	}
 	runAccept.Env = append(idCreateCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
+	if tokenStdin {
+		runAccept.Env = append(runAccept.Env, "AW_TRACE=1")
+	}
 	runAccept.Dir = tmp
 	acceptOut, err := runAccept.CombinedOutput()
 	if err != nil {
 		t.Fatalf("accept-invite failed: %v\n%s", err, string(acceptOut))
 	}
 
+	if tokenStdin && strings.Contains(string(acceptOut), token) {
+		t.Fatal("accept output leaked invite token")
+	}
 	var acceptGot map[string]any
 	if err := json.Unmarshal(extractJSON(t, acceptOut), &acceptGot); err != nil {
 		t.Fatalf("invalid json: %v\n%s", err, string(acceptOut))
@@ -2454,6 +2466,12 @@ func TestTeamAcceptHostedLocalInviteRetryReusesPendingSigningKey(t *testing.T) {
 }
 
 func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
+	testHostedLocalAcceptInviteIntoExternalIdentityHome(t, false)
+}
+func TestHostedLocalAcceptInviteIntoExternalIdentityHomeStdin(t *testing.T) {
+	testHostedLocalAcceptInviteIntoExternalIdentityHome(t, true)
+}
+func testHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T, tokenStdin bool) {
 	t.Parallel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
@@ -2565,10 +2583,20 @@ func TestHostedLocalAcceptInviteIntoExternalIdentityHome(t *testing.T) {
 
 	run := exec.CommandContext(ctx, bin, "--identity-home", identityHome, "id", "team", "accept-invite", "aw_inv_external_local", "--name", "alice", "--local", "--json")
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	if tokenStdin {
+		run.Args = []string{bin, "--identity-home", identityHome, "id", "team", "accept-invite", "--token-stdin", "--name", "alice", "--local", "--json"}
+		run.Stdin = strings.NewReader(" aw_inv_external_local\n")
+		run.Env = append(run.Env, "AW_TRACE=1")
+	}
 	run.Dir = instanceHome
-	out, err := run.CombinedOutput()
+	var stderr bytes.Buffer
+	run.Stderr = &stderr
+	out, err := run.Output()
 	if err != nil {
-		t.Fatalf("external local hosted accept failed: %v\n%s", err, out)
+		t.Fatalf("external local hosted accept failed: %v\n%s\n%s", err, out, stderr.String())
+	}
+	if tokenStdin && strings.Contains(string(out)+stderr.String(), "aw_inv_external_local") {
+		t.Fatal("trace/output leaked invite token")
 	}
 	var got map[string]any
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {

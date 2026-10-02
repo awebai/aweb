@@ -1553,7 +1553,11 @@ func TraceHTTPRequest(req *http.Request, body []byte) {
 	}
 	fmt.Fprintf(os.Stderr, "AW TRACE request: %s %s\n", req.Method, req.URL.String())
 	traceHeaders("AW TRACE request header", req.Header, true)
-	fmt.Fprintf(os.Stderr, "AW TRACE request body: %s\n", string(body))
+	if req.URL != nil && strings.HasSuffix(req.URL.Path, "/v1/spawn/accept-invite") {
+		fmt.Fprintln(os.Stderr, "AW TRACE request body: <redacted: invite acceptance>")
+	} else {
+		fmt.Fprintf(os.Stderr, "AW TRACE request body: %s\n", string(body))
+	}
 }
 
 // TraceHTTPResponse writes redacted response detail when AW_TRACE is enabled.
@@ -1565,6 +1569,11 @@ func TraceHTTPResponse(resp *http.Response) error {
 	traceHeaders("AW TRACE response header", resp.Header, true)
 	if resp.Body == nil {
 		fmt.Fprintln(os.Stderr, "AW TRACE response body:")
+		return nil
+	}
+	// Accept errors may echo the submitted token; suppress the whole body.
+	if resp.Request != nil && resp.Request.URL != nil && strings.HasSuffix(resp.Request.URL.Path, "/v1/spawn/accept-invite") {
+		fmt.Fprintln(os.Stderr, "AW TRACE response body: <redacted: invite acceptance>")
 		return nil
 	}
 	// Sibling creation returns a secret invite. Never copy its body to traces,

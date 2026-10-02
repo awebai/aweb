@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -391,9 +392,12 @@ var teamInviteCmd = &cobra.Command{
 }
 
 var teamAcceptInviteCmd = &cobra.Command{
-	Use:   "accept-invite <token>",
+	Use:   "accept-invite [token]",
 	Short: "Accept a team invite and receive a membership certificate",
 	Long: "Accept a team invite and receive a membership certificate.\n\n" +
+		"Pass the token positionally or use --token-stdin (never both). Stdin is read\n" +
+		"to EOF, up to 65536 bytes, and must contain one token line; surrounding\n" +
+		"whitespace is trimmed. Close the pipe after writing the token.\n\n" +
 		"Scope is explicit: --local is the default, and --global reuses the existing\n" +
 		"self-custodial global identity in this workspace. --address never selects\n" +
 		"global scope; pass --global when presenting an existing owned address.\n\n" +
@@ -415,7 +419,16 @@ var teamAcceptInviteCmd = &cobra.Command{
 		"or --no-address for did:aw-only membership. For cross-machine BYOT joins, use\n" +
 		"`aw id team request`, have the controller run `aw id team add-member`, then\n" +
 		"install with `aw id team fetch-cert` on the joining machine.",
-	Args: cobra.ExactArgs(1),
+	Args: func(cmd *cobra.Command, args []string) error {
+		fromStdin, _ := cmd.Flags().GetBool("token-stdin")
+		if fromStdin {
+			if len(args) != 0 {
+				return usageError("--token-stdin cannot be combined with a positional token")
+			}
+			return nil
+		}
+		return cobra.ExactArgs(1)(cmd, args)
+	},
 	RunE: runTeamAcceptInvite,
 }
 
@@ -552,6 +565,7 @@ func init() {
 	markDeprecatedHiddenFlag(teamInviteCmd, "persistent", "member-global")
 	teamCmd.AddCommand(teamInviteCmd)
 
+	teamAcceptInviteCmd.Flags().Bool("token-stdin", false, "Read one invite token from stdin through EOF (max 65536 bytes)")
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "name", "", "Member name for the accepting agent (defaults to identity name)")
 	teamAcceptInviteCmd.Flags().StringVar(&teamAcceptAlias, "alias", "", "Deprecated alias for --name")
 	markDeprecatedHiddenFlag(teamAcceptInviteCmd, "alias", "name")
@@ -932,7 +946,54 @@ func awebURLForTeamInviteAt(workingDir, identityHome, teamID string) string {
 	return ""
 }
 
+const inviteTokenStdinLimit = 64 * 1024
+
+func readInviteTokenStdin(reader io.Reader) (string, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, inviteTokenStdinLimit+1))
+	if err != nil {
+		return "", usageError("cannot read invite token from stdin")
+	}
+	if len(data) > inviteTokenStdinLimit {
+		return "", usageError("invite token stdin exceeds 65536 bytes")
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", usageError("invite token stdin is empty")
+	}
+	if strings.ContainsAny(token, "\r\n") {
+		return "", usageError("stdin must contain one token line")
+	}
+	// All supported wire formats are unpadded base64url or aw_inv_ tokens.
+	// Validate before the acceptance path can write identity state. Never expose
+	// decoder errors, which can include bytes from the supplied secret.
+	for _, c := range token {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return "", usageError("invalid invite token on stdin")
+		}
+	}
+	if awid.IsHostedSpawnInviteToken(token) {
+		if len(token) <= len("aw_inv_") {
+			return "", usageError("invalid invite token on stdin")
+		}
+	} else if _, err := awconfig.DecodeInviteToken(token); err != nil {
+		return "", usageError("invalid invite token on stdin")
+	}
+	if _, _, err := decodeJoinToken(token); err != nil {
+		return "", usageError("invalid invite token on stdin")
+	}
+	return token, nil
+}
+
 func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
+	fromStdin, _ := cmd.Flags().GetBool("token-stdin")
+	if fromStdin {
+		// Keep the token in process memory; never construct a child command argv.
+		token, err := readInviteTokenStdin(cmd.InOrStdin())
+		if err != nil {
+			return err
+		}
+		args = []string{token}
+	}
 	return runTeamAcceptInviteWithConnect(cmd, args, false)
 }
 
