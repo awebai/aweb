@@ -268,6 +268,9 @@ var (
 	teamCreateNamespace   string
 	teamCreateDisplayName string
 	teamCreateRegistryURL string
+	teamCreateHosted      bool
+	teamCreateRequestID   string
+	teamCreateShowToken   bool
 
 	teamInviteTeam                  string
 	teamInviteNamespace             string
@@ -349,14 +352,29 @@ var teamCmd = &cobra.Command{
 	Short: "Team membership plus protocol/admin certificate operations",
 	Long: "Team membership plus protocol/admin certificate operations.\n\n" +
 		"Everyday hosted setup normally uses invite and accept-invite. Controller-backed\n" +
-		"commands such as create, add-member, remove-member, register, import-request,\n" +
+		"commands such as add-member, remove-member, register, import-request,\n" +
 		"cleanup-cloud, and delete are protocol/admin primitives for BYOT, controller\n" +
 		"holders, service projection, or diagnostics.",
 }
 
 var teamCreateCmd = &cobra.Command{
+	Args: cobra.NoArgs,
+	Long: `Create a hosted sibling team using the selected team certificate, or create
+a customer-controlled AWID team using a local namespace controller key.
+
+Without --namespace, creation is hosted. With --namespace and a local controller
+key, the existing BYOT path is used. --hosted explicitly selects hosted creation;
+a namespace supplied in that mode must match the selected source team.
+Hosted authorization is decided by the service; no human login is performed.
+
+Hosted creation generates a request UUID. Replay with the same --request-id and
+parameters after an uncertain result; there are no automatic retries. A replay
+returns the same team and replaces its unused invite. JSON includes the secret
+invite token; text hides it unless --show-token is set. The caller is not joined.
+Accept into <fresh-directory>/.aw, then run aw init from that directory with
+AWEB_IDENTITY_HOME unset.`,
 	Use:   "create",
-	Short: "Protocol/admin: create a customer-controlled AWID team",
+	Short: "Create a hosted sibling team or a customer-controlled AWID team",
 	RunE:  runTeamCreate,
 }
 
@@ -508,10 +526,14 @@ var certCmd = &cobra.Command{
 }
 
 func init() {
+	bindTeamSelector(teamCreateCmd)
 	teamCreateCmd.Flags().StringVar(&teamCreateName, "name", "", "Team name")
 	teamCreateCmd.Flags().StringVar(&teamCreateNamespace, "namespace", "", "Namespace domain")
 	teamCreateCmd.Flags().StringVar(&teamCreateDisplayName, "display-name", "", "Team display name")
 	teamCreateCmd.Flags().StringVar(&teamCreateRegistryURL, "registry", "", "Registry origin override")
+	teamCreateCmd.Flags().BoolVar(&teamCreateHosted, "hosted", false, "Create a hosted sibling using the selected team certificate")
+	teamCreateCmd.Flags().StringVar(&teamCreateRequestID, "request-id", "", "Hosted create UUID (reuse the same UUID and parameters to replay)")
+	teamCreateCmd.Flags().BoolVar(&teamCreateShowToken, "show-token", false, "Print the hosted invite token in text output (JSON includes it)")
 	teamCmd.AddCommand(teamCreateCmd)
 
 	teamInviteCmd.Flags().StringVar(&teamInviteTeam, "team", "", "Team name")
@@ -624,14 +646,20 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 	if name == "" {
 		return usageError("--name is required")
 	}
-	if domain == "" {
-		return usageError("--namespace is required")
+	if teamCreateHosted || domain == "" {
+		return runHostedTeamCreate(cmd, name, domain)
 	}
 
 	// Load namespace controller key for auth
 	controllerKey, err := awconfig.LoadControllerKey(domain)
+	if errors.Is(err, os.ErrNotExist) {
+		return runHostedTeamCreate(cmd, name, domain)
+	}
 	if err != nil {
 		return fmt.Errorf("load controller key for %s: %w (run `aw id namespace prepare-controller --domain %s` first)", domain, err, domain)
+	}
+	if cmd.Flags().Changed("request-id") || teamCreateShowToken {
+		return usageError("--request-id and --show-token require hosted creation; use --hosted")
 	}
 
 	registry, err := newConfiguredRegistryClient(nil, "")

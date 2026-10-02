@@ -65,6 +65,10 @@ HOSTED_ENDPOINT_BASELINE = {
     "/api/v1/spawn/authority",
     "/api/v1/spawn/create-invite",
     "/api/v1/teams/byoidt/projection-delete",
+    # Public sibling-team creation (aweb-abkh.2): selected member certificate
+    # authorizes a hosted service request; response is an ordinary invite plus
+    # public team identifiers. No hosted account schema or private source paths.
+    "/api/v1/teams/sibling",
     "/api/v1/workspaces/init",
     # Found only once the scan covered the whole corpus rather than CLI Go
     # source. The first derivation missed these: byoidt/import sits inside the

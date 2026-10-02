@@ -1567,6 +1567,12 @@ func TraceHTTPResponse(resp *http.Response) error {
 		fmt.Fprintln(os.Stderr, "AW TRACE response body:")
 		return nil
 	}
+	// Sibling creation returns a secret invite. Never copy its body to traces,
+	// including malformed/error responses; decoding still reads the original body.
+	if resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Path == "/api/v1/teams/sibling" {
+		fmt.Fprintln(os.Stderr, "AW TRACE response body: <redacted: sibling invite>")
+		return nil
+	}
 	originalBody := resp.Body
 	data, err := ReadAllBounded(originalBody, MaxResponseSize)
 	if err != nil {

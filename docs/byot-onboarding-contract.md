@@ -49,6 +49,65 @@ The operator may custody an identity signing key only for an explicitly
 custodial flow. That does not make AWID custodial: AWID stores public registry
 facts and identity-signed assertions, never private keys.
 
+### Creating another hosted team
+
+A service supporting hosted sibling teams exposes `POST /api/v1/teams/sibling`
+on its HTTP origin. `aw id team create --name <name> --json` uses that operation
+when no `--namespace` is supplied. With `--namespace`, a local namespace
+controller selects the existing BYOT operation; an absent controller selects
+hosted creation only when the namespace matches the selected source team.
+A corrupt or unreadable controller key is an error, not a reason to switch
+authority. `--hosted` explicitly selects the hosted operation.
+
+Hosted creation uses the selected native identity's team certificate and DIDKey
+signature over `{body_sha256, team_id, timestamp}`, including when selected with
+`--identity-home` or `AWEB_IDENTITY_HOME`. Session grants are refused. The source
+team comes from authentication; `--team <canonical-team-id>` selects an existing
+membership and also sends the optional `source_team_id` guard. There is no
+client-side role check or human login: the service decides whether the member
+has authority to create a sibling in the same organization namespace. A live
+member certificate alone does not promise that authority.
+
+The JSON request contains `request_id` (UUID), `name` (trimmed and lowercased),
+optional `display_name`, and optional `source_team_id`. A create returns HTTP 201;
+a permitted replay returns HTTP 200 with `reused: true`. The response contains
+`team_id` (service identifier), `canonical_team_id`, `namespace`, `org_handle`,
+`reused`, `token`, `invite_id`, `token_prefix`, `expires_at`, `max_uses`, and
+`server_url`. CLI JSON adds `request_id`, exposes the canonical identifier in `team_id`
+(as in BYOT output), and preserves the wire service identifier as `service_team_id`.
+A service URL ending in `/api` is
+normalized when calling this route, without duplicating that prefix.
+
+The CLI generates a fresh UUID unless `--request-id` is supplied and reports it
+on success or request failure. It never automatically retries the create.
+After an uncertain outcome, explicitly replay the **same** request ID and
+parameters. A successful replay preserves the team and replaces its unused
+invite; the previous token is no longer usable. The service can refuse a
+replay after expiry, invite consumption, or an authority change.
+
+The invite token is secret. JSON includes it; text only includes it with
+`--show-token`. HTTP tracing suppresses this route's response body. The caller
+is not enrolled, and its identity and workspace files are not changed. Accept
+into a fresh external home, then connect explicitly:
+
+```bash
+aw --identity-home <source-home> id team create --name <name> --json
+aw --identity-home <fresh-directory>/.aw id team accept-invite <token> --name <alias> --local --json
+# From <fresh-directory>, with AWEB_IDENTITY_HOME unset:
+aw init
+```
+
+Hosted errors retain the service's HTTP status, code, and message, plus the
+request ID for a deliberate replay. They include `team_key_required` (401);
+`team_member_required`, `sibling_team_forbidden`, `source_team_mismatch`, and
+`sibling_team_replay_forbidden` (403); `source_team_not_found` (404);
+`source_team_not_org_owned`, `source_team_not_hosted`, `sibling_team_name_taken`,
+`sibling_team_request_mismatch`, `sibling_team_invite_closed`, and
+`sibling_team_replay_expired` (409); `team_limit_reached` with `limit` and
+`current` (402); `rate_limited` (429); `rate_limit_unavailable` (503); and
+`validation_error` or `invalid_request_id` (422). Server errors do not trigger
+credential, controller, discovery, or URL fallback.
+
 ## BYOT
 
 BYOT means the customer brings a DNS-backed namespace and an AWID team. The

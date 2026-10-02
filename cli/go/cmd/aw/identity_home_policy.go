@@ -83,6 +83,7 @@ var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw id grant revoke":        {},
 	"aw id grant show":          {},
 	"aw id team accept-invite":  {},
+	"aw id team create":         {},
 	"aw id team leave":          {},
 	"aw id team list":           {},
 	"aw id team members":        {},

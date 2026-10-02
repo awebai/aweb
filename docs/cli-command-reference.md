@@ -778,7 +778,7 @@ Flags:
 Team membership plus protocol/admin certificate operations.
 
 Everyday hosted setup normally uses invite and accept-invite. Controller-backed
-commands such as create, add-member, remove-member, register, import-request,
+commands such as add-member, remove-member, register, import-request,
 cleanup-cloud, and delete are protocol/admin primitives for BYOT, controller
 holders, service projection, or diagnostics.
 
@@ -786,7 +786,7 @@ Subcommands:
 - `accept-invite` Accept a team invite and receive a membership certificate
 - `add-member` Protocol/admin: add a member by signing a team certificate
 - `cleanup-cloud` Protocol/admin: delete aweb Cloud's BYOT projection after registry team deletion
-- `create` Protocol/admin: create a customer-controlled AWID team
+- `create` Create a hosted sibling team or a customer-controlled AWID team
 - `delete` Protocol/admin: delete an AWID team using the namespace controller key
 - `fetch-cert` Protocol/admin bridge: fetch and install an approved team certificate
 - `import-request` Protocol/admin: create a signed BYOT import request for aweb cloud
@@ -888,14 +888,31 @@ Flags:
 
 ### `id team create`
 
-Protocol/admin: create a customer-controlled AWID team
+Create a hosted sibling team using the selected team certificate, or create
+a customer-controlled AWID team using a local namespace controller key.
+
+Without --namespace, creation is hosted. With --namespace and a local controller
+key, the existing BYOT path is used. --hosted explicitly selects hosted creation;
+a namespace supplied in that mode must match the selected source team.
+Hosted authorization is decided by the service; no human login is performed.
+
+Hosted creation generates a request UUID. Replay with the same --request-id and
+parameters after an uncertain result; there are no automatic retries. A replay
+returns the same team and replaces its unused invite. JSON includes the secret
+invite token; text hides it unless --show-token is set. The caller is not joined.
+Accept into <fresh-directory>/.aw, then run aw init from that directory with
+AWEB_IDENTITY_HOME unset.
 
 Flags:
 - `--display-name string Team display name`
 - `-h, --help help for create`
+- `--hosted Create a hosted sibling using the selected team certificate`
 - `--name string Team name`
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
+- `--request-id string Hosted create UUID (reuse the same UUID and parameters to replay)`
+- `--show-token Print the hosted invite token in text output (JSON includes it)`
+- `--team string Override the selected team_id for this command`
 
 ## `id team delete`
 
