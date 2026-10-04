@@ -982,6 +982,83 @@ func TestEnsureE2EEKeyReadyForSendPublishesExistingLocalRecord(t *testing.T) {
 	}
 }
 
+func TestE2EESendOwnHomePreservesActiveLocalCertificate(t *testing.T) {
+	for _, entry := range os.Environ() {
+		name := strings.SplitN(entry, "=", 2)[0]
+		if strings.HasPrefix(name, "AW_") || strings.HasPrefix(name, "AWEB_") || strings.HasPrefix(name, "AWID_") || strings.HasPrefix(name, "OATS_") {
+			t.Setenv(name, "")
+		}
+	}
+	t.Setenv("HOME", t.TempDir())
+	pub, priv, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	var published, registryCalls int32
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut && r.URL.Path == "/v1/agents/me/encryption-key" {
+			var assertion awid.EncryptionKeyAssertion
+			if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil {
+				t.Error(err)
+				w.WriteHeader(422)
+				return
+			}
+			if err := awid.VerifyEncryptionKeyAssertion(&assertion, did, "", time.Now().UTC()); err != nil {
+				t.Error(err)
+				w.WriteHeader(422)
+				return
+			}
+			atomic.AddInt32(&published, 1)
+			writePublishEncryptionKeyResponseForTest(t, w, "agent-alice", "backend:demo", "alice")
+			return
+		}
+		atomic.AddInt32(&registryCalls, 1)
+		http.Error(w, "unexpected registry operation", http.StatusBadRequest)
+	}))
+	tmp := t.TempDir()
+	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
+		AwebURL: server.URL, TeamID: "backend:demo", Alias: "alice", WorkspaceID: "workspace-1",
+		DID: did, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal, SigningKey: priv,
+	})
+	// Same-key global metadata can remain after the active certificate becomes local.
+	writeIdentityForTest(t, tmp, awconfig.WorktreeIdentity{
+		DID: did, StableID: awid.ComputeStableID(pub), Address: "demo/alice", Custody: awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal, RegistryURL: server.URL, RegistryStatus: "registered",
+	})
+	if err := ensureLocalIdentityEncryptionKeyForDir(tmp, currentEncryptionKeyIdentityHome()); err != nil {
+		t.Fatal(err)
+	}
+	keyBefore := requireWorktreeEncryptionKeyForTest(t, tmp)
+	client, sel, err := resolveClientSelectionForDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sel.IdentityHome == "" || sel.ExternalIdentityHome || sel.IdentityScope != awid.IdentityModeLocal || sel.StableID != "" {
+		t.Fatalf("expected ordinary resolved local selection: home=%q external=%t scope=%q stable=%q", sel.IdentityHome, sel.ExternalIdentityHome, sel.IdentityScope, sel.StableID)
+	}
+	if err := configureClientE2EE(context.Background(), client, sel, true); err != nil {
+		t.Fatalf("own-home publication failed: %v (service=%d registry=%d)", err, atomic.LoadInt32(&published), atomic.LoadInt32(&registryCalls))
+	}
+	if atomic.LoadInt32(&published) != 1 || atomic.LoadInt32(&registryCalls) != 0 {
+		t.Fatal("expected one service publication and no registry operations")
+	}
+	state, err := awconfig.LoadEncryptionKeyStateFrom(awconfig.WorktreeEncryptionStatePath(tmp))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.ActiveRecord().KeyID != keyBefore {
+		t.Fatal("send rotated active encryption key")
+	}
+	assertion, err := loadEncryptionAssertion(tmp, state.ActiveRecord().AssertionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.VerifyEncryptionKeyAssertion(assertion, did, "", time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEncryptionKeySetupSkipsAWIDWhenGlobalCertificateHasNoRegistryContext(t *testing.T) {
 	t.Setenv("AWID_REGISTRY_URL", "")
 

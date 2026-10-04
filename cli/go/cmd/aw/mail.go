@@ -889,9 +889,10 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 
 func ensureE2EEKeyReadyForSend(ctx context.Context, sel *awconfig.Selection) error {
 	identityHome := currentEncryptionKeyIdentityHome()
-	if strings.TrimSpace(sel.IdentityHome) != "" {
-		// Use the same selected home as request authentication, including local
-		// certificate-only homes without identity.yaml. Do not fall back to cwd.
+	if sel.ExternalIdentityHome {
+		// Only external selection uses the explicit resolver. Ordinary homes
+		// retain active-certificate precedence over stale identity.yaml state.
+		// External certificate-only homes must never fall back to the cwd.
 		identityHome = explicitEncryptionKeyIdentityHome(sel.IdentityHome)
 	}
 	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, sel.WorkingDir, false, identityHome)
