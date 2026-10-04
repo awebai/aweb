@@ -974,7 +974,7 @@ func TestEnsureE2EEKeyReadyForSendPublishesExistingLocalRecord(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := ensureE2EEKeyReadyForSend(ctx, tmp); err != nil {
+	if err := ensureE2EEKeyReadyForSend(ctx, &awconfig.Selection{WorkingDir: tmp}); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&publishCount); got != 1 {

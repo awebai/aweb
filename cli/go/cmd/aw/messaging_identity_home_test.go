@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -170,59 +171,68 @@ func TestExternalIdentityHomeOutboundMessagingSignsAsPrincipal(t *testing.T) {
 	if err := ensureLocalIdentityEncryptionKeyForDir(instance, currentEncryptionKeyIdentityHome()); err != nil {
 		t.Fatal(err)
 	}
-	shadowBefore := fileDigestsForTest(t, filepath.Join(instance, ".aw"))
-	for _, tc := range []struct {
-		name string
-		args []string
-	}{
-		{name: "mail-send-e2ee", args: []string{"mail", "send", "--e2ee", "--to", "recipient", "--body", "secret"}},
-		{name: "mail-reply-e2ee", args: []string{"mail", "reply", "message-1", "--e2ee", "--body", "secret"}},
-		{name: "chat-send-and-wait-e2ee", args: []string{"chat", "send-and-wait", "--e2ee", "--wait", "0", "--start-conversation", "recipient", "secret"}},
-		{name: "chat-send-and-leave-e2ee", args: []string{"chat", "send-and-leave", "--e2ee", "--start-conversation", "recipient", "secret"}},
-		{name: "chat-send-e2ee", args: []string{"chat", "send", "--e2ee", "--session-id", "session-1", "--body", "secret"}},
-		{name: "chat-extend-wait-e2ee", args: []string{"chat", "extend-wait", "--e2ee", "recipient", "secret"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			mu.Lock()
-			beforePublishes := len(publishedAssertions)
-			observedRequests = nil
-			mu.Unlock()
-			command := exec.CommandContext(ctx, bin, append([]string{"--identity-home", identityHome}, tc.args...)...)
-			command.Dir = instance
-			command.Env = testCommandEnv(filepath.Join(root, "home"))
-			out, err := command.CombinedOutput()
-			if err == nil {
-				t.Fatalf("expected recipient-without-E2EE-key failure, got success:\n%s", out)
+	for _, certificateOnly := range []bool{false, true} {
+		if certificateOnly {
+			// Provider-minted local homes may have a certificate and signing key
+			// without identity.yaml; explicit selection must still win over cwd.
+			if err := os.Remove(filepath.Join(identityHome, "identity.yaml")); err != nil {
+				t.Fatal(err)
 			}
-			text := string(out)
-			if strings.Contains(text, "not yet identity-home-aware") {
-				t.Fatalf("E2EE branch was refused before routing: %s", out)
-			}
-			if !strings.Contains(text, "has no E2E encryption key") && !strings.Contains(text, "has no published E2E encryption key") {
-				t.Fatalf("E2EE branch failed outside the intended keyless-recipient observable: %s", out)
-			}
-			mu.Lock()
-			gotPublishes := append([]awid.EncryptionKeyAssertion(nil), publishedAssertions[beforePublishes:]...)
-			requests := append([]messagingSignedRequest(nil), observedRequests...)
-			mu.Unlock()
-			if len(gotPublishes) != 1 {
-				t.Fatalf("published assertions=%d want 1", len(gotPublishes))
-			}
-			assertion := &gotPublishes[0]
-			if err := awid.VerifyEncryptionKeyAssertion(assertion, principalDID, "", time.Now().UTC()); err != nil {
-				t.Fatalf("assertion did not verify under external principal: %v", err)
-			}
-			if err := awid.VerifyEncryptionKeyAssertion(assertion, shadowDID, "", time.Now().UTC()); err == nil {
-				t.Fatal("assertion unexpectedly verified under shadow identity")
-			}
-			verifyMessagingRequestsForTest(t, requests, principalPub, shadowPub, principalDID, shadowDID)
-			if assertion.IdentityDID != principalDID {
-				t.Fatalf("published encryption identity=%s, want %s", assertion.IdentityDID, principalDID)
-			}
-		})
-	}
-	if shadowAfter := fileDigestsForTest(t, filepath.Join(instance, ".aw")); !reflect.DeepEqual(shadowAfter, shadowBefore) {
-		t.Fatal("external-home E2EE send mutated the disposable instance identity")
+		}
+		shadowBefore := fileDigestsForTest(t, filepath.Join(instance, ".aw"))
+		for _, tc := range []struct {
+			name string
+			args []string
+		}{
+			{name: "mail-send-e2ee", args: []string{"mail", "send", "--e2ee", "--to", "recipient", "--body", "secret"}},
+			{name: "mail-reply-e2ee", args: []string{"mail", "reply", "message-1", "--e2ee", "--body", "secret"}},
+			{name: "chat-send-and-wait-e2ee", args: []string{"chat", "send-and-wait", "--e2ee", "--wait", "0", "--start-conversation", "recipient", "secret"}},
+			{name: "chat-send-and-leave-e2ee", args: []string{"chat", "send-and-leave", "--e2ee", "--start-conversation", "recipient", "secret"}},
+			{name: "chat-send-e2ee", args: []string{"chat", "send", "--e2ee", "--session-id", "session-1", "--body", "secret"}},
+			{name: "chat-extend-wait-e2ee", args: []string{"chat", "extend-wait", "--e2ee", "recipient", "secret"}},
+		} {
+			t.Run(fmt.Sprintf("certificate-only=%t/%s", certificateOnly, tc.name), func(t *testing.T) {
+				mu.Lock()
+				beforePublishes := len(publishedAssertions)
+				observedRequests = nil
+				mu.Unlock()
+				command := exec.CommandContext(ctx, bin, append([]string{"--identity-home", identityHome}, tc.args...)...)
+				command.Dir = instance
+				command.Env = testCommandEnv(filepath.Join(root, "home"))
+				out, err := command.CombinedOutput()
+				if err == nil {
+					t.Fatalf("expected recipient-without-E2EE-key failure, got success:\n%s", out)
+				}
+				text := string(out)
+				if strings.Contains(text, "not yet identity-home-aware") {
+					t.Fatalf("E2EE branch was refused before routing: %s", out)
+				}
+				if !strings.Contains(text, "has no E2E encryption key") && !strings.Contains(text, "has no published E2E encryption key") {
+					t.Fatalf("E2EE branch failed outside the intended keyless-recipient observable: %s", out)
+				}
+				mu.Lock()
+				gotPublishes := append([]awid.EncryptionKeyAssertion(nil), publishedAssertions[beforePublishes:]...)
+				requests := append([]messagingSignedRequest(nil), observedRequests...)
+				mu.Unlock()
+				if len(gotPublishes) != 1 {
+					t.Fatalf("published assertions=%d want 1", len(gotPublishes))
+				}
+				assertion := &gotPublishes[0]
+				if err := awid.VerifyEncryptionKeyAssertion(assertion, principalDID, "", time.Now().UTC()); err != nil {
+					t.Fatalf("assertion did not verify under external principal: %v", err)
+				}
+				if err := awid.VerifyEncryptionKeyAssertion(assertion, shadowDID, "", time.Now().UTC()); err == nil {
+					t.Fatal("assertion unexpectedly verified under shadow identity")
+				}
+				verifyMessagingRequestsForTest(t, requests, principalPub, shadowPub, principalDID, shadowDID)
+				if assertion.IdentityDID != principalDID {
+					t.Fatalf("published encryption identity=%s, want %s", assertion.IdentityDID, principalDID)
+				}
+			})
+		}
+		if shadowAfter := fileDigestsForTest(t, filepath.Join(instance, ".aw")); !reflect.DeepEqual(shadowAfter, shadowBefore) {
+			t.Fatal("external-home E2EE send mutated the disposable instance identity")
+		}
 	}
 }
 

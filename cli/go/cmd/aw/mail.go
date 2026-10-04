@@ -832,7 +832,7 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 		return &e2eeDecryptionUnavailableError{statePath: awconfig.GrantHomeStatePath(sel.IdentityHome), reason: "grant home has no custody.socket_path; ask the resident host to run `aw custody serve` and mint or attach the grant custody socket"}
 	}
 	if required {
-		if err := ensureE2EEKeyReadyForSend(ctx, sel.WorkingDir); err != nil {
+		if err := ensureE2EEKeyReadyForSend(ctx, sel); err != nil {
 			return err
 		}
 	}
@@ -887,8 +887,14 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 	return nil
 }
 
-func ensureE2EEKeyReadyForSend(ctx context.Context, workingDir string) error {
-	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, workingDir, false, currentEncryptionKeyIdentityHome())
+func ensureE2EEKeyReadyForSend(ctx context.Context, sel *awconfig.Selection) error {
+	identityHome := currentEncryptionKeyIdentityHome()
+	if strings.TrimSpace(sel.IdentityHome) != "" {
+		// Use the same selected home as request authentication, including local
+		// certificate-only homes without identity.yaml. Do not fall back to cwd.
+		identityHome = explicitEncryptionKeyIdentityHome(sel.IdentityHome)
+	}
+	out, err := setupOrRotateIdentityEncryptionKeyForDir(ctx, sel.WorkingDir, false, identityHome)
 	if err != nil {
 		return err
 	}
