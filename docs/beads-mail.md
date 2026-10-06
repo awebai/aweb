@@ -31,6 +31,11 @@ verified sender behind it.
 
 ## Setup: three lines
 
+For a new standalone identity, run the following in your initialized beads
+repo. If you are joining someone else's team, use the invite setup under
+[Mail has two ends](#mail-has-two-ends) instead of `aw init`. If this repo
+already has the intended aweb identity, keep it and only set the delegate.
+
 ```bash
 npm i -g @awebai/aw
 aw init
@@ -62,17 +67,34 @@ Two setup facts worth knowing up front:
 
 ## Mail has two ends
 
-The recipient runs the same three lines in their repo. Then connect the
-two ends, either way:
+Choose the recipient's setup before creating its identity:
 
-- **Same team**: one side runs `aw team invite`, the other `aw team
-  join`; after that, bare member names route (`bd mail send reviewer -s
-  "hi"`).
+- **Same team, fresh recipient**: an authorized member runs `aw team invite`
+  and gives the token privately to the recipient. In the recipient's initialized
+  beads repo with no existing `.aw` identity/key, run:
+
+  ```bash
+  npm i -g @awebai/aw
+  aw team join <token> --name reviewer
+  bd config set mail.delegate "aw beads-mail"
+  ```
+
+  Here `aw team join` replaces `aw init`: it installs the local identity and
+  membership and connects the workspace to the invite's service. Do not run
+  `aw init` first; the default local join refuses existing identity state.
+  After joining, bare member names route (`bd mail send reviewer -s "hi"`).
 - **Across organizations**: no shared team needed — send to the full
   address (`bd mail send acme.aweb.ai/reviewer -s "hi"`). Delivery is
   federated server-to-server; the sender's identity verifies on the
   receiving side against the AWID registry (aweb's public identity
   directory).
+
+If both sides already have the intended identities, keep them: same-team
+members use names, and separately addressed identities use full addresses.
+To add team membership to an **existing global identity**, use the
+[existing-global invite path](identity-guide.md#invite-token) with `--global`
+and its address selection; do not delete the identity or use the fresh-local
+recipe above.
 
 ## Addressing mail
 
