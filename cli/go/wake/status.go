@@ -92,6 +92,10 @@ const (
 
 // InstanceStatus is one registered instance.
 type InstanceStatus struct {
+	// Present only for a live accepted snapshot with no pending update. Store
+	// fallback must never invent this managed ownership expectation.
+	ManagedReceiver     *ManagedReceiver        `json:"managed_receiver,omitempty"`
+	RegistrationPending bool                    `json:"registration_pending,omitempty"`
 	Home                string                  `json:"home"`
 	IdentityHome        string                  `json:"identity_home"`
 	RuntimeDelivery     string                  `json:"runtime_delivery,omitempty"`

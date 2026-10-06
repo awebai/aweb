@@ -2556,9 +2556,17 @@ An unknown or already-retired home exits 0 with a note: the hook may run twice,
 or after the pending expiry already dropped the registration, and neither is a
 failed retirement.
 
+For observed managed-worker completion, use --require-managed-stop with
+--expect-registration FILE containing managed_receiver from live wake status.
+This strict mode requires an eligible captured child and a supporting daemon,
+never falls back to files, and treats a lost response as unconfirmed. It does
+not certify already accepted input or command completion.
+
 Flags:
+- `--expect-registration string Expected managed_receiver JSON exported by live wake status (file or '-')`
 - `-h, --help help for deregister`
 - `--home string Absolute instance home path`
+- `--require-managed-stop Require a live exact-receiver managed stop/join receipt; never use file fallback`
 - `--state-dir string Broker state directory (default $AW_WAKE_STATE_DIR, else ~/.config/aw/wake)`
 
 ## `wake pause`

@@ -24,26 +24,29 @@ import (
 type ControlOp string
 
 const (
-	OpRegister   ControlOp = "register"
-	OpDeregister ControlOp = "deregister"
-	OpPause      ControlOp = "pause"
-	OpResume     ControlOp = "resume"
-	OpStatus     ControlOp = "status"
+	OpRegister          ControlOp = "register"
+	OpDeregister        ControlOp = "deregister"
+	OpDeregisterManaged ControlOp = "deregister-managed"
+	OpPause             ControlOp = "pause"
+	OpResume            ControlOp = "resume"
+	OpStatus            ControlOp = "status"
 )
 
 // ControlRequest is one line of JSON sent to the daemon.
 type ControlRequest struct {
-	Op           ControlOp     `json:"op"`
-	Registration *Registration `json:"registration,omitempty"`
-	Home         string        `json:"home,omitempty"`
+	Op           ControlOp        `json:"op"`
+	Registration *Registration    `json:"registration,omitempty"`
+	Home         string           `json:"home,omitempty"`
+	Receiver     *ManagedReceiver `json:"receiver,omitempty"`
 }
 
 // ControlResponse is the daemon's single-line answer.
 type ControlResponse struct {
-	OK      bool    `json:"ok"`
-	Error   string  `json:"error,omitempty"`
-	Existed bool    `json:"existed,omitempty"`
-	Status  *Status `json:"status,omitempty"`
+	OK          bool                `json:"ok"`
+	Error       string              `json:"error,omitempty"`
+	Existed     bool                `json:"existed,omitempty"`
+	Status      *Status             `json:"status,omitempty"`
+	ManagedStop *ManagedStopReceipt `json:"managed_stop,omitempty"`
 }
 
 // ErrDaemonDown reports that no broker is listening on the control socket.
@@ -115,13 +118,29 @@ func handleControlConn(ctx context.Context, b *Broker, conn net.Conn) {
 		writeControlResponse(conn, ControlResponse{Error: "malformed control request"})
 		return
 	}
+	if req.Op == OpDeregisterManaged {
+		_ = conn.SetDeadline(time.Now().Add(managedStopDeadline))
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, managedStopDeadline)
+		defer cancel()
+	}
 	writeControlResponse(conn, b.Handle(ctx, req))
 }
 
 // Handle applies one control request. It is exported so a test can drive the
 // daemon's control semantics without a socket.
-func (b *Broker) Handle(_ context.Context, req ControlRequest) ControlResponse {
+func (b *Broker) Handle(ctx context.Context, req ControlRequest) ControlResponse {
 	switch req.Op {
+	case OpDeregisterManaged:
+		if req.Receiver == nil {
+			return ControlResponse{Error: "E_WAKE_RECEIVER_MISMATCH: expected receiver required"}
+		}
+		receipt, err := b.DeregisterManaged(ctx, *req.Receiver)
+		if err != nil {
+			b.cfg.Log("managed deregister failed home=%s err=%v", req.Receiver.Registration.Home, err)
+			return ControlResponse{Error: err.Error()}
+		}
+		return ControlResponse{OK: true, ManagedStop: receipt}
 	case OpRegister:
 		if req.Registration == nil {
 			return ControlResponse{Error: "register requires a registration"}
@@ -160,23 +179,38 @@ func writeControlResponse(conn net.Conn, resp ControlResponse) {
 // Call sends one control request to the daemon. It returns ErrDaemonDown when
 // nothing is listening, which is the caller's signal to use the file fallback.
 func Call(socketPath string, req ControlRequest) (ControlResponse, error) {
-	conn, err := net.DialTimeout("unix", socketPath, controlDeadline)
+	return callWithTimeout(socketPath, req, controlDeadline)
+}
+
+func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duration) (ControlResponse, error) {
+	transportError := func(err error) error {
+		if req.Op == OpDeregisterManaged {
+			return fmt.Errorf("E_WAKE_STOP_UNKNOWN: control transport: %w", err)
+		}
+		return fmt.Errorf("%w: %v", ErrDaemonDown, err)
+	}
+	deadline := time.Now().Add(timeout)
+	conn, err := net.DialTimeout("unix", socketPath, timeout)
 	if err != nil {
-		return ControlResponse{}, fmt.Errorf("%w: %v", ErrDaemonDown, err)
+		return ControlResponse{}, transportError(err)
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(controlDeadline))
+	if req.Op != OpDeregisterManaged {
+		// Preserve the ordinary call's separate dial and exchange budgets.
+		deadline = time.Now().Add(timeout)
+	}
+	_ = conn.SetDeadline(deadline)
 
 	data, err := json.Marshal(req)
 	if err != nil {
 		return ControlResponse{}, err
 	}
 	if _, err := conn.Write(append(data, '\n')); err != nil {
-		return ControlResponse{}, fmt.Errorf("%w: %v", ErrDaemonDown, err)
+		return ControlResponse{}, transportError(err)
 	}
 	line, err := bufio.NewReader(conn).ReadBytes('\n')
-	if err != nil && len(strings.TrimSpace(string(line))) == 0 {
-		return ControlResponse{}, fmt.Errorf("%w: %v", ErrDaemonDown, err)
+	if err != nil && (req.Op == OpDeregisterManaged || len(strings.TrimSpace(string(line))) == 0) {
+		return ControlResponse{}, transportError(err)
 	}
 	var resp ControlResponse
 	if err := json.Unmarshal(line, &resp); err != nil {

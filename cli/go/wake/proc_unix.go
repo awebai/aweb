@@ -3,10 +3,27 @@
 package wake
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"syscall"
 )
+
+func managedProcessGroupsSupported() bool { return true }
+func managedProcessGroupGone(pgid int) (bool, error) {
+	if pgid <= 0 {
+		return false, fmt.Errorf("invalid owned process group")
+	}
+	err := syscall.Kill(-pgid, 0)
+	if errors.Is(err, syscall.ESRCH) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("owned process group %d confirmation: %w", pgid, err)
+	}
+	return false, nil
+}
 
 // processAlive reports whether pid names a live process. Signal 0 performs the
 // existence and permission checks without delivering anything.

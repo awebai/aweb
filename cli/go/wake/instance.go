@@ -2,6 +2,7 @@ package wake
 
 import (
 	"context"
+	"crypto/rand"
 	"os"
 	"reflect"
 	"sync"
@@ -16,8 +17,9 @@ import (
 // submission is in flight at a time" (§4) true by construction rather than by
 // a lock somebody has to remember to take.
 type instanceRunner struct {
-	broker *Broker
-	reg    Registration
+	broker  *Broker
+	ownerID string // Managed-owner identity; never restored or reused across runner creation.
+	reg     Registration
 
 	persistMu    sync.Mutex
 	mu           sync.Mutex
@@ -66,6 +68,7 @@ type reactivateRequest struct {
 func newInstanceRunner(b *Broker, reg Registration, state InstanceState) *instanceRunner {
 	return &instanceRunner{
 		broker:     b,
+		ownerID:    rand.Text(),
 		reg:        reg,
 		state:      state,
 		admitted:   map[string]bool{},
@@ -605,6 +608,11 @@ func (r *instanceRunner) snapshot() InstanceStatus {
 		UnreadCount:         r.state.UnreadCount,
 		StreamAdmitted:      allAdmitted,
 		ConflictHome:        r.conflictHome,
+	}
+	status.RegistrationPending = r.pendingReg != nil
+	if r.pendingReg == nil && child != nil {
+		snapshot := ManagedReceiver{Registration: r.reg.clone(), Generation: r.generation, OwnerID: r.ownerID}
+		status.ManagedReceiver = &snapshot
 	}
 	r.mu.Unlock()
 	if child != nil {

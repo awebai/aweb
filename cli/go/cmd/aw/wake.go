@@ -50,6 +50,8 @@ var (
 	wakeRegisterReceiveJSON      []string
 	wakeRegisterRegistrationJSON string
 	wakeDeregisterHome           string
+	wakeDeregisterManaged        bool
+	wakeDeregisterExpected       string
 	wakePauseHome                string
 	wakeResumeHome               string
 )
@@ -232,7 +234,12 @@ var wakeDeregisterCmd = &cobra.Command{
 		"stopped is marked inactive and waits here.\n\n" +
 		"An unknown or already-retired home exits 0 with a note: the hook may run twice,\n" +
 		"or after the pending expiry already dropped the registration, and neither is a\n" +
-		"failed retirement.",
+		"failed retirement.\n\n" +
+		"For observed managed-worker completion, use --require-managed-stop with\n" +
+		"--expect-registration FILE containing managed_receiver from live wake status.\n" +
+		"This strict mode requires an eligible captured child and a supporting daemon,\n" +
+		"never falls back to files, and treats a lost response as unconfirmed. It does\n" +
+		"not certify already accepted input or command completion.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home := strings.TrimSpace(wakeDeregisterHome)
 		if home == "" || !filepath.IsAbs(home) {
@@ -241,6 +248,42 @@ var wakeDeregisterCmd = &cobra.Command{
 		store, err := wakeStore()
 		if err != nil {
 			return err
+		}
+		if wakeDeregisterManaged {
+			if strings.TrimSpace(wakeDeregisterExpected) == "" {
+				return usageError("--require-managed-stop requires --expect-registration FILE (managed_receiver from live wake status)")
+			}
+			data, err := readWakeJSONSource(wakeDeregisterExpected)
+			if err != nil {
+				return err
+			}
+			var expected wake.ManagedReceiver
+			if err := json.Unmarshal(data, &expected); err != nil {
+				return usageError("invalid expected receiver: %v", err)
+			}
+			expected, err = wake.NormalizeManagedReceiver(expected)
+			if err != nil {
+				return err
+			}
+			canonical, err := wake.CanonicalHome(home)
+			if err != nil {
+				return err
+			}
+			if canonical != expected.Registration.Home {
+				return usageError("E_WAKE_RECEIVER_MISMATCH: --home differs from expected receiver")
+			}
+			receipt, err := wake.CallManagedStop(store.SocketPath(), expected)
+			if err != nil {
+				return err
+			}
+			printOutput(receipt, func(v any) string {
+				r := v.(*wake.ManagedStopReceipt)
+				return fmt.Sprintf("managed worker joined: home=%s generation=%d completed_at=%s; accepted input completion NOT certified", r.Receiver.Registration.Home, r.Receiver.Generation, r.CompletedAt.Format(time.RFC3339Nano))
+			})
+			return nil
+		}
+		if wakeDeregisterExpected != "" {
+			return usageError("--expect-registration requires --require-managed-stop")
 		}
 		existed := false
 		resp, err := wakeCallOrFallback(store, wake.ControlRequest{Op: wake.OpDeregister, Home: home}, func() error {
@@ -571,6 +614,8 @@ func init() {
 	wakeRegisterCmd.Flags().StringVar(&wakeRegisterBackend, "backend", "", "Terminal backend hint: tmux or herdr")
 
 	wakeDeregisterCmd.Flags().StringVar(&wakeDeregisterHome, "home", "", "Absolute instance home path")
+	wakeDeregisterCmd.Flags().BoolVar(&wakeDeregisterManaged, "require-managed-stop", false, "Require a live exact-receiver managed stop/join receipt; never use file fallback")
+	wakeDeregisterCmd.Flags().StringVar(&wakeDeregisterExpected, "expect-registration", "", "Expected managed_receiver JSON exported by live wake status (file or '-')")
 	wakePauseCmd.Flags().StringVar(&wakePauseHome, "home", "", "Absolute instance home path")
 	wakeResumeCmd.Flags().StringVar(&wakeResumeHome, "home", "", "Absolute instance home path")
 	wakeStatusCmd.Flags().IntVar(&wakeMaxStreams, "max-streams", wake.DefaultMaxStreams, "Stream bound reported when the daemon is down")

@@ -151,6 +151,13 @@
 
 ### CLI compatibility
 
+- Add opt-in `aw wake deregister --require-managed-stop --expect-registration`
+  with a live accepted-receiver export in `aw wake status`. The strict operation
+  confirms captured managed-worker join and owned process-group absence, refuses
+  missing/mismatched ownership, and never falls back to files. Transport loss is
+  unconfirmed; accepted input/command completion is not certified. Both the CLI
+  and owning daemon must support it; ordinary deregistration stays compatible.
+
 - `aw version` respects `AW_NO_UPDATE_CHECK` and skips the update request when
   stdout is not a terminal or `--json` is set. Interactive version checks still
   report available upgrades.

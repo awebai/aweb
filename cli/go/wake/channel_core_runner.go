@@ -115,15 +115,16 @@ type ChannelCoreChild struct {
 	reg    Registration
 	cfg    channelCoreChildConfig
 
-	mu         sync.Mutex
-	st         ChannelCoreStatus
-	paused     bool
-	lastStderr string
-	readyAt    time.Time
-	in         chan childLine
-	ctl        chan childLine
-	cancel     context.CancelFunc
-	done       chan struct{}
+	mu                 sync.Mutex
+	st                 ChannelCoreStatus
+	paused             bool
+	lastStderr         string
+	readyAt            time.Time
+	ownedProcessGroups []int
+	in                 chan childLine
+	ctl                chan childLine
+	cancel             context.CancelFunc
+	done               chan struct{}
 }
 
 type channelCoreChildConfig struct {
@@ -382,6 +383,18 @@ func (c *ChannelCoreChild) runOnce(ctx context.Context) error {
 		return err
 	}
 	pipes.closeChildEnds()
+	c.mu.Lock()
+	// Retain only groups whose absence has not yet been established. This is
+	// local ownership accounting, not a scan for processes from an old daemon.
+	retained := c.ownedProcessGroups[:0]
+	for _, pgid := range c.ownedProcessGroups {
+		gone, err := managedProcessGroupGone(pgid)
+		if err != nil || !gone {
+			retained = append(retained, pgid)
+		}
+	}
+	c.ownedProcessGroups = append(retained, cmd.Process.Pid)
+	c.mu.Unlock()
 	c.setNode(node, bundle, "", false)
 	go func() {
 		defer close(writerDone)

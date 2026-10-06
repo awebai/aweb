@@ -184,6 +184,89 @@ idempotent. The daemon stops the retired runner before deleting the registration
 and instance state, so runner shutdown cannot recreate deleted state. An unknown
 home exits 0 with a note because the hook may run twice.
 
+### Observed managed-receiver withdrawal
+
+Ordinary deregistration keeps its offline/idempotent behavior. Its successful
+exit, registry-file removal, and status absence are **not** a managed-stop
+completion receipt: a control timeout can use file fallback while the daemon
+is still joining the worker.
+
+For an explicitly authorized withdrawal requiring that proof, the additive
+strict mode is:
+
+```sh
+aw wake deregister --home /absolute/receiver --state-dir /authorized/broker-state \
+  --require-managed-stop --expect-registration receiver.json --json
+```
+
+Obtain `receiver.json` from the selected row's complete `managed_receiver`
+object in `aw wake status --state-dir /authorized/broker-state --json`.
+For example, after saving that output as `status.json`:
+
+```sh
+jq -e --arg home /absolute/receiver \
+  '[.instances[] | select(.home == $home and .registration_pending != true) | .managed_receiver | select(. != null)] | if length == 1 then .[0] else error("no unique eligible managed receiver") end' \
+  status.json > receiver.json
+```
+
+Use the already established target broker scope; a default path is not evidence
+of which daemon owns a receiver. This object comes from the live daemon's
+accepted in-memory registration, including every receive binding, its original
+registration clock, generation, and an ephemeral `owner_id`. It is omitted by
+file-fallback status, older daemons, pending registration updates, and owners
+without a captured child. `registration_pending` is an additive live-status
+field. Other status fields remain compatible. A cached/exported object is an
+expectation, not a lease: strict admission compares the full normalized snapshot
+and current stored registration before invalidating, stopping, or deleting
+anything. Pending changes, another owner (including daemon replacement), and a
+changed generation or complete registration are refused.
+
+A paused child remains eligible; pause is preserved until withdrawal. An
+inactive signal may already have joined and cleared the child, which is **not**
+eligible. The strict operation does not invent historical completion from that
+absence, nor from a file-only registration, prior crash, or missing owner. A
+plan needing this receipt must withdraw the eligible managed receiver before
+stopping its harness; it must not resume or create a child to manufacture proof.
+
+The new control operation is distinct (`deregister-managed`); an old daemon
+rejects it without taking the ordinary deregistration path. Both the CLI and
+actual owning daemon must support it. Installing a new CLI does not upgrade the
+owner, and a replacement daemon cannot certify its predecessor's join. This
+interface supplies no daemon adoption or global-restart procedure.
+
+A positive JSON receipt has `version: 1`, `scope: "captured-managed-worker"`,
+`receiver` equal to the invocation's complete expectation, `managed_joined:
+true`, a nonzero `completed_at`, and `accepted_input_disposition:
+"not_certified"`. The client validates these fields before successful exit.
+The daemon has joined the captured supervisor (including its pipe readers) and
+observed absence of the process groups it recorded for that child's executions.
+Observation uses only those owned group IDs, without host-wide discovery or
+additional signals. Unsupported observation, permission error, or a group
+remaining present is non-complete. PID/group reuse may conservatively prevent
+confirmation; it does not authorize killing a different process. Escaped process
+groups and historical owners are outside this proof.
+
+The strict client bounds dial plus exchange to 15 seconds. Server admission
+waits within its 15-second request context; the existing shutdown has a
+five-second graceful period plus reader cleanup. After join, owned-group
+confirmation gets at most five seconds and never exceeds the remaining server
+context. Once stop begins, serialization stays held until actual join, even if
+the context or transport expires: 15 seconds is **not** a promise that all daemon
+work has finished. Timeout, lost/truncated response, or an invalid receipt is
+unconfirmed even if the daemon later finishes. Strict mode never performs local
+file fallback. A failed operation may have stopped the worker/deleted state;
+there is no durable completion journal, so retry cannot manufacture success
+from a now-absent owner. Existing ordinary control deadlines are unchanged.
+
+This receipt concerns the captured managed worker, not permission for successor
+admission, native receivers, an exclusive future lease, or all orphan processes.
+A later authorized registration can create new ownership. Stopping future
+managed presentation cannot retract already accepted input, certify command
+execution/model consumption, or guarantee all delivery marks persisted. The
+operator must separately reconcile durable message/task IDs through withdrawal
+and obtain successor acceptance of the bounded remaining work. Do not replay
+completed effects merely because a stop receipt is absent.
+
 `aw wake pause|resume` updates durable pause state. Pause suppresses terminal
 presentation before fetch; it does not stop the stream or itself mark anything
 read.
