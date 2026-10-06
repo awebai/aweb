@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Release preparation: server 1.27.11, CLI 1.36.24, AWID 0.5.21
+
+These entries cover changes since `server-v1.27.10`, `aw-v1.36.23`, and
+`awid-service-v0.5.20` / `awid-v0.5.20`, respectively.
+
+- **Server 1.27.11:** conversation lookup persists overdue active conversations
+  as expired before rejecting continuation; conversation lists report effective
+  expiry even before that lookup. This fixes stale status after an expired-mail
+  refusal. No SQL schema or migration changes accompany this server release.
+- **CLI 1.36.24 — mail:** automatic threading is opportunistic. When several
+  threads match, prefer the newest exact sender/recipient pair; ambiguous
+  lookups can fall back to a fresh thread. An automatically selected thread
+  rejected with the exact expired-conversation response retries once without
+  that thread. Explicit conversation IDs, other authorization failures and
+  ambiguous transport failures do not gain that retry.
+- **CLI 1.36.24 — wake:** terminal input now refuses an explicit `blocked`
+  harness state, preventing wake text from answering a modal. Add opt-in
+  `aw wake deregister --require-managed-stop --expect-registration` and the live
+  accepted-receiver export in `aw wake status`. Strict completion requires the
+  supporting owning daemon, captured worker join and owned process-group
+  absence; no file fallback certifies it. Accepted input/command completion
+  remains uncertified. Ordinary deregistration stays compatible; installing
+  the CLI does not upgrade an existing daemon or certify its previous workers.
+- **CLI 1.36.24 — team setup:** `aw id team create` without `--namespace` now
+  creates a hosted sibling using the selected team certificate instead of
+  failing for a missing namespace. Explicit `--namespace` retains the
+  customer-controlled path; hosted authority remains server-decided. Invite
+  acceptance adds bounded `--token-stdin` input (65,536 bytes), avoiding token
+  exposure in command arguments. Hosted invite traces redact prefixed tokens.
+- **CLI 1.36.24 — identity and diagnostics:** E2E key publication stays on the
+  selected identity home and preserves its own certificate precedence; holder
+  lock commands accept external identity homes. Non-JSON HTTP failures and
+  hosted bootstrap failures use bounded diagnostics with response identifiers
+  rather than dumping response bodies. Setup documentation joins Beads
+  recipients before initialization and documents global-identity recovery.
+- **AWID service/package 0.5.21:** configured trusted-service tokens bypass
+  registry read rate limits consistently, with aggregated exemption diagnostics.
+  Ordinary public limits and mutation authorization remain unchanged. No SQL
+  schema or migration changes accompany either AWID release. The server
+  publisher requires the exact AWID manifest version, `0.5.21`, to be public on
+  PyPI before publishing server `1.27.11`; CLI versioning remains tag-driven.
+
 ### Migration compatibility
 
 - The immutable published `011_chat_message_reads.sql` migration can now run on
