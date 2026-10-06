@@ -59,6 +59,10 @@ clarification. The team is aweb team `aweb:juan.aweb.ai`; the coordinator seat
 6. Capture non-obvious findings in `./notes/` for harvest. Accepted knowledge
    changes only through the knowledge capability's review path.
 
+For incident access and escalation, follow
+[Diagnostic access before escalation](../../skills/aweb-coordination/SKILL.md#diagnostic-access-before-escalation)
+in the shared coordination skill before declaring service evidence unavailable.
+
 ## How you operate here
 
 - Your session starts in your instance home. Repository work, git and commits

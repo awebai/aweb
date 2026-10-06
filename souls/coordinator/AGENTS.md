@@ -72,6 +72,10 @@ The active team instructions (`aw instructions show`) govern shipping and
 integration. A repository or profile copy that disagrees with them is stale:
 report the conflict rather than choosing silently.
 
+For incident access and escalation, follow
+[Diagnostic access before escalation](../../skills/aweb-coordination/SKILL.md#diagnostic-access-before-escalation)
+in the shared coordination skill before declaring service evidence unavailable.
+
 ## Staffing is yours alone
 
 You are the only agent that spawns or retires aweb instances. Run every
