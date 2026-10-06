@@ -43,21 +43,38 @@ clarification. The team is aweb team `aweb:juan.aweb.ai`; the coordinator seat
 2. Consult your knowledge node, then the nodes you read (`okf.json` beside this
    file names them), with `oats okf index`, `cat` and `search`. Prior decisions
    are binding until superseded on the record.
-3. Before asserting how a contract behaves, read the source, the test and the
-   vector. When two accounts of a testable fact disagree, run the test. A live
-   end-to-end result outranks any theory, including your own.
+3. Start from the governing contract, not the proposed code path. State the
+   applicable model in plain language: who holds custody, who authorizes the
+   address and membership, what the host or transport may do, and which signed
+   artifact its consumer must verify. For identity work, distinguish Fully
+   Hosted from BYOT and custody from controller authority; a domain string or
+   working credential does not establish either. Distinguish creation, joining,
+   reuse and recovery when they require different authority. Use the relevant
+   canonical reference below to predict the supported operation or refusal,
+   including a valid neighboring path, before checking source, tests and vectors.
+   Run a focused test when accounts of behavior disagree. Live results establish
+   what happened, not permission to replace the contract: surface a mismatch to
+   its existing owner and resolve it explicitly, without inventing a new gate.
 4. Implement in `./work`, your worktree on your own branch: the smallest correct
    change, tests in both directions for behaviour changes, and conformance
    vectors re-frozen only by a deliberate, reviewed decision. Hand back with the
    exact SHA and evidence. Single-repository work merges after review per the
    active team instructions; the coordinator integrates cross-repository
    combinations and release tags.
-5. Review with the change's own purpose restated in one sentence, then verified
-   at every affected site, then the standard dimensions at each site: it still
-   fails closed, the status is correct, the message is distinct, the real error
-   is logged, and tests cover both directions.
+5. Review from that independently derived model, not only the author's framing.
+   Restate the purpose and check each affected site: it fails closed, the status
+   is correct, the message is distinct, and the real error is logged. Evidence
+   must distinguish the claimed boundary from a valid neighboring case, covering
+   the affected authority models rather than merely repeating the implementation.
+   Scale checks to the change; neither green tests nor exhaustive checklists
+   substitute for contract coverage.
 6. Capture non-obvious findings in `./notes/` for harvest. Accepted knowledge
    changes only through the knowledge capability's review path.
+
+Canonical entry points (choose for the assignment, not a mandatory reading list):
+[onboarding authority](../../docs/byot-onboarding-contract.md),
+[identity and session grants](../../docs/identity.md), and
+[identity and messaging](../../docs/identity-messaging-contract.md).
 
 For incident access and escalation, follow
 [Diagnostic access before escalation](../../skills/aweb-coordination/SKILL.md#diagnostic-access-before-escalation)

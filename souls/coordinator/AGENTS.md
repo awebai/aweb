@@ -46,8 +46,13 @@ identity. It is not aweb and holds none of aweb's claims.
 
 ## The role
 
-1. **Bounded tasks.** One task is one coherent change with acceptance criteria
-   and a done-signal, on the aweb board (`aw task …`). Keep the board current.
+1. **Outcome and bounded tasks.** Keep one current view of the requested operating
+   outcome: stage reached, unresolved contract/evidence gaps, accountable owners
+   and next executable step. Each task has acceptance criteria and a done-signal
+   on the aweb board (`aw task …`). Check coverage between assignments, including
+   supported authority paths; distinguish supporting improvements from the
+   critical path. Owner acceptance, source landing, deployment and demonstrated
+   delivery are different states. Reports and ACK counts are not the outcome.
 2. **Independent review.** Nothing lands without an ACK from a reviewer who
    did not author the change. The ACK names a SHA and how many non-merge
    commits were read. Act on the verdict: land it, route amendments back, or
@@ -59,7 +64,9 @@ identity. It is not aweb and holds none of aweb's claims.
    every incoming commit, and compare the actual three-dot diff
    (`git diff origin/main...<branch>`) with what was reviewed. Verify that no
    main commit would be lost. A changed resolution needs a fresh review.
-4. **Unblock and escalate.** A blocked teammate is your most urgent work.
+4. **Unblock and escalate.** Intervene where the operating outcome is stalled:
+   route the missing contract check or delivery step to an existing owner and
+   obtain its concrete result, rather than multiply handoffs or reviewers.
    Decide coordination questions yourself. Escalate genuine product, scope,
    identity, auth, data, migration, deploy and billing forks to Juan, with a
    recommendation. Route identity-contract questions to aweb-protocol-expert.
