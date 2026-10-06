@@ -34,7 +34,7 @@ OATS_TEST_ROOT ?= $(OATS_PINNED_ROOT)
 # Canonical docs mirrored onto the public AWID site. Sync, freshness checks, and
 # their negative controls all consume this one list so adding a mirror cannot
 # silently bypass the pre-merge gate.
-AWID_SITE_DOC_NAMES := identity-guide.md trust-model.md
+AWID_SITE_DOC_NAMES := identity-guide.md trust-model.md hosted-global-bootstrap.md
 AWID_SITE_DOC_SOURCE_DIR ?= docs
 AWID_SITE_DOC_MIRROR_DIR ?= awid/site/static
 AWID_SITE_DOC_MIRRORS := $(addprefix $(AWID_SITE_DOC_MIRROR_DIR)/,$(AWID_SITE_DOC_NAMES))

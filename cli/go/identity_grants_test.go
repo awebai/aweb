@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -88,10 +89,20 @@ func TestIdentityGrantNon404PreservesOriginalError(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = client.ListIdentityGrants(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "grant backend unavailable") {
-		t.Fatalf("error=%v, want original backend error", err)
+	var apiErr *awid.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusBadGateway || apiErr.Body != "grant backend unavailable" {
+		t.Fatalf("error=%v, want original typed HTTP rejection", err)
 	}
-	if strings.Contains(err.Error(), "requires aweb server") {
+	if code, ok := awid.HTTPStatusCode(err); !ok || code != http.StatusBadGateway {
+		t.Fatalf("HTTP status=%d, ok=%t, want preserved rejection status", code, ok)
+	}
+	if body, ok := awid.HTTPErrorBody(err); !ok || body != "grant backend unavailable" {
+		t.Fatalf("programmatic error body=%q, ok=%t", body, ok)
+	}
+	if strings.Contains(err.Error(), "grant backend unavailable") || !strings.Contains(err.Error(), "non-JSON error response (body omitted)") {
+		t.Fatalf("error display must be bounded without losing the typed rejection: %v", err)
+	}
+	if strings.Contains(err.Error(), "identity grants require aweb server") {
 		t.Fatalf("non-404 error was rewritten as a compatibility diagnostic: %v", err)
 	}
 }

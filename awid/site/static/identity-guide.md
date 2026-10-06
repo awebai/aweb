@@ -149,6 +149,14 @@ aw id address claim partner.example/alice
 Hosted addresses are claimed through hosted join/onboarding flows; the local
 command does not impersonate hosted namespace authority.
 
+## Create a global identity in an existing hosted team
+
+For a **new** global identity using an existing team's provisioning API key, see
+[hosted global bootstrap and recovery](hosted-global-bootstrap.md). That path uses
+`aw init --global --name NAME` in a fresh destination and validates the returned
+canonical team and address. It is distinct from reusing a retained global
+resident or adding membership to an existing identity below.
+
 ## Join an existing team
 
 Choose the path by who holds the team controller key.

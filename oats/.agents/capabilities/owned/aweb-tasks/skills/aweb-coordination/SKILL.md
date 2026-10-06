@@ -72,6 +72,33 @@ Whenever another agent might care, prefer aweb-visible state to private TODOs:
 
 Private notes go stale and strand context if another agent takes over. Reserve them for short-term scratch.
 
+## Diagnostic access before escalation
+
+When an incident needs service evidence, check the deployment-owned documentation
+for the selected provider/resource, available tools and configured credential
+stores before declaring access unavailable. A missing environment variable,
+executable or connector is only an observation about that surface. Do not scan
+unrelated identity stores or assume a teammate's custody is available.
+
+Separate discovery from authority: a configured credential does not authorize its
+use, mutation or broader access. Use the existing task/user authorization; when it
+covers the required diagnostic read, perform the smallest supported read using
+that selected authority instead of requesting another generic login or owner.
+If authority is missing, stop before loading credentials or calling the service
+and identify the exact operation whose authorization is missing.
+
+Keep credential input in private memory or the deployment's approved mechanism;
+do not print secrets or their private locations. Retain raw diagnostic evidence
+with operator-only access and hand off only sanitized cause/status/request-ID or
+other required public facts. Never copy raw logs into shared review artifacts.
+Distinguish capability/store discovery failure, missing authorization, failed
+authentication, denied resource access, missing resource and a successful read
+with no matching records. Report what the service actually establishes; ambiguous
+responses remain ambiguous. A successful empty query does not prove no effects.
+Escalate only the remaining precise blocker, with the selected resource and safe
+observations. Reuse a successful read's evidence; do not repeat it or expand scope
+merely to reconfirm access. Hosted repairs remain with their authorized owner.
+
 ## Sharing tasks
 
 A task is the durable record of a unit of work. Anyone in the team can see it; it doesn't depend on local notes.

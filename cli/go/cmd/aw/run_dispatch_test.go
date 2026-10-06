@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -1668,8 +1669,18 @@ func TestRunDispatcherDoesNotRepeatRejectedMalformedChatIDs(t *testing.T) {
 		"session-bad",
 		[]string{"not-a-uuid"},
 	)
-	if err == nil || !strings.Contains(err.Error(), "authoritative malformed uuid") {
-		t.Fatalf("error=%v, want authoritative server rejection", err)
+	var apiErr *awid.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusUnprocessableEntity || apiErr.Body != "authoritative malformed uuid" {
+		t.Fatalf("error=%v, want original typed HTTP rejection", err)
+	}
+	if code, ok := awid.HTTPStatusCode(err); !ok || code != http.StatusUnprocessableEntity {
+		t.Fatalf("HTTP status=%d, ok=%t, want preserved rejection status", code, ok)
+	}
+	if body, ok := awid.HTTPErrorBody(err); !ok || body != "authoritative malformed uuid" {
+		t.Fatalf("programmatic error body=%q, ok=%t", body, ok)
+	}
+	if strings.Contains(err.Error(), "authoritative malformed uuid") || !strings.Contains(err.Error(), "non-JSON error response (body omitted)") {
+		t.Fatalf("error display must be bounded without losing the typed rejection: %v", err)
 	}
 	if calls != 1 {
 		t.Fatalf("mark_read_calls=%d, want exactly one", calls)

@@ -2,10 +2,13 @@ package aweb
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/awebai/aw/awid"
 )
 
 func TestSessionLease404RequiresServer12628(t *testing.T) {
@@ -97,10 +100,20 @@ func TestSessionLeaseNon404PreservesOriginalError(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = client.SessionLeaseGet(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "lease backend unavailable") {
-		t.Fatalf("error=%v, want original backend error", err)
+	var apiErr *awid.APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable || apiErr.Body != "lease backend unavailable" {
+		t.Fatalf("error=%v, want original typed HTTP rejection", err)
 	}
-	if strings.Contains(err.Error(), "requires aweb server") {
+	if code, ok := awid.HTTPStatusCode(err); !ok || code != http.StatusServiceUnavailable {
+		t.Fatalf("HTTP status=%d, ok=%t, want preserved rejection status", code, ok)
+	}
+	if body, ok := awid.HTTPErrorBody(err); !ok || body != "lease backend unavailable" {
+		t.Fatalf("programmatic error body=%q, ok=%t", body, ok)
+	}
+	if strings.Contains(err.Error(), "lease backend unavailable") || !strings.Contains(err.Error(), "non-JSON error response (body omitted)") {
+		t.Fatalf("error display must be bounded without losing the typed rejection: %v", err)
+	}
+	if strings.Contains(err.Error(), "session leases require aweb server") {
 		t.Fatalf("non-404 error was rewritten as a compatibility diagnostic: %v", err)
 	}
 }

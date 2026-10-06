@@ -20,8 +20,18 @@ import (
 )
 
 func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
-	for _, refusal := range []string{"paused", "shell", "blocked", "prelaunch-not-launched", "prelaunch-stopped"} {
-		t.Run(refusal, func(t *testing.T) {
+	for _, tc := range []struct {
+		refusal              string
+		initialSnapshotDelay time.Duration
+	}{
+		{refusal: "paused"}, {refusal: "shell"}, {refusal: "blocked"},
+		{refusal: "prelaunch-not-launched"}, {refusal: "prelaunch-stopped"},
+		// Registration age is not snapshot age: slow startup must not spend
+		// the delivery budget before the refusal backoff has elapsed.
+		{refusal: "prelaunch-not-launched-delayed", initialSnapshotDelay: 3 * time.Second},
+	} {
+		t.Run(tc.refusal, func(t *testing.T) {
+			refusal := strings.TrimSuffix(tc.refusal, "-delayed")
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			store, err := NewStore(filepath.Join(root, "state"))
 			if err != nil {
@@ -71,18 +81,49 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			}
 			var mu sync.Mutex
 			var opens []time.Time
+			thirdSnapshot := make(chan time.Time, 1)
 			openCount := func() int { mu.Lock(); defer mu.Unlock(); return len(opens) }
 			registeredAt := time.Now()
 			broker, cancel := liveBroker(t, Config{Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(string, string) (run.EventStreamOpener, error) {
-				return func(context.Context, time.Time) (awid.EventSource, error) {
+				return func(ctx context.Context, _ time.Time) (awid.EventSource, error) {
 					mu.Lock()
-					opens = append(opens, time.Now())
+					openedAt := time.Now()
+					opens = append(opens, openedAt)
+					count := len(opens)
 					mu.Unlock()
+					if count == 3 {
+						thirdSnapshot <- openedAt
+					}
+					if count == 1 && !sleepCtx(ctx, tc.initialSnapshotDelay) {
+						return nil, ctx.Err()
+					}
 					return &oneEventSource{event: awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: "mail-1", ConversationID: "conv-1"}}, nil
 				}, nil
 			}})
 			defer cancel()
-			waitForInstance(t, broker, home, func(st InstanceStatus) bool { return st.ChannelCore.TraceStage == "lane_job_failed" })
+			// The retained trace name and HTTP fetch count do not identify
+			// completion of a particular delivery cycle. Wait for the broker
+			// to consume that cycle's exhausted-retry request and arm its timer.
+			waitForBackoff := func(next time.Duration) {
+				t.Helper()
+				waitForCond(t, "exhausted refusal scheduled its snapshot", func() bool {
+					broker.mu.Lock()
+					defer broker.mu.Unlock()
+					if len(broker.streams) != 1 {
+						return false
+					}
+					for _, stream := range broker.streams {
+						stream.mu.Lock()
+						scheduled := stream.snapshotTimer != nil && stream.snapshotBackoff == next
+						stream.mu.Unlock()
+						if !scheduled {
+							return false
+						}
+					}
+					return true
+				})
+			}
+			waitForBackoff(2 * snapshotBackoffMin)
 			assertFileNotContains(t, inputPath, "snapshot recovery mail")
 			{
 				deadline := time.Now().Add(8 * time.Second)
@@ -98,8 +139,10 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				if gap < 5*time.Second {
 					t.Fatalf("persistent refusal reopened too fast: %s", gap)
 				}
-				waitForCond(t, "second snapshot exhausted four fetches", func() bool { return fetches.Load() >= 8 })
-				waitForInstance(t, broker, home, func(st InstanceStatus) bool { return st.ChannelCore.TraceStage == "lane_job_failed" })
+				waitForBackoff(4 * snapshotBackoffMin)
+				if got := fetches.Load(); got != 8 {
+					t.Fatalf("fetches=%d, want two exhausted four-attempt cycles", got)
+				}
 				assertFileNotContains(t, inputPath, "snapshot recovery mail")
 			}
 			if acks.Load() != 0 {
@@ -141,11 +184,23 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				}
 			}
 			start := time.Now()
-			deadline := start.Add(8 * time.Second)
-			if refusal == "shell" || refusal == "blocked" {
-				// The second exhausted refusal now waits a10s backoff window.
-				deadline = start.Add(12 * time.Second)
+			if refusal != "paused" {
+				// Becoming live does not reset refusal backoff. Observe the
+				// automatic third snapshot before starting the input budget;
+				// no registration, new event or manual snapshot is supplied.
+				select {
+				case openedAt := <-thirdSnapshot:
+					mu.Lock()
+					gap := openedAt.Sub(opens[1])
+					mu.Unlock()
+					if gap < 2*snapshotBackoffMin {
+						t.Fatalf("second refusal reopened too fast: %s", gap)
+					}
+				case <-time.After(2*snapshotBackoffMin + 5*time.Second):
+					t.Fatal("scheduled third snapshot did not open")
+				}
 			}
+			deadline := time.Now().Add(8 * time.Second)
 			for time.Now().Before(deadline) {
 				data, _ := os.ReadFile(inputPath)
 				if len(data) > 0 {

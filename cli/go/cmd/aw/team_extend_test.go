@@ -567,6 +567,8 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			resetTeamHumanCreateGlobals(t)
 			const apiKey = "aw_sk_partial_roster"
+			const requestID = "12345678-1234-1234-1234-123456789abc"
+			const wantFailure = "category=hosted_http_failure status=503 error_code=unknown request_id=" + requestID
 			const teamID = "active:workspace.aweb.ai"
 			t.Setenv(initAPIKeyEnvVar, apiKey)
 			t.Setenv("AW_CONFIG_PATH", "")
@@ -594,6 +596,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 					alias, _ := body["alias"].(string)
 					attempted = append(attempted, alias)
 					if alias == "second" {
+						w.Header().Set("X-Request-ID", requestID)
 						http.Error(w, "injected middle-member failure", http.StatusServiceUnavailable)
 						return
 					}
@@ -625,7 +628,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 			output := captureIDCommandStdout(t, func() {
 				runErr = runTeamHumanExtend(nil, []string{"first", "second", "third"})
 			})
-			if runErr == nil || !strings.Contains(runErr.Error(), "injected middle-member failure") {
+			if runErr == nil || !strings.Contains(runErr.Error(), wantFailure) || strings.Contains(runErr.Error(), "injected middle-member failure") {
 				t.Fatalf("error=%v", runErr)
 			}
 			if got := strings.Join(attempted, ","); got != "first,second" {
@@ -662,7 +665,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 						t.Fatalf("agent[%d]=%+v want outcome %q", i, report.Agents[i], want)
 					}
 				}
-				if !strings.Contains(report.Agents[1].Reason, "injected middle-member failure") || report.Agents[0].Reason != "" || report.Agents[2].Reason != "" {
+				if !strings.Contains(report.Agents[1].Reason, wantFailure) || strings.Contains(report.Agents[1].Reason, "injected middle-member failure") || report.Agents[0].Reason != "" || report.Agents[2].Reason != "" {
 					t.Fatalf("failure reasons=%q/%q/%q", report.Agents[0].Reason, report.Agents[1].Reason, report.Agents[2].Reason)
 				}
 				return
@@ -676,7 +679,7 @@ func TestTeamExtendMiddleFailureReportsEveryRosterOutcome(t *testing.T) {
 			if positions[0] < 0 || positions[1] <= positions[0] || positions[2] <= positions[1] {
 				t.Fatalf("human report does not list all outcomes in input order:\n%s", output)
 			}
-			if !strings.Contains(output, "injected middle-member failure") {
+			if !strings.Contains(output, wantFailure) || strings.Contains(output, "injected middle-member failure") {
 				t.Fatalf("human report missing failure reason:\n%s", output)
 			}
 		})
@@ -746,7 +749,7 @@ func TestTeamExtendFailedBootstrapAndWorktreeSetupRemoveHomeAndAllowSameNameRetr
 	initAwebURL = server.URL
 
 	firstErr := runTeamHumanExtend(nil, []string{"retry"})
-	if firstErr == nil || !strings.Contains(firstErr.Error(), "injected bootstrap failure") {
+	if firstErr == nil || !strings.Contains(firstErr.Error(), "workspace init rejected the API key (401)") || !strings.Contains(firstErr.Error(), "category=hosted_http_failure status=401") || strings.Contains(firstErr.Error(), "injected bootstrap failure") {
 		t.Fatalf("first error=%v", firstErr)
 	}
 	agentHome := filepath.Join(root, "agents", "instances", "retry")
