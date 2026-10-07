@@ -1245,14 +1245,20 @@ Run this in a clean target directory. It refuses to overwrite an existing
 workspace to the aweb service carried by the invite. Use --no-connect only when
 you intentionally want identity state without a workspace binding.
 
+Use --harness claude|codex|pi to install team docs and prepare supported delivery.
+This does not launch a session or verify message delivery. After a setup failure,
+retry here with --setup-only --harness <harness>, without the invite token.
+
 Flags:
 - `--address string Advanced: existing owned address to place in the global member certificate`
 - `--global Join by reusing the existing global identity in this workspace`
+- `--harness string Prepare docs and delivery for claude, codex, or pi (omitted: no harness changes)`
 - `-h, --help help for join`
 - `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`
 - `--no-address For --global, join with did:aw continuity but no member address`
 - `--no-connect Install identity and membership without connecting this workspace`
+- `--setup-only Retry harness setup for the connected identity without accepting an invite`
 
 ## `team leave`
 
@@ -1278,11 +1284,12 @@ Flags:
 
 Check hosted spawn authority for the selected identity and team.
 
+Pass --team-id as the canonical <name>:<domain> team ID. If omitted, the selected team's canonical ID is used.
 This is a read-only proof against /api/v1/spawn/authority. It does not use or prove CLI human auth status.
 
 Flags:
 - `-h, --help help for spawn-authority`
-- `--team-id string Canonical team id to check (defaults to selected team)`
+- `--team-id string Canonical team ID (<name>:<domain>) to check (defaults to selected team)`
 
 ## `team switch`
 

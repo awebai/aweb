@@ -39,6 +39,10 @@ type channelPluginOptions struct {
 }
 
 func EnsureClaudeChannelPlugin(opts channelPluginOptions) *claudeHooksResult {
+	return ensureClaudeChannelPlugin(opts, runClaudeChannelPluginCommand)
+}
+
+func ensureClaudeChannelPlugin(opts channelPluginOptions, runCommand func(...string) error) *claudeHooksResult {
 	result := &claudeHooksResult{FilePath: "Claude Code aweb-channel plugin"}
 	if _, err := exec.LookPath("claude"); err != nil {
 		if opts.RequireClaude {
@@ -48,11 +52,11 @@ func EnsureClaudeChannelPlugin(opts channelPluginOptions) *claudeHooksResult {
 		}
 		return result
 	}
-	if err := runClaudeChannelPluginCommand("plugin", "marketplace", "add", claudeChannelMarketplace); err != nil {
+	if err := runCommand("plugin", "marketplace", "add", claudeChannelMarketplace); err != nil {
 		result.Error = fmt.Errorf("claude plugin marketplace add %s: %w", claudeChannelMarketplace, err)
 		return result
 	}
-	if err := runClaudeChannelPluginCommand("plugin", "install", claudeChannelPlugin); err != nil {
+	if err := runCommand("plugin", "install", claudeChannelPlugin); err != nil {
 		result.Error = fmt.Errorf("claude plugin install %s: %w", claudeChannelPlugin, err)
 		return result
 	}

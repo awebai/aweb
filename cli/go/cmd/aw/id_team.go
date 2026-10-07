@@ -42,13 +42,14 @@ type teamInviteOutput struct {
 }
 
 type teamAcceptInviteOutput struct {
-	Status         string `json:"status"`
-	TeamID         string `json:"team_id"`
-	Alias          string `json:"alias"`
-	CertPath       string `json:"cert_path"`
-	Connected      *bool  `json:"connected,omitempty"`
-	AwebURL        string `json:"aweb_url,omitempty"`
-	ConnectCommand string `json:"connect_command,omitempty"`
+	HarnessSetup   *joinHarnessResult `json:"harness_setup,omitempty"`
+	Status         string             `json:"status"`
+	TeamID         string             `json:"team_id"`
+	Alias          string             `json:"alias"`
+	CertPath       string             `json:"cert_path"`
+	Connected      *bool              `json:"connected,omitempty"`
+	AwebURL        string             `json:"aweb_url,omitempty"`
+	ConnectCommand string             `json:"connect_command,omitempty"`
 }
 
 type teamAddMemberOutput struct {
@@ -998,6 +999,12 @@ func runTeamAcceptInvite(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamHumanJoin(cmd *cobra.Command, args []string) error {
+	if err := validateTeamJoinArgs(cmd, args); err != nil {
+		return err
+	}
+	if teamHumanJoinSetupOnly {
+		return runJoinHarnessSetupOnly(cmd)
+	}
 	return runTeamAcceptInviteWithConnect(cmd, args, true)
 }
 
@@ -1034,6 +1041,19 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if err != nil {
 		return err
 	}
+	connectionFailure := func(cause error) error {
+		if connectWorkspace && teamHumanJoinHarness != "" {
+			connected := false
+			accepted.Output.Connected = &connected
+			accepted.Output.HarnessSetup = &joinHarnessResult{
+				Harness: teamHumanJoinHarness, Status: "not_started",
+				RetryCommand: joinHarnessRetryCommand(home, teamHumanJoinHarness),
+			}
+			printOutput(*accepted.Output, formatTeamAcceptInvite)
+			return fmt.Errorf("%w\nAfter connecting, run `%s` here without reusing the invite", cause, accepted.Output.HarnessSetup.RetryCommand)
+		}
+		return cause
+	}
 	externalHostedLocalAccept := false
 	if home.External() && acceptScope == awid.IdentityModeLocal {
 		if domain, _, parseErr := awid.ParseTeamID(accepted.Output.TeamID); parseErr == nil && isAwebHostedNamespace(domain) {
@@ -1056,11 +1076,11 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 			return nil
 		}
 		if connectURL == "" {
-			return usageError("team membership was installed, but this legacy invite does not identify its aweb service; run `%s` after choosing the service", workspaceConnectCommandForIdentityHome("<url>", externalIdentityHomeRoot(home)))
+			return connectionFailure(usageError("team membership was installed, but this legacy invite does not identify its aweb service; run `%s` after choosing the service", workspaceConnectCommandForIdentityHome("<url>", externalIdentityHomeRoot(home))))
 		}
 		connectURL, err = validateInviteAwebURL(connectURL)
 		if err != nil {
-			return fmt.Errorf("team membership was installed, but its aweb service URL is invalid: %w", err)
+			return connectionFailure(fmt.Errorf("team membership was installed, but its aweb service URL is invalid: %w", err))
 		}
 		accepted.Output.AwebURL = connectURL
 		accepted.Output.ConnectCommand = workspaceConnectCommandForIdentityHome(connectURL, externalIdentityHomeRoot(home))
@@ -1070,7 +1090,7 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 		}
 		connected, connectErr := initCertificateConnectWithOptions(workingDir, connectURL, connectOpts)
 		if connectErr != nil {
-			return fmt.Errorf("team membership was installed, but workspace connection failed: %w\nRun `%s` to retry without reusing the invite", connectErr, accepted.Output.ConnectCommand)
+			return connectionFailure(fmt.Errorf("team membership was installed, but workspace connection failed: %w\nRun `%s` to retry without reusing the invite", connectErr, accepted.Output.ConnectCommand))
 		}
 		connectionComplete := true
 		accepted.Output.Connected = &connectionComplete
@@ -1078,6 +1098,15 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 		if strings.TrimSpace(connected.Alias) != "" {
 			accepted.Output.Alias = strings.TrimSpace(connected.Alias)
 		}
+	}
+	if connectWorkspace && teamHumanJoinHarness != "" {
+		setup, setupErr := setupJoinHarness(workingDir, home, teamHumanJoinHarness)
+		accepted.Output.HarnessSetup = setup
+		printOutput(*accepted.Output, formatTeamAcceptInvite)
+		if setupErr != nil {
+			return fmt.Errorf("team membership and workspace connection completed, but harness setup failed: %w\nRun `%s` here to retry setup without reusing the invite", setupErr, setup.RetryCommand)
+		}
+		return nil
 	}
 	printOutput(*accepted.Output, formatTeamAcceptInvite)
 	return nil

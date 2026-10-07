@@ -42,6 +42,44 @@ alice@aweb.team/developer=claude-code
 It is not part of the profile and can differ between two agents using the same
 profile.
 
+## Prepare a harness when joining
+
+In a clean target directory, choose a harness explicitly:
+
+```bash
+aw team join <invite-token> --harness claude
+aw team join <invite-token> --harness codex
+aw team join <invite-token> --harness pi
+```
+
+Each command admits the member and connects the workspace before installing team
+instructions in that directory. Claude installs the native aweb channel plugin;
+Pi installs its aweb extension. Codex gets team instructions and the
+`aw run codex` launch command. None of these commands launches a session or
+verifies live message delivery. Omitting `--harness` preserves the existing join
+behavior and makes no harness changes. `--harness` cannot accompany `--no-connect`.
+
+If setup fails after admission, the command exits nonzero and reports that
+membership and connection completed. Do not reuse the invite. Correct the
+reported setup error, then retry in the same directory:
+
+```bash
+aw team join --setup-only --harness claude
+```
+
+Use the originally selected harness. This continuation needs an existing
+connected workspace and never admits a member or reconnects it. If connection
+failed before setup, follow the reported `aw workspace connect` command first,
+then the setup-only command. JSON reports `harness_setup` separately from the
+membership result: `not_started`, `incomplete`, or `prepared`. Prepared means
+local setup completed; it is not a delivery readiness result. Installer
+diagnostics go to stderr so stdout remains one JSON result.
+
+The existing external-identity-home restriction on `aw team join` also applies
+to `--setup-only`: neither `--identity-home` nor `AWEB_IDENTITY_HOME` is supported
+on this command. It refuses rather than using a different identity in the current
+directory. Orchestrators must not print an external-home join as a supported path.
+
 ## Claude Code channel launch
 
 Install the channel plugin once:

@@ -50,6 +50,9 @@ func formatTeamAcceptInvite(v any) string {
 	} else if out.Connected != nil {
 		sb.WriteString(fmt.Sprintf("Not connected. This legacy invite has no service URL; run `%s` after choosing the service.\n", workspaceConnectCommand("<url>")))
 	}
+	if out.HarnessSetup != nil {
+		sb.WriteString(formatJoinHarnessSetup(*out.HarnessSetup))
+	}
 	return sb.String()
 }
 

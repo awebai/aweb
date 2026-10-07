@@ -61,6 +61,8 @@ var (
 	teamHumanRemoveAbortOperation  string
 	teamHumanRemoveListPending     bool
 	teamHumanJoinNoConnect         bool
+	teamHumanJoinHarness           string
+	teamHumanJoinSetupOnly         bool
 )
 
 var teamHumanCmd = &cobra.Command{
@@ -137,14 +139,17 @@ var teamHumanInviteCmd = &cobra.Command{
 }
 
 var teamHumanJoinCmd = &cobra.Command{
-	Use:   "join <invite-token>",
+	Use:   "join [invite-token]",
 	Short: "Join a team from an invite token",
 	Long: "Join a team from an invite token.\n\n" +
 		"Run this in a clean target directory. It refuses to overwrite an existing\n" +
 		".aw identity/key. Join installs the identity and membership, then connects this\n" +
 		"workspace to the aweb service carried by the invite. Use --no-connect only when\n" +
-		"you intentionally want identity state without a workspace binding.",
-	Args: cobra.ExactArgs(1),
+		"you intentionally want identity state without a workspace binding.\n\n" +
+		"Use --harness claude|codex|pi to install team docs and prepare supported delivery.\n" +
+		"This does not launch a session or verify message delivery. After a setup failure,\n" +
+		"retry here with --setup-only --harness <harness>, without the invite token.",
+	Args: validateTeamJoinArgs,
 	RunE: runTeamHumanJoin,
 }
 
@@ -300,6 +305,8 @@ func init() {
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptGlobal, "global", false, "Join by reusing the existing global identity in this workspace")
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptNoAddress, "no-address", false, "For --global, join with did:aw continuity but no member address")
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Advanced: existing owned address to place in the global member certificate")
+	teamHumanJoinCmd.Flags().StringVar(&teamHumanJoinHarness, "harness", "", "Prepare docs and delivery for claude, codex, or pi (omitted: no harness changes)")
+	teamHumanJoinCmd.Flags().BoolVar(&teamHumanJoinSetupOnly, "setup-only", false, "Retry harness setup for the connected identity without accepting an invite")
 	teamHumanJoinCmd.Flags().BoolVar(&teamHumanJoinNoConnect, "no-connect", false, "Install identity and membership without connecting this workspace")
 	teamHumanJoinCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamHumanJoinCmd)
