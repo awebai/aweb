@@ -48,11 +48,30 @@ interprets** (distinct from `app.version`, the app's own release). A consumer
 MUST reject a manifest whose `manifest_version` it does not support rather than
 best-effort parse it. v1 consumers support `manifest_version: 1`.
 
-The strict shipped CLI model accepts only top-level `manifest_version`, `app`,
-`tools`, and optional `event_emitters`. It does **not** accept an `events` array.
-The experimental server install API separately accepts event declarations; see
-[`app-events.md`](app-events.md). Do not put `events` into a v1 CLI manifest and
-expect strict decoding to succeed.
+The v1 manifest also accepts optional `events` declaration metadata. When
+present it must be an array of at most 64 objects. Each object accepts only
+`type`, `default_delivery_intent`, and `description`; unknown fields remain
+errors at every typed level of the manifest.
+
+`type` is a required JSON string. After trimming surrounding whitespace, an
+optional `<app.id>/` prefix is removed for validation; the remaining local type
+must match `^[a-z0-9][a-z0-9._-]{0,127}$`. Other namespace prefixes and nested
+slashes are rejected. `default_delivery_intent`, when present, is exactly one
+of `ambient`, `wake`, or `steer`; absence means `ambient`. Null, empty strings,
+and non-string values do not establish a default. Optional `description` must
+be a string with at most 4096 Unicode characters after trimming.
+
+The CLI parses and retains declarations with the installed manifest and its
+provenance. They do not trigger event installation, subscriptions, delivery,
+or additional signing authority. CLI versions through 1.36.24 incorrectly
+rejected the entire `events` field, including Folio's deployed manifest.
+
+Shared cases live in `cli/go/internal/appmanifest/testdata/events-v1.json`.
+Go enforces the strict contract. The pinned Cloud 0.8.28 gateway excerpt used
+by `scripts/check-app-event-vectors.py` agrees on well-formed/deployed cases,
+but its null/false/empty coercions, numeric type conversion, intent trimming,
+and missing count limit are recorded as known divergences, not valid v1
+exceptions. Gateway tightening is a separate change.
 
 ## Manifest discovery
 
