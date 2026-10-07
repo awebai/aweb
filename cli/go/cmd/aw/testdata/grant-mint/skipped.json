@@ -1,0 +1,24 @@
+{
+  "grant_id": "00000000-0000-4000-8000-000000000001",
+  "expires_at": "2030-01-01T01:00:00Z",
+  "team_id": "demo:example.com",
+  "alias": "worker",
+  "out": "/tmp/synthetic-grant",
+  "custody_socket_path": "/tmp/synthetic-custody.sock",
+  "apps": [
+    {
+      "app_id": "shelf",
+      "origin": "https://shelf.example",
+      "manifest_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "tools": [
+        "read"
+      ]
+    }
+  ],
+  "skipped_apps": [
+    {
+      "app_id": "notes",
+      "code": "app_origin_mismatch"
+    }
+  ]
+}

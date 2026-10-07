@@ -191,10 +191,30 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 					t.Fatal(err)
 				}
 				invoke(worker, "", "folio", "show", "--slug", "fixture")
-				invoke(home, "app_origin_mismatch", "id", "grant", "mint", "--scope", "mail.read", "--out", filepath.Join(instance, "tampered"))
-				if mintRequests.Load() != before {
-					t.Fatal("tampered catalog origin reached mint server")
+				for _, tc := range []struct {
+					code  string
+					bytes []byte
+				}{
+					{"app_origin_mismatch", changed},
+					{"app_manifest_invalid", []byte(`{"invalid":true}`)},
+					{"app_manifest_mismatch", bytes.Replace(raw, []byte(`"id":"folio"`), []byte(`"id":"otherapp"`), 1)},
+					{"app_missing", nil},
+				} {
+					// Stored JSON is compact because --dev-origin re-encodes it.
+					if tc.bytes == nil {
+						if err := os.Remove(path); err != nil {
+							t.Fatal(err)
+						}
+					} else if err := os.WriteFile(path, tc.bytes, 0600); err != nil {
+						t.Fatal(err)
+					}
+					narrowed, receipt := mint()
+					if len(receipt.Apps) != 1 || receipt.Apps[0].AppID != "library" || len(receipt.SkippedApps) != 1 || receipt.SkippedApps[0].AppID != "folio" || receipt.SkippedApps[0].Code != tc.code {
+						t.Fatalf("catalog mint skip %s: %+v", tc.code, receipt)
+					}
+					invoke(narrowed, "", "library", "shelf")
 				}
+
 				if _, err := os.Stat(filepath.Join(instance, ".aw")); !os.IsNotExist(err) {
 					t.Fatal("instance fallback")
 				}
