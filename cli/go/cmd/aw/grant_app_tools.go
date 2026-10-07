@@ -19,8 +19,8 @@ import (
 
 // Installed-app tool authority for session grants.
 //
-// A grant can call an installed app tool only if the resident named that exact
-// app:verb at mint. The tool definition is snapshotted into the resident home
+// A grant can call an installed app tool only from the resident-approved catalog
+// or the legacy explicit app:verb selection at mint. The tool definition is snapshotted into the resident home
 // at mint and custody signs only from that snapshot, so an edited or updated
 // manifest in the worker's plugin directory can never widen or redirect a
 // grant. The snapshot is stable authority, not a sandbox: it does not defend
@@ -60,7 +60,7 @@ func parseGrantAppToolSpecs(values []string) (map[string][]string, error) {
 		for _, spec := range strings.Split(value, ",") {
 			spec = strings.TrimSpace(spec)
 			if spec == "" {
-				continue
+				return nil, usageError("--app-tool requires a nonempty app:verb selection")
 			}
 			app, verb, ok := strings.Cut(spec, ":")
 			app, verb = strings.TrimSpace(app), strings.TrimSpace(verb)
@@ -84,6 +84,10 @@ func parseGrantAppToolSpecs(values []string) (map[string][]string, error) {
 // at mint. It fails closed on anything ambiguous: duplicate tool names, unsigned
 // tools, unknown tools, or an app origin that is a coordination/registry origin.
 func buildGrantAppSnapshots(specs map[string][]string, deniedOrigins []string) (map[string]grantAppSnapshot, error) {
+	return buildGrantAppSnapshotsWithApprovals(specs, deniedOrigins, nil)
+}
+
+func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigins []string, approvals map[string]string) (map[string]grantAppSnapshot, error) {
 	if len(specs) == 0 {
 		return nil, nil
 	}
@@ -112,6 +116,9 @@ func buildGrantAppSnapshots(specs map[string][]string, deniedOrigins []string) (
 		if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
 			return nil, err
 		}
+		if manifest.App.ID != name {
+			return nil, usageError("app_manifest_mismatch: installed app id differs from %s", name)
+		}
 		counts := map[string]int{}
 		for _, tool := range manifest.Tools {
 			counts[strings.TrimSpace(tool.Name)]++
@@ -119,6 +126,16 @@ func buildGrantAppSnapshots(specs map[string][]string, deniedOrigins []string) (
 		origin, err := canonicalAppOrigin(manifest.App.Origin)
 		if err != nil {
 			return nil, fmt.Errorf("app %s origin: %w", name, err)
+		}
+		if approvals != nil {
+			if approved, ok := approvals[name]; !ok || approved != origin {
+				return nil, usageError("app_origin_mismatch: %s differs from resident approval; reinstall to approve", name)
+			}
+			for _, tool := range manifest.Tools {
+				if strings.TrimSpace(tool.Auth) != "none" {
+					verbs = append(verbs, tool.Name)
+				}
+			}
 		}
 		if denied[origin] {
 			return nil, usageError("app %s origin %s is a coordination or registry origin; grants cannot sign app requests to it", name, origin)

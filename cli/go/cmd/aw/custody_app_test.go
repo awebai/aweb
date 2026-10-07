@@ -147,6 +147,10 @@ type appCustodyFixture struct {
 }
 
 func setupAppCustodyFixture(t *testing.T, verbs []string) *appCustodyFixture {
+	return setupAppCustodyFixtureForTeam(t, verbs, "backend:acme.com", "global")
+}
+
+func setupAppCustodyFixtureForTeam(t *testing.T, verbs []string, teamID, identityScope string) *appCustodyFixture {
 	t.Helper()
 	resetGrantCommandGlobals(t)
 	tmp := t.TempDir()
@@ -158,12 +162,11 @@ func setupAppCustodyFixture(t *testing.T, verbs []string) *appCustodyFixture {
 	teamPub, teamKey, _ := ed25519.GenerateKey(nil)
 	_, residentKey, _ := ed25519.GenerateKey(nil)
 	residentDID := awid.ComputeDIDKey(residentKey.Public().(ed25519.PublicKey))
-	teamID := "backend:acme.com"
 	app := newAppVerifyingServer(t, teamPub, teamID)
 	writeInstalledAppManifest(t, awHome, appTestManifest(app.server.URL, "/v1/things/{thing_id}"))
 
 	residentHome := filepath.Join(tmp, "resident", ".aw")
-	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: residentDID, MemberDIDAW: "did:aw:alice", MemberAddress: "acme.com/alice", Alias: "alice", IdentityScope: "global"})
+	cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{Team: teamID, MemberDIDKey: residentDID, MemberDIDAW: "did:aw:alice", MemberAddress: "acme.com/alice", Alias: "alice", IdentityScope: identityScope})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +176,7 @@ func setupAppCustodyFixture(t *testing.T, verbs []string) *appCustodyFixture {
 
 	grantHome := filepath.Join(tmp, ".aw")
 	_, grant := writeGrantHomeForTest(t, grantHome, "http://127.0.0.1:1")
+	grant.TeamID = teamID
 	grant.GrantID = appTestGrantID
 	grant.Subject.DIDKey = residentDID
 	socketID, _ := awid.GenerateUUID4()

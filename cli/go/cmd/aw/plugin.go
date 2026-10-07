@@ -23,6 +23,7 @@ import (
 
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
+	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
 )
 
@@ -101,14 +102,16 @@ type pluginProvenance struct {
 }
 
 type pluginInstallOutput struct {
+	Approved   bool              `json:"approved,omitempty"`
 	Name       string            `json:"name"`
 	Path       string            `json:"path"`
 	Provenance *pluginProvenance `json:"provenance,omitempty"`
 }
 
 type pluginRemoveOutput struct {
-	Name string `json:"name"`
-	Path string `json:"path"`
+	ApprovalRemoved bool   `json:"approval_removed,omitempty"`
+	Name            string `json:"name"`
+	Path            string `json:"path"`
 }
 
 type reservedAppIDsOutput struct {
@@ -144,15 +147,23 @@ func runPluginReservedNames(cmd *cobra.Command, args []string) error {
 
 func runPluginInstall(cmd *cobra.Command, args []string) error {
 	source := strings.TrimSpace(args[0])
+	home, resident, err := pluginManagementHome()
+	if err != nil {
+		return err
+	}
+	if home.External() && !isManifestInstallSource(source) {
+		return usageError("executable_plugin_refused: attached homes may install only manifest apps")
+	}
 	dir, err := pluginDir()
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
-	}
 	if isManifestInstallSource(source) {
-		out, err := installOrUpdateManifestPlugin(source, dir, false, strings.TrimSpace(pluginInstallDevOrigin))
+		policy := manifestManagementPolicy{}
+		if resident {
+			policy.residentHome = home.Root
+		}
+		out, err := installManagedManifestPlugin(source, dir, false, strings.TrimSpace(pluginInstallDevOrigin), policy)
 		if err != nil {
 			return err
 		}
@@ -184,6 +195,9 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
 	digest, err := installPluginSource(source, dest)
 	if err != nil {
 		return err
@@ -207,6 +221,10 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 }
 
 func runPluginRemove(cmd *cobra.Command, args []string) error {
+	home, resident, err := pluginManagementHome()
+	if err != nil {
+		return err
+	}
 	name, err := normalizePluginName(args[0])
 	if err != nil {
 		return err
@@ -214,6 +232,25 @@ func runPluginRemove(cmd *cobra.Command, args []string) error {
 	dir, err := pluginDir()
 	if err != nil {
 		return err
+	}
+	if home.External() && externalPluginExists(dir, name) {
+		return usageError("executable_plugin_refused: attached homes cannot remove executable plugins")
+	}
+	if resident {
+		catalog, err := loadAppApprovals(home.Root)
+		if err != nil {
+			return err
+		}
+		if _, approved := catalog.Apps[name]; approved || manifestPluginExists(dir, name) {
+			if err := changeAppApproval(home.Root, name, ""); err != nil {
+				return err
+			}
+			printOutput(pluginRemoveOutput{Name: name, Path: appApprovalsPath(home.Root), ApprovalRemoved: true}, formatPluginRemove)
+			return nil
+		}
+	}
+	if home.External() {
+		return usageError("app_not_approved: %s is not an approved manifest app", name)
 	}
 	if manifestPluginExists(dir, name) {
 		path := manifestPluginDir(dir, name)
@@ -238,6 +275,10 @@ func runPluginRemove(cmd *cobra.Command, args []string) error {
 }
 
 func runPluginUpdate(cmd *cobra.Command, args []string) error {
+	home, resident, err := pluginManagementHome()
+	if err != nil {
+		return err
+	}
 	name, err := normalizePluginName(args[0])
 	if err != nil {
 		return err
@@ -245,6 +286,9 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 	dir, err := pluginDir()
 	if err != nil {
 		return err
+	}
+	if home.External() && externalPluginExists(dir, name) {
+		return usageError("executable_plugin_refused: attached homes cannot update executable plugins")
 	}
 	if !manifestPluginExists(dir, name) {
 		return fmt.Errorf("plugin %q is not an installed manifest app", name)
@@ -256,7 +300,11 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 	if provenance == nil || strings.TrimSpace(provenance.ManifestURL) == "" {
 		return fmt.Errorf("plugin %q is missing manifest provenance", name)
 	}
-	out, err := installOrUpdateManifestPlugin(provenance.ManifestURL, dir, true, "")
+	policy := manifestManagementPolicy{expectedName: name}
+	if resident {
+		policy.residentHome = home.Root
+	}
+	out, err := installManagedManifestPlugin(provenance.ManifestURL, dir, true, "", policy)
 	if err != nil {
 		return err
 	}
@@ -337,11 +385,17 @@ func formatPluginInstall(v any) string {
 			out = *ptr
 		}
 	}
+	if out.Approved {
+		return fmt.Sprintf("Installed app %s; approved for this resident and future grants.\n", out.Name)
+	}
 	return fmt.Sprintf("Installed plugin %s -> %s\n", out.Name, out.Path)
 }
 
 func formatPluginRemove(v any) string {
 	out := v.(pluginRemoveOutput)
+	if out.ApprovalRemoved {
+		return fmt.Sprintf("Removed this resident’s approval for %s; shared installation retained. Existing grants are unchanged.\n", out.Name)
+	}
 	return fmt.Sprintf("Removed plugin %s (%s)\n", out.Name, out.Path)
 }
 
@@ -435,7 +489,25 @@ func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
 // when set, overrides the app's origin to that base URL and skips the
 // origin/fetch-URL self-consistency check, so aw can point at a self-hosted app
 // whose served manifest still advertises a different (e.g. production) origin.
+type manifestManagementPolicy struct{ residentHome, expectedName string }
+
 func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin string) (*pluginInstallOutput, error) {
+	return installManagedManifestPlugin(source, dir, update, devOrigin, manifestManagementPolicy{})
+}
+
+func installManagedManifestPlugin(source, dir string, update bool, devOrigin string, policy manifestManagementPolicy) (*pluginInstallOutput, error) {
+	var catalog *appApprovalCatalog
+	if policy.residentHome != "" {
+		var err error
+		catalog, err = loadAppApprovals(policy.residentHome)
+		if err != nil {
+			return nil, err
+		}
+		if update && catalog.Apps[policy.expectedName] == "" {
+			return nil, usageError("app_not_approved: install %s to approve it for this resident", policy.expectedName)
+		}
+	}
+
 	manifestURL, err := manifestURLForSource(source)
 	if err != nil {
 		return nil, err
@@ -487,8 +559,23 @@ func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin st
 	if externalPluginExists(dir, name) {
 		return nil, fmt.Errorf("plugin %q is already installed as an external plugin", name)
 	}
+	if policy.expectedName != "" && name != policy.expectedName {
+		return nil, usageError("app_manifest_mismatch: update returned a different app id")
+	}
+	origin, err := canonicalAppOrigin(manifest.App.Origin)
+	if err != nil {
+		return nil, err
+	}
+	if update && catalog != nil && catalog.Apps[name] != origin {
+		return nil, usageError("app_origin_mismatch: %s changed origin; reinstall to approve", name)
+	}
 	appDir := manifestPluginDir(dir, name)
-	if !update {
+	for _, path := range []string{manifestPluginManifestPath(dir, name), manifestPluginProvenancePath(dir, name)} {
+		if err := pathpreflight.PreflightFile(path, "app store", pathpreflight.AllowTempAmbientSymlinkPrefix()); err != nil {
+			return nil, err
+		}
+	}
+	if !update && policy.residentHome == "" {
 		if _, err := os.Stat(appDir); err == nil {
 			return nil, fmt.Errorf("plugin %q is already installed at %s", name, appDir)
 		} else if !errors.Is(err, os.ErrNotExist) {
@@ -529,7 +616,12 @@ func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin st
 	if err := savePluginProvenance(provenancePath, &provenance); err != nil {
 		return nil, err
 	}
-	return &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance}, nil
+	if policy.residentHome != "" {
+		if err := changeAppApproval(policy.residentHome, name, origin); err != nil {
+			return nil, err
+		}
+	}
+	return &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance, Approved: policy.residentHome != ""}, nil
 }
 
 // normalizeManifestDevOrigin validates a --dev-origin override and returns it as
