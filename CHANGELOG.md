@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Next CLI release — signed display integrity:** plaintext mail/chat reads
+  fail verification when displayed content or IDs disagree with present signed
+  fields, preserving the observed mismatch. Legacy omissions and same-envelope
+  signed stable-DID routing projections remain supported. Encrypted-v2 reads
+  also bind outer message/conversation IDs to the authenticated envelope.
+
 ### Release preparation: server 1.27.11, CLI 1.36.24, AWID 0.5.21
 
 These entries cover changes since `server-v1.27.10`, `aw-v1.36.23`, and

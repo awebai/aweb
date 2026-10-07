@@ -555,3 +555,29 @@ already-open notification stream. Locally stored grant revocation does not add
 registry cache staleness. Once the adapter cannot supply sufficiently fresh
 revocation evidence, new streams fail closed and the next chat check terminates
 the stream. The wire protocol does not require a particular cache implementation.
+
+## Plaintext signed display binding
+
+For plaintext mail and chat reads, the Go CLI checks the returned `body`,
+`message_id`, `conversation_id`, `from_did`, `to_did`, and message `type`
+(and mail `subject`) against each field present in `signed_payload`, before
+applying signed metadata. Missing legacy fields are not compared; explicit
+empty strings are compared exactly, and null or non-string values fail.
+A missing signed conversation ID retains the existing `verified_legacy`
+classification when the response has a conversation ID.
+
+An outer DID may equal that side's signed signing DID or its nonempty signed
+`did:aw` stable ID in the same envelope. An unsigned stable ID, the opposite
+side's stable ID, or a resolver response cannot excuse a mismatch. Matching
+metadata still requires a valid signature and the existing trust checks.
+On a mismatch the CLI reports `failed` and preserves the original response
+fields, rather than hiding the discrepancy by replacing them with signed
+values. It does not claim that absent legacy fields were signed.
+
+For encrypted-v2 mail and chat, decryption and envelope authentication happen
+first. The outer `message_id` and `conversation_id` must then exactly match
+the authenticated inner/envelope IDs before decrypted metadata is applied.
+A mismatch reports `failed` and preserves the original outer display. Matching
+IDs retain the existing authenticated content/sender projection (and mail
+recipient projection); cipher, key,
+decryption, and recipient checks are unchanged.
