@@ -47,12 +47,34 @@ class CachedTeamFacts:
     expires_at: float
 
 
-class AWIDTeamCache:
-    """Small in-memory cache of public AWID team auth facts."""
+def _raise_if_private_team(response: httpx.Response) -> None:
+    if response.status_code != 403:
+        return
+    try:
+        payload = response.json()
+    except ValueError:
+        return
+    detail = payload.get("detail") if isinstance(payload, dict) else None
+    if isinstance(detail, dict) and detail.get("code") == "team_private":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "team_private_unreadable",
+                "message": "Private AWID team is unreadable; Folio requires a valid AWID service token",
+            },
+        )
 
-    def __init__(self, *, registry_url: str, ttl_seconds: int) -> None:
+
+class AWIDTeamCache:
+    """Small in-memory cache of AWID team auth facts."""
+
+    def __init__(self, *, registry_url: str, ttl_seconds: int, service_token: str | None = None) -> None:
         self.registry_url = registry_url.rstrip("/")
         self.ttl_seconds = ttl_seconds
+        self._headers = (
+            {"X-AWID-Service-Token": service_token.strip()}
+            if service_token and service_token.strip() else {}
+        )
         self._cache: dict[str, CachedTeamFacts] = {}
 
     async def get(self, team_id: str) -> CachedTeamFacts:
@@ -64,7 +86,11 @@ class AWIDTeamCache:
         domain, team_name = parse_team_id(team_id)
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                team_resp = await client.get(f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}")
+                team_resp = await client.get(
+                    f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}",
+                    headers=self._headers,
+                )
+                _raise_if_private_team(team_resp)
                 if team_resp.status_code == 404:
                     raise HTTPException(status_code=401, detail="Unknown AWID team")
                 if team_resp.status_code >= 400:
@@ -76,8 +102,10 @@ class AWIDTeamCache:
                     raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
 
                 cert_resp = await client.get(
-                    f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates"
+                    f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates",
+                    headers=self._headers,
                 )
+                _raise_if_private_team(cert_resp)
                 if cert_resp.status_code >= 400:
                     raise HTTPException(status_code=503, detail="AWID certificate revocation lookup unavailable")
                 cert_payload = cert_resp.json()

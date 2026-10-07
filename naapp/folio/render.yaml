@@ -12,6 +12,8 @@ services:
         sync: false
       - key: FOLIO_AWID_REGISTRY_URL
         value: https://api.awid.ai
+      - key: FOLIO_AWID_SERVICE_TOKEN
+        sync: false
       - key: FOLIO_PUBLIC_ORIGIN
         sync: false
       - key: FOLIO_DB_POOL_MIN_CONNECTIONS

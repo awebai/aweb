@@ -33,6 +33,7 @@ All runtime env vars use the `FOLIO_` prefix:
 
 - `FOLIO_DATABASE_URL` — PostgreSQL connection string.
 - `FOLIO_AWID_REGISTRY_URL` — AWID registry URL, default `https://api.awid.ai`.
+- `FOLIO_AWID_SERVICE_TOKEN` — optional AWID service credential for private-team facts and revocation reads; provision as a secret. A denied private-team read returns `403 team_private_unreadable`; registry outages remain `503`.
 - `FOLIO_PUBLIC_ORIGIN` — public origin clients sign in the v2 team-auth `aud`, default `http://127.0.0.1:8765`.
 - `FOLIO_DB_POOL_MIN_CONNECTIONS` — default `1`.
 - `FOLIO_DB_POOL_MAX_CONNECTIONS` — default `5`.
