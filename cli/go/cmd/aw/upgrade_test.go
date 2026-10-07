@@ -529,6 +529,7 @@ func TestPersistentPreRunSkipsOnSkipListCommand(t *testing.T) {
 		{"aw", "run"},
 		{"aw", "events"},
 		{"aw", "lock", "renew"},
+		{"aw", "team", "invite", "inspect"},
 	} {
 		t.Run(strings.Join(path[1:], "_"), func(t *testing.T) {
 			calls := 0

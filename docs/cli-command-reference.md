@@ -1228,11 +1228,31 @@ This creates an invite token using the current team's authority for a separate
 workspace or machine, then the joining workspace runs `aw team join <token>`.
 For local empty-profile homes under agents/instances/, use `aw team admin add`.
 
+Subcommands:
+- `inspect` Inspect an invite from stdin without redeeming it
+
 Flags:
 - `-h, --help help for invite`
 - `--member-global Create global member invite`
 - `--member-local Create local workspace member invite (default)`
 - `--team-id string Canonical team id (<name>:<namespace>) to invite from (defaults to active team)`
+
+## `team invite inspect`
+
+### `team invite inspect`
+
+Inspect one invite token from stdin through EOF (max 65536 bytes).
+
+Token input is always stdin; --token-stdin makes that explicit. Never pass a token
+as an argument. Hosted envelopes make one non-redeeming Cloud preview request.
+Controller tokens are decoded locally without network or controller-store reads:
+scope is unknown, status is unverified, and expiry/validity are not established.
+Inspection creates no identity, membership or workspace. External identity homes
+remain unsupported. Cloud must support /api/v1/spawn/invite-preview.
+
+Flags:
+- `-h, --help help for inspect`
+- `--token-stdin Read the token from stdin (the default)`
 
 ## `team join`
 

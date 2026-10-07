@@ -64,6 +64,10 @@ HOSTED_ENDPOINT_BASELINE = {
     # ensure verify that a selected certificate-authenticated identity can spawn.
     "/api/v1/spawn/authority",
     "/api/v1/spawn/create-invite",
+    # Public non-redeeming inspection (aweb-abos/abor): possession-only preview
+    # returns canonical team/scope/status/routing metadata, without hosted
+    # account schemas. The new installed CLI capability requires Cloud support.
+    "/api/v1/spawn/invite-preview",
     "/api/v1/teams/byoidt/projection-delete",
     # Public sibling-team creation (aweb-abkh.2): selected member certificate
     # authorizes a hosted service request; response is an ordinary invite plus
