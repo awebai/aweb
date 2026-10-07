@@ -53,15 +53,19 @@ func TestAppApprovalMintSelection(t *testing.T) {
 	if err != nil || len(all) != 1 || len(all["otherapp"].Tools) != 3 {
 		t.Fatalf("approved signed tools: %v %+v", err, all)
 	}
-	if _, err := selectGrantAppSnapshots(f.residentHome, false, nil, []string{f.app.server.URL}); err == nil {
-		t.Fatal("catalog bypassed denied origin")
+	assertSkip := func(code string, denied []string) {
+		t.Helper()
+		apps, skipped, err := prepareGrantAppSnapshots(f.residentHome, false, nil, denied)
+		if err != nil || len(apps) != 0 || len(skipped) != 1 || skipped[0].Code != code {
+			t.Fatalf("skip %s: apps=%d skipped=%v err=%v", code, len(apps), skipped, err)
+		}
 	}
+	assertSkip("app_origin_denied", []string{f.app.server.URL})
 	if err := changeAppApproval(f.residentHome, "otherapp", "https://different.invalid"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := selectGrantAppSnapshots(f.residentHome, false, nil, nil); err == nil || !strings.Contains(err.Error(), "app_origin_mismatch") {
-		t.Fatalf("origin replacement: %v", err)
-	}
+	assertSkip("app_origin_mismatch", nil)
+
 	// Approval is checked against the same bytes captured in the snapshot.
 	if err := changeAppApproval(f.residentHome, "otherapp", f.app.server.URL); err != nil {
 		t.Fatal(err)
@@ -69,9 +73,8 @@ func TestAppApprovalMintSelection(t *testing.T) {
 	if err := os.WriteFile(otherPath, original, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := selectGrantAppSnapshots(f.residentHome, false, nil, nil); err == nil || !strings.Contains(err.Error(), "app_manifest_mismatch") {
-		t.Fatalf("id replacement: %v", err)
-	}
+	assertSkip("app_manifest_mismatch", nil)
+
 	if err := os.WriteFile(otherPath, []byte(other), 0600); err != nil {
 		t.Fatal(err)
 	}

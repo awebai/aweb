@@ -87,6 +87,15 @@ func buildGrantAppSnapshots(specs map[string][]string, deniedOrigins []string) (
 	return buildGrantAppSnapshotsWithApprovals(specs, deniedOrigins, nil)
 }
 
+type appSnapshotFailure struct {
+	code string
+	err  error
+}
+
+func (e *appSnapshotFailure) Error() string        { return e.err.Error() }
+func (e *appSnapshotFailure) Unwrap() error        { return e.err }
+func snapshotFailure(code string, err error) error { return &appSnapshotFailure{code: code, err: err} }
+
 func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigins []string, approvals map[string]string) (map[string]grantAppSnapshot, error) {
 	if len(specs) == 0 {
 		return nil, nil
@@ -105,7 +114,7 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 		data, err := readFileBounded(manifestPluginManifestPath(dir, name), maxManifestBytes)
 		if err != nil {
 			if errors.Is(err, os.ErrNotExist) {
-				return nil, usageError("--app-tool %s: app %q is not installed", app, name)
+				return nil, snapshotFailure("app_missing", usageError("--app-tool %s: app %q is not installed", app, name))
 			}
 			return nil, err
 		}
@@ -113,11 +122,11 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 		if err := appmanifest.DecodeSingleJSONStrict(data, &manifest); err != nil {
 			return nil, fmt.Errorf("decode manifest for %s: %w", name, err)
 		}
+		if manifest.App.ID != name {
+			return nil, snapshotFailure("app_manifest_mismatch", usageError("app_manifest_mismatch: installed app id differs from %s", name))
+		}
 		if err := appmanifest.Validate(manifest, reservedRootCommandNames()); err != nil {
 			return nil, err
-		}
-		if manifest.App.ID != name {
-			return nil, usageError("app_manifest_mismatch: installed app id differs from %s", name)
 		}
 		counts := map[string]int{}
 		for _, tool := range manifest.Tools {
@@ -129,7 +138,7 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 		}
 		if approvals != nil {
 			if approved, ok := approvals[name]; !ok || approved != origin {
-				return nil, usageError("app_origin_mismatch: %s differs from resident approval; reinstall to approve", name)
+				return nil, snapshotFailure("app_origin_mismatch", usageError("app_origin_mismatch: %s differs from resident approval; reinstall to approve", name))
 			}
 			for _, tool := range manifest.Tools {
 				if strings.TrimSpace(tool.Auth) != "none" {
@@ -138,7 +147,7 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 			}
 		}
 		if denied[origin] {
-			return nil, usageError("app %s origin %s is a coordination or registry origin; grants cannot sign app requests to it", name, origin)
+			return nil, snapshotFailure("app_origin_denied", usageError("app %s origin %s is a coordination or registry origin; grants cannot sign app requests to it", name, origin))
 		}
 		sum := sha256.Sum256(data)
 		snap := grantAppSnapshot{ManifestVersion: manifest.ManifestVersion, ManifestSHA256: "sha256:" + hex.EncodeToString(sum[:]), App: manifest.App}

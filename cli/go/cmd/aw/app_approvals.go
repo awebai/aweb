@@ -141,24 +141,53 @@ func grantAppInventory(apps map[string]grantAppSnapshot) []grantAppInventoryItem
 	return out
 }
 
+type skippedGrantApp struct {
+	AppID string `json:"app_id"`
+	Code  string `json:"code"`
+}
+
 func selectGrantAppSnapshots(home string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, error) {
+	apps, _, err := prepareGrantAppSnapshots(home, explicit, values, deniedOrigins)
+	return apps, err
+}
+
+// Catalog failures narrow this mint's authority without preventing unrelated
+// communication. Explicit legacy selections and corrupt resident state fail.
+func prepareGrantAppSnapshots(home string, explicit bool, values, deniedOrigins []string) (map[string]grantAppSnapshot, []skippedGrantApp, error) {
+	skipped := []skippedGrantApp{}
 	if explicit {
 		specs, err := parseGrantAppToolSpecs(values)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(specs) == 0 {
-			return nil, usageError("--app-tool requires a nonempty app:verb selection")
+			return nil, nil, usageError("--app-tool requires a nonempty app:verb selection")
 		}
-		return buildGrantAppSnapshots(specs, deniedOrigins)
+		apps, err := buildGrantAppSnapshots(specs, deniedOrigins)
+		return apps, skipped, err
 	}
 	catalog, err := loadAppApprovals(home)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	specs := map[string][]string{}
+	apps := map[string]grantAppSnapshot{}
+	names := make([]string, 0, len(catalog.Apps))
 	for name := range catalog.Apps {
-		specs[name] = nil
+		names = append(names, name)
 	}
-	return buildGrantAppSnapshotsWithApprovals(specs, deniedOrigins, catalog.Apps)
+	sort.Strings(names)
+	for _, name := range names {
+		selected, err := buildGrantAppSnapshotsWithApprovals(map[string][]string{name: nil}, deniedOrigins, catalog.Apps)
+		if err != nil {
+			code := "app_manifest_invalid"
+			var failure *appSnapshotFailure
+			if errors.As(err, &failure) {
+				code = failure.code
+			}
+			skipped = append(skipped, skippedGrantApp{AppID: name, Code: code})
+			continue
+		}
+		apps[name] = selected[name]
+	}
+	return apps, skipped, nil
 }

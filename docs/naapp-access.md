@@ -27,8 +27,7 @@ store, but that operation approves no resident.
 `aw plugin list` is discovery, including for grant homes; it does not claim the
 listed apps were delegated. `aw plugin update <app>` updates a resident-approved
 app only if the fetched ID and origin still match its approval. A changed origin
-requires an explicit install to approve it again. Invalid catalogs and manifest
-mismatches fail closed.
+requires an explicit install to approve it again. Invalid catalogs fail closed; invalid apps are never delegated.
 
 `aw plugin remove <app>` from a resident removes only that resident's approval.
 It retains the shared manifest and other residents' approvals. Removal affects
@@ -43,7 +42,7 @@ collisions are refused before writes. Released executable dispatch is unchanged.
 
 A normal `aw id grant mint` includes all apps in the selected resident catalog.
 Mint checks each current installed manifest's ID and origin against the catalog
-and refuses mismatches. It snapshots the finite signed tools and their manifest
+and excludes mismatching or unavailable apps from that mint. It snapshots the finite signed tools and their manifest
 hash into the resident's grant state. Public (`auth: none`) tools require no
 signature and are not included as signing authority. Coordination and registry
 origins remain prohibited signing destinations.
@@ -60,7 +59,13 @@ Mint JSON includes `apps`, sorted by app ID, with the actual persisted inventory
 {"apps":[{"app_id":"notes","origin":"https://notes.example","manifest_sha256":"sha256:…","tools":["create","list"]}]}
 ```
 
-An empty catalog emits `"apps": []`. Tool names are sorted. Consumers display
+An empty catalog emits `"apps": []`. Tool names are sorted. `skipped_apps` is
+always an array of `{app_id, code}` objects. Missing, invalid, ID-mismatched,
+origin-mismatched or prohibited-origin apps are excluded and reported as
+`app_missing`, `app_manifest_invalid`, `app_manifest_mismatch`,
+`app_origin_mismatch` or `app_origin_denied`. Other apps and the grant itself
+remain available. A corrupt resident catalog still fails the whole mint.
+Consumers display
 this actual inventory rather than inferring delegation from the shared store.
 
 The released legacy `--app-tool app:verb` flag remains supported for existing

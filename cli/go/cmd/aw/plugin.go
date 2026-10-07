@@ -110,6 +110,7 @@ type pluginInstallOutput struct {
 
 type pluginRemoveOutput struct {
 	ApprovalRemoved bool   `json:"approval_removed,omitempty"`
+	NotApproved     bool   `json:"not_approved,omitempty"`
 	Name            string `json:"name"`
 	Path            string `json:"path"`
 }
@@ -242,6 +243,10 @@ func runPluginRemove(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if _, approved := catalog.Apps[name]; approved || manifestPluginExists(dir, name) {
+			if !approved {
+				printOutput(pluginRemoveOutput{Name: name, Path: appApprovalsPath(home.Root), NotApproved: true}, formatPluginRemove)
+				return nil
+			}
 			if err := changeAppApproval(home.Root, name, ""); err != nil {
 				return err
 			}
@@ -393,6 +398,9 @@ func formatPluginInstall(v any) string {
 
 func formatPluginRemove(v any) string {
 	out := v.(pluginRemoveOutput)
+	if out.NotApproved {
+		return fmt.Sprintf("App %s was not approved for this resident; nothing changed.\n", out.Name)
+	}
 	if out.ApprovalRemoved {
 		return fmt.Sprintf("Removed this resident’s approval for %s; shared installation retained. Existing grants are unchanged.\n", out.Name)
 	}
