@@ -477,14 +477,26 @@ async def get_pending_conversations(
 ) -> list[dict[str, Any]]:
     aweb_db = db.get_manager("aweb")
     participant_agent_uuid = _uuid_or_none(participant_agent_id)
+    # Materialize the viewer's session set before the per-session work. Keep
+    # the existing did-first preference and include departed participants;
+    # left_at is not a pending-conversation authorization or unread filter.
     rows = await aweb_db.fetch_all(
         """
+        WITH mine AS MATERIALIZED (
+            SELECT DISTINCT ON (participant.session_id)
+                participant.session_id, participant.did, participant.agent_id
+            FROM {{tables.chat_participants}} participant
+            WHERE participant.did = $1
+               OR ($3::uuid IS NOT NULL AND participant.agent_id = $3)
+            ORDER BY participant.session_id,
+                     CASE WHEN participant.did = $1 THEN 0 ELSE 1 END
+        )
         SELECT
             s.session_id,
             s.team_id,
-            array_agg(p2.alias ORDER BY p2.alias) AS participants,
-            array_agg(p2.did ORDER BY p2.alias) AS participant_dids,
-            array_agg(p2.address ORDER BY p2.alias) AS participant_addresses,
+            participants.aliases AS participants,
+            participants.dids AS participant_dids,
+            participants.addresses AS participant_addresses,
             CASE WHEN lm.content_mode = 'encrypted_v2' THEN '' ELSE lm.body END AS last_message,
             COALESCE(lm.content_mode, 'legacy_plaintext_v1') AS last_message_content_mode,
             COALESCE(lm.message_version, 1) AS last_message_version,
@@ -500,23 +512,15 @@ async def get_pending_conversations(
             s.wait_started_at,
             s.wait_started_by,
             COALESCE(wait_ext.total_seconds, 0) AS extended_wait_seconds
-        FROM {{tables.chat_sessions}} s
-        JOIN LATERAL (
-            SELECT participant.did, participant.agent_id
-            FROM {{tables.chat_participants}} participant
-            WHERE participant.session_id = s.session_id
-              AND (
-                    participant.did = $1
-                    OR (
-                        $3::uuid IS NOT NULL
-                        AND participant.agent_id = $3
-                    )
-                  )
-            ORDER BY CASE WHEN participant.did = $1 THEN 0 ELSE 1 END
-            LIMIT 1
-        ) p ON TRUE
-        JOIN {{tables.chat_participants}} p2
-          ON p2.session_id = s.session_id
+        FROM mine p
+        JOIN {{tables.chat_sessions}} s ON s.session_id = p.session_id
+        CROSS JOIN LATERAL (
+            SELECT array_agg(p2.alias ORDER BY p2.alias) AS aliases,
+                   array_agg(p2.did ORDER BY p2.alias) AS dids,
+                   array_agg(p2.address ORDER BY p2.alias) AS addresses
+            FROM {{tables.chat_participants}} p2
+            WHERE p2.session_id = p.session_id
+        ) participants
         LEFT JOIN LATERAL (
             SELECT body, content_mode, message_version, encrypted_envelope,
                    from_alias, from_address, from_did, from_agent_id, hang_on, created_at
@@ -545,26 +549,7 @@ async def get_pending_conversations(
               AND m.hang_on = TRUE
               AND (s.wait_started_at IS NULL OR m.created_at >= s.wait_started_at)
         ) wait_ext ON TRUE
-        GROUP BY
-            s.session_id,
-            s.team_id,
-            lm.body,
-            lm.content_mode,
-            lm.message_version,
-            lm.encrypted_envelope,
-            lm.from_alias,
-            lm.from_address,
-            lm.from_did,
-            lm.from_agent_id,
-            lm.hang_on,
-            lm.created_at,
-            unread.cnt,
-            s.wait_seconds,
-            s.wait_started_at,
-            s.wait_started_by,
-            p.did,
-            wait_ext.total_seconds
-        HAVING COALESCE(unread.cnt, 0) > 0
+        WHERE COALESCE(unread.cnt, 0) > 0
             OR (
                 s.wait_started_at IS NOT NULL
                 AND s.wait_seconds IS NOT NULL
