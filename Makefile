@@ -341,6 +341,7 @@ test-a2a:
 	./scripts/check-a2a-copy-guardrails.sh
 
 test-e2e:
+	python3 scripts/test_controller_key_absence_guard.py
 	./scripts/e2e-oss-user-journey.sh
 	./scripts/test-e2e-controller-key-absence-guard.sh
 
