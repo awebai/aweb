@@ -33,6 +33,7 @@ var (
 	mailSendBodyFile        string
 	mailSendPriority        string
 	mailSendConversationID  string
+	mailSendNewConversation bool
 	mailSendE2EE            bool
 	mailSendLegacyPlaintext bool
 	mailSendPlaintext       bool
@@ -413,9 +414,37 @@ func findUniqueMailConversationForTarget(ctx context.Context, c *aweb.Client, ta
 	return uniqueMailConversationTarget(conversations, targetValue)
 }
 
+// Explicit fresh sends must not consult either the conversation index or its
+// inbox fallback. Keep the shared lookup helpers unchanged for other callers.
+func findMailSendConversationForTarget(ctx context.Context, c *aweb.Client, kind, value string) (mailConversationTarget, error) {
+	if mailSendNewConversation {
+		return mailConversationTarget{}, nil
+	}
+	return findUniqueMailConversationForTarget(ctx, c, kind, value)
+}
+
+func findMailSendConversationForAgent(ctx context.Context, c *aweb.Client, agent awid.AgentView) (mailConversationTarget, error) {
+	if mailSendNewConversation {
+		return mailConversationTarget{}, nil
+	}
+	return findUniqueMailConversationForAgent(ctx, c, agent)
+}
+
 var mailSendCmd = &cobra.Command{
 	Use:   "send",
 	Short: "Send a message to another agent",
+	Long: "Send a message to another agent. By default, reuse an existing conversation when available.\n\n" +
+		"--new-conversation creates a fresh signed conversation ID without reading the\n" +
+		"conversation index or inbox. It requires server support and cannot be combined\n" +
+		"with --conversation-id. JSON returns message_id and conversation_id. An old\n" +
+		"server rejection or mismatched response fails without retry; a mismatched\n" +
+		"response may mean the message was already sent into an existing conversation.",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if mailSendNewConversation && cmd.Flags().Changed("conversation-id") {
+			return usageError("--new-conversation and --conversation-id cannot be combined")
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := resolveMailBody(mailSendBody, mailSendBodyFile)
 		if err != nil {
@@ -439,6 +468,13 @@ var mailSendCmd = &cobra.Command{
 			Priority:       awid.MessagePriority(mailSendPriority),
 			ConversationID: strings.TrimSpace(mailSendConversationID),
 		}
+		if mailSendNewConversation {
+			req.NewConversation = true
+			req.ConversationID, err = awid.GenerateUUID4()
+			if err != nil {
+				return err
+			}
+		}
 		switch targetKind {
 		case "conversation":
 			c, sel, err = resolveMailMessagingClientSelection()
@@ -456,7 +492,7 @@ var mailSendCmd = &cobra.Command{
 			} else if found {
 				if agentMatchesSelection(agent, sel) {
 					req.ToAlias = targetValue
-				} else if conversation, findErr := findUniqueMailConversationForAgent(ctx, c, agent); findErr != nil {
+				} else if conversation, findErr := findMailSendConversationForAgent(ctx, c, agent); findErr != nil {
 					return findErr
 				} else if conversation.conversationID != "" {
 					// E2EE key discovery needs the recipient alias, not the
@@ -506,7 +542,7 @@ var mailSendCmd = &cobra.Command{
 				return err
 			}
 			recipientDID := targetValue
-			if conversation, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
+			if conversation, findErr := findMailSendConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
 				return findErr
 			} else if conversation.conversationID != "" {
 				targetKind = "conversation"
@@ -524,7 +560,7 @@ var mailSendCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			if conversation, findErr := findUniqueMailConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
+			if conversation, findErr := findMailSendConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
 				return findErr
 			} else if conversation.conversationID != "" {
 				// E2EE key discovery needs the recipient address, not the
@@ -561,7 +597,7 @@ var mailSendCmd = &cobra.Command{
 			resp, err = c.SendMessageByIdentity(ctx, req)
 		}
 
-		if err != nil && strings.TrimSpace(mailSendConversationID) == "" && req.ConversationID != "" && mailConversationExpired(err) {
+		if err != nil && !mailSendNewConversation && strings.TrimSpace(mailSendConversationID) == "" && req.ConversationID != "" && mailConversationExpired(err) {
 			// The rejected request was not accepted. Keep its resolved recipient and
 			// selected identity, but let the library generate and sign fresh IDs.
 			req.ConversationID = ""
@@ -575,6 +611,9 @@ var mailSendCmd = &cobra.Command{
 				return err
 			}
 			return networkError(err, targetValue)
+		}
+		if mailSendNewConversation && resp.ConversationID != req.ConversationID {
+			return fmt.Errorf("server does not support new conversations: returned a different conversation_id; the message may already have been sent; do not retry automatically")
 		}
 		logsDir := defaultLogsDir()
 		from := preferredIdentityDisplayLabel(
@@ -1174,6 +1213,7 @@ func init() {
 	mailSendCmd.Flags().StringVar(&mailSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailSendCmd.Flags().StringVar(&mailSendPriority, "priority", "normal", "Priority: low|normal|high|urgent")
 	mailSendCmd.Flags().StringVar(&mailSendConversationID, "conversation-id", "", "Existing mail conversation to continue")
+	mailSendCmd.Flags().BoolVar(&mailSendNewConversation, "new-conversation", false, "Start a fresh conversation without conversation or inbox lookup (requires server support)")
 	mailSendCmd.Flags().BoolVar(&mailSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (currently the default)")
 	mailSendCmd.Flags().BoolVar(&mailSendE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if encryption keys are missing")
 	mailSendCmd.Flags().BoolVar(&mailSendLegacyPlaintext, "legacy-plaintext", false, "Deprecated alias for --plaintext")

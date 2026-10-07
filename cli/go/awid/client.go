@@ -1527,6 +1527,16 @@ func isIdempotentSendRequest(method, path string, body []byte) bool {
 		return false
 	}
 	path = strings.TrimSpace(path)
+	if path == "/v1/messages" {
+		var request struct {
+			NewConversation bool `json:"new_conversation"`
+		}
+		// A successful first attempt makes this ID ineligible for another fresh
+		// send. A lost response must not trigger a second delivery attempt.
+		if json.Unmarshal(body, &request) == nil && request.NewConversation {
+			return false
+		}
+	}
 	if path == "/v1/messages" || path == "/v1/chat/sessions" {
 		return true
 	}

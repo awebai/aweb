@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
+import asyncpg
+from pgdbm.errors import QueryError
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
@@ -100,6 +103,7 @@ class SendMessageRequest(BaseModel):
     to_stable_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     to_address: Optional[str] = Field(default=None, min_length=1, max_length=256)
     conversation_id: Optional[str] = None
+    new_conversation: bool = False
     subject: str = ""
     body: str = ""
     content_mode: Optional[str] = None
@@ -879,6 +883,8 @@ async def _deliver_remote_mail_and_project_locally(
         msg_uuid,
     ) if msg_uuid is not None else None
     if existing_projection:
+        if payload.new_conversation:
+            raise HTTPException(status_code=409, detail="conversation_exists")
         return SendMessageResponse(
             message_id=str(existing_projection["message_id"]),
             conversation_id=str(existing_projection["conversation_id"]),
@@ -896,10 +902,13 @@ async def _deliver_remote_mail_and_project_locally(
             UUID(conversation_id),
         )
         if existing_conversation:
+            if payload.new_conversation:
+                raise HTTPException(status_code=409, detail="conversation_exists")
             conversation = {"conversation_id": str(existing_conversation["conversation_id"])}
         else:
-            conversation = await create_conversation(
+            conversation = await _create_requested_mail_conversation(
                 db,
+                require_new=payload.new_conversation,
                 conversation_type="mail",
                 created_by_did=sender_did,
                 conversation_id=conversation_id,
@@ -986,6 +995,18 @@ async def _deliver_remote_mail_and_project_locally(
         status=str(remote.get("status") or "delivered"),
         delivered_at=delivered_at or _utc_iso(local_created_at),
     )
+
+
+async def _create_requested_mail_conversation(db, *, require_new: bool, **kwargs):
+    try:
+        return await create_conversation(db, **kwargs)
+    except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        # The preflight read cannot exclude a concurrent insertion. Creation is
+        # transactional: losing that race must refuse rather than reuse or 500.
+        cause = exc.__cause__ if isinstance(exc, QueryError) else exc
+        if require_new and isinstance(cause, asyncpg.exceptions.UniqueViolationError):
+            raise HTTPException(status_code=409, detail="conversation_exists") from exc
+        raise
 
 
 async def _bound_recipient_from_address(
@@ -1288,6 +1309,21 @@ async def send_message(
         )
     )
 
+    if payload.new_conversation:
+        if payload.conversation_id is None or not has_explicit_recipient:
+            raise HTTPException(
+                status_code=422,
+                detail="new_conversation requires a conversation_id and an explicit recipient",
+            )
+        # Do not use get_conversation here: its lazy-expiry update would mutate
+        # the old thread during a request that must only refuse its reuse.
+        existing = await db.get_manager("aweb").fetch_one(
+            "SELECT conversation_id FROM {{tables.conversations}} WHERE conversation_id = $1",
+            UUID(payload.conversation_id),
+        )
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="conversation_exists")
+
     if payload.conversation_id is not None and not has_explicit_recipient:
         return await _send_mail_conversation_continuation(
             request,
@@ -1300,7 +1336,7 @@ async def send_message(
             conversation_id=payload.conversation_id,
         )
 
-    if has_explicit_recipient:
+    if has_explicit_recipient and not payload.new_conversation:
         requested_continuation = None
         if payload.conversation_id is not None:
             requested_conversation = await get_conversation(db, conversation_id=payload.conversation_id)
@@ -1673,8 +1709,9 @@ async def send_message(
         )
         # If an explicit recipient is present, conversation_id is a caller-chosen
         # initial id. Continuations use conversation_id without recipient fields.
-        conversation = await create_conversation(
+        conversation = await _create_requested_mail_conversation(
             db,
+            require_new=payload.new_conversation,
             conversation_type="mail",
             created_by_did=sender_did,
             conversation_id=payload.conversation_id,

@@ -71,6 +71,58 @@ The output includes a `message_id` and `conversation_id`. Preserve both in
 machine integrations: the message id identifies one immutable item; the
 conversation id identifies the thread and its stored participant route.
 
+### Start a fresh conversation
+
+Ordinary sends may reuse an existing thread. To send on a fresh thread without
+reading the conversation index or the inbox, opt in explicitly:
+
+```bash
+aw mail send --to <teammate> --new-conversation --body-file message.md --json
+```
+
+The CLI allocates and signs a fresh conversation UUID and sends
+`new_conversation: true`. Success JSON includes `message_id` and
+`conversation_id`. The server requires an explicit recipient and the supplied
+conversation ID (HTTP 422 if missing), refuses an existing ID with HTTP 409
+`conversation_exists`, and skips automatic thread reuse. Recipient resolution,
+authorization and signature checks still apply. Use a same-team alias, supported
+`did:key`, or routable address; a bare `did:aw` cannot use a fresh UUID as evidence
+of a stored route and remains unsupported for first contact.
+
+`--new-conversation` and `--conversation-id` are mutually exclusive and are
+rejected together before requests. Omitting the new flag preserves ordinary
+threading, including the index-to-inbox fallback. That internal inbox read does
+not acknowledge messages; the public `aw mail inbox` presentation command does.
+Beads and Gas City sends retain their existing behavior and do not expose this
+flag.
+
+Both the CLI and the serving aweb server must include this feature. Hosted
+service adoption additionally requires the operator to adopt that server
+release; a CLI upgrade alone establishes no server support. Older servers may
+reject the added field, or ignore it and return a reused ID. The CLI rejects a
+mismatched response ID instead of reporting a fresh conversation. The message
+may already have been sent in that case. Fresh sends do not automatically retry
+transport failures, HTTP 503, or expired-conversation errors: a lost response
+can also mean the send succeeded. Do not retry automatically.
+
+This command does not prove server support before sending. An integration
+requiring that guarantee must establish the selected service's support through
+its operator's documented release metadata before invoking the command, and
+refuse unknown support. It must not use a canary send as a capability check.
+
+For the hosted onboarding probe, the supported pre-send observation is read-only
+`GET <origin>/meta`, using the scheme and host of the exact `aweb_url` selected
+for sending (remove its trailing `/api`). Parse `build.aweb_version` as semver,
+not the static top-level `version`, and require both the release-owner-declared
+server floor containing this feature and the corresponding local CLI floor.
+The release owner declares those floors when the server and CLI publish and
+the hosted server pin is adopted; this source documentation assigns no numeric
+floor. Do not substitute another service or metadata route. Missing,
+unreachable, malformed or insufficient metadata, or an unrecognized/non-hosted
+service, fails before send with support unknown. The CLI command itself does
+not perform this integration-level check. A post-send HTTP 422 remains a server
+error, not a unique proof of unsupported features or of rollback.
+
 ### Wake, fetch, and reply
 
 An `actionable_mail` event carries `message_id`, `conversation_id`, sender

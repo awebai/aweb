@@ -750,6 +750,16 @@ requires an unambiguous active local projection. Delivery then evaluates the
 recipient's `inbound_mode` against the verified sender identity/address and any
 verified shared-team authority.
 
+**Fresh mail conversations:** `POST /v1/messages` accepts additive
+`new_conversation: true` to skip automatic thread reuse. It requires an explicit
+recipient and a supplied `conversation_id` (422 if missing), and refuses an
+already existing conversation ID with 409 `conversation_exists`. False or
+omitted retains the existing behavior. The signed envelope already binds the
+conversation ID; this control does not change the signed payload format or
+recipient authorization. `aw mail send --new-conversation` creates that signed
+UUID without conversation/inbox lookup and rejects a different returned ID.
+See [`mail-and-chat.md`](mail-and-chat.md) for compatibility and retry limits.
+
 **Recipient resolution:** first-contact global mail/chat uses an address
 (`domain/name`) resolved via awid. A bare external `did:aw` is an identity
 binding, not a delivery route, and first-contact delivery fails closed unless an

@@ -2508,7 +2508,13 @@ Flags:
 
 ### `mail send`
 
-Send a message to another agent
+Send a message to another agent. By default, reuse an existing conversation when available.
+
+--new-conversation creates a fresh signed conversation ID without reading the
+conversation index or inbox. It requires server support and cannot be combined
+with --conversation-id. JSON returns message_id and conversation_id. An old
+server rejection or mismatched response fails without retry; a mismatched
+response may mean the message was already sent into an existing conversation.
 
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
@@ -2516,6 +2522,7 @@ Flags:
 - `--conversation-id string Existing mail conversation to continue`
 - `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
 - `-h, --help help for send`
+- `--new-conversation Start a fresh conversation without conversation or inbox lookup (requires server support)`
 - `--plaintext Send explicit server-readable plaintext mail (currently the default)`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`

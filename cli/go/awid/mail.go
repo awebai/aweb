@@ -40,6 +40,8 @@ type SendMessageRequest struct {
 	SignedPayload  string               `json:"signed_payload,omitempty"`
 	EncryptE2EE    bool                 `json:"-"`
 	E2EERecipient  *E2EERecipientKey    `json:"-"`
+
+	NewConversation bool `json:"new_conversation,omitempty"`
 }
 
 type SendMessageResponse struct {
@@ -140,7 +142,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		Body:                          payload.Body,
 		ConversationID:                strings.TrimSpace(payload.ConversationID),
 		RequireRecipientBinding:       strings.TrimSpace(payload.ToAddress) != "" && c.requireRecipientBinding,
-		AllowStoredRouteGlobalBinding: initialConversationID != "",
+		AllowStoredRouteGlobalBinding: initialConversationID != "" && !payload.NewConversation,
 	})
 	if err != nil {
 		return nil, err
