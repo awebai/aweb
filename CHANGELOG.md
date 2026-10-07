@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix declarative app installation rejecting v1 event metadata, including Folio's deployed manifest; preserve strict field validation and bounded event declarations.
+
 ### Release preparation: server 1.27.11, CLI 1.36.24, AWID 0.5.21
 
 These entries cover changes since `server-v1.27.10`, `aw-v1.36.23`, and
