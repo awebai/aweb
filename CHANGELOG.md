@@ -7,6 +7,9 @@
   fields, preserving the observed mismatch. Legacy omissions and same-envelope
   signed stable-DID routing projections remain supported. Encrypted-v2 reads
   also bind outer message/conversation IDs to the authenticated envelope.
+  Preserve released empty-recipient forms for signed-stable stored routes,
+  mail delivered to the reading identity, and its authenticated sent-mail views;
+  these compatibility projections do not make unsigned routing a signed claim.
 
 ### Release preparation: server 1.27.11, CLI 1.36.24, AWID 0.5.21
 

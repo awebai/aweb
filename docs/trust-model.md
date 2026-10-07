@@ -570,6 +570,26 @@ An outer DID may equal that side's signed signing DID or its nonempty signed
 `did:aw` stable ID in the same envelope. An unsigned stable ID, the opposite
 side's stable ID, or a resolver response cannot excuse a mismatch. Matching
 metadata still requires a valid signature and the existing trust checks.
+For a stored-route recipient, an explicitly empty signed `to_did` may project
+only that envelope's nonempty signed `did:aw` `to_stable_id`, and only when
+its present, nonempty signed `conversation_id` exactly matches the returned
+conversation. This exception does not apply to the sender, null or non-string
+values, unsigned stable metadata, or absent/empty conversation claims.
+
+Mail reads also accept a legacy explicitly empty signed `to_did` with an
+absent signed `to_stable_id` when the returned recipient equals the reading
+client's own current `did:key` or `did:aw`. Here the authenticated mail read
+establishes delivery to the reader; the recipient DID is not a signed claim.
+This mail-only exception never applies to another recipient or the sender,
+and does not apply to chat history. All other signed fields and signature
+checks remain required. A present empty, null, or non-string stable-ID field
+is not an absent field.
+Sender-visible exact-message and conversation reads also retain this legacy
+recipient representation for the reader's own sent mail: both the original
+routing sender and the signed sender key or stable ID must identify the reader.
+This exception is not enabled by an inbox read. It authenticates authorship,
+not the unsigned recipient projection; nonempty signed recipient claims and
+all content, ID, signature, and trust checks remain enforced.
 On a mismatch the CLI reports `failed` and preserves the original response
 fields, rather than hiding the discrepancy by replacing them with signed
 values. It does not claim that absent legacy fields were signed.

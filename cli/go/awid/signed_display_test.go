@@ -70,6 +70,11 @@ func TestSignedDisplayBinding(t *testing.T) {
 					case "empty_mismatch":
 						signed[field] = ""
 						want = Failed
+						if kind == "mail" && field == "to_did" {
+							// Empty legacy recipient claims may project only this
+							// authenticated mail reader's own identity.
+							want = Verified
+						}
 					case "null":
 						signed[field] = nil
 						want = Failed

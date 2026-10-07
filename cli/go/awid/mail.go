@@ -719,11 +719,11 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
-		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !signedDisplayMatches(m.SignedPayload, map[string]string{
+		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !c.signedMailDisplayMatches(m.SignedPayload, map[string]string{
 			"type": "mail", "body": m.Body, "subject": m.Subject,
 			"message_id": m.MessageID, "conversation_id": m.ConversationID,
 			"from_did": m.FromDID, "to_did": m.ToDID,
-		}) {
+		}, m.authenticatedSenderRead) {
 			// Preserve the observed response so a mismatch cannot be hidden by
 			// metadata overlay or subsequently promoted by trust normalization.
 			m.VerificationStatus = Failed

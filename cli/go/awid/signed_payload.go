@@ -61,7 +61,52 @@ func signedDisplayMatches(payload string, fields map[string]string) bool {
 				continue
 			}
 		}
+		// Stored-route continuations deliberately sign the stable recipient
+		// without resolving its current key. Only that signed recipient and
+		// the same nonempty signed conversation may project an empty to_did.
+		if name == "to_did" && *value == "" && strings.HasPrefix(displayed, "did:aw:") {
+			var stable, conversation string
+			if json.Unmarshal(signed["to_stable_id"], &stable) == nil && stable == displayed &&
+				json.Unmarshal(signed["conversation_id"], &conversation) == nil && conversation != "" &&
+				conversation == fields["conversation_id"] {
+				continue
+			}
+		}
 		return false
 	}
 	return true
+}
+
+// signedMailDisplayMatches permits the legacy empty recipient-key claim only
+// for mail delivered to this reader. The authenticated read establishes the
+// recipient; authenticated sender-visible reads also preserve the reader's own
+// sent mail. Neither case makes that recipient DID a signed claim.
+func (c *Client) signedMailDisplayMatches(payload string, fields map[string]string, authenticatedSenderRead bool) bool {
+	recipient := fields["to_did"]
+	readerIsRecipient := recipient != "" && (recipient == c.did || recipient == c.stableID)
+	readerIsSender := false
+	if authenticatedSenderRead {
+		if meta, ok := parseSignedEnvelopeMetadata(payload); ok {
+			readerIsSender = (c.did != "" && meta.FromDID == c.did) ||
+				(c.stableID != "" && (meta.FromDID == c.stableID || meta.FromStableID == c.stableID))
+		}
+	}
+	if readerIsRecipient || readerIsSender {
+		var signed map[string]json.RawMessage
+		if json.Unmarshal([]byte(payload), &signed) == nil {
+			raw, present := signed["to_did"]
+			_, stablePresent := signed["to_stable_id"]
+			var value *string
+			if present && !stablePresent && json.Unmarshal(raw, &value) == nil && value != nil && *value == "" {
+				remaining := make(map[string]string, len(fields)-1)
+				for name, display := range fields {
+					if name != "to_did" {
+						remaining[name] = display
+					}
+				}
+				return signedDisplayMatches(payload, remaining)
+			}
+		}
+	}
+	return signedDisplayMatches(payload, fields)
 }
