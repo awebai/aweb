@@ -151,6 +151,22 @@ A normal connection does this:
 4. emits idle keepalive comments;
 5. ends no later than the server's five-minute response cap.
 
+After the initial snapshot, a failed periodic poll is logged and retried on the
+same stream after 1, 2, 4, then at most 5 seconds between attempts. A complete
+successful poll resets both the backoff and failure window. Only a subsequent
+failure more than 30 seconds after the first consecutive failed poll ends the
+stream with the existing `error` event (`detail: "poll failure"`). This window
+starts when the first failure is observed; it is not a timeout on an in-flight
+query. The initial snapshot keeps its existing failure behavior.
+
+During backoff, the server continues its one-second disconnect, deadline and
+grant-expiry checks and its 30-second idle `: keepalive` comments. Task
+cancellation still propagates immediately at an await. Queries already in
+flight retain their existing database timeout/cancellation behavior. Failed
+polls do not replace the last successful actionable-state snapshot; recovery
+can therefore emit newly available mail or chat. This does not add durable
+replay or acknowledgement semantics to control signals or other event types.
+
 The low-level CLI exits on EOF or stream error. It intentionally leaves retry
 and backoff to its caller.
 

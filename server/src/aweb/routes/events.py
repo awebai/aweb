@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
+from time import monotonic
 from typing import Any
 from uuid import UUID
 
@@ -45,6 +46,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/events", tags=["aweb-events"])
 
 EVENTS_POLL_INTERVAL = 1.0  # seconds between polls
+EVENTS_POLL_FAILURE_WINDOW = 30.0  # tolerate bursts; terminate only after >30s
+EVENTS_POLL_MAX_BACKOFF = 5.0  # cap query retry delay, not disconnect checks
 EVENTS_HEARTBEAT_INTERVAL = 30.0  # seconds between idle SSE heartbeat comments
 MAX_STREAM_DURATION = 300  # maximum stream lifetime in seconds
 
@@ -465,6 +468,9 @@ async def _sse_agent_events(
         if agent_event_allowed(identity, evt):
             yield f"event: {evt['type']}\ndata: {json.dumps(evt)}\n\n"
 
+    failure_started_at: float | None = None
+    retry_delay = EVENTS_POLL_INTERVAL
+    next_poll_at = 0.0
     while datetime.now(timezone.utc) < deadline:
         await asyncio.sleep(EVENTS_POLL_INTERVAL)
 
@@ -480,6 +486,19 @@ async def _sse_agent_events(
             yield grant_terminal_sse(reason)
             return
 
+        # Backoff skips query work, not the heartbeat needed to keep proxies
+        # from closing an otherwise recoverable stream.
+        if failure_started_at is not None:
+            now = datetime.now(timezone.utc)
+            if (now - last_heartbeat_at).total_seconds() >= EVENTS_HEARTBEAT_INTERVAL:
+                yield ": keepalive\n\n"
+                last_heartbeat_at = now
+
+        # Keep disconnect/deadline/grant checks at the ordinary poll cadence
+        # during backoff; task cancellation still interrupts every await.
+        if monotonic() < next_poll_at:
+            continue
+
         try:
             current_mail = await _current_actionable_mail(aweb_db, inbox_dids=viewer_dids)
             current_chat = await _current_actionable_chat(
@@ -493,9 +512,22 @@ async def _sse_agent_events(
             current_app = await current_app_events_for_agent(aweb_db, team_id=team_id, agent_id=agent_id)
         except Exception:
             logger.exception("event-stream poll error for agent %s", agent_id)
-            yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
-            break
+            now = monotonic()
+            if failure_started_at is None:
+                failure_started_at = now
+                retry_delay = EVENTS_POLL_INTERVAL
+            elif now - failure_started_at > EVENTS_POLL_FAILURE_WINDOW:
+                yield f"event: error\ndata: {json.dumps({'type': 'error', 'detail': 'poll failure'})}\n\n"
+                break
+            else:
+                retry_delay = min(retry_delay * 2, EVENTS_POLL_MAX_BACKOFF)
+            next_poll_at = now + retry_delay
+            continue
 
+        # Reset only after the complete poll, not a successful first query.
+        failure_started_at = None
+        retry_delay = EVENTS_POLL_INTERVAL
+        next_poll_at = 0.0
         mail_events = _new_or_changed_mail_events(current_mail, previous_mail)
         chat_events = _new_or_changed_events(
             current_chat,
