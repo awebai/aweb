@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     database_url: str = Field(default="postgresql://localhost/library")
     awid_registry_url: str = Field(default="https://api.awid.ai")
-    awid_service_token: str | None = Field(default=None)
+    awid_service_token: str | None = Field(default=None, repr=False)
     public_origin: str = Field(default="https://library.aweb.ai")
     auth_cache_ttl_seconds: int = Field(default=600, ge=1)
     timestamp_skew_seconds: int = Field(default=300, ge=1)

@@ -101,3 +101,22 @@ must use those checked-in Make targets rather than ad-hoc commands.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Private AWID teams
+
+Set `LIBRARY_AWID_SERVICE_TOKEN` through the deployment secret store when the
+registry requires trusted-service access to private teams. The optional token is
+sent as `X-AWID-Service-Token` on both team-facts and certificate/revocation reads;
+blank or unset values send no header. It does not replace request signatures or
+team-certificate verification. AWID's `403 team_private` becomes HTTP 403 with
+`detail.code=team_private_unreadable`; registry outages and timeouts remain 503.
+Never put the token in source, logs, or client manifests.
+
+### Revocation lookup bounds
+
+Team authentication reads the complete AWID certificate history, including revoked
+certificates, in pages of 200. A refresh may read at most 100 pages (20,000 records).
+If more pages remain, pagination does not advance, or the response is incomplete,
+the request fails closed with HTTP 503 and no partial facts enter the cache.
+An expired cache entry is never used after a failed refresh. A revoked certificate
+returns HTTP 401; the existing cache TTL still governs revocation freshness.

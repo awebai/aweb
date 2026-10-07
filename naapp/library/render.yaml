@@ -19,6 +19,8 @@ services:
         sync: false
       - key: LIBRARY_AWID_REGISTRY_URL
         value: https://api.awid.ai
+      - key: LIBRARY_AWID_SERVICE_TOKEN
+        sync: false
       - key: LIBRARY_PUBLIC_ORIGIN
         sync: false
       - key: LIBRARY_DB_POOL_MIN_CONNECTIONS
