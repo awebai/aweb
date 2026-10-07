@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/awebai/aw/awid"
@@ -36,21 +37,56 @@ type teamSpawnAuthorityOutput struct {
 
 type teamSpawnAuthorityRequestError struct {
 	status int
+	teamID string
 	cause  error
 }
 
 func (e *teamSpawnAuthorityRequestError) Error() string {
+	detail := teamSpawnAuthorityServerDetail(e.cause)
+	serverDetail := ""
+	if detail != "" {
+		serverDetail = ": " + strconv.Quote(detail)
+	}
+	team := teamSpawnAuthorityBoundedText(e.teamID, 128)
+	if team != "" {
+		team = "team id " + strconv.Quote(team)
+	} else {
+		team = "the selected team"
+	}
 	switch e.status {
 	case http.StatusUnprocessableEntity:
-		return "spawn-authority request was rejected (HTTP 422); pass --team-id in canonical <name>:<domain> form and confirm the selected server supports canonical team IDs"
+		return "server rejected " + team + " (HTTP 422" + serverDetail + "); this server does not accept canonical <name>:<domain> team IDs for spawn-authority yet; upgrade the server or contact support"
 	case http.StatusForbidden:
-		return "spawn-authority request was forbidden (HTTP 403); confirm the selected identity belongs to the requested team and is authorized to check its spawn authority"
+		return "server denied spawn-authority for " + team + " (HTTP 403" + serverDetail + "); verify the selected identity and requested team"
 	default:
 		return "spawn-authority request failed"
 	}
 }
 
 func (e *teamSpawnAuthorityRequestError) Unwrap() error { return e.cause }
+
+func teamSpawnAuthorityServerDetail(err error) string {
+	body, ok := awid.HTTPErrorBody(err)
+	if !ok {
+		return ""
+	}
+	var response struct {
+		Detail string `json:"detail"`
+	}
+	if json.Unmarshal([]byte(body), &response) != nil {
+		return ""
+	}
+	return teamSpawnAuthorityBoundedText(response.Detail, 240)
+}
+
+func teamSpawnAuthorityBoundedText(value string, maxRunes int) string {
+	text := awid.SanitizeErrorText(value)
+	runes := []rune(text)
+	if len(runes) > maxRunes {
+		return string(runes[:maxRunes-3]) + "..."
+	}
+	return text
+}
 
 func init() {
 	teamSpawnAuthorityCmd.Flags().StringVar(&teamSpawnAuthorityTeamID, "team-id", "", "Canonical team ID (<name>:<domain>) to check (defaults to selected team)")
@@ -74,7 +110,7 @@ func runTeamSpawnAuthority(ctx context.Context, cmd *cobra.Command) error {
 	var out teamSpawnAuthorityOutput
 	if err := client.Get(ctx, path, &out); err != nil {
 		if status, ok := awid.HTTPStatusCode(err); ok && (status == http.StatusUnprocessableEntity || status == http.StatusForbidden) {
-			return &teamSpawnAuthorityRequestError{status: status, cause: err}
+			return &teamSpawnAuthorityRequestError{status: status, teamID: teamID, cause: err}
 		}
 		return err
 	}

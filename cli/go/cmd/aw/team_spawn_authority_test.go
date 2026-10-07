@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -77,18 +76,41 @@ func TestTeamSpawnAuthorityMapsActionableTypedHTTPFailures(t *testing.T) {
 	t.Cleanup(func() { teamSpawnAuthorityTeamID = oldTeamID })
 
 	for _, tc := range []struct {
+		name   string
 		status int
-		want   string
+		detail string
+		want   []string
 	}{
-		{status: http.StatusUnprocessableEntity, want: "canonical <name>:<domain>"},
-		{status: http.StatusForbidden, want: "selected identity belongs to the requested team"},
+		{
+			name:   "canonical id unsupported",
+			status: http.StatusUnprocessableEntity,
+			detail: "canonical team IDs are not accepted",
+			want:   []string{`team id "backend:demo"`, "HTTP 422", "canonical team IDs are not accepted", "does not accept canonical <name>:<domain>"},
+		},
+		{
+			name:   "uninitialized identity",
+			status: http.StatusForbidden,
+			detail: "Spawn requires an initialized identity, not an unbound team key",
+			want:   []string{"HTTP 403", "initialized identity", "unbound team key"},
+		},
+		{
+			name:   "missing agent",
+			status: http.StatusForbidden,
+			detail: "Spawn requires a concrete team identity",
+			want:   []string{"HTTP 403", "concrete team identity"},
+		},
+		{
+			name:   "team mismatch",
+			status: http.StatusForbidden,
+			detail: "Authenticated team does not match requested team",
+			want:   []string{"HTTP 403", "Authenticated team does not match requested team"},
+		},
 	} {
-		t.Run(http.StatusText(tc.status), func(t *testing.T) {
-			const rawDetail = "private fixture detail must not be displayed"
+		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
-				_ = json.NewEncoder(w).Encode(map[string]string{"detail": rawDetail})
+				_ = json.NewEncoder(w).Encode(map[string]string{"detail": tc.detail})
 			}))
 			defer server.Close()
 
@@ -102,8 +124,14 @@ func TestTeamSpawnAuthorityMapsActionableTypedHTTPFailures(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected HTTP error")
 			}
-			if got := err.Error(); !strings.Contains(got, tc.want) || strings.Contains(got, rawDetail) {
-				t.Fatalf("error is not actionable and bounded: %q", got)
+			got := err.Error()
+			for _, want := range tc.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("error %q missing %q", got, want)
+				}
+			}
+			if strings.ContainsAny(got, "\r\n") || len([]rune(got)) > 512 {
+				t.Fatalf("error is not a bounded single line: %q", got)
 			}
 			if status, ok := awid.HTTPStatusCode(err); !ok || status != tc.status {
 				t.Fatalf("HTTPStatusCode(err)=(%d,%t), want %d", status, ok, tc.status)
@@ -116,10 +144,28 @@ func TestTeamSpawnAuthorityMapsActionableTypedHTTPFailures(t *testing.T) {
 			if !errors.As(err, &apiErr) || apiErr.StatusCode != tc.status {
 				t.Fatalf("wrapped API error=%#v, want status %d", apiErr, tc.status)
 			}
-			if body, ok := awid.HTTPErrorBody(err); !ok || !strings.Contains(body, rawDetail) {
+			if body, ok := awid.HTTPErrorBody(err); !ok || !strings.Contains(body, tc.detail) {
 				t.Fatalf("bounded mapping did not preserve typed API body: body=%q ok=%t", body, ok)
 			}
 		})
+	}
+}
+
+func TestTeamSpawnAuthorityServerDetailIsBoundedSingleLine(t *testing.T) {
+	rawDetail := "detail\n" + strings.Repeat("界", 300)
+	body, err := json.Marshal(map[string]string{"detail": rawDetail})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := teamSpawnAuthorityServerDetail(&awid.APIError{StatusCode: http.StatusForbidden, Body: string(body)})
+	if strings.ContainsAny(got, "\r\n") {
+		t.Fatalf("detail is not a single line: %q", got)
+	}
+	if gotRunes := len([]rune(got)); gotRunes != 240 {
+		t.Fatalf("detail rune length=%d, want bounded 240: %q", gotRunes, got)
+	}
+	if !strings.HasSuffix(got, "...") {
+		t.Fatalf("truncated detail lacks ellipsis: %q", got)
 	}
 }
 
@@ -147,21 +193,32 @@ func TestTeamSpawnAuthorityHelpAndHTTPFailuresInRealCLI(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
+		name   string
 		status int
-		want   string
+		detail string
+		want   []string
 	}{
-		{status: http.StatusUnprocessableEntity, want: "canonical <name>:<domain>"},
-		{status: http.StatusForbidden, want: "authorized to check its spawn authority"},
+		{
+			name:   "422 reports rejected canonical id",
+			status: http.StatusUnprocessableEntity,
+			detail: "canonical team IDs are not accepted",
+			want:   []string{`team id "backend:demo"`, "HTTP 422", "canonical team IDs are not accepted", "upgrade the server"},
+		},
+		{
+			name:   "403 reports server reason",
+			status: http.StatusForbidden,
+			detail: "Authenticated team does not match requested team",
+			want:   []string{`team id "backend:demo"`, "HTTP 403", "Authenticated team does not match requested team"},
+		},
 	} {
-		t.Run(http.StatusText(tc.status), func(t *testing.T) {
-			const rawDetail = "private fixture validation format must not leak"
+		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/api/v1/spawn/authority" {
 					t.Errorf("unexpected request %s", r.URL.String())
 				}
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.status)
-				_ = json.NewEncoder(w).Encode(map[string]string{"detail": rawDetail})
+				_ = json.NewEncoder(w).Encode(map[string]string{"detail": tc.detail})
 			}))
 			defer server.Close()
 
@@ -175,11 +232,14 @@ func TestTeamSpawnAuthorityHelpAndHTTPFailuresInRealCLI(t *testing.T) {
 			if err == nil {
 				t.Fatalf("expected exit failure, output=%s", output)
 			}
-			if !strings.Contains(string(output), tc.want) || !strings.Contains(string(output), "HTTP "+strconv.Itoa(tc.status)) {
-				t.Fatalf("CLI error lacks status/action: %s", output)
+			outputText := strings.TrimSpace(string(output))
+			for _, want := range tc.want {
+				if !strings.Contains(outputText, want) {
+					t.Fatalf("CLI error %q missing %q", outputText, want)
+				}
 			}
-			if strings.Contains(string(output), rawDetail) {
-				t.Fatalf("CLI leaked server response detail: %s", output)
+			if strings.ContainsAny(outputText, "\r\n") || len([]rune(outputText)) > 600 {
+				t.Fatalf("CLI error is not a bounded single line: %q", outputText)
 			}
 		})
 	}
