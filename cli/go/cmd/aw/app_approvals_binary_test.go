@@ -88,6 +88,11 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 		t.Fatal("remove changed another resident or host store")
 	}
 	invoke(empty, homes[0], "app_not_approved", "plugin", "update", "testapp")
+	var noApproval pluginRemoveOutput
+	if err := json.Unmarshal(invoke(empty, homes[0], "", "plugin", "remove", "testapp"), &noApproval); err != nil || !noApproval.NotApproved || noApproval.ApprovalRemoved {
+		t.Fatalf("unapproved remove receipt: %+v %v", noApproval, err)
+	}
+
 	invoke(empty, homes[0], "", "plugin", "install", server.URL) // already installed, approval once
 	// A changed response ID must not install a second app during update.
 	body.Store([]byte(strings.ReplaceAll(appTestManifest(server.URL, "/v1/things/{thing_id}"), `"id":"testapp"`, `"id":"otherapp"`)))

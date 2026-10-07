@@ -49,6 +49,7 @@ var grantScopeBundles = map[string][]string{
 var errGrantHomeRootAuthority = usageError("this is a grant home; run from the identity's own .aw home")
 
 type grantMintOutput struct {
+	SkippedApps       []skippedGrantApp       `json:"skipped_apps"`
 	Apps              []grantAppInventoryItem `json:"apps"`
 	GrantID           string                  `json:"grant_id"`
 	ExpiresAt         string                  `json:"expires_at"`
@@ -276,7 +277,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	explicitApps := cmd.Flags().Changed("app-tool") || len(grantMintAppTools) > 0
-	appSnapshots, err := selectGrantAppSnapshots(residentIdentityHome.Root, explicitApps, grantMintAppTools, grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL))
+	appSnapshots, skippedApps, err := prepareGrantAppSnapshots(residentIdentityHome.Root, explicitApps, grantMintAppTools, grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL))
 	if err != nil {
 		return err
 	}
@@ -353,6 +354,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 
 	out := grantMintOutput{
 		Apps:              grantAppInventory(appSnapshots),
+		SkippedApps:       skippedApps,
 		GrantID:           state.GrantID,
 		ExpiresAt:         state.ExpiresAt,
 		TeamID:            state.TeamID,
@@ -366,6 +368,9 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 			out.GrantID, firstNonEmpty(out.Address, out.Alias), out.TeamID, out.ExpiresAt, out.Out)
 		if out.CustodySocketPath != "" {
 			text += fmt.Sprintf("Custody socket: %s\n", out.CustodySocketPath)
+		}
+		for _, skipped := range out.SkippedApps {
+			text += fmt.Sprintf("App %s excluded: %s\n", skipped.AppID, skipped.Code)
 		}
 		return text
 	})
