@@ -1,0 +1,1103 @@
+{
+  "schema": "aweb.app-manifest.events.v1",
+  "gateway_source": "awebai/ac@7665d8638fac94b05db4101c6049fa4ea4c3b0e0",
+  "cases": [
+    {
+      "name": "absent",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": []
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "empty",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": []
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "local-default",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "doc.changed"
+          }
+        ]
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "prefixed",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "testapp/doc.changed",
+            "description": "  description  ",
+            "default_delivery_intent": "wake"
+          }
+        ]
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "intent-ambient",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": "ambient"
+          }
+        ]
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "intent-wake",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": "wake"
+          }
+        ]
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "intent-steer",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": "steer"
+          }
+        ]
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "events-null",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": null
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "events-false",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": false
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "events-zero",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": 0
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "events-empty-string",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": ""
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "events-object",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": {}
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "events-nonempty-object",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": {
+          "x": 1
+        }
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "item-null",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          null
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "item-string",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          "x"
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "item-number",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          1
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "item-array",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          []
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "missing",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {}
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "empty",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": ""
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "null",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": null
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "wrong-prefix",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "other/x"
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "nested",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "testapp/a/b"
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "uppercase",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "Foo"
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "overlong",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "extra",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "authority": "all"
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "description-null",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "description": null
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "description-number",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "description": 7
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "description-long",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "description": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "intent-invalid",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": "urgent"
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": false
+    },
+    {
+      "name": "type-number",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": 123
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "intent-null",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": null
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "intent-empty",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": ""
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "intent-false",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": false
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "intent-whitespace",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": " "
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "intent-trimmed",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "default_delivery_intent": " wake "
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    },
+    {
+      "name": "type-max",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "description-unicode-max",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x",
+            "description": " éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé "
+          }
+        ]
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "count-max",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x0"
+          },
+          {
+            "type": "x1"
+          },
+          {
+            "type": "x2"
+          },
+          {
+            "type": "x3"
+          },
+          {
+            "type": "x4"
+          },
+          {
+            "type": "x5"
+          },
+          {
+            "type": "x6"
+          },
+          {
+            "type": "x7"
+          },
+          {
+            "type": "x8"
+          },
+          {
+            "type": "x9"
+          },
+          {
+            "type": "x10"
+          },
+          {
+            "type": "x11"
+          },
+          {
+            "type": "x12"
+          },
+          {
+            "type": "x13"
+          },
+          {
+            "type": "x14"
+          },
+          {
+            "type": "x15"
+          },
+          {
+            "type": "x16"
+          },
+          {
+            "type": "x17"
+          },
+          {
+            "type": "x18"
+          },
+          {
+            "type": "x19"
+          },
+          {
+            "type": "x20"
+          },
+          {
+            "type": "x21"
+          },
+          {
+            "type": "x22"
+          },
+          {
+            "type": "x23"
+          },
+          {
+            "type": "x24"
+          },
+          {
+            "type": "x25"
+          },
+          {
+            "type": "x26"
+          },
+          {
+            "type": "x27"
+          },
+          {
+            "type": "x28"
+          },
+          {
+            "type": "x29"
+          },
+          {
+            "type": "x30"
+          },
+          {
+            "type": "x31"
+          },
+          {
+            "type": "x32"
+          },
+          {
+            "type": "x33"
+          },
+          {
+            "type": "x34"
+          },
+          {
+            "type": "x35"
+          },
+          {
+            "type": "x36"
+          },
+          {
+            "type": "x37"
+          },
+          {
+            "type": "x38"
+          },
+          {
+            "type": "x39"
+          },
+          {
+            "type": "x40"
+          },
+          {
+            "type": "x41"
+          },
+          {
+            "type": "x42"
+          },
+          {
+            "type": "x43"
+          },
+          {
+            "type": "x44"
+          },
+          {
+            "type": "x45"
+          },
+          {
+            "type": "x46"
+          },
+          {
+            "type": "x47"
+          },
+          {
+            "type": "x48"
+          },
+          {
+            "type": "x49"
+          },
+          {
+            "type": "x50"
+          },
+          {
+            "type": "x51"
+          },
+          {
+            "type": "x52"
+          },
+          {
+            "type": "x53"
+          },
+          {
+            "type": "x54"
+          },
+          {
+            "type": "x55"
+          },
+          {
+            "type": "x56"
+          },
+          {
+            "type": "x57"
+          },
+          {
+            "type": "x58"
+          },
+          {
+            "type": "x59"
+          },
+          {
+            "type": "x60"
+          },
+          {
+            "type": "x61"
+          },
+          {
+            "type": "x62"
+          },
+          {
+            "type": "x63"
+          }
+        ]
+      },
+      "accepted": true,
+      "gateway_accepted": true
+    },
+    {
+      "name": "count-over",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "testapp",
+          "version": "1",
+          "origin": "https://app.example"
+        },
+        "tools": [],
+        "events": [
+          {
+            "type": "x0"
+          },
+          {
+            "type": "x1"
+          },
+          {
+            "type": "x2"
+          },
+          {
+            "type": "x3"
+          },
+          {
+            "type": "x4"
+          },
+          {
+            "type": "x5"
+          },
+          {
+            "type": "x6"
+          },
+          {
+            "type": "x7"
+          },
+          {
+            "type": "x8"
+          },
+          {
+            "type": "x9"
+          },
+          {
+            "type": "x10"
+          },
+          {
+            "type": "x11"
+          },
+          {
+            "type": "x12"
+          },
+          {
+            "type": "x13"
+          },
+          {
+            "type": "x14"
+          },
+          {
+            "type": "x15"
+          },
+          {
+            "type": "x16"
+          },
+          {
+            "type": "x17"
+          },
+          {
+            "type": "x18"
+          },
+          {
+            "type": "x19"
+          },
+          {
+            "type": "x20"
+          },
+          {
+            "type": "x21"
+          },
+          {
+            "type": "x22"
+          },
+          {
+            "type": "x23"
+          },
+          {
+            "type": "x24"
+          },
+          {
+            "type": "x25"
+          },
+          {
+            "type": "x26"
+          },
+          {
+            "type": "x27"
+          },
+          {
+            "type": "x28"
+          },
+          {
+            "type": "x29"
+          },
+          {
+            "type": "x30"
+          },
+          {
+            "type": "x31"
+          },
+          {
+            "type": "x32"
+          },
+          {
+            "type": "x33"
+          },
+          {
+            "type": "x34"
+          },
+          {
+            "type": "x35"
+          },
+          {
+            "type": "x36"
+          },
+          {
+            "type": "x37"
+          },
+          {
+            "type": "x38"
+          },
+          {
+            "type": "x39"
+          },
+          {
+            "type": "x40"
+          },
+          {
+            "type": "x41"
+          },
+          {
+            "type": "x42"
+          },
+          {
+            "type": "x43"
+          },
+          {
+            "type": "x44"
+          },
+          {
+            "type": "x45"
+          },
+          {
+            "type": "x46"
+          },
+          {
+            "type": "x47"
+          },
+          {
+            "type": "x48"
+          },
+          {
+            "type": "x49"
+          },
+          {
+            "type": "x50"
+          },
+          {
+            "type": "x51"
+          },
+          {
+            "type": "x52"
+          },
+          {
+            "type": "x53"
+          },
+          {
+            "type": "x54"
+          },
+          {
+            "type": "x55"
+          },
+          {
+            "type": "x56"
+          },
+          {
+            "type": "x57"
+          },
+          {
+            "type": "x58"
+          },
+          {
+            "type": "x59"
+          },
+          {
+            "type": "x60"
+          },
+          {
+            "type": "x61"
+          },
+          {
+            "type": "x62"
+          },
+          {
+            "type": "x63"
+          },
+          {
+            "type": "x64"
+          }
+        ]
+      },
+      "accepted": false,
+      "gateway_accepted": true
+    }
+  ]
+}

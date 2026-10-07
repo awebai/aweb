@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/awebai/aw/awid"
 )
@@ -55,6 +57,7 @@ type Manifest struct {
 	App             App            `json:"app"`
 	Tools           []Tool         `json:"tools"`
 	EventEmitters   []EventEmitter `json:"event_emitters,omitempty"`
+	Events          Events         `json:"events,omitempty"`
 }
 
 type App struct {
@@ -87,6 +90,80 @@ type Body struct {
 	Mode        string `json:"mode,omitempty"`
 	RawParam    string `json:"raw_param,omitempty"`
 	ContentType string `json:"content_type,omitempty"`
+}
+
+// Events are declaration metadata only. The CLI preserves them with the
+// installed manifest and does not subscribe, emit, or change tool authority.
+const MaxManifestEvents = 64
+
+type Events []Event
+
+type Event struct {
+	Type                  string  `json:"type"`
+	DefaultDeliveryIntent *string `json:"default_delivery_intent,omitempty"`
+	Description           *string `json:"description,omitempty"`
+}
+
+func (events *Events) UnmarshalJSON(data []byte) error {
+	if len(bytes.TrimSpace(data)) == 0 || bytes.TrimSpace(data)[0] != '[' {
+		return fmt.Errorf("events must be an array")
+	}
+	var items []json.RawMessage
+	if err := DecodeSingleJSONStrict(data, &items); err != nil {
+		return err
+	}
+	if len(items) > MaxManifestEvents {
+		return fmt.Errorf("events exceeds %d declarations", MaxManifestEvents)
+	}
+	out := make(Events, 0, len(items))
+	for i, raw := range items {
+		if len(bytes.TrimSpace(raw)) == 0 || bytes.TrimSpace(raw)[0] != '{' {
+			return fmt.Errorf("events[%d] must be an object", i)
+		}
+		type plainEvent Event
+		var event plainEvent
+		if err := DecodeSingleJSONStrict(raw, &event); err != nil {
+			return fmt.Errorf("events[%d]: %w", i, err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return err
+		}
+		for key, value := range fields {
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return fmt.Errorf("events[%d].%s must be a string", i, key)
+			}
+		}
+		out = append(out, Event(event))
+	}
+	*events = out
+	return nil
+}
+
+var localEventTypePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
+
+func validateEvents(events Events, appID string) error {
+	if len(events) > MaxManifestEvents {
+		return fmt.Errorf("events exceeds %d declarations", MaxManifestEvents)
+	}
+	for i, event := range events {
+		eventType := strings.TrimSpace(event.Type)
+		eventType = strings.TrimPrefix(eventType, appID+"/")
+		if !localEventTypePattern.MatchString(eventType) {
+			return fmt.Errorf("events[%d].type must be an app-local event type", i)
+		}
+		intent := "ambient"
+		if event.DefaultDeliveryIntent != nil {
+			intent = *event.DefaultDeliveryIntent
+		}
+		if intent != "ambient" && intent != "wake" && intent != "steer" {
+			return fmt.Errorf("events[%d].default_delivery_intent is invalid", i)
+		}
+		if event.Description != nil && utf8.RuneCountInString(strings.TrimSpace(*event.Description)) > 4096 {
+			return fmt.Errorf("events[%d].description exceeds 4096 characters", i)
+		}
+	}
+	return nil
 }
 
 type EventEmitter struct {
@@ -132,6 +209,9 @@ func Validate(manifest Manifest, reservedNames map[string]bool) error {
 		if err := validateTool(tool, reservedNames); err != nil {
 			return err
 		}
+	}
+	if err := validateEvents(manifest.Events, appID); err != nil {
+		return err
 	}
 	if err := validateEventEmitters(manifest.EventEmitters); err != nil {
 		return err
