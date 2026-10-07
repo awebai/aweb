@@ -49,13 +49,14 @@ var grantScopeBundles = map[string][]string{
 var errGrantHomeRootAuthority = usageError("this is a grant home; run from the identity's own .aw home")
 
 type grantMintOutput struct {
-	GrantID           string `json:"grant_id"`
-	ExpiresAt         string `json:"expires_at"`
-	TeamID            string `json:"team_id"`
-	Alias             string `json:"alias,omitempty"`
-	Address           string `json:"address,omitempty"`
-	Out               string `json:"out"`
-	CustodySocketPath string `json:"custody_socket_path,omitempty"`
+	Apps              []grantAppInventoryItem `json:"apps"`
+	GrantID           string                  `json:"grant_id"`
+	ExpiresAt         string                  `json:"expires_at"`
+	TeamID            string                  `json:"team_id"`
+	Alias             string                  `json:"alias,omitempty"`
+	Address           string                  `json:"address,omitempty"`
+	Out               string                  `json:"out"`
+	CustodySocketPath string                  `json:"custody_socket_path,omitempty"`
 }
 
 // activeGrantHome loads the grant home the current identity-home resolution
@@ -274,11 +275,8 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	appSpecs, err := parseGrantAppToolSpecs(grantMintAppTools)
-	if err != nil {
-		return err
-	}
-	appSnapshots, err := buildGrantAppSnapshots(appSpecs, grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL))
+	explicitApps := cmd.Flags().Changed("app-tool") || len(grantMintAppTools) > 0
+	appSnapshots, err := selectGrantAppSnapshots(residentIdentityHome.Root, explicitApps, grantMintAppTools, grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL))
 	if err != nil {
 		return err
 	}
@@ -354,6 +352,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	}
 
 	out := grantMintOutput{
+		Apps:              grantAppInventory(appSnapshots),
 		GrantID:           state.GrantID,
 		ExpiresAt:         state.ExpiresAt,
 		TeamID:            state.TeamID,
@@ -494,7 +493,7 @@ func init() {
 	}
 	mintCmd.Flags().StringArrayVar(&grantMintScopes, "scope", nil, "Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)")
 	mintCmd.Flags().StringArrayVar(&grantMintBundles, "bundle", nil, "Grant scope bundle, repeatable or comma-separated (normal-agent)")
-	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Installed app tool the grant may call, as app:verb; repeatable or comma-separated. Each signed tool must be named; the definition is snapshotted at mint")
+	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Legacy one-mint app:verb selection; replaces the resident approval catalog for this mint only")
 	mintCmd.Flags().StringVar(&grantMintCustodySocket, "custody-socket", "", "Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket")
 	mintCmd.Flags().DurationVar(&grantMintTTL, "ttl", 8*time.Hour, "Grant duration before expiry (60s to 720h)")
 	mintCmd.Flags().StringVar(&grantMintLabel, "label", "", "Optional label for the grant")

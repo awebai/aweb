@@ -356,3 +356,8 @@ application releases use `app.version`; a breaking interpretation change needs
 a new `manifest_version` and new conformance fixtures. Streaming responses,
 multipart bodies, float canonicalization, and output selectors remain outside
 v1 until source, vectors, and this contract change together.
+
+## CLI resident and grant access
+
+See [CLI naapp access](naapp-access.md) for selected-home installation, resident
+approvals, shared-store discovery and finite grant snapshots.
