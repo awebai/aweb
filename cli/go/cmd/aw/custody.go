@@ -95,6 +95,7 @@ type custodyService struct {
 	readStoredEnvelope func(context.Context, string, string, string) (*awid.E2EEMessageEnvelope, error)
 	resolveRecipient   func(context.Context, string) (*awid.ResolvedIdentity, error)
 	e2eeKeyError       string
+	clientInitError    string
 	selectedTeam       string
 	appDeniedOrigins   []string
 	serviceID          string
@@ -127,7 +128,13 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 	if e2eeKeyErr != nil {
 		e2eeKeyError = "encryption_key_unavailable"
 	}
-	client, sel, clientErr := resolveClientSelectionAtIdentityHome(wd, home)
+	// Keep the validated selection even when client construction fails so status
+	// can report the selected team without exposing resolver details.
+	sel, clientErr := resolveSelectionAtIdentityHome(wd, "", home)
+	var client *aweb.Client
+	if clientErr == nil {
+		client, _, clientErr = resolveClientForSelectionAtIdentityHome(wd, externalIdentityHomeRoot(home), sel)
+	}
 	serviceID, _ := awid.GenerateUUID4()
 	svc := &custodyService{residentHome: home.Root, socketPath: awconfig.CustodySocketPath(home.Root), identity: identity, signingKey: key, e2eeAssertion: e2eeAssertion, e2eePrivateKey: e2eePrivateKey, e2eeKeyError: e2eeKeyError, serviceID: serviceID, now: time.Now, replay: map[string]string{}, replayAt: map[string]time.Time{}, results: map[string]any{}}
 	if sel != nil {
@@ -142,8 +149,26 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 		svc.readinessCheck = func(ctx context.Context) (string, error) {
 			return client.ProbeIdentityGrantStatus(ctx)
 		}
+	} else {
+		svc.clientInitError = custodyClientInitializationErrorCode(clientErr)
 	}
 	return svc, nil
+}
+
+func custodyClientInitializationErrorCode(err error) string {
+	if err == nil {
+		return "client_initialization_unavailable"
+	}
+	if isIdentityMismatchError(err) {
+		return "client_initialization_identity_mismatch"
+	}
+	if status, ok := awid.HTTPStatusCode(err); ok {
+		return fmt.Sprintf("client_initialization_http_%d", status)
+	}
+	if exitCode(err) == 2 {
+		return "client_initialization_selection_refused"
+	}
+	return "client_initialization_failed"
 }
 
 func grantStatusViaClient(client *aweb.Client) func(context.Context, string) (custodyGrantStatus, error) {
@@ -231,6 +256,9 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 	out.Resident.DIDKey = s.identity.DID
 	out.Resident.Address = s.identity.Address
 	out.Resident.Alias = s.identity.Handle
+	if strings.TrimSpace(s.clientInitError) != "" {
+		errs = append(errs, strings.TrimSpace(s.clientInitError))
+	}
 	grantStatusReady := s.grantStatus != nil
 	lastCheckedAt := any(nil)
 	if s.readinessCheck != nil {

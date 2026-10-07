@@ -356,6 +356,189 @@ func TestCustodyStatusUnavailableUsesStableErrorCode(t *testing.T) {
 	}
 }
 
+func custodyConstructorIdentityFixture(t *testing.T, home awconfig.IdentityHome, awebURL string, writeCertificate bool) (string, string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(home.Root, "team-certs"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pub, signingKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(pub)
+	didAW := awid.ComputeStableID(pub)
+	teamID := "backend:example.com"
+	address := "example.com/alice"
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(home.Root, "identity.yaml"), &awconfig.WorktreeIdentity{
+		DID: didKey, StableID: didAW, Address: address, Custody: awid.CustodySelf,
+		IdentityScope: awid.IdentityModeGlobal, CreatedAt: "2026-10-06T00:00:00Z",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(home.Root, "signing.key"), signingKey); err != nil {
+		t.Fatal(err)
+	}
+	certPath := awconfig.TeamCertificateRelativePath(teamID)
+	workspace := &awconfig.WorktreeWorkspace{
+		AwebURL:     awebURL,
+		Memberships: []awconfig.WorktreeMembership{{TeamID: teamID, Alias: "alice", WorkspaceID: "workspace-test", CertPath: certPath}},
+	}
+	if err := awconfig.SaveWorktreeWorkspaceTo(filepath.Join(home.Root, "workspace.yaml"), workspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveTeamStateToIdentityHome(home.Root, &awconfig.TeamState{
+		ActiveTeam:  teamID,
+		Memberships: []awconfig.TeamMembership{{TeamID: teamID, Alias: "alice", CertPath: certPath}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if writeCertificate {
+		_, teamKey, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
+			Team: teamID, MemberDIDKey: didKey, MemberDIDAW: didAW, MemberAddress: address,
+			Alias: "alice", IdentityScope: awid.IdentityModeGlobal,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := awconfig.SaveTeamCertificateForTeamToIdentityHome(home.Root, teamID, cert); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return teamID, didKey
+}
+
+func TestCustodyClientInitializationFailureIsReportedWithoutResolverDetails(t *testing.T) {
+	oldTeamFlag, oldServerFlag, oldLastClient := teamFlag, serverFlag, lastClient
+	teamFlag, serverFlag, lastClient = "", "", nil
+	t.Cleanup(func() { teamFlag, serverFlag, lastClient = oldTeamFlag, oldServerFlag, oldLastClient })
+	t.Setenv("AWEB_URL", "")
+
+	home := awconfig.IdentityHome{Root: filepath.Join(t.TempDir(), "resident"), Source: awconfig.IdentityHomeFlag}
+	if err := os.MkdirAll(home.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	teamID, _ := custodyConstructorIdentityFixture(t, home, "https://app.example.test", false)
+	svc, err := newCustodyService(home)
+	if err != nil {
+		t.Fatalf("custody service should stay available for local status: %v", err)
+	}
+	if svc.client != nil || svc.readinessCheck != nil || svc.selectedTeam != teamID {
+		t.Fatalf("constructor changed client or team selection unexpectedly: client=%v check=%v team=%q", svc.client, svc.readinessCheck != nil, svc.selectedTeam)
+	}
+	status := svc.status(context.Background(), "running", nil)
+	encoded, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(encoded)
+	if !containsString(status.Errors, "client_initialization_failed") {
+		t.Fatalf("status hid failed client initialization: %s", text)
+	}
+	if containsString(status.Errors, "grant_status_unavailable") {
+		t.Fatalf("selection failure was misreported as a status probe failure: %s", text)
+	}
+	for _, code := range status.Errors {
+		if strings.Contains(code, home.Root) || strings.Contains(code, "team-certs") || strings.Contains(code, "example.test") {
+			t.Fatalf("status leaked resolver details in error code %q", code)
+		}
+	}
+	if status.Freshness["last_checked_at"] != nil {
+		t.Fatalf("status invented a probe timestamp without a client: %#v", status.Freshness)
+	}
+}
+
+func TestCustodyClientInitializationErrorCodePreservesOnlySafeType(t *testing.T) {
+	const privatePath = "/private/resident/team-certs/team.pem"
+	cases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "unavailable", want: "client_initialization_unavailable"},
+		{name: "identity mismatch", err: &identityMismatchError{ContextPath: privatePath}, want: "client_initialization_identity_mismatch"},
+		{name: "selection refusal", err: usageError("selection failed at %s", privatePath), want: "client_initialization_selection_refused"},
+		{name: "http status", err: &awid.APIError{StatusCode: http.StatusUnauthorized, Body: "private backend response"}, want: "client_initialization_http_401"},
+		{name: "generic", err: errors.New("private resolver detail at " + privatePath), want: "client_initialization_failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := custodyClientInitializationErrorCode(tc.err)
+			if got != tc.want {
+				t.Fatalf("code=%q, want %q", got, tc.want)
+			}
+			if strings.Contains(got, privatePath) || strings.Contains(got, "private backend response") {
+				t.Fatalf("sanitized code leaked resolver details: %q", got)
+			}
+		})
+	}
+}
+
+func TestCustodyClientInitializationSuccessKeepsSelectedCertificateAuth(t *testing.T) {
+	oldTeamFlag, oldServerFlag, oldLastClient := teamFlag, serverFlag, lastClient
+	teamFlag, serverFlag, lastClient = "", "", nil
+	t.Cleanup(func() { teamFlag, serverFlag, lastClient = oldTeamFlag, oldServerFlag, oldLastClient })
+	t.Setenv("AWEB_URL", "")
+
+	var selectedTeamID, selectedDIDKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/agents/heartbeat" || r.URL.Path == "/api/v1/agents/heartbeat" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		if r.URL.Path != "/v1/identity-grants/00000000-0000-0000-0000-000000000000/status" {
+			t.Errorf("unexpected status request path %q", r.URL.Path)
+		}
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "DIDKey "+selectedDIDKey+" ") {
+			t.Errorf("request did not use selected resident identity: %q", r.Header.Get("Authorization"))
+		}
+		certHeader := strings.TrimSpace(r.Header.Get("X-AWID-Team-Certificate"))
+		cert, err := awid.DecodeTeamCertificateHeader(certHeader)
+		if err != nil {
+			t.Errorf("request did not carry selected team certificate: %v", err)
+		} else if cert.Team != selectedTeamID || cert.MemberDIDKey != selectedDIDKey {
+			t.Errorf("request used a different team or member certificate: team=%q member=%q", cert.Team, cert.MemberDIDKey)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":"grant_not_found","contract":"identity-grant-status.v1"}`))
+	}))
+	defer server.Close()
+
+	home := awconfig.IdentityHome{Root: filepath.Join(t.TempDir(), "resident"), Source: awconfig.IdentityHomeFlag}
+	if err := os.MkdirAll(home.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	selectedTeamID, selectedDIDKey = custodyConstructorIdentityFixture(t, home, server.URL, true)
+	svc, err := newCustodyService(home)
+	if err != nil {
+		t.Fatalf("newCustodyService: %v", err)
+	}
+	if svc.client == nil || svc.selectedTeam != selectedTeamID {
+		t.Fatalf("constructor did not preserve selected client/team: client=%v team=%q", svc.client != nil, svc.selectedTeam)
+	}
+	status := svc.status(context.Background(), "running", nil)
+	if containsString(status.Errors, "client_initialization_failed") || containsString(status.Errors, "grant_status_unavailable") {
+		t.Fatalf("successful selected client was reported unavailable: %#v", status.Errors)
+	}
+	if status.Freshness["last_checked_at"] == nil || len(status.Teams) != 1 || status.Teams[0]["team_id"] != selectedTeamID || status.Teams[0]["grant_status_endpoint_ready"] != true {
+		t.Fatalf("selected client/team readiness was not preserved: freshness=%#v teams=%#v", status.Freshness, status.Teams)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestCustodySocketPathLengthDiagnostic(t *testing.T) {
 	limit := custodySocketPathLimit()
 	if limit <= 0 {
