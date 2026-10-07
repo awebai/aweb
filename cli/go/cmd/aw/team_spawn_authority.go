@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
@@ -16,6 +18,7 @@ var teamSpawnAuthorityCmd = &cobra.Command{
 	Use:   "spawn-authority",
 	Short: "Check whether the selected identity can create hosted spawn invites",
 	Long: "Check hosted spawn authority for the selected identity and team.\n\n" +
+		"Pass --team-id as the canonical <name>:<domain> team ID. If omitted, the selected team's canonical ID is used.\n" +
 		"This is a read-only proof against /api/v1/spawn/authority. It does not use or prove CLI human auth status.",
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -31,8 +34,26 @@ type teamSpawnAuthorityOutput struct {
 	CanSpawn     bool   `json:"can_spawn"`
 }
 
+type teamSpawnAuthorityRequestError struct {
+	status int
+	cause  error
+}
+
+func (e *teamSpawnAuthorityRequestError) Error() string {
+	switch e.status {
+	case http.StatusUnprocessableEntity:
+		return "spawn-authority request was rejected (HTTP 422); pass --team-id in canonical <name>:<domain> form and confirm the selected server supports canonical team IDs"
+	case http.StatusForbidden:
+		return "spawn-authority request was forbidden (HTTP 403); confirm the selected identity belongs to the requested team and is authorized to check its spawn authority"
+	default:
+		return "spawn-authority request failed"
+	}
+}
+
+func (e *teamSpawnAuthorityRequestError) Unwrap() error { return e.cause }
+
 func init() {
-	teamSpawnAuthorityCmd.Flags().StringVar(&teamSpawnAuthorityTeamID, "team-id", "", "Canonical team id to check (defaults to selected team)")
+	teamSpawnAuthorityCmd.Flags().StringVar(&teamSpawnAuthorityTeamID, "team-id", "", "Canonical team ID (<name>:<domain>) to check (defaults to selected team)")
 	teamSpawnAuthorityCmd.GroupID = teamGroupMembership
 	teamHumanCmd.AddCommand(teamSpawnAuthorityCmd)
 }
@@ -52,6 +73,9 @@ func runTeamSpawnAuthority(ctx context.Context, cmd *cobra.Command) error {
 	}
 	var out teamSpawnAuthorityOutput
 	if err := client.Get(ctx, path, &out); err != nil {
+		if status, ok := awid.HTTPStatusCode(err); ok && (status == http.StatusUnprocessableEntity || status == http.StatusForbidden) {
+			return &teamSpawnAuthorityRequestError{status: status, cause: err}
+		}
 		return err
 	}
 	if jsonFlag {

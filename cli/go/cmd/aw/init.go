@@ -159,10 +159,6 @@ func initOutcomeFlagNames() []string {
 }
 
 func missingInitOutcomeError(action, flag string) error {
-	guidance := initWorkspaceDiscoveryGuidance()
-	if guidance != "" {
-		return usageError("explicit init outcome required to %s; rerun with %s, or choose --join-from, --admission-team-id, or --workspace-team\n\n%s", action, flag, guidance)
-	}
 	return usageError("explicit init outcome required to %s; rerun with %s, or choose --join-from, --admission-team-id, or --workspace-team", action, flag)
 }
 

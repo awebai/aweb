@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -322,7 +323,7 @@ func TestInitTTYMissingOutcomeUsesChooserConfirmation(t *testing.T) {
 	}
 }
 
-func TestRequireInitOutcomeNonTTYIncludesDiscoveryGuidance(t *testing.T) {
+func TestRequireInitOutcomeNonTTYDoesNotExposeDiscoveryIndex(t *testing.T) {
 	// Uses HOME for discovery index; do not mark parallel.
 	tmp := t.TempDir()
 	t.Setenv("HOME", filepath.Join(tmp, "home"))
@@ -339,9 +340,62 @@ func TestRequireInitOutcomeNonTTYIncludesDiscoveryGuidance(t *testing.T) {
 		t.Fatal("expected missing outcome error")
 	}
 	text := err.Error()
-	for _, want := range []string{"explicit init outcome required", "Existing workspace discovery index", discovered, "aw init --join-from"} {
+	for _, want := range []string{"explicit init outcome required", "--new-account", "--join-from", "--admission-team-id", "--workspace-team"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q in error:\n%v", want, err)
+		}
+	}
+	for _, private := range []string{"Existing workspace discovery index", discovered, "backend:acme.com", "alice", "app.aweb.ai"} {
+		if strings.Contains(text, private) {
+			t.Fatalf("noninteractive refusal exposed discovery data %q: %v", private, err)
+		}
+	}
+}
+
+func TestInitMissingOutcomeRefusalDoesNotListDiscoveryInRealCLI(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	root := t.TempDir()
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+
+	home := filepath.Join(root, "home")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	discovered := filepath.Join(root, "foreign-fixture-workspace")
+	if err := os.MkdirAll(discovered, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	if err := awconfig.RecordMachineWorkspace(awconfig.MachineWorkspaceIndexEntry{
+		Path: discovered, TeamID: "foreign:private.example", Alias: "private-fixture-alias", ServerURL: "https://private-fixture.example",
+	}); err != nil {
+		t.Fatalf("record discovery fixture: %v", err)
+	}
+
+	cwd := filepath.Join(root, "empty-workspace")
+	if err := os.MkdirAll(cwd, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.CommandContext(ctx, bin, "init")
+	command.Dir = cwd
+	command.Env = append(testCommandEnv(home), "AW_NO_UPDATE_CHECK=1", "AWEB_URL=https://app.aweb.ai", "AWID_REGISTRY_URL=https://registry.example")
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("init unexpectedly succeeded without an explicit outcome: %s", output)
+	}
+	if strings.Contains(strings.TrimSpace(string(output)), "\n") {
+		t.Fatalf("refusal printed output beyond the single guidance line:\n%s", output)
+	}
+	for _, want := range []string{"explicit init outcome required", "--new-account", "--join-from", "--admission-team-id", "--workspace-team"} {
+		if !strings.Contains(string(output), want) {
+			t.Fatalf("refusal missing %q:\n%s", want, output)
+		}
+	}
+	for _, private := range []string{"Existing workspace discovery index", discovered, "foreign:private.example", "private-fixture-alias", "private-fixture.example"} {
+		if strings.Contains(string(output), private) {
+			t.Fatalf("init refusal exposed discovery data %q:\n%s", private, output)
 		}
 	}
 }
