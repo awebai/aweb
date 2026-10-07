@@ -116,6 +116,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "016_identity_session_grants.sql",
         "017_agents_certificate_id.sql",
         "018_identity_grant_liveness.sql",
+        "019_chat_participant_lookup.sql",
     ]
 
 
