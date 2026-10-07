@@ -749,6 +749,17 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !signedDisplayMatches(m.SignedPayload, map[string]string{
+			"type": "chat", "body": m.Body,
+			"message_id": m.MessageID, "conversation_id": m.ConversationID,
+			"from_did": m.FromDID, "to_did": m.ToDID,
+		}) {
+			// Preserve the observed response so a mismatch cannot be hidden by
+			// metadata overlay or subsequently promoted by trust normalization.
+			m.VerificationStatus = Failed
+			continue
+		}
+
 		if m.ContentMode == ContentModeEncryptedV2 || m.MessageVersion == E2EEMessageVersion || m.Encrypted != nil {
 			if m.Encrypted == nil {
 				return nil, errors.New("encrypted chat response is missing encrypted envelope")
@@ -757,6 +768,13 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 			if err != nil {
 				return nil, err
 			}
+			if m.MessageID != plain.MessageID || m.ConversationID != plain.ConversationID {
+				// Decryption authenticated the envelope and its inner IDs. Keep
+				// the original outer projection visible when it disagrees.
+				m.VerificationStatus = Failed
+				continue
+			}
+
 			m.Body = plain.Body
 			applyE2EEPlaintextChatMetadata(m, plain)
 			m.VerificationStatus = Verified
