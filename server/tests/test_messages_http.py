@@ -1449,7 +1449,8 @@ async def test_send_message_to_cross_team_did_creates_conversation(aweb_cloud_db
 
 
 @pytest.mark.asyncio
-async def test_send_message_to_external_address_posts_federated_mail_and_projects_locally(aweb_cloud_db):
+@pytest.mark.parametrize("new_conversation", [False, True])
+async def test_send_message_to_external_address_posts_federated_mail_and_projects_locally(aweb_cloud_db, new_conversation):
     alice_sk, _, alice_did_key = _make_keypair()
     bob_sk, _, bob_did_key = _make_keypair()
     await _insert_team(aweb_cloud_db.aweb_db, "backend:acme.com")
@@ -1537,6 +1538,8 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
         "signature": sign_message(alice_sk, signed_payload.encode()),
         "signed_payload": signed_payload,
     }
+    if new_conversation:
+        payload["new_conversation"] = True
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/v1/messages", json=payload)
 
@@ -1586,10 +1589,15 @@ async def test_send_message_to_external_address_posts_federated_mail_and_project
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         retry = await client.post("/v1/messages", json=payload)
 
-    assert retry.status_code == 200, retry.text
-    assert retry.json()["message_id"] == message_id
+    if new_conversation:
+        assert retry.status_code == 409, retry.text
+        assert retry.json()["detail"] == "conversation_exists"
+        assert len(remote_requests) == 1
+    else:
+        assert retry.status_code == 200, retry.text
+        assert retry.json()["message_id"] == message_id
+        assert len(remote_requests) == 2
     assert registry.resolve_address.await_count == 1
-    assert len(remote_requests) == 2
     projected_count = await aweb_cloud_db.aweb_db.fetch_value(
         "SELECT COUNT(*) FROM {{tables.messages}} WHERE message_id = $1",
         UUID(message_id),
