@@ -170,6 +170,22 @@ replay or acknowledgement semantics to control signals or other event types.
 The low-level CLI exits on EOF or stream error. It intentionally leaves retry
 and backoff to its caller.
 
+### Server query maintenance
+
+Pending-chat polling first selects the viewer's participant rows by DID or
+stable agent ID, preferring an exact DID match within each session. It then
+aggregates participants and reads messages only for those sessions. Existing
+semantics include departed participants; this optimization does not add a
+`left_at` filter, change unread receipts, or change encrypted-message redaction.
+The mail poll query is unchanged.
+
+Migration `019_chat_participant_lookup.sql` adds DID and non-null agent-ID
+indexes supporting that lookup. It does not rewrite existing migrations or
+change stored rows. Index creation uses the normal migration transaction and
+can block writes while building; applying it requires the deployment's usual
+migration window. Source tests and local query plans are not production
+migration or performance evidence.
+
 ### Communication event fields
 
 An `actionable_mail` event can include:
