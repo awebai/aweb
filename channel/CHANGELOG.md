@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Verify encrypted mail/chat push trust against the locally decrypted v2 envelope
+  and the existing sender trust checks; never import the CLI verification label.
+
 ## 1.7.11
 
 - Bundles Channel Core 0.2.0, including the shared terminal wake adapter

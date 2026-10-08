@@ -14,7 +14,7 @@ if [ "$*" != "--identity-home ${dir}/secondary.aw --team backend:acme.com mail s
   echo "unexpected args: $*" >&2
   exit 7
 fi
-printf '{"messages":[{"message_id":"mail-1","subject":"hello","body":"decrypted mail"}]}\\n'
+printf '{"messages":[{"message_id":"mail-1","subject":"hello","body":"decrypted mail","conversation_id":"thread-1","from_did":"did:key:sender","from_stable_id":"did:aw:sender","encrypted_envelope":{"signature":"proof"},"verification_status":"verified"}]}\\n'
 `);
     await chmod(script, 0o755);
 
@@ -23,7 +23,10 @@ printf '{"messages":[{"message_id":"mail-1","subject":"hello","body":"decrypted 
       message_id: "mail-1",
       subject: "hello",
       body: "decrypted mail",
+      conversation_id: "thread-1", from_did: "did:key:sender", from_stable_id: "did:aw:sender",
+      encrypted_envelope: { signature: "proof" },
     });
+    expect(await provider.mailMessage?.("mail-1")).not.toHaveProperty("verification_status");
   });
 
   test("reads decrypted chat from exact aw chat history JSON", async () => {
@@ -42,6 +45,7 @@ printf '{"session_id":"sess-1","messages":[{"message_id":"chat-1","body":"decryp
     await expect(provider.chatMessage?.("sess-1", "chat-1")).resolves.toMatchObject({
       message_id: "chat-1",
       body: "decrypted chat",
+      conversation_id: "sess-1",
     });
   });
 });

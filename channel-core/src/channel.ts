@@ -10,6 +10,7 @@ import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
 import { RegistryResolver, type ResolveTxt } from "./identity/registry.js";
 import { SenderTrustManager } from "./identity/trust.js";
+import { verifyDecryptedMessage } from "./identity/encrypted.js";
 import type { VerificationStatus } from "./identity/signing.js";
 import {
   createLocalAWDecryptProvider,
@@ -714,7 +715,7 @@ async function dispatchMailEvent(
       continue;
     }
 
-    const from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    let from = senderDisplayAddress(msg.from_alias, msg.from_address);
     emitTrace(options, "decrypt_started", messageEvent, "mail");
     const decrypt = await resolveMailForDelivery(options, msg);
     emitTrace(options, "decrypt_completed", messageEvent, "mail");
@@ -727,6 +728,7 @@ async function dispatchMailEvent(
       });
       continue;
     }
+    from = senderDisplayAddress(msg.from_alias, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, "mail");
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -790,7 +792,7 @@ async function dispatchChatEvent(
       continue;
     }
 
-    const from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    let from = senderDisplayAddress(msg.from_agent, msg.from_address);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
@@ -803,6 +805,7 @@ async function dispatchChatEvent(
       });
       continue;
     }
+    from = senderDisplayAddress(msg.from_agent, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, lane);
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -970,7 +973,7 @@ async function normalizeMessageTrust(
 }
 
 async function resolveMailForDelivery(
-  options: Pick<ChannelLoopOptions, "localDecrypt">,
+  options: Pick<ChannelLoopOptions, "localDecrypt" | "self">,
   msg: InboxMessage,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!isEncryptedMessage(msg)) return { ok: true };
@@ -982,6 +985,12 @@ async function resolveMailForDelivery(
     if (!decrypted || typeof decrypted.body !== "string") {
       return { ok: false, error: "local aw did not return decrypted mail body" };
     }
+    const authenticated = await verifyDecryptedMessage(msg, decrypted, "mail", msg.conversation_id, options.self);
+    msg.verification_status = authenticated ? "verified" : "unverified";
+    if (authenticated) {
+      Object.assign(msg, authenticated);
+      if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
+    }
     msg.subject = decrypted.subject;
     msg.body = decrypted.body;
     return { ok: true };
@@ -991,7 +1000,7 @@ async function resolveMailForDelivery(
 }
 
 async function resolveChatForDelivery(
-  options: Pick<ChannelLoopOptions, "localDecrypt">,
+  options: Pick<ChannelLoopOptions, "localDecrypt" | "self">,
   sessionID: string,
   msg: ChatMessage,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -1003,6 +1012,12 @@ async function resolveChatForDelivery(
     const decrypted = await options.localDecrypt.chatMessage(sessionID, msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
       return { ok: false, error: "local aw did not return decrypted chat body" };
+    }
+    const authenticated = await verifyDecryptedMessage(msg, decrypted, "chat", sessionID, options.self);
+    msg.verification_status = authenticated ? "verified" : "unverified";
+    if (authenticated) {
+      Object.assign(msg, authenticated);
+      if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }
     msg.body = decrypted.body;
     return { ok: true };

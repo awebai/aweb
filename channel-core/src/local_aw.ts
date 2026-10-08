@@ -5,15 +5,17 @@ import type { ChatMessage } from "./api/chat.js";
 import type { InboxMessage } from "./api/mail.js";
 import type { PinStoreWriter } from "./identity/pinstore.js";
 
+import type { DecryptedMessageProof } from "./identity/encrypted.js";
+
 const execFileAsync = promisify(execFile);
 
-export interface DecryptedMailContent {
+export interface DecryptedMailContent extends DecryptedMessageProof {
   message_id: string;
   subject: string;
   body: string;
 }
 
-export interface DecryptedChatContent {
+export interface DecryptedChatContent extends DecryptedMessageProof {
   message_id: string;
   body: string;
 }
@@ -72,7 +74,7 @@ export function createLocalAWDecryptProvider(options: LocalAWDecryptOptions): Lo
       );
       const payload = parseJSONOutput<{ messages?: InboxMessage[] }>(stdout);
       const message = (payload.messages || []).find((msg) => msg.message_id === id);
-      return message ? { message_id: message.message_id, subject: message.subject, body: message.body } : null;
+      return message ? { ...decryptionProof(message), subject: message.subject, body: message.body } : null;
     },
     async chatMessage(sessionID: string, messageID: string): Promise<DecryptedChatContent | null> {
       const session = sessionID.trim();
@@ -83,9 +85,9 @@ export function createLocalAWDecryptProvider(options: LocalAWDecryptOptions): Lo
         [...identityArgs, ...teamArgs, "chat", "history", "--session-id", session, "--message-id", id, "--limit", "1", "--json"],
         execOptions,
       );
-      const payload = parseJSONOutput<{ messages?: ChatMessage[] }>(stdout);
+      const payload = parseJSONOutput<{ session_id?: string; messages?: ChatMessage[] }>(stdout);
       const message = (payload.messages || []).find((msg) => msg.message_id === id);
-      return message ? { message_id: message.message_id, body: message.body } : null;
+      return message ? { ...decryptionProof(message), conversation_id: payload.session_id, body: message.body } : null;
     },
   };
 }
@@ -138,4 +140,15 @@ function parseJSONOutput<T>(stdout: string): T {
   const start = trimmed.indexOf("{");
   if (start < 0) throw new Error("aw JSON output did not contain an object");
   return JSON.parse(trimmed.slice(start)) as T;
+}
+
+// Keep the proof fields emitted by released aw 1.36.26/1.36.27. Deliberately
+// exclude CLI trust status, signed_payload, and unsigned trust announcements.
+function decryptionProof(message: InboxMessage | ChatMessage): DecryptedMessageProof {
+  return {
+    message_id: message.message_id, conversation_id: message.conversation_id,
+    from_did: message.from_did, from_stable_id: message.from_stable_id,
+    from_address: message.from_address, to_did: message.to_did,
+    to_stable_id: message.to_stable_id, encrypted_envelope: message.encrypted_envelope,
+  };
 }
