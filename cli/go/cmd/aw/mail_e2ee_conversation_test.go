@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -161,26 +162,31 @@ func TestAwMailSendE2EEToAddressWithExistingConversationResolvesRecipient(t *tes
 }
 
 func TestAwMailReplyEncryptionMode(t *testing.T) {
-	for _, tc := range []struct {
-		name                            string
-		flags                           []string
-		plaintext, grant, wantEncrypted bool
-	}{
-		{name: "encrypted-default", wantEncrypted: true},
-		{name: "encrypted-explicit", flags: []string{"--e2ee"}, wantEncrypted: true},
-		{name: "encrypted-plaintext", flags: []string{"--plaintext"}},
-		{name: "encrypted-explicit-false", flags: []string{"--e2ee=false"}},
-		{name: "encrypted-conflicting", flags: []string{"--e2ee", "--plaintext"}},
-		{name: "plaintext-default", plaintext: true},
-		{name: "plaintext-encrypted", plaintext: true, flags: []string{"--e2ee"}, wantEncrypted: true},
-		{name: "grant-encrypted-default", grant: true, wantEncrypted: true},
-		{name: "grant-encrypted-plaintext", grant: true, flags: []string{"--plaintext"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) { testMailReplyEncryptionMode(t, tc.flags, tc.plaintext, tc.grant, tc.wantEncrypted) })
+	for _, grant := range []bool{false, true} {
+		for _, plaintext := range []bool{false, true} {
+			for _, keys := range []bool{false, true} {
+				for _, mode := range []string{"default", "e2ee", "plaintext"} {
+					flags := []string{}
+					if mode != "default" {
+						flags = append(flags, "--"+mode)
+					}
+					name := fmt.Sprintf("grant=%t/plain-source=%t/keys=%t/mode=%s", grant, plaintext, keys, mode)
+					encrypted := mode == "e2ee" || (mode == "default" && !plaintext)
+					t.Run(name, func(t *testing.T) { testMailReplyEncryptionMode(t, flags, plaintext, grant, keys, encrypted) })
+				}
+			}
+		}
 	}
+	t.Run("envelope-marker", func(t *testing.T) { testMailReplyEncryptionMode(t, nil, false, false, true, true) })
+	t.Run("conflicting", func(t *testing.T) {
+		testMailReplyEncryptionMode(t, []string{"--e2ee", "--plaintext"}, false, false, true, false)
+	})
+	t.Run("explicit-false", func(t *testing.T) {
+		testMailReplyEncryptionMode(t, []string{"--e2ee=false"}, false, false, true, false)
+	})
 }
 
-func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant, wantEncrypted bool) {
+func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant, keys, wantEncrypted bool) {
 
 	alicePub, aliceKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -267,6 +273,10 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 				MessageVersion: awid.E2EEMessageVersion,
 				Encrypted:      sourceEnvelope,
 				CreatedAt:      "2026-09-25T00:00:00Z",
+			}
+			if strings.Contains(t.Name(), "envelope-marker") {
+				message.ContentMode = ""
+				message.MessageVersion = 0
 			}
 			if plaintext {
 				message.ContentMode = ""
@@ -358,6 +368,10 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 		if err != nil {
 			t.Fatal(err)
 		}
+		if !keys {
+			svc.e2eeAssertion = nil
+			svc.e2eePrivateKey = nil
+		}
 		svc.readStoredEnvelope = func(ctx context.Context, kind, id, thread string) (*awid.E2EEMessageEnvelope, error) {
 			if kind != "mail" || id != sourceID || thread != conversationID {
 				t.Errorf("wrong custody read")
@@ -382,6 +396,14 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 			t.Fatal(err)
 		}
 	}
+	if !keys {
+		if err := os.Remove(filepath.Join(tmp, ".aw", "encryption.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(filepath.Join(tmp, ".aw", "encryption-keys")); err != nil {
+			t.Fatal(err)
+		}
+	}
 	args := append([]string{"mail", "reply", sourceID, "--body", "reply secret"}, flags...)
 	run := exec.CommandContext(ctx, bin, args...)
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL, "AWID_SKIP_DNS_VERIFY=1")
@@ -398,6 +420,24 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 		defer mu.Unlock()
 		if sent != nil {
 			t.Fatal("conflicting flags sent mail")
+		}
+		return
+	}
+	if !keys && (!plaintext || (grant && wantEncrypted)) {
+		if err == nil {
+			t.Fatal("missing encryption keys unexpectedly succeeded")
+		}
+		t.Logf("missing-key refusal: %s", out)
+		if grant && !plaintext && !strings.Contains(string(out), "resident host to restore") {
+			t.Fatalf("missing custody read-key remedy: %s", out)
+		}
+		if !grant && !strings.Contains(string(out), "restore .aw/encryption-keys") {
+			t.Fatalf("missing read-key remedy: %s", out)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if sent != nil {
+			t.Fatal("missing keys sent a reply")
 		}
 		return
 	}
@@ -440,6 +480,24 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	if err != nil || decoded.Body != "reply secret" {
 		t.Fatalf("peer decrypt failed: %v", err)
 	}
+	_, peerSessionKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := custodyE2EETestIdentity{did: bobDID, stableID: bobStableID, address: "acme.com/bob", signKey: bobKey, xPriv: bobX, assertion: bobAssertion}
+	peerSvc := testCustodyService(t, bobKey, peerSessionKey)
+	peerSvc.identity.StableID = bobStableID
+	peerSvc.identity.Address = peer.address
+	peerSvc.e2eeAssertion = bobAssertion
+	peerSvc.e2eePrivateKey = bobX
+	peerSvc.readStoredEnvelope = func(ctx context.Context, kind, id, thread string) (*awid.E2EEMessageEnvelope, error) {
+		return &envelope, nil
+	}
+	peerPlain, err := peerSvc.unwrapE2EEMessage(ctx, signedE2EEUnwrapRequest(t, peerSessionKey, peer, &envelope))
+	if err != nil || peerPlain.Body != "reply secret" {
+		t.Fatalf("grant peer could not decrypt: %v", err)
+	}
+
 }
 
 // Same defect on the alias branch: an E2EE send by team alias that auto-threads

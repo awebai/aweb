@@ -665,6 +665,9 @@ var mailReplyCmd = &cobra.Command{
 			MessageID:  messageID,
 		})
 		if err != nil {
+			if awconfig.IsGrantHome(sel.IdentityHome) && err.Error() == "archived_key_unavailable" {
+				err = fmt.Errorf("%w; ask the resident host to restore the encryption key for this source message", err)
+			}
 			return networkError(err, messageID)
 		}
 		if len(inbox.Messages) == 0 {
@@ -672,7 +675,8 @@ var mailReplyCmd = &cobra.Command{
 		}
 		encryptReply := mailReplyE2EE
 		if !cmd.Flags().Changed("e2ee") && !mailReplyPlaintext && !mailReplyLegacyPlaintext {
-			encryptReply = inbox.Messages[0].ContentMode == awid.ContentModeEncryptedV2
+			source := inbox.Messages[0]
+			encryptReply = source.ContentMode == awid.ContentModeEncryptedV2 || source.MessageVersion == awid.E2EEMessageVersion || source.Encrypted != nil
 		}
 		if encryptReply {
 			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
