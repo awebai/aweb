@@ -229,9 +229,11 @@ stable reason/status table and safe support interpretation.
 
 ## Encryption boundary
 
-Current CLI sends are server-readable plaintext by default. Use `--e2ee` only
-when encrypted delivery is explicitly required and both identities have valid
-encryption capability. E2E sends fail closed rather than silently downgrading.
+New CLI mail and chat sends are server-readable plaintext by default. Mail
+replies preserve the source message's encryption by default; `--plaintext` and
+`--e2ee` explicitly select the reply mode. Encrypted delivery requires both
+identities to have valid encryption capability and fails closed rather than
+silently downgrading.
 
 Hosted MCP and dashboard-side messaging are server-readable hosted messaging,
 not evidence of self-custodial E2E behavior. For cryptographic and routing
