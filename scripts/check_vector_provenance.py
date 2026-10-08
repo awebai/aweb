@@ -244,6 +244,10 @@ ROOT_CONSUMERS = {
         "identity-log-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-v1.json")',
     ),
+    PurePosixPath("channel-core/test/encrypted_dispatch.test.ts"): _consumer(
+        "e2ee-v2-cross-language.json",
+        'new URL("../../docs/vectors/e2ee-v2-cross-language.json", import.meta.url)',
+    ),
     PurePosixPath("channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
         "pin-store-raw-wire-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',

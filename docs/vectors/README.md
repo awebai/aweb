@@ -249,7 +249,7 @@ reference duplication are mutation-tested failures.
 | `atomic-address-claim-conflict-codes-v1.json` | Python AWID `test_atomic_claim_route.py`; Go AWID `atomic_address_claim_test.go` |
 | `atomic-address-claim-v1.json` | Python AWID `test_atomic_claim.py`; Go AWID `atomic_address_claim_test.go` |
 | `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
-| `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py` and pre-activation federation harness; Go AWID `e2ee_cross_language_test.go` |
+| `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py` and pre-activation federation harness; Go AWID `e2ee_cross_language_test.go`; TypeScript channel-core `encrypted_dispatch.test.ts` |
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts` and `log_rollback.test.ts` |
