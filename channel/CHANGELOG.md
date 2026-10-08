@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Allow grant receivers to authenticate the authoritative team roster read used
+  for same-team sender verification, preserving mismatch and stale outcomes.
+
 ## 1.7.12
 
 - Verify encrypted mail/chat push trust against the locally decrypted v2 envelope

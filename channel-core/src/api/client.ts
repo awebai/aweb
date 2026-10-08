@@ -63,6 +63,16 @@ export class APIClient {
       && this.auth.signingKey.length > 0;
   }
 
+  // Credential availability only. The service still enforces grant validity,
+  // scope and membership for the same authenticated /v1/agents read.
+  hasTeamRosterAuth(teamID: string): boolean {
+    if (this.auth.authMode !== "grant") return this.hasTeamCertificateAuth(teamID);
+    return this.auth.teamID === teamID
+      && (this.auth.grantID || "").trim() !== ""
+      && this.auth.did.trim() !== ""
+      && this.auth.signingKey.length === 32;
+  }
+
   async get<T>(path: string): Promise<T> {
     return this.request("GET", path);
   }
