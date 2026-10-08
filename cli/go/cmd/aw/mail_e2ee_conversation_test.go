@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -159,8 +160,27 @@ func TestAwMailSendE2EEToAddressWithExistingConversationResolvesRecipient(t *tes
 	}
 }
 
-func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing.T) {
-	t.Parallel()
+func TestAwMailReplyEncryptionMode(t *testing.T) {
+	for _, tc := range []struct {
+		name                            string
+		flags                           []string
+		plaintext, grant, wantEncrypted bool
+	}{
+		{name: "encrypted-default", wantEncrypted: true},
+		{name: "encrypted-explicit", flags: []string{"--e2ee"}, wantEncrypted: true},
+		{name: "encrypted-plaintext", flags: []string{"--plaintext"}},
+		{name: "encrypted-explicit-false", flags: []string{"--e2ee=false"}},
+		{name: "encrypted-conflicting", flags: []string{"--e2ee", "--plaintext"}},
+		{name: "plaintext-default", plaintext: true},
+		{name: "plaintext-encrypted", plaintext: true, flags: []string{"--e2ee"}, wantEncrypted: true},
+		{name: "grant-encrypted-default", grant: true, wantEncrypted: true},
+		{name: "grant-encrypted-plaintext", grant: true, flags: []string{"--plaintext"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) { testMailReplyEncryptionMode(t, tc.flags, tc.plaintext, tc.grant, tc.wantEncrypted) })
+	}
+}
+
+func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant, wantEncrypted bool) {
 
 	alicePub, aliceKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -186,7 +206,10 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	tmp := t.TempDir()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
@@ -233,7 +256,7 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/messages/inbox":
-			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{
+			message := awid.InboxMessage{
 				MessageID:      sourceID,
 				ConversationID: conversationID,
 				FromAddress:    "acme.com/bob",
@@ -244,7 +267,14 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 				MessageVersion: awid.E2EEMessageVersion,
 				Encrypted:      sourceEnvelope,
 				CreatedAt:      "2026-09-25T00:00:00Z",
-			}}})
+			}
+			if plaintext {
+				message.ContentMode = ""
+				message.MessageVersion = 0
+				message.Encrypted = nil
+				message.Body = "plain source"
+			}
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{message}})
 		case r.URL.Path == "/v1/conversations":
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{{
 				ConversationType:     "mail",
@@ -287,10 +317,90 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 		}
 	}))
 
-	run := exec.CommandContext(ctx, bin, "mail", "reply", sourceID, "--e2ee", "--body", "reply secret")
+	workerDir := tmp
+	var grantHome string
+	if grant {
+		grantHome = filepath.Join(tmp, "worker-grant")
+		_, state := writeGrantHomeForTest(t, grantHome, server.URL)
+		state.GrantID = "11111111-1111-4111-8111-111111111111"
+		state.Subject.DIDKey = aliceDID
+		state.Subject.DIDAW = aliceStableID
+		socketDir, err := os.MkdirTemp("/tmp", "aw-reply-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+		state.Custody.SocketPath = filepath.Join(socketDir, "custody.sock")
+		if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), state); err != nil {
+			t.Fatal(err)
+		}
+		sessionKey, err := awid.LoadSigningKey(awconfig.GrantHomeSigningKeyPath(grantHome))
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := testCustodyService(t, aliceKey, sessionKey)
+		svc.socketPath = state.Custody.SocketPath
+		svc.identity.StableID = aliceStableID
+		svc.e2eeAssertion = aliceAssertion
+		keyState, err := awconfig.LoadEncryptionKeyStateFrom(filepath.Join(tmp, ".aw", "encryption.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyPath, err := resolveIdentityStoredPath(tmp, filepath.Join(tmp, ".aw"), keyState.ActiveRecord().PrivateKeyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc.e2eePrivateKey, err = awid.LoadX25519PrivateKey(keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc.e2eeAssertion, err = awid.BuildEncryptionKeyAssertion(aliceKey, aliceDID, aliceStableID, svc.e2eePrivateKey.PublicKey().Bytes(), "", time.Now().UTC().Add(-time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc.readStoredEnvelope = func(ctx context.Context, kind, id, thread string) (*awid.E2EEMessageEnvelope, error) {
+			if kind != "mail" || id != sourceID || thread != conversationID {
+				t.Errorf("wrong custody read")
+			}
+			return sourceEnvelope, nil
+		}
+		svc.resolveRecipient = func(ctx context.Context, id string) (*awid.ResolvedIdentity, error) {
+			return &awid.ResolvedIdentity{DID: bobDID, StableID: bobStableID, Address: "acme.com/bob", EncryptionKey: bobAssertion}, nil
+		}
+		serviceCtx, stop := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- svc.serve(serviceCtx) }()
+		t.Cleanup(func() { stop(); <-done })
+		for i := 0; i < 100; i++ {
+			if _, err := os.Stat(svc.socketPath); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		workerDir = filepath.Join(tmp, "empty-instance")
+		if err := os.Mkdir(workerDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := append([]string{"mail", "reply", sourceID, "--body", "reply secret"}, flags...)
+	run := exec.CommandContext(ctx, bin, args...)
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL, "AWID_SKIP_DNS_VERIFY=1")
-	run.Dir = tmp
+	run.Dir = workerDir
+	if grant {
+		run.Env = append(run.Env, "AWEB_IDENTITY_HOME="+grantHome)
+	}
 	out, err := run.CombinedOutput()
+	if strings.Contains(t.Name(), "conflicting") {
+		if err == nil || !strings.Contains(string(out), "mutually exclusive") {
+			t.Fatalf("expected conflicting flag refusal: %v %s", err, out)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if sent != nil {
+			t.Fatal("conflicting flags sent mail")
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("e2ee reply to encrypted source failed: %v\n%s", err, out)
 	}
@@ -306,14 +416,29 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 	if sent["conversation_id"] != conversationID {
 		t.Fatalf("conversation_id=%v, want %s", sent["conversation_id"], conversationID)
 	}
+	if !wantEncrypted {
+		if sent["content_mode"] == awid.ContentModeEncryptedV2 || sent["body"] != "reply secret" {
+			t.Fatalf("expected plaintext reply: %v", sent)
+		}
+		return
+	}
 	if sent["content_mode"] != awid.ContentModeEncryptedV2 {
 		t.Fatalf("content_mode=%v, want %s", sent["content_mode"], awid.ContentModeEncryptedV2)
 	}
 	if body, _ := sent["body"].(string); strings.Contains(body, "reply secret") {
 		t.Fatal("plaintext reply body was sent")
 	}
-	if sent["encrypted_envelope"] == nil {
-		t.Fatal("encrypted reply envelope was not sent")
+	encoded, err := json.Marshal(sent["encrypted_envelope"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope awid.E2EEMessageEnvelope
+	if err := json.Unmarshal(encoded, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := awid.DecryptE2EEMessage(&envelope, awid.E2EEDecryptIdentity{Address: "acme.com/bob", DID: bobDID, StableID: bobStableID, EncryptionKeyID: bobAssertion.EncryptionKeyID, PrivateKey: bobX})
+	if err != nil || decoded.Body != "reply secret" {
+		t.Fatalf("peer decrypt failed: %v", err)
 	}
 }
 
