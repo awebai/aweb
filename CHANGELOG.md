@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fix `aw mail reply` reading encrypted sources without a mode flag; replies preserve source encryption by default, including grant custody, while explicit plaintext/encryption flags remain available.
+
 - Let attached resident agents install and approve declarative apps; new grants inherit the resident’s origin-pinned app catalog and report their actual app inventory. Shared installs and legacy explicit per-tool grants remain compatible.
 
 - Fix declarative app installation rejecting v1 event metadata, including Folio's deployed manifest; preserve strict field validation and bounded event declarations.

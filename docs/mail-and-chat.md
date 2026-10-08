@@ -87,6 +87,14 @@ Reply through the source message:
 aw mail reply <message-id> --body-file reply.md
 ```
 
+Reply always prepares decryption before reading the source. With no mode flag,
+`aw mail reply` encrypts a reply to encrypted mail and keeps a reply to plaintext
+mail plaintext. `--e2ee` requests encryption explicitly; `--plaintext` explicitly
+sends server-readable plaintext even for an encrypted source. These flags are
+mutually exclusive. If required decryption or peer encryption is unavailable,
+the reply fails rather than falling back to plaintext. Grant homes use their
+resident custody socket for decryption and encryption.
+
 Or continue a known conversation directly:
 
 ```bash
