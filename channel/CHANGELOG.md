@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.12
 
 - Verify encrypted mail/chat push trust against the locally decrypted v2 envelope
   and the existing sender trust checks; never import the CLI verification label.
