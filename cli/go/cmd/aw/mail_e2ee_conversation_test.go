@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
@@ -411,7 +412,14 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	if grant {
 		run.Env = append(run.Env, "AWEB_IDENTITY_HOME="+grantHome)
 	}
-	out, err := run.CombinedOutput()
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	err = run.Run()
+	out := append(stdout.Bytes(), stderr.Bytes()...)
+	if plaintext && !keys && len(flags) == 0 && stderr.Len() != 0 {
+		t.Fatalf("keyless plaintext default reply wrote stderr: %s", stderr.String())
+	}
 	if strings.Contains(t.Name(), "conflicting") {
 		if err == nil || !strings.Contains(string(out), "mutually exclusive") {
 			t.Fatalf("expected conflicting flag refusal: %v %s", err, out)
