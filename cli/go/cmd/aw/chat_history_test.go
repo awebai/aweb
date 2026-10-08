@@ -69,6 +69,7 @@ func TestAwChatSendBySessionIDJSON(t *testing.T) {
 		"--session-id", "session-1",
 		"--body", "hello exact",
 		"--leave",
+		"--plaintext",
 		"--json",
 	)
 	run.Env = testCommandEnv(tmp)
