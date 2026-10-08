@@ -837,8 +837,8 @@ export class SenderTrustManager {
       }
       throw new Error(`unsupported local address ${trimmed}`);
     }
-    if (!this.client.hasTeamCertificateAuth(this.teamID)) {
-      throw new Error("team roster resolution requires team-certificate authentication");
+    if (!(this.client.hasTeamRosterAuth?.(this.teamID) ?? this.client.hasTeamCertificateAuth(this.teamID))) {
+      throw new Error("team roster resolution requires authenticated team access");
     }
 
     const roster = await this.resolveAuthenticatedTeamRoster();
