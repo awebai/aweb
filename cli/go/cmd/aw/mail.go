@@ -656,8 +656,13 @@ var mailReplyCmd = &cobra.Command{
 		if cmd.Flags().Changed("e2ee") && (mailReplyPlaintext || mailReplyLegacyPlaintext) {
 			return usageError("--e2ee and --plaintext are mutually exclusive")
 		}
-		if err := configureClientE2EEForRead(cmd, ctx, c, sel); err != nil {
-			return err
+		if err := configureClientE2EE(ctx, c, sel, false); err != nil {
+			var unavailable *e2eeDecryptionUnavailableError
+			if !errors.As(err, &unavailable) {
+				return err
+			}
+			// Plaintext replies need no read key. An encrypted source fails
+			// below with its decryption error and recovery guidance.
 		}
 		inbox, err := c.Inbox(ctx, awid.InboxParams{
 			UnreadOnly: false,
