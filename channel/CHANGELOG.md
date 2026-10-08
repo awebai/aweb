@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.7.13
 
 - Allow grant receivers to authenticate the authoritative team roster read used
   for same-team sender verification, preserving mismatch and stale outcomes.
