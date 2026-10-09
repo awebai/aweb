@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+### Release preparation: server 1.27.12
+
+Server-only release covering the server changes since `server-v1.27.11`.
+CLI, AWID and channel versions are unchanged by this preparation.
+
+- **Fresh mail conversations:** additive `new_conversation` requests require
+  an explicit recipient and a fresh client-supplied conversation UUID. They
+  bypass automatic thread reuse; missing IDs are rejected with 422 and existing
+  IDs with 409. Recipient authorization and signature checks remain unchanged;
+  omitted/false retains automatic threading. Client adoption requires a
+  compatible CLI and deployment of this server version.
+- **Event-stream resilience:** established streams survive short bursts of poll
+  failures with 1, 2, 4, then capped 5-second backoff. A complete successful poll
+  resets the failure window; a subsequent failure strictly more than 30 seconds
+  after the first terminates with the existing error event. Heartbeats and
+  disconnect, deadline and grant checks continue during backoff. Initial
+  snapshots and cancellation behavior are unchanged.
+- **Pending-chat query:** select the viewer's own participant rows before
+  session aggregation and message work, preserving DID-first selection,
+  departed-participant, unread and wait semantics. This removes the old
+  all-session participant expansion; synthetic timings and replica planner
+  costs are not a production latency guarantee.
+- **Migration 019 — operator window required:** startup applies
+  `019_chat_participant_lookup.sql`, adding `idx_chat_participants_did` on
+  `chat_participants(did)` and `idx_chat_participants_agent` on
+  `chat_participants(agent_id) WHERE agent_id IS NOT NULL`. Both statements are
+  plain `CREATE INDEX IF NOT EXISTS`, not concurrent builds, in the normal
+  migration transaction. Index creation can wait for conflicting transactions
+  and blocks writes to `chat_participants` while building; ordinary reads can
+  continue. Locks remain until the migration transaction finishes. Before
+  deployment, measure the target table's row count and heap/index sizes and
+  inspect long-running transactions. Estimate the window by timing both index
+  builds together on a representative restored database with comparable data,
+  storage and load, including commit and lock-wait allowance. Small replica
+  counts or EXPLAIN costs alone do not establish the production duration.
+  Schedule an operator-approved write-blocking window; publication itself does
+  not apply this migration, and hosted pin/deployment is a separate operation.
+- **Release validation:** strict identity-call and packaged-migration inventories
+  include the landed event changes and migration 019. Unexpected controller-key
+  mutation-guard outcomes retain complete private evidence without changing the
+  child journey or its exactly-one-intended-failure requirement.
+
 - **Next CLI release — signed display integrity:** plaintext mail/chat reads
   fail verification when displayed content or IDs disagree with present signed
   fields, preserving the observed mismatch. Legacy omissions and same-envelope
