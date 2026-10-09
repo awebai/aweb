@@ -166,3 +166,12 @@ uvicorn folio.api:app --host 0.0.0.0 --port ${PORT:-8765}
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Revocation lookup bounds
+
+Team authentication reads the complete AWID certificate history, including revoked
+certificates, in pages of 200. A refresh may read at most 100 pages (20,000 records).
+If more pages remain, pagination does not advance, or the response is incomplete,
+the request fails closed with HTTP 503 and no partial facts enter the cache.
+An expired cache entry is never used after a failed refresh. A revoked certificate
+returns HTTP 401; the existing cache TTL still governs revocation freshness.

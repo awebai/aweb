@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -24,6 +25,12 @@ from fastapi import HTTPException, Request
 from pgdbm import AsyncDatabaseManager
 
 from folio.config import Settings
+
+logger = logging.getLogger(__name__)
+
+# At most 20,000 certificate records per refresh; incomplete history is never cached.
+MAX_CERTIFICATE_PAGES = 100
+CERTIFICATE_PAGE_SIZE = 200
 
 TEAM_AUTH_ENVELOPE_V2 = 2
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -101,23 +108,54 @@ class AWIDTeamCache:
                 if not team_did_key:
                     raise HTTPException(status_code=503, detail="AWID team response missing team_did_key")
 
-                cert_resp = await client.get(
-                    f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates",
-                    headers=self._headers,
-                )
-                _raise_if_private_team(cert_resp)
-                if cert_resp.status_code >= 400:
-                    raise HTTPException(status_code=503, detail="AWID certificate revocation lookup unavailable")
-                cert_payload = cert_resp.json()
-        except HTTPException:
+                revoked: set[str] = set()
+                cursor: str | None = None
+                seen_cursors: set[str] = set()
+                for _ in range(MAX_CERTIFICATE_PAGES):
+                    params: dict[str, str | int] = {
+                        "active_only": "false", "limit": CERTIFICATE_PAGE_SIZE,
+                    }
+                    if cursor is not None:
+                        params["cursor"] = cursor
+                    cert_resp = await client.get(
+                        f"{self.registry_url}/v1/namespaces/{domain}/teams/{team_name}/certificates",
+                        params=params, headers=self._headers,
+                    )
+                    _raise_if_private_team(cert_resp)
+                    if cert_resp.status_code >= 400:
+                        raise HTTPException(status_code=503, detail="AWID certificate revocation lookup unavailable")
+                    cert_payload = cert_resp.json()
+                    page = cert_payload.get("certificates")
+                    has_more = cert_payload.get("has_more")
+                    if (
+                        not isinstance(page, list)
+                        or len(page) > CERTIFICATE_PAGE_SIZE
+                        or not isinstance(has_more, bool)
+                        or not all(
+                            isinstance(item, dict)
+                            and isinstance(item.get("certificate_id"), str)
+                            and bool(item["certificate_id"])
+                            and "revoked_at" in item
+                            for item in page
+                        )
+                    ):
+                        raise HTTPException(status_code=503, detail="AWID certificate revocation response is incomplete")
+                    revoked.update(item["certificate_id"] for item in page if item["revoked_at"] is not None)
+                    if not has_more:
+                        break
+                    next_cursor = cert_payload.get("next_cursor")
+                    if not isinstance(next_cursor, str) or not next_cursor.strip() or next_cursor in seen_cursors:
+                        raise HTTPException(status_code=503, detail="AWID certificate pagination did not advance")
+                    seen_cursors.add(next_cursor)
+                    cursor = next_cursor
+                else:
+                    raise HTTPException(status_code=503, detail="AWID certificate pagination limit exceeded")
+        except HTTPException as exc:
+            logger.warning("AWID team facts refresh failed: %s", exc.detail)
             raise
         except Exception as exc:
+            logger.exception("AWID team facts refresh failed")
             raise HTTPException(status_code=503, detail="AWID registry unavailable") from exc
-
-        revoked: set[str] = set()
-        for item in cert_payload.get("certificates", []):
-            if item.get("revoked_at") is not None and item.get("certificate_id"):
-                revoked.add(str(item["certificate_id"]))
 
         facts = CachedTeamFacts(
             team_did_key=team_did_key,

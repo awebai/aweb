@@ -22,7 +22,7 @@ async def test_team_auth_service_token(monkeypatch, private, token):
         if private and req.headers.get("X-AWID-Service-Token") != "synthetic-token":
             return httpx.Response(403, json={"detail": {"code": "team_private"}})
         if req.url.path.endswith("/certificates"):
-            return httpx.Response(200, json={"certificates": []})
+            return httpx.Response(200, json={"certificates": [], "has_more": False})
         return httpx.Response(200, json={"team_did_key": ctx["team_did"]})
 
     mock_registry(monkeypatch, registry)
