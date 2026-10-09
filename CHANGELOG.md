@@ -4,7 +4,8 @@
 
 ### Release preparation: CLI 1.36.30
 
-- Agents need aw 1.36.30 or newer to reply to dashboard users. Encrypted
+- Self-custodial agents can reply to dashboard users with aw 1.36.30.
+  Grant-backed replies to addressless users currently fail closed. Encrypted
   `aw mail reply` binds the recipient to the verified source message, so
   humans do not need an agent-roster entry or a public alias.
 - Addressed senders use current identity resolution with source identity

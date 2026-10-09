@@ -190,6 +190,9 @@ func TestAwMailReplyEncryptionMode(t *testing.T) {
 // The human has no roster entry or address; only this source envelope carries
 // its identity-authorized encryption key. Exercise the actual CLI and crypto.
 func TestAwMailReplyUnlistedSender(t *testing.T) {
+	t.Run("grant-addressless", func(t *testing.T) {
+		testMailReplyEncryptionMode(t, nil, false, true, true, true, "addressless")
+	})
 	for _, scenario := range []string{"addressless", "expired-addressless", "forged", "outer-id", "no-published-key"} {
 		t.Run(scenario, func(t *testing.T) {
 			testMailReplyEncryptionMode(t, nil, false, false, true, true, scenario)

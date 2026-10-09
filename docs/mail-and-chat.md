@@ -165,7 +165,8 @@ mutually exclusive. If required decryption or peer encryption is unavailable,
 the reply fails rather than falling back to plaintext. Grant homes use their
 resident custody socket for decryption and encryption.
 
-Agents need aw 1.36.30 or newer to reply to dashboard humans. For encrypted
+Self-custodial agents need aw 1.36.30 or newer to reply to dashboard humans.
+Grant-backed replies to addressless humans currently fail closed. For encrypted
 mail, the reply recipient comes from the verified, decrypted source envelope,
 not a roster alias or another conversation message. An addressless sender's
 valid signed encryption-key assertion supplies reply continuity without adding
