@@ -18,3 +18,22 @@ def test_hugo_site_mentions_core_awid_promises() -> None:
     assert "aw id create" in html
     assert "Signed writes" in html
     assert "elf-host" in html
+
+
+def _site_html() -> str:
+    return (ROOT / "site" / "layouts" / "index.html").read_text(encoding="utf-8")
+
+
+def test_hugo_site_installs_aw_before_using_it() -> None:
+    html = _site_html()
+    install = html.index("npm install -g @awebai/aw")
+    first_use = min(html.index(command) for command in ("aw init", "aw id create", "aw chat"))
+    assert install < first_use
+
+
+def test_hugo_site_links_aweb_and_the_repository() -> None:
+    html = _site_html()
+    assert '<a href="https://aweb.ai">aweb</a>' in html
+    hero = html[html.index('<section class="hero">') : html.index("</section>")]
+    assert 'href="https://github.com/awebai/aweb"' in hero
+    assert 'href="#quickstart"' in hero

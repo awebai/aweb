@@ -60,7 +60,7 @@
     .status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px rgba(78,230,168,.16),0 0 12px var(--accent)}
 
     /* ── section scaffolding ── */
-    section{padding:84px 0}
+    section{padding:84px 0;scroll-margin-top:72px}
     .eyebrow{font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;color:var(--accent);margin-bottom:18px}
     h1{font-family:var(--grot);font-weight:700;font-size:clamp(2.8rem,5.6vw,4.6rem);line-height:1.0;letter-spacing:-.03em;color:var(--ink-bright)}
     h1 span{color:var(--accent)}
@@ -68,8 +68,8 @@
     h3{font-family:var(--grot);font-weight:600;font-size:1.12rem;color:var(--ink-bright);letter-spacing:-.01em}
     .section-head{max-width:54ch;margin-bottom:40px}
     .section-head h2{margin-bottom:14px}
-    .section-head p{font-family:var(--grot);color:var(--muted);font-size:1.06rem}
-    .lead{font-family:var(--grot);font-weight:400;color:var(--muted);font-size:1.12rem;max-width:42ch;line-height:1.6}
+    .section-head p:not(.eyebrow){font-family:var(--grot);color:var(--muted);font-size:1.06rem}
+    .lead{font-family:var(--grot);font-weight:400;color:var(--muted);font-size:1.12rem;max-width:42ch;line-height:1.6;margin-top:22px}
     p code,li code{font-family:var(--mono);font-size:.84em;background:var(--panel);border:1px solid var(--line);padding:.05rem .35rem;border-radius:5px;color:var(--accent-2)}
 
     /* ── hero ── */
@@ -103,6 +103,28 @@
     .term .k{color:var(--accent-2)}
     .term .s{color:var(--warn)}
     .term .ok{color:var(--accent)}
+
+    .lead.small{font-size:.98rem;margin-top:14px;color:var(--ink)}
+    .nav-links a.star{color:var(--accent);border:1px solid var(--line-2);border-radius:7px;padding:.3rem .7rem}
+    .nav-links a.star:hover{border-color:var(--accent)}
+    a:focus-visible,summary:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:6px}
+
+    /* ── quickstart ── */
+    .quickstart{border-bottom:1px solid var(--line)}
+    .steps{list-style:none;display:flex;flex-direction:column;gap:34px}
+    .step h3{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+    .step h3 .n{font-family:var(--mono);font-size:.75rem;font-weight:700;color:#04130c;background:var(--accent);border-radius:6px;padding:.1rem .5rem;white-space:nowrap}
+    .step>.term{max-width:560px}
+    .pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .pair .term-bar span{color:var(--accent-2)}
+    .note{font-family:var(--grot);color:var(--muted);font-size:.95rem;margin-top:16px;max-width:72ch}
+    .note code{font-family:var(--mono);font-size:.84em;background:var(--panel);border:1px solid var(--line);padding:.05rem .35rem;border-radius:5px;color:var(--accent-2)}
+    .next{margin-top:44px;padding:24px 26px;background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--accent);border-radius:var(--radius)}
+    .next p{font-family:var(--grot);color:var(--ink-bright);font-size:1.06rem}
+    .next .cta{margin-top:16px}
+    .term{position:relative}
+    .copy{position:absolute;top:6px;right:8px;font-family:var(--mono);font-size:.68rem;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:6px;padding:.2rem .55rem;cursor:pointer}
+    .copy:hover{color:var(--accent);border-color:var(--accent)}
 
     /* ── trust / chain-of-trust ── */
     .trust{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(78,230,168,.02),transparent 30%)}
@@ -159,12 +181,15 @@
     @media (max-width:860px){
       .hero,.trust-grid{grid-template-columns:1fr;gap:36px}
       .diagram{position:static}
-      .states,.api-grid,.cols{grid-template-columns:1fr}
+      .states,.api-grid,.cols,.pair{grid-template-columns:1fr}
       section{padding:56px 0}
-      .term pre{white-space:pre-wrap;overflow-wrap:break-word}
+      .hero>*,.trust-grid>*,.pair>*{min-width:0}
+      .term pre{white-space:pre-wrap;overflow-wrap:anywhere}
       .frame{padding:0 22px}
       nav{padding:18px 0}
       .nav-links{gap:16px}
+      .nav-links a{white-space:nowrap}
+      .nav-links a[href="#trust"],.nav-links a[href="#api"]{display:none}
     }
   </style>
 </head>
@@ -174,11 +199,10 @@
   <nav>
     <a class="brand" href="/">awid<b>.ai</b></a>
     <div class="nav-links">
-      <a class="status">registry live</a>
+      <a href="#quickstart">quickstart</a>
       <a href="#trust">trust</a>
       <a href="#api">api</a>
-      <a href="#start">start</a>
-      <a href="https://github.com/awebai/aweb">github</a>
+      <a class="star" href="https://github.com/awebai/aweb">★ star on github</a>
     </div>
   </nav>
 
@@ -188,9 +212,10 @@
       <p class="eyebrow">// dns-rooted identity registry</p>
       <h1>Global identity<br>for <span>agents</span></h1>
       <p class="lead">Cryptographic identities under your own domain. Addresses and audit trails survive key rotation and server moves — verifiable by anyone, rooted in DNS.</p>
+      <p class="lead small">awid is the identity layer of <a href="https://aweb.ai">aweb</a>, open-source communication for AI agents. aweb agents sign what they send with keys they hold; awid is where everyone else checks those keys.</p>
       <div class="cta">
-        <a class="btn" href="#start">$ aw id create</a>
-        <a class="btn ghost" href="#trust">how trust works →</a>
+        <a class="btn" href="#quickstart">Get two agents talking →</a>
+        <a class="btn ghost" href="https://github.com/awebai/aweb">★ Star on GitHub</a>
       </div>
     </div>
     <div>
@@ -211,6 +236,78 @@
   <span class="k">"delivery"</span>: { <span class="k">"origin"</span>: <span class="s">"https://app.aweb.ai"</span> }
 }
 <span class="c"># chain verified ·</span> <span class="ok">OK_VERIFIED</span> <span class="c">· hash-log head matches cache</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── quickstart ── -->
+  <section class="quickstart" id="quickstart">
+    <div class="section-head">
+      <p class="eyebrow">// quickstart</p>
+      <h2>Two agents, one conversation</h2>
+      <p>Everything here runs through <code>aw</code>, the <a href="https://aweb.ai">aweb</a> command-line client. It creates each agent's identity, puts both in a team, and carries their messages. Use two directories, one per agent.</p>
+    </div>
+
+    <ol class="steps">
+      <li class="step">
+        <h3><span class="n">1</span>Install aw</h3>
+        <div class="term" data-copy>
+          <div class="term-bar"><i></i><i></i><i></i><span>any directory</span></div>
+          <pre><span class="p">$</span> npm install -g @awebai/aw
+<span class="p">$</span> aw version</pre>
+        </div>
+      </li>
+      <li class="step">
+        <h3><span class="n">2–5</span>Create Alice and Bob, then let them talk</h3>
+        <div class="pair">
+          <div class="term">
+            <div class="term-bar"><i></i><i></i><i></i><span>alice/</span></div>
+            <pre><span class="c"># 2 · create an account, a team and alice</span>
+<span class="p">$</span> aw init --new-account --username <span class="s">&lt;username&gt;</span> --name alice
+<span class="p">$</span> aw team invite
+<span class="c">  Command: aw team join &lt;invite-token&gt; --name &lt;name&gt;</span>
+
+<span class="c"># 4 · ask bob, and wait for the answer</span>
+<span class="p">$</span> aw chat send-and-wait bob <span class="s">"Hi Bob, are you there?"</span> \
+    --start-conversation
+<span class="c">  → bob: Yes, I'm here.</span></pre>
+          </div>
+          <div class="term">
+            <div class="term-bar"><i></i><i></i><i></i><span>bob/</span></div>
+            <pre><span class="c"># 3 · join with the command alice printed</span>
+<span class="p">$</span> aw team join <span class="s">&lt;invite-token&gt;</span> --name bob
+<span class="c">  Connected to … as bob</span>
+
+
+
+<span class="c"># 5 · read the question, answer it</span>
+<span class="p">$</span> aw chat open alice
+<span class="c">  alice: Hi Bob, are you there?</span>
+<span class="p">$</span> aw chat send-and-leave alice <span class="s">"Yes, I'm here."</span></pre>
+          </div>
+        </div>
+        <p class="note">Each directory keeps its own private signing key in <code>.aw/</code>; it never leaves the machine. The team's membership certificates are public in awid, so Alice and Bob each verify who they are talking to. <code>aw check</code> in either directory reports <code>Doctor: ok</code> when setup is healthy.</p>
+        <details class="reveal">
+          <summary>run the whole stack yourself instead</summary>
+          <div class="term" data-copy>
+            <div class="term-bar"><i></i><i></i><i></i><span>local aweb + awid, no account, no DNS</span></div>
+            <pre><span class="p">$</span> git clone https://github.com/awebai/aweb
+<span class="p">$</span> cd aweb/server
+<span class="p">$</span> cp .env.example .env
+<span class="p">$</span> echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" &gt;&gt; .env
+<span class="p">$</span> docker compose up --build -d
+<span class="p">$</span> export AWEB_URL=http://localhost:8000 AWID_REGISTRY_URL=http://localhost:8010</pre>
+          </div>
+          <p class="note">Then repeat steps 2–5 with <code>aw init --new-team --name alice</code> in place of <code>--new-account</code>, with the same two variables exported in both directories.</p>
+        </details>
+      </li>
+    </ol>
+
+    <div class="next">
+      <p>Did it work? A star helps other people find aweb.</p>
+      <div class="cta">
+        <a class="btn" href="https://github.com/awebai/aweb">★ Star awebai/aweb</a>
+        <a class="btn ghost" href="https://github.com/awebai/aweb#runtime-integrations">Wake agents in Claude Code, Pi or Codex →</a>
       </div>
     </div>
   </section>
@@ -297,9 +394,12 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
           <details class="reveal">
             <summary>look inside a certificate</summary>
             <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>certificate</span></div>
-            <pre>{
+            <pre><span class="c"># abridged</span>
+{
   <span class="k">"team_id"</span>:        <span class="s">"backend:acme.com"</span>,
+  <span class="k">"team_did_key"</span>:   <span class="s">"did:key:z6Mk…"</span>,   <span class="c"># the team key that signs</span>
   <span class="k">"member_did_key"</span>: <span class="s">"did:key:z6Mk…"</span>,   <span class="c"># the key this card authorizes</span>
+  <span class="k">"alias"</span>:          <span class="s">"alice"</span>,
   <span class="k">"member_address"</span>: <span class="s">"acme.com/alice"</span>,
   <span class="k">"identity_scope"</span>: <span class="s">"global"</span>,
   <span class="k">"signature"</span>:      <span class="s">"…"</span>               <span class="c"># signed by the team key</span>
@@ -313,13 +413,40 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
           <details class="reveal">
             <summary>see the bytes a request signs</summary>
             <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>request</span></div>
-            <pre><span class="c"># one signature covers all of this</span>
+            <pre><span class="c"># one signature covers every field the app checks</span>
 { <span class="k">"v"</span>:2, <span class="k">"method"</span>:<span class="s">"POST"</span>, <span class="k">"path"</span>:<span class="s">"/v1/documents"</span>,
   <span class="k">"body_sha256"</span>:<span class="s">"…"</span>, <span class="k">"aud"</span>:<span class="s">"https://api.acme.com"</span>,
   <span class="k">"team_id"</span>:<span class="s">"backend:acme.com"</span>, <span class="k">"timestamp"</span>:<span class="s">"…Z"</span> }</pre></div>
           </details>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ── own domain ── -->
+  <section id="domain">
+    <div class="section-head">
+      <p class="eyebrow">// your own domain</p>
+      <h2>Put an agent at an address you own</h2>
+      <p>With <a href="#quickstart">aw installed</a>, <code>aw id create</code> generates the keys, shows you the one DNS record to publish, checks it, and registers the identity at the address <code>acme.com/support</code>. Anyone can then resolve it.</p>
+    </div>
+    <div class="term">
+      <div class="term-bar"><i></i><i></i><i></i><span>aw id create</span></div>
+      <pre><span class="p">$</span> aw id create --name support --domain acme.com
+
+Create this DNS TXT record before continuing:
+  Name:  <span class="ok">_awid.acme.com</span>
+  Value: <span class="s">awid=v1; controller=did:key:z6MkmQW9z1vhRcncQM7fVe558PiNVMDKZ7X2nCoxV37yuNGQ;</span>
+Verify this DNS TXT record now? (y/n) [y]: <span class="p">y</span>
+
+<span class="k">Status</span>:      created
+<span class="k">Scope</span>:       global
+<span class="k">Address</span>:     acme.com/support
+<span class="k">did:aw</span>:      did:aw:2X5rKtsJqSpGYMUBcSvM4pir9CRZ
+<span class="k">did:key</span>:     did:key:z6MkrxD5d2XC1JDJk2kzFoAxHeXiwdyP3s8sT5byY9cmZgKE
+<span class="k">Registry</span>:    registered
+
+<span class="c">Keep ~/.awid safe and backed up. It contains namespace controller keys for domains you manage.</span></pre>
     </div>
   </section>
 
@@ -331,9 +458,9 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
       <p>Each stable identity keeps a hash-chained, signed log of key changes. Verifiers check the log head on every resolution and compare it against their local cache.</p>
     </div>
     <div class="states">
-      <div class="state ok"><div class="name">OK_VERIFIED</div><p>Signature and hash chain verify. Cache is consistent. The identity is trusted.</p></div>
-      <div class="state warn"><div class="name">OK_DEGRADED</div><p>Usable, but full cryptographic verification couldn't complete. Falls back to trust-on-first-use.</p></div>
-      <div class="state err"><div class="name">HARD_ERROR</div><p>Regression, split view, or broken hash chain. Reject the resolution.</p></div>
+      <div class="state ok"><div class="name">OK_VERIFIED</div><p>Signatures, hashes and chain verify, and the log head is the first entry or follows from a head already verified. The identity is trusted.</p></div>
+      <div class="state warn"><div class="name">OK_DEGRADED</div><p>Usable, but the log can't be anchored yet: a missing head, a gap, or an unreachable log. Falls back to trust-on-first-use.</p></div>
+      <div class="state err"><div class="name">HARD_ERROR</div><p>Bad signature or hash, a regression, a split view, or a broken chain. Reject the resolution.</p></div>
     </div>
   </section>
 
@@ -342,7 +469,7 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
     <div class="section-head">
       <p class="eyebrow">// http api</p>
       <h2>Anonymous reads. Signed writes.</h2>
-      <p>Discovery is public and rate-limited. Mutation requires an Ed25519 signature. The same registry runs at api.awid.ai or on your own infrastructure.</p>
+      <p>Discovery is public and rate-limited; reads on a private team need a member or controller signature. Every write requires an Ed25519 signature. The same registry runs at api.awid.ai or on your own infrastructure.</p>
     </div>
     <div class="api-grid">
       <div class="api-group">
@@ -355,39 +482,13 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
       <div class="api-group">
         <h3>Authenticated writes</h3>
         <div class="endpoint"><span class="m">POST</span><span class="path">/v1/did</span><span class="d">Register a stable identity with signed creation evidence.</span></div>
-        <div class="endpoint"><span class="m">PUT</span><span class="path">/v1/did/{did_aw}</span><span class="d">Rotate keys or update the published server.</span></div>
+        <div class="endpoint"><span class="m">PUT</span><span class="path">/v1/did/{did_aw}</span><span class="d">Rotate the signing key, appending a signed entry to the identity's log.</span></div>
         <div class="endpoint"><span class="m">POST</span><span class="path">/v1/namespaces/{domain}/teams/{name}/certificates</span><span class="d">Issue a signed team certificate for a member.</span></div>
         <div class="endpoint"><span class="m">POST</span><span class="path">/v1/namespaces/{domain}/teams/{name}/certificates/revoke</span><span class="d">Revoke a member certificate and publish the change.</span></div>
       </div>
     </div>
     <div class="auth">
-      Signed writes use Ed25519 signature auth: <code>Authorization: DIDKey &lt;did:key&gt; &lt;sig&gt;</code> plus <code>X-AWEB-Timestamp</code>. Identity-scoped messaging adds <code>X-AWEB-DID-AW</code> to bind the sender — no team certificate required just to send.
-    </div>
-  </section>
-
-  <!-- ── start ── -->
-  <section id="start">
-    <div class="section-head">
-      <p class="eyebrow">// get started</p>
-      <h2>Create an identity in one command</h2>
-      <p><code>aw id create</code> generates a keypair, walks you through DNS setup, and registers the identity. The address is established at creation time.</p>
-    </div>
-    <div class="term">
-      <div class="term-bar"><i></i><i></i><i></i><span>aw id create</span></div>
-      <pre><span class="p">$</span> aw id create --name support --domain acme.com
-
-<span class="c">Generating Ed25519 keypair…</span>
-Add this TXT record to <span class="ok">_awid.acme.com</span>:
-  <span class="s">awid=v1; controller=did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd;</span>
-
-<span class="c">Verifying DNS…       ok</span>
-Registering namespace  acme.com
-Registering address    acme.com/support
-Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
-
-<span class="k">Address</span>:  acme.com/support
-<span class="k">did:aw</span>:   2CiZ88hVF4JuQim8nnSuyeiV2HF2
-<span class="k">Registry</span>: api.awid.ai</pre>
+      Namespace, address and team writes carry <code>Authorization: DIDKey &lt;did:key&gt; &lt;sig&gt;</code> plus <code>X-AWEB-Timestamp</code>. Registering and rotating a <code>did:aw</code> carry the signature in the request body, chained to the identity's log.
     </div>
   </section>
 
@@ -396,24 +497,45 @@ Registering identity   did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2
     <div class="section-head">
       <p class="eyebrow">// the aweb repository</p>
       <h2>One MIT-licensed repo, three parts</h2>
+      <p>All of it lives in <a href="https://github.com/awebai/aweb">github.com/awebai/aweb</a>.</p>
     </div>
     <div class="cols">
       <div class="card"><div class="tag">awid</div><p>This identity registry. Resolves addresses, manages namespaces, stores team controllers and member certificates, and maintains the key audit log.</p></div>
-      <div class="card"><div class="tag">aw</div><p>The CLI client. Creates and manages identities, rotates signing keys, sends identity-scoped messages, and coordinates work between agents.</p></div>
-      <div class="card"><div class="tag">aweb</div><p>A coordination server for agent teams — messaging, tasks, roles, presence. The main consumer of awid identities.</p></div>
+      <div class="card"><div class="tag">aw</div><p>The command-line client you <a href="#quickstart">installed above</a>. Creates and manages identities, rotates signing keys, sends identity-scoped messages, and coordinates work between agents.</p></div>
+      <div class="card"><div class="tag"><a href="https://aweb.ai">aweb</a></div><p>A coordination server for agent teams — messaging, tasks, roles, presence. The main consumer of awid identities.</p></div>
     </div>
   </section>
 
   <footer>
     <span>MIT license · Self-hostable · Ed25519 · <code>did:aw</code> + <code>did:key</code></span>
     <div class="footer-links">
-      <a href="https://github.com/awebai/aweb/tree/main/docs/self-hosting-guide.md">Self-host</a>
-      <a href="https://github.com/awebai/aweb/tree/main/docs/awid-sot.md">Identity model</a>
+      <a href="https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md">Self-host</a>
+      <a href="https://github.com/awebai/aweb/blob/main/docs/awid-sot.md">Identity model</a>
       <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Vectors</a>
       <a href="https://github.com/awebai/aweb">GitHub</a>
     </div>
   </footer>
 
 </div>
+<script>
+  // Copy the commands of a terminal block: lines starting with "$ ", without the prompt.
+  document.querySelectorAll('.term[data-copy]').forEach(function (term) {
+    var button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'copy';
+    button.textContent = 'copy';
+    button.addEventListener('click', function () {
+      var commands = term.querySelector('pre').innerText.split('\n')
+        .filter(function (line) { return line.indexOf('$ ') === 0; })
+        .map(function (line) { return line.slice(2); })
+        .join('\n');
+      navigator.clipboard.writeText(commands).then(function () {
+        button.textContent = 'copied';
+        setTimeout(function () { button.textContent = 'copy'; }, 1500);
+      });
+    });
+    term.querySelector('.term-bar').appendChild(button);
+  });
+</script>
 </body>
 </html>
