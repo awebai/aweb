@@ -207,6 +207,11 @@ async def test_exact_full_page_is_complete_and_forward_poll_handles_ties(privacy
     assert full.json()["has_more"] is False
     assert full.json()["next_cursor"] is None
     assert full.json()["after_cursor"]
+    # Even a drained page anchors at its newest row, not its last DESC row.
+    idle = await _request(env, "bob", "GET", path + "?after=" + full.json()["after_cursor"])
+    assert idle.status_code == 200, idle.text
+    assert idle.json()["messages"] == []
+    assert idle.json()["after_cursor"] == full.json()["after_cursor"]
     # Starting at the oldest row and moving forward crosses identical times.
     oldest = await _request(env, "bob", "GET", path + "?limit=1")
     watermark = oldest.json()["after_cursor"]
@@ -260,3 +265,26 @@ async def test_pagination_keeps_encrypted_projection_and_public_dashboard_isolat
     await env.db.execute("DELETE FROM {{tables.messages}} WHERE conversation_id=$1", UUID(conversation))
     empty = await _request(env, "alice", "GET", path)
     assert empty.json() == {"messages": [], "has_more": False, "next_cursor": None, "after_cursor": None}
+
+
+@pytest.mark.asyncio
+async def test_direct_handler_old_arguments_keep_native_defaults(privacy_app):
+    from starlette.requests import Request
+
+    from aweb.identity_auth_deps import MessagingAuth
+    from aweb.routes.messages import get_mail_conversation
+
+    env = privacy_app
+    conversation, ascending = await _conversation(env, 3)
+    actor = env.actors["bob"]
+    # Embedded hosts pass the authenticated identity and DB explicitly and omit
+    # new optional query fields. FastAPI does not resolve defaults on this path.
+    result = await get_mail_conversation(
+        Request({"type": "http", "app": env.app}),
+        conversation_id=conversation, db=env.infra, limit=2,
+        auth=MessagingAuth(did_key=actor.did, did_aw=None, address=None, team_id=TEAM, alias="bob", agent_id=str(actor.id)),
+    )
+    assert [m.message_id for m in result.messages] == ascending[:2]
+    assert result.has_more is True
+    assert result.next_cursor
+    assert result.after_cursor

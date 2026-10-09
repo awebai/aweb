@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 import asyncpg
@@ -351,9 +351,9 @@ async def get_mail_conversation(
     conversation_id: str,
     db=Depends(get_db),
     limit: int = Query(default=200, ge=1, le=500),
-    order: Literal["asc", "desc"] = Query(default="asc"),
-    cursor: str | None = Query(default=None),
-    after: str | None = Query(default=None),
+    order: Annotated[Literal["asc", "desc"], Query()] = "asc",
+    cursor: Annotated[str | None, Query()] = None,
+    after: Annotated[str | None, Query()] = None,
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> MailConversationResponse:
     del request
