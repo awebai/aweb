@@ -130,6 +130,13 @@ service, fails before send with support unknown. The CLI command itself does
 not perform this integration-level check. A post-send HTTP 422 remains a server
 error, not a unique proof of unsupported features or of rollback.
 
+Base-URL heartbeat probes refuse HTTP redirects: every 3xx response rejects
+that candidate, and discovery may try another API path on the same origin.
+An API-shaped 2xx response still selects its candidate; existing 404/HTML
+rejection is unchanged. This extends the API/mail request no-redirect policy
+to these probes; integrations need a CLI release containing this correction
+before treating the probe boundary as qualified.
+
 ### Wake, fetch, and reply
 
 An `actionable_mail` event carries `message_id`, `conversation_id`, sender

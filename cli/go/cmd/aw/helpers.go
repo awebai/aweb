@@ -752,19 +752,19 @@ func cleanBaseURL(raw string) (string, error) {
 
 func probeAwebBaseURL(ctx context.Context, baseURL string) (bool, error) {
 	// Stable across our servers: exists (POST) on /v1/agents/heartbeat.
-	// We use GET to avoid side effects; success is any non-404 response
-	// with a non-HTML content type (to distinguish a web app from an API).
+	// We use GET to avoid side effects; redirects and 404 reject a candidate.
+	// Other non-HTML responses distinguish an API from a web app.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/agents/heartbeat", nil)
 	if err != nil {
 		return false, err
 	}
-	resp, err := (&http.Client{Timeout: 2 * time.Second, Transport: awid.NewAPITransport()}).Do(req)
+	resp, err := awid.DoNoRedirect(&http.Client{Timeout: 2 * time.Second, Transport: awid.NewAPITransport()}, req)
 	if err != nil {
 		return false, err
 	}
 	_ = resp.Body.Close()
 	debugLog("probe aweb base url: %s -> %d", baseURL, resp.StatusCode)
-	if resp.StatusCode == http.StatusNotFound {
+	if (resp.StatusCode >= 300 && resp.StatusCode < 400) || resp.StatusCode == http.StatusNotFound {
 		return false, nil
 	}
 	ct := resp.Header.Get("Content-Type")
