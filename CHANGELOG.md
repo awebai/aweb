@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Release preparation: CLI 1.36.29
+
+This CLI-only release covers E2E encryption-key assertion renewal since
+`aw-v1.36.28`. CLI versioning remains tag-driven; the server stays at 1.27.13.
+
+- Reading existing mail no longer fails solely because the local encryption
+  key's own assertion has expired. Reads warn when it remains expired; key,
+  signature and identity-binding checks still apply.
+- Automatically re-sign and republish the same key's assertion when it expires
+  within 14 days or has already expired. Checks run during eligible CLI root
+  pre-run and resident custody startup, hourly and before encrypted sends.
+  Renewal does not rotate the key or change its previous-key linkage.
+- A failed publication attempt triggers a shared one-hour quiet backoff for
+  automatic renewal; explicit encryption-key setup can retry immediately.
+  Encrypted sends still require currently valid encryption-key assertions and
+  do not fall back to plaintext on renewal failure.
+- Invite inspection, help and neutral commands do not trigger renewal network
+  activity. Inspection's existing explicit preview behavior is unchanged.
+- Juan's identity-path approval is recorded in the underlying abqc source
+  commits. This release introduces no wire or schema change.
+
 ### Release preparation: server 1.27.13 and CLI 1.36.28
 
 Server changes below are since `server-v1.27.12`. CLI 1.36.28 combines the
