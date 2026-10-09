@@ -177,7 +177,7 @@ Cover these cases for mail and chat wherever the operation exists:
 | Dashboard agents, tasks, claims, roles, instructions, status; `/v1/status`; federation ingress | No mail/chat content read. Public coordination data does not establish messaging participation; federation ingress is a write surface. |
 
 Executable regression: `server/tests/test_dashboard_privacy.py` uses real aweb
-and AWID application routes, PostgreSQL, a disposable Redis process and signed
+and AWID application routes, PostgreSQL, environment-provided Redis and signed
 requests. Embedded public-reader cases invoke the real status route with a
 host-supplied identity; the embedding application's authentication bridge needs
 its own integration test. Both content modes are covered at the dashboard read boundary;

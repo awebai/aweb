@@ -9,10 +9,8 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 import json
-import shutil
+import os
 import socket
-import subprocess
-import tempfile
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -20,7 +18,6 @@ import httpx
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
-from redis.exceptions import ConnectionError as RedisConnectionError
 from starlette.requests import Request
 import uvicorn
 
@@ -47,7 +44,9 @@ from test_messages_http import (
     _signed_team_headers,
 )
 
-TEAM = "privacy:example.test"
+# Avoid channel/key collisions when sharing the gate Redis with other runs.
+TEAM_NAME = f"privacy-{uuid4().hex[:12]}"
+TEAM = f"{TEAM_NAME}:example.test"
 
 
 @pytest_asyncio.fixture
@@ -55,113 +54,95 @@ async def privacy_app(shared_test_pool, monkeypatch):
     monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
     service_token = "privacy-tests-disposable-service-token"
     monkeypatch.setenv("AWID_SERVICE_TOKEN", service_token)
-    if not shutil.which("redis-server"):
-        pytest.fail("dashboard privacy tests require a local redis-server executable")
-    with tempfile.TemporaryDirectory(prefix="abav-") as directory:
-        redis_path = f"{directory}/redis.sock"
-        process = subprocess.Popen(
-            ["redis-server", "--port", "0", "--unixsocket", redis_path,
-             "--save", "", "--appendonly", "no"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
-        redis = Redis(unix_socket_path=redis_path, decode_responses=True)
-        try:
-            for _ in range(100):
-                try:
-                    await redis.ping()
-                    break
-                except RedisConnectionError:
-                    if process.poll() is not None:
-                        raise
-                    await asyncio.sleep(0.02)
-            await redis.ping()
-            db = DatabaseInfra()
-            await db.initialize(shared_pool=shared_test_pool)
-            registry_db = AwidDatabaseInfra(schema="privacy_registry")
-            await registry_db.initialize(shared_pool=shared_test_pool)
-            registry_app = create_registry_app(db_infra=registry_db, redis=redis)
-            async with registry_app.router.lifespan_context(registry_app):
-                registry = RegistryClient(
-                    registry_url="http://registry.test",
-                    transport=httpx.ASGITransport(app=registry_app),
-                    service_token=service_token,
-                )
-                app = create_app()
-                # Externally provisioned resources, exactly as an embedding host
-                # supplies them; lifecycle startup would create different ones.
-                app.state.db = db
-                app.state.redis = redis
-                app.state.awid_registry_client = registry
-                app.state.dashboard_jwt_secret = _JWT_SECRET
-                dispatched = []
-                handler = create_mutation_handler(redis, db)
+    # Candidate runners provide Redis as a service, not a local executable.
+    # Never flush this shared database; team/workspace/session keys are unique.
+    async with Redis.from_url(
+        os.environ.get("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True,
+    ) as redis:
+        await redis.ping()
+        db = DatabaseInfra()
+        await db.initialize(shared_pool=shared_test_pool)
+        registry_db = AwidDatabaseInfra(schema="privacy_registry")
+        await registry_db.initialize(shared_pool=shared_test_pool)
+        registry_app = create_registry_app(db_infra=registry_db, redis=redis)
+        async with registry_app.router.lifespan_context(registry_app):
+            registry = RegistryClient(
+                registry_url="http://registry.test",
+                transport=httpx.ASGITransport(app=registry_app),
+                service_token=service_token,
+            )
+            app = create_app()
+            # Externally provisioned resources, exactly as an embedding host
+            # supplies them; lifecycle startup would create different ones.
+            app.state.db = db
+            app.state.redis = redis
+            app.state.awid_registry_client = registry
+            app.state.dashboard_jwt_secret = _JWT_SECRET
+            dispatched = []
+            handler = create_mutation_handler(redis, db)
 
-                async def observe_mutation(event_type, context):
-                    dispatched.append((event_type, dict(context)))
-                    await handler(event_type, context)
+            async def observe_mutation(event_type, context):
+                dispatched.append((event_type, dict(context)))
+                await handler(event_type, context)
 
-                app.state.on_mutation = observe_mutation
-                manager = db.get_manager("aweb")
-                team_sk, _, team_did = _make_keypair()
+            app.state.on_mutation = observe_mutation
+            manager = db.get_manager("aweb")
+            team_sk, _, team_did = _make_keypair()
+            await manager.execute(
+                "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
+                "VALUES ($1, 'example.test', $2, $3)", TEAM, TEAM_NAME, team_did,
+            )
+            await registry_db.get_manager().execute(
+                "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
+                "VALUES ('example.test', $1, $2, 'public')", TEAM_NAME, team_did,
+            )
+            actors = {}
+            for alias in ("alice", "bob", "carol"):
+                sk, _, did = _make_keypair()
+                agent_id, workspace_id = uuid4(), uuid4()
                 await manager.execute(
-                    "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) "
-                    "VALUES ($1, 'example.test', 'privacy', $2)", TEAM, team_did,
+                    "INSERT INTO {{tables.agents}} "
+                    "(agent_id, team_id, did_key, alias, identity_scope, inbound_mode) "
+                    "VALUES ($1, $2, $3, $4, 'local', 'open')",
+                    agent_id, TEAM, did, alias,
                 )
-                await registry_db.get_manager().execute(
-                    "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) "
-                    "VALUES ('example.test', 'privacy', $1, 'public')", team_did,
+                await manager.execute(
+                    "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
+                    "VALUES ($1, $2, $3, $4)", workspace_id, TEAM, agent_id, alias,
                 )
-                actors = {}
-                for alias in ("alice", "bob", "carol"):
-                    sk, _, did = _make_keypair()
-                    agent_id, workspace_id = uuid4(), uuid4()
-                    await manager.execute(
-                        "INSERT INTO {{tables.agents}} "
-                        "(agent_id, team_id, did_key, alias, identity_scope, inbound_mode) "
-                        "VALUES ($1, $2, $3, $4, 'local', 'open')",
-                        agent_id, TEAM, did, alias,
+                certificate = _encode_certificate(_make_certificate(
+                    team_sk, team_did, did, team_id=TEAM, alias=alias,
+                    identity_scope="local", certificate_id=f"privacy-{alias}",
+                ))
+                actors[alias] = SimpleNamespace(
+                    sk=sk, did=did, id=agent_id, workspace=workspace_id, certificate=certificate,
+                )
+            sock = socket.socket()
+            sock.bind(("127.0.0.1", 0))
+            server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
+            serving = asyncio.create_task(server.serve(sockets=[sock]))
+            try:
+                for _ in range(100):
+                    if server.started:
+                        break
+                    await asyncio.sleep(0.02)
+                assert server.started
+                async with httpx.AsyncClient(
+                    base_url=f"http://127.0.0.1:{sock.getsockname()[1]}", timeout=5,
+                ) as client:
+                    yield SimpleNamespace(
+                        client=client, db=manager, redis=redis, actors=actors,
+                        registry_db=registry_db.get_manager(), dispatched=dispatched, app=app, infra=db,
                     )
-                    await manager.execute(
-                        "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
-                        "VALUES ($1, $2, $3, $4)", workspace_id, TEAM, agent_id, alias,
-                    )
-                    certificate = _encode_certificate(_make_certificate(
-                        team_sk, team_did, did, team_id=TEAM, alias=alias,
-                        identity_scope="local", certificate_id=f"privacy-{alias}",
-                    ))
-                    actors[alias] = SimpleNamespace(
-                        sk=sk, did=did, id=agent_id, workspace=workspace_id, certificate=certificate,
-                    )
-                sock = socket.socket()
-                sock.bind(("127.0.0.1", 0))
-                server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
-                serving = asyncio.create_task(server.serve(sockets=[sock]))
-                try:
-                    for _ in range(100):
-                        if server.started:
-                            break
-                        await asyncio.sleep(0.02)
-                    assert server.started
-                    async with httpx.AsyncClient(
-                        base_url=f"http://127.0.0.1:{sock.getsockname()[1]}", timeout=5,
-                    ) as client:
-                        yield SimpleNamespace(
-                            client=client, db=manager, redis=redis, actors=actors,
-                            registry_db=registry_db.get_manager(), dispatched=dispatched, app=app, infra=db,
-                        )
-                finally:
-                    server.should_exit = True
-                    await asyncio.wait_for(serving, 5)
-                    sock.close()
-                    await _shutdown_lifecycle_outbox_replay(app)
-                    await _shutdown_federation_outbox_replay(app)
-                    await registry.aclose()
-            await registry_db.close()
-            await db.close()
-        finally:
-            await redis.aclose()
-            process.terminate()
-            process.wait(timeout=5)
+            finally:
+                server.should_exit = True
+                await asyncio.wait_for(serving, 5)
+                sock.close()
+                await _shutdown_lifecycle_outbox_replay(app)
+                await _shutdown_federation_outbox_replay(app)
+                await registry.aclose()
+        await registry_db.close()
+        await db.close()
 
 
 async def _request(env, actor, method, path, body=None):

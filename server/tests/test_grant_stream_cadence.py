@@ -100,7 +100,7 @@ def harness(monkeypatch):
     async def disconnected():
         return False
 
-    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)), is_disconnected=disconnected)
+    request = SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)), is_disconnected=disconnected)
 
     async def open_stream(kind, expiry=600, duration=900):
         auth = replace(identity, grant=replace(identity.grant, expires_at=start + timedelta(seconds=expiry)))
