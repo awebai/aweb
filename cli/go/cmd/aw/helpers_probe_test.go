@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"unicode"
 )
 
 func TestProbeAwebBaseURLRejectsRedirects(t *testing.T) {
@@ -30,7 +33,7 @@ func TestProbeAwebBaseURLRejectsRedirects(t *testing.T) {
 			}))
 			defer source.Close()
 			ok, err := probeAwebBaseURL(context.Background(), source.URL)
-			if ok || err != nil || sourceHits.Load() != 1 || targetHits.Load() != 0 {
+			if ok || err == nil || sourceHits.Load() != 1 || targetHits.Load() != 0 {
 				t.Fatalf("redirect candidate: ok=%v err=%v source=%d target=%d", ok, err, sourceHits.Load(), targetHits.Load())
 			}
 		})
@@ -110,7 +113,65 @@ func TestProbeAwebBaseURLRejectsSameOriginRedirect(t *testing.T) {
 	}))
 	defer server.Close()
 	ok, err := probeAwebBaseURL(context.Background(), server.URL)
-	if ok || err != nil || probeHits.Load() != 1 || redirectedHits.Load() != 0 {
+	if ok || err == nil || probeHits.Load() != 1 || redirectedHits.Load() != 0 {
 		t.Fatalf("same-origin redirect: ok=%v err=%v probe=%d redirected=%d", ok, err, probeHits.Load(), redirectedHits.Load())
+	}
+}
+
+func TestResolveWorkingBaseURLRedirectDiagnostic(t *testing.T) {
+	for _, tc := range []struct{ name, location, want string }{
+		{"upgrade", "https://api.example.test/api", "https://api.example.test/api"},
+		{"malformed", "https://username:password@api.example.test/%zz?secret=query#fragment", "heartbeat probe request failed"},
+		{"untrusted", "https://username:password@api.example.test/" + strings.Repeat("x", 2000) + "?secret=query#fragment", "https://api.example.test/"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits.Add(1)
+				if r.URL.Path != "/v1/agents/heartbeat" {
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Location", tc.location)
+				w.WriteHeader(http.StatusMovedPermanently)
+			}))
+			defer server.Close()
+			got, err := resolveWorkingBaseURLContext(context.Background(), server.URL)
+			if got != "" || err == nil {
+				t.Fatalf("got=%q err=%v", got, err)
+			}
+			message := err.Error()
+			if !strings.Contains(message, tc.want) || (tc.name != "malformed" && !strings.Contains(message, "AWEB_URL")) || hits.Load() != 2 {
+				t.Fatalf("missing redirect diagnostic or wrong request count: %q hits=%d", message, hits.Load())
+			}
+			if len(message) > 600 || strings.ContainsAny(message, "\r\n") {
+				t.Fatalf("unbounded/multiline diagnostic: length=%d", len(message))
+			}
+			for _, private := range []string{"username", "password", "secret", "query", "fragment"} {
+				if strings.Contains(message, private) {
+					t.Fatalf("redirect diagnostic exposed %s", private)
+				}
+			}
+		})
+	}
+}
+
+func TestRedirectLocationDisplaySanitizes(t *testing.T) {
+	base, _ := url.Parse("http://source.example/api/v1/agents/heartbeat")
+	for _, tc := range []struct{ raw, want string }{
+		{"https://username:password@target.example:8443/pa\r\nth\x1b?secret=query#fragment", "https://target.example:8443/path"},
+		{"/other?secret=query#fragment", "http://source.example/other"},
+		{"https://username:password@target.example/\r\n" + strings.Repeat("x", 2000) + "?secret=query#fragment", "https://target.example/" + strings.Repeat("x", 230) + "..."},
+		{"javascript:alert(1)", "(missing or invalid Location)"},
+		{"https://target.example/%zz", "(missing or invalid Location)"},
+		{"", "(missing or invalid Location)"},
+	} {
+		got := redirectLocationDisplay(tc.raw, base)
+		if got != tc.want || len(got) > 256 {
+			t.Fatalf("unexpected display %q (length %d)", got, len(got))
+		}
+		if strings.IndexFunc(got, unicode.IsControl) >= 0 {
+			t.Fatal("control character in display")
+		}
 	}
 }

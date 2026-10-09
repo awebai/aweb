@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
@@ -750,6 +751,34 @@ func cleanBaseURL(raw string) (string, error) {
 	return strings.TrimSuffix(u.String(), "/"), nil
 }
 
+// redirectLocationDisplay is diagnostic-only: never use its output for a request.
+func redirectLocationDisplay(raw string, base *url.URL) string {
+	raw = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, raw)
+	if strings.TrimSpace(raw) == "" {
+		return "(missing or invalid Location)"
+	}
+	target, err := url.Parse(raw)
+	if err != nil {
+		return "(missing or invalid Location)"
+	}
+	target = base.ResolveReference(target)
+	if (target.Scheme != "http" && target.Scheme != "https") || target.Host == "" || target.Opaque != "" {
+		return "(missing or invalid Location)"
+	}
+	// Reconstruct only routing fields; credentials, query and fragment never display.
+	display := (&url.URL{Scheme: target.Scheme, Host: target.Host, Path: target.Path}).String()
+	const maxDisplayBytes = 256
+	if len(display) > maxDisplayBytes {
+		display = strings.ToValidUTF8(display[:maxDisplayBytes-3], "") + "..."
+	}
+	return display
+}
+
 func probeAwebBaseURL(ctx context.Context, baseURL string) (bool, error) {
 	// Stable across our servers: exists (POST) on /v1/agents/heartbeat.
 	// We use GET to avoid side effects; redirects and 404 reject a candidate.
@@ -760,11 +789,19 @@ func probeAwebBaseURL(ctx context.Context, baseURL string) (bool, error) {
 	}
 	resp, err := awid.DoNoRedirect(&http.Client{Timeout: 2 * time.Second, Transport: awid.NewAPITransport()}, req)
 	if err != nil {
-		return false, err
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		// net/http may put an unparseable Location (including credentials) in err.
+		// Never reflect that server-controlled header through transport diagnostics.
+		return false, fmt.Errorf("heartbeat probe request failed at %q (transport failure or invalid redirect)", redirectLocationDisplay(baseURL, req.URL))
 	}
 	_ = resp.Body.Close()
 	debugLog("probe aweb base url: %s -> %d", baseURL, resp.StatusCode)
-	if (resp.StatusCode >= 300 && resp.StatusCode < 400) || resp.StatusCode == http.StatusNotFound {
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return false, fmt.Errorf("server redirected %q to %q; set AWEB_URL to the intended API base at that address", redirectLocationDisplay(baseURL, req.URL), redirectLocationDisplay(resp.Header.Get("Location"), req.URL))
+	}
+	if resp.StatusCode == http.StatusNotFound {
 		return false, nil
 	}
 	ct := resp.Header.Get("Content-Type")
