@@ -181,9 +181,75 @@ Inspect the thread:
 aw mail show --conversation-id <conversation-id>
 ```
 
-Conversation output is oldest-first, defaults to 200 messages, and has a
-500-message ceiling with no paging flag. If the returned count equals the
-requested limit, do not claim the conversation is complete.
+The released CLI conversation command remains oldest-first, defaults to 200
+messages, and has a 500-message ceiling with no paging flag. Existing clients
+continue to receive that ordering. If a client does not consume cursor fields,
+a full-size window cannot establish completeness.
+
+### Participant mail conversation pagination
+
+`GET /v1/messages/conversations/{conversation_id}` is a read-only participant
+endpoint. A dashboard token or public team visibility does not confer
+participation. Every page checks the authenticated identity against the stored
+conversation participants; a cursor never grants access.
+
+The query parameters are:
+
+| Parameter | Meaning |
+| --- | --- |
+| `limit` | Page size, 1–500, default 200. |
+| `order` | `asc` (default, oldest first) or `desc` (newest first). |
+| `cursor` | Opaque `next_cursor` from a previous page in the same conversation and order. |
+| `after` | Opaque `after_cursor` for newer messages, returned oldest first. Use `order=asc` or omit `order`; cannot combine with `cursor`. |
+
+Messages are ordered by the pair `(created_at, message_id)`, including ties in
+creation time. Pages use an exclusive boundary, not an offset. `created_at` is
+this server's receipt time, not the sender's signed timestamp. A page fetches one
+extra row to determine `has_more`; when true, `next_cursor` continues in the
+requested direction. When false, `next_cursor` is null, even if exactly `limit`
+rows were returned. The limit may change between pages.
+
+The response preserves the existing message projection and adds continuation
+metadata:
+
+```json
+{
+  "messages": [],
+  "has_more": false,
+  "next_cursor": null,
+  "after_cursor": null
+}
+```
+
+To open the recent end of a long conversation, request `?order=desc&limit=50`.
+Use its `next_cursor` with `order=desc` to load older history. Save its
+`after_cursor` separately as the newest displayed boundary; loading older
+history must not replace that polling boundary.
+
+To poll, request `?after=<after_cursor>&limit=50`. New rows are oldest-first so a
+burst larger than the limit can be drained without jumping over unseen rows.
+Advance to the response's `after_cursor` and continue while `has_more` is true
+(the `next_cursor` on these ascending pages is the same token). An empty poll
+preserves the supplied `after_cursor`. A nonempty history page supplies an
+`after_cursor` at its newest returned row, even if it has no further history.
+An empty initial conversation has no boundary; repeat the initial request until
+a message exists.
+
+Cursors are opaque, scoped to a conversation and traversal order, and are not
+authentication credentials. Malformed, wrong-scope, and wrong-order tokens are
+rejected with 422; clients must not construct or edit them. Pagination is a live
+keyset traversal, not a database snapshot or commit-order event log. Newer
+appends do not shift backwards pages. Rows committed late behind an already
+consumed boundary require a history refresh; clients can deduplicate by
+`message_id` when reconciling history.
+
+Compatibility: calls without `order` retain the original oldest-first default,
+including released `aw mail show --conversation-id`, the Go mail recipient
+lookup, and the A2A mail bridge. OSS MCP `check_mail` uses its own
+recipient-scoped inbox query and does not call this conversation endpoint.
+Hosted participant chat clients opt into `order=desc` and consume the cursors.
+Mail content, encryption projection, participant checks, and acknowledgment
+behavior are unchanged.
 
 ### Inbox and read state
 

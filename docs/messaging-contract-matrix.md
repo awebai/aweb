@@ -113,8 +113,13 @@ Cover these cases for mail and chat wherever the operation exists:
    read uses the server-authorized stored sender routing DID plus the valid
    historical signature for authorship; a claimed stable field alone is not
    authority. Conversation `show` is also read-only.
-3. Conversation history is oldest-first, defaults to 200, has a 500-message
-   ceiling, and has no paging flag. A full-size window cannot prove completeness.
+3. Participant mail conversation history defaults to oldest-first (`order=asc`),
+   200 rows, and a maximum of 500 per page. HTTP clients may opt into `order=desc`
+   and continue with `next_cursor` / `has_more`; `(created_at, message_id)` gives
+   a stable exclusive boundary. `after_cursor` supports oldest-first incremental
+   polling via `after`, retaining its boundary on empty polls. Cursors never
+   authorize participation. Released CLI `show` has no paging flag and preserves
+   its oldest-first window; see [the paging contract](mail-and-chat.md#participant-mail-conversation-pagination).
 4. Inbox is newest-first. The CLI defaults to 50 while the server accepts at most
    200 per page; returned unread rows are presented and acknowledged. A response
    with `has_more` includes an opaque `next_cursor`, allowing the remaining

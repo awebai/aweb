@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 import asyncpg
@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer, model_validator
 
 from awid.federation_errors import FederationAuthorityError
-from awid.pagination import encode_cursor, validate_pagination_params
+from awid.pagination import decode_cursor, encode_cursor, validate_pagination_params
 from aweb.awid_error_handling import awid_registry_not_configured_exception
 from aweb.deps import get_db
 from aweb.config import get_settings
@@ -249,6 +249,10 @@ class InboxResponse(BaseModel):
     next_cursor: Optional[str] = None
 
 
+class MailConversationResponse(InboxResponse):
+    after_cursor: str | None = None
+
+
 class AckResponse(BaseModel):
     message_id: str
     acknowledged_at: str
@@ -309,14 +313,49 @@ async def _inbox_response_from_rows(
     return InboxResponse(messages=messages, has_more=has_more, next_cursor=next_cursor)
 
 
-@router.get("/conversations/{conversation_id}", response_model=InboxResponse)
+def _mail_conversation_cursor(conversation_id: UUID, order: str, row) -> str:
+    return encode_cursor({
+        "kind": "mail_conversation",
+        "conversation_id": str(conversation_id),
+        "order": order,
+        "created_at": row["created_at"].isoformat(),
+        "message_id": str(row["message_id"]),
+    })
+
+
+def _mail_conversation_boundary(
+    cursor: str | None, conversation_id: UUID, order: str,
+) -> tuple[datetime, UUID] | None:
+    if cursor is None:
+        return None
+    try:
+        data = decode_cursor(cursor)
+        if (not data or data.get("kind") != "mail_conversation"
+                or data.get("conversation_id") != str(conversation_id)
+                or data.get("order") != order):
+            raise ValueError("Cursor scope or order mismatch")
+        created_at = datetime.fromisoformat(data["created_at"])
+        message_id = UUID(data["message_id"])
+        if created_at.tzinfo is None:
+            raise ValueError("Cursor timestamp must be timezone-aware")
+        # Normalize before passing to asyncpg, including range validation for
+        # timezone offsets at datetime's minimum/maximum supported year.
+        return created_at.astimezone(timezone.utc), message_id
+    except (KeyError, TypeError, ValueError, AttributeError, OverflowError) as exc:
+        raise HTTPException(status_code=422, detail="Invalid mail conversation cursor") from exc
+
+
+@router.get("/conversations/{conversation_id}", response_model=MailConversationResponse)
 async def get_mail_conversation(
     request: Request,
     conversation_id: str,
     db=Depends(get_db),
     limit: int = Query(default=200, ge=1, le=500),
+    order: Literal["asc", "desc"] = Query(default="asc"),
+    cursor: str | None = Query(default=None),
+    after: str | None = Query(default=None),
     auth: MessagingAuth = Depends(get_messaging_auth),
-) -> InboxResponse:
+) -> MailConversationResponse:
     del request
     aweb_db = db.get_manager("aweb")
     actor_dids = auth_dids(auth)
@@ -352,21 +391,46 @@ async def get_mail_conversation(
         )
         if not participant:
             raise HTTPException(status_code=403, detail="Authenticated identity is not a participant in this conversation")
+        # A cursor selects a position, never an identity or authorization scope.
+        # Keep the participant check above on every page, even for forged cursors.
+        if after is not None and (cursor is not None or order != "asc"):
+            raise HTTPException(status_code=422, detail="after requires order=asc and cannot be combined with cursor")
+        boundary = _mail_conversation_boundary(after if after is not None else cursor, conv_uuid, order)
+        params: list = [conv_uuid]
+        where = "WHERE m.conversation_id = $1"
+        if boundary is not None:
+            params.extend(boundary)
+            comparison = "<" if order == "desc" else ">"
+            where += f" AND (m.created_at, m.message_id) {comparison} ($2, $3)"
+        direction = "DESC" if order == "desc" else "ASC"
         rows = await aweb_db.fetch_all(
-            """
+            f"""
             SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                    m.subject, m.body, m.priority, m.read_at, m.created_at,
                    m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
                    m.content_mode, m.message_version, m.encrypted_envelope
-            FROM {{tables.messages}} m
-            WHERE m.conversation_id = $1
-            ORDER BY m.created_at ASC, m.message_id ASC
-            LIMIT $2
+            FROM {{{{tables.messages}}}} m
+            {where}
+            ORDER BY m.created_at {direction}, m.message_id {direction}
+            LIMIT ${len(params) + 1}
             """,
-            conv_uuid,
-            limit,
+            *params,
+            limit + 1,
         )
-        return await _inbox_response_from_rows(db, rows)
+        has_more = len(rows) > limit
+        rows = rows[:limit]
+        next_cursor = _mail_conversation_cursor(conv_uuid, order, rows[-1]) if has_more else None
+        # The polling watermark never advances beyond a returned row. Empty
+        # polls preserve it so the client can keep waiting at the same boundary.
+        after_cursor = after
+        if rows:
+            newest = rows[0] if order == "desc" else rows[-1]
+            after_cursor = _mail_conversation_cursor(conv_uuid, "asc", newest)
+        response = await _inbox_response_from_rows(db, rows, has_more=has_more, next_cursor=next_cursor)
+        return MailConversationResponse(
+            messages=response.messages, has_more=response.has_more,
+            next_cursor=response.next_cursor, after_cursor=after_cursor,
+        )
 
     legacy_rows = await aweb_db.fetch_all(
         """
