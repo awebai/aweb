@@ -187,7 +187,21 @@ func TestAwMailReplyEncryptionMode(t *testing.T) {
 	})
 }
 
-func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant, keys, wantEncrypted bool) {
+// The human has no roster entry or address; only this source envelope carries
+// its identity-authorized encryption key. Exercise the actual CLI and crypto.
+func TestAwMailReplyUnlistedSender(t *testing.T) {
+	testMailReplyEncryptionMode(t, nil, false, false, true, true, "addressless")
+}
+
+func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant, keys, wantEncrypted bool, scenarios ...string) {
+	scenario := ""
+	if len(scenarios) > 0 {
+		scenario = scenarios[0]
+	}
+	bobAddress := "acme.com/bob"
+	if scenario == "addressless" {
+		bobAddress = ""
+	}
 
 	alicePub, aliceKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -237,7 +251,7 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	sourceID := "dc6c7498-2f5a-49e6-85fb-3961b9986690"
 	sourceEnvelope, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{
 		Sender: awid.E2EESenderKey{
-			Address:       "acme.com/bob",
+			Address:       bobAddress,
 			DID:           bobDID,
 			StableID:      bobStableID,
 			EncryptionKey: bobAssertion,
@@ -266,7 +280,7 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 			message := awid.InboxMessage{
 				MessageID:      sourceID,
 				ConversationID: conversationID,
-				FromAddress:    "acme.com/bob",
+				FromAddress:    bobAddress,
 				FromDID:        bobStableID,
 				ToAddress:      "acme.com/alice",
 				ToDID:          aliceStableID,
@@ -286,13 +300,15 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 				message.Body = "plain source"
 			}
 			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{message}})
+		case r.URL.Path == "/v1/agents":
+			_ = json.NewEncoder(w).Encode(awid.ListAgentsResponse{Agents: []awid.AgentView{}})
 		case r.URL.Path == "/v1/conversations":
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{{
 				ConversationType:     "mail",
 				ConversationID:       conversationID,
 				Participants:         []string{"alice", "bob"},
 				ParticipantDIDs:      []string{aliceStableID, bobStableID},
-				ParticipantAddresses: []string{"acme.com/alice", "acme.com/bob"},
+				ParticipantAddresses: []string{"acme.com/alice", bobAddress},
 				Subject:              "encrypted source",
 				LastMessageAt:        "2026-09-25T00:00:00Z",
 			}}})
@@ -380,7 +396,7 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 			return sourceEnvelope, nil
 		}
 		svc.resolveRecipient = func(ctx context.Context, id string) (*awid.ResolvedIdentity, error) {
-			return &awid.ResolvedIdentity{DID: bobDID, StableID: bobStableID, Address: "acme.com/bob", EncryptionKey: bobAssertion}, nil
+			return &awid.ResolvedIdentity{DID: bobDID, StableID: bobStableID, Address: bobAddress, EncryptionKey: bobAssertion}, nil
 		}
 		serviceCtx, stop := context.WithCancel(ctx)
 		done := make(chan error, 1)
@@ -484,7 +500,7 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	if err := json.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := awid.DecryptE2EEMessage(&envelope, awid.E2EEDecryptIdentity{Address: "acme.com/bob", DID: bobDID, StableID: bobStableID, EncryptionKeyID: bobAssertion.EncryptionKeyID, PrivateKey: bobX})
+	decoded, err := awid.DecryptE2EEMessage(&envelope, awid.E2EEDecryptIdentity{Address: bobAddress, DID: bobDID, StableID: bobStableID, EncryptionKeyID: bobAssertion.EncryptionKeyID, PrivateKey: bobX})
 	if err != nil || decoded.Body != "reply secret" {
 		t.Fatalf("peer decrypt failed: %v", err)
 	}
@@ -492,7 +508,7 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	if err != nil {
 		t.Fatal(err)
 	}
-	peer := custodyE2EETestIdentity{did: bobDID, stableID: bobStableID, address: "acme.com/bob", signKey: bobKey, xPriv: bobX, assertion: bobAssertion}
+	peer := custodyE2EETestIdentity{did: bobDID, stableID: bobStableID, address: bobAddress, signKey: bobKey, xPriv: bobX, assertion: bobAssertion}
 	peerSvc := testCustodyService(t, bobKey, peerSessionKey)
 	peerSvc.identity.StableID = bobStableID
 	peerSvc.identity.Address = peer.address
