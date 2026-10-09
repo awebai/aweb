@@ -26,9 +26,6 @@ from .events import (
     TaskCreatedEvent,
     TaskStatusChangedEvent,
     TaskUnclaimedEvent,
-    TeamChatMessageSentEvent,
-    TeamMessageSentEvent,
-    TeamMessageAcknowledgedEvent,
     TeamReservationAcquiredEvent,
     TeamReservationReleasedEvent,
     TeamReservationRenewedEvent,
@@ -578,50 +575,9 @@ def _paths_from_context(ctx: dict) -> list[str]:
 
 
 def _translate_team_event(event_type: str, ctx: dict):
-    if event_type == "message.sent":
-        team_id = _team_id_from_context(ctx)
-        if not team_id:
-            return None
-        encrypted = _event_is_encrypted(ctx)
-        return TeamMessageSentEvent(
-            team_id=team_id,
-            message_id=str(ctx.get("message_id", "")).strip(),
-            from_alias=str(ctx.get("from_alias", "")).strip(),
-            to_alias=str(ctx.get("to_alias", "")).strip(),
-            subject=_event_subject(ctx),
-            priority=str(ctx.get("priority", "normal") or "normal"),
-            content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
-            encrypted=encrypted,
-        )
-
-    if event_type == "message.acknowledged":
-        team_id = _team_id_from_context(ctx)
-        if not team_id:
-            return None
-        encrypted = _event_is_encrypted(ctx)
-        return TeamMessageAcknowledgedEvent(
-            team_id=team_id,
-            alias=str(ctx.get("alias", "")).strip(),
-            from_alias=str(ctx.get("from_alias", "")).strip(),
-            subject=_event_subject(ctx),
-            content_mode=str(ctx.get("content_mode") or "legacy_plaintext_v1"),
-            encrypted=encrypted,
-        )
-
-    if event_type == "chat.message_sent":
-        team_id = _team_id_from_context(ctx)
-        if not team_id:
-            return None
-        to_aliases = ctx.get("to_aliases", [])
-        if not isinstance(to_aliases, list):
-            to_aliases = []
-        return TeamChatMessageSentEvent(
-            team_id=team_id,
-            from_alias=str(ctx.get("from_alias", "")).strip(),
-            to_aliases=[str(alias).strip() for alias in to_aliases if str(alias).strip()],
-            preview=str(ctx.get("preview", "") or ""),
-        )
-
+    # Mail/chat mutation hooks and participant events remain intact, including
+    # metering context. A dashboard token is not a participant, so none of these
+    # mutations has a team-wide event representation.
     if event_type == "task.created":
         team_id = _team_id_from_context(ctx)
         if not team_id:

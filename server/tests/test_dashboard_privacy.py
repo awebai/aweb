@@ -7,7 +7,7 @@ query or event behavior is mocked. All identities and data are disposable.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 import json
 import shutil
 import socket
@@ -20,6 +20,8 @@ import httpx
 import pytest
 import pytest_asyncio
 from redis.asyncio import Redis
+from redis.exceptions import ConnectionError as RedisConnectionError
+from starlette.requests import Request
 import uvicorn
 
 from aweb.api import (
@@ -28,19 +30,31 @@ from aweb.api import (
     _shutdown_lifecycle_outbox_replay,
 )
 from aweb.db import DatabaseInfra
-from aweb.events import team_events_channel_name
+from aweb.events import MessageDeliveredEvent, ChatMessageEvent, TaskCreatedEvent, publish_event, team_events_channel_name
 from aweb.mutation_hooks import create_mutation_handler
+from aweb.internal_auth import build_internal_auth_header_value
+from aweb.routes.status import status_stream
+from aweb.team_auth_deps import TeamIdentity
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
 from test_dashboard import _JWT_SECRET, _make_jwt
-from test_messages_http import _make_keypair, _signed_identity_headers
+from test_messages_http import (
+    _encode_certificate,
+    _make_certificate,
+    _make_keypair,
+    _signed_identity_headers,
+    _signed_team_headers,
+)
 
 TEAM = "privacy:example.test"
 
 
 @pytest_asyncio.fixture
-async def privacy_app(shared_test_pool):
+async def privacy_app(shared_test_pool, monkeypatch):
+    monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://unused/test")
+    service_token = "privacy-tests-disposable-service-token"
+    monkeypatch.setenv("AWID_SERVICE_TOKEN", service_token)
     if not shutil.which("redis-server"):
         pytest.fail("dashboard privacy tests require a local redis-server executable")
     with tempfile.TemporaryDirectory(prefix="abav-") as directory:
@@ -56,11 +70,7 @@ async def privacy_app(shared_test_pool):
                 try:
                     await redis.ping()
                     break
-                except ConnectionError:
-                    await asyncio.sleep(0.02)
-                except OSError:
-                    await asyncio.sleep(0.02)
-                except Exception:
+                except RedisConnectionError:
                     if process.poll() is not None:
                         raise
                     await asyncio.sleep(0.02)
@@ -74,6 +84,7 @@ async def privacy_app(shared_test_pool):
                 registry = RegistryClient(
                     registry_url="http://registry.test",
                     transport=httpx.ASGITransport(app=registry_app),
+                    service_token=service_token,
                 )
                 app = create_app()
                 # Externally provisioned resources, exactly as an embedding host
@@ -114,7 +125,13 @@ async def privacy_app(shared_test_pool):
                         "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
                         "VALUES ($1, $2, $3, $4)", workspace_id, TEAM, agent_id, alias,
                     )
-                    actors[alias] = SimpleNamespace(sk=sk, did=did, id=agent_id, workspace=workspace_id)
+                    certificate = _encode_certificate(_make_certificate(
+                        team_sk, team_did, did, team_id=TEAM, alias=alias,
+                        identity_scope="local", certificate_id=f"privacy-{alias}",
+                    ))
+                    actors[alias] = SimpleNamespace(
+                        sk=sk, did=did, id=agent_id, workspace=workspace_id, certificate=certificate,
+                    )
                 sock = socket.socket()
                 sock.bind(("127.0.0.1", 0))
                 server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
@@ -130,7 +147,7 @@ async def privacy_app(shared_test_pool):
                     ) as client:
                         yield SimpleNamespace(
                             client=client, db=manager, redis=redis, actors=actors,
-                            registry_db=registry_db.get_manager(), dispatched=dispatched,
+                            registry_db=registry_db.get_manager(), dispatched=dispatched, app=app, infra=db,
                         )
                 finally:
                     server.should_exit = True
@@ -194,7 +211,7 @@ async def test_dashboard_cannot_read_mail_but_participants_can(privacy_app, visi
         env.actors["alice"].id, env.actors["bob"].id,
     )
     dashboard = {"X-Dashboard-Token": _make_jwt([TEAM])}
-    for headers in ({}, dashboard):
+    for headers in (dashboard, {}):
         response = await env.client.get(f"/v1/teams/{TEAM}/messages", headers=headers)
         assert response.status_code == 404, response.text
         for item in (message_id, str(encrypted_id), "alice", "bob", "private subject", "private body"):
@@ -239,7 +256,7 @@ async def test_team_stream_suppresses_old_publishers_and_keeps_task_activity(pri
         assert (await _next_event(lines))["type"] == "connected"
         assert (await _next_event(lines))["type"] == "snapshot"
         for mode in ("legacy_plaintext_v1", "encrypted_v2"):
-            for event_type in ("message.delivered", "message.acknowledged", "chat.message_sent"):
+            for event_type in ("message.sent", "message.delivered", "message.acknowledged", "chat.message_sent"):
                 await env.redis.publish(team_events_channel_name(TEAM), json.dumps({
                     "type": event_type, "team_id": TEAM, "content_mode": mode,
                     "from_alias": "alice", "to_alias": "bob", "subject": "private subject",
@@ -286,3 +303,152 @@ async def test_real_sends_keep_mutation_callbacks_and_participant_reads(privacy_
             assert history.status_code == 200, history.text
             assert "private chat" in history.text
             assert session_id in conversations.text
+        for path in ("/v1/chat/pending", "/v1/chat/sessions"):
+            result = await _request(env, actor, "GET", path)
+            assert result.status_code == 200, result.text
+            if actor == "carol":
+                assert session_id not in result.text
+                assert "private chat" not in result.text
+            elif actor == "bob" or path == "/v1/chat/sessions":
+                assert session_id in result.text
+
+
+@pytest.mark.asyncio
+async def test_agent_event_snapshot_stays_participant_scoped(privacy_app):
+    env = privacy_app
+    message_id = await _seed_mail(env)
+    # An elapsed polling deadline still returns the initial participant-scoped
+    # snapshot, making both positive and negative reads finite and deterministic.
+    deadline = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    for alias in ("bob", "carol"):
+        actor = env.actors[alias]
+        headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
+        response = await env.client.get("/v1/events/stream", params={"deadline": deadline}, headers=headers)
+        assert response.status_code == 200, response.text
+        if alias == "bob":
+            assert message_id in response.text
+            assert "private subject" in response.text
+        else:
+            assert message_id not in response.text
+            assert "private subject" not in response.text
+    dashboard = await env.client.get("/v1/events/stream", params={"deadline": deadline}, headers={
+        "X-Dashboard-Token": _make_jwt([TEAM]),
+    })
+    assert dashboard.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_public_usage_requires_token_and_keeps_aggregate(privacy_app):
+    env = privacy_app
+    await _seed_mail(env)
+    response = await env.client.get("/v1/usage", params={"team_id": TEAM})
+    assert response.status_code == 401
+    response = await env.client.get("/v1/usage", params={"team_id": TEAM}, headers={
+        "X-Dashboard-Token": _make_jwt([TEAM]),
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["messages_sent"] == 1
+    assert "private subject" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("alias", ["bob", "carol"])
+@pytest.mark.parametrize("specific_workspace", [False, True])
+async def test_status_stream_keeps_mail_private_and_team_tasks_visible(privacy_app, alias, specific_workspace):
+    env = privacy_app
+    actor = env.actors[alias]
+    bob_workspace = str(env.actors["bob"].workspace)
+    headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate)
+    params = {"workspace_id": bob_workspace} if specific_workspace else {}
+    async with env.client.stream("GET", "/v1/status/stream", headers=headers, params=params) as response:
+        assert response.status_code == 200
+        # Await the actual Redis subscription before sending; no mocked timing.
+        channel = f"events:{bob_workspace}"
+        async with asyncio.timeout(5):
+            while not (await env.redis.pubsub_numsub(channel))[0][1]:
+                await asyncio.sleep(0.01)
+        message_id = await _seed_mail(env)
+        # The legacy status stream consumes workspace-shaped events from
+        # embedding/older publishers; current mail hooks use agent-ID channels.
+        await publish_event(env.redis, MessageDeliveredEvent(
+            workspace_id=bob_workspace, message_id=message_id, subject="private subject",
+        ))
+        await publish_event(env.redis, ChatMessageEvent(
+            workspace_id=bob_workspace, session_id="private-session", message_id="private-chat-id",
+        ))
+        await publish_event(env.redis, TaskCreatedEvent(
+            workspace_id=bob_workspace, task_ref="privacy-control", title="Team work",
+        ))
+        lines = response.aiter_lines()
+        event = await _next_event(lines)
+        if alias == "bob":
+            assert event["type"] == "message.delivered"
+            assert event["message_id"] == message_id
+            assert event["subject"] == "private subject"
+            event = await _next_event(lines)
+            assert event["type"] == "chat.message_sent"
+            event = await _next_event(lines)
+        assert event["type"] == "task.created"
+        assert event["task_ref"] == "privacy-control"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("colliding_workspace", [False, True])
+async def test_embedded_public_status_reader_never_gets_messaging(privacy_app, colliding_workspace):
+    """Exercise the real embedded route with its host-supplied public identity.
+
+    The standalone app does not authenticate public principals. The host's
+    authentication bridge is tested by the embedding application, not mocked here.
+    """
+    env = privacy_app
+    actor_id = "00000000-0000-0000-0000-000000000001"
+    workspace_id = str(env.actors["bob"].workspace)
+    if colliding_workspace:
+        _, _, did = _make_keypair()
+        await env.db.execute(
+            "INSERT INTO {{tables.agents}} (agent_id, team_id, did_key, alias) "
+            "VALUES ($1, $2, $3, 'public-collision')", UUID(actor_id), TEAM, did,
+        )
+        workspace_id = str(uuid4())
+        await env.db.execute(
+            "INSERT INTO {{tables.workspaces}} (workspace_id, team_id, agent_id, alias) "
+            "VALUES ($1, $2, $3, 'public-collision')", UUID(workspace_id), TEAM, UUID(actor_id),
+        )
+    header = build_internal_auth_header_value(
+        secret="disposable-embedding-test-secret", team_id=TEAM,
+        principal_type="p", principal_id="anonymous", actor_id=actor_id,
+    )
+    incoming = asyncio.Queue()
+    request = Request({
+        "type": "http", "method": "GET", "path": "/v1/status/stream", "app": env.app,
+        "headers": [(b"x-aweb-auth", header.encode())],
+    }, receive=incoming.get)
+    identity = TeamIdentity(
+        team_id=TEAM, alias="", did_key="", did_aw="", address="",
+        agent_id=actor_id, identity_scope="local", certificate_id="",
+    )
+    response = await status_stream(
+        request, workspace_id=None, repo=None, human_name=None, limit=200,
+        event_types=None, redis=env.redis, db_infra=env.infra, identity=identity,
+    )
+    stream = response.body_iterator
+    next_item = asyncio.create_task(anext(stream))
+    try:
+        async with asyncio.timeout(5):
+            while not (await env.redis.pubsub_numsub(f"events:{workspace_id}"))[0][1]:
+                await asyncio.sleep(0.01)
+        for event in (
+            MessageDeliveredEvent(workspace_id=workspace_id, subject="private subject"),
+            ChatMessageEvent(workspace_id=workspace_id, session_id="private-session"),
+            TaskCreatedEvent(workspace_id=workspace_id, task_ref="public-control"),
+        ):
+            await publish_event(env.redis, event)
+        item = await asyncio.wait_for(next_item, 5)
+        event = json.loads(item.removeprefix("data: "))
+        assert event["type"] == "task.created"
+        assert event["task_ref"] == "public-control"
+    finally:
+        if not next_item.done():
+            next_item.cancel()
+            await asyncio.gather(next_item, return_exceptions=True)
+        await stream.aclose()

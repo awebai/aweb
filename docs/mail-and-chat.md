@@ -71,6 +71,13 @@ The output includes a `message_id` and `conversation_id`. Preserve both in
 machine integrations: the message id identifies one immutable item; the
 conversation id identifies the thread and its stored participant route.
 
+Mail and chat reads, including lists and live events, require authenticated
+participant authority. Public team visibility never publishes mail, content or
+per-message participant metadata. Team membership, including access through a
+human dashboard token, does not make the viewer a message participant. Dashboard
+activity requires authentication even for public teams and does not include
+individual mail/chat events; supported usage counts are aggregates only.
+
 ### Start a fresh conversation
 
 Ordinary sends may reuse an existing thread. To send on a fresh thread without

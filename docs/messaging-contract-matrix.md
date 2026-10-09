@@ -22,6 +22,12 @@ content. Where this matrix and one of those disagree, that authority wins.
   still evaluates the recipient's current delivery policy.
 - `conversation_id` and chat `session_id` select existing state; neither is
   routing or participant authority by itself.
+- Participant visibility covers **every read surface**, including history,
+  inbox, conversation lists, streams, MCP tools and dashboard APIs. Public team
+  visibility never publishes mail, content or per-message participant metadata.
+  A dashboard token's team membership does not make its human a participant.
+  Dashboard message/activity reads require a verified token even for public
+  teams; only explicitly supported aggregates may cross that boundary.
 - Self-custodial clients own private keys and local plaintext presentation.
   Hosted custodial tools are server-readable hosted messaging.
 - A verified or legacy-verified local-alias sender requires a valid message
@@ -142,6 +148,41 @@ Cover these cases for mail and chat wherever the operation exists:
     UUID reuse after message deletion.
 15. The durable mutation outbox commits atomically, uses skip-locked concurrent
     replay, and retains its documented at-least-once crash residual.
+16. Team dashboard mail history is unavailable. Neither anonymous public-team
+    readers nor authenticated nonparticipants receive mail rows, subject/body,
+    message IDs, participants or chat previews, for plaintext or encrypted v2.
+17. Team SSE requires a verified dashboard token and suppresses mail/chat events
+    both at mutation translation and when consuming events from older publishers.
+    Internal mutation callbacks still receive `message.sent` and
+    `chat.message_sent` with `from_agent_id`; participant wake events remain.
+18. The authenticated workspace status stream preserves team coordination
+    events but exposes message/chat events only from the viewer's own active
+    workspaces. An embedded public reader receives no messaging events, even if
+    its attribution UUID collides with an existing workspace owner.
+
+### Read-surface audit (aweb-abav)
+
+| Surface | Visibility boundary |
+| --- | --- |
+| `/v1/teams/{team_id}/messages` | Removed; no team-wide mailbox. |
+| `/v1/teams/{team_id}/events/stream` | Dashboard JWT required for public and private teams; no `message.*` or `chat.*` payloads. |
+| `/v1/usage` | Dashboard JWT required; existing aggregate counts only. |
+| `/v1/messages/inbox`, `/v1/messages/{id}` | Authenticated recipient inbox; exact reads match sender or recipient DID. Unrelated exact IDs return the same 404 as absent IDs. |
+| `/v1/conversations` | Mail sender/recipient or stored participant match; chat participant join precedes content/metadata aggregation. |
+| `/v1/chat/pending`, `/v1/chat/sessions` | Authenticated participant DID scopes session selection. |
+| `/v1/chat/sessions/{id}/messages`, `/stream` | Session participant authority checked before history or stream content. |
+| `/v1/events/stream` | Authenticated agent identity; mail snapshot by recipient DID and chat snapshot by participant. |
+| `/v1/status/stream` | Team coordination events; messaging restricted to the authenticated actor's active workspace IDs, never to embedded public readers. |
+| MCP `check_mail`, chat open/history/wait, contact history | Authenticated identity DIDs scope inbox and chat membership; contact history additionally checks contact ownership and conversation/session participation. Trusted host attribution is not dashboard-token authority. |
+| Dashboard agents, tasks, claims, roles, instructions, status; `/v1/status`; federation ingress | No mail/chat content read. Public coordination data does not establish messaging participation; federation ingress is a write surface. |
+
+Executable regression: `server/tests/test_dashboard_privacy.py` uses real aweb
+and AWID application routes, PostgreSQL, a disposable Redis process and signed
+requests. Embedded public-reader cases invoke the real status route with a
+host-supplied identity; the embedding application's authentication bridge needs
+its own integration test. Both content modes are covered at the dashboard read boundary;
+plaintext sends also prove the internal mutation callback contract and retained
+participant reads. Encryption validation has separate conformance tests.
 
 ## Chat wait, selection, and read cases
 
