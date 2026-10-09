@@ -96,7 +96,7 @@ reproduce for the runtime it wakes. It is what `channel-core` dispatches today.
 | `work_available` | `ambient` | the task title and `task_id` |
 | `claim_update` | `ambient` | `task_id`, title, status |
 | `claim_removed` | `ambient` | `task_id` |
-| `app_event` | the producer's `delivery_intent`, defaulting to `ambient` | app id, app event type, resource reference, and a bounded payload summary |
+| `app_event` | the server-resolved subscriber `delivery_intent`, defaulting to `ambient` if absent | app id, app event type, resource reference, and a bounded payload summary |
 
 The three delivery intents are the runtime contract: `wake` interrupts an idle
 session with content to read and answer, `steer` redirects the turn already in

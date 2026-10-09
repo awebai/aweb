@@ -11,8 +11,8 @@ The [repository README](../README.md) has install and server-start commands.
 Use this page to find the document you need, and to see which documents carry
 authority over shipped behavior.
 
-The baseline contains 77 tracked Markdown documents. This front door does not
-self-link. The remaining 76 public Markdown paths appear below exactly once.
+The baseline contains 78 tracked Markdown documents. This front door does not
+self-link. The remaining 77 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -103,6 +103,8 @@ authority.
   it or changing identity or membership state.
 - [Hosted global bootstrap and recovery](hosted-global-bootstrap.md) — creating
   a new global identity in an existing hosted team, or reusing a retained resident.
+- [Build a naapp](build-a-naapp.md) — an outside author's path from an HTTP
+  service to signed requests, optional events and agent installation.
 - [CLI naapp access](naapp-access.md) — resident approval and finite grant
   snapshots for declarative HTTP apps.
 - [Channel](channel.md) — maintained Claude Code event integration.
