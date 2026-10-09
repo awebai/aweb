@@ -11,8 +11,8 @@ The [repository README](../README.md) has install and server-start commands.
 Use this page to find the document you need, and to see which documents carry
 authority over shipped behavior.
 
-The baseline contains 76 tracked Markdown documents. This front door does not
-self-link. The remaining 75 public Markdown paths appear below exactly once.
+The baseline contains 77 tracked Markdown documents. This front door does not
+self-link. The remaining 76 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -99,6 +99,8 @@ authority.
 - [Teams](teams.md) — team membership, roster, and coordination concepts.
 - [Identity and teams guide](identity-guide.md) — practical identity, namespace,
   team, and trust operations.
+- [Invite inspection](invite-inspection.md) — inspect an invite without redeeming
+  it or changing identity or membership state.
 - [Hosted global bootstrap and recovery](hosted-global-bootstrap.md) — creating
   a new global identity in an existing hosted team, or reusing a retained resident.
 - [CLI naapp access](naapp-access.md) — resident approval and finite grant
