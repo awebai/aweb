@@ -187,10 +187,22 @@ func setupOrRotateIdentityEncryptionKeyForDir(ctx context.Context, workingDir st
 		return idEncryptionKeyOutput{}, usageError("current identity is invalid: .aw/identity.yaml did %q does not match .aw/signing.key %q", strings.TrimSpace(identity.DID), got)
 	}
 
+	if !rotate {
+		// Identity rebinding remains the explicit setup path below; opportunistic
+		// renewal must never repair a mismatched identity implicitly.
+		if err := renewIdentityEncryptionAssertion(ctx, workingDir, identityHome); err != nil && !shouldRefreshEncryptionKeyForIdentityBinding(err) {
+			return idEncryptionKeyOutput{}, err
+		}
+	}
 	statePath, err := encryptionStatePathForIdentity(identity)
 	if err != nil {
 		return idEncryptionKeyOutput{}, err
 	}
+	lock, err := awconfig.LockExclusive(statePath + ".lock")
+	if err != nil {
+		return idEncryptionKeyOutput{}, err
+	}
+	defer lock.Close()
 	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -323,6 +335,11 @@ func publishEnsuredIdentityEncryptionKeyForDir(ctx context.Context, workingDir s
 	if err != nil {
 		return nil, nil, err
 	}
+	lock, err := awconfig.LockExclusive(statePath + ".lock")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer lock.Close()
 	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
 	if err != nil {
 		return nil, nil, err
@@ -367,6 +384,11 @@ func ensureLocalIdentityEncryptionKeyForDir(workingDir string, identityHome encr
 	if err != nil {
 		return err
 	}
+	lock, err := awconfig.LockExclusive(statePath + ".lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	state, err := awconfig.LoadEncryptionKeyStateFrom(statePath)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -735,10 +757,28 @@ func validateEncryptionRecordPrivateKeyAt(workingDir, identityHome string, recor
 }
 
 func validateEncryptionRecordAssertion(identity *awconfig.ResolvedIdentity, record *awconfig.EncryptionKeyRecord, assertion *awid.EncryptionKeyAssertion, material *encryptionRecordKeyMaterial) error {
+	return validateEncryptionRecordAssertionAt(identity, record, assertion, material, time.Now().UTC())
+}
+
+// Expiry governs new encryption, not access to an existing private key. Validate
+// expired local assertions at the end of their validity window, including the
+// signature and key binding; malformed/future assertions remain errors.
+func validateEncryptionRecordForRead(identity *awconfig.ResolvedIdentity, record *awconfig.EncryptionKeyRecord, assertion *awid.EncryptionKeyAssertion, material *encryptionRecordKeyMaterial) error {
+	now := time.Now().UTC()
+	if assertion != nil {
+		expiry, err := time.Parse(time.RFC3339Nano, assertion.ExpiresAt)
+		if err == nil && !expiry.After(now) {
+			now = expiry.Add(-time.Nanosecond)
+		}
+	}
+	return validateEncryptionRecordAssertionAt(identity, record, assertion, material, now)
+}
+
+func validateEncryptionRecordAssertionAt(identity *awconfig.ResolvedIdentity, record *awconfig.EncryptionKeyRecord, assertion *awid.EncryptionKeyAssertion, material *encryptionRecordKeyMaterial, now time.Time) error {
 	if identity == nil || record == nil || assertion == nil || material == nil {
 		return usageError("local E2E encryption key state is incomplete; restore from backup or run `aw id encryption-key rotate`")
 	}
-	if err := awid.VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(identity.DID), strings.TrimSpace(identity.StableID), time.Now().UTC()); err != nil {
+	if err := awid.VerifyEncryptionKeyAssertion(assertion, strings.TrimSpace(identity.DID), strings.TrimSpace(identity.StableID), now); err != nil {
 		return usageError("local E2E encryption-key assertion is stale or mismatched; restore the matching assertion from backup or run `aw id encryption-key rotate`: %v", err)
 	}
 	if strings.TrimSpace(assertion.EncryptionKeyID) != strings.TrimSpace(record.KeyID) ||

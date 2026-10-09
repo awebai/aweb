@@ -231,6 +231,10 @@ func (s *custodyService) serve(ctx context.Context) error {
 	mux.HandleFunc("/unwrap_e2ee_message", s.handleUnwrapE2EEMessage)
 	mux.HandleFunc("/sign_app_request", s.handleSignAppRequest)
 	mux.HandleFunc("/stop", s.handleStop)
+
+	renewalCtx, stopRenewal := context.WithCancel(ctx)
+	defer stopRenewal()
+	go s.renewEncryptionAssertions(renewalCtx)
 	s.server = &http.Server{Handler: mux}
 	go func() { <-ctx.Done(); _ = s.server.Close() }()
 	err = s.server.Serve(ln)
@@ -685,7 +689,7 @@ func loadCustodyE2EEKey(identityHome string, identity *awconfig.ResolvedIdentity
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := validateEncryptionRecordAssertion(identity, record, assertion, material); err != nil {
+	if err := validateEncryptionRecordForRead(identity, record, assertion, material); err != nil {
 		return nil, nil, err
 	}
 	privatePath, err := resolveIdentityStoredPath("", identityHome, record.PrivateKeyPath)
@@ -830,6 +834,9 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 	}
 	if out, _ := cached.(*awid.E2EEEnvelopeCreateResponse); out != nil {
 		return out, nil
+	}
+	if s.residentHome != "" {
+		maybeRenewIdentityEncryptionAssertion(ctx, "", explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
 	}
 	if err := s.reloadActiveE2EEKey(); err != nil {
 		return nil, err
@@ -1070,4 +1077,22 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	out := &awid.E2EEUnwrapResponse{Kind: plain.Kind, MessageID: plain.MessageID, ConversationID: plain.ConversationID, CreatedAt: plain.CreatedAt, From: plain.From, Recipients: plain.Recipients, Subject: plain.Subject, Body: plain.Body}
 	s.cacheCustodyReplayResult(key, out)
 	return out, nil
+}
+
+// Custody owns the resident signing key. Grant seats never receive that key or
+// sign assertions themselves; renewal continues even when no grant sends mail.
+func (s *custodyService) renewEncryptionAssertions(ctx context.Context) {
+	if s.residentHome == "" {
+		return
+	}
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		maybeRenewIdentityEncryptionAssertion(ctx, "", explicitEncryptionKeyIdentityHome(s.residentHome), os.Stderr)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

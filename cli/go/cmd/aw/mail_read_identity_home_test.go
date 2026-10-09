@@ -17,6 +17,10 @@ import (
 )
 
 func TestMailReadsDecryptWithSelectedPrincipalIdentityHome(t *testing.T) {
+	testMailReadsDecryptWithSelfAssertion(t, false)
+}
+
+func testMailReadsDecryptWithSelfAssertion(t *testing.T, expired bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
@@ -109,6 +113,27 @@ func TestMailReadsDecryptWithSelectedPrincipalIdentityHome(t *testing.T) {
 		CreatedAt:      envelope.CreatedAt,
 	}
 
+	if expired {
+		state, err := awconfig.LoadEncryptionKeyStateFrom(filepath.Join(principalHome, "encryption.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		record := state.ActiveRecord()
+		principalAssertion.CreatedAt = time.Now().Add(-100 * 24 * time.Hour).UTC().Format(time.RFC3339)
+		principalAssertion.NotBefore = principalAssertion.CreatedAt
+		principalAssertion.ExpiresAt = time.Now().Add(-24 * time.Hour).UTC().Format(time.RFC3339)
+		if err := awid.SignEncryptionKeyAssertion(principalAssertion, principalKey); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveEncryptionAssertion(filepath.Join(principalHome, record.AssertionPath), principalAssertion); err != nil {
+			t.Fatal(err)
+		}
+		record.ExpiresAt = principalAssertion.ExpiresAt
+		state.UpsertRecord(*record)
+		if err := awconfig.SaveEncryptionKeyStateTo(filepath.Join(principalHome, "encryption.yaml"), state); err != nil {
+			t.Fatal(err)
+		}
+	}
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
 	commands := []struct {
@@ -138,6 +163,9 @@ func TestMailReadsDecryptWithSelectedPrincipalIdentityHome(t *testing.T) {
 			}
 			if strings.Contains(stderr.String(), "decryption unavailable") {
 				t.Fatalf("mail read reported unavailable decryption despite selected principal key:\n%s", stderr.String())
+			}
+			if expired && !strings.Contains(stderr.String(), "assertion is expired") {
+				t.Fatalf("missing expired-self warning:\n%s", stderr.String())
 			}
 		})
 	}
@@ -257,4 +285,8 @@ func installMailReadEncryptionKeyForTest(t *testing.T, workingDir, identityHome,
 		t.Fatal(err)
 	}
 	return assertion
+}
+
+func TestMailReadsDecryptWithExpiredSelfAssertion(t *testing.T) {
+	testMailReadsDecryptWithSelfAssertion(t, true)
 }

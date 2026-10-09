@@ -222,6 +222,25 @@ assertion. Clients keep old private encryption keys in their local archive and
 select them by the key id in the wrap. Losing an archived private key makes only
 history wrapped to that key unrecoverable.
 
+### Assertion expiry and renewal
+
+The assertion validity window governs selection for new sends. Expiry of a
+local self-assertion does not revoke its private key or prevent reading stored
+messages, including messages wrapped to archived keys. Clients warn about an
+expired local assertion while retaining signature, identity/key binding, and
+message-integrity checks. Senders still reject an expired recipient assertion.
+
+Renewal re-signs and republishes the same encryption public key with a new
+validity window; it does not rotate the key or change its key id, custody, or
+previous-key link. The identity signing key authorizes renewal. The CLI attempts
+renewal within 14 days of expiry on identity-aware commands; the resident custody
+service also checks at startup and hourly, without requiring grant activity.
+Grant seats do not receive the resident signing key. Failed publication warns,
+leaves local history readable, and is retried on subsequent checks. Hosted
+custody operators must arrange equivalent renewal at their custody boundary,
+including inactive recipients; a transport or team controller cannot renew on
+an identity's behalf without its signing authority.
+
 ### Hosted-custody interoperability
 
 A hosted custody operator may hold an identity's Ed25519 signing key and X25519

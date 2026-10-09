@@ -909,10 +909,15 @@ func configureClientE2EE(ctx context.Context, c *aweb.Client, sel *awconfig.Sele
 		return err
 	}
 	identity := e2eeAssertionIdentityForSelection(sel)
-	if err := validateEncryptionRecordAssertion(identity, record, assertion, material); err != nil {
-		if required || !shouldRefreshEncryptionKeyForIdentityBinding(err) {
+	if !required {
+		if err := validateEncryptionRecordForRead(identity, record, assertion, material); err != nil && !shouldRefreshEncryptionKeyForIdentityBinding(err) {
 			return err
 		}
+		if expiry, err := time.Parse(time.RFC3339Nano, assertion.ExpiresAt); err == nil && !expiry.After(time.Now()) {
+			fmt.Fprintln(os.Stderr, "Warning: local E2E encryption-key assertion is expired; existing messages remain decryptable; run `aw id encryption-key setup` to renew publication.")
+		}
+	} else if err := validateEncryptionRecordAssertion(identity, record, assertion, material); err != nil {
+		return err
 	}
 	privatePath, err := resolveIdentityStoredPath(sel.WorkingDir, sel.IdentityHome, record.PrivateKeyPath)
 	if err != nil {
