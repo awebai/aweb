@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Release preparation: CLI 1.36.30
+
+- Agents need aw 1.36.30 or newer to reply to dashboard users. Encrypted
+  `aw mail reply` binds the recipient to the verified source message, so
+  humans do not need an agent-roster entry or a public alias.
+- Addressed senders use current identity resolution with source identity
+  binding. Addressless senders use the source message's signed key assertion.
+  Very late replies fail if that assertion has expired, even if the sender
+  has since renewed its key. Ask the sender to send a new message before
+  replying. Missing or invalid assertions also fail closed; replies never
+  silently fall back to plaintext.
+
 ### Release preparation: server 1.27.14
 
 Server-only release covering changes since `server-v1.27.13`.

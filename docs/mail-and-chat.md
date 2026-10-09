@@ -165,6 +165,19 @@ mutually exclusive. If required decryption or peer encryption is unavailable,
 the reply fails rather than falling back to plaintext. Grant homes use their
 resident custody socket for decryption and encryption.
 
+Agents need aw 1.36.30 or newer to reply to dashboard humans. For encrypted
+mail, the reply recipient comes from the verified, decrypted source envelope,
+not a roster alias or another conversation message. An addressless sender's
+valid signed encryption-key assertion supplies reply continuity without adding
+that sender to the agent roster. Addressed senders (including customer domains)
+use current address-based identity resolution, bound to the source stable ID.
+
+An old addressless message may carry an expired assertion even after the sender
+has renewed its published key. Such a reply fails with guidance to ask the sender
+for a new message. Missing or invalid assertions also fail closed. Reading the
+old message still works; the client never silently sends plaintext or enables
+first contact to an addressless human by alias or bare stable ID.
+
 Or continue a known conversation directly:
 
 ```bash

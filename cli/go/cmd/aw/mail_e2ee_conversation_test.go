@@ -190,7 +190,11 @@ func TestAwMailReplyEncryptionMode(t *testing.T) {
 // The human has no roster entry or address; only this source envelope carries
 // its identity-authorized encryption key. Exercise the actual CLI and crypto.
 func TestAwMailReplyUnlistedSender(t *testing.T) {
-	testMailReplyEncryptionMode(t, nil, false, false, true, true, "addressless")
+	for _, scenario := range []string{"addressless", "expired-addressless", "forged", "outer-id", "no-published-key"} {
+		t.Run(scenario, func(t *testing.T) {
+			testMailReplyEncryptionMode(t, nil, false, false, true, true, scenario)
+		})
+	}
 }
 
 func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant, keys, wantEncrypted bool, scenarios ...string) {
@@ -199,7 +203,7 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 		scenario = scenarios[0]
 	}
 	bobAddress := "acme.com/bob"
-	if scenario == "addressless" {
+	if scenario == "addressless" || scenario == "expired-addressless" {
 		bobAddress = ""
 	}
 
@@ -249,6 +253,19 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 
 	conversationID := "55555555-5555-4555-8555-555555555555"
 	sourceID := "dc6c7498-2f5a-49e6-85fb-3961b9986690"
+	sourceTime := time.Now().UTC()
+	if scenario == "expired-addressless" {
+		sourceTime = sourceTime.Add(-2 * time.Minute)
+		bobAssertion.ExpiresAt = time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+		if err := awid.SignEncryptionKeyAssertion(bobAssertion, bobKey); err != nil {
+			t.Fatal(err)
+		}
+		aliceAssertion.CreatedAt = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+		aliceAssertion.NotBefore = aliceAssertion.CreatedAt
+		if err := awid.SignEncryptionKeyAssertion(aliceAssertion, aliceKey); err != nil {
+			t.Fatal(err)
+		}
+	}
 	sourceEnvelope, err := awid.EncryptE2EEMail(awid.E2EEEncryptMailParams{
 		Sender: awid.E2EESenderKey{
 			Address:       bobAddress,
@@ -266,12 +283,15 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 		Body:           "source secret",
 		MessageID:      sourceID,
 		ConversationID: conversationID,
-		CreatedAt:      time.Now().UTC(),
+		CreatedAt:      sourceTime,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	if scenario == "forged" {
+		sourceEnvelope.From.Address = "attacker.example/human"
+	}
 	var mu sync.Mutex
 	var sent map[string]any
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -292,6 +312,9 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 			if strings.Contains(t.Name(), "envelope-marker") {
 				message.ContentMode = ""
 				message.MessageVersion = 0
+			}
+			if scenario == "outer-id" {
+				message.ConversationID = "33333333-3333-4333-8333-333333333333"
 			}
 			if plaintext {
 				message.ContentMode = ""
@@ -319,7 +342,12 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 			})
 		case r.URL.Path == "/v1/did/"+bobStableID+"/key":
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"did_aw": bobStableID, "current_did_key": bobDID, "encryption_key": bobAssertion,
+				"did_aw": bobStableID, "current_did_key": bobDID, "encryption_key": func() *awid.EncryptionKeyAssertion {
+					if scenario == "no-published-key" {
+						return nil
+					}
+					return bobAssertion
+				}(),
 			})
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/did/") && strings.HasSuffix(r.URL.Path, "/encryption-key"):
 			writeRegistryEncryptionKeyAssertionForTest(t, w, r)
@@ -433,6 +461,18 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	run.Stderr = &stderr
 	err = run.Run()
 	out := append(stdout.Bytes(), stderr.Bytes()...)
+	expectedFailure := map[string]string{"expired-addressless": "send a new message", "forged": "signature", "outer-id": "does not match", "no-published-key": "no published E2E encryption key"}[scenario]
+	if expectedFailure != "" {
+		if err == nil || !strings.Contains(string(out), expectedFailure) {
+			t.Fatalf("want %q refusal, got %v: %s", expectedFailure, err, out)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if sent != nil {
+			t.Fatal("refused source sent a reply")
+		}
+		return
+	}
 	if plaintext && !keys && len(flags) == 0 && stderr.Len() != 0 {
 		t.Fatalf("keyless plaintext default reply wrote stderr: %s", stderr.String())
 	}

@@ -742,6 +742,19 @@ var mailReplyCmd = &cobra.Command{
 			Priority:       awid.MessagePriority(mailReplyPriority),
 			EncryptE2EE:    encryptReply,
 		}
+		if encryptReply && inbox.Messages[0].Encrypted != nil {
+			source := inbox.Messages[0]
+			if source.MessageID != messageID {
+				return fmt.Errorf("reply source does not match requested message %s", messageID)
+			}
+			recipient, err := c.MailReplyRecipient(ctx, source)
+			if err != nil {
+				return err
+			}
+			req.E2EERecipient = &recipient
+			req.ToDID = recipient.DID
+			req.ToStableID = recipient.StableID
+		}
 		resp, err := c.SendMessageByIdentity(ctx, req)
 		if err != nil {
 			return err

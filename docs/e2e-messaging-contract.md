@@ -214,7 +214,14 @@ There is no separate TOFU pin for an X25519 encryption key. Global addressed
 identities publish assertions through AWID. Local/team identities publish them
 through the service-local team roster. Addressless reply continuity may use the
 signed sender assertion embedded in a previously verified envelope, but never
-as bare `did:aw` first-contact authority.
+as bare `did:aw` first-contact authority. A reply binds to the sender of the
+specific verified and decrypted source message. Addressed senders use current
+address resolution, checked against the source stable ID (or signing DID when
+there is no stable ID). Addressless senders use that envelope's assertion only
+while it is valid at reply time. Missing, invalid or expired assertions require
+a new message from the sender; bare DID resolution is not a renewal mechanism.
+Neither participant display fields nor roster membership substitute for this
+signed binding.
 
 Rotation publishes a new assertion with `previous_encryption_key_id`; it does
 not change the identity signing key. New sends use the newest valid discovered

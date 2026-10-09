@@ -3,6 +3,7 @@ package awid
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -288,6 +289,48 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 	payload.Signature = ""
 	payload.SignedPayload = ""
 	return nil
+}
+
+// MailReplyRecipient binds an encrypted reply to this source message's sender.
+// Conversation participant lists and display aliases are not key authority.
+func (c *Client) MailReplyRecipient(ctx context.Context, source InboxMessage) (E2EERecipientKey, error) {
+	envelope := source.Encrypted
+	if err := VerifyE2EEMessageEnvelopeSignature(envelope); err != nil {
+		return E2EERecipientKey{}, fmt.Errorf("cannot reply to unverified encrypted mail: %w", err)
+	}
+	plain, err := c.DecryptE2EEEnvelopeWithContext(ctx, envelope)
+	if err != nil {
+		return E2EERecipientKey{}, fmt.Errorf("cannot reply to unverified encrypted mail: %w", err)
+	}
+	if envelope.Kind != "mail" || source.MessageID != plain.MessageID || source.ConversationID != plain.ConversationID {
+		return E2EERecipientKey{}, errors.New("cannot reply: source message does not match its verified envelope")
+	}
+	from := envelope.From
+	if strings.TrimSpace(from.Address) == "" {
+		recipient, err := E2EERecipientFromEnvelopeSender(envelope, time.Now())
+		if err != nil {
+			return E2EERecipientKey{}, fmt.Errorf("cannot reply: sender's key in the original message is missing, expired or invalid; ask them to send a new message before you reply: %w", err)
+		}
+		return recipient, nil
+	}
+	identity, err := c.ResolveIdentity(ctx, strings.TrimSpace(from.Address))
+	if err != nil {
+		return E2EERecipientKey{}, err
+	}
+	if (from.StableID != "" && identity.StableID != from.StableID) ||
+		(from.StableID == "" && identity.DID != from.DID) {
+		return E2EERecipientKey{}, errors.New("cannot reply: resolved address does not match the source sender identity")
+	}
+	if identity.EncryptionKey == nil {
+		return E2EERecipientKey{}, errors.New("recipient has no published E2E encryption key; ask them to run `aw id encryption-key setup` before replying")
+	}
+	if err := VerifyEncryptionKeyAssertion(identity.EncryptionKey, identity.DID, identity.StableID, time.Now()); err != nil {
+		return E2EERecipientKey{}, fmt.Errorf("cannot reply: recipient encryption key is invalid: %w", err)
+	}
+	return E2EERecipientKey{
+		Address: strings.TrimSpace(from.Address), DID: identity.DID, StableID: identity.StableID,
+		EncryptionKey: identity.EncryptionKey, DeliveryOrigin: identity.DeliveryOrigin,
+	}, nil
 }
 
 func (c *Client) e2eeMailRecipient(ctx context.Context, payload *SendMessageRequest) (E2EERecipientKey, error) {
