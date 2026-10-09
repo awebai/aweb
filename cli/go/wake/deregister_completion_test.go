@@ -132,6 +132,11 @@ func managedReceiverFixture(t *testing.T) (*Broker, *Store, ManagedReceiver, *Ch
 
 func TestManagedDeregisterCompletionAndWrongReceiver(t *testing.T) {
 	b, store, expected, child := managedReceiverFixture(t)
+	// These pending/file mismatches are synthetic, deliberately unaccepted state.
+	// Drain any current sweep and keep the live broker from accepting them.
+	// Do not hold reconcileMu: the stop path must acquire that lock itself.
+	b.passMu.Lock()
+	defer b.passMu.Unlock()
 	home := expected.Registration.Home
 	wrong := expected
 	wrong.Generation++
@@ -213,6 +218,49 @@ func TestManagedDeregisterCompletionAndWrongReceiver(t *testing.T) {
 	}
 	if again, err := CallManagedStop(store.SocketPath(), expected); err == nil || again != nil {
 		t.Fatal("missing owner manufactured repeat completion")
+	}
+}
+
+// Force the race that the synthetic-mismatch test must exclude. A label is
+// accepted synchronously without restarting the child or changing generation;
+// restoring the file alone does not restore the accepted receiver snapshot.
+func TestManagedDeregisterReconciledLabelMismatch(t *testing.T) {
+	b, store, expected, child := managedReceiverFixture(t)
+	home := expected.Registration.Home
+	changed := expected.Registration.clone()
+	changed.ReceiveIdentities[0].Label = "reconciled-label"
+	if err := store.SaveRegistration(changed); err != nil {
+		t.Fatal(err)
+	}
+	b.Reconcile() // Real snapshot/apply, not a timer-dependent race.
+	b.passMu.Lock()
+	defer b.passMu.Unlock()
+	accepted := b.Status().Instances[0].ManagedReceiver
+	if accepted == nil || accepted.Registration.ReceiveIdentities[0].Label != "reconciled-label" {
+		t.Fatal("reconcile did not accept the changed label")
+	}
+	if accepted.Generation != expected.Generation || accepted.OwnerID != expected.OwnerID {
+		t.Fatal("label-only update unexpectedly replaced receiver generation or owner")
+	}
+	if err := store.SaveRegistration(expected.Registration); err != nil {
+		t.Fatal(err)
+	}
+	// Durable bytes now match the old expectation; the accepted snapshot does not.
+	durable, exists, err := store.LoadRegistration(home)
+	if err != nil || !exists || !sameManagedReceiver(ManagedReceiver{
+		Registration: durable, Generation: expected.Generation, OwnerID: expected.OwnerID,
+	}, expected) {
+		t.Fatalf("failed to restore durable snapshot: exists=%v err=%v", exists, err)
+	}
+	receipt, err := b.DeregisterManaged(context.Background(), expected)
+	if err == nil || receipt != nil || !strings.Contains(err.Error(), "accepted receiver changed") {
+		t.Fatalf("stale accepted snapshot was not refused: receipt=%+v err=%v", receipt, err)
+	}
+	if _, ok := b.instanceRunner(home); !ok || !child.Status().Running {
+		t.Fatal("refusal removed owner or stopped child")
+	}
+	if _, exists, err := store.LoadRegistration(home); err != nil || !exists {
+		t.Fatalf("refusal removed registration: exists=%v err=%v", exists, err)
 	}
 }
 
