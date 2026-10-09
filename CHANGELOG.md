@@ -52,6 +52,11 @@ CLI, AWID and channel versions are unchanged by this preparation.
   Preserve released empty-recipient forms for signed-stable stored routes,
   mail delivered to the reading identity, and its authenticated sent-mail views;
   these compatibility projections do not make unsigned routing a signed claim.
+- Fix `aw mail reply` reading encrypted sources without a mode flag; replies preserve source encryption by default, including grant custody, while explicit plaintext/encryption flags remain available.
+
+- Let attached resident agents install and approve declarative apps; new grants inherit the resident’s origin-pinned app catalog and report their actual app inventory. Shared installs and legacy explicit per-tool grants remain compatible.
+
+- Fix declarative app installation rejecting v1 event metadata, including Folio's deployed manifest; preserve strict field validation and bounded event declarations.
 
 ### Release preparation: server 1.27.11, CLI 1.36.24, AWID 0.5.21
 

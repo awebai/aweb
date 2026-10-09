@@ -174,7 +174,7 @@ func TestRunBuildsLoopOptionsFromConfigAndFlags(t *testing.T) {
 	cmd := &cobraCommandClone{Command: *runCmd}
 	cmd.ResetFlagsForTest()
 	cmd.Command.SetContext(context.Background())
-	runWorkingDir = "testdata"
+	runWorkingDir = filepath.Join(t.TempDir(), "testdata")
 	runContinueMode = true
 	runMaxRuns = 3
 	runAllowedTools = "Read,Write"

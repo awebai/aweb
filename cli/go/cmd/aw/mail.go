@@ -695,10 +695,13 @@ var mailReplyCmd = &cobra.Command{
 		if cmd.Flags().Changed("e2ee") && (mailReplyPlaintext || mailReplyLegacyPlaintext) {
 			return usageError("--e2ee and --plaintext are mutually exclusive")
 		}
-		if mailReplyE2EE {
-			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
+		if err := configureClientE2EE(ctx, c, sel, false); err != nil {
+			var unavailable *e2eeDecryptionUnavailableError
+			if !errors.As(err, &unavailable) {
 				return err
 			}
+			// Plaintext replies need no read key. An encrypted source fails
+			// below with its decryption error and recovery guidance.
 		}
 		inbox, err := c.Inbox(ctx, awid.InboxParams{
 			UnreadOnly: false,
@@ -706,10 +709,23 @@ var mailReplyCmd = &cobra.Command{
 			MessageID:  messageID,
 		})
 		if err != nil {
+			if awconfig.IsGrantHome(sel.IdentityHome) && err.Error() == "archived_key_unavailable" {
+				err = fmt.Errorf("%w; ask the resident host to restore the encryption key for this source message", err)
+			}
 			return networkError(err, messageID)
 		}
 		if len(inbox.Messages) == 0 {
 			return fmt.Errorf("mail message not found: %s", messageID)
+		}
+		encryptReply := mailReplyE2EE
+		if !cmd.Flags().Changed("e2ee") && !mailReplyPlaintext && !mailReplyLegacyPlaintext {
+			source := inbox.Messages[0]
+			encryptReply = source.ContentMode == awid.ContentModeEncryptedV2 || source.MessageVersion == awid.E2EEMessageVersion || source.Encrypted != nil
+		}
+		if encryptReply {
+			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
+				return err
+			}
 		}
 		conversationID := strings.TrimSpace(inbox.Messages[0].ConversationID)
 		if conversationID == "" {
@@ -724,7 +740,7 @@ var mailReplyCmd = &cobra.Command{
 			Subject:        subject,
 			Body:           body,
 			Priority:       awid.MessagePriority(mailReplyPriority),
-			EncryptE2EE:    mailReplyE2EE,
+			EncryptE2EE:    encryptReply,
 		}
 		resp, err := c.SendMessageByIdentity(ctx, req)
 		if err != nil {
@@ -1226,8 +1242,8 @@ func init() {
 	mailReplyCmd.Flags().StringVar(&mailReplyBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	mailReplyCmd.Flags().StringVar(&mailReplyBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	mailReplyCmd.Flags().StringVar(&mailReplyPriority, "priority", "normal", "Priority: low|normal|high|urgent")
-	mailReplyCmd.Flags().BoolVar(&mailReplyPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail (currently the default)")
-	mailReplyCmd.Flags().BoolVar(&mailReplyE2EE, "e2ee", false, "Send E2E encrypted mail; fails closed if encryption keys are missing")
+	mailReplyCmd.Flags().BoolVar(&mailReplyPlaintext, "plaintext", false, "Send explicit server-readable plaintext mail, even when replying to encrypted mail")
+	mailReplyCmd.Flags().BoolVar(&mailReplyE2EE, "e2ee", false, "Send E2E encrypted mail (default for an encrypted source); fails closed if encryption keys are missing")
 	mailReplyCmd.Flags().BoolVar(&mailReplyLegacyPlaintext, "legacy-plaintext", false, "Deprecated alias for --plaintext")
 	_ = mailReplyCmd.Flags().MarkHidden("legacy-plaintext")
 	mailShowCmd.Flags().StringVar(&mailShowConversationID, "conversation-id", "", "Mail conversation to inspect")

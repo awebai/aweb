@@ -501,7 +501,7 @@ Flags:
 Mint a session grant and write a self-contained grant home
 
 Flags:
-- `--app-tool stringArray Installed app tool the grant may call, as app:verb; repeatable or comma-separated. Each signed tool must be named; the definition is snapshotted at mint`
+- `--app-tool stringArray Legacy one-mint app:verb selection; replaces the resident approval catalog for this mint only`
 - `--bundle stringArray Grant scope bundle, repeatable or comma-separated (normal-agent)`
 - `--custody-socket string Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket`
 - `-h, --help help for mint`
@@ -2498,9 +2498,9 @@ Reply to an existing mail conversation
 Flags:
 - `--body string Body. Warning: double-quoted shell arguments expand backticks and $(...) before aw runs; use --body-file for Markdown or command examples`
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
-- `--e2ee Send E2E encrypted mail; fails closed if encryption keys are missing`
+- `--e2ee Send E2E encrypted mail (default for an encrypted source); fails closed if encryption keys are missing`
 - `-h, --help help for reply`
-- `--plaintext Send explicit server-readable plaintext mail (currently the default)`
+- `--plaintext Send explicit server-readable plaintext mail, even when replying to encrypted mail`
 - `--priority string Priority: low|normal|high|urgent (default "normal")`
 - `--subject string Subject`
 
