@@ -22,25 +22,26 @@ const (
 )
 
 type SendMessageRequest struct {
-	ToAgentID      string               `json:"to_agent_id,omitempty"`
-	ToAlias        string               `json:"to_alias,omitempty"`
-	ToDID          string               `json:"to_did,omitempty"`
-	ToStableID     string               `json:"to_stable_id,omitempty"`
-	ToAddress      string               `json:"to_address,omitempty"`
-	ConversationID string               `json:"conversation_id,omitempty"`
-	Subject        string               `json:"subject,omitempty"`
-	Body           string               `json:"body"`
-	ContentMode    string               `json:"content_mode,omitempty"`
-	MessageVersion int                  `json:"message_version,omitempty"`
-	Encrypted      *E2EEMessageEnvelope `json:"encrypted_envelope,omitempty"`
-	Priority       MessagePriority      `json:"priority,omitempty"`
-	MessageID      string               `json:"message_id,omitempty"`
-	Timestamp      string               `json:"timestamp,omitempty"`
-	FromDID        string               `json:"from_did,omitempty"`
-	Signature      string               `json:"signature,omitempty"`
-	SignedPayload  string               `json:"signed_payload,omitempty"`
-	EncryptE2EE    bool                 `json:"-"`
-	E2EERecipient  *E2EERecipientKey    `json:"-"`
+	ToAgentID        string               `json:"to_agent_id,omitempty"`
+	ToAlias          string               `json:"to_alias,omitempty"`
+	ToDID            string               `json:"to_did,omitempty"`
+	ToStableID       string               `json:"to_stable_id,omitempty"`
+	ToAddress        string               `json:"to_address,omitempty"`
+	ConversationID   string               `json:"conversation_id,omitempty"`
+	Subject          string               `json:"subject,omitempty"`
+	Body             string               `json:"body"`
+	ContentMode      string               `json:"content_mode,omitempty"`
+	MessageVersion   int                  `json:"message_version,omitempty"`
+	Encrypted        *E2EEMessageEnvelope `json:"encrypted_envelope,omitempty"`
+	Priority         MessagePriority      `json:"priority,omitempty"`
+	MessageID        string               `json:"message_id,omitempty"`
+	Timestamp        string               `json:"timestamp,omitempty"`
+	FromDID          string               `json:"from_did,omitempty"`
+	Signature        string               `json:"signature,omitempty"`
+	SignedPayload    string               `json:"signed_payload,omitempty"`
+	ReplyToMessageID string               `json:"-"`
+	EncryptE2EE      bool                 `json:"-"`
+	E2EERecipient    *E2EERecipientKey    `json:"-"`
 
 	NewConversation bool `json:"new_conversation,omitempty"`
 }
@@ -224,6 +225,7 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 			Body:                payload.Body,
 			MessageID:           messageID,
 			ConversationID:      conversationID,
+			ReplyToMessageID:    payload.ReplyToMessageID,
 			Recipients:          []E2EERecipientKey{recipient},
 			DeliveryOrigin:      recipient.DeliveryOrigin,
 			ObservedInboundMode: recipient.InboundMode,
@@ -233,6 +235,9 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 		}
 		out, err := custody.CreateE2EEEnvelope(ctx, req)
 		if err != nil {
+			if payload.ReplyToMessageID != "" && recipient.Address == "" && strings.Contains(err.Error(), "recipient_binding_unavailable") {
+				return fmt.Errorf("%w; custody host must be aw >= 1.36.30 for replies to addressless senders", err)
+			}
 			return err
 		}
 		if out == nil || out.EncryptedEnvelope == nil {
@@ -268,6 +273,7 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 		Body:                payload.Body,
 		MessageID:           messageID,
 		ConversationID:      conversationID,
+		ReplyToMessageID:    payload.ReplyToMessageID,
 		CreatedAt:           now,
 		DeliveryOrigin:      recipient.DeliveryOrigin,
 		ObservedInboundMode: recipient.InboundMode,

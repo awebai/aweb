@@ -223,6 +223,17 @@ a new message from the sender; bare DID resolution is not a renewal mechanism.
 Neither participant display fields nor roster membership substitute for this
 signed binding.
 
+A resident custody host may authorize same-service mail reply continuity by
+fetching the exact stored source itself, under resident authentication. The
+session-signed custody request names that source in `reply_to_message_id` and
+requires current `mail.read` and `mail.send` scope. Custody verifies and decrypts
+the source, binds its IDs, and requires an explicit resident delivery recipient
+and delivery wrap; a sender archive alone gives no reply authority. It accepts
+only the stored addressless sender's valid assertion and rejects worker target
+substitution or routing hints. The reply retains the signed source ID and its
+normal resident archive wrap. This grants neither first contact nor federation
+routing. Worker and custody host must both support this path (aw 1.36.30+).
+
 Rotation publishes a new assertion with `previous_encryption_key_id`; it does
 not change the identity signing key. New sends use the newest valid discovered
 assertion. Clients keep old private encryption keys in their local archive and

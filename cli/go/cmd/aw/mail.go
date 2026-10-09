@@ -751,6 +751,7 @@ var mailReplyCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			req.ReplyToMessageID = source.MessageID
 			req.E2EERecipient = &recipient
 			req.ToDID = recipient.DID
 			req.ToStableID = recipient.StableID

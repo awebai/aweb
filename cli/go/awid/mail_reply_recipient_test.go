@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -140,5 +141,42 @@ func TestMailReplyRecipientBindsSource(t *testing.T) {
 				t.Fatal("addressless reply attempted first-contact discovery")
 			}
 		})
+	}
+}
+
+// An older custody host must fail with a worker-side upgrade remedy, never
+// downgrade the reply or silently reroute it through first-contact discovery.
+type oldReplyCustody struct{ fakeE2EECustody }
+
+func (f *oldReplyCustody) CreateE2EEEnvelope(_ context.Context, req *E2EEEnvelopeCreateRequest) (*E2EEEnvelopeCreateResponse, error) {
+	f.createReq = req
+	return nil, errors.New("recipient_binding_unavailable")
+}
+func TestGrantMailReplyRequiresCurrentCustodyHost(t *testing.T) {
+	resident := newE2EETestIdentity(t, "example.com/resident")
+	human := newE2EETestIdentity(t, "")
+	_, key, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := NewWithGrant("http://unused.invalid", key, "11111111-1111-4111-8111-111111111111")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetGrantSubject("test:example.com", resident.stableID, resident.did, resident.address, "resident")
+	custody := &oldReplyCustody{}
+	c.SetPlainMessageSigner(custody)
+	_, err = c.SendMessage(context.Background(), &SendMessageRequest{
+		ToDID: human.did, ConversationID: "22222222-2222-4222-8222-222222222222", ReplyToMessageID: "33333333-3333-4333-8333-333333333333",
+		EncryptE2EE: true, Body: "reply", E2EERecipient: &E2EERecipientKey{DID: human.did, StableID: human.stableID, EncryptionKey: human.assertion},
+	})
+	if err == nil || !strings.Contains(err.Error(), "custody host must be aw >= 1.36.30") {
+		t.Fatalf("missing upgrade guidance: %v", err)
+	}
+	if custody.createReq == nil || custody.createReq.ReplyToMessageID != "33333333-3333-4333-8333-333333333333" {
+		t.Fatal("source id not sent to custody")
+	}
+	if err := VerifyE2EECreateCustodyProof(custody.createReq); err != nil {
+		t.Fatal(err)
 	}
 }

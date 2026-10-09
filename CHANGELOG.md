@@ -4,10 +4,13 @@
 
 ### Release preparation: CLI 1.36.30
 
-- Self-custodial agents can reply to dashboard users with aw 1.36.30.
-  Grant-backed replies to addressless users currently fail closed. Encrypted
+- Agents need aw 1.36.30 or newer to reply to dashboard users. Grant-backed
+  agents also require their custody host to run aw 1.36.30 or newer; an older
+  host fails closed with upgrade guidance. Encrypted
   `aw mail reply` binds the recipient to the verified source message, so
-  humans do not need an agent-roster entry or a public alias.
+  humans do not need an agent-roster entry or a public alias. Custody verifies
+  the exact stored source itself before authorizing a same-service reply;
+  the worker cannot supply a new recipient key or first-contact authority.
 - Addressed senders use current identity resolution with source identity
   binding. Addressless senders use the source message's signed key assertion.
   Very late replies fail if that assertion has expired, even if the sender

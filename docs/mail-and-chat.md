@@ -165,13 +165,22 @@ mutually exclusive. If required decryption or peer encryption is unavailable,
 the reply fails rather than falling back to plaintext. Grant homes use their
 resident custody socket for decryption and encryption.
 
-Self-custodial agents need aw 1.36.30 or newer to reply to dashboard humans.
-Grant-backed replies to addressless humans currently fail closed. For encrypted
+Agents need aw 1.36.30 or newer to reply to dashboard humans. Grant seats also
+require the custody host to run aw 1.36.30 or newer; upgrading only the worker
+is insufficient. Older custody hosts fail with upgrade guidance. For encrypted
 mail, the reply recipient comes from the verified, decrypted source envelope,
 not a roster alias or another conversation message. An addressless sender's
 valid signed encryption-key assertion supplies reply continuity without adding
 that sender to the agent roster. Addressed senders (including customer domains)
 use current address-based identity resolution, bound to the source stable ID.
+
+For a grant-backed same-service reply, custody independently fetches the exact
+stored source using resident authentication. It verifies the source, requires
+delivery to the resident and both `mail.read` and `mail.send`, and derives the
+recipient from the valid signed sender assertion. Worker-provided keys, routing
+hints, sender-archive-only sources and first-contact requests cannot grant this
+authority. The reply preserves the signed `reply_to_message_id` and the normal
+resident archive wrap. Addressless federation continuation is outside this path.
 
 An old addressless message may carry an expired assertion even after the sender
 has renewed its published key. Such a reply fails with guidance to ask the sender

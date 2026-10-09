@@ -426,6 +426,12 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 			}
 			return sourceEnvelope, nil
 		}
+		svc.readStoredMailReply = func(ctx context.Context, id string) (*awid.InboxMessage, error) {
+			if id != sourceID {
+				t.Errorf("wrong custody reply source")
+			}
+			return &awid.InboxMessage{MessageID: sourceID, ConversationID: conversationID, FromAgentID: "human-actor", Encrypted: sourceEnvelope}, nil
+		}
 		svc.resolveRecipient = func(ctx context.Context, id string) (*awid.ResolvedIdentity, error) {
 			return &awid.ResolvedIdentity{DID: bobDID, StableID: bobStableID, Address: bobAddress, EncryptionKey: bobAssertion}, nil
 		}
@@ -542,6 +548,20 @@ func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant,
 	var envelope awid.E2EEMessageEnvelope
 	if err := json.Unmarshal(encoded, &envelope); err != nil {
 		t.Fatal(err)
+	}
+	if !plaintext {
+		if envelope.ReplyToMessageID != sourceID {
+			t.Fatal("reply lost signed source id")
+		}
+		archive := false
+		for _, wrap := range envelope.KeyWraps {
+			if wrap.WrapPurpose == "sender_copy" && wrap.RecipientDID == aliceDID {
+				archive = true
+			}
+		}
+		if !archive {
+			t.Fatal("reply lost resident archive wrap")
+		}
 	}
 	decoded, err := awid.DecryptE2EEMessage(&envelope, awid.E2EEDecryptIdentity{Address: bobAddress, DID: bobDID, StableID: bobStableID, EncryptionKeyID: bobAssertion.EncryptionKeyID, PrivateKey: bobX})
 	if err != nil || decoded.Body != "reply secret" {
