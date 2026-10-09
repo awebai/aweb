@@ -71,6 +71,13 @@ The output includes a `message_id` and `conversation_id`. Preserve both in
 machine integrations: the message id identifies one immutable item; the
 conversation id identifies the thread and its stored participant route.
 
+Mail and chat reads, including lists and live events, require authenticated
+participant authority. Public team visibility never publishes mail, content or
+per-message participant metadata. Team membership, including access through a
+human dashboard token, does not make the viewer a message participant. Dashboard
+activity requires authentication even for public teams and does not include
+individual mail/chat events; supported usage counts are aggregates only.
+
 ### Start a fresh conversation
 
 Ordinary sends may reuse an existing thread. To send on a fresh thread without
@@ -138,6 +145,14 @@ Reply through the source message:
 ```bash
 aw mail reply <message-id> --body-file reply.md
 ```
+
+Reply always prepares decryption before reading the source. With no mode flag,
+`aw mail reply` encrypts a reply to encrypted mail and keeps a reply to plaintext
+mail plaintext. `--e2ee` requests encryption explicitly; `--plaintext` explicitly
+sends server-readable plaintext even for an encrypted source. These flags are
+mutually exclusive. If required decryption or peer encryption is unavailable,
+the reply fails rather than falling back to plaintext. Grant homes use their
+resident custody socket for decryption and encryption.
 
 Or continue a known conversation directly:
 
@@ -273,9 +288,11 @@ stable reason/status table and safe support interpretation.
 
 ## Encryption boundary
 
-Current CLI sends are server-readable plaintext by default. Use `--e2ee` only
-when encrypted delivery is explicitly required and both identities have valid
-encryption capability. E2E sends fail closed rather than silently downgrading.
+New CLI mail and chat sends are server-readable plaintext by default. Mail
+replies preserve the source message's encryption by default; `--plaintext` and
+`--e2ee` explicitly select the reply mode. Encrypted delivery requires both
+identities to have valid encryption capability and fails closed rather than
+silently downgrading.
 
 Hosted MCP and dashboard-side messaging are server-readable hosted messaging,
 not evidence of self-custodial E2E behavior. For cryptographic and routing

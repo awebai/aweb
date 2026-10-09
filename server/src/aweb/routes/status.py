@@ -6,6 +6,7 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -13,6 +14,7 @@ from redis.asyncio import Redis
 
 from aweb.auth import validate_workspace_id
 from aweb.team_auth_deps import TeamIdentity, team_identity_with_grant_scope
+from aweb.internal_auth import INTERNAL_AUTH_HEADER
 
 from ..db import DatabaseInfra, get_db_infra
 from ..events import EventCategory, stream_events_multi
@@ -557,6 +559,31 @@ async def status(
     }
 
 
+async def _messaging_workspace_ids(request: Request, db_infra, identity: TeamIdentity) -> set[str]:
+    # An embedding host may authorize a public coordination reader. Its signed
+    # internal principal must never acquire messaging visibility, even if an
+    # attribution UUID happens to have workspace rows. This is deny-only: the
+    # header cannot establish identity or grant access in standalone aweb.
+    if request.headers.get(INTERNAL_AUTH_HEADER, "").startswith(f"v2:{identity.team_id}:p:"):
+        return set()
+    try:
+        actor_id = UUID(identity.agent_id)
+    except (ValueError, TypeError, AttributeError):
+        return set()
+    rows = await db_infra.get_manager("aweb").fetch_all(
+        """
+        SELECT w.workspace_id
+        FROM {{tables.workspaces}} w
+        JOIN {{tables.agents}} a ON a.agent_id = w.agent_id AND a.team_id = w.team_id
+        WHERE w.team_id = $1 AND w.agent_id = $2
+          AND w.deleted_at IS NULL AND a.deleted_at IS NULL
+        """,
+        identity.team_id,
+        actor_id,
+    )
+    return {str(row["workspace_id"]) for row in rows}
+
+
 @router.get("/status/stream")
 async def status_stream(
     request: Request,
@@ -587,8 +614,8 @@ async def status_stream(
     """
     Server-Sent Events (SSE) stream for real-time updates.
 
-    Subscribes to events and streams them as they occur. Events include
-    messages and task status changes.
+    Subscribes to team coordination events and the actor's own messaging events.
+    Team membership does not authorize another participant's mail/chat events.
 
     Filter by:
     - workspace_id: Stream events for a specific workspace
@@ -686,6 +713,14 @@ async def status_stream(
                 detail=f"Invalid event types: {invalid}. Valid types: {sorted(VALID_SSE_EVENT_TYPES)}",
             )
 
+    messaging_workspace_ids = await _messaging_workspace_ids(request, db_infra, identity)
+
+    def event_visible(event: dict[str, Any]) -> bool:
+        category = str(event.get("type", "")).split(".", 1)[0]
+        if category in {"message", "chat"}:
+            return str(event.get("workspace_id", "")) in messaging_workspace_ids
+        return True
+
     if identity.grant is None:
         return StreamingResponse(
             stream_events_multi(
@@ -693,6 +728,7 @@ async def status_stream(
                 workspace_ids,
                 event_type_set,
                 check_disconnected=request.is_disconnected,
+                event_filter=event_visible,
             ),
             media_type="text/event-stream",
             headers={
@@ -728,7 +764,7 @@ async def status_stream(
             # Empty-workspace streams otherwise sleep 30s past a near expiry.
             keepalive_seconds=30 if workspace_ids else 1,
             check_disconnected=_disconnected_or_deadline,
-            event_filter=(lambda event: status_event_allowed(identity, event)),
+            event_filter=(lambda event: event_visible(event) and status_event_allowed(identity, event)),
         )) as items:
             async for item in items:
                 if datetime.now(timezone.utc) >= deadline:

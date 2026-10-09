@@ -59,8 +59,12 @@ def _get_dashboard_secret(request: Request) -> str:
     return secret or ""
 
 
-async def _require_dashboard_auth(request: Request, team_id: str) -> dict[str, Any]:
-    """Allow anonymous reads for public teams; otherwise verify dashboard JWT."""
+async def _require_dashboard_auth(
+    request: Request, team_id: str, *, allow_public: bool = True
+) -> dict[str, Any]:
+    """Public directory reads may be anonymous; activity requires a dashboard JWT."""
+    if not allow_public:
+        return _verify_dashboard_auth(request, team_id)
     token = request.headers.get("X-Dashboard-Token")
     try:
         visibility = await _get_team_visibility(request, team_id)
@@ -72,6 +76,11 @@ async def _require_dashboard_auth(request: Request, team_id: str) -> dict[str, A
     if visibility == "public":
         return {"user_id": "", "team_ids": [team_id]}
 
+    return _verify_dashboard_auth(request, team_id)
+
+
+def _verify_dashboard_auth(request: Request, team_id: str) -> dict[str, Any]:
+    token = request.headers.get("X-Dashboard-Token")
     if not token:
         raise HTTPException(status_code=401, detail="Missing X-Dashboard-Token header")
 
@@ -143,17 +152,6 @@ class AgentDetail(BaseModel):
     human_name: str
     agent_type: str
     created_at: str
-
-
-class MessageSummary(BaseModel):
-    message_id: str
-    from_alias: str
-    to_alias: str
-    subject: str
-    body: str
-    priority: str
-    created_at: str
-    read_at: Optional[str]
 
 
 class TaskSummary(BaseModel):
@@ -290,7 +288,11 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
                 if isinstance(raw_payload, bytes):
                     raw_payload = raw_payload.decode("utf-8")
                 payload = json.loads(raw_payload)
-                yield _format_sse(str(payload.get("type", "message")), payload)
+                event_type = str(payload.get("type", "message"))
+                # Older/external publishers may still send sensitive messaging
+                # events. Team access never establishes message participation.
+                if not event_type.startswith(("message.", "chat.")):
+                    yield _format_sse(event_type, payload)
 
             if now - last_presence_poll >= DASHBOARD_PRESENCE_POLL_SECONDS:
                 current_online_aliases = set(await _list_online_aliases(redis, team_id=team_id))
@@ -429,45 +431,6 @@ async def get_team_agent(
     ).model_dump()
 
 
-@router.get("/v1/teams/{team_id:path}/messages")
-async def list_team_messages(
-    request: Request,
-    team_id: str,
-    limit: int = Query(default=50, ge=1, le=200),
-    db=Depends(get_db),
-) -> dict:
-    await _require_dashboard_auth(request, team_id)
-    aweb_db = db.get_manager("aweb")
-
-    rows = await aweb_db.fetch_all(
-        """
-        SELECT message_id, from_alias, to_alias, subject, body, priority, created_at, read_at
-        FROM {{tables.messages}}
-        WHERE team_id = $1
-        ORDER BY created_at DESC
-        LIMIT $2
-        """,
-        team_id,
-        limit,
-    )
-
-    return {
-        "messages": [
-            MessageSummary(
-                message_id=str(r["message_id"]),
-                from_alias=r["from_alias"],
-                to_alias=r["to_alias"],
-                subject=r["subject"],
-                body=r["body"],
-                priority=r["priority"],
-                created_at=r["created_at"].isoformat(),
-                read_at=r["read_at"].isoformat() if r.get("read_at") else None,
-            ).model_dump()
-            for r in rows
-        ]
-    }
-
-
 @router.get("/v1/teams/{team_id:path}/tasks")
 async def list_team_tasks(
     request: Request,
@@ -561,7 +524,7 @@ async def stream_team_events(
     db=Depends(get_db),
     redis=Depends(get_redis),
 ):
-    await _require_dashboard_auth(request, team_id)
+    await _require_dashboard_auth(request, team_id, allow_public=False)
     if redis is None:
         raise HTTPException(status_code=503, detail="Redis unavailable")
 
@@ -698,7 +661,7 @@ async def get_usage(
     until: Optional[str] = Query(default=None),
     db=Depends(get_db),
 ) -> dict:
-    await _require_dashboard_auth(request, team_id)
+    await _require_dashboard_auth(request, team_id, allow_public=False)
     aweb_db = db.get_manager("aweb")
 
     since_dt = _parse_optional_datetime(since)

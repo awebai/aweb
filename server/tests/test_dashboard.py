@@ -510,7 +510,7 @@ async def test_claims_missing_token_returns_401(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
-async def test_messages(aweb_cloud_db):
+async def test_dashboard_messages_route_is_removed(aweb_cloud_db):
     app = _build_app(aweb_cloud_db.aweb_db)
     await _seed(aweb_cloud_db.aweb_db)
     token = _make_jwt(["backend:acme.com"])
@@ -521,10 +521,8 @@ async def test_messages(aweb_cloud_db):
             headers={"X-Dashboard-Token": token},
         )
 
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["messages"]) == 1
-    assert data["messages"][0]["subject"] == "Hello"
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not Found"}
 
 
 @pytest.mark.asyncio

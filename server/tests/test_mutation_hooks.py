@@ -12,9 +12,6 @@ from aweb.events import (
     TaskClaimedEvent,
     TaskCreatedEvent,
     TaskUnclaimedEvent,
-    TeamChatMessageSentEvent,
-    TeamMessageSentEvent,
-    TeamMessageAcknowledgedEvent,
     TeamReservationAcquiredEvent,
     TeamReservationReleasedEvent,
     TeamReservationRenewedEvent,
@@ -263,10 +260,7 @@ def test_translate_redacts_encrypted_mail_subjects():
             "content_mode": "encrypted_v2",
         },
     )
-    assert isinstance(team_event, TeamMessageSentEvent)
-    assert team_event.subject == ""
-    assert team_event.encrypted is True
-    assert team_event.content_mode == "encrypted_v2"
+    assert team_event is None
 
 
 @pytest.mark.asyncio
@@ -352,46 +346,36 @@ async def test_mutation_handler_publishes_dashboard_team_events(aweb_cloud_db, m
         },
     )
 
-    assert len(published) == 8
+    assert len(published) == 6
     assert all(event.team_id == "backend:acme.com" for event in published)
 
-    assert isinstance(published[0], TeamMessageAcknowledgedEvent)
-    assert published[0].alias == "bob"
-    assert published[0].from_alias == "alice"
-    assert published[0].subject == "Ship dashboard events"
+    assert isinstance(published[0], TeamTaskStatusChangedEvent)
+    assert published[0].task_ref == "backend-1234"
+    assert published[0].title == "Ship dashboard events"
+    assert published[0].old_status == "open"
+    assert published[0].new_status == "closed"
 
-    assert isinstance(published[1], TeamChatMessageSentEvent)
-    assert published[1].from_alias == "alice"
-    assert published[1].to_aliases == ["bob", "carol"]
-    assert published[1].preview == "short preview"
+    assert isinstance(published[1], TeamTaskClaimedEvent)
+    assert published[1].task_ref == "backend-1234"
+    assert published[1].title == "Ship dashboard events"
+    assert published[1].alias == "alice"
 
-    assert isinstance(published[2], TeamTaskStatusChangedEvent)
+    assert isinstance(published[2], TeamTaskUnclaimedEvent)
     assert published[2].task_ref == "backend-1234"
     assert published[2].title == "Ship dashboard events"
-    assert published[2].old_status == "open"
-    assert published[2].new_status == "closed"
+    assert published[2].alias == "alice"
 
-    assert isinstance(published[3], TeamTaskClaimedEvent)
-    assert published[3].task_ref == "backend-1234"
-    assert published[3].title == "Ship dashboard events"
+    assert isinstance(published[3], TeamReservationAcquiredEvent)
     assert published[3].alias == "alice"
+    assert published[3].paths == ["repo:backend"]
 
-    assert isinstance(published[4], TeamTaskUnclaimedEvent)
-    assert published[4].task_ref == "backend-1234"
-    assert published[4].title == "Ship dashboard events"
+    assert isinstance(published[4], TeamReservationReleasedEvent)
     assert published[4].alias == "alice"
+    assert published[4].paths == ["repo:backend"]
 
-    assert isinstance(published[5], TeamReservationAcquiredEvent)
+    assert isinstance(published[5], TeamReservationRenewedEvent)
     assert published[5].alias == "alice"
     assert published[5].paths == ["repo:backend"]
-
-    assert isinstance(published[6], TeamReservationReleasedEvent)
-    assert published[6].alias == "alice"
-    assert published[6].paths == ["repo:backend"]
-
-    assert isinstance(published[7], TeamReservationRenewedEvent)
-    assert published[7].alias == "alice"
-    assert published[7].paths == ["repo:backend"]
 
 
 def test_translate_task_claim_events():

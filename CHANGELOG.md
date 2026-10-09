@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Release preparation: server 1.27.13 and CLI 1.36.28
+
+Server changes below are since `server-v1.27.12`. CLI 1.36.28 combines the
+queued main changes with the released 1.36.25–1.36.27 hotfix range; it is not
+only a delta from the 1.36.27 hotfix branch. CLI versioning remains tag-driven.
+AWID and channel versions are unchanged by this preparation.
+
+- **Server 1.27.13 — security fix and dashboard contract change:** narrow
+  messaging visibility to participants. Remove `GET /v1/teams/{team_id}/messages`.
+  Team SSE and `/v1/usage` require a verified dashboard JWT, including for public
+  teams. Mail/chat events are no longer published to the team event stream;
+  SSE also drops legacy messaging events already queued there. Dashboard Monitor
+  no longer receives messaging events. `/v1/status/stream` limits messaging
+  events to the authenticated actor's own workspaces; the public-reader marker
+  only denies messaging access and cannot grant authority. No SQL schema or
+  migration changes accompany this server release; migration 019 belongs to
+  server 1.27.12 and retains its separately documented operator-window needs.
+- **CLI 1.36.28 — app manifests:** carry forward the bounded, strictly typed v1
+  event metadata model. Metadata is preserved without adding CLI event runtime
+  behavior or relaxing unknown-field validation.
+- **CLI 1.36.28 — naapp grants:** carry forward resident approval on declarative
+  app install, origin-pinned finite snapshots at grant mint, actual app inventory
+  and per-app exclusions. Legacy explicit per-tool selection remains separate;
+  invalid individual catalog apps do not block unrelated grant capabilities.
+- **CLI 1.36.28 — mail replies:** carry forward source decryption before reply
+  mode selection. Readable encrypted sources receive encrypted replies by
+  default; explicit mode flags win. Keyless plaintext replies remain quiet,
+  and unreadable encrypted sources fail without a plaintext fallback.
+- **CLI 1.36.28 — integration: team join:** opt-in `aw team join --harness`
+  configures the selected harness, team documentation, and its hooks or channel.
+  `--setup-only` retries setup for an already connected workspace without
+  redeeming an invite again or changing membership.
+- **CLI 1.36.28 — integration: invite inspection:** `aw team invite inspect`
+  reads an invite from stdin without redeeming it or creating identity state.
+  Hosted inspection requires the Cloud invite-preview endpoint; installing the
+  CLI alone does not make inspection available on an older service.
+- **CLI 1.36.28 — integration: spawn authority:** `aw team spawn-authority`
+  accepts canonical team IDs and reports bounded, sanitized server details for
+  denied requests and servers that do not yet accept that team-ID form.
+- **CLI 1.36.28 — integration: custody diagnostics:** report custody client
+  initialization failures with distinct diagnostic categories, without changing
+  custody authorization, identity selection or retry behavior.
+- **CLI 1.36.28 — integration and documentation:** retain queued main behavior,
+  including fresh-conversation sends and signed-display verification, alongside
+  these hotfixes. Reconcile the generated reply reference and guide index.
+
 ### Release preparation: server 1.27.12
 
 Server-only release covering the server changes since `server-v1.27.11`.
@@ -52,6 +98,11 @@ CLI, AWID and channel versions are unchanged by this preparation.
   Preserve released empty-recipient forms for signed-stable stored routes,
   mail delivered to the reading identity, and its authenticated sent-mail views;
   these compatibility projections do not make unsigned routing a signed claim.
+- Fix `aw mail reply` reading encrypted sources without a mode flag; replies preserve source encryption by default, including grant custody, while explicit plaintext/encryption flags remain available.
+
+- Let attached resident agents install and approve declarative apps; new grants inherit the resident’s origin-pinned app catalog and report their actual app inventory. Shared installs and legacy explicit per-tool grants remain compatible.
+
+- Fix declarative app installation rejecting v1 event metadata, including Folio's deployed manifest; preserve strict field validation and bounded event declarations.
 
 ### Release preparation: server 1.27.11, CLI 1.36.24, AWID 0.5.21
 

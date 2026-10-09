@@ -55,9 +55,12 @@ A producer cannot escalate a subscriber from `ambient` to `wake` or `steer`.
 
 ## Install-time declarations
 
-The strict app-manifest v1 CLI model accepts `event_emitters` but does not model
-an `events` array. The experimental server install request separately accepts
-both event declarations and public emit keys:
+The app-manifest v1 CLI model accepts and preserves bounded, strictly typed
+`events` metadata alongside `event_emitters`; see [app-manifest.md](app-manifest.md)
+for validation rules and the known older gateway coercion differences. The CLI
+does not install subscriptions or emit events from these declarations. The
+experimental server install request separately accepts event declarations and
+public emit keys:
 
 ```json
 {

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdh"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -159,8 +162,32 @@ func TestAwMailSendE2EEToAddressWithExistingConversationResolvesRecipient(t *tes
 	}
 }
 
-func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing.T) {
-	t.Parallel()
+func TestAwMailReplyEncryptionMode(t *testing.T) {
+	for _, grant := range []bool{false, true} {
+		for _, plaintext := range []bool{false, true} {
+			for _, keys := range []bool{false, true} {
+				for _, mode := range []string{"default", "e2ee", "plaintext"} {
+					flags := []string{}
+					if mode != "default" {
+						flags = append(flags, "--"+mode)
+					}
+					name := fmt.Sprintf("grant=%t/plain-source=%t/keys=%t/mode=%s", grant, plaintext, keys, mode)
+					encrypted := mode == "e2ee" || (mode == "default" && !plaintext)
+					t.Run(name, func(t *testing.T) { testMailReplyEncryptionMode(t, flags, plaintext, grant, keys, encrypted) })
+				}
+			}
+		}
+	}
+	t.Run("envelope-marker", func(t *testing.T) { testMailReplyEncryptionMode(t, nil, false, false, true, true) })
+	t.Run("conflicting", func(t *testing.T) {
+		testMailReplyEncryptionMode(t, []string{"--e2ee", "--plaintext"}, false, false, true, false)
+	})
+	t.Run("explicit-false", func(t *testing.T) {
+		testMailReplyEncryptionMode(t, []string{"--e2ee=false"}, false, false, true, false)
+	})
+}
+
+func testMailReplyEncryptionMode(t *testing.T, flags []string, plaintext, grant, keys, wantEncrypted bool) {
 
 	alicePub, aliceKey, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -186,7 +213,10 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	tmp := t.TempDir()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
@@ -233,7 +263,7 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/v1/messages/inbox":
-			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{{
+			message := awid.InboxMessage{
 				MessageID:      sourceID,
 				ConversationID: conversationID,
 				FromAddress:    "acme.com/bob",
@@ -244,7 +274,18 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 				MessageVersion: awid.E2EEMessageVersion,
 				Encrypted:      sourceEnvelope,
 				CreatedAt:      "2026-09-25T00:00:00Z",
-			}}})
+			}
+			if strings.Contains(t.Name(), "envelope-marker") {
+				message.ContentMode = ""
+				message.MessageVersion = 0
+			}
+			if plaintext {
+				message.ContentMode = ""
+				message.MessageVersion = 0
+				message.Encrypted = nil
+				message.Body = "plain source"
+			}
+			_ = json.NewEncoder(w).Encode(awid.InboxResponse{Messages: []awid.InboxMessage{message}})
 		case r.URL.Path == "/v1/conversations":
 			_ = json.NewEncoder(w).Encode(awid.ConversationsResponse{Conversations: []awid.ConversationItem{{
 				ConversationType:     "mail",
@@ -287,10 +328,127 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 		}
 	}))
 
-	run := exec.CommandContext(ctx, bin, "mail", "reply", sourceID, "--e2ee", "--body", "reply secret")
+	workerDir := tmp
+	var grantHome string
+	if grant {
+		grantHome = filepath.Join(tmp, "worker-grant")
+		_, state := writeGrantHomeForTest(t, grantHome, server.URL)
+		state.GrantID = "11111111-1111-4111-8111-111111111111"
+		state.Subject.DIDKey = aliceDID
+		state.Subject.DIDAW = aliceStableID
+		socketDir, err := os.MkdirTemp("/tmp", "aw-reply-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.RemoveAll(socketDir) })
+		state.Custody.SocketPath = filepath.Join(socketDir, "custody.sock")
+		if err := awconfig.SaveGrantHomeTo(awconfig.GrantHomeStatePath(grantHome), state); err != nil {
+			t.Fatal(err)
+		}
+		sessionKey, err := awid.LoadSigningKey(awconfig.GrantHomeSigningKeyPath(grantHome))
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := testCustodyService(t, aliceKey, sessionKey)
+		svc.socketPath = state.Custody.SocketPath
+		svc.identity.StableID = aliceStableID
+		svc.e2eeAssertion = aliceAssertion
+		keyState, err := awconfig.LoadEncryptionKeyStateFrom(filepath.Join(tmp, ".aw", "encryption.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		keyPath, err := resolveIdentityStoredPath(tmp, filepath.Join(tmp, ".aw"), keyState.ActiveRecord().PrivateKeyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc.e2eePrivateKey, err = awid.LoadX25519PrivateKey(keyPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc.e2eeAssertion, err = awid.BuildEncryptionKeyAssertion(aliceKey, aliceDID, aliceStableID, svc.e2eePrivateKey.PublicKey().Bytes(), "", time.Now().UTC().Add(-time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !keys {
+			svc.e2eeAssertion = nil
+			svc.e2eePrivateKey = nil
+		}
+		svc.readStoredEnvelope = func(ctx context.Context, kind, id, thread string) (*awid.E2EEMessageEnvelope, error) {
+			if kind != "mail" || id != sourceID || thread != conversationID {
+				t.Errorf("wrong custody read")
+			}
+			return sourceEnvelope, nil
+		}
+		svc.resolveRecipient = func(ctx context.Context, id string) (*awid.ResolvedIdentity, error) {
+			return &awid.ResolvedIdentity{DID: bobDID, StableID: bobStableID, Address: "acme.com/bob", EncryptionKey: bobAssertion}, nil
+		}
+		serviceCtx, stop := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		go func() { done <- svc.serve(serviceCtx) }()
+		t.Cleanup(func() { stop(); <-done })
+		for i := 0; i < 100; i++ {
+			if _, err := os.Stat(svc.socketPath); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		workerDir = filepath.Join(tmp, "empty-instance")
+		if err := os.Mkdir(workerDir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !keys {
+		if err := os.Remove(filepath.Join(tmp, ".aw", "encryption.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(filepath.Join(tmp, ".aw", "encryption-keys")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := append([]string{"mail", "reply", sourceID, "--body", "reply secret"}, flags...)
+	run := exec.CommandContext(ctx, bin, args...)
 	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL="+server.URL, "AWID_SKIP_DNS_VERIFY=1")
-	run.Dir = tmp
-	out, err := run.CombinedOutput()
+	run.Dir = workerDir
+	if grant {
+		run.Env = append(run.Env, "AWEB_IDENTITY_HOME="+grantHome)
+	}
+	var stdout, stderr bytes.Buffer
+	run.Stdout = &stdout
+	run.Stderr = &stderr
+	err = run.Run()
+	out := append(stdout.Bytes(), stderr.Bytes()...)
+	if plaintext && !keys && len(flags) == 0 && stderr.Len() != 0 {
+		t.Fatalf("keyless plaintext default reply wrote stderr: %s", stderr.String())
+	}
+	if strings.Contains(t.Name(), "conflicting") {
+		if err == nil || !strings.Contains(string(out), "mutually exclusive") {
+			t.Fatalf("expected conflicting flag refusal: %v %s", err, out)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if sent != nil {
+			t.Fatal("conflicting flags sent mail")
+		}
+		return
+	}
+	if !keys && (!plaintext || (grant && wantEncrypted)) {
+		if err == nil {
+			t.Fatal("missing encryption keys unexpectedly succeeded")
+		}
+		t.Logf("missing-key refusal: %s", out)
+		if grant && !plaintext && !strings.Contains(string(out), "resident host to restore") {
+			t.Fatalf("missing custody read-key remedy: %s", out)
+		}
+		if !grant && !strings.Contains(string(out), "restore .aw/encryption-keys") {
+			t.Fatalf("missing read-key remedy: %s", out)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if sent != nil {
+			t.Fatal("missing keys sent a reply")
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("e2ee reply to encrypted source failed: %v\n%s", err, out)
 	}
@@ -306,15 +464,48 @@ func TestAwMailReplyE2EEConfiguresReadKeyBeforeLoadingEncryptedSource(t *testing
 	if sent["conversation_id"] != conversationID {
 		t.Fatalf("conversation_id=%v, want %s", sent["conversation_id"], conversationID)
 	}
+	if !wantEncrypted {
+		if sent["content_mode"] == awid.ContentModeEncryptedV2 || sent["body"] != "reply secret" {
+			t.Fatalf("expected plaintext reply: %v", sent)
+		}
+		return
+	}
 	if sent["content_mode"] != awid.ContentModeEncryptedV2 {
 		t.Fatalf("content_mode=%v, want %s", sent["content_mode"], awid.ContentModeEncryptedV2)
 	}
 	if body, _ := sent["body"].(string); strings.Contains(body, "reply secret") {
 		t.Fatal("plaintext reply body was sent")
 	}
-	if sent["encrypted_envelope"] == nil {
-		t.Fatal("encrypted reply envelope was not sent")
+	encoded, err := json.Marshal(sent["encrypted_envelope"])
+	if err != nil {
+		t.Fatal(err)
 	}
+	var envelope awid.E2EEMessageEnvelope
+	if err := json.Unmarshal(encoded, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := awid.DecryptE2EEMessage(&envelope, awid.E2EEDecryptIdentity{Address: "acme.com/bob", DID: bobDID, StableID: bobStableID, EncryptionKeyID: bobAssertion.EncryptionKeyID, PrivateKey: bobX})
+	if err != nil || decoded.Body != "reply secret" {
+		t.Fatalf("peer decrypt failed: %v", err)
+	}
+	_, peerSessionKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer := custodyE2EETestIdentity{did: bobDID, stableID: bobStableID, address: "acme.com/bob", signKey: bobKey, xPriv: bobX, assertion: bobAssertion}
+	peerSvc := testCustodyService(t, bobKey, peerSessionKey)
+	peerSvc.identity.StableID = bobStableID
+	peerSvc.identity.Address = peer.address
+	peerSvc.e2eeAssertion = bobAssertion
+	peerSvc.e2eePrivateKey = bobX
+	peerSvc.readStoredEnvelope = func(ctx context.Context, kind, id, thread string) (*awid.E2EEMessageEnvelope, error) {
+		return &envelope, nil
+	}
+	peerPlain, err := peerSvc.unwrapE2EEMessage(ctx, signedE2EEUnwrapRequest(t, peerSessionKey, peer, &envelope))
+	if err != nil || peerPlain.Body != "reply secret" {
+		t.Fatalf("grant peer could not decrypt: %v", err)
+	}
+
 }
 
 // Same defect on the alias branch: an E2EE send by team alias that auto-threads

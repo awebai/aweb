@@ -820,7 +820,7 @@ transient `did:key`.
 |-------|-------|
 | `GET /v1/agents/{alias}/events` | SSE event stream |
 | `GET /v1/status` | Team status |
-| `GET /v1/status/stream` | Status SSE |
+| `GET /v1/status/stream` | Team coordination SSE; message/chat events restricted to the authenticated actor's own active workspaces. Embedded public readers receive no messaging events. |
 | `POST /v1/agents/heartbeat` | Keep-alive |
 | `POST /v1/agents/suggest-alias-prefix` | Suggest the next available classic alias prefix |
 | `GET /v1/agents` | List team agents |
@@ -955,10 +955,9 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 |-------|---------|
 | `GET /v1/teams/{team_id}/agents` | List active agents in team |
 | `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail |
-| `GET /v1/teams/{team_id}/messages` | Message history |
 | `GET /v1/teams/{team_id}/tasks` | Task list with query params `status`, `assignee_alias`, `task_type`, `priority` (`P0`-`P4`), `labels`, `q`, `limit`, and `cursor`. Returns `{tasks, has_more, next_cursor}`. |
 | `GET /v1/teams/{team_id}/claims` | Active task claims |
-| `GET /v1/teams/{team_id}/events/stream` | Dashboard SSE stream. Subscribe to `team-events:{team_id}` before building the initial snapshot, then stream dashboard-shaped events `task.created`, `task.status_changed`, `task.claimed`, `task.unclaimed`, `message.sent`, `agent.online`, and `agent.offline`. First frames are `connected` then `snapshot` with current `online_aliases` and `active_claims`. |
+| `GET /v1/teams/{team_id}/events/stream` | Authenticated dashboard SSE, including for public teams. Subscribe to `team-events:{team_id}` before building the initial snapshot, then stream task, reservation and presence events. No mail/chat events or participant metadata. First frames are `connected` then `snapshot` with current `online_aliases` and `active_claims`. |
 | `GET /v1/teams/{team_id}/roles/active` | Active role definitions |
 | `GET /v1/teams/{team_id}/instructions/active` | Active instructions |
 | `GET /v1/teams/{team_id}/status` | Team status (online agents, locks, claims) |
@@ -966,7 +965,12 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 ### Dashboard auth
 
 aweb verifies a short-lived JWT in the `X-Dashboard-Token` header on
-every dashboard read. The JWT is minted by an upstream dashboard
+private-team dashboard reads and always on activity SSE and `/v1/usage`, even
+for public teams. Public team directory/coordination reads may be anonymous;
+public visibility never publishes mail, content or per-message participant
+metadata. The former team-wide `/v1/teams/{team_id}/messages` route is removed.
+Content reads remain on authenticated participant-scoped messaging APIs;
+dashboard team access is not participation. The JWT is minted by an upstream dashboard
 service (any operator that has provisioned a human-account layer on
 top of aweb) and signed with a secret shared between that service and
 aweb. The token carries the list of `team_ids` the human is
