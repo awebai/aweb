@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Release preparation: server 1.27.14
+
+Server-only release covering changes since `server-v1.27.13`.
+
+- **Long mail conversations:** participant clients can request newest-first
+  history with `order=desc` and page through older messages using opaque
+  cursors. Pages report `has_more` and `next_cursor`, including conversations
+  longer than 500 messages. Ordering uses creation time and message ID to
+  handle timestamp ties without overlap.
+- **Incremental mail polling:** `after_cursor` lets clients retrieve newer
+  messages oldest-first and drain bursts across bounded pages. Empty polls
+  preserve the cursor. This is live history pagination, not a commit-order
+  delivery feed; clients reconcile history to recover late-committing rows.
+- Existing clients retain oldest-first ordering, the 200-message default and
+  the 500-message page limit. Every page remains participant-authorized and
+  read-only; message content and encrypted-message projections are unchanged.
+- No schema migration or dependency update is required. CLI, AWID and channel
+  versions are unchanged.
+
 ### Release preparation: CLI 1.36.29
 
 This CLI-only release covers E2E encryption-key assertion renewal since
