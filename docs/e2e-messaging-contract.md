@@ -233,10 +233,13 @@ message-integrity checks. Senders still reject an expired recipient assertion.
 Renewal re-signs and republishes the same encryption public key with a new
 validity window; it does not rotate the key or change its key id, custody, or
 previous-key link. The identity signing key authorizes renewal. The CLI attempts
-renewal within 14 days of expiry on identity-aware commands; the resident custody
+renewal within 14 days of expiry on identity-aware commands, excluding help,
+neutral commands, and invite inspection; the resident custody
 service also checks at startup and hourly, without requiring grant activity.
 Grant seats do not receive the resident signing key. Failed publication warns,
-leaves local history readable, and is retried on subsequent checks. Hosted
+leaves local history readable, and persists a one-hour automatic retry backoff.
+Commands and custody share this backoff; skipped attempts emit no renewal warning.
+Successful renewal clears it. Explicit key setup may retry immediately. Hosted
 custody operators must arrange equivalent renewal at their custody boundary,
 including inactive recipients; a transport or team controller cannot renew on
 an identity's behalf without its signing authority.

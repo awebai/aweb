@@ -152,7 +152,7 @@ func shouldSkipUpdateCheck(cmd *cobra.Command) bool {
 	}
 	// Inspection promises no incidental network or cache writes, including in
 	// an interactive text-mode invocation of a released binary.
-	if cmd.CommandPath() == "aw team invite inspect" {
+	if isTeamInviteInspectCommand(cmd) {
 		return true
 	}
 	path := strings.Fields(cmd.CommandPath())

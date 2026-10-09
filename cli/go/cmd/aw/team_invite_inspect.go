@@ -230,3 +230,9 @@ func inspectHostedInvite(ctx context.Context, token string, envelope hostedJoinT
 		return nil, inspectUnavailable()
 	}
 }
+
+// Inspection retains normal identity-home admission, but must not acquire
+// incidental network or state-writing side effects from command hooks.
+func isTeamInviteInspectCommand(cmd *cobra.Command) bool {
+	return cmd != nil && cmd.CommandPath() == "aw team invite inspect"
+}

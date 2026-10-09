@@ -14,11 +14,16 @@ import (
 )
 
 const encryptionAssertionRenewalWindow = 14 * 24 * time.Hour
+const encryptionAssertionFailureBackoff = time.Hour
 
 // Only existing keys are renewed. Publication precedes replacing the local
-// assertion so an offline/partial publication is retried on the next command.
+// assertion so an offline/partial publication is retried after the automatic backoff (or by explicit setup).
 // The private key is already durable and is never changed by renewal.
 func renewIdentityEncryptionAssertion(ctx context.Context, workingDir string, home encryptionKeyIdentityHomeIntent) error {
+	return renewIdentityEncryptionAssertionWithBackoff(ctx, workingDir, home, true)
+}
+
+func renewIdentityEncryptionAssertionWithBackoff(ctx context.Context, workingDir string, home encryptionKeyIdentityHomeIntent, force bool) error {
 	identity, err := resolveIdentityForEncryptionKeyForDir(workingDir, home)
 	if err != nil {
 		return err
@@ -51,6 +56,11 @@ func renewIdentityEncryptionAssertion(ctx context.Context, workingDir string, ho
 	record := state.ActiveRecord()
 	if record == nil {
 		return nil
+	}
+	if !force {
+		if last, err := time.Parse(time.RFC3339Nano, record.LastRenewalAttempt); err == nil && time.Now().Before(last.Add(encryptionAssertionFailureBackoff)) {
+			return nil
+		}
 	}
 	assertion, err := loadEncryptionAssertionAt(identity.WorkingDir, identity.IdentityHome, record.AssertionPath)
 	if err != nil {
@@ -86,6 +96,13 @@ func renewIdentityEncryptionAssertion(ctx context.Context, workingDir string, ho
 	if err := awid.SignEncryptionKeyAssertion(&renewed, key); err != nil {
 		return err
 	}
+	// Persist before network I/O while holding the keyring lock. A failure or
+	// interrupted process leaves a shared cooldown across commands and custody.
+	record.LastRenewalAttempt = now.Format(time.RFC3339)
+	state.UpsertRecord(*record)
+	if err := awconfig.SaveEncryptionKeyStateTo(statePath, state); err != nil {
+		return err
+	}
 	published, _, err := publishIdentityEncryptionKey(ctx, identity, key, &renewed)
 	if err != nil {
 		return err
@@ -102,6 +119,7 @@ func renewIdentityEncryptionAssertion(ctx context.Context, workingDir string, ho
 	}
 	record.CreatedAt, record.NotBefore, record.ExpiresAt = renewed.CreatedAt, renewed.NotBefore, renewed.ExpiresAt
 	record.PublishedAt = now.Format(time.RFC3339)
+	record.LastRenewalAttempt = ""
 	state.UpsertRecord(*record)
 	return awconfig.SaveEncryptionKeyStateTo(statePath, state)
 }
@@ -114,7 +132,7 @@ func maybeRenewIdentityEncryptionAssertion(ctx context.Context, workingDir strin
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := renewIdentityEncryptionAssertion(ctx, workingDir, home); err != nil {
-		fmt.Fprintf(warnings, "Warning: E2E encryption-key assertion renewal failed: %v; will retry on a later check.\n", err)
+	if err := renewIdentityEncryptionAssertionWithBackoff(ctx, workingDir, home, false); err != nil {
+		fmt.Fprintf(warnings, "Warning: E2E encryption-key assertion renewal failed: %v; automatic renewal will retry in one hour.\n", err)
 	}
 }

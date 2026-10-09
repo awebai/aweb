@@ -16,14 +16,15 @@ type EncryptionKeyState struct {
 }
 
 type EncryptionKeyRecord struct {
-	KeyID          string `yaml:"key_id"`
-	PublicKey      string `yaml:"public_key"`
-	PrivateKeyPath string `yaml:"private_key_path"`
-	AssertionPath  string `yaml:"assertion_path,omitempty"`
-	CreatedAt      string `yaml:"created_at"`
-	NotBefore      string `yaml:"not_before"`
-	ExpiresAt      string `yaml:"expires_at"`
-	PublishedAt    string `yaml:"published_at,omitempty"`
+	KeyID              string `yaml:"key_id"`
+	PublicKey          string `yaml:"public_key"`
+	PrivateKeyPath     string `yaml:"private_key_path"`
+	AssertionPath      string `yaml:"assertion_path,omitempty"`
+	CreatedAt          string `yaml:"created_at"`
+	NotBefore          string `yaml:"not_before"`
+	ExpiresAt          string `yaml:"expires_at"`
+	PublishedAt        string `yaml:"published_at,omitempty"`
+	LastRenewalAttempt string `yaml:"last_renewal_attempt,omitempty"`
 }
 
 func DefaultWorktreeEncryptionStateRelativePath() string {
@@ -114,6 +115,7 @@ func (r *EncryptionKeyRecord) normalize() {
 	r.NotBefore = strings.TrimSpace(r.NotBefore)
 	r.ExpiresAt = strings.TrimSpace(r.ExpiresAt)
 	r.PublishedAt = strings.TrimSpace(r.PublishedAt)
+	r.LastRenewalAttempt = strings.TrimSpace(r.LastRenewalAttempt)
 }
 
 func (s *EncryptionKeyState) ActiveRecord() *EncryptionKeyRecord {
