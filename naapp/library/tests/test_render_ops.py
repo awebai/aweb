@@ -1059,30 +1059,59 @@ def test_header_evidence_exact_boundary() -> None:
     assert complete is False
 
 
-def test_verifier_identity_is_repo_anchored_and_rejects_dirty_script(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def _git_without_inherited_repository(*args: str) -> None:
+    env = {key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV}
+    subprocess.run(["git", *args], check=True, env=env)
+
+
+def _committed_script_repo(tmp_path: Path, content: str = "print('clean')\n") -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     script = repo / "scripts" / "render_ops.py"
     script.parent.mkdir(parents=True)
-    script.write_text("print('clean')\n", encoding="utf-8")
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "-qm",
-            "initial",
-        ],
-        check=True,
+    script.write_text(content, encoding="utf-8")
+    _git_without_inherited_repository("init", "-q", str(repo))
+    _git_without_inherited_repository("-C", str(repo), "add", ".")
+    _git_without_inherited_repository(
+        "-C",
+        str(repo),
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "initial",
     )
+    return repo, script
+
+
+def _head(repo: Path) -> str:
+    env = {key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV}
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True, env=env
+    ).stdout.strip()
+
+
+def test_verifier_identity_ignores_an_inherited_git_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sentinel, _ = _committed_script_repo(tmp_path / "sentinel", "print('sentinel')\n")
+    sentinel_head = _head(sentinel)
+    monkeypatch.setenv("GIT_DIR", str(sentinel / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(sentinel))
+
+    repo, script = _committed_script_repo(tmp_path)
+    identity = render_ops._verifier_identity(repo_root=repo, script_path=script)
+
+    assert identity["verifier_source_sha"] == _head(repo)
+    assert identity["verifier_source_sha"] != sentinel_head
+    assert _head(sentinel) == sentinel_head
+
+
+def test_verifier_identity_is_repo_anchored_and_rejects_dirty_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo, script = _committed_script_repo(tmp_path)
     unrelated = tmp_path / "unrelated"
     unrelated.mkdir()
     monkeypatch.chdir(unrelated)
