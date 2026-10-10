@@ -193,8 +193,8 @@ async def _reply_context(binary, root, env, grant):
                 pytest.fail(f"custody not ready: {status}; {log_path.read_text()}")
             seat = root / "seat"
             seat.mkdir()
-            await _cli(binary, root, env, "id", "grant", "mint", "--scope", "mail.read,mail.send",
-                       "--ttl", "20m", "--custody-socket", "auto", "--out", str(seat / ".aw"), "--json")
+            await _cli(binary, root, env, "id", "grant", "mint", "--bundle", "normal-agent",
+                       "--ttl", "5m", "--custody-socket", "auto", "--out", str(seat / ".aw"), "--json")
             assert not (seat / ".aw" / "signing.key").exists()
             grant_env = dict(env, AWEB_IDENTITY_HOME=str(seat / ".aw"))
             status = await _cli(binary, seat, grant_env, "custody", "status", "--json")
