@@ -77,10 +77,10 @@ public emit keys:
 }
 ```
 
-This split is a current experimental compatibility limit: do not add `events`
-to a v1 CLI manifest, because strict decoding rejects the unknown field. The
-installer supplies declarations to `POST /v1/apps/install`; the server does not
-fetch a manifest to derive or verify them.
+CLI manifest installation and server registry installation are separate. The
+CLI accepts `events` metadata but does not register it with the server. A
+team-authorized installer supplies declarations to `POST /v1/apps/install`;
+the server does not fetch a manifest to derive or verify them.
 
 The install route in [`app-registry.md`](app-registry.md) records those values
 under the supplied manifest digest. The full emitted type is
