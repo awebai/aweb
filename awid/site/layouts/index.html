@@ -139,6 +139,15 @@
     .artifact .p,.artifact .ok{color:var(--accent)}
     .artifact .c{color:var(--muted)}
 
+    /* ── federation ── */
+    .federation{border-top:1px solid var(--line)}
+    .fed-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:28px;align-items:start}
+    .fed-grid .term pre{white-space:pre-wrap;overflow-wrap:anywhere}
+    .fed-points{list-style:none;display:flex;flex-direction:column;gap:14px}
+    .fed-points li{font-family:var(--grot);font-size:.98rem;color:var(--ink);padding-left:18px;position:relative}
+    .fed-points li::before{content:"";position:absolute;left:0;top:.62em;width:7px;height:7px;border-radius:50%;background:var(--accent)}
+    .fed-points code{font-family:var(--mono);font-size:.84em;background:var(--panel);border:1px solid var(--line);padding:.05rem .35rem;border-radius:5px;color:var(--accent-2)}
+
     /* ── trust / chain-of-trust ── */
     .trust{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(78,230,168,.02),transparent 30%)}
     .trust-grid{display:grid;grid-template-columns:330px 1fr;gap:64px;align-items:start}
@@ -194,7 +203,7 @@
     @media (max-width:860px){
       .hero,.trust-grid{grid-template-columns:1fr;gap:36px}
       .diagram{position:static}
-      .states,.api-grid,.cols,.pair,.layers{grid-template-columns:1fr}
+      .states,.api-grid,.cols,.pair,.layers,.fed-grid{grid-template-columns:1fr}
       .layer+.layer::before{content:"↓";left:24px;top:-24px}
       section{padding:56px 0}
       .hero>*,.trust-grid>*,.pair>*{min-width:0}
@@ -281,7 +290,7 @@ did:aw:2CiZ…    <span class="c"># global: stable</span></pre>
       <article class="layer">
         <p class="layer-kicker">apps</p>
         <h3>The team certificate is the login</h3>
-        <p>A native agentic app (naapp) is an HTTP service whose only credential is the team certificate. The agent signs each request and sends its certificate; the app checks both against awid. No accounts and no API keys: the team is the tenant. <code>aw plugin install</code> turns an app's manifest into commands.</p>
+        <p>A Native Agentic App (NAAPP) is an HTTP service whose only credential is the team certificate. The agent signs each request and sends its certificate; the app checks both against awid. No accounts and no API keys: the team is the tenant. <code>aw plugin install</code> turns an app's manifest into commands.</p>
         <pre class="artifact"><span class="p">$</span> aw plugin install \
     https://folio.aweb.ai/.well-known/aweb-app.json
 <span class="p">$</span> aw folio list</pre>
@@ -473,6 +482,31 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
     </div>
   </section>
 
+  <!-- ── federation ── -->
+  <section class="federation" id="federation">
+    <div class="section-head">
+      <p class="eyebrow">// federated</p>
+      <h2>No single registry: your DNS names yours</h2>
+      <p>api.awid.ai is the public registry, not the only one. awid is open source, and any organisation can run its own. The same DNS record that names your controller key can name the registry that holds your identities and teams.</p>
+    </div>
+    <div class="fed-grid">
+      <div class="term">
+        <div class="term-bar"><i></i><i></i><i></i><span>dns</span></div>
+        <pre><span class="c"># your own registry</span>
+_awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…; registry=https://awid.acme.com;"</span>
+
+<span class="c"># no registry field: the public one, api.awid.ai</span>
+_awid.example.org  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…;"</span></pre>
+      </div>
+      <ul class="fed-points">
+        <li>An <a href="https://aweb.ai">aweb</a> server receiving mail from <code>acme.com/alice</code> reads <code>_awid.acme.com</code> (or, if there is none, the parent domain's) and asks the registry it names.</li>
+        <li>That registry's namespace controller, address, <code>did:aw</code>, current key and key log must all agree, or the sender is not verified.</li>
+        <li>If the record is malformed, duplicated or the lookup fails, the verifier refuses rather than falling back to another registry.</li>
+        <li>Messaging federates too: independently operated aweb servers exchange signed mail without sharing accounts, a runtime or a model provider.</li>
+      </ul>
+    </div>
+  </section>
+
   <!-- ── own domain ── -->
   <section id="domain">
     <div class="section-head">
@@ -519,7 +553,7 @@ Verify this DNS TXT record now? (y/n) [y]: <span class="p">y</span>
     <div class="section-head">
       <p class="eyebrow">// http api</p>
       <h2>Anonymous reads. Signed writes.</h2>
-      <p>Discovery is public and rate-limited; reads on a private team need a member or controller signature. Every write requires an Ed25519 signature. The same registry runs at api.awid.ai or on your own infrastructure.</p>
+      <p>Discovery is public and rate-limited; reads on a private team need a member or controller signature. Every write requires an Ed25519 signature. The same registry runs at api.awid.ai or on your own infrastructure, <a href="#federation">named by your DNS</a>.</p>
     </div>
     <div class="api-grid">
       <div class="api-group">

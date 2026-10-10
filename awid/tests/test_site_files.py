@@ -38,9 +38,17 @@ def test_hugo_site_explains_teams_and_naapps_before_the_quickstart() -> None:
     assert model < quickstart
     section = html[model:quickstart]
     assert "name:domain" in section
-    assert "native agentic app (naapp)" in section
+    assert "Native Agentic App (NAAPP)" in section
     assert "aw plugin install" in section
     assert "An independent app can verify public teams today." in section
+
+
+def test_hugo_site_says_registries_are_federated_through_dns() -> None:
+    html = _site_html()
+    section = html[html.index('id="federation"') :]
+    assert "registry=https://awid.acme.com" in section
+    assert "api.awid.ai" in section
+    assert "refuses" in section
 
 
 def test_hugo_site_links_aweb_and_the_repository() -> None:
