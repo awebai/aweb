@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/awebai/aw/internal/custodypath"
 	"net"
 	"net/http"
 	"net/url"
@@ -203,6 +204,9 @@ func (s *custodyService) serve(ctx context.Context) error {
 	if strings.TrimSpace(s.serviceID) == "" {
 		id, _ := awid.GenerateUUID4()
 		s.serviceID = id
+	}
+	if err := custodypath.Prepare(s.socketPath); err != nil {
+		return err
 	}
 	runDir := filepath.Dir(s.socketPath)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
@@ -595,6 +599,9 @@ func custodyHTTP(ctx context.Context, socket, method, path string, in any, out a
 }
 
 func custodyHTTPTimeout(ctx context.Context, socket, method, path string, in any, out any, timeout time.Duration) error {
+	if err := custodypath.Check(socket); err != nil {
+		return err
+	}
 	var body strings.Reader
 	if in != nil {
 		b, _ := json.Marshal(in)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/awebai/aw/internal/custodypath"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,6 +243,9 @@ func resolveGrantMintCustodySocket(identityHome awconfig.IdentityHome) (string, 
 			return "", usageError("--custody-socket must be an absolute Unix socket path or auto")
 		}
 		path = filepath.Clean(value)
+	}
+	if err := custodypath.Prepare(path); err != nil {
+		return "", err
 	}
 	if err := validateCustodySocketPathLength(path); err != nil {
 		return "", err
