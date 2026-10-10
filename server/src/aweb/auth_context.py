@@ -17,6 +17,7 @@ class GrantContext:
     issuing_certificate_id: str | None
     scopes: tuple[str, ...]
     expires_at: datetime
+    never_expires: bool = False
 
 
 GRANT_SCOPE_ANY = "__any_grant__"

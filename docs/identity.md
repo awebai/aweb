@@ -338,13 +338,13 @@ the controller machine.
 
 ## Session grants
 
-A session grant lets a worker process act as an identity for a bounded window
+A session grant lets a worker process act as an identity until revoked (or for an explicit finite window)
 without holding the identity's root keys. The identity mints the grant from
 its own `.aw` home:
 
 ```
 aw id grant mint --bundle normal-agent \
-    --ttl 8h --out /path/to/grant-home
+    --ttl never --out /path/to/grant-home
 ```
 
 When the grant should use local resident custody for signed plaintext or E2EE
@@ -397,7 +397,9 @@ payloads, identity operations, or grant/delegation payloads. `aw custody status
 freshness), and `aw custody stop` asks the local service to exit.
 
 The status `ops` list includes `status.v1`, `sign_plain_message.v1`, and
-`sign_app_request.v1`. When the encryption assertion and private key are
+`sign_app_request.v1`, plus `grant_never_ttl.v1` when the running custody host
+supports never-expiring grants. Upgrade and restart custody before using a
+never grant; upgrading the binary on disk does not upgrade an existing process. When the encryption assertion and private key are
 configured, it also includes `create_e2ee_envelope.v1`,
 `unwrap_e2ee_message.v1`, and `mail_reply_continuation.v1`. The last entry is a
 capability marker for stored-source mail reply continuation through the existing
@@ -413,11 +415,32 @@ all of those scopes for ordinary worker operation; old grants keep exactly the
 scopes they were minted with. Grant requests outside their scopes, and root or
 admin surfaces such as team lifecycle, session leases, reservation revoke, and
 minting further grants, are refused server-side. A
-grant expires at its TTL and can be revoked early and idempotently with
+grant minted with `--ttl never` (the default) does not expire. Explicit finite
+TTLs from 60 seconds through 720 hours retain their expiry. Grants can be revoked
+idempotently with
 `aw id grant revoke <grant-id>`; `aw id grant list` shows each grant as
 active, revoked, or expired. Root-authority commands refuse to run from a
 grant home, and `aw whoami` there reports the subject identity plus the
 grant's status, scopes, and expiry.
+
+The mint API accepts `ttl_seconds: "never"`, null, or omission for no expiry;
+existing finite integer requests remain supported. Mint/list/status responses and
+`grant.yaml` use `expires_at: "never"` for this case. The server stores a non-null
+expiry 100 calendar years after issuance (February 29 maps to February 28 if
+needed); an interval of at least 99 calendar years is reserved for never-expiring
+grants and is not treated as a clock deadline. No database migration is needed.
+Old custody hosts cannot consume the new expiry value and fail closed; both the
+worker and running custody host must support the new contract. Malformed expiry
+values are not never-expiring grants.
+
+Owner revocation, an inactive/deleted subject, and issuing-certificate revocation
+still end delegation. Revocation is enforced on the next authenticated request.
+Open never-grant mail/event, status and chat streams recheck within a 30-second
+cadence and close with a terminal event; unavailable verification fails closed.
+This is bounded rechecking, not instantaneous idle-stream disconnection. Existing
+finite notification streams keep their current behavior. Custody's authoritative
+status cache remains bounded to 30 seconds. Registry revocation freshness remains
+subject to the registry client's existing cache policy.
 
 ## Message verification and trust
 

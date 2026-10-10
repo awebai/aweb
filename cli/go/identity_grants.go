@@ -13,10 +13,24 @@ import (
 )
 
 type IdentityGrantMintRequest struct {
-	GrantDIDKey string   `json:"grant_did_key"`
-	Scopes      []string `json:"scopes"`
-	TTLSeconds  int      `json:"ttl_seconds"`
-	Label       string   `json:"label,omitempty"`
+	GrantDIDKey  string   `json:"grant_did_key"`
+	Scopes       []string `json:"scopes"`
+	TTLSeconds   int      `json:"ttl_seconds"`
+	NeverExpires bool     `json:"-"`
+	Label        string   `json:"label,omitempty"`
+}
+
+// NeverExpires is opt-in; existing numeric requests keep their wire shape.
+func (r IdentityGrantMintRequest) MarshalJSON() ([]byte, error) {
+	type fields IdentityGrantMintRequest
+	var ttl any = r.TTLSeconds
+	if r.NeverExpires {
+		ttl = "never"
+	}
+	return json.Marshal(struct {
+		fields
+		TTL any `json:"ttl_seconds"`
+	}{fields(r), ttl})
 }
 
 type IdentityGrantView struct {

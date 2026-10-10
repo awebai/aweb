@@ -34,7 +34,7 @@ from aweb.internal_auth import parse_internal_auth_context
 from aweb.grant_streams import (
     agent_event_allowed,
     clamp_deadline_to_grant,
-    grant_expiry_reason,
+    NeverGrantStreamGuard, grant_expiry_reason,
     grant_terminal_sse,
     require_valid_stream_grant,
 )
@@ -428,7 +428,8 @@ async def _sse_agent_events(
 
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
 
-    reason = grant_expiry_reason(identity)
+    guard = NeverGrantStreamGuard(request, db, identity, grant_expiry_reason)
+    reason = await guard.reason()
     if reason:
         yield grant_terminal_sse(reason)
         return
@@ -448,7 +449,7 @@ async def _sse_agent_events(
     previous_chat = _index_events(chat_events, key_field="session_id")
     previous_app = _index_events(app_events, key_field="event_id")
 
-    reason = grant_expiry_reason(identity)
+    reason = await guard.reason()
     if reason:
         yield grant_terminal_sse(reason)
         return
@@ -481,7 +482,7 @@ async def _sse_agent_events(
         if datetime.now(timezone.utc) >= deadline:
             break
 
-        reason = grant_expiry_reason(identity)
+        reason = await guard.reason()
         if reason:
             yield grant_terminal_sse(reason)
             return
@@ -540,7 +541,7 @@ async def _sse_agent_events(
             key_field="event_id",
         )
 
-        reason = grant_expiry_reason(identity)
+        reason = await guard.reason()
         if reason:
             yield grant_terminal_sse(reason)
             return
@@ -573,7 +574,7 @@ async def _sse_agent_events(
         previous_chat = _index_events(current_chat, key_field="session_id")
         previous_app = _index_events(current_app, key_field="event_id")
 
-    reason = grant_expiry_reason(identity)
+    reason = await guard.reason()
     if reason:
         yield grant_terminal_sse(reason)
 

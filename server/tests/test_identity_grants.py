@@ -1236,8 +1236,8 @@ def test_direct_team_identity_calls_are_reviewed_root_only_sites():
         ("server/src/aweb/routes/apps.py", "install_app_route", 111),
         ("server/src/aweb/routes/connect.py", "get_team_info", 483),
         ("server/src/aweb/routes/events.py", "_subscription_read_identity", 144),
-        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 644),
-        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route", 609),
+        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 645),
+        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route", 610),
     ]
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/awebai/aw/internal/custodypath"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,7 +19,7 @@ import (
 
 var grantCmd = &cobra.Command{
 	Use:   "grant",
-	Short: "Scoped, expiring session grants derived from this identity",
+	Short: "Scoped, revocable session grants derived from this identity",
 }
 
 var (
@@ -32,9 +33,59 @@ var (
 )
 
 const (
-	identityGrantMinTTL = 60 * time.Second
-	identityGrantMaxTTL = 2592000 * time.Second
+	identityGrantNeverTTL time.Duration = -1
+	identityGrantMinTTL                 = 60 * time.Second
+	identityGrantMaxTTL                 = 2592000 * time.Second
 )
+
+func requireNeverGrantCustody(ops []string) error {
+	for _, op := range ops {
+		if op == "grant_never_ttl.v1" {
+			return nil
+		}
+	}
+	return fmt.Errorf("custody host must be aw >= 1.36.32 and support grant_never_ttl.v1; upgrade aw and restart the custody service")
+}
+
+type grantTTLFlag struct{}
+
+func (grantTTLFlag) Set(value string) error {
+	if value == "never" {
+		grantMintTTL = identityGrantNeverTTL
+		return nil
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return err
+	}
+	if duration < identityGrantMinTTL || duration > identityGrantMaxTTL {
+		return fmt.Errorf("grant duration must be 60s to 720h or never")
+	}
+	grantMintTTL = duration
+	return nil
+}
+func (grantTTLFlag) String() string {
+	if grantMintTTL == identityGrantNeverTTL {
+		return "never"
+	}
+	return grantMintTTL.String()
+}
+func (grantTTLFlag) Type() string { return "string" }
+
+// Never is an explicit duration, not a malformed timestamp or missing freshness.
+func checkGrantExpiry(raw string, now time.Time) error {
+	if raw == "never" {
+		return nil
+	}
+	expires, err := time.Parse(time.RFC3339, strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("grant_freshness_unavailable")
+	}
+	if !now.Before(expires) {
+		return fmt.Errorf("grant_expired")
+	}
+	return nil
+}
 
 var grantScopeBundles = map[string][]string{
 	"normal-agent": {
@@ -100,8 +151,8 @@ func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) 
 	if requestedTeam := strings.TrimSpace(teamFlag); requestedTeam != "" && requestedTeam != strings.TrimSpace(grant.TeamID) {
 		return nil, nil, usageError("grant home is bound to team %s; --team %s conflicts", strings.TrimSpace(grant.TeamID), requestedTeam)
 	}
-	if expires, ok := parseTimeBestEffort(grant.ExpiresAt); ok && time.Now().After(expires) {
-		return nil, nil, fmt.Errorf("identity grant %s expired at %s; mint a new grant from the identity's own .aw home", grant.GrantID, grant.ExpiresAt)
+	if err := checkGrantExpiry(grant.ExpiresAt, time.Now()); err != nil {
+		return nil, nil, fmt.Errorf("identity grant %s: %w (expires_at=%s)", grant.GrantID, err, grant.ExpiresAt)
 	}
 	sessionKeyPath := awconfig.GrantHomeSigningKeyPath(home.Root)
 	sessionKey, err := awid.LoadSigningKey(sessionKeyPath)
@@ -139,6 +190,17 @@ func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) 
 	}
 	c.SetGrantSubject(sel.TeamID, sel.StableID, sel.DID, sel.Address, sel.Alias)
 	if socketPath := strings.TrimSpace(grant.Custody.SocketPath); socketPath != "" {
+		if grant.ExpiresAt == "never" {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			var status custodyStatusReport
+			if err := custodyHTTP(ctx, socketPath, http.MethodGet, "/status", nil, &status); err != nil {
+				return nil, nil, fmt.Errorf("never-grant custody status: %w", err)
+			}
+			if err := requireNeverGrantCustody(status.Ops); err != nil {
+				return nil, nil, err
+			}
+		}
 		c.SetPlainMessageSigner(&awid.UnixCustodyClient{SocketPath: socketPath})
 	}
 	if err := configureResolvedClient(c, sel, baseURL); err != nil {
@@ -261,8 +323,8 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	if grantMintTTL < identityGrantMinTTL || grantMintTTL > identityGrantMaxTTL {
-		return usageError("--ttl must be between %s and %s", identityGrantMinTTL, identityGrantMaxTTL)
+	if grantMintTTL != identityGrantNeverTTL && (grantMintTTL < identityGrantMinTTL || grantMintTTL > identityGrantMaxTTL) {
+		return usageError("--ttl must be never or between %s and %s", identityGrantMinTTL, identityGrantMaxTTL)
 	}
 	outDir, err := prepareGrantHomeDir(grantMintOut)
 	if err != nil {
@@ -299,10 +361,11 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	view, err := client.MintIdentityGrant(ctx, &aweb.IdentityGrantMintRequest{
-		GrantDIDKey: grantDIDKey,
-		Scopes:      scopes,
-		TTLSeconds:  int(grantMintTTL / time.Second),
-		Label:       strings.TrimSpace(grantMintLabel),
+		GrantDIDKey:  grantDIDKey,
+		Scopes:       scopes,
+		TTLSeconds:   int(grantMintTTL / time.Second),
+		NeverExpires: grantMintTTL == identityGrantNeverTTL,
+		Label:        strings.TrimSpace(grantMintLabel),
 	})
 	if err != nil {
 		return err
@@ -504,7 +567,8 @@ func init() {
 	mintCmd.Flags().StringArrayVar(&grantMintBundles, "bundle", nil, "Grant scope bundle, repeatable or comma-separated (normal-agent)")
 	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Legacy one-mint app:verb selection; replaces the resident approval catalog for this mint only")
 	mintCmd.Flags().StringVar(&grantMintCustodySocket, "custody-socket", "", "Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket")
-	mintCmd.Flags().DurationVar(&grantMintTTL, "ttl", 8*time.Hour, "Grant duration before expiry (60s to 720h)")
+	grantMintTTL = identityGrantNeverTTL
+	mintCmd.Flags().Var(grantTTLFlag{}, "ttl", "Grant duration: never (revocation-only) or a duration from 60s to 720h")
 	mintCmd.Flags().StringVar(&grantMintLabel, "label", "", "Optional label for the grant")
 	mintCmd.Flags().StringVar(&grantMintOut, "out", "", "Directory to write the grant home (created fresh; a non-empty directory is refused)")
 	listCmd := &cobra.Command{

@@ -1,8 +1,19 @@
 from __future__ import annotations
 
 from typing import Any
+from datetime import datetime, timedelta, timezone
+
+from .auth_context import GrantContext
 
 DEFAULT_GRANT_LIVENESS_TTL_SECONDS = 1800
+
+
+def grant_liveness_expiry(grant: GrantContext) -> datetime:
+    # Presence is ephemeral even when delegation is not. Do not write the
+    # storage sentinel as a heartbeat deadline after its calendar horizon.
+    if grant.never_expires:
+        return datetime.now(timezone.utc) + timedelta(seconds=DEFAULT_GRANT_LIVENESS_TTL_SECONDS)
+    return grant.expires_at
 
 
 async def cleanup_expired_grant_liveness(db, *, ttl_seconds: int = DEFAULT_GRANT_LIVENESS_TTL_SECONDS) -> int:
@@ -45,8 +56,7 @@ async def valid_grant_liveness_by_workspace(
         JOIN {{tables.agents}} a ON a.agent_id = l.subject_agent_id
         WHERE l.workspace_id = ANY($1::uuid[])
           AND l.last_seen_at >= NOW() - ($2::int * INTERVAL '1 second')
-          AND l.expires_at > NOW()
-          AND g.expires_at > NOW()
+          AND (g.expires_at >= g.issued_at + INTERVAL '99 years' OR (l.expires_at > NOW() AND g.expires_at > NOW()))
           AND g.revoked_at IS NULL
           AND g.team_id = l.team_id
           AND g.subject_agent_id = l.subject_agent_id

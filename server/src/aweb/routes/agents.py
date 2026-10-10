@@ -18,7 +18,7 @@ from aweb.coordination.roles import ROLE_MAX_LENGTH
 from aweb.coordination.routes.repos import canonicalize_git_url
 from aweb.coordination.workspace_registry import ensure_repo
 from aweb.deps import get_db, get_redis
-from aweb.grant_liveness import cleanup_expired_grant_liveness, valid_grant_liveness_by_workspace
+from aweb.grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness, valid_grant_liveness_by_workspace
 from aweb.role_name_compat import normalize_optional_role_name, resolve_role_name_aliases
 from aweb.auth_context import GRANT_SCOPE_ANY
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
@@ -571,7 +571,7 @@ async def heartbeat(
             workspace["workspace_id"],
             identity.alias,
             identity.grant.session_did_key,
-            identity.grant.expires_at,
+            grant_liveness_expiry(identity.grant),
         )
         return HeartbeatResponse(
             agent_id=identity.agent_id,
