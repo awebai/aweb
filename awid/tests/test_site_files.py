@@ -51,6 +51,17 @@ def test_hugo_site_says_registries_are_federated_through_dns() -> None:
     assert "refuses" in section
 
 
+def test_hugo_site_quickstart_says_where_each_step_runs() -> None:
+    html = _site_html()
+    quickstart = html[html.index('id="quickstart"') : html.index('id="trust"')]
+    assert 'href="https://aweb.ai/docs/cli-tutorial/"' in quickstart
+    assert 'data-copy="all"' in quickstart
+    for where in ('class="where alice">in alice/', 'class="where bob">in bob/', 'class="where">any directory'):
+        assert where in quickstart
+    # Copy takes "$ " lines only, so a command must not continue onto another line.
+    assert " \\\n" not in quickstart
+
+
 def test_hugo_site_serves_and_links_llms_txt() -> None:
     llms = (ROOT / "site" / "static" / "llms.txt").read_text(encoding="utf-8")
     assert llms.startswith("# awid.ai")

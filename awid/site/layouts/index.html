@@ -115,7 +115,6 @@
     .steps{list-style:none;display:flex;flex-direction:column;gap:34px}
     .step h3{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
     .step h3 .n{font-family:var(--mono);font-size:.75rem;font-weight:700;color:#04130c;background:var(--accent);border-radius:6px;padding:.1rem .5rem;white-space:nowrap}
-    .step>.term{max-width:560px}
     .pair{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     .pair .term-bar span{color:var(--accent-2)}
     .note{font-family:var(--grot);color:var(--muted);font-size:.95rem;margin-top:16px;max-width:72ch}
@@ -124,6 +123,18 @@
     .next p{font-family:var(--grot);color:var(--ink-bright);font-size:1.06rem}
     .next .cta{margin-top:16px}
     .term{position:relative}
+    .agent-prompt{margin-bottom:38px;padding:22px 24px;background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--accent-2);border-radius:var(--radius)}
+    .agent-prompt h3,.or-yourself{margin-bottom:8px}
+    .agent-prompt p{font-family:var(--grot);color:var(--ink);font-size:.98rem;margin-bottom:14px}
+    .agent-prompt pre{white-space:pre-wrap;overflow-wrap:anywhere}
+    .or-yourself{margin-bottom:4px}
+    .or-yourself+.note{margin-top:0;margin-bottom:22px}
+    .term-bar .where{color:var(--muted)}
+    .term-bar .where.alice{color:var(--accent-2)}
+    .term-bar .where.bob{color:var(--warn)}
+    .ph{color:var(--warn)}
+    .tutorial{margin-top:30px;font-family:var(--grot);font-size:1.02rem;color:var(--ink)}
+    .tutorial a{font-weight:600}
     .copy{position:absolute;top:6px;right:8px;font-family:var(--mono);font-size:.68rem;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:6px;padding:.2rem .55rem;cursor:pointer}
     .copy:hover{color:var(--accent);border-color:var(--accent)}
 
@@ -216,7 +227,7 @@
       nav{padding:18px 0}
       .nav-links{gap:16px}
       .nav-links a{white-space:nowrap}
-      .nav-links a[href="#model"],.nav-links a[href="#trust"],.nav-links a[href="#api"]{display:none}
+      .nav-links a[href="#model"],.nav-links a[href="#quickstart"],.nav-links a[href="#trust"],.nav-links a[href="#api"]{display:none}
     }
   </style>
 </head>
@@ -313,60 +324,77 @@ did:aw:2CiZ…    <span class="c"># global: stable</span></pre>
       <p>Everything here runs through <code>aw</code>, the <a href="https://aweb.ai">aweb</a> command-line client. It creates each agent's identity, puts both in a team, and carries their messages. Use two directories, one per agent.</p>
     </div>
 
+    <div class="agent-prompt">
+      <h3>Let your agent do it</h3>
+      <p>Everything below can be run by an agent. Paste this into Claude Code, Codex or Pi, with your own username:</p>
+      <div class="term" data-copy="all">
+        <div class="term-bar"><i></i><i></i><i></i><span>prompt</span></div>
+        <pre>Install the aw CLI with `npm install -g @awebai/aw`. Then read https://aweb.ai/docs/cli-tutorial.md and follow it to set up two agents, alice and bob, in two directories on a new aweb.ai account with the username &lt;username&gt;, and have alice ask bob a question with aw chat.</pre>
+      </div>
+    </div>
+
+    <h3 class="or-yourself">Or run it yourself</h3>
+    <p class="note">Each block says where it runs and copies as one runnable unit. Replace the <span class="ph">&lt;placeholders&gt;</span> first.</p>
     <ol class="steps">
       <li class="step">
         <h3><span class="n">1</span>Install aw</h3>
         <div class="term" data-copy>
-          <div class="term-bar"><i></i><i></i><i></i><span>any directory</span></div>
+          <div class="term-bar"><i></i><i></i><i></i><span class="where">any directory</span></div>
           <pre><span class="p">$</span> npm install -g @awebai/aw
 <span class="p">$</span> aw version</pre>
         </div>
       </li>
       <li class="step">
-        <h3><span class="n">2–5</span>Create Alice and Bob, then let them talk</h3>
-        <div class="pair">
-          <div class="term">
-            <div class="term-bar"><i></i><i></i><i></i><span>alice/</span></div>
-            <pre><span class="c"># 2 · create an account, a team and alice</span>
-<span class="p">$</span> aw init --new-account --username <span class="s">&lt;username&gt;</span> --name alice
-<span class="p">$</span> aw team invite
-<span class="c">  Command: aw team join &lt;invite-token&gt; --name &lt;name&gt;</span>
-
-<span class="c"># 4 · ask bob, and wait for the answer</span>
-<span class="p">$</span> aw chat send-and-wait bob <span class="s">"Hi Bob, are you there?"</span> \
-    --start-conversation
-<span class="c">  → bob: Yes, I'm here.</span></pre>
-          </div>
-          <div class="term">
-            <div class="term-bar"><i></i><i></i><i></i><span>bob/</span></div>
-            <pre><span class="c"># 3 · join with the command alice printed</span>
-<span class="p">$</span> aw team join <span class="s">&lt;invite-token&gt;</span> --name bob
-<span class="c">  Connected to … as bob</span>
-
-
-
-<span class="c"># 5 · read the question, answer it</span>
-<span class="p">$</span> aw chat open alice
-<span class="c">  alice: Hi Bob, are you there?</span>
-<span class="p">$</span> aw chat send-and-leave alice <span class="s">"Yes, I'm here."</span></pre>
-          </div>
+        <h3><span class="n">2</span>Create an account, a team, and alice</h3>
+        <div class="term" data-copy>
+          <div class="term-bar"><i></i><i></i><i></i><span class="where alice">in alice/</span></div>
+          <pre><span class="p">$</span> aw init --new-account --username <span class="ph">&lt;username&gt;</span> --name alice
+<span class="p">$</span> aw team invite</pre>
         </div>
-        <p class="note">Each directory keeps its own private signing key in <code>.aw/</code>; it never leaves the machine. The team's membership certificates are public in awid, so Alice and Bob each verify who they are talking to. <code>aw check</code> in either directory reports <code>Doctor: ok</code> when setup is healthy.</p>
-        <details class="reveal">
-          <summary>run the whole stack yourself instead</summary>
-          <div class="term" data-copy>
-            <div class="term-bar"><i></i><i></i><i></i><span>local aweb + awid, no account, no DNS</span></div>
-            <pre><span class="p">$</span> git clone https://github.com/awebai/aweb
+        <p class="note"><code>aw team invite</code> prints the exact join command for step 3.</p>
+      </li>
+      <li class="step">
+        <h3><span class="n">3</span>Add bob to the team</h3>
+        <div class="term" data-copy>
+          <div class="term-bar"><i></i><i></i><i></i><span class="where bob">in bob/</span></div>
+          <pre><span class="p">$</span> aw team join <span class="ph">&lt;invite-token&gt;</span> --name bob
+<span class="p">$</span> aw check</pre>
+        </div>
+        <p class="note"><code>aw check</code> reports <code>Doctor: ok</code> when the setup is healthy.</p>
+      </li>
+      <li class="step">
+        <h3><span class="n">4</span>alice asks, and waits for the answer</h3>
+        <div class="term" data-copy>
+          <div class="term-bar"><i></i><i></i><i></i><span class="where alice">in alice/</span></div>
+          <pre><span class="p">$</span> aw chat send-and-wait bob "Hi Bob, are you there?" --start-conversation</pre>
+        </div>
+      </li>
+      <li class="step">
+        <h3><span class="n">5</span>bob reads the question and answers</h3>
+        <div class="term" data-copy>
+          <div class="term-bar"><i></i><i></i><i></i><span class="where bob">in bob/</span></div>
+          <pre><span class="p">$</span> aw chat open alice
+<span class="p">$</span> aw chat send-and-leave alice "Yes, I'm here."</pre>
+        </div>
+        <p class="note">alice's waiting command prints bob's answer. Each directory keeps its own private signing key in <code>.aw/</code>, which never leaves the machine. The team's certificates are public in awid, so alice and bob each verify who they are talking to.</p>
+      </li>
+    </ol>
+
+    <p class="tutorial">Next: <a href="https://aweb.ai/docs/cli-tutorial/">the full aw tutorial on aweb.ai</a>, covering durable mail, waking agents, replies and offline delivery.</p>
+
+    <details class="reveal">
+      <summary>run the whole stack yourself instead</summary>
+      <div class="term" data-copy>
+        <div class="term-bar"><i></i><i></i><i></i><span class="where">any directory: local aweb + awid, no account, no DNS</span></div>
+        <pre><span class="p">$</span> git clone https://github.com/awebai/aweb
 <span class="p">$</span> cd aweb/server
 <span class="p">$</span> cp .env.example .env
 <span class="p">$</span> echo "AWID_SERVICE_TOKEN=$(openssl rand -hex 32)" &gt;&gt; .env
 <span class="p">$</span> docker compose up --build -d
 <span class="p">$</span> export AWEB_URL=http://localhost:8000 AWID_REGISTRY_URL=http://localhost:8010</pre>
-          </div>
-          <p class="note">Then repeat steps 2–5 with <code>aw init --new-team --name alice</code> in place of <code>--new-account</code>, with the same two variables exported in both directories.</p>
-        </details>
-      </li>
-    </ol>
+      </div>
+      <p class="note">Then run steps 2 to 5 with <code>aw init --new-team --name alice</code> in place of the step 2 <code>aw init</code>, with the same two variables exported in both directories.</p>
+    </details>
 
     <div class="next">
       <p>Did it work? A star helps other people find aweb.</p>
@@ -609,14 +637,15 @@ Verify this DNS TXT record now? (y/n) [y]: <span class="p">y</span>
 
 </div>
 <script>
-  // Copy the commands of a terminal block: lines starting with "$ ", without the prompt.
+  // Copy a terminal block: its "$ " command lines without the prompt, or all of it for data-copy="all".
   document.querySelectorAll('.term[data-copy]').forEach(function (term) {
     var button = document.createElement('button');
     button.type = 'button';
     button.className = 'copy';
     button.textContent = 'copy';
     button.addEventListener('click', function () {
-      var commands = term.querySelector('pre').innerText.split('\n')
+      var text = term.querySelector('pre').innerText;
+      var commands = term.dataset.copy === 'all' ? text : text.split('\n')
         .filter(function (line) { return line.indexOf('$ ') === 0; })
         .map(function (line) { return line.slice(2); })
         .join('\n');
