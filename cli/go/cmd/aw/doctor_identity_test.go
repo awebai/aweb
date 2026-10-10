@@ -31,7 +31,7 @@ type doctorIdentityFixture struct {
 func writeDoctorIdentityFixture(t *testing.T, registryURL string) doctorIdentityFixture {
 	t.Helper()
 	bin, tmp := buildDoctorBinary(t)
-	priv := writeDoctorGlobalFixture(t, tmp, "https://app.example.com/api")
+	priv := writeDoctorGlobalFixture(t, tmp, "https://app.example/api")
 	identity, err := awconfig.LoadWorktreeIdentityFrom(filepath.Join(tmp, awconfig.DefaultWorktreeIdentityRelativePath()))
 	if err != nil {
 		t.Fatalf("load identity: %v", err)

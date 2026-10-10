@@ -976,7 +976,7 @@ func TestTeamHumanCreateAgentDevNullMissingUsernameErrorsClearly(t *testing.T) {
 	oldStdin := os.Stdin
 	os.Stdin = devNull
 	t.Cleanup(func() { os.Stdin = oldStdin })
-	teamHumanCreateAgents = []string{"alice@aweb.team/developer=pi"}
+	teamHumanCreateAgents = []string{"alice@aweb.team/developer:local=pi"}
 
 	err = runTeamHumanCreate(nil, []string{"eng"})
 	if err == nil || !strings.Contains(err.Error(), "missing required flag: --username") || strings.Contains(strings.ToLower(err.Error()), "eof") {
@@ -1002,7 +1002,7 @@ func TestTeamHumanCreateAgentDevNullHostedUnavailableDoesNotFallbackPromptBYOD(t
 	os.Stdin = devNull
 	t.Cleanup(func() { os.Stdin = oldStdin })
 	teamHumanCreateUsername = "alice"
-	teamHumanCreateAgents = []string{"alice@aweb.team/developer=pi"}
+	teamHumanCreateAgents = []string{"alice@aweb.team/developer:local=pi"}
 
 	err = runTeamHumanCreate(nil, []string{"eng"})
 	if err == nil || !strings.Contains(err.Error(), "hosted onboarding is not available") || strings.Contains(strings.ToLower(err.Error()), "eof") || strings.Contains(err.Error(), "Domain:") {

@@ -851,7 +851,7 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 		"--subject", "Re",
 		"--body", "reply",
 	)
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1329,7 +1329,7 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "mail", "reply", "--plaintext", "msg-in", "--body", "reply")
-	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL)
+	run.Env = append(testCommandEnv(tmp), "AWEB_URL="+server.URL, "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

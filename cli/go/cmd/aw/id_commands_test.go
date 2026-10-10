@@ -180,7 +180,7 @@ func TestAwIDCommandsHappyPath(t *testing.T) {
 	runJSON := func(args ...string) map[string]any {
 		t.Helper()
 		run := exec.CommandContext(ctx, bin, args...)
-		run.Env = testCommandEnv(tmp)
+		run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL="+server.URL)
 		run.Dir = tmp
 		out, err := run.CombinedOutput()
 		if err != nil {

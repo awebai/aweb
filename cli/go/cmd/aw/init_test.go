@@ -904,6 +904,11 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	}
 	memberDID := awid.ComputeDIDKey(memberPub)
 	stableID := awid.ComputeStableID(memberPub)
+	registryURL := realAWIDFixture(t)
+	registry := awid.NewAWIDRegistryClient(nil, nil)
+	if _, err := registry.RegisterIdentity(context.Background(), registryURL, memberDID, stableID, memberKey); err != nil {
+		t.Fatalf("register real AWID fixture identity: %v", err)
+	}
 	var sawGlobalAccept bool
 	server := newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -937,7 +942,7 @@ func TestInitGlobalHostedJoinWithExistingIdentityInstallsGlobalCert(t *testing.T
 	if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(target), memberKey); err != nil {
 		t.Fatalf("save key: %v", err)
 	}
-	writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: memberDID, StableID: stableID, Address: "aweb.ai/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: awid.DefaultAWIDRegistryURL, CreatedAt: "2026-09-26T00:00:00Z"})
+	writeIdentityForTest(t, target, awconfig.WorktreeIdentity{DID: memberDID, StableID: stableID, Address: "aweb.ai/alice", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, RegistryURL: registryURL, CreatedAt: "2026-09-26T00:00:00Z"})
 	initGlobal = true
 	initName = "alice"
 	jsonFlag = true

@@ -344,6 +344,7 @@ func TestGuidedOnboardingBYODErrorsBubbleUpInsteadOfPanicking(t *testing.T) {
 	var out bytes.Buffer
 	_, err := executeGuidedOnboardingWizard(guidedOnboardingRequest{
 		WorkingDir: t.TempDir(),
+		BaseURL:    "http://127.0.0.1:1",
 		BYOD:       true,
 		PromptIn:   strings.NewReader("\nalice\nacme.com\n"),
 		PromptOut:  &out,

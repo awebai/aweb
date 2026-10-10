@@ -797,7 +797,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "eve", "workspace-1"))
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "bob", "hello there", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -830,7 +830,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	run = exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "bob", "--body-file", bodyFile, "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	if out, err := run.CombinedOutput(); err != nil {
 		t.Fatalf("body-file run failed: %v\n%s", err, string(out))
@@ -964,7 +964,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "eve", "workspace-1"))
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "bob", "hello there", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -1328,7 +1328,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 		"--body", "hello",
 		"--json",
 	)
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2086,7 +2086,7 @@ func TestAwMailInboxLogsStableIDWhenAddressMissing(t *testing.T) {
 	})
 
 	run := exec.CommandContext(ctx, bin, "mail", "inbox")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -2209,7 +2209,7 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 		"--body", "hello from log test",
 		"--subject", "log test",
 	)
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

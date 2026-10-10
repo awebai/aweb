@@ -366,7 +366,7 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "bob", "--body", "hello local", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -435,7 +435,7 @@ func TestChatSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-leave", "--plaintext", "acme/bot", "hello network", "--json")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -508,7 +508,7 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--plaintext", "--start-conversation", "aweb/merlin", "hello")
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err == nil {
