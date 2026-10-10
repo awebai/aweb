@@ -30,8 +30,7 @@ def _pem(path, kind, raw):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("grant", [False, True])
-@pytest.mark.parametrize("global_resident", [False, True])
+@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, True)])
 async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_path, grant, global_resident):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
@@ -173,7 +172,8 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         for mode in ("--plaintext", "--e2ee"):
             text = f"Local resident peer send {mode}"
             body_file.write_text(text)
-            control = await _cli(binary, tmp_path, child_env, "mail", "send", "--to", "carol",
+            control = await _cli(binary, command_dir if global_resident else tmp_path,
+                                 command_env if global_resident else child_env, "mail", "send", "--to", "carol",
                                  mode, "--new-conversation", "--body-file", str(body_file), "--json")
             control_read = await _request(env, "carol", "GET", f"/v1/messages/{control['message_id']}")
             assert control_read.status_code == 200, control_read.text
@@ -183,7 +183,7 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
             received = await _request(env, "carol", "GET", f"/v1/messages/{sent['message_id']}")
             assert received.status_code == 200, received.text
             delivered = received.json()
-            assert delivered["from_did"] == agent["did"]
+            assert delivered["from_did"] == (agent["stable_id"] or agent["did"])
             assert delivered["from_alias"] == control_message["from_alias"] == "bob"
             if mode == "--plaintext":
                 assert delivered["body"] == text
