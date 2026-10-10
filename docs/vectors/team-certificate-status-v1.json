@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "description": "Anonymous published-certificate status; active still requires signature verification against the current team key.",
+  "cases": [
+    {
+      "name": "active",
+      "http_status": 200,
+      "response": {
+        "team_id": "ops:vector-status.example",
+        "team_did_key": "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp",
+        "status": "active",
+        "revoked_at": null
+      }
+    },
+    {
+      "name": "revoked",
+      "http_status": 200,
+      "response": {
+        "team_id": "ops:vector-status.example",
+        "team_did_key": "did:key:z6MkiTBz1ymuepAQ4HEHYSF1H8quG5GLVVQR3djdX3mDooWp",
+        "status": "revoked",
+        "revoked_at": "2026-01-02T03:04:05+00:00"
+      }
+    }
+  ],
+  "not_found": {
+    "http_status": 404,
+    "response": {
+      "detail": "Certificate not found"
+    }
+  }
+}

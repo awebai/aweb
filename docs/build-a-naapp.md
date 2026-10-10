@@ -72,26 +72,38 @@ Before application side effects, perform every check:
    bounded cache. Refuse on revoked certificates or when a required refresh
    cannot establish complete state. Then apply your own team/resource policy.
 
-For team `engineering:example.com`, the current registry reads are
-`GET /v1/namespaces/example.com/teams/engineering` for team facts and the
-`/certificates` child route for certificate history. When deriving revocations
-from that listing, request `active_only=false` and follow every `next_cursor`
-until `has_more` is false. An active-only list or a partial page is not proof
-that a presented certificate is unrevoked. The repository's
-[Library verifier and paginated cache](../naapp/library/src/library/auth.py)
-show this pattern; [cache tests](../naapp/library/tests/test_awid_team_cache.py)
-cover the reads. Treat that code as an implementation example, not evidence
-about a separately deployed app's version.
+For an independent app without an operator credential, read
+`GET /v1/namespaces/example.com/teams/engineering/certificates/{certificate_id}/status`.
+This tokenless path is available from the AWID release that introduces `/status` (version to be named when cut); older registries, including awid.ai until that release is deployed there, return 404, which an independent app must treat as “unverifiable, refuse,” not an error to work around.
+This anonymous read works for public and private teams. It returns exactly
+`team_id`, the **current** `team_did_key`, `status` (`active` or `revoked`), and
+`revoked_at` (null for active). Require the expected team ID and a consistent
+response, verify the presented certificate against that current key, and refuse
+revoked certificates. An active result alone is never authentication: after key
+rotation, an old-key certificate may still have an active record but its
+signature no longer verifies. Cache by **both team ID and certificate ID**, for
+at most 60 seconds. On a failed refresh, refuse; never reuse expired facts.
 
-**Private-team prerequisite:** anonymous AWID reads can return `403 team_private`.
-Arrange registry read authority with the registry operator before promising
-private-team support. Current AWID supports its configured trusted service
-credential or authorized team-key reads; a credential for registry reads does
-not replace verification of the incoming member request. Do not reuse the
-app-targeted signature against AWID, request the member's private key, or treat
-a denied revocation read as an empty revocation set. Public manifest discovery
-does not provision this access. There is no automatic third-party credential
-issuance implied by this guide.
+**Publication prerequisite:** this status-based path requires a published
+certificate record. An unknown team, unknown certificate, or certificate from a
+different team returns the same 404 response; refuse authentication. The `aw`
+membership issuance paths publish certificates by default. A custom BYOT
+controller that signs outside `aw` must also publish member certificates using
+`POST /v1/namespaces/{domain}/teams/{name}/certificates` for independent apps to
+verify them. Publication is an availability requirement for this verifier, not
+a replacement for controller signatures. No operator token is needed.
+
+Apps already holding the registry's trusted service credential retain their
+team/history path. Read team facts, then certificate history with
+`active_only=false`, following every `next_cursor` until `has_more` is false;
+fail closed if a bound or error prevents completion. Private-team metadata,
+member lookup, certificate lists and revocations still require read authority;
+the narrow status route exposes no members, aliases, addresses or history.
+Do not reuse an app-targeted signature against AWID or ask for a member's key.
+The [Library verifier](../naapp/library/src/library/auth.py) demonstrates both
+paths, with [real-registry status tests](../naapp/library/tests/test_certificate_status.py)
+and [token cache tests](../naapp/library/tests/test_awid_team_cache.py). This is
+reference source, not a claim about any separately deployed app's version.
 
 Use every positive and negative case in the
 [team-auth v2 vectors](vectors/team-auth-envelope-v2.json), including wrong

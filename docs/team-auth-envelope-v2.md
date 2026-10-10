@@ -60,6 +60,16 @@ The verifier:
 8. Verifies the team certificate against AWID team authority and revocation
    state, and requires `certificate.member_did_key == signing did:key`.
 
+Independent applications without an operator token can obtain the current
+team key and revocation status from AWID's anonymous
+`/v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status`, even
+for private teams. This path requires a published certificate and refuses an
+unknown record. Cache per team and certificate for at most 60 seconds and fail
+closed on refresh failure. Active status never replaces certificate signature
+verification against the current team key; rotation invalidates old-key
+signatures. Existing token/history, server and CLI verification is unchanged.
+See [the registry contract](awid-sot.md#teams).
+
 The verifier must not trust request headers such as `Host` or
 `X-Forwarded-Host` for `aud`. Public origins are configuration, not caller
 input.
