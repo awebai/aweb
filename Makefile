@@ -265,8 +265,10 @@ test-awid-pooler:
 	set -e; \
 	trap 'docker compose -p awid-pooler -f $(CURDIR)/awid/tests/pooler/docker-compose.yml down -v --remove-orphans' EXIT; \
 	docker compose -p awid-pooler -f $(CURDIR)/awid/tests/pooler/docker-compose.yml up -d --wait; \
-	cd awid && AWID_TEST_POOLER_URL=postgresql://postgres:postgres@localhost:$${AWID_TEST_POOLER_PORT:-56433}/postgres \
-		UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q tests/test_database_session_settings.py
+	cd awid; \
+	UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen; \
+	AWID_TEST_POOLER_URL=postgresql://postgres:postgres@localhost:$${AWID_TEST_POOLER_PORT:-56433}/postgres \
+		UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_database_session_settings.py
 
 test-cli:
 	cd cli/go && go mod download
