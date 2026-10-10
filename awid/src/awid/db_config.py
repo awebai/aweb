@@ -16,15 +16,16 @@ def build_database_config(
     statement_cache_size: int | None = None,
     shared_pool_search_path: str | None = "pg_catalog",
     uses_transaction_pooler: bool = False,
+    pooler_max_connections: int = DEFAULT_TRANSACTION_POOLER_MAX_CONNECTIONS,
 ) -> DatabaseConfig:
     kwargs: dict[str, object] = {
         "connection_string": connection_string,
     }
 
     if uses_transaction_pooler:
-        effective_max = DEFAULT_TRANSACTION_POOLER_MAX_CONNECTIONS
+        effective_max = pooler_max_connections
         if max_connections is not None:
-            effective_max = min(max_connections, DEFAULT_TRANSACTION_POOLER_MAX_CONNECTIONS)
+            effective_max = min(max_connections, pooler_max_connections)
         effective_min = DEFAULT_TRANSACTION_POOLER_MIN_CONNECTIONS
         if min_connections is not None:
             effective_min = min(min_connections, effective_max)

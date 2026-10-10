@@ -34,6 +34,38 @@ Optional environment:
   authentication still apply. `awid_service_exempt` logs cumulative per-bucket,
   process-local exemption counts at 1, 2, 4, 8 and later powers of two; the token
   is never logged. See [the trust model](../docs/trust-model.md#trusted-awid-service-reads).
+- `AWID_DATABASE_USES_TRANSACTION_POOLER` default `false`. Set `true` when the
+  database URL points at a transaction pooler (PgBouncer, Neon `-pooler`
+  endpoints): asyncpg's statement cache is turned off and the pool is bounded.
+- `AWID_DATABASE_POOLER_MAX_CONNECTIONS` default `10`, the pool bound used with
+  the transaction pooler.
+- `AWID_DATABASE_STATEMENT_CACHE_SIZE` overrides the statement cache size.
+- `AWID_DATABASE_REQUIRE_SESSION_SETTINGS` default `false`. Set `true` to refuse
+  to start unless connections carry the `search_path` pin and the pgdbm
+  timeouts (`statement_timeout`, `lock_timeout`,
+  `idle_in_transaction_session_timeout`, `jit`).
+
+### Behind a transaction pooler
+
+pgdbm requests its `search_path` pin and timeouts as startup parameters, and a
+transaction pooler can drop them without an error; Neon's pooler does. Set them
+as defaults of the database role, which the server applies to every new
+connection:
+
+```sql
+ALTER ROLE <role> SET search_path TO pg_catalog;
+ALTER ROLE <role> SET statement_timeout = '60s';
+ALTER ROLE <role> SET lock_timeout = '5s';
+ALTER ROLE <role> SET idle_in_transaction_session_timeout = '60s';
+ALTER ROLE <role> SET jit = off;
+```
+
+Role defaults reach only new server connections, so refresh the pooler's
+connections afterwards, and confirm with
+`SELECT name, setting, source FROM pg_settings` that each shows `source = user`.
+Then set `AWID_DATABASE_USES_TRANSACTION_POOLER=true` and
+`AWID_DATABASE_REQUIRE_SESSION_SETTINGS=true`. `make test-awid-pooler` runs
+awid's checks through a real PgBouncer.
 
 ## Docker
 

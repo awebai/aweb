@@ -1,0 +1,35 @@
+# PostgreSQL behind a transaction-mode PgBouncer that drops the startup
+# parameters pgdbm requests, as Neon's pooler does. Used by
+# tests/test_database_session_settings.py via `make test-awid-pooler`.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  pgbouncer:
+    image: edoburu/pgbouncer@sha256:9c78945868a6a142c7fc40ccd843bbe5a606df163c7ffce4de70e0d628d696a2
+    environment:
+      DB_HOST: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      POOL_MODE: transaction
+      AUTH_TYPE: scram-sha-256
+      MAX_PREPARED_STATEMENTS: "0"
+      IGNORE_STARTUP_PARAMETERS: extra_float_digits,search_path,jit,statement_timeout,lock_timeout,idle_in_transaction_session_timeout
+    ports:
+      - "${AWID_TEST_POOLER_PORT:-56433}:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

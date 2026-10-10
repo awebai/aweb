@@ -4,12 +4,67 @@ import asyncio
 from pathlib import Path
 from typing import Any, Optional
 
-from pgdbm import AsyncDatabaseManager
+from pgdbm import AsyncDatabaseManager, DatabaseConfig
 from pgdbm.migrations import AsyncMigrationManager
 
 from awid.db_config import build_database_config
 
 from .config import get_settings
+
+# The pgdbm protections that travel as startup parameters besides the search_path
+# pin, which pgdbm verifies itself.
+REQUIRED_SESSION_SETTINGS = (
+    "statement_timeout",
+    "lock_timeout",
+    "idle_in_transaction_session_timeout",
+    "jit",
+)
+
+
+class DatabaseSessionSettingsError(RuntimeError):
+    """The database connection does not carry the session settings awid requires."""
+
+
+def database_config_from_settings(settings: Any) -> DatabaseConfig:
+    require = bool(getattr(settings, "database_require_session_settings", False))
+    return build_database_config(
+        connection_string=settings.database_url,
+        statement_cache_size=getattr(settings, "database_statement_cache_size", None),
+        uses_transaction_pooler=bool(getattr(settings, "database_uses_transaction_pooler", False)),
+        pooler_max_connections=int(getattr(settings, "database_pooler_max_connections", 10)),
+        shared_pool_search_path="pg_catalog" if require else None,
+    )
+
+
+async def verify_session_settings(pool: Any, config: DatabaseConfig) -> None:
+    """Fail closed unless a pooled connection carries the timeouts awid requests.
+
+    pgdbm sends them as startup parameters, which a transaction pooler may drop
+    without error; role or database defaults survive the pooler.
+    """
+    requested = config.get_server_settings()
+    names = [name for name in REQUIRED_SESSION_SETTINGS if name in requested]
+    async with pool.acquire() as conn:
+        role = await conn.fetchval("SELECT current_user")
+        rows = await conn.fetch(
+            "SELECT name, setting FROM pg_catalog.pg_settings WHERE name = ANY($1::text[])",
+            names,
+        )
+    effective = {row["name"]: row["setting"] for row in rows}
+    missing = [name for name in names if effective.get(name) != requested[name]]
+    if not missing:
+        return
+    lines = [f"  {name}: requested {requested[name]!r}, connection has {effective.get(name)!r}" for name in missing]
+    fixes = [f"  ALTER ROLE \"{role}\" SET {name} = '{requested[name]}';" for name in missing]
+    raise DatabaseSessionSettingsError(
+        "Database session settings were not applied; a connection pooler probably dropped "
+        "the startup parameters:\n"
+        + "\n".join(lines)
+        + "\nSet them as role defaults, which every new server connection applies:\n"
+        + "\n".join(fixes)
+        + "\nThen refresh the pooler's server connections and confirm with "
+        "SELECT name, setting, source FROM pg_settings."
+    )
 
 
 class AwidDatabaseInfra:
@@ -38,11 +93,14 @@ class AwidDatabaseInfra:
 
             if shared_pool is None:
                 settings = get_settings()
-                config = build_database_config(
-                    connection_string=settings.database_url,
-                    shared_pool_search_path=None,
-                )
+                config = database_config_from_settings(settings)
                 shared_pool = await AsyncDatabaseManager.create_shared_pool(config)
+                if getattr(settings, "database_require_session_settings", False):
+                    try:
+                        await verify_session_settings(shared_pool, config)
+                    except BaseException:
+                        await shared_pool.close()
+                        raise
                 self._owns_pool = True
             else:
                 self._owns_pool = False
