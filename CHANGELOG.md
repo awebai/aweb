@@ -5,7 +5,8 @@
 - `aw custody serve` now starts from legacy local API-key workspaces created
   by `aw init --alias`, using their existing team certificate and signing key
   without requiring or creating `identity.yaml`. Global metadata and key-binding
-  checks remain enforced.
+  checks remain enforced. Local grants keep the certificate member name without
+  inventing an address, allowing custody-signed mail to use the correct sender.
 
 - The wake broker now uses a short private control socket when its state path
   is too long for Unix sockets. It exits immediately if the control socket

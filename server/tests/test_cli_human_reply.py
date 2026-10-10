@@ -177,6 +177,18 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                 })
                 assert decrypted["body"] == text
 
+        # Also retain the ordinary send form, including existing-conversation
+        # lookup, rather than proving only --new-conversation sends.
+        default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
+                                  "--plaintext", "--body-file", str(body_file), "--json")
+        default_read = await _request(env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}")
+        assert default_read.status_code == 200, default_read.text
+        default_message = default_read.json()
+        assert default_message["body"] == body_file.read_text()
+        assert default_message["from_alias"] == "bob"
+        assert verify_signature(agent["did"], default_message["signed_payload"].encode(),
+                                default_message["signature"]) == VerifyResult.VERIFIED
+
 
 async def _cli(binary, cwd, env, *args):
     proc = await asyncio.create_subprocess_exec(str(binary), *args, cwd=cwd, env=env,

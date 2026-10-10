@@ -384,7 +384,10 @@ resident identity's ordinary message signature, run local resident custody from
 the resident home with `aw custody serve`. Local API-key workspaces created by
 `aw init --alias` are supported even though they intentionally omit
 `identity.yaml`: custody uses that workspace's active local team certificate
-and matching signing key. Run from the resident workspace, not inside `.aw`.
+and matching signing key. The certificate supplies the resident member name;
+local identities and newly minted local grants keep their address empty.
+Grant-signed mail uses the resident member name, without promoting it to a
+namespace address. Run from the resident workspace, not inside `.aw`.
 Missing global identity metadata, malformed identity files, and mismatched keys
 remain errors; custody does not create identity state or borrow another
 workspace's identity when an external home is selected. The grant home records the custody
