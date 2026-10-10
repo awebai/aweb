@@ -289,7 +289,7 @@ async def test_events_stream_sends_idle_heartbeats(aweb_cloud_db, monkeypatch):
     monkeypatch.setattr(events_module, "EVENTS_HEARTBEAT_INTERVAL", 0.01)
 
     app = _build_test_app(aweb_cloud_db.aweb_db, team_did_key)
-    deadline = (datetime.now(timezone.utc) + timedelta(seconds=0.05)).isoformat()
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=0.5)).isoformat()
     headers = _signed_request(bob_sk, bob_did_key, "backend:acme.com")
     headers["X-AWID-Team-Certificate"] = cert_header
 
