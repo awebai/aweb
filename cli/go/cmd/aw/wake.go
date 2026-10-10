@@ -113,17 +113,30 @@ var wakeRunCmd = &cobra.Command{
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
 
-		controlErr := make(chan error, 1)
-		go func() { controlErr <- wake.ServeControl(ctx, broker) }()
-
+		controlErr, err := wake.StartControl(ctx, broker)
+		if err != nil {
+			return err
+		}
 		fmt.Fprintf(cmd.OutOrStdout(), "wake broker listening: state_dir=%s socket=%s max_streams=%d\n",
 			store.Dir(), store.SocketPath(), broker.MaxStreams())
-
-		runErr := broker.Run(ctx)
-		if err := <-controlErr; err != nil && runErr == nil {
-			runErr = err
+		runErr := make(chan error, 1)
+		go func() { runErr <- broker.Run(ctx) }()
+		select {
+		case err := <-controlErr:
+			stop()
+			brokerErr := <-runErr
+			if err != nil {
+				return err
+			}
+			return brokerErr
+		case err := <-runErr:
+			stop()
+			control := <-controlErr
+			if err != nil {
+				return err
+			}
+			return control
 		}
-		return runErr
 	},
 }
 
