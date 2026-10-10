@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Release preparation: AWID 0.5.22
+
+Changes since `awid-service-v0.5.21` / `awid-v0.5.21`.
+
+- **Database session settings:** new `AWID_DATABASE_REQUIRE_SESSION_SETTINGS`
+  makes awid refuse to start unless sampled connections carry the
+  `search_path` pin (`pg_catalog`) and pgdbm's `statement_timeout`,
+  `lock_timeout`, `idle_in_transaction_session_timeout` and `jit` settings,
+  which a connection pooler or Neon can drop silently. The check samples at
+  least 20 concurrently held connections and is bounded by
+  `AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS` (default 30).
+  `AWID_DATABASE_USES_TRANSACTION_POOLER` turns off the statement cache and
+  bounds the pool for transaction poolers; `AWID_DATABASE_POOLER_MAX_CONNECTIONS`
+  and `AWID_DATABASE_STATEMENT_CACHE_SIZE` tune it. All default off, so an
+  unchanged deployment behaves as before. The awid README documents setting the
+  values through a direct endpoint's `options` URL parameter or role defaults,
+  and that migrations must schema-qualify under the pin.
+- **Certificate status:** `GET /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status`
+  returns the current team key and the certificate's active or revoked status,
+  for public and private teams, without member identities. It has its own
+  `certificate_status` rate-limit bucket.
+- No database migration accompanies this release.
+
 ### Release preparation: server 1.27.15 and CLI 1.36.32
 
 Server changes are since `server-v1.27.14`; CLI changes are since
