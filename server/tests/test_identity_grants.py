@@ -1546,7 +1546,7 @@ async def test_status_stream_real_handler_drops_coord_categories_without_coord_s
     await aweb_cloud_db.aweb_db.execute(
         """
         UPDATE {{tables.identity_session_grants}}
-        SET expires_at = NOW() + INTERVAL '100 milliseconds'
+        SET expires_at = NOW() + INTERVAL '2 seconds'
         WHERE grant_id = $1::UUID
         """,
         grant_id,
