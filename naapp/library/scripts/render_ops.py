@@ -28,7 +28,9 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 SCRIPT_PATH = Path(__file__).resolve()
-REPOSITORY_ROOT = SCRIPT_PATH.parents[1]
+# Library lives at naapp/library inside the aweb repository.
+APP_ROOT = SCRIPT_PATH.parents[1]
+REPOSITORY_ROOT = SCRIPT_PATH.parents[3]
 SCRIPT_RELATIVE_PATH = SCRIPT_PATH.relative_to(REPOSITORY_ROOT)
 API_BASE = "https://api.render.com/v1"
 IN_PROGRESS_STATUSES = {
@@ -738,6 +740,7 @@ class ProductionConfig:
     service_name: str
     region: str
     repo: str
+    root_dir: str
     branch: str
     origin_url: str
     public_url: str
@@ -762,6 +765,9 @@ class ProductionConfig:
             raise OpsError("production URLs must use https")
         if not config.health_path.startswith("/"):
             raise OpsError("health_path must be absolute")
+        root_dir = Path(config.root_dir)
+        if not config.root_dir or root_dir.is_absolute() or ".." in root_dir.parts:
+            raise OpsError("root_dir must be a relative path inside the repository")
         return config
 
 
@@ -937,6 +943,7 @@ def validate_service(service: dict[str, Any], config: ProductionConfig) -> None:
         "name": service.get("name"),
         "region": details.get("region"),
         "repo": service.get("repo"),
+        "rootDir": service.get("rootDir"),
         "branch": service.get("branch"),
         "url": details.get("url"),
         "suspended": service.get("suspended"),
@@ -947,6 +954,7 @@ def validate_service(service: dict[str, Any], config: ProductionConfig) -> None:
         "name": config.service_name,
         "region": config.region,
         "repo": config.repo,
+        "rootDir": config.root_dir,
         "branch": config.branch,
         "url": config.origin_url,
         "suspended": "not_suspended",
