@@ -55,7 +55,9 @@ test("packaged Claude MCP child inherits AWEB_IDENTITY_HOME and signs as the ext
   process.env.HOME = mkdtempSync(join(tmpdir(), "claude-channel-home-"));
   process.env.AWEB_IDENTITY_HOME = external.identityHome;
 
-  const launched = await launchPackagedMCPChild(channelRoot, workdir);
+  const launched = await launchPackagedMCPChild(channelRoot, workdir, {
+    AWEB_IDENTITY_HOME: process.env.AWEB_IDENTITY_HOME,
+  });
   child = launched.child;
   expect(launched.args).toEqual([join(channelRoot, "dist", "index.js")]);
 
