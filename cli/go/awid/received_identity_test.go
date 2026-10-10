@@ -1,6 +1,7 @@
 package awid
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,6 +24,30 @@ func TestReceivedCheckpointMalformedFile(t *testing.T) {
 			c.SetPinStore(ps, path)
 			if _, err := c.receivedCheckpoint("https://registry.test", "did:aw:sender"); err == nil {
 				t.Fatal("malformed persisted checkpoint accepted")
+			}
+		})
+	}
+}
+
+// Exercise the real pre-registry classification directly: a different selected
+// team provides no proof about this delivery, even when its attestation is active.
+func TestReceivedSenderOtherTeamIsUnproven(t *testing.T) {
+	c := &Client{resolver: &ChainResolver{
+		Team:                 &TeamRosterResolver{TeamID: "selected:example.test"},
+		DeliveryTeamRegistry: NewRegistryResolver(nil, nil),
+	}}
+	for _, tc := range []struct {
+		name, team, state, stable string
+		want                      VerificationStatus
+	}{
+		{"other team", "delivery:example.test", "active", "did:aw:sender", VerificationStale},
+		{"inactive", "selected:example.test", "inactive", "did:aw:sender", IdentityMismatch},
+		{"different member", "selected:example.test", "active", "did:aw:other", IdentityMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := c.NormalizeReceivedSenderTrust(context.Background(), Verified, "", "sender", "did:key:sender", "did:aw:sender", &SenderMembership{TeamID: tc.team, State: tc.state, MemberDIDAW: tc.stable}, nil, nil, nil)
+			if got != tc.want {
+				t.Fatalf("status = %s, want %s", got, tc.want)
 			}
 		})
 	}

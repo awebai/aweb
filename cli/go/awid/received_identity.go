@@ -68,8 +68,11 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 	// Team is configured from the selected authenticated membership, while
 	// identity-only HTTP clients intentionally leave c.teamID empty.
 	teamID := strings.TrimSpace(chain.Team.TeamID)
-	if membership.State != "active" || teamID == "" || membership.TeamID != teamID || membership.MemberDIDAW != stableID {
+	if membership.State != "active" || membership.MemberDIDAW != stableID {
 		return IdentityMismatch, nil
+	}
+	if teamID == "" || membership.TeamID != teamID {
+		return VerificationStale, nil
 	}
 	registryURL, registry, err := chain.DeliveryTeamRegistry.receivedRegistry(ctx, teamID)
 	if err != nil {
