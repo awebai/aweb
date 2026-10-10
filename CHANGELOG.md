@@ -2,39 +2,47 @@
 
 ## Unreleased
 
-- `aw custody serve` now starts from legacy local API-key workspaces created
-  by `aw init --alias`, using their existing team certificate and signing key
-  without requiring or creating `identity.yaml`. Global metadata and key-binding
-  checks remain enforced. Local grants keep the certificate member name without
-  inventing an address, allowing custody-signed mail to use the correct sender.
+### Release preparation: server 1.27.15 and CLI 1.36.32
 
-- The wake broker now uses a short private control socket when its state path
-  is too long for Unix sockets. It exits immediately if the control socket
-  cannot start, instead of reporting that it is listening. Restart the broker
-  after upgrading; state-directory overrides and short paths remain supported.
+Server changes are since `server-v1.27.14`; CLI changes are since
+`aw-v1.36.31`. CLI versioning remains tag-driven.
 
-- Custody now uses a short, private per-user socket path when a long resident
-  identity path would exceed Unix socket limits, including on macOS. Auto-minted
-  grants and custody status share this default; existing short paths and explicit
-  locators remain supported. Unsafe runtime ownership or symlinks are refused.
-
-### Grants: revocation-only lifetime
-
-- `aw id grant mint --ttl never` creates a grant without clock expiry and is now
-  the default. Explicit finite TTLs remain supported. Grant mint/list/status
-  report `expires_at: "never"`; upgrade the worker and restart its upgraded
-  custody host, which advertises `grant_never_ttl.v1`.
-- Never grants retain scope, subject and issuer checks. Owner revocation rejects
-  subsequent requests; open never-grant streams recheck on a 30-second cadence.
-  Storage uses the existing non-null expiry column, with no migration.
-
-### CLI: preserve incomplete global identity material
-
-- A hosted global-init response with a different DID now quarantines partial
-  signing material in a private timestamped `.rejected` file instead of deleting
-  it. Initialization refuses to create another key in that home until the
-  rejected state is reconciled. Ordinary incomplete-init failures retain the
-  original partial and explain how to resume with the same command and directory.
+- **Revocation-only grants:** `aw id grant mint --ttl never` creates a grant
+  without clock expiry and is now the default. Explicit finite TTLs remain
+  supported. Mint, list and status report `expires_at: "never"`. Upgrade the
+  worker and restart its upgraded custody host, which advertises
+  `grant_never_ttl.v1`. Scope, subject and issuer checks remain enforced;
+  revocation rejects subsequent requests, and open never-grant streams recheck
+  on a 30-second cadence. No database migration is required.
+- **Certificate verification for independent apps:** a per-certificate AWID
+  status read exposes the current team key and revocation status for public and
+  private teams without publishing member identities or a roster. Apps still
+  verify the certificate signature and fail closed on missing records or
+  refresh errors.
+- **Local custody and grant messaging:** `aw custody serve` starts from legacy
+  local API-key workspaces created by `aw init --alias`, using their existing
+  certificate and signing key without creating `identity.yaml`. Local grants
+  retain the member name without inventing an address. Plain and encrypted mail
+  use the correct resident identity, and conversation matching uses the grant
+  subject rather than its session key.
+- **Long socket paths:** custody and the wake broker use short private per-user
+  sockets when resident or state paths exceed Unix socket limits, including on
+  macOS. Existing short paths and explicit locators remain supported. The wake
+  broker fails immediately if its control socket cannot start. Restart custody
+  and the wake broker after upgrading.
+- **Incomplete global initialization:** a hosted response with a different DID
+  quarantines partial signing material in a private `.rejected` file instead of
+  deleting it. Initialization refuses a new key in that home until the rejected
+  state is reconciled. Other incomplete-init failures preserve the original
+  partial and explain how to resume.
+- **App event subscriptions:** resident `aw plugin install` registers declared
+  events and emitter keys and subscribes the installer at each default intent.
+  Other residents can opt in with `aw events subscribe`. Updates preserve
+  subscription choices. Identity-free discovery installs still populate the
+  local store without granting permissions or enabling subscriptions.
+- **Test harnesses:** isolate channel and CLI-reference subprocesses from
+  inherited identity settings and allow stream timing tests enough time for
+  authentication before checking heartbeats or expiry.
 
 ### Release preparation: CLI 1.36.31
 
