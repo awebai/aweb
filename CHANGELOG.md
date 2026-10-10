@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The wake broker now uses a short private control socket when its state path
+  is too long for Unix sockets. It exits immediately if the control socket
+  cannot start, instead of reporting that it is listening. Restart the broker
+  after upgrading; state-directory overrides and short paths remain supported.
+
 - Custody now uses a short, private per-user socket path when a long resident
   identity path would exceed Unix socket limits, including on macOS. Auto-minted
   grants and custody status share this default; existing short paths and explicit

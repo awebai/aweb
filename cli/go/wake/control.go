@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/awebai/aw/internal/custodypath"
 	"net"
 	"os"
 	"strings"
@@ -62,43 +63,60 @@ const controlDeadline = 5 * time.Second
 // can be named.
 const maxSocketPath = 100
 
-// ServeControl listens on the store's control socket until ctx is done.
-func ServeControl(ctx context.Context, b *Broker) error {
+// StartControl binds synchronously, then serves until cancellation. A successful
+// return is the readiness boundary: the socket exists and can accept clients.
+func StartControl(ctx context.Context, b *Broker) (<-chan error, error) {
 	path := b.cfg.Store.SocketPath()
 	if len(path) > maxSocketPath {
-		return fmt.Errorf("wake: control socket path is %d bytes, over the %d-byte unix socket limit: %s. Use a shorter --state-dir (or AW_WAKE_STATE_DIR)", len(path), maxSocketPath, path)
+		return nil, fmt.Errorf("wake: control socket path is %d bytes, over the %d-byte unix socket limit: %s", len(path), maxSocketPath, path)
 	}
-	// A socket left by a crashed daemon is stale by the time the lock has been
-	// taken, so removing it is safe and is what makes restart unconditional.
+	if err := custodypath.Prepare(path); err != nil {
+		return nil, fmt.Errorf("wake: control socket: %w", err)
+	}
+	// The caller holds the daemon lock, so any existing safe socket is stale.
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+		return nil, fmt.Errorf("wake: control socket: %w", err)
 	}
 	listener, err := net.Listen("unix", path)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("wake: control socket: %w", err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = listener.Close()
+		return nil, err
+	}
+	served := make(chan error, 1)
+	go func() { served <- serveControl(ctx, b, listener) }()
+	return served, nil
+}
+
+// ServeControl retains the blocking interface for embedded callers.
+func ServeControl(ctx context.Context, b *Broker) error {
+	served, err := StartControl(ctx, b)
+	if err != nil {
 		return err
 	}
+	return <-served
+}
 
+func serveControl(ctx context.Context, b *Broker, listener net.Listener) error {
+	defer listener.Close()
+	stopped := make(chan struct{})
+	defer close(stopped)
 	go func() {
-		<-ctx.Done()
-		_ = listener.Close()
-		_ = os.Remove(path)
+		select {
+		case <-ctx.Done():
+			_ = listener.Close()
+		case <-stopped:
+		}
 	}()
-
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			if errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			b.cfg.Log("control accept failed err=%v", err)
-			continue
+			return fmt.Errorf("wake: control accept: %w", err)
 		}
 		go handleControlConn(ctx, b, conn)
 	}
@@ -188,6 +206,12 @@ func callWithTimeout(socketPath string, req ControlRequest, timeout time.Duratio
 			return fmt.Errorf("E_WAKE_STOP_UNKNOWN: control transport: %w", err)
 		}
 		return fmt.Errorf("%w: %v", ErrDaemonDown, err)
+	}
+	if err := custodypath.Check(socketPath); err != nil {
+		if os.IsNotExist(err) {
+			return ControlResponse{}, transportError(err)
+		}
+		return ControlResponse{}, fmt.Errorf("wake: control socket: %w", err)
 	}
 	deadline := time.Now().Add(timeout)
 	conn, err := net.DialTimeout("unix", socketPath, timeout)

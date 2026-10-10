@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"github.com/awebai/aw/internal/custodypath"
 	"github.com/awebai/aw/wake"
 	"os"
 	"os/exec"
@@ -24,7 +26,7 @@ func TestWakeControlStartup(t *testing.T) {
 	}
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
-	for _, name := range []string{"long-default-home", "short-state-override", "unservable"} {
+	for _, name := range []string{"long-default-home", "short-state-override", "unservable", "unsafe-shortened-socket"} {
 		t.Run(name, func(t *testing.T) {
 			home := filepath.Join(root, name, strings.Repeat("h", 120))
 			if err := os.MkdirAll(home, 0700); err != nil {
@@ -41,7 +43,7 @@ func TestWakeControlStartup(t *testing.T) {
 			env = append(env, "HOME="+home, "XDG_CONFIG_HOME="+home, "AW_NO_UPDATE_CHECK=1")
 			stateDir := filepath.Join(home, ".config", "aw", "wake")
 			flags := []string{}
-			if name != "long-default-home" {
+			if name == "short-state-override" || name == "unservable" {
 				short, err := os.MkdirTemp("", "aw-wake-")
 				if err != nil {
 					t.Fatal(err)
@@ -54,13 +56,30 @@ func TestWakeControlStartup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if name == "unservable" {
+			if name == "unservable" || name == "unsafe-shortened-socket" {
 				path := store.SocketPath()
-				if err := os.Mkdir(path, 0700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(path, "keep"), []byte("occupied"), 0600); err != nil {
-					t.Fatal(err)
+				if name == "unsafe-shortened-socket" {
+					if err := custodypath.Prepare(path); err != nil {
+						t.Fatal(err)
+					}
+					target := filepath.Join(home, "target")
+					if err := os.WriteFile(target, []byte("keep"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Symlink(target, path); err != nil {
+						t.Fatal(err)
+					}
+					defer os.Remove(path)
+					if _, err := wake.Call(path, wake.ControlRequest{Op: wake.OpStatus}); err == nil || errors.Is(err, wake.ErrDaemonDown) {
+						t.Fatalf("unsafe path treated as absent: %v", err)
+					}
+				} else {
+					if err := os.Mkdir(path, 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(path, "keep"), []byte("occupied"), 0600); err != nil {
+						t.Fatal(err)
+					}
 				}
 				startup, stop := context.WithTimeout(ctx, 3*time.Second)
 				defer stop()
