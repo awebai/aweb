@@ -99,9 +99,14 @@ func TestParseGrantScopesExpandsNormalAgentBundle(t *testing.T) {
 	}
 }
 
-func TestRunGrantMintWritesGrantHome(t *testing.T)      { testRunGrantMintWritesGrantHome(t, false) }
-func TestRunGrantMintNeverWritesGrantHome(t *testing.T) { testRunGrantMintWritesGrantHome(t, true) }
-func testRunGrantMintWritesGrantHome(t *testing.T, never bool) {
+func TestRunGrantMintWritesGrantHome(t *testing.T) { testRunGrantMintWritesGrantHome(t, false, false) }
+func TestRunGrantMintNeverWritesGrantHome(t *testing.T) {
+	testRunGrantMintWritesGrantHome(t, true, false)
+}
+func TestRunGrantMintDefaultNeverWritesGrantHome(t *testing.T) {
+	testRunGrantMintWritesGrantHome(t, true, true)
+}
+func testRunGrantMintWritesGrantHome(t *testing.T, never, omitTTL bool) {
 	resetGrantCommandGlobals(t)
 	expiry := "2026-08-12T08:00:00Z"
 	if never {
@@ -156,7 +161,11 @@ func testRunGrantMintWritesGrantHome(t *testing.T, never bool) {
 	if never {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-		command := exec.CommandContext(ctx, binaryPath, "id", "grant", "mint", "--scope", "mail.read,mail.send,chat.read", "--ttl", "never", "--label", "worker", "--out", outDir, "--json")
+		args := []string{"id", "grant", "mint", "--scope", "mail.read,mail.send,chat.read", "--label", "worker", "--out", outDir, "--json"}
+		if !omitTTL {
+			args = append(args, "--ttl", "never")
+		}
+		command := exec.CommandContext(ctx, binaryPath, args...)
 		command.Dir = tmp
 		command.Env = append(os.Environ(), "AW_NO_UPDATE_CHECK=1")
 		output, err := command.CombinedOutput()
