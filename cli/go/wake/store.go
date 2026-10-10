@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/awebai/aw/internal/custodypath"
@@ -55,6 +56,11 @@ var wakeRename = os.Rename
 
 type Store struct {
 	dir string
+
+	// A status writer reuses its own private scratch name. Unique names on every
+	// periodic refresh otherwise accumulate reclaimable VFS metadata while idle.
+	statusMu   sync.Mutex
+	statusTemp string
 }
 
 // NewStore returns a Store rooted at dir, creating the directory tree.
@@ -672,7 +678,9 @@ func (s *Store) ResetInstanceLifecycle(home string) error {
 
 // SaveStatus writes the status snapshot the CLI reads when the daemon is down.
 func (s *Store) SaveStatus(status Status) error {
-	return writeJSONAtomic(s.StatusPath(), status)
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	return writeJSONAtomicWithTempName(s.StatusPath(), status, &s.statusTemp)
 }
 
 // LoadStatus reads the last status snapshot.
@@ -683,6 +691,13 @@ func (s *Store) LoadStatus() (Status, bool, error) {
 }
 
 func writeJSONAtomic(path string, value any) error {
+	return writeJSONAtomicWithTempName(path, value, nil)
+}
+
+// reusable is owned by a serialized writer, never shared between Store objects.
+// Recreate exclusively: an unexpected file or symlink is a failure, not a path
+// to truncate or remove. Only files created by this call enter cleanup below.
+func writeJSONAtomicWithTempName(path string, value any, reusable *string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -691,7 +706,15 @@ func writeJSONAtomic(path string, value any) error {
 		return err
 	}
 	data = append(data, '\n')
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
+	var tmp *os.File
+	if reusable == nil || *reusable == "" {
+		tmp, err = os.CreateTemp(filepath.Dir(path), ".tmp-*")
+		if err == nil && reusable != nil {
+			*reusable = tmp.Name()
+		}
+	} else {
+		tmp, err = os.OpenFile(*reusable, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	}
 	if err != nil {
 		return err
 	}
