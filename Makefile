@@ -1,3 +1,7 @@
+# Only the internal-network Docker runner clears this prefix. Native suites use
+# the proxy; the hard runner instead preserves DNS/connection error semantics.
+TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
+
 .PHONY: help clean test test-shipping test-server test-awid test-cli test-node-deps test-channel test-channel-name-live-contract test-channel-core test-channel-core-process-guard test-pi-extension release-candidate release-publish test-sot-source-inventories test-vector-provenance test-federation-error-reference regenerate-federation-error-reference test-cli-reference regenerate-cli-reference test-mcp-tools-reference prepare-oats-test-root check-oats-launch-environment-contract check-oats-pi-launch-order test-oats test-oats-proof-helpers test-tmux-guard test-a2a test-e2e test-federation-harness test-federation-e2e test-a2a-gateway-e2e check-a2a-copy-guardrails check-extension-docs build \
 	freshness check-go-vulnerability-audit check-node-audit check-exception-deadlines test-go-vulnerability-audit \
 	selfhost-up selfhost-down selfhost-logs awid-up awid-down awid-logs \
@@ -105,7 +109,7 @@ build:
 #
 # These cheap committed-source controls run first on every ordinary test run.
 # The expensive complete release proof is owned by the clean local-Docker gate.
-test: check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
+test: test-egress-controls check-aw-commit-repo-stamp check-cli-go-tidy test-python-locks test-sot-source-inventories test-vector-provenance test-federation-error-reference test-federation-authority-mutations test-federation-harness test-cli-reference test-mcp-tools-reference test-server test-awid test-cli test-channel test-channel-name-live-contract test-channel-core test-pi-extension test-oats test-oats-proof-helpers test-tmux-guard test-release-cli-version test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish test-go-vulnerability-audit
 
 test-shipping:
 	python3 scripts/test_shipping.py
@@ -149,9 +153,10 @@ test-federation-authority-mutations:
 # The direct-core historical harness inventories all 51 contract rows without
 # claiming ingress coverage and kills topology/provenance weakening mutations.
 test-federation-harness:
+	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	python3 scripts/check_federation_harness.py
 	python3 scripts/check_federation_harness.py --self-test
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q tests/test_federation_preactivation_harness.py
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q tests/test_federation_preactivation_harness.py
 
 # The public CLI inventory comes from live Cobra help. Root completion is an
 # independent exact-set control so grouped and Additional Commands cannot vanish
@@ -248,13 +253,17 @@ verify-site: check-awid-site-docs
 	cd awid/site && hugo --minify --cleanDestinationDir
 
 test-server:
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
+	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 test-awid:
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 test-cli:
-	cd cli/go && GOCACHE=/tmp/go-build go test ./... -count=1
+	cd cli/go && go mod download
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
+	cd cli/go && GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1
 
 # The Node suites have separate lockfiles and a local file: dependency from the
 # host adapters to channel-core. Install all three before any Node test target
@@ -267,7 +276,7 @@ test-node-deps:
 test-channel test-channel-core test-pi-extension: test-node-deps
 
 test-channel:
-	cd channel && npm test
+	cd channel && $(TEST_EGRESS_RUNNER) npm test
 
 test-channel-name-live-contract:
 	python3 scripts/e2e/test_channel_name_live_contract.py
@@ -291,7 +300,7 @@ test-channel-integration:
 # channel-core holds the identity, trust, pinstore and signature-decode logic
 # that channel and pi-extension are both built from, so its suite gates them.
 test-channel-core:
-	cd channel-core && npm test
+	cd channel-core && $(TEST_EGRESS_RUNNER) npm test
 
 # The multi-process DeliveryStore guard spawns 16 real subprocesses, enough to
 # blow unrelated timing deadlines elsewhere on a shared machine (default-aadj),
@@ -302,7 +311,7 @@ test-channel-core-process-guard:
 	cd channel-core && npm run test:process-guard
 
 test-pi-extension:
-	cd pi-extension && npm test
+	cd pi-extension && $(TEST_EGRESS_RUNNER) npm test
 
 prepare-oats-test-root:
 	@if [ "$(abspath $(OATS_TEST_ROOT))" = "$(abspath $(OATS_PINNED_ROOT))" ]; then \
@@ -440,12 +449,14 @@ check-cli-release-vcs-stamps:
 	./scripts/check-cli-release-vcs-stamps.sh
 
 check-server-locked-suite:
+	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	cd server && uv lock --check
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
+	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 check-awid-locked-suite:
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
 	cd awid && uv lock --check
-	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache uv run --frozen pytest -q
+	cd awid && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 # ── awid.ai static-site deployment ─────────────────────────────────
 
@@ -500,13 +511,13 @@ _candidate-node-deps:
 	cd pi-extension && npm ci --no-audit --no-fund
 
 _candidate-unit-channel:
-	cd channel && npm test
+	cd channel && $(TEST_EGRESS_RUNNER) npm test
 
 _candidate-unit-channel-core:
-	cd channel-core && npm test
+	cd channel-core && $(TEST_EGRESS_RUNNER) npm test
 
 _candidate-unit-pi:
-	cd pi-extension && npm test
+	cd pi-extension && $(TEST_EGRESS_RUNNER) npm test
 
 _candidate-oats: check-oats-launch-environment-contract check-oats-pi-launch-order
 	PATH="$(CURDIR)/cli/go:$(CURDIR)/pi-extension/node_modules/.bin:$$PATH" OATS_TEST_ROOT="$(OATS_TEST_ROOT)" node --test oats/test/*.test.mjs
@@ -580,3 +591,11 @@ clean:
 	find . -type d -name test-results -exec rm -rf {} + 2>/dev/null || true
 	find . -name .DS_Store -delete 2>/dev/null || true
 	@echo "Clean."
+
+.PHONY: test-isolated
+test-isolated:
+	python3 scripts/test-egress/docker.py --evidence "$${TEST_EGRESS_EVIDENCE:-/tmp/aweb-test-egress-$$(date +%s)}"
+
+.PHONY: test-egress-controls
+test-egress-controls:
+	python3 -m unittest discover -s scripts/test-egress -p test_native.py -v

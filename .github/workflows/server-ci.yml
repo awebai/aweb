@@ -56,6 +56,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -76,15 +78,8 @@ jobs:
           /tmp/aweb-wheel-smoke/bin/pip install dist/*.whl
           /tmp/aweb-wheel-smoke/bin/aweb --help
 
-      - name: Run server test suite
-        working-directory: server
-        env:
-          PGHOST: localhost
-          PGPORT: 5432
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: postgres
-        run: uv run pytest
+      - name: Run server test suite without external network access
+        run: python3 scripts/test-egress/docker.py --evidence "${{ runner.temp }}/server-egress" test-server
 
       - name: Validate compose file
         working-directory: server

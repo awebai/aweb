@@ -23,13 +23,7 @@ run test-cli-reference
 run test-mcp-tools-reference
 run _candidate-channel-version
 run _candidate-node-deps
-run test-server
-run test-awid
-run test-cli
-run _candidate-unit-channel
-run test-channel-name-live-contract
-run _candidate-unit-channel-core
-run _candidate-unit-pi
+TEST_EGRESS_EVIDENCE="$CANDIDATE_LOG_DIR/test-egress" run test-isolated
 run check-a2a-copy-guardrails
 run test-go-vulnerability-audit
 run test-release-cli-version
