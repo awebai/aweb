@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Release preparation: AWID 0.5.23
+
+Changes since `awid-service-v0.5.22` / `awid-v0.5.22`.
+
+- **Session-settings check startup time:** with
+  `AWID_DATABASE_REQUIRE_SESSION_SETTINGS=true`, the startup check now acquires
+  each sampling round's connections concurrently instead of one at a time. Its
+  duration no longer grows with the number of new connections a round opens, so
+  a slow-to-connect database endpoint no longer makes a restart time out and
+  refuse to start. On failure or timeout, every connection already acquired is
+  released. The timeout message names both causes: slow connection
+  establishment, or a pooler serving fewer server connections than the pool
+  size. Sample count, round width and fail-closed behavior are unchanged.
+- No AWID database migration is added, and the bundled `server/src` is unchanged
+  since 0.5.22.
+
 - Start local-resident custody correctly when the working directory is reached
   through a symlink, including macOS temporary-directory aliases.
 
