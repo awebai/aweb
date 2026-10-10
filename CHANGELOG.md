@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Start local-resident custody correctly when the working directory is reached
+  through a symlink, including macOS temporary-directory aliases.
+
 ### Release preparation: AWID 0.5.22
 
 Changes since `awid-service-v0.5.21` / `awid-v0.5.21`.

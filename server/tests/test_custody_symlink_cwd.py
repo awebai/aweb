@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from awid.signing import canonical_json_bytes, sign_message
 
 from test_cli_human_reply import _cli, _pem
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
@@ -26,6 +27,10 @@ async def test_local_custody_from_symlink_cwd(privacy_app, tmp_path):
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE team_id=$2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key=$1 WHERE name=$2", team_did, TEAM.split(":", 1)[0])
     cert = _make_certificate(team_sk, team_did, actor.did, team_id=TEAM, alias="bob", identity_scope="local")
+    # Match the public CLI certificate encoding: omit absent local fields.
+    for field in ("signature", "member_did_aw", "member_address"):
+        cert.pop(field)
+    cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
     cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
     (home / "team-certs").mkdir(mode=0o700)
     (home / cert_path).write_text(json.dumps(cert))
@@ -58,7 +63,7 @@ async def test_local_custody_from_symlink_cwd(privacy_app, tmp_path):
                 if status["status"] == "running":
                     assert status["resident"]["did_key"] == actor.did
                     assert status["resident"]["alias"] == "bob"
-                    assert status["keys"]["signing_ready"]
+                    assert status["keys"]["signing_ready"], status
                     break
                 await asyncio.sleep(0.05)
             else:
