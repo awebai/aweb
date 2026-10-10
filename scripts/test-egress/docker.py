@@ -84,8 +84,9 @@ def main():
         for name, command in [('postgres:17', ['-e', 'POSTGRES_PASSWORD=postgres']), ('redis:7', [])]:
             containers.append(docker('run', '-d', '--network', 'container:' + runner,
                                      '--cpus', '1', '--memory', '1g', '--pids-limit', '512', *command, name))
+        # The entrypoint's temporary initialization server has a socket but no TCP listener.
         for _ in range(60):
-            if subprocess.run(['docker', 'exec', containers[-2], 'pg_isready', '-U', 'postgres'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            if subprocess.run(['docker', 'exec', containers[-2], 'pg_isready', '-h', '127.0.0.1', '-U', 'postgres'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
                 break
             time.sleep(.5)
         else:
