@@ -276,9 +276,9 @@ def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
 
 
 @contextmanager
-def _running_library(*, awid_service_token: str | None) -> Iterator[RunningLibrary]:
+def _running_library(*, awid_service_token: str | None, registry_url: str = AWID_URL) -> Iterator[RunningLibrary]:
     _require_e2e_enabled()
-    _wait_http_ok(f"{AWID_URL}/health")
+    _wait_http_ok(f"{registry_url}/health")
 
     backend_port = _free_port()
     proxy_port = _free_port()
@@ -302,7 +302,7 @@ def _running_library(*, awid_service_token: str | None) -> Iterator[RunningLibra
         {
             "RENDER_GIT_COMMIT": E2E_BUILD_SHA,
             "LIBRARY_DATABASE_URL": POSTGRES_URL,
-            "LIBRARY_AWID_REGISTRY_URL": AWID_URL,
+            "LIBRARY_AWID_REGISTRY_URL": registry_url,
             "LIBRARY_AUTH_CACHE_TTL_SECONDS": "2",
             "LIBRARY_PUBLIC_ORIGIN": proxy_origin,
         }
