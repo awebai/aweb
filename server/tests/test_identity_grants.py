@@ -1963,4 +1963,3 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     for response in (delete_task, ensure_repo, reset_roles, reset_instructions, delete_workspace):
         assert response.status_code == 403
         assert response.json()["detail"] == "outside grant scope"
-

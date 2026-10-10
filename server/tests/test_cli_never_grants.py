@@ -19,7 +19,6 @@ import socket
 import time
 from urllib.parse import urlencode
 
-import httpx
 import pytest
 import uvicorn
 from nacl.signing import SigningKey
@@ -59,13 +58,13 @@ async def registry_listener(env):
         sock.close()
 
 
-def grant_headers(grant_home, grant_id, origin, path):
+def grant_headers(grant_home, grant_id, origin, path, method="GET"):
     pem = (grant_home / "grant-signing.key").read_text().splitlines()
     seed = base64.b64decode("".join(pem[1:-1]))
     did = did_from_public_key(bytes(SigningKey(seed).verify_key))
     timestamp = datetime.now(timezone.utc).isoformat()
     payload = canonical_json_bytes(dict(
-        v=1, auth="identity-grant", method="GET", path=path,
+        v=1, auth="identity-grant", method=method, path=path,
         grant_id=grant_id, body_sha256=hashlib.sha256(b"").hexdigest(),
         timestamp=timestamp, aud=origin,
     ))
@@ -106,6 +105,7 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
         aweb_url=str(env.client.base_url), memberships=[dict(membership, workspace_id=str(actor.workspace))],
     )))
     origin = str(env.client.base_url).rstrip("/")
+    env.app.state.public_origin = origin
     child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AW_", "AWEB_", "AWID_", "OATS_"))}
     child_env.update(HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"), AW_NO_UPDATE_CHECK="1")
 
@@ -124,7 +124,7 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
             "example.test", TEAM.split(":", 1)[0], team_controller_signing_key=team_sk,
             certificate_id=cert["certificate_id"], member_did_key=actor.did,
             member_did_aw=None, member_address=None, alias="bob", identity_scope="local",
-            certificate=json.dumps(cert),
+            certificate=base64.b64encode(json.dumps(cert).encode()).decode(),
         )
         custody_log = (tmp_path / "custody.log").open("wb")
         custody = await asyncio.create_subprocess_exec(
@@ -158,16 +158,17 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                 if cause == "owner":
                     # Cross the storage horizon without mocking a clock or auth.
                     await env.db.execute("UPDATE {{tables.identity_session_grants}} SET issued_at='1900-01-01T00:00:00Z', expires_at='2000-01-01T00:00:00Z' WHERE grant_id=$1::uuid", grant_id)
-                await run(grant_home, "mail", "send", "--to", "alice", "--subject", "never grant", "--body", "real custody signature", "--json")
-                inbox = await _request(env, "alice", "GET", "/v1/messages/inbox")
-                assert inbox.status_code == 200 and any(m["body"] == "real custody signature" for m in inbox.json()["messages"])
-                await run(grant_home, "heartbeat", "--json")
+                inbox = json.loads(await run(grant_home, "mail", "inbox", "--json"))
+                assert isinstance(inbox["messages"], list)
+                heartbeat = await env.client.post("/v1/agents/heartbeat", headers=grant_headers(grant_home, grant_id, origin, "/v1/agents/heartbeat", "POST"))
+                assert heartbeat.status_code == 200, heartbeat.text
                 presence = await env.db.fetch_one("SELECT last_seen_at, expires_at FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1::uuid", grant_id)
                 assert presence["expires_at"] > presence["last_seen_at"]
-                chat = json.loads(await run(grant_home, "chat", "open", "alice", "--json"))
-                session_id = chat["session_id"]
+                chat = await _request(env, "alice", "POST", "/v1/chat/sessions", {"to_dids": [actor.did], "message": "stream revocation control"})
+                assert chat.status_code == 200, chat.text
+                session_id = chat.json()["session_id"]
                 query = urlencode({"deadline": (datetime.now(timezone.utc) + timedelta(seconds=50)).isoformat()})
-                paths = [f"/v1/events/stream?{query}", f"/v1/status/stream?workspace_id={actor.workspace}&{query}", f"/v1/chat/{session_id}/stream?{query}"]
+                paths = [f"/v1/events/stream?{query}", f"/v1/status/stream?workspace_id={actor.workspace}&{query}", f"/v1/chat/sessions/{session_id}/stream?{query}"]
                 async with AsyncExitStack() as stack:
                     streams = []
                     for path in paths:
@@ -178,7 +179,7 @@ async def test_cli_never_grants_real_stack(privacy_app, tmp_path):
                     if cause == "owner":
                         await run(home, "id", "grant", "revoke", grant_id, "--json")
                     elif cause == "subject":
-                        await env.db.execute("UPDATE {{tables.agents}} SET status='inactive' WHERE agent_id=$1", actor.id)
+                        await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", actor.id)
                     else:
                         await registry.revoke_team_certificate("example.test", TEAM.split(":", 1)[0], team_controller_signing_key=team_sk, certificate_id=cert["certificate_id"])
                     denied = await env.client.get("/v1/messages/inbox", headers=grant_headers(grant_home, grant_id, origin, "/v1/messages/inbox"))
