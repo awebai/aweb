@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { childEnvironment } from "./child_env.js";
 
 export interface MCPInitializeResult {
   capabilities?: { experimental?: Record<string, unknown> };
@@ -17,7 +18,7 @@ export interface PackagedMCPChild {
   stderr: () => string;
 }
 
-export async function launchPackagedMCPChild(channelRoot: string, cwd: string): Promise<PackagedMCPChild> {
+export async function launchPackagedMCPChild(channelRoot: string, cwd: string, environment: NodeJS.ProcessEnv = {}): Promise<PackagedMCPChild> {
   const definition = JSON.parse(readFileSync(join(channelRoot, ".mcp.json"), "utf8")) as {
     mcpServers: Record<string, { command: string; args: string[] }>;
   };
@@ -30,10 +31,11 @@ export async function launchPackagedMCPChild(channelRoot: string, cwd: string): 
   const [declarationName, server] = entry;
   const args = server.args.map((value) => value.replaceAll("${CLAUDE_PLUGIN_ROOT}", channelRoot));
 
-  // Deliberately omit spawn's env option: packaged MCP children must inherit
-  // the parent process environment rather than receive a test-only copy.
+  // Each fixture selects the aweb settings it exercises; runner settings
+  // must not select an unrelated identity, delivery mode or diagnostic file.
   const child = spawn(server.command, args, {
     cwd,
+    env: childEnvironment(environment),
     stdio: ["pipe", "pipe", "pipe"],
   });
   let stderr = "";
