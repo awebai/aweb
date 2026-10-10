@@ -1,6 +1,5 @@
-# Dependencies are fetched during image preparation, before any test runs.
-ARG TOOLS_IMAGE=aweb-test-tools
-FROM ${TOOLS_IMAGE}
+# Appended to candidate-gate/Dockerfile by docker.py for one image build.
+# Dependencies are fetched during preparation, before any test runs.
 RUN useradd --uid 1000 --create-home test-runner
 ENV UV_CACHE_DIR=/tmp/uv-cache HOME=/home/test-runner
 WORKDIR /src

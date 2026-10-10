@@ -34,12 +34,10 @@ def main():
     (evidence / 'source-status').write_text(subprocess.check_output(['git', '-C', str(ROOT), 'status', '--short'], text=True))
     token = 'aw-egress-' + uuid.uuid4().hex[:12]
     image = args.image or token
-    tools_image = token + '-tools'
     containers = []
     network = None
     try:
         if not args.image:
-            subprocess.run(['docker', 'build', '-t', tools_image, str(ROOT / 'candidate-gate')], check=True)
             # Copy only source files and a self-contained Git bundle. A worktree's
             # .git file points outside it and cannot be copied into the runner.
             with tempfile.TemporaryDirectory(prefix='aw-egress-source-') as tmp:
@@ -55,8 +53,15 @@ def main():
                         data = destination.readlink().as_posix().encode() if destination.is_symlink() else destination.read_bytes()
                         hashes.append(hashlib.sha256(data).hexdigest() + "  " + name)
                 (evidence / 'source-files.sha256').write_text('\n'.join(hashes) + '\n')
-                subprocess.run(['docker', 'build', '--build-arg', 'TOOLS_IMAGE=' + tools_image,
-                                '-f', str(Path(tmp) / 'scripts/test-egress/Dockerfile'), '-t', image, tmp], check=True)
+                # A docker-container builder cannot resolve a daemon-local tools
+                # image. Build the tools and suite setup in one recipe instead.
+                recipe = ((ROOT / 'candidate-gate/Dockerfile').read_text()
+                          + '\n' + (ROOT / 'scripts/test-egress/Dockerfile').read_text())
+                dockerfile = Path(tmp) / 'isolated.Dockerfile'
+                dockerfile.write_text(recipe)
+                (evidence / 'Dockerfile.generated').write_text(recipe)
+                subprocess.run(['docker', 'build', '-f', str(dockerfile),
+                                '-t', image, tmp], check=True)
         # Pull service images before entering isolation.
         for service in ('postgres:17', 'redis:7'):
             subprocess.run(['docker', 'image', 'inspect', service], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -119,7 +124,7 @@ def main():
         if network:
             subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL, check=True)
         if not args.image:
-            subprocess.run(['docker', 'image', 'rm', image, tools_image], stdout=subprocess.DEVNULL, check=False)
+            subprocess.run(['docker', 'image', 'rm', image], stdout=subprocess.DEVNULL, check=False)
 
 
 if __name__ == '__main__':
