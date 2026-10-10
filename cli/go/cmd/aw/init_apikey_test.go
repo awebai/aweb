@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/awebai/aw/awconfig"
@@ -1333,8 +1334,12 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 	existingDIDKey := awid.ComputeDIDKey(existingPub)
 	existingStableID := awid.ComputeStableID(existingPub)
 
+	tmp := t.TempDir()
+	partialBytes := make(chan []byte, 1)
+	var requests atomic.Int32
 	var server *httptest.Server
 	server = newLocalHTTPServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
 		switch {
 		case r.URL.Path == "/v1/did":
 			_ = json.NewEncoder(w).Encode(map[string]any{"registered": true})
@@ -1347,6 +1352,11 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 				"updated_at":      "2026-04-18T00:00:00Z",
 			})
 		case r.URL.Path == "/api/v1/workspaces/init":
+			data, readErr := os.ReadFile(apiKeyPartialInitPath(tmp))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			partialBytes <- data
 			// Simulate a server that already has this global name registered to a
 			// different identity and returns the existing identity material.
 			cert, err := awid.SignTeamCertificate(teamKey, awid.TeamCertificateFields{
@@ -1381,15 +1391,15 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 		}
 	})
 
-	tmp := t.TempDir()
-	_, err = runAPIKeyBootstrapInit(apiKeyInitRequest{
+	req := apiKeyInitRequest{
 		WorkingDir:  tmp,
 		AwebURL:     externalLikeTestURL(t, server.URL),
 		RegistryURL: server.URL,
 		APIKey:      "aw_sk_test_taken_name",
 		Name:        "ama",
 		Global:      true,
-	})
+	}
+	_, err = runAPIKeyBootstrapInit(req)
 	if err == nil {
 		t.Fatal("expected already-registered name to fail")
 	}
@@ -1405,7 +1415,37 @@ func TestRunAPIKeyBootstrapInitGlobalRefusesAlreadyRegisteredName(t *testing.T) 
 	if _, statErr := os.Stat(filepath.Join(tmp, ".aw", "signing.key")); !os.IsNotExist(statErr) {
 		t.Fatalf("already-registered name must not write a signing key: %v", statErr)
 	}
+	files, globErr := filepath.Glob(apiKeyPartialInitPath(tmp) + ".*.rejected")
+	if globErr != nil || len(files) != 1 {
+		t.Fatalf("expected one quarantined partial, got %v: %v", files, globErr)
+	}
+	data, readErr := os.ReadFile(files[0])
+	if readErr != nil || string(data) != string(<-partialBytes) {
+		t.Fatal("quarantine lost or changed signing material")
+	}
+	info, statErr := os.Stat(files[0])
+	if statErr != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("quarantine must remain private: %v", statErr)
+	}
+	if !strings.Contains(err.Error(), files[0]) || strings.Contains(err.Error(), "rerun the same command") {
+		t.Fatalf("wrong quarantine guidance: %v", err)
+	}
 	if _, statErr := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(statErr) {
-		t.Fatalf("already-registered name must clean up partial init state: %v", statErr)
+		t.Fatalf("partial was not renamed: %v", statErr)
+	}
+	beforeRetry := requests.Load()
+	// Must refuse before registration, even if an operator changes the mode to LOCAL.
+	for _, global := range []bool{true, false} {
+		req.Global = global
+		_, retryErr := runAPIKeyBootstrapInit(req)
+		if retryErr == nil || !strings.Contains(retryErr.Error(), "partial_init_reconciliation_required") || !strings.Contains(retryErr.Error(), files[0]) {
+			t.Fatalf("rejected state must refuse fresh init: %v", retryErr)
+		}
+		if _, statErr := os.Stat(apiKeyPartialInitPath(tmp)); !os.IsNotExist(statErr) {
+			t.Fatal("rerun generated fresh material")
+		}
+		if requests.Load() != beforeRetry {
+			t.Fatal("rejected-state retry reached network")
+		}
 	}
 }

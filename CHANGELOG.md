@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### CLI: preserve incomplete global identity material
+
+- A hosted global-init response with a different DID now quarantines partial
+  signing material in a private timestamped `.rejected` file instead of deleting
+  it. Initialization refuses to create another key in that home until the
+  rejected state is reconciled. Ordinary incomplete-init failures retain the
+  original partial and explain how to resume with the same command and directory.
+
 ### Release preparation: CLI 1.36.31
 
 - Custody status advertises `mail_reply_continuation.v1` when E2EE is
