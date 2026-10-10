@@ -254,7 +254,9 @@ verify-site: check-awid-site-docs
 
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
+		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
+	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 test-awid:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
