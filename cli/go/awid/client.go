@@ -1218,7 +1218,7 @@ func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, 
 		}
 		return IdentityMismatch
 	}
-	if toDID == "" || c.did == "" {
+	if toDID == "" || c.ParticipantDID() == "" {
 		return status
 	}
 	if strings.HasPrefix(strings.TrimSpace(toDID), "did:aw:") {
@@ -1234,7 +1234,7 @@ func (c *Client) checkRecipientBinding(status VerificationStatus, toDID string, 
 		}
 		return status
 	}
-	if toDID != c.did {
+	if toDID != c.ParticipantDID() {
 		return IdentityMismatch
 	}
 	return status
