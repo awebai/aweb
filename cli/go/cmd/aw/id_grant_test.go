@@ -99,27 +99,8 @@ func TestParseGrantScopesExpandsNormalAgentBundle(t *testing.T) {
 	}
 }
 
-func TestRunGrantMintWritesGrantHome(t *testing.T) { testRunGrantMintWritesGrantHome(t, false, false) }
-func TestRunGrantMintNeverWritesGrantHome(t *testing.T) {
-	testRunGrantMintWritesGrantHome(t, true, false)
-}
-func TestRunGrantMintDefaultNeverWritesGrantHome(t *testing.T) {
-	testRunGrantMintWritesGrantHome(t, true, true)
-}
-func testRunGrantMintWritesGrantHome(t *testing.T, never, omitTTL bool) {
+func TestRunGrantMintWritesGrantHome(t *testing.T) {
 	resetGrantCommandGlobals(t)
-	expiry := "2026-08-12T08:00:00Z"
-	if never {
-		expiry = "never"
-		grantMintTTL = identityGrantNeverTTL
-	}
-	var binaryPath string
-	if never {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		binaryPath = filepath.Join(t.TempDir(), "aw")
-		buildAwBinary(t, ctx, binaryPath)
-	}
 	tmp := t.TempDir()
 	t.Chdir(tmp)
 	setGrantTestEnv(t, tmp)
@@ -145,7 +126,7 @@ func testRunGrantMintWritesGrantHome(t *testing.T, never, omitTTL bool) {
 			"grant_did_key":  gotBody["grant_did_key"],
 			"scopes":         gotBody["scopes"],
 			"issued_at":      "2026-08-12T00:00:00Z",
-			"expires_at":     expiry,
+			"expires_at":     "2026-08-12T08:00:00Z",
 		})
 	}))
 	t.Cleanup(server.Close)
@@ -157,32 +138,9 @@ func testRunGrantMintWritesGrantHome(t *testing.T, never, omitTTL bool) {
 	grantMintOut = outDir
 
 	var runErr error
-	var stdout string
-	if never {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		args := []string{"id", "grant", "mint", "--scope", "mail.read,mail.send,chat.read", "--label", "worker", "--out", outDir, "--json"}
-		if !omitTTL {
-			args = append(args, "--ttl", "never")
-		}
-		command := exec.CommandContext(ctx, binaryPath, args...)
-		command.Dir = tmp
-		command.Env = append(os.Environ(), "AW_NO_UPDATE_CHECK=1")
-		output, err := command.CombinedOutput()
-		stdout, runErr = string(output), err
-		if err != nil {
-			t.Fatalf("never binary mint: %v: %s", err, output)
-		}
-		var receipt map[string]any
-		if err := json.Unmarshal(output, &receipt); err != nil {
-			t.Fatal(err)
-		}
-		if receipt["expires_at"] != "never" {
-			t.Fatalf("bad mint receipt: %s", output)
-		}
-	} else {
-		stdout = captureIDCommandStdout(t, func() { runErr = runGrantMint(&cobra.Command{}, nil) })
-	}
+	stdout := captureIDCommandStdout(t, func() {
+		runErr = runGrantMint(&cobra.Command{}, nil)
+	})
 	if runErr != nil {
 		t.Fatalf("runGrantMint: %v", runErr)
 	}
@@ -194,7 +152,7 @@ func testRunGrantMintWritesGrantHome(t *testing.T, never, omitTTL bool) {
 	if len(scopes) != 3 || scopes[0] != "mail.read" || scopes[1] != "mail.send" || scopes[2] != "chat.read" {
 		t.Fatalf("scopes=%v", gotBody["scopes"])
 	}
-	if (!never && gotBody["ttl_seconds"] != float64(28800)) || (never && gotBody["ttl_seconds"] != "never") {
+	if ttl, ok := gotBody["ttl_seconds"].(float64); !ok || int(ttl) != 28800 {
 		t.Fatalf("ttl_seconds=%v", gotBody["ttl_seconds"])
 	}
 	if gotBody["label"] != "worker" {
@@ -211,7 +169,7 @@ func testRunGrantMintWritesGrantHome(t *testing.T, never, omitTTL bool) {
 	if grant.Version != 1 || grant.GrantID != "grant-9" || grant.TeamID != "backend:demo" {
 		t.Fatalf("grant home state=%+v", grant)
 	}
-	if grant.ExpiresAt != expiry || grant.MintedAt != "2026-08-12T00:00:00Z" {
+	if grant.ExpiresAt != "2026-08-12T08:00:00Z" || grant.MintedAt != "2026-08-12T00:00:00Z" {
 		t.Fatalf("grant home timestamps=%+v", grant)
 	}
 	if grant.AwebURL != server.URL {

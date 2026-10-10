@@ -11,7 +11,6 @@ import pytest
 from pgdbm.errors import QueryError
 
 import aweb.routes.events as events
-import aweb.grant_streams as grant_streams
 from aweb.team_auth_deps import TeamIdentity
 
 
@@ -168,7 +167,7 @@ async def test_backoff_checks_stream_boundaries_every_tick(monkeypatch, caplog, 
                     stop_at=3 if boundary == "disconnect" else 50,
                     deadline=3 if boundary == "deadline" else 120)
     if boundary == "grant":
-        monkeypatch.setattr(grant_streams, "grant_expiry_reason", lambda identity: "grant_expired" if h.now >= 3 else None)
+        monkeypatch.setattr(events, "grant_expiry_reason", lambda identity: "grant_expired" if h.now >= 3 else None)
     frames = await h.collect()
     assert h.attempts == [1, 2]
     assert h.now == 3

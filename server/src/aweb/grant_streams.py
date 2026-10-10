@@ -145,14 +145,15 @@ def status_event_allowed(identity: TeamIdentity, event: dict[str, Any]) -> bool:
 
 class NeverGrantStreamGuard:
     """Retain finite-stream behavior; never grants revalidate at most every 30s."""
-    def __init__(self, request, db, identity):
+    def __init__(self, request, db, identity, expiry_reason=grant_expiry_reason):
         self.request, self.db, self.identity = request, db, identity
+        self.expiry_reason = expiry_reason
         self.checked_at = time.monotonic()
 
     async def reason(self):
         grant = self.identity.grant
         if grant is None or not grant.never_expires:
-            return grant_expiry_reason(self.identity)
+            return self.expiry_reason(self.identity)
         now = time.monotonic()
         if now - self.checked_at < GRANT_STREAM_RECHECK_SECONDS:
             return None

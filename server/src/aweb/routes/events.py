@@ -34,7 +34,7 @@ from aweb.internal_auth import parse_internal_auth_context
 from aweb.grant_streams import (
     agent_event_allowed,
     clamp_deadline_to_grant,
-    NeverGrantStreamGuard,
+    NeverGrantStreamGuard, grant_expiry_reason,
     grant_terminal_sse,
     require_valid_stream_grant,
 )
@@ -428,7 +428,7 @@ async def _sse_agent_events(
 
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
 
-    guard = NeverGrantStreamGuard(request, db, identity)
+    guard = NeverGrantStreamGuard(request, db, identity, grant_expiry_reason)
     reason = await guard.reason()
     if reason:
         yield grant_terminal_sse(reason)
