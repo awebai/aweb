@@ -113,10 +113,9 @@ jobs:
         run: make test
 
       # docker-compose.e2e.yml builds the awid service from
-      # ${LIBRARY_E2E_AWEB_CONTEXT:-../aweb}. That default was a sibling
-      # checkout when library was its own repository; from naapp/library it now
-      # resolves to naapp/aweb, which does not exist. Point it at the
-      # repository root so the e2e exercises in-repo awid.
+      # ${LIBRARY_E2E_AWEB_CONTEXT:-../..}, the repository root. The explicit
+      # workspace path names the same directory, so the e2e exercises in-repo
+      # awid.
       - name: Run real-stack e2e
         working-directory: naapp/library
         env:
