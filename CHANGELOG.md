@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `aw custody serve` now starts from legacy local API-key workspaces created
+  by `aw init --alias`, using their existing team certificate and signing key
+  without requiring or creating `identity.yaml`. Global metadata and key-binding
+  checks remain enforced.
+
 - Custody now uses a short, private per-user socket path when a long resident
   identity path would exceed Unix socket limits, including on macOS. Auto-minted
   grants and custody status share this default; existing short paths and explicit

@@ -115,6 +115,14 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 		return nil, usageError("custody serve requires the resident identity home, not a grant home")
 	}
 	identity, err := awconfig.ResolveIdentityFromHome(wd, home.Root)
+	if err != nil && filepath.Clean(home.Root) == awconfig.WorktreeIdentityHome(wd) {
+		// Legacy local init intentionally omits identity.yaml. Reuse only this
+		// workspace's certificate/key-bound resolver, never another selected home
+		// or an existing malformed identity file.
+		if _, statErr := os.Lstat(filepath.Join(home.Root, "identity.yaml")); os.IsNotExist(statErr) {
+			identity, err = resolveLocalIdentityWithoutState(wd)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

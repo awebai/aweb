@@ -381,7 +381,13 @@ attributes the results to the identity.
 
 When a grant-backed worker also needs plaintext mail/chat messages to carry the
 resident identity's ordinary message signature, run local resident custody from
-the resident home with `aw custody serve`. The grant home records the custody
+the resident home with `aw custody serve`. Local API-key workspaces created by
+`aw init --alias` are supported even though they intentionally omit
+`identity.yaml`: custody uses that workspace's active local team certificate
+and matching signing key. Run from the resident workspace, not inside `.aw`.
+Missing global identity metadata, malformed identity files, and mismatched keys
+remain errors; custody does not create identity state or borrow another
+workspace's identity when an external home is selected. The grant home records the custody
 socket as locator metadata only; each signing request is structured
 (`sign_plain_message`) and the service derives the resident sender fields and
 constructs the canonical mail/chat envelope itself. It never signs
