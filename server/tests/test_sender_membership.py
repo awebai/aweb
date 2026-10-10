@@ -33,3 +33,27 @@ async def test_sender_membership_mail_and_chat_is_current_and_participant_scoped
     for path in paths:
         response = await _request(env, 'carol', 'GET', path)
         assert response.status_code in (403, 404)
+
+
+@pytest.mark.asyncio
+async def test_sender_membership_revocation_and_missing_provenance(privacy_app):
+    env = privacy_app
+    sender = env.actors['alice']
+    stable_id = stable_id_from_did_key(sender.did)
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET did_aw=$1, certificate_id='privacy-alice' WHERE agent_id=$2", stable_id, sender.id,
+    )
+    mail_id = await _seed_mail(env)
+    await env.registry_db.execute(
+        "INSERT INTO {{tables.team_certificates}} "
+        "(team_uuid, certificate_id, member_did_key, member_did_aw, alias, revoked_at) "
+        "SELECT team_uuid, 'privacy-alice', $1, $2, 'alice', NOW() FROM {{tables.teams}}",
+        sender.did, stable_id,
+    )
+    response = await _request(env, 'bob', 'GET', f'/v1/messages/{mail_id}')
+    assert response.status_code == 200, response.text
+    assert response.json()['sender_membership']['state'] == 'inactive'
+    await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1", sender.id)
+    response = await _request(env, 'bob', 'GET', f'/v1/messages/{mail_id}')
+    assert response.status_code == 200, response.text
+    assert response.json()['sender_membership']['state'] == 'unknown'

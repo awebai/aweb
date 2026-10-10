@@ -13,7 +13,7 @@ import uvicorn
 from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message
-from aweb.e2ee_messages import encrypt_e2ee_mail, generate_x25519_keypair
+from aweb.e2ee_messages import encrypt_e2ee_mail, encrypt_e2ee_chat, generate_x25519_keypair
 from test_cli_human_reply import _cli, _pem, _reply_context
 from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
@@ -31,7 +31,7 @@ async def _registry_http(app):
                 break
             await asyncio.sleep(0.02)
         assert server.started
-        yield f"http://127.0.0.1:{sock.getsockname()[1]}"
+        yield f"http://127.0.0.1:{sock.getsockname()[1]}", server
     finally:
         server.should_exit = True
         await asyncio.wait_for(task, 5)
@@ -80,6 +80,15 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     })
     assert sent.status_code == 200, sent.text
     assert source["sender_encryption_key"]["custody"] == "hosted_custodial"
+
+    chat_id, chat_message_id = str(uuid4()), str(uuid4())
+    chat_source = encrypt_e2ee_chat(sender=human, recipients=[agent], body="Human chat",
+                                   message_id=chat_message_id, conversation_id=chat_id, created_at=now)
+    chat_sent = await _request(env, "alice", "POST", "/v1/chat/sessions", {
+        "to_dids": [agent["did"]], "session_id": chat_id,
+        "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": chat_source,
+    })
+    assert chat_sent.status_code == 200, chat_sent.text
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)
@@ -137,11 +146,33 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
                      HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),
                      AWID_REGISTRY_URL=str(env.client.base_url))
-    async with _registry_http(env.registry_app) as registry_url:
+    async with _registry_http(env.registry_app) as (registry_url, registry_server):
         child_env["AWID_REGISTRY_URL"] = registry_url
         async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
-            shown = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
-            shown = shown["messages"][0]
-            assert shown["verification_status"] == "verified", {k: shown.get(k) for k in ("verification_status", "from_address", "sender_membership")}
-            assert shown["from_stable_id"] == human["stable_id"]
-            assert not shown.get("from_address")
+            async def read_both(expected):
+                for args in (("mail", "show", "--message-id", message_id),
+                             ("chat", "history", "--session-id", chat_id)):
+                    result = await _cli(binary, command_dir, command_env, *args, "--json")
+                    shown = result["messages"][0]
+                    assert shown["verification_status"] == expected, {
+                        k: shown.get(k) for k in ("verification_status", "from_address", "sender_membership")
+                    }
+                    assert shown["from_stable_id"] == human["stable_id"]
+                    assert not shown.get("from_address")
+            await read_both("verified")
+            # A second CLI process restores the registry-scoped checkpoint.
+            await read_both("verified")
+            await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", env.actors["alice"].id)
+            await read_both("identity_mismatch")
+            await env.db.execute("UPDATE {{tables.agents}} SET status='active' WHERE agent_id=$1", env.actors["alice"].id)
+            # Real signed registry rotation: old messages remain signed correctly,
+            # but the current key must no longer match the old signer.
+            rotated_sk, _, rotated_did = _make_keypair()
+            await env.app.state.awid_registry_client.rotate_key(human["stable_id"], rotated_did, human["signing_key"], rotated_sk)
+            await read_both("identity_mismatch")
+            registry_server.should_exit = True
+            for _ in range(100):
+                if not registry_server.started or not registry_server.servers[0].is_serving():
+                    break
+                await asyncio.sleep(0.02)
+            await read_both("verification_stale")
