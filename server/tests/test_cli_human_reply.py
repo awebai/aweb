@@ -147,12 +147,12 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
             text = f"Local resident peer send {mode}"
             body_file.write_text(text)
             control = await _cli(binary, tmp_path, child_env, "mail", "send", "--to", "carol",
-                                 mode, "--body-file", str(body_file), "--json")
+                                 mode, "--new-conversation", "--body-file", str(body_file), "--json")
             control_read = await _request(env, "carol", "GET", f"/v1/messages/{control['message_id']}")
             assert control_read.status_code == 200, control_read.text
             control_message = control_read.json()
             sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
-                              mode, "--body-file", str(body_file), "--json")
+                              mode, "--new-conversation", "--body-file", str(body_file), "--json")
             received = await _request(env, "carol", "GET", f"/v1/messages/{sent['message_id']}")
             assert received.status_code == 200, received.text
             delivered = received.json()
