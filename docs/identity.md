@@ -369,8 +369,18 @@ socket as locator metadata only; each signing request is structured
 constructs the canonical mail/chat envelope itself. It never signs
 caller-supplied bytes, digests, identity-auth payloads, certificate-auth
 payloads, identity operations, or grant/delegation payloads. `aw custody status
---json` reports safe readiness (signing, unsupported encryption=false, selected
-team, and freshness), and `aw custody stop` asks the local service to exit.
+--json` reports safe readiness (signing, encryption, selected team, and
+freshness), and `aw custody stop` asks the local service to exit.
+
+The status `ops` list includes `status.v1`, `sign_plain_message.v1`, and
+`sign_app_request.v1`. When the encryption assertion and private key are
+configured, it also includes `create_e2ee_envelope.v1`,
+`unwrap_e2ee_message.v1`, and `mail_reply_continuation.v1`. The last entry is a
+capability marker for stored-source mail reply continuation through the existing
+envelope operation, not a separate RPC or a grant of permission. Consumers should
+require it for grant-seat replies to unlisted senders and still check readiness
+and grant scopes. Restart custody after upgrading: an already-running process
+keeps its old capabilities. The marker is advertised starting with aw 1.36.31.
 
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,

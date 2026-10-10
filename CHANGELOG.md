@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Release preparation: CLI 1.36.31
+
+- Custody status advertises `mail_reply_continuation.v1` when E2EE is
+  configured. Consumers should require this op for grant-seat replies to
+  unlisted senders; restart custody after upgrading so the running process
+  exposes the capability.
+
 ### Release preparation: CLI 1.36.30
 
 This CLI-only release covers changes since `aw-v1.36.29`. CLI versioning
