@@ -1,9 +1,3 @@
+# docker.py already selects tracked and nonignored source files. Do not drop
+# tracked fixture data or documentation examples from that source snapshot.
 .git
-**/.venv
-**/node_modules
-**/__pycache__
-**/.pytest_cache
-**/dist
-**/build
-**/.env
-**/.env.*
