@@ -69,8 +69,11 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     for field in ("signature", "member_did_aw", "member_address"):
         cert.pop(field)
     cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
-    (identity_home / "certificate.json").write_text(json.dumps(cert))
-    membership = {"team_id": TEAM, "alias": "bob", "cert_path": "certificate.json"}
+    cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
+    (identity_home / "team-certs").mkdir(mode=0o700)
+    (identity_home / cert_path).write_text(json.dumps(cert))
+    (identity_home / cert_path).chmod(0o600)
+    membership = {"team_id": TEAM, "alias": "bob", "cert_path": cert_path}
     (identity_home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": [membership]}))
     (identity_home / "workspace.yaml").write_text(json.dumps({
         "aweb_url": str(env.client.base_url), "memberships": [{**membership, "workspace_id": str(env.actors["bob"].workspace)}],
