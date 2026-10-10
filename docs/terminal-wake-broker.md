@@ -59,7 +59,23 @@ maximum near the cap, keeping both the bound and jitter.
 - `registry.d/<sha256-home>.json` — durable registrations;
 - `instances.d/<sha256-home>.json` — pause/inactive lifecycle, first live
   observation, readiness/error/status metadata and child admission evictions;
-- `status.json`, `lock/`, and `control.sock`.
+- `status.json` and `lock/`;
+- `control.sock` when the socket path fits the 100-byte portable limit.
+
+Long control socket paths use a stable hash of the canonical socket path in
+an owner-only per-user runtime directory, shared with custody:
+`/private/tmp/aw-custody-<uid>` on macOS and `/tmp/aw-custody-<uid>` on other
+Unix systems. The directory is 0700 and the socket is 0600. For these shortened paths, unsafe ownership,
+permissions, symlinks or file types are refused before listen and dial. Existing
+short paths stay unchanged. `--state-dir` and `AW_WAKE_STATE_DIR` still select
+all durable state and the input to the socket locator; no state moves to tmp.
+
+`aw wake run` binds its control socket before reporting “listening”. A bind or
+permission failure exits immediately with an error and releases the daemon
+lock. Transient accept errors are logged and retried with backoff from 5 ms up
+to 1 second; a closed control listener stops the broker. Restart the
+broker after upgrading to use the new locator; status and control commands
+compute the same path.
 
 Legacy `pending` hint queues from the retired hint-only broker are accepted on
 load only so older stores do not break startup; they are counted as evicted and
