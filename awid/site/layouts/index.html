@@ -126,6 +126,19 @@
     .copy{position:absolute;top:6px;right:8px;font-family:var(--mono);font-size:.68rem;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:6px;padding:.2rem .55rem;cursor:pointer}
     .copy:hover{color:var(--accent);border-color:var(--accent)}
 
+    /* ── layers ── */
+    .layers-section{border-bottom:1px solid var(--line)}
+    .layers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px}
+    .layer{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px;display:flex;flex-direction:column;gap:12px}
+    .layer+.layer::before{content:"→";position:absolute;left:-22px;top:28px;color:var(--accent);font-size:1rem}
+    .layer-kicker{font-size:.7rem;letter-spacing:.16em;text-transform:uppercase;color:var(--accent-2)}
+    .layer p:not(.layer-kicker){font-family:var(--grot);font-size:.95rem;color:var(--ink)}
+    .layer p em{color:var(--ink-bright);font-style:normal;font-weight:600}
+    .layer p code{font-family:var(--mono);font-size:.84em;background:var(--bg-2);border:1px solid var(--line);padding:.05rem .35rem;border-radius:5px;color:var(--accent-2)}
+    .artifact{margin-top:auto;background:var(--bg-2);border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:.76rem;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+    .artifact .p,.artifact .ok{color:var(--accent)}
+    .artifact .c{color:var(--muted)}
+
     /* ── trust / chain-of-trust ── */
     .trust{border-top:1px solid var(--line);border-bottom:1px solid var(--line);background:linear-gradient(180deg,rgba(78,230,168,.02),transparent 30%)}
     .trust-grid{display:grid;grid-template-columns:330px 1fr;gap:64px;align-items:start}
@@ -181,7 +194,8 @@
     @media (max-width:860px){
       .hero,.trust-grid{grid-template-columns:1fr;gap:36px}
       .diagram{position:static}
-      .states,.api-grid,.cols,.pair{grid-template-columns:1fr}
+      .states,.api-grid,.cols,.pair,.layers{grid-template-columns:1fr}
+      .layer+.layer::before{content:"↓";left:24px;top:-24px}
       section{padding:56px 0}
       .hero>*,.trust-grid>*,.pair>*{min-width:0}
       .term pre{white-space:pre-wrap;overflow-wrap:anywhere}
@@ -189,7 +203,7 @@
       nav{padding:18px 0}
       .nav-links{gap:16px}
       .nav-links a{white-space:nowrap}
-      .nav-links a[href="#trust"],.nav-links a[href="#api"]{display:none}
+      .nav-links a[href="#model"],.nav-links a[href="#trust"],.nav-links a[href="#api"]{display:none}
     }
   </style>
 </head>
@@ -199,6 +213,7 @@
   <nav>
     <a class="brand" href="/">awid<b>.ai</b></a>
     <div class="nav-links">
+      <a href="#model">model</a>
       <a href="#quickstart">quickstart</a>
       <a href="#trust">trust</a>
       <a href="#api">api</a>
@@ -238,6 +253,41 @@
 <span class="c"># chain verified ·</span> <span class="ok">OK_VERIFIED</span> <span class="c">· hash-log head matches cache</span></pre>
       </div>
     </div>
+  </section>
+
+  <!-- ── layers ── -->
+  <section class="layers-section" id="model">
+    <div class="section-head">
+      <p class="eyebrow">// how it fits together</p>
+      <h2>Identities, teams, and the apps that trust them</h2>
+      <p>Three layers. Each one is published in awid, so anyone can check it, and none of them is an account on someone's server.</p>
+    </div>
+    <div class="layers">
+      <article class="layer">
+        <p class="layer-kicker">identity</p>
+        <h3>An agent is a key it holds</h3>
+        <p>Every agent signs with its own Ed25519 key, and the private half never leaves its directory. A <em>local</em> identity is just that key, valid in one team. A <em>global</em> identity adds a stable <code>did:aw</code> in awid: it keeps its name when the key rotates, can hold addresses like <code>acme.com/support</code>, and can join many teams.</p>
+        <pre class="artifact">did:key:z6Mk…   <span class="c"># local: one team</span>
+did:aw:2CiZ…    <span class="c"># global: stable</span></pre>
+      </article>
+      <article class="layer">
+        <p class="layer-kicker">team</p>
+        <h3>A team is a key that signs its members</h3>
+        <p>A team is <code>name:domain</code>, like <code>backend:acme.com</code>, with a key of its own. That key signs a certificate for each member, and certificates and revocations are public in awid. The controller is you, under a DNS domain you own, or aweb.ai for a hosted team. On an <a href="https://aweb.ai">aweb</a> server, members get mail, chat and wake-ups.</p>
+        <pre class="artifact">backend:acme.com
+├─ alice  <span class="ok">certified</span>
+└─ bob    <span class="ok">certified</span></pre>
+      </article>
+      <article class="layer">
+        <p class="layer-kicker">apps</p>
+        <h3>The team certificate is the login</h3>
+        <p>A native agentic app (naapp) is an HTTP service whose only credential is the team certificate. The agent signs each request and sends its certificate; the app checks both against awid. No accounts and no API keys: the team is the tenant. <code>aw plugin install</code> turns an app's manifest into commands.</p>
+        <pre class="artifact"><span class="p">$</span> aw plugin install \
+    https://folio.aweb.ai/.well-known/aweb-app.json
+<span class="p">$</span> aw folio list</pre>
+      </article>
+    </div>
+    <p class="note">Apps run by awid's operator, such as <a href="https://folio.aweb.ai">folio.aweb.ai</a> for documents and <a href="https://library.aweb.ai">library.aweb.ai</a> for agent profiles, verify any team on api.awid.ai. An independent app can verify public teams today.</p>
   </section>
 
   <!-- ── quickstart ── -->
@@ -390,7 +440,7 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
 
         <div class="beat">
           <h3>A team is a group your domain vouches for</h3>
-          <p>One identity is not a team. The domain's controller <em>creates</em> one — <code>backend:acme.com</code> — with a key of its own. That team key signs a <em>certificate</em> for each member: a small card saying <em>this key belongs to this team</em>. No central platform manages it, so no one can forge membership — and a teammate can even live on another domain: <code>partner.com/bob</code> can hold a card for your team.</p>
+          <p>One identity is not a team. The domain's controller <em>creates</em> one — <code>backend:acme.com</code> — with a key of its own. That team key signs a <em>certificate</em> for each member: a small card saying <em>this key belongs to this team</em>. The team key stays with the team's controller — you, or aweb.ai for a hosted team — and the cards are public in awid, so anyone can check membership and only the controller can grant it. A teammate can even live on another domain: <code>partner.com/bob</code> can hold a card for your team.</p>
           <details class="reveal">
             <summary>look inside a certificate</summary>
             <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>certificate</span></div>
@@ -409,7 +459,7 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
 
         <div class="beat">
           <h3>Proving it, one request at a time</h3>
-          <p>A card can be photocopied — so every time an agent acts, it <em>signs the exact request</em>: this action, this path, this body, this audience, this moment. The app re-checks each against what arrived, traces the card back to the key your domain published, and confirms the member wasn't revoked. A single mismatch locks the door.</p>
+          <p>A card can be photocopied — so every time an agent acts, it <em>signs the exact request</em>: this method, this path, this body, this audience, this team, this moment. The app re-checks each against what arrived, checks the card against the team key published in awid, and refuses a revoked card once its cache refreshes. A single mismatch locks the door.</p>
           <details class="reveal">
             <summary>see the bytes a request signs</summary>
             <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>request</span></div>

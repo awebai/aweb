@@ -31,6 +31,18 @@ def test_hugo_site_installs_aw_before_using_it() -> None:
     assert install < first_use
 
 
+def test_hugo_site_explains_teams_and_naapps_before_the_quickstart() -> None:
+    html = _site_html()
+    model = html.index('id="model"')
+    quickstart = html.index('id="quickstart"')
+    assert model < quickstart
+    section = html[model:quickstart]
+    assert "name:domain" in section
+    assert "native agentic app (naapp)" in section
+    assert "aw plugin install" in section
+    assert "An independent app can verify public teams today." in section
+
+
 def test_hugo_site_links_aweb_and_the_repository() -> None:
     html = _site_html()
     assert '<a href="https://aweb.ai">aweb</a>' in html
