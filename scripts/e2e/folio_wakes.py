@@ -69,6 +69,20 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
         result = run(['node', str(ROOT / 'scripts/e2e/folio-wakes-channel.mjs')], input=out)
         return [json.loads(line) for line in result.splitlines()]
     configure_manifest('0.1.0')
+    homes['discovery'] = root / 'discovery'
+    homes['discovery'].mkdir()
+    discovery = aw('discovery', '--json', 'plugin', 'install', FOLIO)
+    warning = 'app events not registered: no resident identity here; run aw plugin install from a resident home to enable wakes'
+    assert discovery.stderr.count(warning) == 1, discovery.stderr
+    local = json.loads(discovery.stdout)
+    assert not local.get('approved', False), local
+    assert not local['provenance'].get('registered_digest'), local
+    assert (Path(local['path']) / 'manifest.json').is_file()
+    assert not list(homes['discovery'].iterdir()), 'discovery-only install created identity state'
+    # A team-less install must not silently register anywhere on the real server.
+    count = run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', 'SELECT count(*) FROM aweb.team_app_installs'])
+    assert count.strip() == '0', count
+    print('PASS identity-free install caches manifest, approves nobody, warns once and registers nothing', flush=True)
     for name in ['alice', 'bob']:
         homes[name] = root / name
         homes[name].mkdir()

@@ -540,9 +540,6 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if err := appmanifest.Validate(manifest, reserved); err != nil {
 		return nil, err
 	}
-	if policy.registerEvents && len(manifest.Events) > 0 && policy.residentHome == "" {
-		return nil, usageError("app events require installation from a resident home")
-	}
 	if devOrigin != "" {
 		// Operator override: point the app at this base URL regardless of the
 		// origin the manifest declares. Rewrite the stored manifest so dispatch
@@ -635,7 +632,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 			return nil, err
 		}
 	}
-	if policy.registerEvents && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
+	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
 		if err := registerManifestEvents(manifest, fetchedDigest, previous, &provenance, update); err != nil {
 			return nil, err
 		}
@@ -649,6 +646,9 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	}
 	if err := savePluginProvenance(provenancePath, &provenance); err != nil {
 		return nil, err
+	}
+	if policy.registerEvents && policy.residentHome == "" && len(manifest.Events) > 0 {
+		fmt.Fprintln(os.Stderr, "app events not registered: no resident identity here; run aw plugin install from a resident home to enable wakes")
 	}
 	return &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance, Approved: policy.residentHome != ""}, nil
 }

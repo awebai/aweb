@@ -63,7 +63,10 @@ registers its exact fetched-byte digest, declarations and public emitter keys wi
 the selected team's server, and subscribes the installer at each declaration's
 default intent. Any certified team member can install; no admin gate or extra
 prompt is required. Grant homes cannot install. Manifests without events do not
-trigger server registration.
+trigger server registration. Installing from a directory without a resident
+identity still populates the shared local app store, approves nobody, skips
+registration/subscriptions, and prints a message explaining how to enable wakes.
+Grant homes remain a hard refusal.
 
 The server install request accepts:
 
