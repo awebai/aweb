@@ -18,7 +18,7 @@ import pytest
 
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message
-from test_messages_http import _make_keypair, _make_certificate
+from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
 from aweb.e2ee_messages import decrypt_e2ee_message, encrypt_e2ee_mail, generate_x25519_keypair
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 
@@ -47,7 +47,11 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     await env.db.execute("UPDATE {{tables.agents}} SET agent_type = 'human' WHERE agent_id = $1", env.actors["alice"].id)
     human, agent = identities["alice"], identities["bob"]
     peer = identities["carol"]
-    published = await _request(env, "carol", "PUT", "/v1/agents/me/encryption-key", peer["encryption_key"])
+    peer_body = json.dumps(peer["encryption_key"]).encode()
+    peer_actor = env.actors["carol"]
+    peer_headers = _signed_team_headers(peer_actor.sk, peer_actor.did, TEAM, peer_actor.certificate, peer_body)
+    peer_headers["Content-Type"] = "application/json"
+    published = await env.client.put("/v1/agents/me/encryption-key", content=peer_body, headers=peer_headers)
     assert published.status_code == 200, published.text
     message_id, conversation_id = str(uuid4()), str(uuid4())
     source = encrypt_e2ee_mail(sender=human, recipients=[agent], subject="Human question",
