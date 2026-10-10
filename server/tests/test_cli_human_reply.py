@@ -141,6 +141,17 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         })
         assert plain["body"] == "Agent private reply"
 
+        # Exercise the reported first-send form before any peer conversation exists.
+        default_sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
+                                  "--plaintext", "--body-file", str(body_file), "--json")
+        default_read = await _request(env, "carol", "GET", f"/v1/messages/{default_sent['message_id']}")
+        assert default_read.status_code == 200, default_read.text
+        default_message = default_read.json()
+        assert default_message["body"] == body_file.read_text()
+        assert default_message["from_alias"] == "bob"
+        assert verify_signature(agent["did"], default_message["signed_payload"].encode(),
+                                default_message["signature"]) == VerifyResult.VERIFIED
+
         # A local resident must also sign ordinary grant sends, not only the
         # source-bound encrypted reply path above. Exercise actual peer reads.
         for mode in ("--plaintext", "--e2ee"):
