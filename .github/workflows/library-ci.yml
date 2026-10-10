@@ -40,7 +40,7 @@ permissions:
   contents: read
 
 env:
-  AW_VERSION: "1.34.0"
+  AW_VERSION: "1.36.30"
   LIBRARY_REQUIRE_TEST_DATABASE: "1"
 
 concurrency:

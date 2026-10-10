@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 env:
-  AW_VERSION: "1.36.29"
+  AW_VERSION: "1.36.30"
 
 concurrency:
   group: folio-ci-${{ github.ref }}
