@@ -40,6 +40,26 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      # A transaction-mode PgBouncer that drops the startup parameters pgdbm
+      # requests, as Neon's pooler does. awid's database session tests run
+      # through it (AWID_TEST_POOLER_URL).
+      pgbouncer:
+        image: edoburu/pgbouncer@sha256:9c78945868a6a142c7fc40ccd843bbe5a606df163c7ffce4de70e0d628d696a2
+        env:
+          DB_HOST: postgres
+          DB_USER: postgres
+          DB_PASSWORD: postgres
+          POOL_MODE: transaction
+          AUTH_TYPE: scram-sha-256
+          MAX_PREPARED_STATEMENTS: "0"
+          IGNORE_STARTUP_PARAMETERS: extra_float_digits,search_path,jit,statement_timeout,lock_timeout,idle_in_transaction_session_timeout
+        ports:
+          - 6432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -p 5432"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
       redis:
         image: redis:7
         ports:
@@ -56,6 +76,7 @@ jobs:
       PGPASSWORD: postgres
       PGDATABASE: postgres
       REDIS_URL: redis://localhost:6379/0
+      AWID_TEST_POOLER_URL: postgresql://postgres:postgres@localhost:6432/postgres
 
     steps:
       - uses: actions/checkout@v7

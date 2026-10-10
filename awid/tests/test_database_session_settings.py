@@ -1,0 +1,317 @@
+"""awid's database session settings behind a transaction pooler (PgBouncer, as on Neon).
+
+pgdbm requests search_path, statement_timeout, lock_timeout,
+idle_in_transaction_session_timeout and jit as startup parameters. A
+transaction pooler may drop them, leaving the service without its timeouts.
+These tests run awid's real startup against a real PgBouncer in transaction
+mode (AWID_TEST_POOLER_URL) and against direct PostgreSQL.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import uuid
+from urllib.parse import urlsplit, urlunsplit
+
+import asyncpg
+import pytest
+
+from awid_service.config import get_settings
+from pgdbm import AsyncDatabaseManager
+
+from awid.db_config import build_database_config
+from awid_service.db import (
+    AwidDatabaseInfra,
+    DatabaseSessionSettingsError,
+    database_config_from_settings,
+    verify_session_settings,
+)
+
+POOLER_URL = os.environ.get("AWID_TEST_POOLER_URL", "")
+needs_pooler = pytest.mark.skipif(
+    not POOLER_URL, reason="set AWID_TEST_POOLER_URL to a PgBouncer in transaction mode (make test-awid-pooler)"
+)
+
+SESSION_DEFAULTS = {
+    "search_path": "pg_catalog",
+    "statement_timeout": "60s",
+    "lock_timeout": "5s",
+    "idle_in_transaction_session_timeout": "60s",
+    "jit": "off",
+}
+
+
+def _with_database(url: str, database: str) -> str:
+    parts = urlsplit(url)
+    return urlunsplit(parts._replace(path=f"/{database}"))
+
+
+async def _create_database(defaults: dict[str, str] | None) -> str:
+    """Create a fresh database through the pooler, so its server connections are new."""
+    name = f"awid_pooler_{uuid.uuid4().hex[:12]}"
+    admin = await asyncpg.connect(POOLER_URL, statement_cache_size=0)
+    try:
+        await admin.execute(f'CREATE DATABASE "{name}"')
+        for key, value in (defaults or {}).items():
+            await admin.execute(f"ALTER DATABASE \"{name}\" SET {key} = '{value}'")
+    finally:
+        await admin.close()
+    return name
+
+
+async def _drop_database(name: str) -> None:
+    admin = await asyncpg.connect(POOLER_URL, statement_cache_size=0)
+    try:
+        await admin.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+    finally:
+        await admin.close()
+
+
+def _configure(monkeypatch, url: str, *, pooler: bool, require: bool) -> None:
+    monkeypatch.setenv("AWID_DATABASE_URL", url)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("AWID_DATABASE_USES_TRANSACTION_POOLER", "true" if pooler else "false")
+    monkeypatch.setenv("AWID_DATABASE_REQUIRE_SESSION_SETTINGS", "true" if require else "false")
+
+
+def test_defaults_keep_the_unpinned_cached_configuration(monkeypatch):
+    monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://awid@localhost/awid")
+    for name in (
+        "AWID_DATABASE_USES_TRANSACTION_POOLER",
+        "AWID_DATABASE_REQUIRE_SESSION_SETTINGS",
+        "AWID_DATABASE_STATEMENT_CACHE_SIZE",
+        "AWID_DATABASE_POOLER_MAX_CONNECTIONS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    config = database_config_from_settings(get_settings())
+    assert config.shared_pool_search_path is None
+    assert config.statement_cache_size == 1000
+
+
+def test_pooler_mode_disables_the_statement_cache_and_bounds_the_pool(monkeypatch):
+    monkeypatch.setenv("AWID_DATABASE_URL", "postgresql://awid@localhost/awid")
+    monkeypatch.setenv("AWID_DATABASE_USES_TRANSACTION_POOLER", "true")
+    monkeypatch.setenv("AWID_DATABASE_POOLER_MAX_CONNECTIONS", "12")
+    monkeypatch.setenv("AWID_DATABASE_REQUIRE_SESSION_SETTINGS", "true")
+    config = database_config_from_settings(get_settings())
+    assert config.statement_cache_size == 0
+    assert config.max_connections == 12
+    assert config.shared_pool_search_path == "pg_catalog"
+
+
+@pytest.mark.asyncio
+async def test_required_settings_accept_direct_postgres(monkeypatch, test_db_factory):
+    db = await test_db_factory.create_db(suffix="awid_session_direct")
+    _configure(monkeypatch, db.config.get_dsn(), pooler=False, require=True)
+    infra = AwidDatabaseInfra(schema="awid")
+    await infra.initialize(run_migrations=True)
+    try:
+        manager = infra.get_manager()
+        assert await manager.fetch_value("SELECT current_setting('lock_timeout')") == "5s"
+    finally:
+        await infra.close()
+
+
+@needs_pooler
+@pytest.mark.asyncio
+async def test_required_settings_refuse_a_pooler_that_drops_them(monkeypatch):
+    name = await _create_database(defaults=None)
+    try:
+        _configure(monkeypatch, _with_database(POOLER_URL, name), pooler=True, require=True)
+        infra = AwidDatabaseInfra(schema="awid")
+        with pytest.raises(DatabaseSessionSettingsError) as refused:
+            await infra.initialize(run_migrations=False)
+        message = str(refused.value)
+        for setting in ("statement_timeout", "lock_timeout", "idle_in_transaction_session_timeout", "jit"):
+            assert setting in message
+        assert "ALTER ROLE" in message
+    finally:
+        await _drop_database(name)
+
+
+@needs_pooler
+@pytest.mark.asyncio
+async def test_required_settings_accept_server_side_defaults_behind_the_pooler(monkeypatch):
+    name = await _create_database(defaults=SESSION_DEFAULTS)
+    try:
+        _configure(monkeypatch, _with_database(POOLER_URL, name), pooler=True, require=True)
+        infra = AwidDatabaseInfra(schema="awid")
+        await infra.initialize(run_migrations=True)
+        try:
+            manager = infra.get_manager()
+            assert await manager.fetch_value("SELECT count(*) FROM {{tables.dns_namespaces}}") == 0
+            assert await manager.fetch_value("SHOW search_path") == "pg_catalog"
+        finally:
+            await infra.close()
+    finally:
+        await _drop_database(name)
+
+
+async def _hold_server_connections(url: str, count: int) -> None:
+    """Open `count` concurrent transactions through the pooler, forcing that many server connections."""
+    connections = [await asyncpg.connect(url, statement_cache_size=0) for _ in range(count)]
+    try:
+        transactions = [conn.transaction() for conn in connections]
+        for transaction in transactions:
+            await transaction.start()
+        await asyncio.gather(*(conn.fetchval("SELECT pg_backend_pid()") for conn in connections))
+        for transaction in transactions:
+            await transaction.rollback()
+    finally:
+        for conn in connections:
+            await conn.close()
+
+
+@needs_pooler
+@pytest.mark.asyncio
+async def test_required_settings_refuse_a_mix_of_old_and_new_server_connections(monkeypatch):
+    # Rollout state between ALTER ROLE and the pooler's refresh: some server
+    # connections predate the defaults, some carry them. The ones carrying them
+    # are used most recently, so a single sample would see only those.
+    name = await _create_database(defaults=None)
+    url = _with_database(POOLER_URL, name)
+    try:
+        await _hold_server_connections(url, 4)
+        admin = await asyncpg.connect(POOLER_URL, statement_cache_size=0)
+        try:
+            for key, value in SESSION_DEFAULTS.items():
+                await admin.execute(f"ALTER DATABASE \"{name}\" SET {key} = '{value}'")
+        finally:
+            await admin.close()
+        await _hold_server_connections(url, 8)
+
+        _configure(monkeypatch, url, pooler=True, require=True)
+        monkeypatch.setenv("AWID_DATABASE_POOLER_MAX_CONNECTIONS", "10")
+        infra = AwidDatabaseInfra(schema="awid")
+        with pytest.raises(DatabaseSessionSettingsError) as refused:
+            await infra.initialize(run_migrations=False)
+        assert "server connections" in str(refused.value)
+    finally:
+        await _drop_database(name)
+
+
+@needs_pooler
+@pytest.mark.asyncio
+async def test_pooler_mode_serves_concurrent_varied_queries(monkeypatch):
+    name = await _create_database(defaults=SESSION_DEFAULTS)
+    try:
+        _configure(monkeypatch, _with_database(POOLER_URL, name), pooler=True, require=True)
+        infra = AwidDatabaseInfra(schema="awid")
+        await infra.initialize(run_migrations=False)
+        try:
+            manager = infra.get_manager()
+
+            async def worker(index: int) -> None:
+                for step in range(40):
+                    assert await manager.fetch_value(f"SELECT $1::int + {step % 25}", index) == index + step % 25
+
+            await asyncio.gather(*(worker(index) for index in range(30)))
+        finally:
+            await infra.close()
+    finally:
+        await _drop_database(name)
+
+
+class _SeveringRelay:
+    """A TCP relay to PostgreSQL that can cut one connection on its client's next write.
+
+    The client learns of the cut only when it sends, so a pooled connection
+    looks healthy until its next query, which then fails.
+    """
+
+    def __init__(self, host: str, port: int) -> None:
+        self._upstream = (host, port)
+        self._links: list[dict] = []
+        self._server: asyncio.AbstractServer | None = None
+
+    async def start(self) -> int:
+        self._server = await asyncio.start_server(self._accept, "127.0.0.1", 0)
+        return self._server.sockets[0].getsockname()[1]
+
+    async def _accept(self, client_reader, client_writer) -> None:
+        upstream_reader, upstream_writer = await asyncio.open_connection(*self._upstream)
+        link = {"sever": False, "writers": (client_writer, upstream_writer)}
+        self._links.append(link)
+
+        async def pump(reader, writer, outbound: bool) -> None:
+            try:
+                while data := await reader.read(65536):
+                    if outbound and link["sever"]:
+                        break
+                    writer.write(data)
+                    await writer.drain()
+            except (ConnectionError, OSError):
+                pass
+            finally:
+                for each in link["writers"]:
+                    each.close()
+
+        await asyncio.gather(
+            pump(client_reader, upstream_writer, True), pump(upstream_reader, client_writer, False)
+        )
+
+    def sever_on_next_write(self, index: int) -> None:
+        self._links[index]["sever"] = True
+
+    @property
+    def connections(self) -> int:
+        return len(self._links)
+
+    async def close(self) -> None:
+        for link in self._links:
+            for each in link["writers"]:
+                each.close()
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_a_failing_sample_fails_the_check_promptly(test_db_factory):
+    # One pooled connection is cut: its sample errors before the barrier, and
+    # the check must surface that error instead of leaving the other samples
+    # waiting.
+    db = await test_db_factory.create_db(suffix="awid_session_dead")
+    dsn = urlsplit(db.config.get_dsn())
+    relay = _SeveringRelay(dsn.hostname or "localhost", dsn.port or 5432)
+    relay_port = await relay.start()
+    credentials, at, _ = dsn.netloc.rpartition("@")
+    netloc = f"{credentials}{at}127.0.0.1:{relay_port}"
+    config = build_database_config(
+        connection_string=urlunsplit(dsn._replace(netloc=netloc)), min_connections=3, max_connections=3
+    )
+    pool = await AsyncDatabaseManager.create_shared_pool(config)
+    try:
+        assert relay.connections == 3
+        relay.sever_on_next_write(0)
+
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(DatabaseSessionSettingsError) as refused:
+            await verify_session_settings(pool, config, timeout_seconds=20)
+        assert asyncio.get_running_loop().time() - started < 10
+        assert "Could not verify database session settings" in str(refused.value)
+        assert "timed out" not in str(refused.value)
+    finally:
+        pool.terminate()
+        await relay.close()
+
+
+@needs_pooler
+@pytest.mark.asyncio
+async def test_a_pooler_without_enough_server_connections_times_out(monkeypatch):
+    # PgBouncer serves at most its default pool of 20 server connections per
+    # database and user; a 30-wide round can never complete.
+    name = await _create_database(defaults=SESSION_DEFAULTS)
+    try:
+        _configure(monkeypatch, _with_database(POOLER_URL, name), pooler=True, require=True)
+        monkeypatch.setenv("AWID_DATABASE_POOLER_MAX_CONNECTIONS", "30")
+        monkeypatch.setenv("AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS", "3")
+        infra = AwidDatabaseInfra(schema="awid")
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(DatabaseSessionSettingsError) as refused:
+            await infra.initialize(run_migrations=False)
+        assert asyncio.get_running_loop().time() - started < 15
+        assert "timed out after 3" in str(refused.value)
+    finally:
+        await _drop_database(name)

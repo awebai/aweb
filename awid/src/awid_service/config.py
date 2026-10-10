@@ -24,6 +24,16 @@ class Settings:
     db_schema: str
     rate_limit_backend: str
     service_token: str | None
+    # Behind a transaction pooler (PgBouncer, Neon's -pooler endpoints) asyncpg's
+    # statement cache must be off and the pool bounded.
+    database_uses_transaction_pooler: bool = False
+    database_pooler_max_connections: int = 10
+    database_statement_cache_size: int | None = None
+    # Refuse to start unless every connection carries the search_path pin and the
+    # pgdbm timeouts. A pooler that drops startup parameters needs them as role
+    # defaults (ALTER ROLE ... SET ...).
+    database_require_session_settings: bool = False
+    database_session_check_timeout_seconds: float = 30.0
 
 
 def get_settings() -> Settings:
@@ -37,6 +47,20 @@ def get_settings() -> Settings:
     redis_url = os.getenv("AWID_REDIS_URL") or os.getenv("REDIS_URL") or "redis://localhost:6379/0"
     schema = (os.getenv("AWID_DB_SCHEMA") or "awid").strip() or "awid"
     rate_limit_backend = (os.getenv("AWID_RATE_LIMIT_BACKEND") or "redis").strip().lower() or "redis"
+
+    pooler_max_raw = os.getenv("AWID_DATABASE_POOLER_MAX_CONNECTIONS", "10")
+    pooler_max_connections = int(pooler_max_raw)
+    if pooler_max_connections < 1:
+        raise ValueError(
+            f"AWID_DATABASE_POOLER_MAX_CONNECTIONS must be at least 1, got {pooler_max_connections}"
+        )
+    session_check_timeout = float(os.getenv("AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS", "30"))
+    if session_check_timeout <= 0:
+        raise ValueError(
+            f"AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS must be positive, got {session_check_timeout}"
+        )
+    statement_cache_raw = (os.getenv("AWID_DATABASE_STATEMENT_CACHE_SIZE") or "").strip()
+    statement_cache_size = int(statement_cache_raw) if statement_cache_raw else None
 
     port_raw = os.getenv("AWID_PORT", "8010")
     port = int(port_raw)
@@ -53,4 +77,9 @@ def get_settings() -> Settings:
         db_schema=schema,
         rate_limit_backend=rate_limit_backend,
         service_token=normalize_service_token(os.getenv("AWID_SERVICE_TOKEN")),
+        database_uses_transaction_pooler=_env_bool("AWID_DATABASE_USES_TRANSACTION_POOLER"),
+        database_pooler_max_connections=pooler_max_connections,
+        database_statement_cache_size=statement_cache_size,
+        database_require_session_settings=_env_bool("AWID_DATABASE_REQUIRE_SESSION_SETTINGS"),
+        database_session_check_timeout_seconds=session_check_timeout,
     )
