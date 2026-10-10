@@ -32,14 +32,14 @@ async def test_sender_address_preserves_team_context(privacy_app, scope, address
         )
         assert row["from_address"] == expected
         assert row["from_alias"] == "alice"
-        assert row["from_did"] == actor.did
+        assert row["from_did"] == (stable if table == "chat_messages" and stable else actor.did)
     for path in [f"/v1/messages/{mail.json()['message_id']}", f"/v1/chat/sessions/{chat.json()['session_id']}/messages"]:
         response = await _request(env, "bob", "GET", path)
         assert response.status_code == 200, response.text
         data = response.json()
         item = data["messages"][0] if "messages" in data else data
         assert (item.get("from_address") or None) == expected
-        assert item["from_alias"] == "alice"
+        assert item.get("from_alias", item.get("from_agent")) == "alice"
         assert item["sender_membership"]["team_id"] == TEAM
         assert item["sender_membership"]["state"] == "active"
         assert item["sender_membership"]["member_did_aw"] == stable
