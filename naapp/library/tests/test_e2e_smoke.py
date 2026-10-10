@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,10 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 AWID_URL = os.environ.get("LIBRARY_E2E_AWID_URL", "http://127.0.0.1:18010")
+# Same-operator credential shared with the e2e awid service (docker-compose.e2e.yml).
+AWID_SERVICE_TOKEN = os.environ.get(
+    "LIBRARY_E2E_AWID_SERVICE_TOKEN", "library-e2e-awid-service-token-0123456789abcdef"
+)
 POSTGRES_URL = os.environ.get(
     "LIBRARY_E2E_DATABASE_URL",
     "postgresql://library:library@127.0.0.1:55432/library",
@@ -270,8 +275,8 @@ def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
         raise AssertionError(f"invalid JSON for {context}: {stdout}") from exc
 
 
-@pytest.fixture(scope="session")
-def library() -> Iterator[RunningLibrary]:
+@contextmanager
+def _running_library(*, awid_service_token: str | None) -> Iterator[RunningLibrary]:
     _require_e2e_enabled()
     _wait_http_ok(f"{AWID_URL}/health")
 
@@ -288,8 +293,11 @@ def library() -> Iterator[RunningLibrary]:
         "RENDER_GIT_BRANCH",
         "RENDER_GIT_COMMIT",
         "LIBRARY_GIT_SHA",
+        "LIBRARY_AWID_SERVICE_TOKEN",
     ):
         env.pop(name, None)
+    if awid_service_token is not None:
+        env["LIBRARY_AWID_SERVICE_TOKEN"] = awid_service_token
     env.update(
         {
             "RENDER_GIT_COMMIT": E2E_BUILD_SHA,
@@ -341,6 +349,18 @@ def library() -> Iterator[RunningLibrary]:
             proc.stderr.close()
         if failed:
             raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+
+
+@pytest.fixture(scope="session")
+def library() -> Iterator[RunningLibrary]:
+    with _running_library(awid_service_token=AWID_SERVICE_TOKEN) as running:
+        yield running
+
+
+@pytest.fixture(scope="session")
+def library_without_awid_service_token() -> Iterator[RunningLibrary]:
+    with _running_library(awid_service_token=None) as running:
+        yield running
 
 
 @pytest.fixture(scope="session")
@@ -509,6 +529,18 @@ def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
         assert response.headers["content-type"].startswith("application/json")
         assert response.content == expected
         assert json.loads(response.content)["app"]["origin"] == library.origin
+
+
+def test_private_team_needs_the_awid_service_token(
+    library_without_awid_service_token: RunningLibrary, aw_workspace: AWWorkspace
+) -> None:
+    team = _provision_team(aw_workspace)
+    result = _aw_request(
+        team, "GET", f"{library_without_awid_service_token.origin}/v1/agents/agent-1/profile-binding"
+    )
+    assert result.returncode != 0
+    assert "HTTP 403" in result.stderr
+    assert "team_private_unreadable" in result.stdout
 
 
 def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:
