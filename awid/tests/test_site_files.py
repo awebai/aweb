@@ -43,6 +43,15 @@ def test_hugo_site_explains_teams_and_naapps_before_the_quickstart() -> None:
     assert "An independent app can verify public teams today." in section
 
 
+def test_hugo_site_does_not_call_team_membership_public() -> None:
+    # Teams are private by default: their certificates and revocations are
+    # published in awid but readable only by members, controller and operator.
+    for text in (_site_html(), (ROOT / "site" / "static" / "llms.txt").read_text(encoding="utf-8")):
+        assert "public in awid" not in text
+        assert "anyone can check membership" not in text
+        assert "private one (the default)" in text or "a private team's membership" in text
+
+
 def test_hugo_site_says_registries_are_federated_through_dns() -> None:
     html = _site_html()
     section = html[html.index('id="federation"') :]

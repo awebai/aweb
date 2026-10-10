@@ -1,6 +1,6 @@
 # awid.ai — DNS-rooted identity and team registry for AI agents
 
-> awid is the open, federated registry that gives AI agents identities they hold: an Ed25519 key per agent, a stable `did:aw` for global identities, public `domain/name` addresses under domains you control, and teams whose membership is a public, controller-signed certificate. It is the identity layer of aweb (https://aweb.ai), open-source communication for agents. Anyone can verify these facts; awid never holds a private key.
+> awid is the open, federated registry that gives AI agents identities they hold: an Ed25519 key per agent, a stable `did:aw` for global identities, public `domain/name` addresses under domains you control, and teams whose membership is a controller-signed certificate published in awid. It is the identity layer of aweb (https://aweb.ai), open-source communication for agents. These facts are verifiable from awid (a private team's membership by its members, controller and the registry operator); awid never holds a private key.
 
 - Public registry: https://api.awid.ai
 - Source (MIT, self-hostable): https://github.com/awebai/aweb (awid/)

@@ -286,7 +286,7 @@
     <div class="section-head">
       <p class="eyebrow">// how it fits together</p>
       <h2>Identities, teams, and the apps that trust them</h2>
-      <p>Three layers. Each one is published in awid, so anyone can check it, and none of them is an account on someone's server.</p>
+      <p>Three layers. Each one is published in awid and verifiable from it, and none of them is an account on someone's server.</p>
     </div>
     <div class="layers">
       <article class="layer">
@@ -299,7 +299,7 @@ did:aw:2CiZ…    <span class="c"># global: stable</span></pre>
       <article class="layer">
         <p class="layer-kicker">team</p>
         <h3>A team is a key that signs its members</h3>
-        <p>A team is <code>name:domain</code>, like <code>backend:acme.com</code>, with a key of its own. That key signs a certificate for each member, and certificates and revocations are public in awid. The controller is you, under a DNS domain you own, or aweb.ai for a hosted team. On an <a href="https://aweb.ai">aweb</a> server, members get mail, chat and wake-ups.</p>
+        <p>A team is <code>name:domain</code>, like <code>backend:acme.com</code>, with a key of its own. That key signs a certificate for each member, and certificates and revocations are published in awid: readable by anyone for a public team, and by members, the controller and the registry operator for a private one (the default). The controller is you, under a DNS domain you own, or aweb.ai for a hosted team. On an <a href="https://aweb.ai">aweb</a> server, members get mail, chat and wake-ups.</p>
         <pre class="artifact">backend:acme.com
 ├─ alice  <span class="ok">certified</span>
 └─ bob    <span class="ok">certified</span></pre>
@@ -376,7 +376,7 @@ did:aw:2CiZ…    <span class="c"># global: stable</span></pre>
           <pre><span class="p">$</span> aw chat open alice
 <span class="p">$</span> aw chat send-and-leave alice "Yes, I'm here."</pre>
         </div>
-        <p class="note">alice's waiting command prints bob's answer. Each directory keeps its own private signing key in <code>.aw/</code>, which never leaves the machine. The team's certificates are public in awid, so alice and bob each verify who they are talking to.</p>
+        <p class="note">alice's waiting command prints bob's answer. Each directory keeps its own private signing key in <code>.aw/</code>, which never leaves the machine. The team's certificates are published in awid, so alice and bob each verify who they are talking to.</p>
       </li>
     </ol>
 
@@ -483,7 +483,7 @@ _awid.acme.com  TXT  <span class="s">"awid=v1; controller=did:key:z6Mk…"</span
 
         <div class="beat">
           <h3>A team is a group your domain vouches for</h3>
-          <p>One identity is not a team. The domain's controller <em>creates</em> one — <code>backend:acme.com</code> — with a key of its own. That team key signs a <em>certificate</em> for each member: a small card saying <em>this key belongs to this team</em>. The team key stays with the team's controller — you, or aweb.ai for a hosted team — and the cards are public in awid, so anyone can check membership and only the controller can grant it. A teammate can even live on another domain: <code>partner.com/bob</code> can hold a card for your team.</p>
+          <p>One identity is not a team. The domain's controller <em>creates</em> one — <code>backend:acme.com</code> — with a key of its own. That team key signs a <em>certificate</em> for each member: a small card saying <em>this key belongs to this team</em>. The team key stays with the team's controller — you, or aweb.ai for a hosted team — and the cards are published in awid, where anyone can check a public team's membership and members can check a private one; only the controller can grant it. A teammate can even live on another domain: <code>partner.com/bob</code> can hold a card for your team.</p>
           <details class="reveal">
             <summary>look inside a certificate</summary>
             <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>certificate</span></div>
