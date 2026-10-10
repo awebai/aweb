@@ -21,7 +21,7 @@ async def test_sender_membership_mail_and_chat_is_current_and_participant_scoped
     paths = [f'/v1/messages/{mail_id}', f"/v1/chat/sessions/{chat.json()['session_id']}/messages"]
     for state in ('active', 'inactive'):
         if state == 'inactive':
-            await env.db.execute("UPDATE {{tables.agents}} SET status='inactive' WHERE agent_id=$1", sender.id)
+            await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", sender.id)
         for path in paths:
             response = await _request(env, 'bob', 'GET', path)
             assert response.status_code == 200, response.text
