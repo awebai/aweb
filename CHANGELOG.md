@@ -11,6 +11,36 @@
   reads include current sender membership; unavailable proof remains unverified.
   Grant-seat recipients are matched to their resident identity.
 
+- Start local-resident custody correctly when the working directory is reached
+  through a symlink, including macOS temporary-directory aliases.
+
+### Release preparation: AWID 0.5.22
+
+Changes since `awid-service-v0.5.21` / `awid-v0.5.21`.
+
+- **Database session settings:** new `AWID_DATABASE_REQUIRE_SESSION_SETTINGS`
+  makes awid refuse to start unless sampled connections carry the
+  `search_path` pin (`pg_catalog`) and pgdbm's `statement_timeout`,
+  `lock_timeout`, `idle_in_transaction_session_timeout` and `jit` settings,
+  which a connection pooler or Neon can drop silently. The check takes at
+  least 20 connection samples in concurrently held rounds sized to the pool,
+  and is bounded by `AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS` (default 30).
+  `AWID_DATABASE_USES_TRANSACTION_POOLER` bounds the pool for transaction
+  poolers (`AWID_DATABASE_POOLER_MAX_CONNECTIONS`, default 10) and turns the
+  statement cache off by default; an explicit
+  `AWID_DATABASE_STATEMENT_CACHE_SIZE` takes precedence. Both boolean opt-ins
+  default off; absent these opt-ins or explicit numeric overrides, existing
+  database behavior is preserved. The awid README documents setting the
+  values through a direct endpoint's `options` URL parameter or role defaults,
+  and that migrations must schema-qualify under the pin.
+- **Certificate status:** `GET /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status`
+  returns the current team key and the certificate's active or revoked status,
+  for public and private teams, without member identities. It has its own
+  `certificate_status` rate-limit bucket.
+- No AWID database migration is added. The image also bundles the current
+  `server/src`, which includes server migration
+  `019_chat_participant_lookup.sql`; awid does not run server migrations.
+
 ### Release preparation: server 1.27.15 and CLI 1.36.32
 
 Server changes are since `server-v1.27.14`; CLI changes are since

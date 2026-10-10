@@ -465,7 +465,9 @@ func killRotationAtRegistryWindow(t *testing.T, ctx context.Context, bin, dir st
 		t.Fatalf("rotation did not reach registry crash window\n%s", output.String())
 	}
 	signalRotationSIGKILL(t, cmd)
-	close(state.release)
+	// Keep the response blocked until Wait observes death, not just signal delivery.
+	// Defer also releases the handler if the death assertion fails.
+	defer close(state.release)
 	waitForRotationSIGKILL(t, cmd)
 }
 

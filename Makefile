@@ -254,7 +254,9 @@ verify-site: check-awid-site-docs
 
 test-server:
 	cd server && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
-	cd server && UV_CACHE_DIR=/tmp/uv-cache PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
+	set -eu; cd server; build_dir=$$(mktemp -d); trap 'rm -rf "$$build_dir"' EXIT; \
+		UV_CACHE_DIR=/tmp/uv-cache uv build --out-dir "$$build_dir"
+	cd server && UV_CACHE_DIR=/tmp/uv-cache UV_OFFLINE=1 PYTHONPYCACHEPREFIX=/tmp/pycache $(TEST_EGRESS_RUNNER) uv run --offline --no-sync pytest -q
 
 test-awid:
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
@@ -273,7 +275,9 @@ test-awid-pooler:
 test-cli:
 	cd cli/go && go mod download
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
-	cd cli/go && GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1
+	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
+	cd cli/go && TMPDIR="$$(python3 -c 'import os; print(os.path.realpath("/tmp"))')" \
+		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1
 
 # The Node suites have separate lockfiles and a local file: dependency from the
 # host adapters to channel-core. Install all three before any Node test target

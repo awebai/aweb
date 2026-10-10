@@ -110,7 +110,16 @@ type custodyService struct {
 }
 
 func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
-	wd, _ := os.Getwd()
+	wd, err := os.Getwd()
+	if err != nil {
+		return nil, err
+	}
+	// ResolveIdentityHome canonicalizes the default cwd. Use the same spelling
+	// for resolution and the local fallback, even when Getwd preserves PWD.
+	wd, err = filepath.EvalSymlinks(wd)
+	if err != nil {
+		return nil, fmt.Errorf("resolve custody working directory: %w", err)
+	}
 	if awconfig.IsGrantHome(home.Root) {
 		return nil, usageError("custody serve requires the resident identity home, not a grant home")
 	}

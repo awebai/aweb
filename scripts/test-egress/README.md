@@ -6,6 +6,19 @@ behind the native deny proxy. Loopback stays direct. The exact existing
 suffixes bypass the native proxy to retain normal DNS failure semantics. Other requests fail the wrapper even when
 the caller ignores the error. The per-run refused-host report remains visible.
 
+`make test-cli` sets `TMPDIR` to the canonical form of `/tmp` (`/private/tmp`
+on macOS), keeping custody paths free of symlink parents and Unix sockets short.
+
+Server preparation builds the distribution once before entering the guard, warming
+uv's build-backend cache as well as its runtime dependencies. The guarded server
+suite exports `UV_OFFLINE=1`, which also reaches the package-data test's `uv build`
+child; `uv run --offline` alone does not prevent that child from revalidating PyPI.
+The isolated image likewise prebuilds the server before disabling network access.
+Its tools and suite setup are composed into one Docker build, so the host Docker
+builder and the candidate gate's bounded docker-container builder use the same
+path without needing access to a daemon-local intermediate image. The generated
+Dockerfile is retained with the run's evidence.
+
 This proxy is a **soft** guard: a client disabling proxy support bypasses it.
 `make test-isolated` is the hard Go/Python/Node suite gate: dependencies are built
 into an image before execution; the runner has only an internal Docker network,

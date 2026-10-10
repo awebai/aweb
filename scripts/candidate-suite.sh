@@ -12,13 +12,13 @@ run() {
 # targets visible here, including their dependency-order contract.
 if [[ "${1:-}" == "--isolated-suites" ]]; then
   export TEST_EGRESS_RUNNER=
-  run test-server
-  run test-awid
-  run test-cli
-  run _candidate-unit-channel
-  run test-channel-name-live-contract
-  run _candidate-unit-channel-core
-  run _candidate-unit-pi
+run test-server
+run test-awid
+run test-cli
+run _candidate-unit-channel
+run test-channel-name-live-contract
+run _candidate-unit-channel-core
+run _candidate-unit-pi
   exit 0
 fi
 
