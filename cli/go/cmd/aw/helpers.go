@@ -210,6 +210,7 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		return nil, fmt.Errorf("current signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
 	}
 
+	domain, _ := splitTeamID(cert.Team)
 	return &awconfig.ResolvedIdentity{
 		WorkingDir:     strings.TrimSpace(workingDir),
 		IdentityPath:   "",
@@ -217,8 +218,8 @@ func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIden
 		DID:            didKey,
 		StableID:       "",
 		Address:        "",
-		Handle:         "",
-		Domain:         "",
+		Handle:         strings.TrimSpace(cert.Alias),
+		Domain:         domain,
 		Custody:        awid.CustodySelf,
 		IdentityScope:  awid.IdentityModeLocal,
 		RegistryURL:    "",

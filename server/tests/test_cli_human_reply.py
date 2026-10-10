@@ -17,7 +17,7 @@ from uuid import uuid4
 import pytest
 
 from awid.e2ee_keys import build_encryption_key_assertion
-from awid.signing import canonical_json_bytes, sign_message
+from awid.signing import canonical_json_bytes, sign_message, verify_signature, VerifyResult
 from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
 from aweb.e2ee_messages import decrypt_e2ee_message, encrypt_e2ee_mail, generate_x25519_keypair
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
@@ -146,17 +146,32 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         for mode in ("--plaintext", "--e2ee"):
             text = f"Local resident peer send {mode}"
             body_file.write_text(text)
+            control = await _cli(binary, tmp_path, child_env, "mail", "send", "--to", "carol",
+                                 mode, "--body-file", str(body_file), "--json")
+            control_read = await _request(env, "carol", "GET", f"/v1/messages/{control['message_id']}")
+            assert control_read.status_code == 200, control_read.text
+            control_message = control_read.json()
             sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
                               mode, "--body-file", str(body_file), "--json")
             received = await _request(env, "carol", "GET", f"/v1/messages/{sent['message_id']}")
             assert received.status_code == 200, received.text
             delivered = received.json()
             assert delivered["from_did"] == agent["did"]
+            assert delivered["from_alias"] == control_message["from_alias"] == "bob"
             if mode == "--plaintext":
                 assert delivered["body"] == text
-                assert delivered["signature"]
+                for message in (control_message, delivered):
+                    assert verify_signature(agent["did"], message["signed_payload"].encode(),
+                                            message["signature"]) == VerifyResult.VERIFIED
+                actual_from = json.loads(delivered["signed_payload"])["from"]
+                control_from = json.loads(control_message["signed_payload"])["from"]
+                assert actual_from.encode() == control_from.encode() == b"bob"
             else:
                 assert delivered["content_mode"] == "encrypted_v2"
+                sender = delivered["encrypted_envelope"]["from"]
+                assert sender == control_message["encrypted_envelope"]["from"]
+                assert sender["did"] == agent["did"]
+                assert not sender.get("address")
                 decrypted = decrypt_e2ee_message(delivered["encrypted_envelope"], {
                     **peer, "encryption_key_id": peer["encryption_key"]["encryption_key_id"],
                 })
@@ -187,14 +202,18 @@ async def _reply_context(binary, root, env, grant):
                 status = await _cli(binary, root, env, "custody", "status", "--json")
                 if (status.get("keys") or {}).get("encryption_ready"):
                     assert status["keys"]["signing_ready"]
+                    assert status["resident"]["alias"] == "bob"
+                    assert not status["resident"].get("address")
                     break
                 await asyncio.sleep(0.05)
             else:
                 pytest.fail(f"custody not ready: {status}; {log_path.read_text()}")
             seat = root / "seat"
             seat.mkdir()
-            await _cli(binary, root, env, "id", "grant", "mint", "--bundle", "normal-agent",
+            minted = await _cli(binary, root, env, "id", "grant", "mint", "--bundle", "normal-agent",
                        "--ttl", "5m", "--custody-socket", "auto", "--out", str(seat / ".aw"), "--json")
+            assert not minted.get("address")
+            assert minted["alias"] == "bob"
             assert not (seat / ".aw" / "signing.key").exists()
             grant_env = dict(env, AWEB_IDENTITY_HOME=str(seat / ".aw"))
             status = await _cli(binary, seat, grant_env, "custody", "status", "--json")

@@ -392,6 +392,11 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if len(grantedScopes) == 0 {
 		grantedScopes = scopes
 	}
+	address := selectionAddress(sel)
+	if sel.IdentityScope == awid.IdentityModeLocal {
+		// A local member name is not a namespace-authorized identity address.
+		address = ""
+	}
 	state := &awconfig.GrantHome{
 		Version: awconfig.GrantHomeSchemaVersion,
 		GrantID: strings.TrimSpace(view.GrantID),
@@ -399,7 +404,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		Subject: awconfig.GrantSubject{
 			DIDAW:   firstNonEmpty(strings.TrimSpace(view.SubjectDIDAW), strings.TrimSpace(sel.StableID)),
 			DIDKey:  strings.TrimSpace(sel.DID),
-			Address: selectionAddress(sel),
+			Address: address,
 			Alias:   firstNonEmpty(strings.TrimSpace(view.SubjectAlias), strings.TrimSpace(sel.Alias)),
 		},
 		Scopes:    grantedScopes,
