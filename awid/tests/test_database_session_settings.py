@@ -18,7 +18,15 @@ import asyncpg
 import pytest
 
 from awid_service.config import get_settings
-from awid_service.db import AwidDatabaseInfra, DatabaseSessionSettingsError, database_config_from_settings
+from pgdbm import AsyncDatabaseManager
+
+from awid.db_config import build_database_config
+from awid_service.db import (
+    AwidDatabaseInfra,
+    DatabaseSessionSettingsError,
+    database_config_from_settings,
+    verify_session_settings,
+)
 
 POOLER_URL = os.environ.get("AWID_TEST_POOLER_URL", "")
 needs_pooler = pytest.mark.skipif(
@@ -201,5 +209,57 @@ async def test_pooler_mode_serves_concurrent_varied_queries(monkeypatch):
             await asyncio.gather(*(worker(index) for index in range(30)))
         finally:
             await infra.close()
+    finally:
+        await _drop_database(name)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_sample_fails_the_check_promptly(test_db_factory):
+    # One pooled connection whose server backend is gone: its sample errors
+    # before the barrier, and the check must surface that error instead of
+    # leaving the other samples waiting.
+    db = await test_db_factory.create_db(suffix="awid_session_dead")
+    config = build_database_config(
+        connection_string=db.config.get_dsn(), min_connections=3, max_connections=3
+    )
+    pool = await AsyncDatabaseManager.create_shared_pool(config)
+    try:
+        held = [await pool.acquire() for _ in range(3)]
+        backends = [await conn.fetchval("SELECT pg_backend_pid()") for conn in held]
+        for conn in held:
+            await pool.release(conn)
+        assert len(set(backends)) == 3
+        admin = await asyncpg.connect(db.config.get_dsn())
+        try:
+            assert await admin.fetchval("SELECT pg_terminate_backend($1)", backends[0]) is True
+        finally:
+            await admin.close()
+
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(DatabaseSessionSettingsError) as refused:
+            await verify_session_settings(pool, config, timeout_seconds=20)
+        assert asyncio.get_running_loop().time() - started < 10
+        assert "Could not verify database session settings" in str(refused.value)
+        assert "timed out" not in str(refused.value)
+    finally:
+        pool.terminate()
+
+
+@needs_pooler
+@pytest.mark.asyncio
+async def test_a_pooler_without_enough_server_connections_times_out(monkeypatch):
+    # PgBouncer serves at most its default pool of 20 server connections per
+    # database and user; a 30-wide round can never complete.
+    name = await _create_database(defaults=SESSION_DEFAULTS)
+    try:
+        _configure(monkeypatch, _with_database(POOLER_URL, name), pooler=True, require=True)
+        monkeypatch.setenv("AWID_DATABASE_POOLER_MAX_CONNECTIONS", "30")
+        monkeypatch.setenv("AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS", "3")
+        infra = AwidDatabaseInfra(schema="awid")
+        started = asyncio.get_running_loop().time()
+        with pytest.raises(DatabaseSessionSettingsError) as refused:
+            await infra.initialize(run_migrations=False)
+        assert asyncio.get_running_loop().time() - started < 15
+        assert "timed out after 3" in str(refused.value)
     finally:
         await _drop_database(name)

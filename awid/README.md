@@ -40,6 +40,8 @@ Optional environment:
 - `AWID_DATABASE_POOLER_MAX_CONNECTIONS` default `10`, the pool bound used with
   the transaction pooler.
 - `AWID_DATABASE_STATEMENT_CACHE_SIZE` overrides the statement cache size.
+- `AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS` default `30`, the bound on the
+  startup session-settings check.
 - `AWID_DATABASE_REQUIRE_SESSION_SETTINGS` default `false`. Set `true` to refuse
   to start unless connections carry the `search_path` pin and the pgdbm
   timeouts (`statement_timeout`, `lock_timeout`,

@@ -33,6 +33,7 @@ class Settings:
     # pgdbm timeouts. A pooler that drops startup parameters needs them as role
     # defaults (ALTER ROLE ... SET ...).
     database_require_session_settings: bool = False
+    database_session_check_timeout_seconds: float = 30.0
 
 
 def get_settings() -> Settings:
@@ -52,6 +53,11 @@ def get_settings() -> Settings:
     if pooler_max_connections < 1:
         raise ValueError(
             f"AWID_DATABASE_POOLER_MAX_CONNECTIONS must be at least 1, got {pooler_max_connections}"
+        )
+    session_check_timeout = float(os.getenv("AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS", "30"))
+    if session_check_timeout <= 0:
+        raise ValueError(
+            f"AWID_DATABASE_SESSION_CHECK_TIMEOUT_SECONDS must be positive, got {session_check_timeout}"
         )
     statement_cache_raw = (os.getenv("AWID_DATABASE_STATEMENT_CACHE_SIZE") or "").strip()
     statement_cache_size = int(statement_cache_raw) if statement_cache_raw else None
@@ -75,4 +81,5 @@ def get_settings() -> Settings:
         database_pooler_max_connections=pooler_max_connections,
         database_statement_cache_size=statement_cache_size,
         database_require_session_settings=_env_bool("AWID_DATABASE_REQUIRE_SESSION_SETTINGS"),
+        database_session_check_timeout_seconds=session_check_timeout,
     )
