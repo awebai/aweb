@@ -74,7 +74,7 @@ Before application side effects, perform every check:
 
 For an independent app without an operator credential, read
 `GET /v1/namespaces/example.com/teams/engineering/certificates/{certificate_id}/status`.
-This tokenless path requires AWID at or above the release that introduces `/status`; availability depends on the registry operator deploying that release.
+This tokenless path is available from the AWID release that introduces `/status` (version to be named when cut); older registries, including awid.ai until that release is deployed there, return 404, which an independent app must treat as “unverifiable, refuse,” not an error to work around.
 This anonymous read works for public and private teams. It returns exactly
 `team_id`, the **current** `team_did_key`, `status` (`active` or `revoked`), and
 `revoked_at` (null for active). Require the expected team ID and a consistent
