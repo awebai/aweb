@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/awebai/aw/awconfig"
-	"github.com/awebai/aw/awid"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func TestCustodyLocalFallbackRefusals(t *testing.T) {
