@@ -64,8 +64,17 @@ Role defaults reach only new server connections, so refresh the pooler's
 connections afterwards, and confirm with
 `SELECT name, setting, source FROM pg_settings` that each shows `source = user`.
 Then set `AWID_DATABASE_USES_TRANSACTION_POOLER=true` and
-`AWID_DATABASE_REQUIRE_SESSION_SETTINGS=true`. `make test-awid-pooler` runs
-awid's checks through a real PgBouncer.
+`AWID_DATABASE_REQUIRE_SESSION_SETTINGS=true`. At startup awid samples at least
+20 concurrently held server connections and refuses to start if any lacks a
+setting, so a partially refreshed pooler is caught. `make test-awid-pooler`
+runs awid's checks through a real PgBouncer.
+
+The defaults apply to everything that connects as that role. Operators and
+scripts using it must schema-qualify (`awid.teams`), or set the path inside a
+transaction: through a transaction pooler a plain `SET` does not persist, so use
+`BEGIN; SET LOCAL search_path TO awid; ...; COMMIT;`. A migration or backfill
+that may run longer than 60 seconds must raise its own limit inside its
+transaction with `SET LOCAL statement_timeout = '...'`.
 
 ## Docker
 
