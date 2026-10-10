@@ -10,6 +10,9 @@ Server changes are since `server-v1.27.15`; CLI changes are since
 - **Addressless global senders:** mail and chat preserve an empty public sender
   address while retaining team authorization and display names. Existing local
   sender routing labels and explicit global addresses are unchanged.
+- **Plaintext sender addresses:** mail and chat reads preserve an explicit
+  sender address when the signed sender field uses a team member name. Member
+  names alone are not promoted into public addresses.
 - **Received-message verification:** mail and chat verify global senders without
   a public address using their current registry key and active delivery-team
   membership. Participant reads include current sender membership; unavailable

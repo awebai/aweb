@@ -15,7 +15,8 @@ from test_messages_http import _make_keypair, _make_certificate
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["mail", "chat"])
-async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp_path, kind):
+@pytest.mark.parametrize("sender_address", ["example.test/alice", ""])
+async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp_path, kind, sender_address):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     team_sk, _, team_did = _make_keypair()
@@ -25,7 +26,7 @@ async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp
     for name in ("alice", "bob"):
         actor = env.actors[name]
         stable = stable_id_from_did_key(actor.did) if name == "alice" else ""
-        address = "example.test/alice" if stable else ""
+        address = sender_address if stable else ""
         scope = "global" if stable else "local"
         await env.db.execute("UPDATE {{tables.agents}} SET did_aw=$1,address=$2,identity_scope=$3 WHERE agent_id=$4",
                              stable or None, address or None, scope, actor.id)
@@ -36,6 +37,7 @@ async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp
         cert.pop("signature")
         if not stable:
             cert.pop("member_did_aw")
+        if not address:
             cert.pop("member_address")
         cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
         root = (tmp_path / name).resolve()
@@ -79,13 +81,18 @@ async def test_cli_preserves_explicit_address_with_signed_alias(privacy_app, tmp
     data = raw.json()
     message = data["messages"][0] if "messages" in data else data
     stored = await env.db.fetch_one("SELECT from_address, signed_payload FROM {{tables." + table + "}} WHERE message_id=$1", UUID(message["message_id"]))
-    assert stored["from_address"] == "example.test/alice"
-    assert message["from_address"] == "example.test/alice"
+    assert (stored["from_address"] or "") == sender_address
+    assert (message.get("from_address") or "") == sender_address
     signed = json.loads(stored["signed_payload"])
     assert signed["from"] == "alice"
     assert signed["from_stable_id"] == stable_id_from_did_key(env.actors["alice"].did)
-    shown = await _cli(binary, *homes["bob"], *read_args, "--json")
-    assert shown["messages"][0].get("from_address") == "example.test/alice", {
-        "stored_address": stored["from_address"], "http_address": message["from_address"],
+    reader = await asyncio.create_subprocess_exec(str(binary), *read_args, "--json",
+        cwd=homes["bob"][0], env=homes["bob"][1], stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE)
+    output, error = await asyncio.wait_for(reader.communicate(), 30)
+    assert reader.returncode == 0, error.decode()
+    shown = json.loads(output)
+    assert (shown["messages"][0].get("from_address") or "") == sender_address, {
+        "stored_address": stored["from_address"], "http_address": message.get("from_address"),
         "signed_from": signed["from"], "cli_address": shown["messages"][0].get("from_address"),
     }

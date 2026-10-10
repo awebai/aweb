@@ -811,15 +811,17 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 			if m.ToStableID == "" {
 				m.ToStableID = meta.ToStableID
 			}
-			if m.FromAddress == "" && meta.From != "" {
+			// A signed member name is not a public address. Preserve an explicit
+			// server projection; only suppress alias-to-address fallback.
+			stableAlias := strings.HasPrefix(meta.FromStableID, "did:aw:") && !strings.Contains(meta.From, "/")
+			if m.FromAddress == "" && meta.From != "" && !stableAlias {
 				m.FromAddress = meta.From
 			}
 			if m.ToAddress == "" && meta.To != "" {
 				m.ToAddress = meta.To
 			}
-			if strings.HasPrefix(meta.FromStableID, "did:aw:") && !strings.Contains(meta.From, "/") {
+			if stableAlias {
 				m.FromStableID = meta.FromStableID
-				m.FromAddress = ""
 			}
 		}
 		from := m.FromAlias
