@@ -19,7 +19,7 @@ from ...config import get_settings
 from ...db import DatabaseInfra, get_db_infra
 from ...input_validation import is_valid_alias, is_valid_canonical_origin, is_valid_human_name
 from awid.pagination import encode_cursor, validate_pagination_params
-from ...grant_liveness import cleanup_expired_grant_liveness
+from ...grant_liveness import grant_liveness_expiry, cleanup_expired_grant_liveness
 from ...presence import (
     DEFAULT_PRESENCE_TTL_SECONDS,
     clear_workspace_presence,
@@ -196,7 +196,7 @@ async def heartbeat(
             UUID(payload.workspace_id),
             identity.alias,
             identity.grant.session_did_key,
-            identity.grant.expires_at,
+            grant_liveness_expiry(identity.grant),
         )
         return WorkspaceHeartbeatResponse(ok=True, workspace_id=payload.workspace_id)
 
