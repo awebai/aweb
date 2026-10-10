@@ -35,7 +35,7 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc)
     identities = {}
-    for name, custody in (("alice", "hosted_custodial"), ("bob", "self")):
+    for name, custody in (("alice", "hosted_custodial"), ("bob", "self"), ("carol", "self")):
         actor = env.actors[name]
         private, public = generate_x25519_keypair()
         assertion = build_encryption_key_assertion(
@@ -46,6 +46,9 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                                 signing_key=actor.sk, private_key=private, encryption_key=assertion)
     await env.db.execute("UPDATE {{tables.agents}} SET agent_type = 'human' WHERE agent_id = $1", env.actors["alice"].id)
     human, agent = identities["alice"], identities["bob"]
+    peer = identities["carol"]
+    published = await _request(env, "carol", "PUT", "/v1/agents/me/encryption-key", peer["encryption_key"])
+    assert published.status_code == 200, published.text
     message_id, conversation_id = str(uuid4()), str(uuid4())
     source = encrypt_e2ee_mail(sender=human, recipients=[agent], subject="Human question",
                               body="Human private text", message_id=message_id,
@@ -133,6 +136,27 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
             **human, "encryption_key_id": human["encryption_key"]["encryption_key_id"],
         })
         assert plain["body"] == "Agent private reply"
+
+        # A local resident must also sign ordinary grant sends, not only the
+        # source-bound encrypted reply path above. Exercise actual peer reads.
+        for mode in ("--plaintext", "--e2ee"):
+            text = f"Local resident peer send {mode}"
+            body_file.write_text(text)
+            sent = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol",
+                              mode, "--body-file", str(body_file), "--json")
+            received = await _request(env, "carol", "GET", f"/v1/messages/{sent['message_id']}")
+            assert received.status_code == 200, received.text
+            delivered = received.json()
+            assert delivered["from_did"] == agent["did"]
+            if mode == "--plaintext":
+                assert delivered["body"] == text
+                assert delivered["signature"]
+            else:
+                assert delivered["content_mode"] == "encrypted_v2"
+                decrypted = decrypt_e2ee_message(delivered["encrypted_envelope"], {
+                    **peer, "encryption_key_id": peer["encryption_key"]["encryption_key_id"],
+                })
+                assert decrypted["body"] == text
 
 
 async def _cli(binary, cwd, env, *args):
