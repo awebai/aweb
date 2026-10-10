@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/internal/custodypath"
 	"gopkg.in/yaml.v3"
 )
 
@@ -75,9 +76,11 @@ func NewStore(dir string) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Dir() string                  { return s.dir }
-func (s *Store) LockDir() string              { return filepath.Join(s.dir, "lock") }
-func (s *Store) SocketPath() string           { return filepath.Join(s.dir, "control.sock") }
+func (s *Store) Dir() string     { return s.dir }
+func (s *Store) LockDir() string { return filepath.Join(s.dir, "lock") }
+func (s *Store) SocketPath() string {
+	return custodypath.Shorten(filepath.Join(s.dir, "control.sock"), maxSocketPath)
+}
 func (s *Store) StatusPath() string           { return filepath.Join(s.dir, "status.json") }
 func (s *Store) registryPath(k string) string { return filepath.Join(s.dir, "registry.d", k+".json") }
 func (s *Store) instancePath(k string) string { return filepath.Join(s.dir, "instances.d", k+".json") }

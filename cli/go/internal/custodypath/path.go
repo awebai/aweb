@@ -35,3 +35,22 @@ func Default(root string) string {
 }
 
 func IsRuntime(socket string) bool { return filepath.Dir(filepath.Clean(socket)) == RuntimeDir() }
+
+// Shorten preserves a usable socket path, or hashes its canonical full path
+// into the shared private runtime directory. It does not change custody's
+// existing root-derived locator.
+func Shorten(socket string, limit int) string {
+	if len(socket) <= limit {
+		return socket
+	}
+	parent := filepath.Dir(socket)
+	if canonical, err := filepath.EvalSymlinks(parent); err == nil {
+		parent = canonical
+	}
+	socket = filepath.Join(parent, filepath.Base(socket))
+	if len(socket) <= limit {
+		return socket
+	}
+	digest := sha256.Sum256([]byte("socket\x00" + socket))
+	return filepath.Join(RuntimeDir(), fmt.Sprintf("%x.sock", digest[:20]))
+}
