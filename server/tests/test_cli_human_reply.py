@@ -32,6 +32,7 @@ def _pem(path, kind, raw):
 @pytest.mark.parametrize("grant", [False, True])
 async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_path, grant):
     env = privacy_app
+    env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc)
     identities = {}
     for name, custody in (("alice", "hosted_custodial"), ("bob", "self")):
