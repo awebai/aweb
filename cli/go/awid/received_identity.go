@@ -129,12 +129,18 @@ func (c *Client) receivedCheckpoint(registryURL, stableID string) (*VerifiedLogH
 	if err := json.Unmarshal(data, &heads); err != nil {
 		return nil, err
 	}
+	if heads == nil {
+		return nil, fmt.Errorf("invalid received identity checkpoints")
+	}
 	head, ok := heads[registryURL][stableID]
 	if !ok {
 		return nil, nil
 	}
-	if head == nil || head.Seq < 1 || head.EntryHash == "" || head.CurrentDIDKey == "" {
+	if head == nil || head.Seq < 1 || len(head.EntryHash) != 64 || !isLowerHex(head.EntryHash) || head.CurrentDIDKey == "" {
 		return nil, fmt.Errorf("invalid received identity checkpoint")
+	}
+	if _, err := ExtractPublicKey(head.CurrentDIDKey); err != nil {
+		return nil, err
 	}
 	return head, nil
 }
@@ -158,6 +164,10 @@ func (c *Client) saveReceivedCheckpoint(registryURL, stableID string, head *Veri
 			c.pinStore.mu.Unlock()
 			return err
 		}
+	}
+	if heads == nil {
+		c.pinStore.mu.Unlock()
+		return fmt.Errorf("invalid received identity checkpoints")
 	}
 	if heads[registryURL] == nil {
 		heads[registryURL] = map[string]*VerifiedLogHead{}
@@ -187,5 +197,9 @@ func (c *Client) saveReceivedCheckpoint(registryURL, stableID string, head *Veri
 	if err != nil {
 		return err
 	}
-	return c.savePinStore()
+	err = c.savePinStore()
+	if err != nil {
+		c.pinStore.undurable.Store(true)
+	}
+	return err
 }

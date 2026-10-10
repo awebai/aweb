@@ -1955,10 +1955,10 @@ async def get_inbox(
 
 @router.get("/{message_id}", response_model=InboxMessage)
 async def get_message(
-    request: Request,
     message_id: str,
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
+    request: Request = None,
 ) -> InboxMessage:
     try:
         msg_uuid = UUID(message_id.strip())

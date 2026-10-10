@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Verify received mail and chat from global senders without a public address
+  using their current registry key and delivery-team membership. Participant
+  reads include current sender membership; unavailable proof remains unverified.
+  Grant-seat recipients are matched to their resident identity.
+
 ### Release preparation: server 1.27.15 and CLI 1.36.32
 
 Server changes are since `server-v1.27.14`; CLI changes are since

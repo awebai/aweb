@@ -2,6 +2,7 @@
 from typing import Literal
 from uuid import UUID
 
+from awid.team_ids import parse_team_id
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
@@ -14,7 +15,7 @@ class SenderMembership(BaseModel):
     state: Literal["active", "inactive", "unknown"] = "unknown"
 
 
-async def sender_memberships(request: Request, db, rows) -> dict[tuple[str, str], SenderMembership]:
+async def sender_memberships(request: Request | None, db, rows) -> dict[tuple[str, str], SenderMembership]:
     """Project only stored sender IDs in their stored delivery teams.
 
     Call only after participant authorization. Missing provenance or unavailable
@@ -22,6 +23,8 @@ async def sender_memberships(request: Request, db, rows) -> dict[tuple[str, str]
     """
     keys = {(str(r.get("team_id") or ""), str(r.get("from_agent_id") or "")) for r in rows}
     result = {key: SenderMembership(team_id=key[0]) for key in keys}
+    if request is None:
+        return result
     ids = [UUID(agent) for team, agent in keys if team and agent]
     if not ids:
         return result
@@ -44,6 +47,10 @@ async def sender_memberships(request: Request, db, rows) -> dict[tuple[str, str]
             continue
         team = key[0]
         if team not in revocations:
+            try:
+                parse_team_id(team)
+            except ValueError:
+                continue
             try:
                 revocations[team] = await _get_revoked_certificates(request, team)
             except HTTPException:

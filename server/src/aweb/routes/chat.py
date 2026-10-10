@@ -1999,7 +1999,7 @@ async def mark_read(
     session_uuid = UUID(session_id.strip())
 
     aweb_db = db.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -2392,7 +2392,7 @@ async def stream(
         raise HTTPException(status_code=422, detail="Invalid id format")
 
     aweb_db = db.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one("SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
