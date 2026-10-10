@@ -306,6 +306,37 @@ func TestCustodyReplayEntriesEvictAfterAcceptedWindow(t *testing.T) {
 	}
 }
 
+func TestCustodyStatusMailReplyContinuationCapability(t *testing.T) {
+	for _, mode := range []string{"configured", "unconfigured", "missing-private-key", "missing-assertion"} {
+		t.Run(mode, func(t *testing.T) {
+			resident := newCustodyE2EETestIdentity(t, "acme.com/alice")
+			_, sessionKey, _ := ed25519.GenerateKey(nil)
+			svc := testCustodyService(t, resident.signKey, sessionKey)
+			if mode == "configured" || mode == "missing-private-key" {
+				svc.e2eeAssertion = resident.assertion
+			}
+			if mode == "configured" || mode == "missing-assertion" {
+				svc.e2eePrivateKey = resident.xPriv
+			}
+			recorder := httptest.NewRecorder()
+			svc.handleStatus(recorder, httptest.NewRequest(http.MethodGet, "/status", nil))
+			var status custodyStatusReport
+			if err := json.Unmarshal(recorder.Body.Bytes(), &status); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, op := range status.Ops {
+				if op == "mail_reply_continuation.v1" {
+					found = true
+				}
+			}
+			if found != (mode == "configured") {
+				t.Fatalf("mail reply capability for %s: ops=%v", mode, status.Ops)
+			}
+		})
+	}
+}
+
 func TestCustodyStatusContainsOnlySafeReadiness(t *testing.T) {
 	_, residentKey, _ := ed25519.GenerateKey(nil)
 	_, sessionKey, _ := ed25519.GenerateKey(nil)
