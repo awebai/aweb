@@ -57,12 +57,14 @@ dev = [
   "pytest-asyncio>=1.2.0",
   "ruff>=0.14.0",
   "mypy>=1.18.0",
+  "httpx2>=2.9.1",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "../aweb/awid/src", "../pgdbm/src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = ["error"]
 markers = [
   "e2e: docker-backed end-to-end tests using real aw/awid tooling",
 ]
