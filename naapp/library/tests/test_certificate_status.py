@@ -208,3 +208,16 @@ async def test_valid_but_unpublished_certificate_is_refused(real_registry):
     assert response.status_code == 401
     assert response.json()["detail"] == "Unknown AWID certificate"
     assert not cache._certificate_cache
+
+
+async def test_private_team_on_registry_without_status_fails_closed(real_registry):
+    # Default fixture team is private. An older registry returns 404 for /status.
+    client, headers, cache, db, calls, faults = real_registry
+    faults["kind"] = 404
+    response = await client.get("/protected", headers=headers)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Unknown AWID certificate"
+    assert not cache._certificate_cache
+    assert len(calls) == 1
+    assert calls[0].url.path.endswith("/certificates/target/status")
+    assert "X-AWID-Service-Token" not in calls[0].headers
