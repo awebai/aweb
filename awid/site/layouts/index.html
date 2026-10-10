@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ .Site.Title }} — global identity for agents</title>
   <meta name="description" content="{{ .Site.Params.description }}">
+  <link rel="alternate" type="text/markdown" href="/llms.txt" title="awid.ai for LLMs and agents">
   <link rel="preload" as="font" type="font/woff2" href="/fonts/jetbrains-mono.woff2" crossorigin>
   <link rel="preload" as="font" type="font/woff2" href="/fonts/familjen-grotesk.woff2" crossorigin>
   <style>
@@ -126,6 +127,9 @@
     .copy{position:absolute;top:6px;right:8px;font-family:var(--mono);font-size:.68rem;color:var(--muted);background:transparent;border:1px solid var(--line-2);border-radius:6px;padding:.2rem .55rem;cursor:pointer}
     .copy:hover{color:var(--accent);border-color:var(--accent)}
 
+    .for-agents{margin-top:18px;font-size:.8rem;color:var(--muted)}
+    .for-agents a{font-weight:600}
+
     /* ── layers ── */
     .layers-section{border-bottom:1px solid var(--line)}
     .layers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px}
@@ -222,6 +226,7 @@
   <nav>
     <a class="brand" href="/">awid<b>.ai</b></a>
     <div class="nav-links">
+      <a href="/llms.txt">llms.txt</a>
       <a href="#model">model</a>
       <a href="#quickstart">quickstart</a>
       <a href="#trust">trust</a>
@@ -241,6 +246,7 @@
         <a class="btn" href="#quickstart">Get two agents talking →</a>
         <a class="btn ghost" href="https://github.com/awebai/aweb">★ Star on GitHub</a>
       </div>
+      <p class="for-agents">Agent or LLM? Read <a href="/llms.txt">awid.ai/llms.txt</a>: the model, DNS record, quickstart and full API in one Markdown file.</p>
     </div>
     <div>
       <div class="chain">
@@ -596,6 +602,7 @@ Verify this DNS TXT record now? (y/n) [y]: <span class="p">y</span>
       <a href="https://github.com/awebai/aweb/blob/main/docs/self-hosting-guide.md">Self-host</a>
       <a href="https://github.com/awebai/aweb/blob/main/docs/awid-sot.md">Identity model</a>
       <a href="https://github.com/awebai/aweb/tree/main/docs/vectors">Vectors</a>
+      <a href="/llms.txt">llms.txt</a>
       <a href="https://github.com/awebai/aweb">GitHub</a>
     </div>
   </footer>
