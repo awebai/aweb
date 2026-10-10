@@ -278,7 +278,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_columns=_FOOTER_COLUMNS,
         footer_bottom=_FOOTER_BOTTOM,
         header_actions=(),
-        source_url="https://github.com/awebai/library",
+        source_url="https://github.com/awebai/aweb/tree/main/naapp/library",
         og_image="/og-card.png",
     )
 
@@ -490,7 +490,7 @@ def render_landing_page(*, public_origin: str, blueprints: Any = None) -> str:
           <a class="btn primary btn--lg" href="#use">Get started</a>
           <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
         </div>
-        <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/library" style="color:var(--accent);font-weight:550">github.com/awebai/library</a></p>
+        <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/aweb/tree/main/naapp/library" style="color:var(--accent);font-weight:550">github.com/awebai/aweb (naapp/library)</a></p>
       </div>
     </section>
 

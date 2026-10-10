@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,10 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 AWID_URL = os.environ.get("FOLIO_E2E_AWID_URL", "http://127.0.0.1:18010")
+# Same-operator credential shared with the e2e awid service (docker-compose.e2e.yml).
+AWID_SERVICE_TOKEN = os.environ.get(
+    "FOLIO_E2E_AWID_SERVICE_TOKEN", "folio-e2e-awid-service-token-0123456789abcdef"
+)
 POSTGRES_URL = os.environ.get(
     "FOLIO_E2E_DATABASE_URL",
     "postgresql://folio:folio@127.0.0.1:55432/folio",
@@ -266,8 +271,8 @@ def _aw_json(result: subprocess.CompletedProcess[str], *, context: str) -> Any:
         raise AssertionError(f"invalid JSON for {context}: {stdout}") from exc
 
 
-@pytest.fixture(scope="session")
-def folio() -> Iterator[RunningFolio]:
+@contextmanager
+def _running_folio(*, awid_service_token: str | None) -> Iterator[RunningFolio]:
     _require_e2e_enabled()
     _wait_http_ok(f"{AWID_URL}/health")
 
@@ -284,6 +289,9 @@ def folio() -> Iterator[RunningFolio]:
             "FOLIO_PUBLIC_ORIGIN": proxy_origin,
         }
     )
+    env.pop("FOLIO_AWID_SERVICE_TOKEN", None)
+    if awid_service_token is not None:
+        env["FOLIO_AWID_SERVICE_TOKEN"] = awid_service_token
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -317,10 +325,27 @@ def folio() -> Iterator[RunningFolio]:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=10)
-        if proc.returncode not in (0, -15, -9, None):
-            stdout = proc.stdout.read() if proc.stdout else ""
-            stderr = proc.stderr.read() if proc.stderr else ""
+        failed = proc.returncode not in (0, -15, -9, None)
+        stdout = proc.stdout.read() if failed and proc.stdout else ""
+        stderr = proc.stderr.read() if failed and proc.stderr else ""
+        if proc.stdout:
+            proc.stdout.close()
+        if proc.stderr:
+            proc.stderr.close()
+        if failed:
             raise RuntimeError(f"uvicorn exited with {proc.returncode}\nstdout:\n{stdout}\nstderr:\n{stderr}")
+
+
+@pytest.fixture(scope="session")
+def folio() -> Iterator[RunningFolio]:
+    with _running_folio(awid_service_token=AWID_SERVICE_TOKEN) as running:
+        yield running
+
+
+@pytest.fixture(scope="session")
+def folio_without_awid_service_token() -> Iterator[RunningFolio]:
+    with _running_folio(awid_service_token=None) as running:
+        yield running
 
 
 @pytest.fixture(scope="session")
@@ -532,6 +557,16 @@ def test_real_aw_team_auth_smoke(folio: RunningFolio, aw_workspace: AWWorkspace)
     team = _provision_team(aw_workspace)
     result = _aw_request(team, "GET", f"{folio.origin}/v1/documents")
     assert _assert_aw_success(result, context="list documents smoke").strip() == "[]"
+
+
+def test_private_team_needs_the_awid_service_token(
+    folio_without_awid_service_token: RunningFolio, aw_workspace: AWWorkspace
+) -> None:
+    team = _provision_team(aw_workspace)
+    result = _aw_request(team, "GET", f"{folio_without_awid_service_token.origin}/v1/documents")
+    assert result.returncode != 0
+    assert "HTTP 403" in result.stderr
+    assert "team_private_unreadable" in result.stdout
 
 
 def test_document_endpoints_versions_raw_utf8_and_attribution(

@@ -2,7 +2,7 @@
 
 `folio` is an agent-first document and presentation service for AWID teams. Agents authenticate with their team certificate, write append-only Markdown documents, brand them with a team theme, and mint no-login presentation links for humans. Documents are team-scoped; identity is the team's AWID certificate — there is no app account system.
 
-Open source, MIT-licensed — [github.com/awebai/folio](https://github.com/awebai/folio).
+Open source, MIT-licensed — [github.com/awebai/aweb (naapp/folio)](https://github.com/awebai/aweb/tree/main/naapp/folio).
 
 ## What it does
 
@@ -33,6 +33,7 @@ All runtime env vars use the `FOLIO_` prefix:
 
 - `FOLIO_DATABASE_URL` — PostgreSQL connection string.
 - `FOLIO_AWID_REGISTRY_URL` — AWID registry URL, default `https://api.awid.ai`.
+- `FOLIO_AWID_SERVICE_TOKEN` — optional AWID service credential for private-team facts and revocation reads; provision as a secret. A denied private-team read returns `403 team_private_unreadable`; registry outages remain `503`.
 - `FOLIO_PUBLIC_ORIGIN` — public origin clients sign in the v2 team-auth `aud`, default `http://127.0.0.1:8765`.
 - `FOLIO_DB_POOL_MIN_CONNECTIONS` — default `1`.
 - `FOLIO_DB_POOL_MAX_CONNECTIONS` — default `5`.
@@ -165,3 +166,12 @@ uvicorn folio.api:app --host 0.0.0.0 --port ${PORT:-8765}
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+### Revocation lookup bounds
+
+Team authentication reads the complete AWID certificate history, including revoked
+certificates, in pages of 200. A refresh may read at most 100 pages (20,000 records).
+If more pages remain, pagination does not advance, or the response is incomplete,
+the request fails closed with HTTP 503 and no partial facts enter the cache.
+An expired cache entry is never used after a failed refresh. A revoked certificate
+returns HTTP 401; the existing cache TTL still governs revocation freshness.

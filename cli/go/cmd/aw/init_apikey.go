@@ -107,7 +107,7 @@ func resolveAPIKeyInitAwebURL() (string, error) {
 	return normalizeAPIKeyBootstrapBaseURL(awebURLOrDefault(resolveInitAwebURLOverride()))
 }
 
-func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
+func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr error) {
 	if strings.TrimSpace(req.WorkingDir) == "" {
 		return connectOutput{}, fmt.Errorf("working directory is required")
 	}
@@ -145,6 +145,16 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 	if err != nil {
 		return connectOutput{}, err
 	}
+	// Only failures with the original resumable material receive retry guidance.
+	// A rejected server identity must be reconciled, never selected automatically.
+	resumable := req.Global
+	defer func() {
+		if resultErr != nil && resumable {
+			if info, err := os.Lstat(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); err == nil && info.Mode().IsRegular() {
+				resultErr = fmt.Errorf("%w\nrerun the same command in this directory; do not delete .aw/partial-init.yaml", resultErr)
+			}
+		}
+	}()
 	pub := material.PublicKey
 	signingKey := material.SigningKey
 	didKey := material.DIDKey
@@ -185,15 +195,14 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 
 	if req.Global {
 		if responseDID := strings.TrimSpace(resp.DID); responseDID != "" && responseDID != didKey {
-			if removeErr := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); removeErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: could not remove partial init state: %v\n", removeErr)
+			resumable = false
+			rejected, quarantineErr := quarantineAPIKeyPartialInit(req.WorkingDir, req.IdentityHome)
+			if quarantineErr != nil {
+				return connectOutput{}, fmt.Errorf("global name %q is already registered with a different identity; could not quarantine partial signing material (original retained at %s): %w; operator reconciliation is required", name, apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome), quarantineErr)
 			}
-			pruneEmptyAwDir(req.WorkingDir, req.IdentityHome)
 			return connectOutput{}, fmt.Errorf(
-				"global name %q is already registered with a different identity: the server returned did %s but this machine generated %s.\nTo use this name you need its original signing key (restore the original .aw directory), or ask an operator to remove the server-side identity record, then rerun.\nNo signing key was written; stale partial-init state was cleaned up.",
-				name,
-				responseDID,
-				didKey,
+				"global name %q is already registered with a different identity: the server returned did %s but this machine generated %s.\nThe signing key material was preserved at %s. Use a different directory for a new identity, or ask an operator to reconcile the existing identity binding; rejected material is never restored automatically.",
+				name, responseDID, didKey, rejected,
 			)
 		}
 	}
@@ -226,7 +235,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		return connectOutput{}, err
 	}
 
-	out, err := initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
+	out, err = initCertificateConnectWithOptions(req.WorkingDir, serverURL, certificateConnectOptions{
 		Role:         strings.TrimSpace(req.Role),
 		HumanName:    strings.TrimSpace(req.HumanName),
 		AgentType:    strings.TrimSpace(req.AgentType),
@@ -240,6 +249,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (connectOutput, error) {
 		rollbackAwTree(req.WorkingDir, snapshot, req.IdentityHome)
 		return connectOutput{}, fmt.Errorf("%w\n(local state from this attempt was rolled back; rerun the same command to resume)", err)
 	}
+	resumable = false // Connected state must not be retried as an incomplete init.
 	if global {
 		if err := removeAPIKeyPartialInit(req.WorkingDir, req.IdentityHome); err != nil {
 			return connectOutput{}, fmt.Errorf("remove partial API-key init state: %w", err)
@@ -330,6 +340,9 @@ func prepareAPIKeyBootstrapIdentity(
 	name string,
 	registry *awid.RegistryClient,
 ) (apiKeyBootstrapIdentityMaterial, error) {
+	if err := refuseRejectedAPIKeyPartialInit(apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)); err != nil {
+		return apiKeyBootstrapIdentityMaterial{}, err
+	}
 	if !req.Global {
 		partialPath := apiKeyPartialInitPath(req.WorkingDir, req.IdentityHome)
 		if err := preflightAPIKeyPartialInit(partialPath); err != nil {
@@ -438,6 +451,54 @@ func saveAPIKeyPartialInit(workingDir string, state *apiKeyPartialInitState, ide
 		return err
 	}
 	return awid.AtomicWriteFile(path, data)
+}
+
+// Rejected material is evidence, not an implicit choice of identity. Even an
+// otherwise resumable partial cannot bypass this reconciliation requirement.
+func refuseRejectedAPIKeyPartialInit(path string) error {
+	if err := preflightAPIKeyPartialInit(path); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), filepath.Base(path)+".") && strings.HasSuffix(entry.Name(), ".rejected") {
+			return usageError("partial_init_reconciliation_required: rejected signing material at %s; use a different directory for a new identity or obtain operator reconciliation; rejected material is never restored automatically", filepath.Join(filepath.Dir(path), entry.Name()))
+		}
+	}
+	return nil
+}
+
+func quarantineAPIKeyPartialInit(workingDir string, identityHomes ...string) (string, error) {
+	path := apiKeyPartialInitPath(workingDir, identityHomes...)
+	if err := preflightAPIKeyPartialInit(path); err != nil {
+		return "", err
+	}
+	// Reserve a unique private destination so repeated timestamps cannot replace
+	// an earlier key. Rename only over the empty file created by this call.
+	file, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+"."+time.Now().UTC().Format("20060102T150405.000000000Z")+".*.rejected")
+	if err != nil {
+		return "", err
+	}
+	destination := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(destination)
+		return "", err
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		_ = os.Remove(destination)
+		return "", err
+	}
+	if err := os.Rename(path, destination); err != nil {
+		_ = os.Remove(destination) // Only our empty reservation; original is intact.
+		return "", err
+	}
+	return destination, nil
 }
 
 func removeAPIKeyPartialInit(workingDir string, identityHomes ...string) error {

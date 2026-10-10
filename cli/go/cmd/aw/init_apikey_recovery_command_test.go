@@ -257,6 +257,9 @@ func TestAPIKeyGlobalRecoveryCommand(t *testing.T) {
 				if beforeCalls != 1 || beforeIssued != 1 {
 					t.Fatalf("lost response auto-retried: %d/%d", beforeCalls, beforeIssued)
 				}
+				if !strings.Contains(stderr, "rerun the same command in this directory; do not delete .aw/partial-init.yaml") {
+					t.Fatalf("missing resumable failure guidance: %s", stderr)
+				}
 				// Wrong original authority must refuse locally without altering the partial.
 				_, _, changedCode := run("aw_sk_different_fixture_key")
 				after, err := os.ReadFile(apiKeyPartialInitPath(target))

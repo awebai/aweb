@@ -24,7 +24,6 @@ extra whitespace. Version 2 requires these fields:
   "aud": "https://coordination.example.com",
   "body_sha256": "<hex sha256 of request body bytes>",
   "method": "POST",
-  "operation": "task.create",
   "path": "/v1/tasks",
   "team_id": "engineering:example.com",
   "timestamp": "2026-06-12T10:00:00Z",
@@ -32,7 +31,11 @@ extra whitespace. Version 2 requires these fields:
 }
 ```
 
-Operation-specific fields may be present and are ignored by the auth layer.
+`operation` is optional, informational metadata. The auth layer neither
+requires it nor verifies its value against the requested operation; the signed
+`method` and raw `path`/query bind the request target. Operation-specific fields
+may be present and are ignored by the auth layer. If present, these fields are
+still covered by the signature over the complete canonical payload.
 
 ## Verification
 
@@ -105,6 +108,7 @@ contract, the timestamp window above is the replay limit.
 
 [`vectors/team-auth-envelope-v2.json`](vectors/team-auth-envelope-v2.json)
 contains deterministic Ed25519 cases for both a neutral OSS task request and a
-hosted-route interoperability example, plus cross-endpoint, cross-origin,
+hosted-route interoperability example, including a positive request without
+`operation`, plus cross-endpoint, cross-origin,
 tampered-body, and missing-version negatives. Consumers must verify every
 current positive case rather than treating the first array entry as the corpus.

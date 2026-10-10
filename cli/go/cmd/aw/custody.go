@@ -293,7 +293,7 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 	out.Keys = map[string]any{"signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": s.e2eeAssertion != nil && s.e2eePrivateKey != nil && grantStatusReady, "encryption_key_id": encryptionKeyID}
 	out.Ops = []string{"status.v1", "sign_plain_message.v1", "sign_app_request.v1"}
 	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
-		out.Ops = append(out.Ops, "create_e2ee_envelope.v1", "unwrap_e2ee_message.v1")
+		out.Ops = append(out.Ops, "create_e2ee_envelope.v1", "unwrap_e2ee_message.v1", "mail_reply_continuation.v1")
 	}
 	out.Freshness = map[string]any{"source": "identity-grants", "last_checked_at": lastCheckedAt, "max_cache_age_seconds": 30}
 	out.Errors = errs

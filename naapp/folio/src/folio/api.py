@@ -99,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         holder["team_cache"] = AWIDTeamCache(
             registry_url=resolved.awid_registry_url,
             ttl_seconds=resolved.auth_cache_ttl_seconds,
+            service_token=resolved.awid_service_token,
         )
         try:
             yield

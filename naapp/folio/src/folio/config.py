@@ -13,6 +13,7 @@ class Settings(BaseSettings):
 
     database_url: str = Field(default="postgresql://localhost/folio")
     awid_registry_url: str = Field(default="https://api.awid.ai")
+    awid_service_token: str | None = Field(default=None, repr=False)
     public_origin: str = Field(default="http://127.0.0.1:8765")
     free_max_documents: int = Field(default=3, ge=1)
     free_max_versions_per_doc: int = Field(default=50, ge=1)
