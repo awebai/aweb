@@ -2,17 +2,25 @@
 
 ## Unreleased
 
-- Preserve empty mail/chat sender addresses for global identities without a
-  public address, while retaining their team context and display names. Existing
-  LOCAL sender routing labels and explicit global addresses are unchanged.
+### Release preparation: server 1.27.16 and CLI 1.36.33
 
-- Verify received mail and chat from global senders without a public address
-  using their current registry key and delivery-team membership. Participant
-  reads include current sender membership; unavailable proof remains unverified.
-  Grant-seat recipients are matched to their resident identity.
+Server changes are since `server-v1.27.15`; CLI changes are since
+`aw-v1.36.32`. CLI versioning remains tag-driven.
 
-- Start local-resident custody correctly when the working directory is reached
-  through a symlink, including macOS temporary-directory aliases.
+- **Addressless global senders:** mail and chat preserve an empty public sender
+  address while retaining team authorization and display names. Existing local
+  sender routing labels and explicit global addresses are unchanged.
+- **Received-message verification:** mail and chat verify global senders without
+  a public address using their current registry key and active delivery-team
+  membership. Participant reads include current sender membership; unavailable
+  proof remains unverified. Grant-seat recipients are matched to their resident
+  identity rather than their session key.
+- **Local custody startup:** local-resident custody starts correctly when its
+  working directory is reached through a symlink, including macOS temporary
+  directory aliases, using the existing certificate and key material.
+- **Wake status writes:** the wake broker writes status atomically using unique
+  temporary files, avoiding failures from concurrent writes. Restart the wake
+  broker after upgrading to use the fix.
 
 ### Release preparation: AWID 0.5.23
 
