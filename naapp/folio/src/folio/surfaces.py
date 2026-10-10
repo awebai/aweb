@@ -115,7 +115,7 @@ def _site(*, public_origin: str, title: str, description: str) -> SiteConfig:
         footer_columns=_FOOTER_COLUMNS,
         footer_bottom=_FOOTER_BOTTOM,
         header_actions=(),
-        source_url="https://github.com/awebai/folio",
+        source_url="https://github.com/awebai/aweb/tree/main/naapp/folio",
         og_image="/og-card.png",
     )
 
@@ -354,7 +354,7 @@ def render_landing_page(*, public_origin: str) -> str:
           <a class="btn primary btn--lg" href="#use">Get started</a>
           <a class="btn secondary btn--lg" href="/llms.txt">Read llms.txt</a>
         </div>
-        <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/folio" style="color:var(--accent);font-weight:550">github.com/awebai/folio</a></p>
+        <p style="margin-top:var(--s3);font-size:var(--step-0);color:var(--muted)">Open source, MIT-licensed — <a href="https://github.com/awebai/aweb/tree/main/naapp/folio" style="color:var(--accent);font-weight:550">github.com/awebai/aweb (naapp/folio)</a></p>
       </div>
     </section>
 

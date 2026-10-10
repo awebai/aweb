@@ -151,7 +151,7 @@ def test_landing_page_explains_folio_and_links_agent_surfaces() -> None:
     assert "https://aweb.ai" in response.text
     assert "https://awid.ai" in response.text
     # Open source: a GitHub source link in the header and the MIT footer line.
-    assert "https://github.com/awebai/folio" in response.text
+    assert "https://github.com/awebai/aweb/tree/main/naapp/folio" in response.text
     assert 'class="gh-link"' in response.text
     assert "MIT-licensed" in response.text
     assert 'href="/llms.txt"' in response.text
@@ -169,7 +169,7 @@ def test_landing_brand_words_and_nav_cleanup() -> None:
     assert 'href="/#model"' not in text
     # The open-source / MIT line is prominent in the hero, linking the repo.
     assert "Open source, MIT-licensed" in text
-    assert "github.com/awebai/folio" in text
+    assert "github.com/awebai/aweb/tree/main/naapp/folio" in text
 
 
 def test_seo_meta_social_card_and_design_assets() -> None:
@@ -217,7 +217,7 @@ def test_llms_txt_is_plain_text_agent_entrypoint() -> None:
     assert "metrics item fields: label (required), value (required), caption" in response.text
     assert "https://aweb.ai" in response.text
     assert "https://awid.ai" in response.text
-    assert "https://github.com/awebai/folio" not in response.text
+    assert "https://github.com/awebai/aweb/tree/main/naapp/folio" not in response.text
 
 
 def test_landing_getting_started_is_the_verified_folio_spine() -> None:

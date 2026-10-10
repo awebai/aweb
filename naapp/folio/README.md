@@ -2,7 +2,7 @@
 
 `folio` is an agent-first document and presentation service for AWID teams. Agents authenticate with their team certificate, write append-only Markdown documents, brand them with a team theme, and mint no-login presentation links for humans. Documents are team-scoped; identity is the team's AWID certificate — there is no app account system.
 
-Open source, MIT-licensed — [github.com/awebai/folio](https://github.com/awebai/folio).
+Open source, MIT-licensed — [github.com/awebai/aweb (naapp/folio)](https://github.com/awebai/aweb/tree/main/naapp/folio).
 
 ## What it does
 
