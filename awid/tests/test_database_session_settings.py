@@ -213,15 +213,18 @@ async def test_pooler_mode_serves_concurrent_varied_queries(monkeypatch):
         await _drop_database(name)
 
 
-class _SeveringRelay:
-    """A TCP relay to PostgreSQL that can cut one connection on its client's next write.
+class _Relay:
+    """A TCP relay to PostgreSQL for real network faults.
 
-    The client learns of the cut only when it sends, so a pooled connection
-    looks healthy until its next query, which then fails.
+    It can cut one connection on its client's next write: the client learns of
+    the cut only when it sends, so a pooled connection looks healthy until its
+    next query, which then fails. It can also delay establishing each new
+    connection, as a distant or slow database endpoint does.
     """
 
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str, port: int, *, connect_delay: float = 0.0) -> None:
         self._upstream = (host, port)
+        self._connect_delay = connect_delay
         self._links: list[dict] = []
         self._server: asyncio.AbstractServer | None = None
 
@@ -230,6 +233,7 @@ class _SeveringRelay:
         return self._server.sockets[0].getsockname()[1]
 
     async def _accept(self, client_reader, client_writer) -> None:
+        await asyncio.sleep(self._connect_delay)
         upstream_reader, upstream_writer = await asyncio.open_connection(*self._upstream)
         link = {"sever": False, "writers": (client_writer, upstream_writer)}
         self._links.append(link)
@@ -267,20 +271,23 @@ class _SeveringRelay:
             await self._server.wait_closed()
 
 
+async def _relayed(test_db_factory, suffix: str, **relay_options) -> tuple[_Relay, str]:
+    """A fresh database and a relay to it; returns the relay and the DSN through it."""
+    db = await test_db_factory.create_db(suffix=suffix)
+    dsn = urlsplit(db.config.get_dsn())
+    relay = _Relay(dsn.hostname or "localhost", dsn.port or 5432, **relay_options)
+    relay_port = await relay.start()
+    credentials, at, _ = dsn.netloc.rpartition("@")
+    return relay, urlunsplit(dsn._replace(netloc=f"{credentials}{at}127.0.0.1:{relay_port}"))
+
+
 @pytest.mark.asyncio
 async def test_a_failing_sample_fails_the_check_promptly(test_db_factory):
     # One pooled connection is cut: its sample errors before the barrier, and
     # the check must surface that error instead of leaving the other samples
     # waiting.
-    db = await test_db_factory.create_db(suffix="awid_session_dead")
-    dsn = urlsplit(db.config.get_dsn())
-    relay = _SeveringRelay(dsn.hostname or "localhost", dsn.port or 5432)
-    relay_port = await relay.start()
-    credentials, at, _ = dsn.netloc.rpartition("@")
-    netloc = f"{credentials}{at}127.0.0.1:{relay_port}"
-    config = build_database_config(
-        connection_string=urlunsplit(dsn._replace(netloc=netloc)), min_connections=3, max_connections=3
-    )
+    relay, dsn = await _relayed(test_db_factory, "awid_session_dead")
+    config = build_database_config(connection_string=dsn, min_connections=3, max_connections=3)
     pool = await AsyncDatabaseManager.create_shared_pool(config)
     try:
         assert relay.connections == 3
@@ -292,6 +299,25 @@ async def test_a_failing_sample_fails_the_check_promptly(test_db_factory):
         assert asyncio.get_running_loop().time() - started < 10
         assert "Could not verify database session settings" in str(refused.value)
         assert "timed out" not in str(refused.value)
+    finally:
+        pool.terminate()
+        await relay.close()
+
+
+@pytest.mark.asyncio
+async def test_the_check_opens_new_connections_concurrently(test_db_factory):
+    # Each new connection takes CONNECT_DELAY to establish. A round needs eight
+    # more than the pool holds; opened one after another they would take eight
+    # delays, which a distant endpoint turns into a startup timeout.
+    connect_delay = 0.5
+    relay, dsn = await _relayed(test_db_factory, "awid_session_slow", connect_delay=connect_delay)
+    config = build_database_config(connection_string=dsn, min_connections=2, max_connections=10)
+    pool = await AsyncDatabaseManager.create_shared_pool(config)
+    try:
+        started = asyncio.get_running_loop().time()
+        await verify_session_settings(pool, config, timeout_seconds=20)
+        elapsed = asyncio.get_running_loop().time() - started
+        assert elapsed < 4 * connect_delay, f"check took {elapsed:.2f}s"
     finally:
         pool.terminate()
         await relay.close()

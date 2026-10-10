@@ -68,6 +68,26 @@ async def _sample_session_settings(conn: Any, names: list[str], barrier: asyncio
     }
 
 
+async def _acquire_concurrently(pool: Any, count: int) -> list[Any]:
+    """Acquire count connections at once, so new ones are established in parallel.
+
+    On any failure or cancellation, every connection already acquired is
+    released before the error propagates.
+    """
+    tasks = [asyncio.ensure_future(pool.acquire()) for _ in range(count)]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for task in tasks:
+            if not task.cancelled() and task.exception() is None:
+                await pool.release(task.result())
+        raise
+    return [task.result() for task in tasks]
+
+
 async def verify_session_settings(
     pool: Any,
     config: DatabaseConfig,
@@ -80,8 +100,11 @@ async def verify_session_settings(
     without error; role or database defaults survive the pooler. Behind a
     transaction pooler each transaction may run on a different server
     connection, so this samples many concurrently held connections, at least
-    MIN_SESSION_SETTING_SAMPLES in rounds as wide as the pool. The whole check is
-    bounded by timeout_seconds, and a sample that fails ends its round at once.
+    MIN_SESSION_SETTING_SAMPLES in rounds as wide as the pool. Each round's
+    connections are acquired concurrently, so the check costs about one
+    connection-establishment latency rather than one per new connection. The
+    whole check is bounded by timeout_seconds, and a sample that fails ends its
+    round at once.
     """
     requested = config.get_server_settings()
     required = {name: requested[name] for name in REQUIRED_SESSION_SETTINGS if name in requested}
@@ -95,10 +118,8 @@ async def verify_session_settings(
 
     async def sample_rounds() -> None:
         for _ in range(rounds):
-            connections: list[Any] = []
+            connections = await _acquire_concurrently(pool, width)
             try:
-                for _ in range(width):
-                    connections.append(await pool.acquire())
                 barrier = asyncio.Barrier(width)
                 results = await asyncio.gather(
                     *(_sample_session_settings(conn, names, barrier) for conn in connections),
@@ -120,8 +141,8 @@ async def verify_session_settings(
     except TimeoutError as exc:
         raise DatabaseSessionSettingsError(
             f"Could not verify database session settings: timed out after {timeout_seconds:g}s "
-            f"holding {width} concurrent server connections; the pooler may serve fewer "
-            "server connections than the pool size."
+            f"holding {width} concurrent server connections; new connections may be slow to "
+            "establish, or a pooler may serve fewer server connections than the pool size."
         ) from exc
     except DatabaseSessionSettingsError:
         raise
