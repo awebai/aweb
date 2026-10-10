@@ -72,7 +72,8 @@ all durable state and the input to the socket locator; no state moves to tmp.
 
 `aw wake run` binds its control socket before reporting “listening”. A bind or
 permission failure exits immediately with an error and releases the daemon
-lock. A subsequent control-server failure also stops the broker. Restart the
+lock. Transient accept errors are logged and retried with backoff from 5 ms up
+to 1 second; a closed control listener stops the broker. Restart the
 broker after upgrading to use the new locator; status and control commands
 compute the same path.
 

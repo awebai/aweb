@@ -110,14 +110,35 @@ func serveControl(ctx context.Context, b *Broker, listener net.Listener) error {
 		case <-stopped:
 		}
 	}()
+	var retryDelay time.Duration
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
 			}
-			return fmt.Errorf("wake: control accept: %w", err)
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			if retryDelay == 0 {
+				retryDelay = 5 * time.Millisecond
+			} else {
+				retryDelay *= 2
+			}
+			if retryDelay > time.Second {
+				retryDelay = time.Second
+			}
+			b.cfg.Log("control accept failed err=%v; retrying in %s", err, retryDelay)
+			timer := time.NewTimer(retryDelay)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return nil
+			case <-timer.C:
+			}
+			continue
 		}
+		retryDelay = 0
 		go handleControlConn(ctx, b, conn)
 	}
 }
