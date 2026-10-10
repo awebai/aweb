@@ -213,27 +213,78 @@ async def test_pooler_mode_serves_concurrent_varied_queries(monkeypatch):
         await _drop_database(name)
 
 
+class _SeveringRelay:
+    """A TCP relay to PostgreSQL that can cut one connection on its client's next write.
+
+    The client learns of the cut only when it sends, so a pooled connection
+    looks healthy until its next query, which then fails.
+    """
+
+    def __init__(self, host: str, port: int) -> None:
+        self._upstream = (host, port)
+        self._links: list[dict] = []
+        self._server: asyncio.AbstractServer | None = None
+
+    async def start(self) -> int:
+        self._server = await asyncio.start_server(self._accept, "127.0.0.1", 0)
+        return self._server.sockets[0].getsockname()[1]
+
+    async def _accept(self, client_reader, client_writer) -> None:
+        upstream_reader, upstream_writer = await asyncio.open_connection(*self._upstream)
+        link = {"sever": False, "writers": (client_writer, upstream_writer)}
+        self._links.append(link)
+
+        async def pump(reader, writer, outbound: bool) -> None:
+            try:
+                while data := await reader.read(65536):
+                    if outbound and link["sever"]:
+                        break
+                    writer.write(data)
+                    await writer.drain()
+            except (ConnectionError, OSError):
+                pass
+            finally:
+                for each in link["writers"]:
+                    each.close()
+
+        await asyncio.gather(
+            pump(client_reader, upstream_writer, True), pump(upstream_reader, client_writer, False)
+        )
+
+    def sever_on_next_write(self, index: int) -> None:
+        self._links[index]["sever"] = True
+
+    @property
+    def connections(self) -> int:
+        return len(self._links)
+
+    async def close(self) -> None:
+        for link in self._links:
+            for each in link["writers"]:
+                each.close()
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+
+
 @pytest.mark.asyncio
 async def test_a_failing_sample_fails_the_check_promptly(test_db_factory):
-    # One pooled connection whose server backend is gone: its sample errors
-    # before the barrier, and the check must surface that error instead of
-    # leaving the other samples waiting.
+    # One pooled connection is cut: its sample errors before the barrier, and
+    # the check must surface that error instead of leaving the other samples
+    # waiting.
     db = await test_db_factory.create_db(suffix="awid_session_dead")
+    dsn = urlsplit(db.config.get_dsn())
+    relay = _SeveringRelay(dsn.hostname or "localhost", dsn.port or 5432)
+    relay_port = await relay.start()
+    credentials, at, _ = dsn.netloc.rpartition("@")
+    netloc = f"{credentials}{at}127.0.0.1:{relay_port}"
     config = build_database_config(
-        connection_string=db.config.get_dsn(), min_connections=3, max_connections=3
+        connection_string=urlunsplit(dsn._replace(netloc=netloc)), min_connections=3, max_connections=3
     )
     pool = await AsyncDatabaseManager.create_shared_pool(config)
     try:
-        held = [await pool.acquire() for _ in range(3)]
-        backends = [await conn.fetchval("SELECT pg_backend_pid()") for conn in held]
-        for conn in held:
-            await pool.release(conn)
-        assert len(set(backends)) == 3
-        admin = await asyncpg.connect(db.config.get_dsn())
-        try:
-            assert await admin.fetchval("SELECT pg_terminate_backend($1)", backends[0]) is True
-        finally:
-            await admin.close()
+        assert relay.connections == 3
+        relay.sever_on_next_write(0)
 
         started = asyncio.get_running_loop().time()
         with pytest.raises(DatabaseSessionSettingsError) as refused:
@@ -243,6 +294,7 @@ async def test_a_failing_sample_fails_the_check_promptly(test_db_factory):
         assert "timed out" not in str(refused.value)
     finally:
         pool.terminate()
+        await relay.close()
 
 
 @needs_pooler
