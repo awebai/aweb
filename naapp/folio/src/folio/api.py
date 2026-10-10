@@ -14,7 +14,7 @@ from folio.aweb_manifest import read_manifest_bytes
 from folio.cloudflare_stream import stream_iframe_url
 from folio.config import Settings, get_settings
 from folio.db import FolioDatabase
-from folio.event_emit import emit_doc_changed
+from folio.event_emit import UninstalledTeams, emit_doc_changed
 from folio.models import (
     AppendTemplateVersionRequest,
     AssetMetadataResponse,
@@ -90,6 +90,7 @@ _FONT_NAMES = frozenset(
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
     holder: dict[str, object] = {}
+    uninstalled_teams = UninstalledTeams(ttl_seconds=resolved.app_emit_uninstalled_ttl_seconds)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -287,6 +288,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
         await emit_doc_changed(
             settings=resolved,
+            uninstalled=uninstalled_teams,
             team_id=actor.team_id,
             slug=slug,
             version=int(result["current_version"]),
@@ -306,6 +308,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = await append_version(database, principal=actor, settings=resolved, slug=slug, body=body)
         await emit_doc_changed(
             settings=resolved,
+            uninstalled=uninstalled_teams,
             team_id=actor.team_id,
             slug=slug,
             version=int(result["current_version"]),
