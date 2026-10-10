@@ -126,6 +126,20 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
+					// This matrix covers grant-tool authority, not app event registration.
+					// Keep the deployed tool declarations without introducing event mocks.
+					if name == "folio" {
+						var manifest map[string]json.RawMessage
+						if err := json.Unmarshal(raw, &manifest); err != nil {
+							t.Fatal(err)
+						}
+						delete(manifest, "events")
+						delete(manifest, "event_emitters")
+						raw, err = json.Marshal(manifest)
+						if err != nil {
+							t.Fatal(err)
+						}
+					}
 					served.Store(raw)
 					invoke(home, "", "plugin", "install", f.app.server.URL, "--dev-origin", f.app.server.URL)
 				}
