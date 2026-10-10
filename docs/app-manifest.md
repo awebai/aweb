@@ -62,8 +62,9 @@ and non-string values do not establish a default. Optional `description` must
 be a string with at most 4096 Unicode characters after trimming.
 
 The CLI parses and retains declarations with the installed manifest and its
-provenance. They do not trigger event installation, subscriptions, delivery,
-or additional signing authority. CLI versions through 1.36.24 incorrectly
+provenance. Explicit resident installation registers event-declaring apps with
+the selected team and subscribes the installer at the declaration defaults; see
+[app-events.md](app-events.md). This grants no additional signing authority. CLI versions through 1.36.24 incorrectly
 rejected the entire `events` field, including Folio's deployed manifest.
 
 Shared cases live in `cli/go/internal/appmanifest/testdata/events-v1.json`.

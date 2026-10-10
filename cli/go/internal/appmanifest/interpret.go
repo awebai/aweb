@@ -93,7 +93,8 @@ type Body struct {
 }
 
 // Events are declaration metadata only. The CLI preserves them with the
-// installed manifest and does not subscribe, emit, or change tool authority.
+// installed manifest. Explicit installation uses them for registration and
+// subscription; interpreting a manifest does not emit or change tool authority.
 const MaxManifestEvents = 64
 
 type Events []Event

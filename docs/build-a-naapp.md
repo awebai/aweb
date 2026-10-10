@@ -130,9 +130,13 @@ separate setup steps before emitting:
    bytes, then registers the app, digest, declarations and emitter keys using
    `POST /v1/apps/install` on the chosen aweb server. This is the optional
    [server app registry](app-registry.md). It does not fetch or independently
-   verify the manifest. **`aw plugin install` does not perform this registration.**
-3. The receiving member creates its own subscription with team-certificate
-   authentication, for example `POST /v1/events/subscriptions` with
+   verify the manifest. `aw plugin install <manifest-url>` performs this registration
+   after local approval when the manifest declares events, using resident team
+   certificate authentication.
+3. Installation subscribes the installing resident to each declaration at its
+   default intent. Other residents use `aw events subscribe notes/doc.changed`
+   with optional `--intent` and `--resource`, using team-certificate auth. The
+   underlying request is `POST /v1/events/subscriptions` with
    `{"type":"notes/doc.changed","delivery_intent":"wake"}`. An optional
    `resource_ref` limits it to an exact resource. No subscription means no
    app-event delivery.
@@ -198,9 +202,10 @@ workers on re-mint; existing grants do not silently widen. Removing a resident's
 approval affects subsequent mints, not existing snapshots or other residents.
 
 `aw plugin update` explicitly refreshes local manifest bytes. A changed approved
-origin requires explicit reinstallation. Server registry installation and
-updates remain separate; publishing new bytes does not update either a local
-cache or a team's registry digest automatically.
+origin requires explicit reinstallation. When fetched bytes change, the update
+re-registers event declarations and emitter keys with the selected team, without
+resetting subscription intents. Publishing new bytes alone does not update a
+local cache or a team's registry digest.
 
 ## 5. Version against the public contracts
 

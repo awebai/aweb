@@ -57,10 +57,18 @@ A producer cannot escalate a subscriber from `ambient` to `wake` or `steer`.
 
 The app-manifest v1 CLI model accepts and preserves bounded, strictly typed
 `events` metadata alongside `event_emitters`; see [app-manifest.md](app-manifest.md)
-for validation rules and the known older gateway coercion differences. The CLI
-does not install subscriptions or emit events from these declarations. The
-experimental server install request separately accepts event declarations and
-public emit keys:
+for validation rules and the known older gateway coercion differences. An explicit
+`aw plugin install <manifest-url>` from a resident home approves the app locally,
+registers its exact fetched-byte digest, declarations and public emitter keys with
+the selected team's server, and subscribes the installer at each declaration's
+default intent. Any certified team member can install; no admin gate or extra
+prompt is required. Grant homes cannot install. Manifests without events do not
+trigger server registration. Installing from a directory without a resident
+identity still populates the shared local app store, approves nobody, skips
+registration/subscriptions, and prints a message explaining how to enable wakes.
+Grant homes remain a hard refusal.
+
+The server install request accepts:
 
 ```json
 {
@@ -77,10 +85,8 @@ public emit keys:
 }
 ```
 
-CLI manifest installation and server registry installation are separate. The
-CLI accepts `events` metadata but does not register it with the server. A
-team-authorized installer supplies declarations to `POST /v1/apps/install`;
-the server does not fetch a manifest to derive or verify them.
+The CLI normalizes an optional `<app_id>/` prefix to the app-local declaration
+name sent to the server. The server never fetches the manifest itself.
 
 The install route in [`app-registry.md`](app-registry.md) records those values
 under the supplied manifest digest. The full emitted type is
@@ -181,6 +187,22 @@ particular subscriber's effective intent.
 A team member manages only its own subscriptions with normal team-certificate
 auth.
 
+Other residents opt in explicitly:
+
+```sh
+aw events subscribe folio/doc.changed
+aw events subscribe folio/doc.changed --intent steer --resource docs/pitch
+```
+
+Omitting `--intent` uses the declaration's default. Grant workers inherit the
+resident's subscriptions; their stream still requires both `events.read` and
+`coord.read` for app events. An explicit install subscribes only the installer.
+`aw plugin update` re-registers changed fetched manifest bytes, including emitter
+key changes, and preserves existing subscription choices. Failed registration
+remains retryable; publishing new bytes alone never updates the team's registry.
+The server's app-id/origin conflict has no CLI override.
+
+
 ```http
 POST /v1/events/subscriptions
 GET /v1/events/subscriptions
@@ -260,3 +282,14 @@ and both producer and verifier tests. Changes to frame shape require server and
 channel-core tests. A durable cursor, ack, encrypted payload format, or
 exactly-once emit key would be a new contract rather than an implied property of
 this experimental surface.
+
+## Real-stack acceptance
+
+Run `./scripts/e2e-folio-wakes.sh` from a checkout with Docker, Go, Node and
+Python available. It builds the actual AWID, aweb and Folio services, provisions
+disposable residents and a grant, drives the candidate `aw` binary, and dispatches
+real SSE frames through channel-core. It verifies install consent, subscriber
+isolation, explicit intent/resource selection, grant scope filtering, digest
+updates, failure retry and origin conflict. It adds no mock services. Set `AW_BIN`
+to test an already-built candidate. The script removes its stack and retains logs
+at the printed evidence path. App-event delivery limits above still apply.
