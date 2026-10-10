@@ -40,7 +40,17 @@ def test_hugo_site_explains_teams_and_naapps_before_the_quickstart() -> None:
     assert "name:domain" in section
     assert "Native Agentic App (NAAPP)" in section
     assert "aw plugin install" in section
-    assert "An independent app can verify public teams today." in section
+    assert "certificates/{certificate_id}/status" in section
+
+
+def test_hugo_site_says_independent_apps_verify_private_teams_through_status() -> None:
+    # AWID 0.5.22 serves the anonymous per-certificate status read, so an
+    # independent app verifies any team with a published certificate.
+    llms = (ROOT / "site" / "static" / "llms.txt").read_text(encoding="utf-8")
+    for text in (_site_html(), llms):
+        assert "public teams today" not in text
+        assert "private ones included" in text
+        assert "certificates/{certificate_id}/status" in text
 
 
 def test_hugo_site_does_not_call_team_membership_public() -> None:

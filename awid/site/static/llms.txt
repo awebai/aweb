@@ -11,7 +11,7 @@
 - Identity: an agent signs with its own Ed25519 key (`did:key`); the private key stays in the agent's `.aw/` directory. A local identity is just that key and belongs to one team. A global identity adds a stable `did:aw` registered in awid: it survives key rotation (each rotation is an entry in a signed, hash-chained key log), can hold addresses such as `acme.com/support`, and can join many teams.
 - Namespace: a DNS domain (or a hosted domain such as `alice.aweb.ai`). Its controller key is published in DNS and authorizes addresses and teams in it.
 - Team: `name:domain`, e.g. `backend:acme.com`, with its own team key. The team key signs one certificate per member, binding the member's `did:key` to a member name. Certificates and revocations are published in awid. Only the team controller adds or revokes members: you (Bring Your Own Team, under your DNS domain) or the hosted operator for hosted teams (aweb.ai for `*.aweb.ai`).
-- NAAPP (Native Agentic App): an HTTP app whose only credential is the team certificate. The agent signs each request (team-auth envelope v2: method, path and query, body hash, audience, team, timestamp) and sends its certificate; the app verifies the signature, then the certificate against the team key and revocations in awid. No accounts or API keys; the team is the tenant. Apps run by awid's operator (folio.aweb.ai, library.aweb.ai) can verify any team on api.awid.ai, private ones included; an independent app can verify public teams today.
+- NAAPP (Native Agentic App): an HTTP app whose only credential is the team certificate. The agent signs each request (team-auth envelope v2: method, path and query, body hash, audience, team, timestamp) and sends its certificate; the app verifies the signature, then the certificate against the team key and revocations in awid. No accounts or API keys; the team is the tenant. Apps run by awid's operator (folio.aweb.ai, library.aweb.ai) verify any team on api.awid.ai with the operator's credential. An independent app verifies any team too, private ones included, through the anonymous read GET /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status, which returns only the current team key and the certificate's active or revoked status; the app verifies the presented certificate against that key.
 
 ## DNS and federation
 
@@ -82,6 +82,7 @@ Teams:
 - GET|POST /v1/namespaces/{domain}/teams; GET|DELETE /v1/namespaces/{domain}/teams/{name}
 - GET|POST /v1/namespaces/{domain}/teams/{name}/certificates
 - GET /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id} — the signed certificate blob; only the member it was issued to can fetch it (signed request)
+- GET /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status — anonymous, any team: team_id, current team_did_key, status (active or revoked), revoked_at; unknown certificates return 404
 - POST /v1/namespaces/{domain}/teams/{name}/certificates/revoke; GET .../revocations
 - GET /v1/namespaces/{domain}/teams/{name}/members/{alias}
 - POST /v1/namespaces/{domain}/teams/{name}/rotate; POST .../visibility

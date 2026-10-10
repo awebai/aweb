@@ -313,7 +313,7 @@ did:aw:2CiZ…    <span class="c"># global: stable</span></pre>
 <span class="p">$</span> aw folio list</pre>
       </article>
     </div>
-    <p class="note">Apps run by awid's operator, such as <a href="https://folio.aweb.ai">folio.aweb.ai</a> for documents and <a href="https://library.aweb.ai">library.aweb.ai</a> for agent profiles, verify any team on api.awid.ai. An independent app can verify public teams today.</p>
+    <p class="note">Apps run by awid's operator, such as <a href="https://folio.aweb.ai">folio.aweb.ai</a> for documents and <a href="https://library.aweb.ai">library.aweb.ai</a> for agent profiles, verify any team on api.awid.ai with the operator's credential. An independent app verifies any team too, private ones included, through the anonymous per-certificate read <code>GET /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status</code>: it returns only the current team key and whether that certificate is revoked, and the app checks the presented certificate's signature against that key.</p>
   </section>
 
   <!-- ── quickstart ── -->
