@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import pytest
 
+from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
 from awid.signing import canonical_json_bytes, sign_message, verify_signature, VerifyResult
 from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
@@ -30,7 +31,8 @@ def _pem(path, kind, raw):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("grant", [False, True])
-async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_path, grant):
+@pytest.mark.parametrize("global_resident", [False, True])
+async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_path, grant, global_resident):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc)
@@ -38,11 +40,16 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     for name, custody in (("alice", "hosted_custodial"), ("bob", "self"), ("carol", "self")):
         actor = env.actors[name]
         private, public = generate_x25519_keypair()
+        address = "example.test/bob" if global_resident and name == "bob" else ""
+        stable_id = stable_id_from_did_key(actor.did) if address else ""
+        if address:
+            await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2 WHERE agent_id = $3",
+                                 stable_id, address, actor.id)
         assertion = build_encryption_key_assertion(
-            signing_key=actor.sk, identity_did=actor.did, identity_stable_id="",
+            signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
             encryption_public_key=public, custody=custody, now=now,
         )
-        identities[name] = dict(address="", did=actor.did, stable_id="", team_id=TEAM,
+        identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=TEAM,
                                 signing_key=actor.sk, private_key=private, encryption_key=assertion)
     await env.db.execute("UPDATE {{tables.agents}} SET agent_type = 'human' WHERE agent_id = $1", env.actors["alice"].id)
     human, agent = identities["alice"], identities["bob"]
@@ -68,14 +75,23 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     identity_home.mkdir(mode=0o700)
     # API-key local init intentionally omits identity.yaml. Neither root nor
     # grant custody may require it or manufacture global identity state.
-    assert not (identity_home / "identity.yaml").exists()
+    if global_resident:
+        (identity_home / "identity.yaml").write_text(json.dumps({
+            "did": agent["did"], "stable_id": agent["stable_id"], "address": agent["address"],
+            "custody": "self", "identity_scope": "global", "created_at": now.isoformat(),
+        }))
+    else:
+        assert not (identity_home / "identity.yaml").exists()
     team_sk, _, team_did = _make_keypair()
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
-    cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="local")
+    cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
+                             member_did_aw=agent["stable_id"], member_address=agent["address"])
     # Match the CLI wire format: absent optional local fields, not empty strings.
-    for field in ("signature", "member_did_aw", "member_address"):
-        cert.pop(field)
+    cert.pop("signature")
+    if not global_resident:
+        for field in ("member_did_aw", "member_address"):
+            cert.pop(field)
     cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
     cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
     (identity_home / "team-certs").mkdir(mode=0o700)
@@ -111,7 +127,7 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
                      HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),
                      AWID_REGISTRY_URL=str(env.client.base_url))
-    async with _reply_context(binary, tmp_path, child_env, grant) as (command_dir, command_env):
+    async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
         body_file = tmp_path / "reply.txt"
         body_file.write_text("Agent private reply")
         reply = await asyncio.create_subprocess_exec(str(binary), "mail", "reply", message_id,
@@ -176,13 +192,14 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                                             message["signature"]) == VerifyResult.VERIFIED
                 actual_from = json.loads(delivered["signed_payload"])["from"]
                 control_from = json.loads(control_message["signed_payload"])["from"]
-                assert actual_from.encode() == control_from.encode() == b"bob"
+                if not global_resident:
+                    assert actual_from.encode() == control_from.encode() == b"bob"
             else:
                 assert delivered["content_mode"] == "encrypted_v2"
                 sender = delivered["encrypted_envelope"]["from"]
                 assert sender == control_message["encrypted_envelope"]["from"]
                 assert sender["did"] == agent["did"]
-                assert not sender.get("address")
+                assert sender.get("address", "") == agent["address"]
                 decrypted = decrypt_e2ee_message(delivered["encrypted_envelope"], {
                     **peer, "encryption_key_id": peer["encryption_key"]["encryption_key_id"],
                 })
@@ -221,7 +238,7 @@ async def _cli(binary, cwd, env, *args):
 
 
 @asynccontextmanager
-async def _reply_context(binary, root, env, grant):
+async def _reply_context(binary, root, env, grant, address=""):
     if not grant:
         yield root, env
         return
@@ -236,7 +253,7 @@ async def _reply_context(binary, root, env, grant):
                 if (status.get("keys") or {}).get("encryption_ready"):
                     assert status["keys"]["signing_ready"]
                     assert status["resident"]["alias"] == "bob"
-                    assert not status["resident"].get("address")
+                    assert status["resident"].get("address", "") == address
                     break
                 await asyncio.sleep(0.05)
             else:
@@ -245,14 +262,14 @@ async def _reply_context(binary, root, env, grant):
             seat.mkdir()
             minted = await _cli(binary, root, env, "id", "grant", "mint", "--bundle", "normal-agent",
                        "--ttl", "5m", "--custody-socket", "auto", "--out", str(seat / ".aw"), "--json")
-            assert not minted.get("address")
+            assert minted.get("address", "") == address
             assert minted["alias"] == "bob"
             assert not (seat / ".aw" / "signing.key").exists()
             grant_env = dict(env, AWEB_IDENTITY_HOME=str(seat / ".aw"))
             status = await _cli(binary, seat, grant_env, "custody", "status", "--json")
             assert status["keys"]["encryption_ready"]
             yield seat, grant_env
-            assert not (root / ".aw" / "identity.yaml").exists()
+            assert (root / ".aw" / "identity.yaml").exists() == bool(address)
         finally:
             if service.returncode is None:
                 service.terminate()
