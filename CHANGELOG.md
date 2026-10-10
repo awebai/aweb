@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+- Custody now uses a short, private per-user socket path when a long resident
+  identity path would exceed Unix socket limits, including on macOS. Auto-minted
+  grants and custody status share this default; existing short paths and explicit
+  locators remain supported. Unsafe runtime ownership or symlinks are refused.
+
+### CLI: preserve incomplete global identity material
+
+- A hosted global-init response with a different DID now quarantines partial
+  signing material in a private timestamped `.rejected` file instead of deleting
+  it. Initialization refuses to create another key in that home until the
+  rejected state is reconciled. Ordinary incomplete-init failures retain the
+  original partial and explain how to resume with the same command and directory.
+
+### Release preparation: CLI 1.36.31
+
+- Custody status advertises `mail_reply_continuation.v1` when E2EE is
+  configured. Consumers should require this op for grant-seat replies to
+  unlisted senders; restart custody after upgrading so the running process
+  exposes the capability.
+
+### Release preparation: CLI 1.36.30
+
+This CLI-only release covers changes since `aw-v1.36.29`. CLI versioning
+remains tag-driven; the server stays at 1.27.14.
+
+- When API discovery encounters a redirect, diagnostics now show a sanitized
+  destination and ask you to set `AWEB_URL` to the intended API base.
+  Redirects are never followed; credentials, query strings and fragments
+  are removed from the displayed destination.
+- Agents need aw 1.36.30 or newer to reply to dashboard users. Grant-backed
+  agents also require their custody host to run aw 1.36.30 or newer; an older
+  host fails closed with upgrade guidance. Encrypted
+  `aw mail reply` binds the recipient to the verified source message, so
+  humans do not need an agent-roster entry or a public alias. Custody verifies
+  the exact stored source itself before authorizing a same-service reply;
+  the worker cannot supply a new recipient key or first-contact authority.
+- Addressed senders use current identity resolution with source identity
+  binding. Addressless senders use the source message's signed key assertion.
+  Very late replies fail if that assertion has expired, even if the sender
+  has since renewed its key. Ask the sender to send a new message before
+  replying. Missing or invalid assertions also fail closed; replies never
+  silently fall back to plaintext.
+
 ### Release preparation: server 1.27.14
 
 Server-only release covering changes since `server-v1.27.13`.

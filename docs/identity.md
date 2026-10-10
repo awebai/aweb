@@ -353,6 +353,24 @@ operations, pass the preflighted socket explicitly with `--custody-socket
 home's default `aw custody serve` socket. This writes only the locator at
 `grant.yaml` `custody.socket_path`; it does not copy resident keys.
 
+Short default socket paths remain `<identity-home>/run/custody.sock`. When that
+would exceed 103 bytes, custody uses a stable hash of the canonical identity-home
+path under an owner-only per-user directory: `/private/tmp/aw-custody-<uid>` on
+macOS, `/tmp/aw-custody-<uid>` on other Unix platforms. This does not depend on
+`TMPDIR`, so long temporary or OATS paths do not lengthen the socket. Serve,
+resident status, and grant mint with `--custody-socket auto` use the same locator;
+grant clients use the locator recorded at mint time. Existing short paths and
+explicit `--custody-socket` locators remain unchanged. Explicit paths must still
+fit the platform's Unix socket limit.
+
+The fallback directory is created with mode 0700; its ownership, permissions,
+and absence of symlinks are checked before use. Existing sockets must be
+owner-only, owned by the current user, and not symlinks. Unsafe paths are refused
+rather than repaired or followed. Restart custody and mint a new grant if an
+older grant contains an unusably long explicit locator; resident keys stay in
+the identity home, never in the runtime directory.
+
+
 Minting generates a fresh session Ed25519 keypair, registers its `did:key`
 with the server together with the scopes and expiry, and writes a
 self-contained grant home (`grant.yaml` plus the session key — never the
@@ -369,8 +387,18 @@ socket as locator metadata only; each signing request is structured
 constructs the canonical mail/chat envelope itself. It never signs
 caller-supplied bytes, digests, identity-auth payloads, certificate-auth
 payloads, identity operations, or grant/delegation payloads. `aw custody status
---json` reports safe readiness (signing, unsupported encryption=false, selected
-team, and freshness), and `aw custody stop` asks the local service to exit.
+--json` reports safe readiness (signing, encryption, selected team, and
+freshness), and `aw custody stop` asks the local service to exit.
+
+The status `ops` list includes `status.v1`, `sign_plain_message.v1`, and
+`sign_app_request.v1`. When the encryption assertion and private key are
+configured, it also includes `create_e2ee_envelope.v1`,
+`unwrap_e2ee_message.v1`, and `mail_reply_continuation.v1`. The last entry is a
+capability marker for stored-source mail reply continuation through the existing
+envelope operation, not a separate RPC or a grant of permission. Consumers should
+require it for grant-seat replies to unlisted senders and still check readiness
+and grant scopes. Restart custody after upgrading: an already-running process
+keeps its old capabilities. The marker is advertised starting with aw 1.36.31.
 
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,

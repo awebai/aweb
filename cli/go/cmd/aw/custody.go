@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/awebai/aw/internal/custodypath"
 	"net"
 	"net/http"
 	"net/url"
@@ -83,28 +84,29 @@ type custodyGrantStatus struct {
 }
 
 type custodyService struct {
-	residentHome       string
-	socketPath         string
-	identity           *awconfig.ResolvedIdentity
-	signingKey         ed25519.PrivateKey
-	e2eeAssertion      *awid.EncryptionKeyAssertion
-	e2eePrivateKey     *ecdh.PrivateKey
-	client             *aweb.Client
-	grantStatus        func(context.Context, string) (custodyGrantStatus, error)
-	readinessCheck     func(context.Context) (string, error)
-	readStoredEnvelope func(context.Context, string, string, string) (*awid.E2EEMessageEnvelope, error)
-	resolveRecipient   func(context.Context, string) (*awid.ResolvedIdentity, error)
-	e2eeKeyError       string
-	clientInitError    string
-	selectedTeam       string
-	appDeniedOrigins   []string
-	serviceID          string
-	now                func() time.Time
-	mu                 sync.Mutex
-	replay             map[string]string
-	replayAt           map[string]time.Time
-	results            map[string]any
-	server             *http.Server
+	residentHome        string
+	socketPath          string
+	identity            *awconfig.ResolvedIdentity
+	signingKey          ed25519.PrivateKey
+	e2eeAssertion       *awid.EncryptionKeyAssertion
+	e2eePrivateKey      *ecdh.PrivateKey
+	client              *aweb.Client
+	grantStatus         func(context.Context, string) (custodyGrantStatus, error)
+	readinessCheck      func(context.Context) (string, error)
+	readStoredEnvelope  func(context.Context, string, string, string) (*awid.E2EEMessageEnvelope, error)
+	readStoredMailReply func(context.Context, string) (*awid.InboxMessage, error)
+	resolveRecipient    func(context.Context, string) (*awid.ResolvedIdentity, error)
+	e2eeKeyError        string
+	clientInitError     string
+	selectedTeam        string
+	appDeniedOrigins    []string
+	serviceID           string
+	now                 func() time.Time
+	mu                  sync.Mutex
+	replay              map[string]string
+	replayAt            map[string]time.Time
+	results             map[string]any
+	server              *http.Server
 }
 
 func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
@@ -145,6 +147,7 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 		svc.client = client
 		svc.grantStatus = grantStatusViaClient(client)
 		svc.readStoredEnvelope = svc.storedE2EEEnvelopeViaClient
+		svc.readStoredMailReply = svc.storedMailReplyViaClient
 		svc.resolveRecipient = client.ResolveIdentity
 		svc.readinessCheck = func(ctx context.Context) (string, error) {
 			return client.ProbeIdentityGrantStatus(ctx)
@@ -201,6 +204,9 @@ func (s *custodyService) serve(ctx context.Context) error {
 	if strings.TrimSpace(s.serviceID) == "" {
 		id, _ := awid.GenerateUUID4()
 		s.serviceID = id
+	}
+	if err := custodypath.Prepare(s.socketPath); err != nil {
+		return err
 	}
 	runDir := filepath.Dir(s.socketPath)
 	if err := os.MkdirAll(runDir, 0o700); err != nil {
@@ -291,7 +297,7 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 	out.Keys = map[string]any{"signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": s.e2eeAssertion != nil && s.e2eePrivateKey != nil && grantStatusReady, "encryption_key_id": encryptionKeyID}
 	out.Ops = []string{"status.v1", "sign_plain_message.v1", "sign_app_request.v1"}
 	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
-		out.Ops = append(out.Ops, "create_e2ee_envelope.v1", "unwrap_e2ee_message.v1")
+		out.Ops = append(out.Ops, "create_e2ee_envelope.v1", "unwrap_e2ee_message.v1", "mail_reply_continuation.v1")
 	}
 	out.Freshness = map[string]any{"source": "identity-grants", "last_checked_at": lastCheckedAt, "max_cache_age_seconds": 30}
 	out.Errors = errs
@@ -593,6 +599,9 @@ func custodyHTTP(ctx context.Context, socket, method, path string, in any, out a
 }
 
 func custodyHTTPTimeout(ctx context.Context, socket, method, path string, in any, out any, timeout time.Duration) error {
+	if err := custodypath.Check(socket); err != nil {
+		return err
+	}
 	var body strings.Reader
 	if in != nil {
 		b, _ := json.Marshal(in)
@@ -825,8 +834,21 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 		return nil, fmt.Errorf("message_not_allowed")
 	}
 	fields := map[string]string{"grant_id": req.GrantID, "session_did_key": req.SessionDIDKey, "team_id": req.TeamID, "subject_did_aw": req.SubjectDIDAW, "subject_did_key": req.SubjectDIDKey, "aud": req.Audience}
-	if _, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".send"); err != nil {
+	grant, err := s.validateE2EECommon(ctx, req.Operation, fields, req.Nonce, req.Timestamp, kind+".send")
+	if err != nil {
 		return nil, err
+	}
+	replyContinuation := kind == "mail" && req.ReplyToMessageID != "" && len(req.Recipients) == 1 && req.Recipients[0].Address == ""
+	if replyContinuation {
+		canRead := false
+		for _, scope := range grant.Scopes {
+			if scope == "mail.read" {
+				canRead = true
+			}
+		}
+		if !canRead {
+			return nil, fmt.Errorf("grant_scope_denied")
+		}
 	}
 	key, cached, err := s.reserveCustodyReplay(req.GrantID, req.SessionDIDKey, req.Nonce, req.RequestDigest, &awid.E2EEEnvelopeCreateResponse{})
 	if err != nil {
@@ -841,11 +863,18 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 	if err := s.reloadActiveE2EEKey(); err != nil {
 		return nil, err
 	}
-	if err := s.verifyE2EERecipients(ctx, req.Recipients); err != nil {
+	recipients := req.Recipients
+	if replyContinuation {
+		recipient, err := s.storedMailReplyRecipient(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		recipients = []awid.E2EERecipientKey{recipient}
+	} else if err := s.verifyE2EERecipients(ctx, recipients); err != nil {
 		return nil, err
 	}
 	now := s.now().UTC().Truncate(time.Second)
-	params := awid.E2EEEncryptMessageParams{Kind: kind, Sender: awid.E2EESenderKey{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID, TeamID: req.TeamID, EncryptionKey: s.e2eeAssertion, SigningKey: s.signingKey}, Recipients: req.Recipients, Subject: req.Subject, Body: req.Body, MessageID: req.MessageID, ConversationID: req.ConversationID, ReplyToMessageID: req.ReplyToMessageID, CreatedAt: now, DeliveryOrigin: req.DeliveryOrigin, ObservedInboundMode: req.ObservedInboundMode}
+	params := awid.E2EEEncryptMessageParams{Kind: kind, Sender: awid.E2EESenderKey{Address: s.identity.Address, DID: s.identity.DID, StableID: s.identity.StableID, TeamID: req.TeamID, EncryptionKey: s.e2eeAssertion, SigningKey: s.signingKey}, Recipients: recipients, Subject: req.Subject, Body: req.Body, MessageID: req.MessageID, ConversationID: req.ConversationID, ReplyToMessageID: req.ReplyToMessageID, CreatedAt: now, DeliveryOrigin: req.DeliveryOrigin, ObservedInboundMode: req.ObservedInboundMode}
 	var env *awid.E2EEMessageEnvelope
 	var encryptErr error
 	if kind == "mail" {
@@ -859,6 +888,90 @@ func (s *custodyService) createE2EEEnvelope(ctx context.Context, req *awid.E2EEE
 	out := &awid.E2EEEnvelopeCreateResponse{ContentMode: awid.ContentModeEncryptedV2, MessageVersion: awid.E2EEMessageVersion, EncryptedEnvelope: env}
 	s.cacheCustodyReplayResult(key, out)
 	return out, nil
+}
+
+// storedMailReplyRecipient authorizes only a same-service reply to one stored
+// source. Worker assertions and participant display metadata cannot grant it.
+func (s *custodyService) storedMailReplyRecipient(ctx context.Context, req *awid.E2EEEnvelopeCreateRequest) (awid.E2EERecipientKey, error) {
+	refuse := func(reason string) (awid.E2EERecipientKey, error) {
+		return awid.E2EERecipientKey{}, fmt.Errorf("%s", reason)
+	}
+	claimed := req.Recipients[0]
+	if req.DeliveryOrigin != "" || req.ObservedInboundMode != "" || claimed.DeliveryOrigin != "" || claimed.InboundMode != "" {
+		return refuse("reply_routing_not_allowed")
+	}
+	if s.readStoredMailReply == nil {
+		return refuse("stored_message_unavailable")
+	}
+	message, err := s.readStoredMailReply(ctx, req.ReplyToMessageID)
+	if err != nil {
+		return awid.E2EERecipientKey{}, err
+	}
+	if message == nil || message.MessageID != req.ReplyToMessageID || message.ConversationID != req.ConversationID {
+		return refuse("stored_message_mismatch")
+	}
+	// Federated incoming mail has no local sender actor. This exception must
+	// not derive a remote return route from a worker hint or a source envelope.
+	if strings.TrimSpace(message.FromAgentID) == "" {
+		return refuse("reply_requires_local_sender")
+	}
+	stored := message.Encrypted
+	if stored == nil || stored.Kind != "mail" || stored.MessageID != req.ReplyToMessageID || stored.ConversationID != req.ConversationID {
+		return refuse("stored_message_mismatch")
+	}
+	if err := awid.VerifyE2EEMessageEnvelopeSignature(stored); err != nil {
+		return refuse("stored_message_signature_invalid")
+	}
+	if stored.From.Address != "" {
+		return refuse("reply_requires_address_resolution")
+	}
+
+	// An archive wrap proves readability, not delivery to the resident. Require
+	// an explicit outer recipient and its matching delivery wrap; decryption
+	// below authenticates the matching inner recipient set as well.
+	delivered := false
+	for _, recipient := range stored.Recipients {
+		if recipient.DID != s.identity.DID || (recipient.StableID != "" && recipient.StableID != s.identity.StableID) {
+			continue
+		}
+		for _, wrap := range stored.KeyWraps {
+			if wrap.WrapPurpose == "delivery" && wrap.WrapID == recipient.WrapID &&
+				wrap.RecipientDID == recipient.DID && wrap.RecipientStableID == recipient.StableID &&
+				wrap.RecipientAddress == recipient.Address && wrap.RecipientEncryptionKeyID == recipient.EncryptionKeyID {
+				delivered = true
+			}
+		}
+	}
+	if !delivered {
+		return refuse("not_a_delivery_recipient")
+	}
+	if stored.From.DID == s.identity.DID || (s.identity.StableID != "" && stored.From.StableID == s.identity.StableID) {
+		return refuse("reply_source_is_resident")
+	}
+	decryptIdentity, err := s.decryptIdentityForE2EEEnvelope(stored)
+	if err != nil {
+		return awid.E2EERecipientKey{}, err
+	}
+	plain, err := awid.DecryptE2EEMessage(stored, decryptIdentity)
+	if err != nil {
+		return refuse("decrypt_failed")
+	}
+	if plain.Kind != "mail" || plain.MessageID != req.ReplyToMessageID || plain.ConversationID != req.ConversationID {
+		return refuse("stored_message_mismatch")
+	}
+	derived, err := awid.E2EERecipientFromEnvelopeSender(stored, s.now())
+	if err != nil {
+		return awid.E2EERecipientKey{}, fmt.Errorf("source sender key is missing, expired or invalid; ask them to send a new message: %w", err)
+	}
+	claimedJSON, err := awid.CanonicalJSONValue(claimed)
+	if err != nil {
+		return refuse("recipient_binding_mismatch")
+	}
+	derivedJSON, err := awid.CanonicalJSONValue(derived)
+	if err != nil || claimedJSON != derivedJSON {
+		return refuse("recipient_binding_mismatch")
+	}
+	return derived, nil
 }
 
 func (s *custodyService) verifyE2EERecipients(ctx context.Context, recipients []awid.E2EERecipientKey) error {
@@ -893,6 +1006,19 @@ func (s *custodyService) verifyE2EERecipients(ctx context.Context, recipients []
 		}
 	}
 	return nil
+}
+
+func (s *custodyService) storedMailReplyViaClient(ctx context.Context, messageID string) (*awid.InboxMessage, error) {
+	if s.client == nil {
+		return nil, fmt.Errorf("stored_message_unavailable")
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var message awid.InboxMessage
+	if err := s.client.Get(readCtx, "/v1/messages/"+url.PathEscape(messageID), &message); err != nil {
+		return nil, fmt.Errorf("stored_message_unavailable")
+	}
+	return &message, nil
 }
 
 func (s *custodyService) storedE2EEEnvelopeViaClient(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {

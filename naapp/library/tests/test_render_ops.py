@@ -41,7 +41,7 @@ def deployment_health_payload(
         "service_name": "library",
         "hostname": "library-origin.example",
         "origin_url": "https://library-origin.example",
-        "repo": "awebai/library",
+        "repo": "awebai/aweb",
         "branch": "main",
         "commit": git_sha,
         **deployment_overrides,
@@ -137,7 +137,8 @@ def config(tmp_path: Path) -> render_ops.ProductionConfig:
                 "service_id": "srv-abc123",
                 "service_name": "library",
                 "region": "virginia",
-                "repo": "https://github.com/awebai/library",
+                "repo": "https://github.com/awebai/aweb",
+                "root_dir": "naapp/library",
                 "branch": "main",
                 "origin_url": "https://library-origin.example",
                 "public_url": "https://library.example",
@@ -215,6 +216,7 @@ def write_config(path: Path, config: render_ops.ProductionConfig) -> None:
                     "service_name",
                     "region",
                     "repo",
+                    "root_dir",
                     "branch",
                     "origin_url",
                     "public_url",
@@ -282,6 +284,7 @@ def service(config: render_ops.ProductionConfig) -> dict:
         "id": config.service_id,
         "name": config.service_name,
         "repo": config.repo,
+        "rootDir": config.root_dir,
         "branch": config.branch,
         "autoDeploy": "no",
         "suspended": "not_suspended",
@@ -869,7 +872,7 @@ def test_health_403_persists_bounded_allowlisted_evidence_before_raise(
 def test_evidence_refuses_inside_repo_from_subdirectory(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.chdir(render_ops.REPOSITORY_ROOT / "scripts")
+    monkeypatch.chdir(render_ops.APP_ROOT / "scripts")
     path = render_ops.REPOSITORY_ROOT / ".pytest-inside-evidence"
     with pytest.raises(render_ops.OpsError, match="outside the repository"):
         render_ops.HealthEvidenceRun(path, label="test")
@@ -1059,30 +1062,59 @@ def test_header_evidence_exact_boundary() -> None:
     assert complete is False
 
 
-def test_verifier_identity_is_repo_anchored_and_rejects_dirty_script(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def _git_without_inherited_repository(*args: str) -> None:
+    env = {key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV}
+    subprocess.run(["git", *args], check=True, env=env)
+
+
+def _committed_script_repo(tmp_path: Path, content: str = "print('clean')\n") -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     script = repo / "scripts" / "render_ops.py"
     script.parent.mkdir(parents=True)
-    script.write_text("print('clean')\n", encoding="utf-8")
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(repo),
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "-qm",
-            "initial",
-        ],
-        check=True,
+    script.write_text(content, encoding="utf-8")
+    _git_without_inherited_repository("init", "-q", str(repo))
+    _git_without_inherited_repository("-C", str(repo), "add", ".")
+    _git_without_inherited_repository(
+        "-C",
+        str(repo),
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.invalid",
+        "commit",
+        "-qm",
+        "initial",
     )
+    return repo, script
+
+
+def _head(repo: Path) -> str:
+    env = {key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV}
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], check=True, capture_output=True, text=True, env=env
+    ).stdout.strip()
+
+
+def test_verifier_identity_ignores_an_inherited_git_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    sentinel, _ = _committed_script_repo(tmp_path / "sentinel", "print('sentinel')\n")
+    sentinel_head = _head(sentinel)
+    monkeypatch.setenv("GIT_DIR", str(sentinel / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(sentinel))
+
+    repo, script = _committed_script_repo(tmp_path)
+    identity = render_ops._verifier_identity(repo_root=repo, script_path=script)
+
+    assert identity["verifier_source_sha"] == _head(repo)
+    assert identity["verifier_source_sha"] != sentinel_head
+    assert _head(sentinel) == sentinel_head
+
+
+def test_verifier_identity_is_repo_anchored_and_rejects_dirty_script(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    repo, script = _committed_script_repo(tmp_path)
     unrelated = tmp_path / "unrelated"
     unrelated.mkdir()
     monkeypatch.chdir(unrelated)
@@ -1601,6 +1633,32 @@ def test_validate_service_fails_on_topology_drift(config: render_ops.ProductionC
     observed["serviceDetails"]["region"] = "oregon"
     with pytest.raises(render_ops.OpsError, match="region"):
         render_ops.validate_service(observed, config)
+
+
+def test_validate_service_fails_on_root_dir_drift(config: render_ops.ProductionConfig) -> None:
+    observed = service(config)
+    observed["rootDir"] = ""
+    with pytest.raises(render_ops.OpsError, match="rootDir"):
+        render_ops.validate_service(observed, config)
+
+
+def test_production_config_names_library_inside_the_aweb_repository() -> None:
+    config = render_ops.ProductionConfig.load(render_ops.APP_ROOT / "ops" / "render-production.json")
+    assert render_ops.canonical_git_repo(config.repo) == "github.com/awebai/aweb"
+    assert render_ops.REPOSITORY_ROOT / config.root_dir == render_ops.APP_ROOT
+
+
+def test_repository_root_is_the_git_top_level() -> None:
+    env = {key: value for key, value in os.environ.items() if key not in render_ops.GIT_REPOSITORY_ENV}
+    top_level = subprocess.run(
+        ["git", "-C", str(render_ops.APP_ROOT), "rev-parse", "--show-toplevel"],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    ).stdout.strip()
+    assert render_ops.REPOSITORY_ROOT == Path(top_level).resolve()
+    assert render_ops.SCRIPT_RELATIVE_PATH == Path("naapp/library/scripts/render_ops.py")
 
 
 def test_current_live_rejects_active_or_unknown_deploy() -> None:

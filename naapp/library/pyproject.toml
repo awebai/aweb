@@ -31,9 +31,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/awebai/library"
-Repository = "https://github.com/awebai/library"
-Issues = "https://github.com/awebai/library/issues"
+Homepage = "https://github.com/awebai/aweb/tree/main/naapp/library"
+Repository = "https://github.com/awebai/aweb"
+Issues = "https://github.com/awebai/aweb/issues"
 
 
 [build-system]

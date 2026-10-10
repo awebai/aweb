@@ -3,6 +3,7 @@ package awid
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -21,25 +22,26 @@ const (
 )
 
 type SendMessageRequest struct {
-	ToAgentID      string               `json:"to_agent_id,omitempty"`
-	ToAlias        string               `json:"to_alias,omitempty"`
-	ToDID          string               `json:"to_did,omitempty"`
-	ToStableID     string               `json:"to_stable_id,omitempty"`
-	ToAddress      string               `json:"to_address,omitempty"`
-	ConversationID string               `json:"conversation_id,omitempty"`
-	Subject        string               `json:"subject,omitempty"`
-	Body           string               `json:"body"`
-	ContentMode    string               `json:"content_mode,omitempty"`
-	MessageVersion int                  `json:"message_version,omitempty"`
-	Encrypted      *E2EEMessageEnvelope `json:"encrypted_envelope,omitempty"`
-	Priority       MessagePriority      `json:"priority,omitempty"`
-	MessageID      string               `json:"message_id,omitempty"`
-	Timestamp      string               `json:"timestamp,omitempty"`
-	FromDID        string               `json:"from_did,omitempty"`
-	Signature      string               `json:"signature,omitempty"`
-	SignedPayload  string               `json:"signed_payload,omitempty"`
-	EncryptE2EE    bool                 `json:"-"`
-	E2EERecipient  *E2EERecipientKey    `json:"-"`
+	ToAgentID        string               `json:"to_agent_id,omitempty"`
+	ToAlias          string               `json:"to_alias,omitempty"`
+	ToDID            string               `json:"to_did,omitempty"`
+	ToStableID       string               `json:"to_stable_id,omitempty"`
+	ToAddress        string               `json:"to_address,omitempty"`
+	ConversationID   string               `json:"conversation_id,omitempty"`
+	Subject          string               `json:"subject,omitempty"`
+	Body             string               `json:"body"`
+	ContentMode      string               `json:"content_mode,omitempty"`
+	MessageVersion   int                  `json:"message_version,omitempty"`
+	Encrypted        *E2EEMessageEnvelope `json:"encrypted_envelope,omitempty"`
+	Priority         MessagePriority      `json:"priority,omitempty"`
+	MessageID        string               `json:"message_id,omitempty"`
+	Timestamp        string               `json:"timestamp,omitempty"`
+	FromDID          string               `json:"from_did,omitempty"`
+	Signature        string               `json:"signature,omitempty"`
+	SignedPayload    string               `json:"signed_payload,omitempty"`
+	ReplyToMessageID string               `json:"-"`
+	EncryptE2EE      bool                 `json:"-"`
+	E2EERecipient    *E2EERecipientKey    `json:"-"`
 
 	NewConversation bool `json:"new_conversation,omitempty"`
 }
@@ -223,6 +225,7 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 			Body:                payload.Body,
 			MessageID:           messageID,
 			ConversationID:      conversationID,
+			ReplyToMessageID:    payload.ReplyToMessageID,
 			Recipients:          []E2EERecipientKey{recipient},
 			DeliveryOrigin:      recipient.DeliveryOrigin,
 			ObservedInboundMode: recipient.InboundMode,
@@ -232,6 +235,9 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 		}
 		out, err := custody.CreateE2EEEnvelope(ctx, req)
 		if err != nil {
+			if payload.ReplyToMessageID != "" && recipient.Address == "" && strings.Contains(err.Error(), "recipient_binding_unavailable") {
+				return fmt.Errorf("%w; custody host must be aw >= 1.36.30 for replies to addressless senders", err)
+			}
 			return err
 		}
 		if out == nil || out.EncryptedEnvelope == nil {
@@ -267,6 +273,7 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 		Body:                payload.Body,
 		MessageID:           messageID,
 		ConversationID:      conversationID,
+		ReplyToMessageID:    payload.ReplyToMessageID,
 		CreatedAt:           now,
 		DeliveryOrigin:      recipient.DeliveryOrigin,
 		ObservedInboundMode: recipient.InboundMode,
@@ -288,6 +295,48 @@ func (c *Client) prepareE2EEMail(ctx context.Context, payload *SendMessageReques
 	payload.Signature = ""
 	payload.SignedPayload = ""
 	return nil
+}
+
+// MailReplyRecipient binds an encrypted reply to this source message's sender.
+// Conversation participant lists and display aliases are not key authority.
+func (c *Client) MailReplyRecipient(ctx context.Context, source InboxMessage) (E2EERecipientKey, error) {
+	envelope := source.Encrypted
+	if err := VerifyE2EEMessageEnvelopeSignature(envelope); err != nil {
+		return E2EERecipientKey{}, fmt.Errorf("cannot reply to unverified encrypted mail: %w", err)
+	}
+	plain, err := c.DecryptE2EEEnvelopeWithContext(ctx, envelope)
+	if err != nil {
+		return E2EERecipientKey{}, fmt.Errorf("cannot reply to unverified encrypted mail: %w", err)
+	}
+	if envelope.Kind != "mail" || source.MessageID != plain.MessageID || source.ConversationID != plain.ConversationID {
+		return E2EERecipientKey{}, errors.New("cannot reply: source message does not match its verified envelope")
+	}
+	from := envelope.From
+	if strings.TrimSpace(from.Address) == "" {
+		recipient, err := E2EERecipientFromEnvelopeSender(envelope, time.Now())
+		if err != nil {
+			return E2EERecipientKey{}, fmt.Errorf("cannot reply: sender's key in the original message is missing, expired or invalid; ask them to send a new message before you reply: %w", err)
+		}
+		return recipient, nil
+	}
+	identity, err := c.ResolveIdentity(ctx, strings.TrimSpace(from.Address))
+	if err != nil {
+		return E2EERecipientKey{}, err
+	}
+	if (from.StableID != "" && identity.StableID != from.StableID) ||
+		(from.StableID == "" && identity.DID != from.DID) {
+		return E2EERecipientKey{}, errors.New("cannot reply: resolved address does not match the source sender identity")
+	}
+	if identity.EncryptionKey == nil {
+		return E2EERecipientKey{}, errors.New("recipient has no published E2E encryption key; ask them to run `aw id encryption-key setup` before replying")
+	}
+	if err := VerifyEncryptionKeyAssertion(identity.EncryptionKey, identity.DID, identity.StableID, time.Now()); err != nil {
+		return E2EERecipientKey{}, fmt.Errorf("cannot reply: recipient encryption key is invalid: %w", err)
+	}
+	return E2EERecipientKey{
+		Address: strings.TrimSpace(from.Address), DID: identity.DID, StableID: identity.StableID,
+		EncryptionKey: identity.EncryptionKey, DeliveryOrigin: identity.DeliveryOrigin,
+	}, nil
 }
 
 func (c *Client) e2eeMailRecipient(ctx context.Context, payload *SendMessageRequest) (E2EERecipientKey, error) {

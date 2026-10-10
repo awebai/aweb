@@ -25,7 +25,7 @@ services:
 
   awid:
     build:
-      context: ${LIBRARY_E2E_AWEB_CONTEXT:-../aweb}
+      context: ${LIBRARY_E2E_AWEB_CONTEXT:-../..}
       dockerfile: awid/Dockerfile
     environment:
       AWID_DATABASE_URL: postgresql://library:library@postgres:5432/library
@@ -37,6 +37,7 @@ services:
       AWID_RATE_LIMIT_BACKEND: redis
       AWID_RATE_LIMIT_DISABLED: "true"
       AWID_SKIP_DNS_VERIFY: "1"
+      AWID_SERVICE_TOKEN: ${LIBRARY_E2E_AWID_SERVICE_TOKEN:-library-e2e-awid-service-token-0123456789abcdef}
     ports:
       - "${LIBRARY_E2E_AWID_PORT:-18010}:8010"
     depends_on:

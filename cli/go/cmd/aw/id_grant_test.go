@@ -219,7 +219,12 @@ func TestRunGrantMintAutoCustodySocketSupportsGrantSignedSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	cleanupRoot := root
+	t.Cleanup(func() { _ = os.RemoveAll(cleanupRoot) })
+	root = filepath.Join(root, strings.Repeat("long-resident-", 12))
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	t.Chdir(root)
 	setGrantTestEnv(t, root)
 
@@ -239,7 +244,7 @@ func TestRunGrantMintAutoCustodySocketSupportsGrantSignedSend(t *testing.T) {
 				"grant_did_key":  gotMint["grant_did_key"],
 				"scopes":         gotMint["scopes"],
 				"issued_at":      "2026-08-12T00:00:00Z",
-				"expires_at":     "2026-08-12T08:00:00Z",
+				"expires_at":     time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&gotMessage); err != nil {
@@ -297,6 +302,15 @@ func TestRunGrantMintAutoCustodySocketSupportsGrantSignedSend(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionDID := awid.ComputeDIDKey(sessionKey.Public().(ed25519.PublicKey))
+	residentSocket, err := activeCustodySocketPath()
+	if err != nil || residentSocket != wantSocket {
+		t.Fatalf("resident discovery=%q err=%v", residentSocket, err)
+	}
+	t.Setenv("AWEB_IDENTITY_HOME", filepath.Join(realRoot, "worker-grant"))
+	grantSocket, err := activeCustodySocketPath()
+	if err != nil || grantSocket != wantSocket {
+		t.Fatalf("grant discovery=%q err=%v", grantSocket, err)
+	}
 	svc := &custodyService{
 		residentHome: filepath.Join(root, ".aw"),
 		socketPath:   grant.Custody.SocketPath,
@@ -314,6 +328,14 @@ func TestRunGrantMintAutoCustodySocketSupportsGrantSignedSend(t *testing.T) {
 	defer cancel()
 	errc := make(chan error, 1)
 	go func() { errc <- svc.serve(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case <-errc:
+		case <-time.After(time.Second):
+			t.Error("custody did not stop")
+		}
+	}()
 	for i := 0; i < 100; i++ {
 		if _, err := os.Stat(grant.Custody.SocketPath); err == nil {
 			break
@@ -326,6 +348,10 @@ func TestRunGrantMintAutoCustodySocketSupportsGrantSignedSend(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
+	status, err := runCustodyStatus(context.Background())
+	if err != nil || status.Status != "running" || status.SocketPath != wantSocket {
+		t.Fatalf("grant status discovery=%+v err=%v", status, err)
+	}
 	client, _, err := resolveClientSelectionForDir(root)
 	if err != nil {
 		t.Fatal(err)
