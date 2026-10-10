@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -28,7 +29,8 @@ def _pem(path, kind, raw):
 
 
 @pytest.mark.asyncio
-async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_path):
+@pytest.mark.parametrize("grant", [False, True])
+async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_path, grant):
     env = privacy_app
     now = datetime.now(timezone.utc)
     identities = {}
@@ -56,10 +58,9 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)
-    (identity_home / "identity.yaml").write_text(json.dumps({
-        "did": agent["did"], "custody": "self", "identity_scope": "local",
-        "created_at": now.isoformat(),
-    }))
+    # API-key local init intentionally omits identity.yaml. Neither root nor
+    # grant custody may require it or manufacture global identity state.
+    assert not (identity_home / "identity.yaml").exists()
     team_sk, _, team_did = _make_keypair()
     await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
     await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
@@ -88,41 +89,91 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         }],
     }))
     root = Path(__file__).resolve().parents[2]
-    binary = tmp_path / "aw"
-    build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
-                                                cwd=root / "cli/go", stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.STDOUT)
-    output, _ = await build.communicate()
-    assert build.returncode == 0, output.decode()
+    binary = Path(os.environ.get("AW_TEST_CLI_BINARY", str(tmp_path / "aw")))
+    if "AW_TEST_CLI_BINARY" not in os.environ:
+        build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
+                                                    cwd=root / "cli/go", stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.STDOUT)
+        output, _ = await build.communicate()
+        assert build.returncode == 0, output.decode()
     child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
     child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
                      HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),
                      AWID_REGISTRY_URL=str(env.client.base_url))
-    body_file = tmp_path / "reply.txt"
-    body_file.write_text("Agent private reply")
-    reply = await asyncio.create_subprocess_exec(str(binary), "mail", "reply", message_id,
-                                                "--body-file", str(body_file), "--json", cwd=tmp_path,
-                                                env=child_env, stdout=asyncio.subprocess.PIPE,
-                                                stderr=asyncio.subprocess.STDOUT)
-    output, _ = await asyncio.wait_for(reply.communicate(), 30)
-    assert reply.returncode == 0, output.decode()
-    # Reply continuity must not make human aliases valid send targets.
-    forbidden = await asyncio.create_subprocess_exec(str(binary), "mail", "send", "--to", "alice",
-                                                    "--e2ee", "--body-file", str(body_file), cwd=tmp_path,
-                                                    env=child_env, stdout=asyncio.subprocess.PIPE,
+    async with _reply_context(binary, tmp_path, child_env, grant) as (command_dir, command_env):
+        body_file = tmp_path / "reply.txt"
+        body_file.write_text("Agent private reply")
+        reply = await asyncio.create_subprocess_exec(str(binary), "mail", "reply", message_id,
+                                                    "--body-file", str(body_file), "--json", cwd=command_dir,
+                                                    env=command_env, stdout=asyncio.subprocess.PIPE,
                                                     stderr=asyncio.subprocess.STDOUT)
-    refused, _ = await asyncio.wait_for(forbidden.communicate(), 30)
-    assert forbidden.returncode != 0
-    assert "recipient agent not found" in refused.decode()
-    response = await _request(env, "alice", "GET", f"/v1/messages/conversations/{conversation_id}")
-    assert response.status_code == 200, response.text
-    messages = response.json()["messages"]
-    assert len(messages) == 2
-    delivered = next(m for m in messages if m["message_id"] != message_id)
-    assert delivered["content_mode"] == "encrypted_v2"
-    assert delivered["conversation_id"] == conversation_id
-    assert "Agent private reply" not in json.dumps(delivered)
-    plain = decrypt_e2ee_message(delivered["encrypted_envelope"], {
-        **human, "encryption_key_id": human["encryption_key"]["encryption_key_id"],
-    })
-    assert plain["body"] == "Agent private reply"
+        output, _ = await asyncio.wait_for(reply.communicate(), 30)
+        assert reply.returncode == 0, output.decode()
+        # Reply continuity must not make human aliases valid send targets.
+        forbidden = await asyncio.create_subprocess_exec(str(binary), "mail", "send", "--to", "alice",
+                                                        "--e2ee", "--body-file", str(body_file), cwd=command_dir,
+                                                        env=command_env, stdout=asyncio.subprocess.PIPE,
+                                                        stderr=asyncio.subprocess.STDOUT)
+        refused, _ = await asyncio.wait_for(forbidden.communicate(), 30)
+        assert forbidden.returncode != 0
+        assert "recipient agent not found" in refused.decode()
+        response = await _request(env, "alice", "GET", f"/v1/messages/conversations/{conversation_id}")
+        assert response.status_code == 200, response.text
+        messages = response.json()["messages"]
+        assert len(messages) == 2
+        delivered = next(m for m in messages if m["message_id"] != message_id)
+        assert delivered["content_mode"] == "encrypted_v2"
+        assert delivered["conversation_id"] == conversation_id
+        assert "Agent private reply" not in json.dumps(delivered)
+        plain = decrypt_e2ee_message(delivered["encrypted_envelope"], {
+            **human, "encryption_key_id": human["encryption_key"]["encryption_key_id"],
+        })
+        assert plain["body"] == "Agent private reply"
+
+
+async def _cli(binary, cwd, env, *args):
+    proc = await asyncio.create_subprocess_exec(str(binary), *args, cwd=cwd, env=env,
+                                              stdout=asyncio.subprocess.PIPE,
+                                              stderr=asyncio.subprocess.STDOUT)
+    output, _ = await asyncio.wait_for(proc.communicate(), 30)
+    assert proc.returncode == 0, output.decode()
+    return json.loads(output)
+
+
+@asynccontextmanager
+async def _reply_context(binary, root, env, grant):
+    if not grant:
+        yield root, env
+        return
+    log_path = root / "custody.log"
+    with log_path.open("wb") as log:
+        service = await asyncio.create_subprocess_exec(str(binary), "custody", "serve",
+                                                      cwd=root, env=env, stdout=log, stderr=log)
+        try:
+            for _ in range(100):
+                assert service.returncode is None, log_path.read_text()
+                status = await _cli(binary, root, env, "custody", "status", "--json")
+                if (status.get("keys") or {}).get("encryption_ready"):
+                    assert status["keys"]["signing_ready"]
+                    break
+                await asyncio.sleep(0.05)
+            else:
+                pytest.fail(f"custody not ready: {status}; {log_path.read_text()}")
+            seat = root / "seat"
+            seat.mkdir()
+            await _cli(binary, root, env, "id", "grant", "mint", "--scope", "mail.read,mail.send",
+                       "--ttl", "20m", "--custody-socket", "auto", "--out", str(seat / ".aw"), "--json")
+            assert not (seat / ".aw" / "signing.key").exists()
+            grant_env = dict(env, AWEB_IDENTITY_HOME=str(seat / ".aw"))
+            status = await _cli(binary, seat, grant_env, "custody", "status", "--json")
+            assert status["keys"]["encryption_ready"]
+            yield seat, grant_env
+            assert not (root / ".aw" / "identity.yaml").exists()
+        finally:
+            if service.returncode is None:
+                service.terminate()
+                try:
+                    await asyncio.wait_for(service.wait(), 5)
+                except asyncio.TimeoutError:
+                    service.kill()
+                    await service.wait()

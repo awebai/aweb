@@ -70,7 +70,24 @@ type foreignOwnerInfo struct{ os.FileInfo }
 
 func (f foreignOwnerInfo) Sys() any { return &syscall.Stat_t{Uid: uint32(os.Geteuid() + 1)} }
 func TestRuntimeRejectsForeignOwner(t *testing.T) {
-	info, err := os.Stat(t.TempDir())
+	dir := t.TempDir()
+	if os.Geteuid() == 0 {
+		// Linux release containers can exercise real foreign ownership. Ordinary
+		// unprivileged runners retain the explicit Stat_t boundary control.
+		if err := os.Chown(dir, 65534, 65534); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chown(dir, 0, 0)
+		info, err := os.Stat(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ownerOnly(info); err == nil {
+			t.Fatal("real foreign owner accepted")
+		}
+		return
+	}
+	info, err := os.Stat(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
