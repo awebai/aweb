@@ -36,29 +36,91 @@ def database_config_from_settings(settings: Any) -> DatabaseConfig:
     )
 
 
-async def verify_session_settings(pool: Any, config: DatabaseConfig) -> None:
-    """Fail closed unless a pooled connection carries the timeouts awid requests.
+MIN_SESSION_SETTING_SAMPLES = 20
 
-    pgdbm sends them as startup parameters, which a transaction pooler may drop
-    without error; role or database defaults survive the pooler.
-    """
-    requested = config.get_server_settings()
-    names = [name for name in REQUIRED_SESSION_SETTINGS if name in requested]
-    async with pool.acquire() as conn:
-        role = await conn.fetchval("SELECT current_user")
+
+def _search_path_entries(value: str | None) -> list[str]:
+    return [entry.strip() for entry in (value or "").split(",") if entry.strip()]
+
+
+async def _sample_session_settings(conn: Any, names: list[str], barrier: asyncio.Barrier) -> dict[str, Any]:
+    # One transaction pins one server connection behind a transaction pooler, so
+    # the role, backend and settings read here all describe the same connection.
+    # The barrier keeps every transaction of the round open at once, so each
+    # sample holds a different server connection.
+    async with conn.transaction():
+        identity = await conn.fetchrow("SELECT current_user AS role, pg_backend_pid() AS backend")
         rows = await conn.fetch(
             "SELECT name, setting FROM pg_catalog.pg_settings WHERE name = ANY($1::text[])",
             names,
         )
-    effective = {row["name"]: row["setting"] for row in rows}
-    missing = [name for name in names if effective.get(name) != requested[name]]
-    if not missing:
+        await barrier.wait()
+    return {
+        "role": identity["role"],
+        "backend": identity["backend"],
+        "settings": {row["name"]: row["setting"] for row in rows},
+    }
+
+
+async def verify_session_settings(pool: Any, config: DatabaseConfig) -> None:
+    """Fail closed unless the pool's server connections carry the settings awid requests.
+
+    pgdbm sends them as startup parameters, which a transaction pooler may drop
+    without error; role or database defaults survive the pooler. Behind a
+    transaction pooler each transaction may run on a different server
+    connection, so this samples many concurrently held connections, at least
+    MIN_SESSION_SETTING_SAMPLES in rounds as wide as the pool.
+    """
+    requested = config.get_server_settings()
+    required = {name: requested[name] for name in REQUIRED_SESSION_SETTINGS if name in requested}
+    if config.shared_pool_search_path is not None:
+        required["search_path"] = config.shared_pool_search_path
+    names = sorted(required)
+
+    width = max(1, pool.get_max_size())
+    rounds = max(2, -(-MIN_SESSION_SETTING_SAMPLES // width))
+    samples: list[dict[str, Any]] = []
+    for _ in range(rounds):
+        connections = [await pool.acquire() for _ in range(width)]
+        try:
+            barrier = asyncio.Barrier(width)
+            samples.extend(
+                await asyncio.gather(*(_sample_session_settings(conn, names, barrier) for conn in connections))
+            )
+        finally:
+            for conn in connections:
+                await pool.release(conn)
+
+    def matches(name: str, effective: str | None) -> bool:
+        if name == "search_path":
+            return _search_path_entries(effective) == _search_path_entries(required[name])
+        return effective == required[name]
+
+    failing = [
+        sample
+        for sample in samples
+        if any(not matches(name, sample["settings"].get(name)) for name in names)
+    ]
+    if not failing:
         return
-    lines = [f"  {name}: requested {requested[name]!r}, connection has {effective.get(name)!r}" for name in missing]
-    fixes = [f"  ALTER ROLE \"{role}\" SET {name} = '{requested[name]}';" for name in missing]
+
+    role = failing[0]["role"]
+    wrong: dict[str, set[str | None]] = {}
+    for sample in failing:
+        for name in names:
+            effective = sample["settings"].get(name)
+            if not matches(name, effective):
+                wrong.setdefault(name, set()).add(effective)
+    backends = sorted({sample["backend"] for sample in failing})
+    lines = [
+        f"  {name}: requested {required[name]!r}, connections have {sorted(map(str, values))}"
+        for name, values in sorted(wrong.items())
+    ]
+    fixes = [f"  ALTER ROLE \"{role}\" SET {name} = '{required[name]}';" for name in sorted(wrong)]
     raise DatabaseSessionSettingsError(
-        "Database session settings were not applied; a connection pooler probably dropped "
-        "the startup parameters:\n"
+        f"Database session settings missing on {len(failing)} of {len(samples)} sampled server "
+        f"connections (backends {backends}); a connection pooler probably dropped the startup "
+        "parameters:\n"
         + "\n".join(lines)
         + "\nSet them as role defaults, which every new server connection applies:\n"
         + "\n".join(fixes)

@@ -140,6 +140,49 @@ async def test_required_settings_accept_server_side_defaults_behind_the_pooler(m
         await _drop_database(name)
 
 
+async def _hold_server_connections(url: str, count: int) -> None:
+    """Open `count` concurrent transactions through the pooler, forcing that many server connections."""
+    connections = [await asyncpg.connect(url, statement_cache_size=0) for _ in range(count)]
+    try:
+        transactions = [conn.transaction() for conn in connections]
+        for transaction in transactions:
+            await transaction.start()
+        await asyncio.gather(*(conn.fetchval("SELECT pg_backend_pid()") for conn in connections))
+        for transaction in transactions:
+            await transaction.rollback()
+    finally:
+        for conn in connections:
+            await conn.close()
+
+
+@needs_pooler
+@pytest.mark.asyncio
+async def test_required_settings_refuse_a_mix_of_old_and_new_server_connections(monkeypatch):
+    # Rollout state between ALTER ROLE and the pooler's refresh: some server
+    # connections predate the defaults, some carry them. The ones carrying them
+    # are used most recently, so a single sample would see only those.
+    name = await _create_database(defaults=None)
+    url = _with_database(POOLER_URL, name)
+    try:
+        await _hold_server_connections(url, 4)
+        admin = await asyncpg.connect(POOLER_URL, statement_cache_size=0)
+        try:
+            for key, value in SESSION_DEFAULTS.items():
+                await admin.execute(f"ALTER DATABASE \"{name}\" SET {key} = '{value}'")
+        finally:
+            await admin.close()
+        await _hold_server_connections(url, 8)
+
+        _configure(monkeypatch, url, pooler=True, require=True)
+        monkeypatch.setenv("AWID_DATABASE_POOLER_MAX_CONNECTIONS", "10")
+        infra = AwidDatabaseInfra(schema="awid")
+        with pytest.raises(DatabaseSessionSettingsError) as refused:
+            await infra.initialize(run_migrations=False)
+        assert "server connections" in str(refused.value)
+    finally:
+        await _drop_database(name)
+
+
 @needs_pooler
 @pytest.mark.asyncio
 async def test_pooler_mode_serves_concurrent_varied_queries(monkeypatch):
