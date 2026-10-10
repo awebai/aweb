@@ -150,14 +150,23 @@ using the same original selection and an explicitly reviewed single operation.
 No automatic loop, absent-partial fresh fallback, manual state rewrite or borrowed
 key is supplied by this reference.
 
-**Current exception:** a successful hosted response containing a different
-nonempty DID causes the native client to remove the partial file before returning
-its collision error, before the later snapshot/rollback. In a partial-only target
-this can lose the sole persisted signing material. The public registry is not a
-backup. Report observed state (removal can fail), stop if material is absent, and
-obtain an explicit recovery disposition. Do not describe every failed init as
-key-preserving or improvise a copy/restore workaround. This behavior is tested;
-changing it requires a separate identity-contract decision.
+**Identity mismatch:** a successful hosted response containing a different
+nonempty DID is refused. The client renames the partial signing material to a
+unique timestamped `.aw/partial-init.yaml.<UTC timestamp>.<suffix>.rejected`
+file, retaining private permissions, and reports its location. It does not
+restore or select that material automatically. A rejected partial blocks fresh
+API-key initialization in that selected identity home with
+`partial_init_reconciliation_required`, before key generation or registration.
+Use a different directory for a new identity or obtain operator reconciliation;
+do not delete the preserved key material. If quarantine fails, initialization
+still refuses and does not delete the original partial.
+
+For resumable failures with the original partial retained, the diagnostic says
+"rerun the same command in this directory; do not delete .aw/partial-init.yaml".
+This guidance does not apply to a quarantined identity mismatch and does not
+remove the remote-state reconciliation requirement above. Successful completion
+removes the temporary partial only after the identity has been persisted and
+connected.
 
 Same-identity reuse is not exactly-once execution. A service may reuse its agent
 and address yet issue another workspace credential on repeated bootstrap. A lost
@@ -171,9 +180,9 @@ idempotency or the cause of a particular failure.
 
 - `cli/go/cmd/aw/init.go`: API-key branch and JSON addon behavior.
 - `cli/go/cmd/aw/init_apikey.go`: partial material/context, registry-before-hosted
-  ordering, certificate/response validation, mismatch deletion and connect rollback.
+  ordering, certificate/response validation, mismatch quarantine and connect rollback.
 - `cli/go/cmd/aw/init_connect.go`: output fields and publication warning behavior.
 - `cli/go/cmd/aw/doctor_identity.go`: local publication versus registry comparison.
 - `cli/go/cmd/aw/init_apikey_recovery_command_test.go`: real-command diagnostic,
   protected-capture and representative committed-response-loss fixtures.
-- `cli/go/cmd/aw/init_apikey_test.go`: existing mismatch-deletion and resume tests.
+- `cli/go/cmd/aw/init_apikey_test.go`: mismatch-quarantine and resume tests.

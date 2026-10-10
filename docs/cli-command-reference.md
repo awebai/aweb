@@ -2175,6 +2175,7 @@ Event stream operations
 
 Subcommands:
 - `stream` Listen to real-time agent events via SSE
+- `subscribe` Subscribe this resident to an installed app event
 
 Flags:
 - `-h, --help help for events`
@@ -2189,6 +2190,17 @@ Listen to real-time agent events via SSE
 Flags:
 - `-h, --help help for stream`
 - `--timeout int Stop after N seconds (0 = indefinite)`
+
+## `events subscribe`
+
+### `events subscribe`
+
+Subscribe this resident to an installed app event
+
+Flags:
+- `-h, --help help for subscribe`
+- `--intent string Delivery intent: wake, steer or ambient (default: app declaration)`
+- `--resource string Match only this resource reference`
 
 ## `gc-mail`
 
