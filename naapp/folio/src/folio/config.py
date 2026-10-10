@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     app_emit_kid: str | None = None
     app_emit_key_seed_hex: str | None = None
     app_emit_timeout_seconds: float = Field(default=3.0, gt=0)
+    app_emit_uninstalled_ttl_seconds: float = Field(default=600.0, gt=0)
 
     @model_validator(mode="after")
     def validate_db_pool(self) -> Self:
