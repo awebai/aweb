@@ -21,6 +21,7 @@ func TestMailReadsDecryptWithSelectedPrincipalIdentityHome(t *testing.T) {
 }
 
 func testMailReadsDecryptWithSelfAssertion(t *testing.T, expired bool) {
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 

@@ -8,6 +8,20 @@ run() {
   make "$1"
 }
 
+# Invoked only inside the no-egress runner. Keep the explicit candidate
+# targets visible here, including their dependency-order contract.
+if [[ "${1:-}" == "--isolated-suites" ]]; then
+  export TEST_EGRESS_RUNNER=
+  run test-server
+  run test-awid
+  run test-cli
+  run _candidate-unit-channel
+  run test-channel-name-live-contract
+  run _candidate-unit-channel-core
+  run _candidate-unit-pi
+  exit 0
+fi
+
 run _candidate-gate-docker-boundaries
 run test-shipping
 run check-aw-commit-repo-stamp
@@ -23,13 +37,8 @@ run test-cli-reference
 run test-mcp-tools-reference
 run _candidate-channel-version
 run _candidate-node-deps
-run test-server
-run test-awid
-run test-cli
-run _candidate-unit-channel
-run test-channel-name-live-contract
-run _candidate-unit-channel-core
-run _candidate-unit-pi
+python3 scripts/test-egress/docker.py --evidence "$CANDIDATE_LOG_DIR/test-egress" \
+  --command bash scripts/candidate-suite.sh --isolated-suites
 run check-a2a-copy-guardrails
 run test-go-vulnerability-audit
 run test-release-cli-version

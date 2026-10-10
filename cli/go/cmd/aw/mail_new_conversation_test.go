@@ -18,6 +18,7 @@ import (
 )
 
 func TestAwMailSendNewConversation(t *testing.T) {
+	t.Setenv("AWID_REGISTRY_URL", "http://127.0.0.1:1")
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	bin := filepath.Join(t.TempDir(), "aw")

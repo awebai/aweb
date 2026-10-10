@@ -1556,6 +1556,9 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 		t.Helper()
 		run := exec.CommandContext(ctx, bin, args...)
 		run.Env = withoutEnvForTest(testCommandEnv(tmp), "AWEB_URL", "AWID_REGISTRY_URL")
+		if len(args) > 0 && args[0] == "mail" {
+			run.Env = append(run.Env, "AWID_REGISTRY_URL=http://127.0.0.1:1")
+		}
 		run.Dir = dir
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -1833,6 +1836,9 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 		t.Helper()
 		run := exec.CommandContext(ctx, bin, args...)
 		run.Env = env
+		if len(args) > 0 && args[0] == "mail" {
+			run.Env = append(run.Env, "AWID_REGISTRY_URL=http://127.0.0.1:1")
+		}
 		run.Dir = dir
 		out, err := run.CombinedOutput()
 		if err != nil {
