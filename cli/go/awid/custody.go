@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/awebai/aw/internal/custodypath"
 	"net"
 	"net/http"
 	"strings"
@@ -111,6 +112,9 @@ func (c *UnixCustodyClient) SignPlainMessage(ctx context.Context, req *PlainMess
 func (c *UnixCustodyClient) do(ctx context.Context, method, path string, in any, out any) error {
 	if c == nil || strings.TrimSpace(c.SocketPath) == "" {
 		return fmt.Errorf("custody_unavailable")
+	}
+	if err := custodypath.Check(strings.TrimSpace(c.SocketPath)); err != nil {
+		return err
 	}
 	var body []byte
 	if in != nil {

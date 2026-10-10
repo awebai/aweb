@@ -353,6 +353,24 @@ operations, pass the preflighted socket explicitly with `--custody-socket
 home's default `aw custody serve` socket. This writes only the locator at
 `grant.yaml` `custody.socket_path`; it does not copy resident keys.
 
+Short default socket paths remain `<identity-home>/run/custody.sock`. When that
+would exceed 103 bytes, custody uses a stable hash of the canonical identity-home
+path under an owner-only per-user directory: `/private/tmp/aw-custody-<uid>` on
+macOS, `/tmp/aw-custody-<uid>` on other Unix platforms. This does not depend on
+`TMPDIR`, so long temporary or OATS paths do not lengthen the socket. Serve,
+resident status, and grant mint with `--custody-socket auto` use the same locator;
+grant clients use the locator recorded at mint time. Existing short paths and
+explicit `--custody-socket` locators remain unchanged. Explicit paths must still
+fit the platform's Unix socket limit.
+
+The fallback directory is created with mode 0700; its ownership, permissions,
+and absence of symlinks are checked before use. Existing sockets must be
+owner-only, owned by the current user, and not symlinks. Unsafe paths are refused
+rather than repaired or followed. Restart custody and mint a new grant if an
+older grant contains an unusably long explicit locator; resident keys stay in
+the identity home, never in the runtime directory.
+
+
 Minting generates a fresh session Ed25519 keypair, registers its `did:key`
 with the server together with the scopes and expiry, and writes a
 self-contained grant home (`grant.yaml` plus the session key — never the

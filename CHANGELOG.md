@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Custody now uses a short, private per-user socket path when a long resident
+  identity path would exceed Unix socket limits, including on macOS. Auto-minted
+  grants and custody status share this default; existing short paths and explicit
+  locators remain supported. Unsafe runtime ownership or symlinks are refused.
+
 ### CLI: preserve incomplete global identity material
 
 - A hosted global-init response with a different DID now quarantines partial

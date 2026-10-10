@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/awebai/aw/internal/custodypath"
 	"gopkg.in/yaml.v3"
 )
 
@@ -55,7 +56,7 @@ func CustodyRunDir(root string) string {
 }
 
 func CustodySocketPath(root string) string {
-	return filepath.Join(CustodyRunDir(root), "custody.sock")
+	return custodypath.Default(root)
 }
 
 // IsGrantHome reports whether root is a grant home. Presence of grant.yaml is
