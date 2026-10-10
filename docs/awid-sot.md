@@ -111,7 +111,9 @@ Public identity and namespace read endpoints (`GET /v1/namespaces/{domain}`,
 signatures. Team reads follow team visibility: public teams are anonymous;
 private-team metadata, enumeration, certificate history, member lookup, and
 revocations require a controller or unrevoked-member path signature, or the
-trusted same-operator service credential described below. Identity-private
+trusted same-operator service credential described below. The per-certificate
+`/certificates/{certificate_id}/status` read is the narrow anonymous exception,
+including for private teams; it exposes only the four facts documented below. Identity-private
 reads and certificate-blob fetch have their separately documented
 authentication requirements.
 
@@ -124,9 +126,9 @@ uses constant-time comparison. A matching credential is a confidential
 same-operator read capability: it may read and enumerate private-team metadata,
 certificate history, member references, and revocations so the aweb server can
 verify and reconcile memberships without holding every member key. It also
-exempts all 16 registry GET read buckets from public-IP rate limits: DID key,
+exempts all 17 registry GET read buckets from public-IP rate limits: DID key,
 addresses, head, full and log; namespace get/list; address get/list; A2A
-publication get; team get/list and member lookup; certificate list/fetch; and
+publication get; team get/list and member lookup; certificate list/fetch/status; and
 revocations. The exemption does not change identity-private or certificate-blob
 authentication. Write buckets remain rate-limited even with a matching token.
 It never authorizes a write, and must not be shared with
@@ -414,6 +416,13 @@ authorization oracle: a verifier uses the presented controller-signed
 certificate plus non-revocation. See the [ordered schema
 contract](#awid-database-schema) for storage authority.
 
+Independent apps using the anonymous per-certificate status read require a
+published record: a missing record is an authentication refusal on that path.
+This publication prerequisite does not change the existing token/history,
+server or CLI authority model; it never makes a registry row a substitute for
+a valid controller signature. Custom BYOT signers must publish certificates
+for independent status-based verification.
+
 ### Endpoints
 
 ```
@@ -518,6 +527,22 @@ GET    /v1/namespaces/{domain}/teams/{name}/certificates
                    "revoked_at": null }] }
        With active_only=true: only rows where revoked_at IS NULL.
        This is how the dashboard lists team members.
+
+GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/status
+       Anonymous for public and private teams. Own certificate_status public-IP
+       bucket: 60 reads per 60 seconds; trusted service reads are exempt.
+       Response (exactly four fields):
+         { "team_id": "backend:acme.com", "team_did_key": "did:key:z6Mk...",
+           "status": "active" | "revoked", "revoked_at": null | "RFC3339" }
+       Unknown/deleted team, unknown certificate, or certificate belonging to
+       another team: identical 404 { "detail": "Certificate not found" }.
+       No member identity, alias, addresses, enumeration, or history.
+       The key is the CURRENT team key (did:key itself identifies the key).
+       Active means revoked_at is null, not that authentication succeeded.
+       Rotation can leave old-key records active; verifiers must reject their
+       signatures against the current key. No previous key is returned.
+       Cache per (team_id, certificate_id) for at most 60 seconds and fail closed
+       on refresh errors. Existing private-read visibility remains unchanged.
 
 GET    /v1/namespaces/{domain}/teams/{name}/members/{alias}
        Resolve an active team-member reference. The path segment is the

@@ -123,6 +123,14 @@ customer:
 - creates or authorizes address bindings;
 - signs member certificates and certificate revocations.
 
+For independent applications using anonymous certificate status reads, the
+controller must publish each member certificate to AWID using
+`POST /v1/namespaces/{domain}/teams/{name}/certificates`. The `aw` membership
+issuance paths do this by default. Controllers signing outside `aw` must make
+publication explicit: an unpublished certificate is refused by status-based
+verifiers, even if correctly signed. This does not change the existing
+server/CLI or token/history authority model. See [anonymous status reads](awid-sot.md#teams).
+
 A coordination host may verify and project those public AWID facts into runtime
 rows. It must not upload, store, derive, or use the customer namespace or team
 controller private keys.

@@ -85,6 +85,12 @@ async def test_team_request_authenticates(monkeypatch, private, configured, faul
     def handler(req):
         calls.append(req.url.path)
         assert req.headers.get("X-AWID-Service-Token") == (token if configured else None)
+        if req.url.path.endswith("/status"):
+            return httpx.Response(200, json={
+                "team_id": cert["team_id"], "team_did_key": team_did,
+                "status": "revoked" if fault == "revoked" else "active",
+                "revoked_at": now if fault == "revoked" else None,
+            })
         if private and req.headers.get("X-AWID-Service-Token") != token:
             return httpx.Response(403, json={"detail": {"code": "team_private"}})
         return httpx.Response(
@@ -111,29 +117,15 @@ async def test_team_request_authenticates(monkeypatch, private, configured, faul
                 team_cache=cache,
                 db=db,
             )
-        assert caught.value.status_code == (
-            403 if private and not configured and fault != "body" else 401
-        )
-        db.execute.assert_not_awaited()
-        return
-    if private and not configured:
-        with pytest.raises(HTTPException) as caught:
-            await authenticate_request(
-                request,
-                settings=Settings(public_origin="https://app.example.com"),
-                team_cache=cache,
-                db=db,
-            )
-        assert caught.value.status_code == 403
-        assert caught.value.detail["code"] == "team_private_unreadable"
+        assert caught.value.status_code == 401
         db.execute.assert_not_awaited()
         return
     principal = await authenticate_request(
         request, settings=Settings(public_origin="https://app.example.com"), team_cache=cache, db=db
     )
     assert principal.team_id == cert["team_id"]
-    assert len(calls) == 2
-    assert calls[1].endswith("/certificates")
+    assert len(calls) == (2 if configured else 1)
+    assert calls[-1].endswith("/certificates" if configured else "/certificates/synthetic-cert/status")
     assert db.execute.await_count == 2
 
 
@@ -143,14 +135,19 @@ async def test_team_request_authenticates(monkeypatch, private, configured, faul
     [(403, "team_private", 403), (403, "other", 503), (500, "team_private", 503)],
 )
 async def test_registry_refusal_mapping(monkeypatch, endpoint, status, code, expected):
+    # Classified private denials still apply to the configured-token history path.
+    token = secrets.token_urlsafe(24)
+
     def handler(req):
         if endpoint == "certificates" and not req.url.path.endswith("/certificates"):
             return httpx.Response(200, json={"team_did_key": "synthetic-team-key"})
-        assert "X-AWID-Service-Token" not in req.headers
+        assert req.headers.get("X-AWID-Service-Token") == token
         return httpx.Response(status, json={"detail": {"code": code}})
 
     registry(monkeypatch, handler)
-    cache = AWIDTeamCache(registry_url="https://registry.example.com", ttl_seconds=60)
+    cache = AWIDTeamCache(
+        registry_url="https://registry.example.com", ttl_seconds=60, service_token=token
+    )
     with pytest.raises(HTTPException) as caught:
         await cache.get("team:example.com")
     assert caught.value.status_code == expected
@@ -166,7 +163,7 @@ async def test_registry_timeout_remains_unavailable(monkeypatch):
     registry(monkeypatch, handler)
     with pytest.raises(HTTPException) as caught:
         await AWIDTeamCache(registry_url="https://registry.example.com", ttl_seconds=60).get(
-            "team:example.com"
+            "team:example.com", "synthetic-cert"
         )
     assert caught.value.status_code == 503
 
@@ -186,7 +183,7 @@ async def test_unrecognized_forbidden_remains_unavailable(monkeypatch, payload):
     registry(monkeypatch, lambda req: httpx.Response(403, json=payload))
     with pytest.raises(HTTPException) as caught:
         await AWIDTeamCache(registry_url="https://registry.example.com", ttl_seconds=60).get(
-            "team:example.com"
+            "team:example.com", "synthetic-cert"
         )
     assert caught.value.status_code == 503
 

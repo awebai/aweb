@@ -51,3 +51,36 @@ services:
       timeout: 5s
       start_period: 5s
       retries: 30
+
+  # Real pre-status registry, pinned to the abqt base. It shares the real data
+  # services so the same published private-team certificate is tested on both.
+  awid-pre-status:
+    build:
+      context: https://github.com/awebai/aweb.git#0bc7546de0b5c002e3496ae4807fb1a4e12bd0b4
+      dockerfile: awid/Dockerfile
+    environment:
+      AWID_DATABASE_URL: postgresql://library:library@postgres:5432/library
+      AWID_REDIS_URL: redis://redis:6379/0
+      AWID_HOST: 0.0.0.0
+      AWID_PORT: 8010
+      AWID_DB_SCHEMA: awid
+      AWID_LOG_JSON: "false"
+      AWID_RATE_LIMIT_BACKEND: redis
+      AWID_RATE_LIMIT_DISABLED: "true"
+      AWID_SKIP_DNS_VERIFY: "1"
+      AWID_SERVICE_TOKEN: ${LIBRARY_E2E_AWID_SERVICE_TOKEN:-library-e2e-awid-service-token-0123456789abcdef}
+    ports:
+      - "${LIBRARY_E2E_OLD_AWID_PORT:-18011}:8010"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      awid:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 2s
+      timeout: 5s
+      start_period: 5s
+      retries: 30

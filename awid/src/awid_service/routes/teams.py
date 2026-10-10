@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
+from typing import Literal
 
 import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -444,6 +445,13 @@ class CertificateRegisterRequest(BaseModel):
 class CertificateRegisterResponse(BaseModel):
     registered: bool
     certificate_id: str
+
+
+class CertificateStatusResponse(BaseModel):
+    team_id: str
+    team_did_key: str
+    status: Literal["active", "revoked"]
+    revoked_at: str | None
 
 
 class CertificateResponse(BaseModel):
@@ -1046,6 +1054,44 @@ async def get_team_member(
         alias=row["alias"],
         identity_scope=row["identity_scope"],
         issued_at=row["issued_at"].isoformat(),
+    )
+
+
+@router.get(
+    "/{name}/certificates/{certificate_id}/status",
+    response_model=CertificateStatusResponse,
+    dependencies=[Depends(rate_limit_dep("certificate_status", allow_trusted_service=True))],
+)
+async def certificate_status(
+    domain: str,
+    name: str,
+    certificate_id: str,
+    db_infra=Depends(get_db),
+) -> CertificateStatusResponse:
+    """Public facts for one published certificate, including on private teams.
+
+    Active means not revoked; callers must still verify the presented certificate
+    against the current team key. A rotation invalidates old-key signatures.
+    """
+    db = db_infra.get_manager("aweb")
+    row = await db.fetch_one(
+        """
+        SELECT t.team_did_key, tc.revoked_at
+        FROM {{tables.team_certificates}} tc
+        JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
+        WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
+          AND tc.certificate_id = $3
+        """,
+        domain, name, certificate_id,
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Certificate not found")
+    revoked_at = row["revoked_at"]
+    return CertificateStatusResponse(
+        team_id=build_team_id(domain, name),
+        team_did_key=row["team_did_key"],
+        status="revoked" if revoked_at is not None else "active",
+        revoked_at=revoked_at.isoformat() if revoked_at is not None else None,
     )
 
 
