@@ -209,4 +209,3 @@ async def test_valid_but_unpublished_certificate_is_refused(real_registry):
     assert response.status_code == 401
     assert response.json()["detail"] == "Unknown AWID certificate"
     assert not cache._certificate_cache
-
