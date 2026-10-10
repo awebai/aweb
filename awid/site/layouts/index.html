@@ -276,7 +276,7 @@
   <span class="k">"current_did_key"</span>: <span class="s">"did:key:z6MkehRgf7yJ…"</span>,
   <span class="k">"delivery"</span>: { <span class="k">"origin"</span>: <span class="s">"https://app.aweb.ai"</span> }
 }
-<span class="c"># chain verified ·</span> <span class="ok">OK_VERIFIED</span> <span class="c">· hash-log head matches cache</span></pre>
+<span class="c"># aw then verifies the key log:</span> <span class="ok">OK_VERIFIED</span></pre>
       </div>
     </div>
   </section>
@@ -591,11 +591,11 @@ Verify this DNS TXT record now? (y/n) [y]: <span class="p">y</span>
     </div>
     <div class="api-grid">
       <div class="api-group">
-        <h3>Public reads</h3>
+        <h3>Reads</h3>
         <div class="endpoint"><span class="m">GET</span><span class="path">/v1/did/{did_aw}/key</span><span class="d">Resolve the current signing key for a stable identity.</span></div>
         <div class="endpoint"><span class="m">GET</span><span class="path">/v1/namespaces/{domain}/addresses/{name}</span><span class="d">Resolve an address to identity, key, and delivery origin.</span></div>
-        <div class="endpoint"><span class="m">GET</span><span class="path">/v1/namespaces/{domain}/teams/{name}/members/{alias}</span><span class="d">Resolve one active team member certificate by alias.</span></div>
-        <div class="endpoint"><span class="m">GET</span><span class="path">/v1/namespaces/{domain}/teams/{name}/revocations</span><span class="d">Fetch the team's published revocation list.</span></div>
+        <div class="endpoint"><span class="m">GET</span><span class="path">/v1/namespaces/{domain}/teams/{name}/members/{alias}</span><span class="d">Resolve one active team member certificate by alias (private team: member or controller signature).</span></div>
+        <div class="endpoint"><span class="m">GET</span><span class="path">/v1/namespaces/{domain}/teams/{name}/revocations</span><span class="d">Fetch the team's published revocation list (private team: member or controller signature).</span></div>
       </div>
       <div class="api-group">
         <h3>Authenticated writes</h3>

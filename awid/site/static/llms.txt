@@ -58,13 +58,14 @@ Clients classify a key-log resolution as OK_VERIFIED (signatures, hashes and cha
 
 ## HTTP API (https://api.awid.ai)
 
-Reads are public and rate-limited. Reads of a private team (metadata, members, certificates, revocations) need a controller or member signature, or the operator's service credential. Namespace, address and team writes carry `Authorization: DIDKey <did:key> <signature>` plus `X-AWEB-Timestamp`, signed by the namespace or team controller. Registering and rotating a `did:aw` carry the signature in the request body, chained to the key log.
+Reads are public and rate-limited, except where noted below. Reads of a private team (metadata, members, certificates, revocations) need a controller or member signature, or the operator's service credential. Namespace, address and team writes carry `Authorization: DIDKey <did:key> <signature>` plus `X-AWEB-Timestamp`, signed by the namespace or team controller. Registering and rotating a `did:aw` carry the signature in the request body, chained to the key log.
 
 Identities:
 - POST /v1/did — register a stable identity
 - PUT /v1/did/{did_aw} — rotate the signing key (appends a log entry)
 - GET /v1/did/{did_aw}/key — current signing key
-- GET /v1/did/{did_aw}/head, /log, /full — key log head, entries, full state
+- GET /v1/did/{did_aw}/head, /log — key log head and entries (public)
+- GET /v1/did/{did_aw}/full — full identity record; requires the identity's own signature
 - GET /v1/did/{did_aw}/addresses — addresses bound to the identity
 - POST /v1/did/{did_aw}/encryption-key — publish the E2E encryption key assertion
 
@@ -79,7 +80,8 @@ Namespaces and addresses:
 
 Teams:
 - GET|POST /v1/namespaces/{domain}/teams; GET|DELETE /v1/namespaces/{domain}/teams/{name}
-- GET|POST /v1/namespaces/{domain}/teams/{name}/certificates; GET .../certificates/{certificate_id}
+- GET|POST /v1/namespaces/{domain}/teams/{name}/certificates
+- GET /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id} — the signed certificate blob; only the member it was issued to can fetch it (signed request)
 - POST /v1/namespaces/{domain}/teams/{name}/certificates/revoke; GET .../revocations
 - GET /v1/namespaces/{domain}/teams/{name}/members/{alias}
 - POST /v1/namespaces/{domain}/teams/{name}/rotate; POST .../visibility
