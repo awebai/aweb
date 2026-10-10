@@ -531,16 +531,14 @@ def test_manifest_is_public_and_byte_stable(library: RunningLibrary) -> None:
         assert json.loads(response.content)["app"]["origin"] == library.origin
 
 
-def test_private_team_needs_the_awid_service_token(
+def test_private_team_authenticates_without_the_awid_service_token(
     library_without_awid_service_token: RunningLibrary, aw_workspace: AWWorkspace
 ) -> None:
     team = _provision_team(aw_workspace)
     result = _aw_request(
-        team, "GET", f"{library_without_awid_service_token.origin}/v1/agents/agent-1/profile-binding"
+        team, "GET", f"{library_without_awid_service_token.origin}/v1/proposals"
     )
-    assert result.returncode != 0
-    assert "HTTP 403" in result.stderr
-    assert "team_private_unreadable" in result.stdout
+    assert _assert_aw_success(result, context="private team without service token").strip() == "[]"
 
 
 def test_real_aw_team_auth_reaches_team_scoped_routes(library: RunningLibrary, aw_workspace: AWWorkspace) -> None:

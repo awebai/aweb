@@ -17,10 +17,11 @@ from awid.signing import canonical_json_bytes, sign_message
 from awid_service.db import AwidDatabaseInfra
 from awid_service.routes.teams import router
 from fastapi import FastAPI, Request
-from library import auth
-from library.config import Settings
 from nacl.signing import SigningKey
 from pgdbm import AsyncMigrationManager
+
+from library import auth
+from library.config import Settings
 
 pytest_plugins = ("pgdbm.fixtures.conftest",)
 TEAM_ID = "backend:example.com"
