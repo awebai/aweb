@@ -723,7 +723,7 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 	teamRegistryURL := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
 	if state, err := awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome); err == nil && state != nil {
 		if membership := state.Membership(sel.TeamID); membership != nil {
-			if pinned := registryURLForTeamMembersMembership(membership); pinned != "" {
+			if pinned := strings.TrimSpace(membership.RegistryURL); pinned != "" {
 				teamRegistryURL = pinned
 			}
 		}

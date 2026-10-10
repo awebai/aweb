@@ -18,7 +18,7 @@ func TestStoredRouteSignedDisplay(t *testing.T) {
 			for _, mode := range []string{"signed", "unrelated", "unsigned", "swapped", "bad_signature", "tampered_body", "empty_sender", "null_recipient", "number_recipient", "null_stable", "number_stable", "absent_conversation", "empty_conversation", "null_conversation", "number_conversation", "changed_conversation", "changed_message"} {
 				t.Run(kind+"/"+side+"/"+mode, func(t *testing.T) {
 					env := &MessageEnvelope{Type: kind, FromDID: did, ToDID: "", FromStableID: "did:aw:sender", ToStableID: "did:aw:recipient", Body: "signed body", MessageID: "message", ConversationID: "conversation"}
-					expected := Verified
+					expected := VerificationStale
 					outerDID := "did:aw:sender"
 					if side == "to" {
 						outerDID = "did:aw:recipient"
@@ -74,7 +74,7 @@ func TestStoredRouteSignedDisplay(t *testing.T) {
 						expected = Failed
 					}
 					if kind == "mail" && mode == "unsigned" {
-						expected = Verified
+						expected = VerificationStale
 					}
 					if mode == "bad_signature" {
 						sig = base64.RawStdEncoding.EncodeToString(make([]byte, 64))

@@ -138,7 +138,7 @@ func TestSignedDisplayStableProjection(t *testing.T) {
 			for _, mode := range []string{"signed", "unrelated", "unsigned", "swapped", "bad_signature", "tampered_body"} {
 				t.Run(kind+"/"+side+"/"+mode, func(t *testing.T) {
 					env := &MessageEnvelope{Type: kind, FromDID: did, ToDID: did, FromStableID: "did:aw:sender", ToStableID: "did:aw:recipient", Body: "signed body", ConversationID: "conversation"}
-					expected := Verified
+					expected := VerificationStale
 					outerDID := "did:aw:sender"
 					if side == "to" {
 						outerDID = "did:aw:recipient"

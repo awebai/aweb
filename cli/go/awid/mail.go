@@ -873,7 +873,14 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 		if !senderRead && !c.messageAuthoredByClientDID(m.FromDID) {
 			m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
 		}
-		m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAlias, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
+		// Own-sent reads establish authorship, not a received sender's team trust.
+		// Require the server-authorized sender view AND our stable ID AND a
+		// signature by our current resident key; a claimed stable ID is not enough.
+		ownAddressless := senderRead && strings.TrimSpace(m.FromAddress) == "" && c.stableID != "" &&
+			m.FromStableID == c.stableID && c.ParticipantDID() != "" && m.FromDID == c.ParticipantDID()
+		if !ownAddressless {
+			m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAlias, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
+		}
 	}
 	return out, nil
 }
@@ -888,7 +895,7 @@ func (c *Client) messageAuthoredByClientRoutingDID(fromDID string) bool {
 	if fromDID == "" {
 		return false
 	}
-	return fromDID == strings.TrimSpace(c.did) ||
+	return fromDID == strings.TrimSpace(c.ParticipantDID()) ||
 		(strings.TrimSpace(c.stableID) != "" && fromDID == strings.TrimSpace(c.stableID))
 }
 

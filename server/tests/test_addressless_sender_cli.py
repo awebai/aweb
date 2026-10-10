@@ -1,5 +1,6 @@
 """Addressless global sender verification using real apps and the public CLI."""
 import asyncio
+import base64
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
@@ -161,6 +162,38 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
                     assert shown["from_stable_id"] == human["stable_id"]
                     assert not shown.get("from_address")
             await read_both("verified")
+            if global_resident:
+                # Own-sent addressless reads retain verified authorship for both
+                # root and grant clients, without registry proof of ourselves.
+                own_id, own_conversation = str(uuid4()), str(uuid4())
+                own = encrypt_e2ee_mail(sender={**agent, "address": ""}, recipients=[peer],
+                    subject="Own message", body="Own control", message_id=own_id,
+                    conversation_id=own_conversation, created_at=now)
+                own_sent = await _request(env, "bob", "POST", "/v1/messages", {
+                    "to_did": peer["did"], "message_id": own_id, "conversation_id": own_conversation,
+                    "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": own,
+                })
+                assert own_sent.status_code == 200, own_sent.text
+                own_read = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", own_id, "--json")
+                assert own_read["messages"][0]["verification_status"] == "verified"
+                # A persisted incoming envelope claiming our stable ID is not
+                # our authorship: it was signed by the human's different key.
+                claiming = {**human, "stable_id": agent["stable_id"]}
+                claiming["encryption_key"] = build_encryption_key_assertion(
+                    signing_key=human["signing_key"], identity_did=human["did"],
+                    identity_stable_id=agent["stable_id"],
+                    encryption_public_key=base64.b64decode(human["encryption_key"]["encryption_public_key"] + "="),
+                    custody="hosted_custodial", now=now,
+                )
+                forged_claim = encrypt_e2ee_mail(sender=claiming, recipients=[agent],
+                    subject="Claimed identity", body="Wrong signer", message_id=message_id,
+                    conversation_id=conversation_id, created_at=now)
+                await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2",
+                                     json.dumps(forged_claim), UUID(message_id))
+                incoming = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
+                assert incoming["messages"][0]["verification_status"] == "identity_mismatch"
+                await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2",
+                                     json.dumps(source), UUID(message_id))
             # Read-time metadata must not promote a forged encrypted signature.
             stored = await env.db.fetch_value("SELECT encrypted_envelope FROM {{tables.messages}} WHERE message_id=$1", UUID(message_id))
             envelope = json.loads(stored) if isinstance(stored, str) else dict(stored)

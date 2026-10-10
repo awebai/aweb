@@ -315,3 +315,9 @@ ID. Existing rotation/log and anti-rollback checks apply. A wrong key or inactiv
 membership gives `identity_mismatch`; an unavailable registry, missing projection
 (including old servers), or unknown membership gives `verification_stale`.
 Neither a failed signature nor an existing recipient mismatch is promoted.
+
+Own-authored mail read through the server-authorized sender-visible route keeps
+its existing authorship result when the signed stable ID is the client's own
+and the signature uses its current key (the resident key for a grant client).
+A claimed stable ID alone never establishes authorship; incoming reads still
+require the received-sender proof above.
