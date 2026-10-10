@@ -23,7 +23,7 @@ from ..grant_liveness import valid_grant_liveness_by_workspace
 from ..grant_streams import (
     allowed_status_categories,
     clamp_deadline_to_grant,
-    grant_expiry_reason,
+    NeverGrantStreamGuard,
     grant_terminal_sse,
     require_valid_stream_grant,
     status_event_allowed,
@@ -748,12 +748,18 @@ async def status_stream(
     )
 
     async def _grant_guarded_status_stream():
+        guard = NeverGrantStreamGuard(request, db_infra, identity)
+        terminal = None
         async def _disconnected_or_deadline():
+            nonlocal terminal
+            terminal = await guard.reason()
+            if terminal:
+                return True
             if await request.is_disconnected():
                 return True
             return datetime.now(timezone.utc) >= deadline
 
-        reason = grant_expiry_reason(identity)
+        reason = terminal or await guard.reason()
         if reason:
             yield grant_terminal_sse(reason)
             return
@@ -767,10 +773,13 @@ async def status_stream(
             event_filter=(lambda event: event_visible(event) and status_event_allowed(identity, event)),
         )) as items:
             async for item in items:
+                terminal = await guard.reason()
+                if terminal:
+                    break
                 if datetime.now(timezone.utc) >= deadline:
                     break
                 yield item
-        reason = grant_expiry_reason(identity)
+        reason = terminal or await guard.reason()
         if reason:
             yield grant_terminal_sse(reason)
 

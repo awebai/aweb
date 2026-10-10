@@ -346,7 +346,7 @@ Subcommands:
 - `cert` Team certificate operations
 - `create` Create a global identity by claiming a namespace address
 - `encryption-key` Manage local E2E encryption keys for this self-custodial identity
-- `grant` Scoped, expiring session grants derived from this identity
+- `grant` Scoped, revocable session grants derived from this identity
 - `log` Show a global AWID DID log
 - `namespace` Protocol/admin namespace controller and address operations
 - `register` Register the current global identity at the configured registry
@@ -473,7 +473,7 @@ Flags:
 
 ### `id grant`
 
-Scoped, expiring session grants derived from this identity
+Scoped, revocable session grants derived from this identity
 
 Subcommands:
 - `list` List this identity's session grants
@@ -508,7 +508,7 @@ Flags:
 - `--label string Optional label for the grant`
 - `--out string Directory to write the grant home (created fresh; a non-empty directory is refused)`
 - `--scope stringArray Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)`
-- `--ttl duration Grant duration before expiry (60s to 720h) (default 8h0m0s)`
+- `--ttl string Grant lifetime: never (revocation-only) or a duration from 60s to 720h (default "never")`
 
 ## `id grant revoke`
 

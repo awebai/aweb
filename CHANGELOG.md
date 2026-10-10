@@ -11,6 +11,15 @@
   identity path would exceed Unix socket limits, including on macOS. Auto-minted
   grants and custody status share this default; existing short paths and explicit
   locators remain supported. Unsafe runtime ownership or symlinks are refused.
+### Grants: revocation-only lifetime
+
+- `aw id grant mint --ttl never` creates a grant without clock expiry and is now
+  the default. Explicit finite TTLs remain supported. Grant mint/list/status
+  report `expires_at: "never"`; upgrade the worker and restart its upgraded
+  custody host, which advertises `grant_never_ttl.v1`.
+- Never grants retain scope, subject and issuer checks. Owner revocation rejects
+  subsequent requests; open never-grant streams recheck on a 30-second cadence.
+  Storage uses the existing non-null expiry column, with no migration.
 
 ### CLI: preserve incomplete global identity material
 

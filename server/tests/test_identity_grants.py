@@ -1236,8 +1236,8 @@ def test_direct_team_identity_calls_are_reviewed_root_only_sites():
         ("server/src/aweb/routes/apps.py", "install_app_route", 111),
         ("server/src/aweb/routes/connect.py", "get_team_info", 483),
         ("server/src/aweb/routes/events.py", "_subscription_read_identity", 144),
-        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 644),
-        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route", 609),
+        ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 645),
+        ("server/src/aweb/routes/events.py", "upsert_app_event_subscription_route", 610),
     ]
 
 @pytest.mark.asyncio
@@ -1963,3 +1963,53 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     for response in (delete_task, ensure_repo, reset_roles, reset_instructions, delete_workspace):
         assert response.status_code == 403
         assert response.json()["detail"] == "outside grant scope"
+
+
+@pytest.mark.asyncio
+async def test_never_grant_mint_use_list_status_and_revoke(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    app, _ = await _fixture(db)
+    key, did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        minted = await _mint(client, grant_did_key=did, scopes=["mail.read"], ttl_seconds="never")
+        assert minted.status_code == 200, minted.text
+        grant = minted.json()
+        assert grant["expires_at"] == "never"
+        grant_id = grant["grant_id"]
+        # Simulate a grant older than the previous cap without changing request clocks.
+        await db.execute("UPDATE {{tables.identity_session_grants}} SET issued_at=issued_at-INTERVAL '60 days', expires_at=expires_at-INTERVAL '60 days' WHERE grant_id=$1::UUID", grant_id)
+        headers = _grant_headers(signing_key=key, did_key=did, grant_id=grant_id, method="GET", path="/v1/messages")
+        accepted = await client.get("/v1/messages", headers=headers)
+        assert accepted.status_code == 200, accepted.text
+        listing = (await client.get("/v1/identity-grants")).json()
+        assert listing["grants"][0]["expires_at"] == "never"
+        status = (await client.get(f"/v1/identity-grants/{grant_id}/status")).json()
+        assert status["expires_at"] == "never" and status["effective_status"] == "active"
+        assert (await client.post(f"/v1/identity-grants/{grant_id}/revoke")).status_code == 200
+        denied = await client.get("/v1/messages", headers=headers)
+        assert denied.status_code == 403 and denied.json()["detail"] == "grant revoked"
+
+
+@pytest.mark.asyncio
+async def test_never_grant_liveness_survives_storage_horizon(aweb_cloud_db):
+    from aweb.grant_liveness import cleanup_expired_grant_liveness
+
+    app, _, _ = await _real_messaging_fixture(aweb_cloud_db.aweb_db)
+    key, did = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        minted = await _mint(client, grant_did_key=did, scopes=["presence.write"], ttl_seconds="never")
+        grant_id = minted.json()["grant_id"]
+        db = aweb_cloud_db.aweb_db
+        await db.execute(
+            "UPDATE {{tables.identity_session_grants}} SET issued_at='1900-01-01T00:00:00Z', expires_at='2000-01-01T00:00:00Z' WHERE grant_id=$1::UUID",
+            grant_id,
+        )
+        heartbeat = await client.post(
+            "/v1/agents/heartbeat",
+            headers=_grant_headers(signing_key=key, did_key=did, grant_id=grant_id, method="POST", path="/v1/agents/heartbeat"),
+        )
+        assert heartbeat.status_code == 200, heartbeat.text
+        await cleanup_expired_grant_liveness(db)
+        assert await db.fetch_value(
+            "SELECT EXISTS (SELECT 1 FROM {{tables.identity_grant_liveness}} WHERE grant_id=$1::UUID)", grant_id,
+        )

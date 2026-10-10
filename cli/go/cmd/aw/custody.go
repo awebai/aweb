@@ -295,7 +295,7 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 		errs = append(errs, strings.TrimSpace(s.e2eeKeyError))
 	}
 	out.Keys = map[string]any{"signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": s.e2eeAssertion != nil && s.e2eePrivateKey != nil && grantStatusReady, "encryption_key_id": encryptionKeyID}
-	out.Ops = []string{"status.v1", "sign_plain_message.v1", "sign_app_request.v1"}
+	out.Ops = []string{"status.v1", "sign_plain_message.v1", "sign_app_request.v1", "grant_never_ttl.v1"}
 	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
 		out.Ops = append(out.Ops, "create_e2ee_envelope.v1", "unwrap_e2ee_message.v1", "mail_reply_continuation.v1")
 	}
@@ -432,12 +432,8 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if strings.TrimSpace(st.ExpiresAt) == "" {
 		return nil, fmt.Errorf("grant_freshness_unavailable")
 	}
-	expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(st.ExpiresAt))
-	if err != nil {
-		return nil, fmt.Errorf("grant_freshness_unavailable")
-	}
-	if !s.now().Before(expiresAt) {
-		return nil, fmt.Errorf("grant_expired")
+	if err := checkGrantExpiry(st.ExpiresAt, s.now()); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(st.GrantDIDKey) != strings.TrimSpace(req.SessionDIDKey) {
 		return nil, fmt.Errorf("grant_session_mismatch")
@@ -793,12 +789,8 @@ func (s *custodyService) validateE2EECommon(ctx context.Context, op string, reqF
 	if strings.TrimSpace(st.ExpiresAt) == "" {
 		return st, fmt.Errorf("grant_freshness_unavailable")
 	}
-	expiresAt, err := time.Parse(time.RFC3339, strings.TrimSpace(st.ExpiresAt))
-	if err != nil {
-		return st, fmt.Errorf("grant_freshness_unavailable")
-	}
-	if !s.now().Before(expiresAt) {
-		return st, fmt.Errorf("grant_expired")
+	if err := checkGrantExpiry(st.ExpiresAt, s.now()); err != nil {
+		return st, err
 	}
 	if strings.TrimSpace(st.GrantDIDKey) != strings.TrimSpace(reqFields["session_did_key"]) {
 		return st, fmt.Errorf("grant_session_mismatch")

@@ -19,6 +19,7 @@ from awid.dns_auth import enforce_timestamp_skew, require_timestamp
 from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
+from aweb.grant_expiry import never_expires
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 from aweb.config import get_settings, require_registered_certificates
 from aweb.identity_auth_deps import MessagingAuth
@@ -147,7 +148,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     aweb_db = _aweb_db(db)
     row = await aweb_db.fetch_one(
         """
-        SELECT g.team_id, g.grant_did_key, g.scopes, g.expires_at, g.revoked_at,
+        SELECT g.team_id, g.grant_did_key, g.scopes, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
                a.did_key AS subject_did_key, a.did_aw, a.address, a.alias,
                a.agent_id, a.identity_scope, a.status, a.deleted_at
@@ -161,7 +162,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
     if row["revoked_at"] is not None:
         raise HTTPException(status_code=403, detail="grant revoked")
-    if row["expires_at"] <= datetime.now(timezone.utc):
+    if not never_expires(row.get("issued_at"), row["expires_at"]) and row["expires_at"] <= datetime.now(timezone.utc):
         raise HTTPException(status_code=403, detail="grant expired")
     if row["status"] != "active" or row["deleted_at"] is not None:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
@@ -202,6 +203,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         issuing_certificate_id=issuing_certificate_id or None,
         scopes=scopes,
         expires_at=row["expires_at"],
+        never_expires=never_expires(row.get("issued_at"), row["expires_at"]),
     )
     return dict(row), grant
 

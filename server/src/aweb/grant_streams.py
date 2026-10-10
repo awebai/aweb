@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, Request
 
+from aweb.grant_expiry import never_expires
 from aweb.auth_context import GrantContext
 from aweb.config import require_registered_certificates
 from aweb.team_auth_deps import TeamIdentity, _aweb_db, _get_registered_certificates, _get_revoked_certificates
@@ -23,7 +26,7 @@ GRANT_TERMINAL_DETAILS = {
 
 def clamp_deadline_to_grant(deadline: datetime, identity: TeamIdentity) -> datetime:
     grant = identity.grant
-    if grant is None:
+    if grant is None or grant.never_expires:
         return deadline
     expires_at = _as_utc(grant.expires_at)
     return min(_as_utc(deadline), expires_at)
@@ -35,7 +38,7 @@ def grant_terminal_sse(reason: str) -> str:
 
 
 def grant_expiry_reason(identity: TeamIdentity) -> str | None:
-    if identity.grant is not None and _as_utc(identity.grant.expires_at) <= datetime.now(timezone.utc):
+    if identity.grant is not None and not identity.grant.never_expires and _as_utc(identity.grant.expires_at) <= datetime.now(timezone.utc):
         return "grant_expired"
     return None
 
@@ -52,13 +55,13 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     if grant is None:
         return None
     now = datetime.now(timezone.utc)
-    if _as_utc(grant.expires_at) <= now:
+    if not grant.never_expires and _as_utc(grant.expires_at) <= now:
         return "grant_expired"
 
     aweb_db = _aweb_db(db)
     row = await aweb_db.fetch_one(
         """
-        SELECT g.team_id, g.grant_did_key, g.expires_at, g.revoked_at,
+        SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,
                g.issued_by_certificate_id,
                a.agent_id, a.status, a.deleted_at
         FROM {{tables.identity_session_grants}} AS g
@@ -71,7 +74,7 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
         return "grant_revoked"
     if row["revoked_at"] is not None:
         return "grant_revoked"
-    if _as_utc(row["expires_at"]) <= now:
+    if not never_expires(row.get("issued_at"), row["expires_at"]) and _as_utc(row["expires_at"]) <= now:
         return "grant_expired"
     if str(row["agent_id"]) != str(identity.agent_id) or row["status"] != "active" or row["deleted_at"] is not None:
         return "grant_subject_inactive"
@@ -138,3 +141,24 @@ def status_event_allowed(identity: TeamIdentity, event: dict[str, Any]) -> bool:
     category = event_type.split(".", 1)[0]
     allowed = allowed_status_categories(identity) or set()
     return category in allowed
+
+
+class NeverGrantStreamGuard:
+    """Retain finite-stream behavior; never grants revalidate at most every 30s."""
+    def __init__(self, request, db, identity):
+        self.request, self.db, self.identity = request, db, identity
+        self.checked_at = time.monotonic()
+
+    async def reason(self):
+        grant = self.identity.grant
+        if grant is None or not grant.never_expires:
+            return grant_expiry_reason(self.identity)
+        now = time.monotonic()
+        if now - self.checked_at < GRANT_STREAM_RECHECK_SECONDS:
+            return None
+        self.checked_at = now
+        try:
+            return await grant_terminal_reason(self.request, self.db, self.identity)
+        except Exception:
+            logging.getLogger(__name__).warning("Never-grant stream revalidation failed", exc_info=True)
+            return "verification_unavailable"

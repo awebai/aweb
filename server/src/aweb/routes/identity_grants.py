@@ -1,6 +1,6 @@
 """Identity session grants: mint, list, and revoke.
 
-Grants are scoped, expiring, revocable credentials derived from a durable
+Grants are scoped, revocable credentials derived from a durable
 identity. Minting and revocation require the subject's ordinary
 team-certificate auth; grant-authenticated requests can never reach these
 routes (the grant verifier rejects the path, and the scheme guard below
@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from aweb.grant_expiry import add_years, expiry_label, never_expires
 from aweb.deps import get_db
 from aweb.config import require_registered_certificates
 from aweb.identity_grant_auth import GRANT_AUTH_SCHEME, GRANT_SCOPES
@@ -33,7 +34,7 @@ class GrantMintRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     grant_did_key: str = Field(..., min_length=1, max_length=512)
     scopes: list[str] = Field(..., min_length=1)
-    ttl_seconds: int = Field(..., ge=GRANT_TTL_MIN_SECONDS, le=GRANT_TTL_MAX_SECONDS)
+    ttl_seconds: Annotated[int, Field(ge=GRANT_TTL_MIN_SECONDS, le=GRANT_TTL_MAX_SECONDS)] | Literal["never"] | None = None
     label: Optional[str] = Field(None, max_length=200)
 
     @field_validator("grant_did_key")
@@ -88,7 +89,7 @@ def reject_grant_scheme(request: Request) -> None:
 def _status(row, now: datetime) -> str:
     if row["revoked_at"] is not None:
         return "revoked"
-    if row["expires_at"] <= now:
+    if not never_expires(row.get("issued_at"), row["expires_at"]) and row["expires_at"] <= now:
         return "expired"
     return "active"
 
@@ -134,7 +135,7 @@ async def mint_identity_grant(
     subject_did_aw = (identity.did_aw or subject.get("did_aw") or "").strip() or None
 
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(seconds=payload.ttl_seconds)
+    expires_at = add_years(now, 100) if payload.ttl_seconds in (None, "never") else now + timedelta(seconds=payload.ttl_seconds)
     async with manager.transaction() as tx:
         await tx.fetch_value(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -142,13 +143,13 @@ async def mint_identity_grant(
         )
         existing = await tx.fetch_one(
             """
-            SELECT grant_id, expires_at
+            SELECT grant_id, issued_at, expires_at
             FROM {{tables.identity_session_grants}}
             WHERE grant_did_key = $1 AND revoked_at IS NULL
             """,
             payload.grant_did_key,
         )
-        if existing and existing["expires_at"] > now:
+        if existing and (never_expires(existing.get("issued_at"), existing["expires_at"]) or existing["expires_at"] > now):
             raise HTTPException(
                 status_code=409,
                 detail="an active grant already exists for this grant_did_key",
@@ -188,7 +189,7 @@ async def mint_identity_grant(
         grant_did_key=payload.grant_did_key,
         scopes=payload.scopes,
         issued_at=row["issued_at"].isoformat(),
-        expires_at=row["expires_at"].isoformat(),
+        expires_at=expiry_label(row["issued_at"], row["expires_at"]),
     )
 
 
@@ -222,7 +223,7 @@ async def list_identity_grants(
                 label=row.get("label") or None,
                 status=_status(row, now),
                 issued_at=row["issued_at"].isoformat(),
-                expires_at=row["expires_at"].isoformat(),
+                expires_at=expiry_label(row["issued_at"], row["expires_at"]),
                 revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
             )
             for row in rows
@@ -278,7 +279,7 @@ async def identity_grant_status(
         effective_status=effective,
         status_detail=detail,
         issued_at=row["issued_at"].isoformat(),
-        expires_at=row["expires_at"].isoformat(),
+        expires_at=expiry_label(row["issued_at"], row["expires_at"]),
         revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
         last_checked_at=now.isoformat(),
     )

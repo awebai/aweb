@@ -30,6 +30,7 @@ def harness(monkeypatch):
     for module in (chat, events, status, grant_streams):
         monkeypatch.setattr(module, "datetime", Clock)
     monkeypatch.setattr(chat, "time", SimpleNamespace(monotonic=lambda: clock.seconds))
+    monkeypatch.setattr(grant_streams, "time", SimpleNamespace(monotonic=lambda: clock.seconds))
     monkeypatch.setattr(events.asyncio, "sleep", sleep)
     monkeypatch.setenv("AWEB_REQUIRE_REGISTERED_CERTIFICATES", "0")
     identity = TeamIdentity(
@@ -54,6 +55,8 @@ def harness(monkeypatch):
 
     class DB:
         grant_reads = 0
+        revoke_at = None
+        inactive_at = None
 
         def get_manager(self, _):
             return self
@@ -62,8 +65,8 @@ def harness(monkeypatch):
             if "identity_session_grants" in sql:
                 self.grant_reads += 1
                 return dict(team_id=identity.team_id, grant_did_key=identity.grant.session_did_key,
-                            expires_at=identity.grant.expires_at, revoked_at=None,
-                            issued_by_certificate_id="cert", agent_id=identity.agent_id, status="active", deleted_at=None)
+                            issued_at=start, expires_at=identity.grant.expires_at, revoked_at=(start if self.revoke_at is not None and clock.seconds >= self.revoke_at else None),
+                            issued_by_certificate_id="cert", agent_id=identity.agent_id, status=("inactive" if self.inactive_at is not None and clock.seconds >= self.inactive_at else "active"), deleted_at=None)
             if "chat_participants" in sql:
                 return {"did": identity.did_key}
             return {"did_key": identity.did_key, "did_aw": ""}
@@ -103,7 +106,7 @@ def harness(monkeypatch):
     request = SimpleNamespace(headers={}, app=SimpleNamespace(state=SimpleNamespace(awid_registry_client=registry)), is_disconnected=disconnected)
 
     async def open_stream(kind, expiry=600, duration=900):
-        auth = replace(identity, grant=replace(identity.grant, expires_at=start + timedelta(seconds=expiry)))
+        auth = replace(identity, grant=replace(identity.grant, expires_at=(start.replace(year=start.year+100) if expiry is None else start + timedelta(seconds=expiry)), never_expires=expiry is None))
         deadline = (start + timedelta(seconds=duration)).isoformat()
         if kind == "event":
             return await events.event_stream(request, deadline=deadline, db=db, redis=None, identity=auth)
@@ -223,3 +226,18 @@ async def test_chat_checks_again_after_slow_message_fetch_before_emitting_body(h
     else:
         assert "private content" in body
         assert "verification_unavailable" not in body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["event", "status", "chat"])
+@pytest.mark.parametrize("cause,terminal", [("revoke", "grant_revoked"), ("inactive", "grant_subject_inactive"), ("issuer", "grant_issuer_revoked"), ("unavailable", "verification_unavailable")])
+async def test_never_grant_open_stream_rechecks_and_closes(harness, kind, cause, terminal):
+    response = await harness.open(kind, expiry=None)
+    if cause == "revoke": harness.db.revoke_at = 1
+    elif cause == "inactive": harness.db.inactive_at = 1
+    elif cause == "issuer": harness.registry.revoke_at = 1
+    else: harness.registry.fail_at = 1
+    body = await collect(response)
+    assert "event: " + terminal in body
+    assert harness.clock.seconds <= 31
+    assert harness.db.grant_reads >= 2
