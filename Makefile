@@ -275,7 +275,9 @@ test-awid-pooler:
 test-cli:
 	cd cli/go && go mod download
 	cd awid && UV_CACHE_DIR=/tmp/uv-cache uv sync --frozen
-	cd cli/go && GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1
+	# A short, canonical temp root avoids macOS /var symlinks and socket limits.
+	cd cli/go && TMPDIR="$$(python3 -c 'import os; print(os.path.realpath("/tmp"))')" \
+		GOCACHE=/tmp/go-build $(TEST_EGRESS_RUNNER) go test ./... -count=1
 
 # The Node suites have separate lockfiles and a local file: dependency from the
 # host adapters to channel-core. Install all three before any Node test target

@@ -6,6 +6,9 @@ behind the native deny proxy. Loopback stays direct. The exact existing
 suffixes bypass the native proxy to retain normal DNS failure semantics. Other requests fail the wrapper even when
 the caller ignores the error. The per-run refused-host report remains visible.
 
+`make test-cli` sets `TMPDIR` to the canonical form of `/tmp` (`/private/tmp`
+on macOS), keeping custody paths free of symlink parents and Unix sockets short.
+
 Server preparation builds the distribution once before entering the guard, warming
 uv's build-backend cache as well as its runtime dependencies. The guarded server
 suite exports `UV_OFFLINE=1`, which also reaches the package-data test's `uv build`
