@@ -201,6 +201,16 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
                                 default_message["signature"]) == VerifyResult.VERIFIED
 
 
+        chat_first = await _cli(binary, command_dir, command_env, "chat", "send-and-wait", "carol",
+                                "--wait", "0", "--plaintext", "--body-file", str(body_file), "--json")
+        chat_next = await _cli(binary, command_dir, command_env, "chat", "send-and-wait", "carol",
+                               "--wait", "0", "--plaintext", "--body-file", str(body_file), "--json")
+        assert chat_next["session_id"] == chat_first["session_id"]
+        chat_read = await _request(env, "carol", "GET", f"/v1/chat/sessions/{chat_first['session_id']}/messages")
+        assert chat_read.status_code == 200, chat_read.text
+        assert len(chat_read.json()["messages"]) == 2
+
+
 async def _cli(binary, cwd, env, *args):
     proc = await asyncio.create_subprocess_exec(str(binary), *args, cwd=cwd, env=env,
                                               stdout=asyncio.subprocess.PIPE,

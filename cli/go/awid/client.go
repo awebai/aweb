@@ -418,6 +418,15 @@ func (c *Client) SigningKey() ed25519.PrivateKey { return c.signingKey }
 // DID returns the client's DID, or empty for legacy/custodial clients.
 func (c *Client) DID() string { return c.did }
 
+// ParticipantDID returns the represented identity for conversation matching.
+// Grant request authentication still uses DID(), the session signing identity.
+func (c *Client) ParticipantDID() string {
+	if strings.TrimSpace(c.grantID) != "" {
+		return strings.TrimSpace(c.custodySubject.DIDKey)
+	}
+	return c.did
+}
+
 // Address returns the client's address, if configured.
 func (c *Client) Address() string { return c.address }
 

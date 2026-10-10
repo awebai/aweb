@@ -1945,7 +1945,7 @@ func chatParticipantMatchesSelf(participant awid.ChatParticipant, client *awid.C
 	if client != nil {
 		selfAddress = strings.TrimSpace(client.Address())
 		selfStableID = strings.TrimSpace(client.StableID())
-		selfDID = strings.TrimSpace(client.DID())
+		selfDID = strings.TrimSpace(client.ParticipantDID())
 	}
 	row := chatParticipantRowFromParticipant(participant)
 	return identityutil.MatchesSelfStrict(
