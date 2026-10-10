@@ -62,6 +62,14 @@ maximum near the cap, keeping both the bound and jitter.
 - `status.json` and `lock/`;
 - `control.sock` when the socket path fits the 100-byte portable limit.
 
+Periodic `status.json` snapshots continue to advance `updated_at`, including
+when the broker is idle. Each status writer reuses its own temporary filename
+to avoid accumulating filesystem name-cache metadata on every refresh. Writes
+still create the temporary file exclusively with mode 0600, sync it, and rename
+it atomically; readers see a complete snapshot. An unexpected file or symlink
+at that temporary name is refused without altering it or the previous snapshot.
+Registration and instance-state writes retain their existing persistence path.
+
 Long control socket paths use a stable hash of the canonical socket path in
 an owner-only per-user runtime directory, shared with custody:
 `/private/tmp/aw-custody-<uid>` on macOS and `/tmp/aw-custody-<uid>` on other
