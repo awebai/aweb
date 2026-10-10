@@ -556,6 +556,7 @@ func (c *Client) mailInboxAliasTarget(msg InboxMessage) string {
 }
 
 type InboxMessage struct {
+	SenderMembership        *SenderMembership        `json:"sender_membership,omitempty"`
 	MessageID               string                   `json:"message_id"`
 	ConversationID          string                   `json:"conversation_id,omitempty"`
 	FromAgentID             string                   `json:"from_agent_id"`
@@ -734,9 +735,9 @@ func applyE2EEPlaintextMailMetadata(m *InboxMessage, plain *E2EEInnerPayload) {
 	if strings.TrimSpace(plain.From.StableID) != "" {
 		m.FromStableID = strings.TrimSpace(plain.From.StableID)
 	}
-	if strings.TrimSpace(plain.From.Address) != "" {
-		m.FromAddress = strings.TrimSpace(plain.From.Address)
-	}
+	// An authenticated empty address is meaningful; never retain a projected
+	// alias/address here. Server-attested membership remains separate.
+	m.FromAddress = strings.TrimSpace(plain.From.Address)
 	if len(plain.Recipients) == 1 {
 		recipient := plain.Recipients[0]
 		if strings.TrimSpace(recipient.DID) != "" {
@@ -870,7 +871,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 		if !senderRead && !c.messageAuthoredByClientDID(m.FromDID) {
 			m.VerificationStatus = c.checkRecipientBinding(m.VerificationStatus, m.ToDID, m.ToStableID)
 		}
-		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
+		m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAlias, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}
 	return out, nil
 }

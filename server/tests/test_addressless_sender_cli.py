@@ -141,6 +141,7 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
         child_env["AWID_REGISTRY_URL"] = registry_url
         async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
             shown = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
-            assert shown["verification_status"] == "verified", shown
+            shown = shown["messages"][0]
+            assert shown["verification_status"] == "verified", {k: shown.get(k) for k in ("verification_status", "from_address", "sender_membership")}
             assert shown["from_stable_id"] == human["stable_id"]
             assert not shown.get("from_address")

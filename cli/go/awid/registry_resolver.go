@@ -92,6 +92,7 @@ type RegistryResolver struct {
 	memberCache         map[string]cachedValue[*registryTeamMemberCacheValue]
 	keyCache            map[string]cachedValue[*DidKeyResolution]
 	headCache           map[string]*VerifiedLogHead
+	receivedRegistries  map[string]*RegistryResolver
 }
 
 func NewRegistryResolver(httpClient *http.Client, dnsResolver TXTResolver) *RegistryResolver {
@@ -334,7 +335,11 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 			}
 		}
 	}
-	keyRes, err := r.resolveKey(ctx, addr.authority.RegistryURL, stableID)
+	return r.verifyStableIdentityAtRegistry(ctx, addr.authority.RegistryURL, stableID, expectedCurrentDIDKey)
+}
+
+func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, registryURL, stableID, expectedCurrentDIDKey string) *StableIdentityVerification {
+	keyRes, err := r.resolveKey(ctx, registryURL, stableID)
 	if err != nil {
 		return &StableIdentityVerification{
 			Outcome: StableIdentityDegraded,
@@ -344,7 +349,7 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 	expectedCurrentDIDKey = strings.TrimSpace(expectedCurrentDIDKey)
 	if expectedCurrentDIDKey != "" && strings.TrimSpace(keyRes.CurrentDIDKey) != expectedCurrentDIDKey {
 		staleCurrentDIDKey := keyRes.CurrentDIDKey
-		keyRes, err = r.resolveKeyFresh(ctx, addr.authority.RegistryURL, stableID, true)
+		keyRes, err = r.resolveKeyFresh(ctx, registryURL, stableID, true)
 		if err != nil {
 			return &StableIdentityVerification{
 				Outcome:       StableIdentityStaleCache,
@@ -365,7 +370,7 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 	r.mu.Unlock()
 
 	if cachedHead == nil {
-		return r.verifyStableIdentityViaFullLog(ctx, addr.authority.RegistryURL, stableID, keyRes.CurrentDIDKey)
+		return r.verifyStableIdentityViaFullLog(ctx, registryURL, stableID, keyRes.CurrentDIDKey)
 	}
 
 	outcome, nextHead, verifyErr := VerifyDidKeyResolution(keyRes, cachedHead, r.now())
@@ -375,7 +380,7 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 		r.mu.Unlock()
 	}
 	if outcome == StableIdentityDegraded && verifyErr == nil {
-		return r.verifyStableIdentityViaFullLog(ctx, addr.authority.RegistryURL, stableID, keyRes.CurrentDIDKey)
+		return r.verifyStableIdentityViaFullLog(ctx, registryURL, stableID, keyRes.CurrentDIDKey)
 	}
 	if verifyErr != nil {
 		return &StableIdentityVerification{

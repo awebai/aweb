@@ -697,6 +697,7 @@ type ChatHistoryResponse struct {
 }
 
 type ChatMessage struct {
+	SenderMembership        *SenderMembership        `json:"sender_membership,omitempty"`
 	MessageID               string                   `json:"message_id"`
 	ConversationID          string                   `json:"conversation_id,omitempty"`
 	FromAgent               string                   `json:"from_agent"`
@@ -839,7 +840,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 				}
 			}
 		}
-		m.VerificationStatus, m.IsContact = c.NormalizeSenderTrust(ctx, m.VerificationStatus, from, m.FromDID, m.FromStableID, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
+		m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAgent, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
 	}
 	return &out, nil
 }
@@ -854,9 +855,9 @@ func applyE2EEPlaintextChatMetadata(m *ChatMessage, plain *E2EEInnerPayload) {
 	if strings.TrimSpace(plain.From.StableID) != "" {
 		m.FromStableID = strings.TrimSpace(plain.From.StableID)
 	}
-	if strings.TrimSpace(plain.From.Address) != "" {
-		m.FromAddress = strings.TrimSpace(plain.From.Address)
-	}
+	// An authenticated empty address is meaningful; never retain a projected
+	// alias/address here. Server-attested membership remains separate.
+	m.FromAddress = strings.TrimSpace(plain.From.Address)
 }
 
 type ChatMarkReadRequest struct {

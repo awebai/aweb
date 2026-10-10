@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.messaging.sender_membership import sender_memberships
+
 import asyncio
 import json
 import logging
@@ -1876,7 +1878,6 @@ async def history(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> HistoryResponse:
-    del request
     actor_dids = _actor_dids(auth)
     owner_dids = _actor_dids(auth)
     if not owner_dids:
@@ -1888,7 +1889,7 @@ async def history(
         raise HTTPException(status_code=422, detail="Invalid id format")
 
     aweb_db = db.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one("SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -1920,6 +1921,7 @@ async def history(
         [m["from_did"] for m in messages if m.get("from_did")],
     )
 
+    memberships = await sender_memberships(request, db, [dict(m, team_id=sess["team_id"]) for m in messages])
     history_items: list[dict[str, Any]] = []
     for msg in messages:
         from_did = (msg.get("from_did") or "").strip()
@@ -1930,6 +1932,7 @@ async def history(
         )
         history_items.append(
             {
+                "sender_membership": memberships[(str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))],
                 "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
                 "from_agent": msg["from_alias"],

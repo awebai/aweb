@@ -84,6 +84,8 @@ from aweb.messaging.verification import (
 )
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
+from aweb.messaging.sender_membership import SenderMembership, sender_memberships
+
 router = APIRouter(prefix="/v1/messages", tags=["aweb-mail"])
 
 
@@ -211,6 +213,7 @@ class SendMessageResponse(BaseModel):
 
 
 class InboxMessage(BaseModel):
+    sender_membership: SenderMembership | None = None
     message_id: str
     conversation_id: Optional[str] = None
     from_agent_id: Optional[str] = None
@@ -259,6 +262,7 @@ class AckResponse(BaseModel):
 
 
 async def _inbox_response_from_rows(
+    request,
     db,
     rows,
     *,
@@ -275,6 +279,7 @@ async def _inbox_response_from_rows(
         ],
     )
 
+    memberships = await sender_memberships(request, db, rows)
     messages = []
     for r in rows:
         from_did = (r.get("from_did") or "").strip()
@@ -285,6 +290,7 @@ async def _inbox_response_from_rows(
             encrypted_envelope = json.loads(encrypted_envelope)
         messages.append(
             InboxMessage(
+                sender_membership=memberships[(str(r.get("team_id") or ""), str(r.get("from_agent_id") or ""))],
                 message_id=str(r["message_id"]),
                 conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),
                 from_agent_id=(str(r["from_agent_id"]) if r.get("from_agent_id") else None),
@@ -356,7 +362,6 @@ async def get_mail_conversation(
     after: Annotated[str | None, Query()] = None,
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> MailConversationResponse:
-    del request
     aweb_db = db.get_manager("aweb")
     actor_dids = auth_dids(auth)
     if not actor_dids:
@@ -405,7 +410,7 @@ async def get_mail_conversation(
         direction = "DESC" if order == "desc" else "ASC"
         rows = await aweb_db.fetch_all(
             f"""
-            SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+            SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                    m.subject, m.body, m.priority, m.read_at, m.created_at,
                    m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
                    m.content_mode, m.message_version, m.encrypted_envelope
@@ -426,7 +431,7 @@ async def get_mail_conversation(
         if rows:
             newest = rows[0] if order == "desc" else rows[-1]
             after_cursor = _mail_conversation_cursor(conv_uuid, "asc", newest)
-        response = await _inbox_response_from_rows(db, rows, has_more=has_more, next_cursor=next_cursor)
+        response = await _inbox_response_from_rows(request, db, rows, has_more=has_more, next_cursor=next_cursor)
         return MailConversationResponse(
             messages=response.messages, has_more=response.has_more,
             next_cursor=response.next_cursor, after_cursor=after_cursor,
@@ -434,7 +439,7 @@ async def get_mail_conversation(
 
     legacy_rows = await aweb_db.fetch_all(
         """
-        SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+        SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
                m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
@@ -1872,7 +1877,6 @@ async def get_inbox(
     message_id: str | None = Query(default=None),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> InboxResponse:
-    del request
     aweb_db = db.get_manager("aweb")
     inbox_dids = auth_dids(auth)
     if not inbox_dids:
@@ -1917,7 +1921,7 @@ async def get_inbox(
     query_limit = 1 if exact_message_id is not None else page_limit + 1
     rows = await aweb_db.fetch_all(
         f"""
-        SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+        SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
                m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
@@ -1942,7 +1946,7 @@ async def get_inbox(
             }
         )
     return await _inbox_response_from_rows(
-        db,
+        request, db,
         rows,
         has_more=has_more,
         next_cursor=next_cursor,
@@ -1951,6 +1955,7 @@ async def get_inbox(
 
 @router.get("/{message_id}", response_model=InboxMessage)
 async def get_message(
+    request: Request,
     message_id: str,
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
@@ -1965,7 +1970,7 @@ async def get_message(
         raise HTTPException(status_code=401, detail="Authenticated identity is missing a routing DID")
     row = await db.get_manager("aweb").fetch_one(
         """
-        SELECT m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
+        SELECT m.team_id, m.message_id, m.from_agent_id, m.from_alias, m.from_address, m.to_alias,
                m.subject, m.body, m.priority, m.read_at, m.created_at,
                m.from_did, m.to_did, m.signature, m.signed_payload, m.conversation_id,
                m.content_mode, m.message_version, m.encrypted_envelope
@@ -1978,7 +1983,7 @@ async def get_message(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Message not found")
-    response = await _inbox_response_from_rows(db, [row])
+    response = await _inbox_response_from_rows(request, db, [row])
     return response.messages[0]
 
 
