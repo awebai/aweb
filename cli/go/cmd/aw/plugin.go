@@ -89,16 +89,20 @@ type pluginListItem struct {
 }
 
 type pluginProvenance struct {
-	AppName         string `json:"app_name"`
-	AppID           string `json:"app_id,omitempty"`
-	ManifestVersion string `json:"manifest_version,omitempty"`
-	AppVersion      string `json:"app_version,omitempty"`
-	Origin          string `json:"origin,omitempty"`
-	Source          string `json:"source,omitempty"`
-	ManifestURL     string `json:"manifest_url,omitempty"`
-	Digest          string `json:"digest,omitempty"`
-	InstalledAt     string `json:"installed_at,omitempty"`
-	UpdatedAt       string `json:"updated_at,omitempty"`
+	RegisteredDigest string `json:"registered_digest,omitempty"`
+	RegisteredTeam   string `json:"registered_team,omitempty"`
+	RegisteredServer string `json:"registered_server,omitempty"`
+	DevOrigin        string `json:"dev_origin,omitempty"`
+	AppName          string `json:"app_name"`
+	AppID            string `json:"app_id,omitempty"`
+	ManifestVersion  string `json:"manifest_version,omitempty"`
+	AppVersion       string `json:"app_version,omitempty"`
+	Origin           string `json:"origin,omitempty"`
+	Source           string `json:"source,omitempty"`
+	ManifestURL      string `json:"manifest_url,omitempty"`
+	Digest           string `json:"digest,omitempty"`
+	InstalledAt      string `json:"installed_at,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
 }
 
 type pluginInstallOutput struct {
@@ -160,7 +164,7 @@ func runPluginInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if isManifestInstallSource(source) {
-		policy := manifestManagementPolicy{}
+		policy := manifestManagementPolicy{registerEvents: true}
 		if resident {
 			policy.residentHome = home.Root
 		}
@@ -305,11 +309,11 @@ func runPluginUpdate(cmd *cobra.Command, args []string) error {
 	if provenance == nil || strings.TrimSpace(provenance.ManifestURL) == "" {
 		return fmt.Errorf("plugin %q is missing manifest provenance", name)
 	}
-	policy := manifestManagementPolicy{expectedName: name}
+	policy := manifestManagementPolicy{expectedName: name, registerEvents: true}
 	if resident {
 		policy.residentHome = home.Root
 	}
-	out, err := installManagedManifestPlugin(provenance.ManifestURL, dir, true, "", policy)
+	out, err := installManagedManifestPlugin(provenance.ManifestURL, dir, true, provenance.DevOrigin, policy)
 	if err != nil {
 		return err
 	}
@@ -497,7 +501,10 @@ func installManifestPlugin(source, dir string) (*pluginInstallOutput, error) {
 // when set, overrides the app's origin to that base URL and skips the
 // origin/fetch-URL self-consistency check, so aw can point at a self-hosted app
 // whose served manifest still advertises a different (e.g. production) origin.
-type manifestManagementPolicy struct{ residentHome, expectedName string }
+type manifestManagementPolicy struct {
+	residentHome, expectedName string
+	registerEvents             bool
+}
 
 func installOrUpdateManifestPlugin(source, dir string, update bool, devOrigin string) (*pluginInstallOutput, error) {
 	return installManagedManifestPlugin(source, dir, update, devOrigin, manifestManagementPolicy{})
@@ -524,6 +531,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if err != nil {
 		return nil, err
 	}
+	fetchedDigest := digest
 	var manifest appmanifest.Manifest
 	if err := appmanifest.DecodeSingleJSONStrict(manifestBytes, &manifest); err != nil {
 		return nil, fmt.Errorf("decode manifest: %w", err)
@@ -595,11 +603,8 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	}
 	manifestPath := manifestPluginManifestPath(dir, name)
 	provenancePath := manifestPluginProvenancePath(dir, name)
-	if err := os.WriteFile(manifestPath+".tmp", manifestBytes, 0o600); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(manifestPath+".tmp", manifestPath); err != nil {
-		_ = os.Remove(manifestPath + ".tmp")
+	previous, err := loadPluginProvenance(provenancePath)
+	if err != nil {
 		return nil, err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -610,6 +615,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		}
 	}
 	provenance := pluginProvenance{
+		DevOrigin:       devOrigin,
 		AppName:         name,
 		AppID:           strings.TrimSpace(manifest.App.ID),
 		ManifestVersion: strconv.Itoa(manifest.ManifestVersion),
@@ -621,13 +627,28 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		InstalledAt:     installedAt,
 		UpdatedAt:       now,
 	}
-	if err := savePluginProvenance(provenancePath, &provenance); err != nil {
-		return nil, err
-	}
 	if policy.residentHome != "" {
 		if err := changeAppApproval(policy.residentHome, name, origin); err != nil {
 			return nil, err
 		}
+	}
+	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
+		if err := registerManifestEvents(manifest, fetchedDigest, previous, &provenance, update); err != nil {
+			return nil, err
+		}
+	}
+	if err := os.WriteFile(manifestPath+".tmp", manifestBytes, 0o600); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(manifestPath+".tmp", manifestPath); err != nil {
+		_ = os.Remove(manifestPath + ".tmp")
+		return nil, err
+	}
+	if err := savePluginProvenance(provenancePath, &provenance); err != nil {
+		return nil, err
+	}
+	if policy.registerEvents && policy.residentHome == "" && len(manifest.Events) > 0 {
+		fmt.Fprintln(os.Stderr, "app events not registered: no resident identity here; run aw plugin install from a resident home to enable wakes")
 	}
 	return &pluginInstallOutput{Name: name, Path: appDir, Provenance: &provenance, Approved: policy.residentHome != ""}, nil
 }
