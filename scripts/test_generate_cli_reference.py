@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextlib
 import io
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +37,32 @@ Flags:
 
 
 class CLIReferenceGeneratorTests(unittest.TestCase):
+    def test_inherited_aweb_settings_do_not_change_live_reference(self) -> None:
+        binary = os.environ.get("AW_CLI_REFERENCE_BIN")
+        if not binary:
+            self.skipTest("AW_CLI_REFERENCE_BIN is set by the generator self-test")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "reference.md"
+            result = subprocess.run(
+                [sys.executable, str(Path(__file__).with_name("generate_cli_reference.py")),
+                 "--binary", binary, "--output", str(output)],
+                env={
+                    **os.environ,
+                    "AWEB_IDENTITY_HOME": str(Path(temp_dir).resolve()),
+                    "AWEB_DELIVERY": "session",
+                    "AWEB_CHANNEL_DEBUG": "1",
+                    "AWEB_CHANNEL_DEBUG_FILE": str(Path(temp_dir) / "unexpected-debug"),
+                },
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                output.read_bytes(),
+                (Path(__file__).resolve().parents[1] / "docs/cli-command-reference.md").read_bytes(),
+            )
+            self.assertEqual(list(Path(temp_dir).iterdir()), [output])
+
     def test_additional_commands_are_parsed_as_a_visible_group(self) -> None:
         parsed = parse_help(ROOT_HELP_WITH_ADDITIONAL)
 

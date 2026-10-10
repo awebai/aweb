@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -15,9 +16,15 @@ class RootCoverageError(RuntimeError):
     """The rendered root-command inventory disagrees with Cobra completion."""
 
 
+def cli_environment() -> dict[str, str]:
+    """Reference generation must not select the runner's aweb identity or policy."""
+    return {key: value for key, value in os.environ.items() if not key.startswith("AWEB_")}
+
+
 def run_help(binary: Path, path: Sequence[str]) -> str:
     result = subprocess.run(
         [str(binary), *path, "--help"],
+        env=cli_environment(),
         check=True,
         capture_output=True,
         text=True,
@@ -108,6 +115,7 @@ def parse_help(text: str) -> dict[str, object]:
 def visible_root_commands(binary: Path) -> list[str]:
     result = subprocess.run(
         [str(binary), "__complete", ""],
+        env=cli_environment(),
         check=True,
         capture_output=True,
         text=True,
