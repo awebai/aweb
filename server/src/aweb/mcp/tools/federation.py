@@ -18,6 +18,7 @@ def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
         team_id=auth.team_id,
         alias=auth.alias,
         agent_id=auth.agent_id,
+        identity_scope=auth.identity_scope,
     )
 
 

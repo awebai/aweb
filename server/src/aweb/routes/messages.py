@@ -31,6 +31,7 @@ from aweb.federation.mail import FederatedMailDeliveryError, deliver_federated_m
 from aweb.hooks import fire_mutation_hook
 from aweb.identity_metadata import lookup_identity_metadata_by_did
 from aweb.identity_auth_deps import MessagingAuth, auth_dids, get_messaging_auth
+from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
     derive_team_address,
@@ -613,10 +614,6 @@ def _raise_bare_did_first_contact_unsupported() -> None:
         status_code=422,
         detail="Bare did:aw first-contact is unsupported; use to_address=domain/name or continue an existing conversation",
     )
-
-
-def _sender_address(auth: MessagingAuth) -> str | None:
-    return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
 
 
 def _recipient_transport_hint(payload: SendMessageRequest) -> str:

@@ -290,6 +290,20 @@ with no address. Its team display alias is not a public address and is never
 expanded to select registry authority. This does not enable bare-`did:aw`
 first-contact sending.
 
+HTTP and MCP mail/chat preserve an empty sender address when the authenticated
+actor has `identity_scope=global`, a `did:aw`, and no address. Team membership,
+team ID and display alias remain intact; they do not manufacture an address.
+Chat read projections preserve the same empty address and keep the member name
+in `from_agent`. An explicit global address is unchanged. For compatibility
+with released clients, LOCAL actors and adapters that omit identity scope keep
+the existing team-scoped routing label in this release. Removing that legacy
+label requires a separate released-client review.
+
+Embedded adapters constructing MCP `AuthContext` should provide the optional
+`identity_scope` from their authenticated certificate/member projection.
+`mcp_messaging_auth` preserves it along with the delivery team; clearing team
+context to suppress an address is not supported.
+
 Participant-authorized reads include a separate `sender_membership` projection
 computed at read time for the stored sender in the stored delivery team. The
 server derives the stable ID from its certificate-derived member row. `active`

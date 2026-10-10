@@ -22,9 +22,9 @@ from aweb.messaging.chat import (
     resolve_agent_by_did,
     send_in_session,
 )
+from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
-    derive_team_address,
     get_agent_by_namespace_alias,
     namespace_exists,
 )
@@ -98,10 +98,6 @@ def _signed_from(auth, actor_alias: str) -> str:
         or (auth.did_aw or "").strip()
         or (auth.did_key or "").strip()
     )
-
-
-def _sender_address(auth) -> str | None:
-    return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
 
 
 async def _local_agent_by_address(db_infra, *, domain: str, name: str) -> dict | None:

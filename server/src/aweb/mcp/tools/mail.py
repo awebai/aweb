@@ -28,9 +28,9 @@ from aweb.mcp.tools.federation import (
     mcp_messaging_auth,
     registry_delivery_origin,
 )
+from aweb.messaging.sender_address import sender_address as _sender_address
 from aweb.messaging.alias_targets import (
     AmbiguousLocalAddressError,
-    derive_team_address,
     get_agent_by_namespace_alias,
     namespace_exists,
 )
@@ -136,10 +136,6 @@ def _external_recipient_from_address(address: str, resolution) -> dict:
         "delivery_origin": delivery_origin,
         "external": True,
     }
-
-
-def _sender_address(auth) -> str | None:
-    return (auth.address or "").strip() or derive_team_address(auth.team_id, auth.alias) or None
 
 
 async def _local_recipient_from_address(db_infra, *, domain: str, name: str) -> dict | None:

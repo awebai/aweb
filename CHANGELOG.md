@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preserve empty mail/chat sender addresses for global identities without a
+  public address, while retaining their team context and display names. Existing
+  LOCAL sender routing labels and explicit global addresses are unchanged.
+
 - Verify received mail and chat from global senders without a public address
   using their current registry key and delivery-team membership. Participant
   reads include current sender membership; unavailable proof remains unverified.

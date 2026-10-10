@@ -36,6 +36,7 @@ class AuthContext:
     address: str | None = None
     workspace_id: str | None = None
     trusted_proxy: bool = False
+    identity_scope: str | None = None
 
 
 def auth_dids(auth: AuthContext) -> list[str]:
@@ -137,6 +138,7 @@ class MCPAuthMiddleware:
                 did_key=identity.did_key,
                 did_aw=identity.did_aw or ((row or {}).get("did_aw") or None),
                 address=identity.address or ((row or {}).get("address") or None),
+                identity_scope=(row or {}).get("identity_scope") or None,
             )
 
         cert_info = await verify_request_certificate(request, self.db_infra)
@@ -144,7 +146,7 @@ class MCPAuthMiddleware:
         aweb_db = _aweb_db(self.db_infra)
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, alias, did_aw, address FROM {{tables.agents}}
+            SELECT agent_id, alias, did_aw, address, identity_scope FROM {{tables.agents}}
             WHERE team_id = $1 AND did_key = $2 AND deleted_at IS NULL
             """,
             cert_info["team_id"],
@@ -173,6 +175,7 @@ class MCPAuthMiddleware:
             did_key=cert_info["did_key"],
             did_aw=(cert_info.get("member_did_aw") or row.get("did_aw") or "").strip() or None,
             address=(cert_info.get("member_address") or row.get("address") or "").strip() or None,
+            identity_scope=cert_info.get("identity_scope") or row.get("identity_scope") or None,
         )
 
     async def _resolve_proxy_auth(self, internal: dict[str, str]) -> AuthContext:
@@ -180,7 +183,7 @@ class MCPAuthMiddleware:
         team_id = internal["team_id"]
         row = await aweb_db.fetch_one(
             """
-            SELECT agent_id, alias, did_key, did_aw, address
+            SELECT agent_id, alias, did_key, did_aw, address, identity_scope
             FROM {{tables.agents}}
             WHERE agent_id = $1 AND team_id = $2 AND deleted_at IS NULL
             """,
@@ -211,4 +214,5 @@ class MCPAuthMiddleware:
             did_aw=(str(row.get("did_aw") or "").strip() or None),
             address=(str(row.get("address") or "").strip() or None),
             trusted_proxy=True,
+            identity_scope=row.get("identity_scope") or None,
         )

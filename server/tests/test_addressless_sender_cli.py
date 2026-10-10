@@ -92,6 +92,13 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     })
     assert chat_sent.status_code == 200, chat_sent.text
 
+    for table, stored_id in (("messages", message_id), ("chat_messages", chat_message_id)):
+        stored = await env.db.fetch_one(
+            "SELECT from_address, from_alias FROM {{tables." + table + "}} WHERE message_id=$1", UUID(stored_id),
+        )
+        assert not stored["from_address"]
+        assert stored["from_alias"] == "alice"
+
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)
     # API-key local init intentionally omits identity.yaml. Neither root nor

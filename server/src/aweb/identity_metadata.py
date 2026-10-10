@@ -13,6 +13,9 @@ def routable_chat_address(meta: dict[str, str] | None, viewer_team_id: str | Non
     if address:
         return address
 
+    if meta.get("identity_scope") == "global" and (meta.get("stable_id") or "").strip():
+        return ""
+
     alias = (meta.get("alias") or "").strip() or (fallback_alias or "").strip()
     if not alias:
         return ""
@@ -39,7 +42,7 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
     aweb_db = _aweb_db(db_or_manager)
     rows = await aweb_db.fetch_all(
         """
-        SELECT did_aw, did_key, address, team_id, alias
+        SELECT did_aw, did_key, address, team_id, alias, identity_scope
         FROM {{tables.agents}}
         WHERE deleted_at IS NULL
           AND (did_aw = ANY($1::text[]) OR did_key = ANY($1::text[]))
@@ -60,6 +63,8 @@ async def lookup_identity_metadata_by_did(db_or_manager, dids: list[str]) -> dic
             if not did:
                 continue
             meta = result.setdefault(did, {})
+            if row.get("identity_scope"):
+                meta["identity_scope"] = row["identity_scope"]
             if stable_id:
                 meta["stable_id"] = stable_id
             if address:
