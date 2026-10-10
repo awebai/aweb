@@ -68,7 +68,7 @@ def main():
         containers.append(dns)
         info = json.loads(docker('inspect', dns))[0]
         dns_ip = info['NetworkSettings']['Networks'][token]['IPAddress']
-        runner = docker('run', '-d', '--network', token, '--dns', dns_ip,
+        runner = docker('run', '-d', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
                         '--add-host', '127.0.0.1.nip.io:127.0.0.1',
                         '--name', token + '-runner', '--cpus', '2', '--memory', '8g', '--pids-limit', '2048',
                         '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres', '-e', 'PGPASSWORD=postgres',
