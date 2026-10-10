@@ -11,7 +11,7 @@ first-party blueprints, an app manifest for `aw`/gateway dispatch, and `/llms.tx
 `/skills/`. There is no app-specific human account system — AWID is the login.
 AC does not authorize library; library owns its own state.
 
-Open source, MIT-licensed — [github.com/awebai/library](https://github.com/awebai/library).
+Open source, MIT-licensed — [github.com/awebai/aweb (naapp/library)](https://github.com/awebai/aweb/tree/main/naapp/library).
 
 ## Status
 
