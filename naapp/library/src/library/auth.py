@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import re
 import time
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from library.config import Settings
 
 TEAM_AUTH_ENVELOPE_V2 = 2
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,8 +63,13 @@ class AWIDTeamCache:
             else {}
         )
         self._cache: dict[str, CachedTeamFacts] = {}
+        self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
 
-    async def get(self, team_id: str) -> CachedTeamFacts:
+    async def get(self, team_id: str, certificate_id: str | None = None) -> CachedTeamFacts:
+        if not self._headers:
+            if not certificate_id:
+                raise HTTPException(status_code=401, detail="Missing AWID certificate id")
+            return await self._get_certificate_status(team_id, certificate_id)
         now = time.monotonic()
         cached = self._cache.get(team_id)
         if cached and cached.expires_at > now:
@@ -143,6 +150,61 @@ class AWIDTeamCache:
             expires_at=now + self.ttl_seconds,
         )
         self._cache[team_id] = facts
+        return facts
+
+    async def _get_certificate_status(
+        self, team_id: str, certificate_id: str
+    ) -> CachedTeamFacts:
+        now = time.monotonic()
+        cache_key = (team_id, certificate_id)
+        cached = self._certificate_cache.get(cache_key)
+        if cached and cached.expires_at > now:
+            return cached
+        domain, team_name = parse_team_id(team_id)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    f"{self.registry_url}/v1/namespaces/{quote(domain, safe='')}/teams/"
+                    f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
+                )
+                if response.status_code == 404:
+                    raise HTTPException(status_code=401, detail="Unknown AWID certificate")
+                response.raise_for_status()
+                payload = response.json()
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"team_id", "team_did_key", "status", "revoked_at"}
+                or payload["team_id"] != team_id
+                or payload["status"] not in ("active", "revoked")
+                or not isinstance(payload["team_did_key"], str)
+            ):
+                raise ValueError("Malformed AWID certificate status")
+            public_key_from_did(payload["team_did_key"])
+            revoked_at = payload["revoked_at"]
+            if payload["status"] == "active":
+                if revoked_at is not None:
+                    raise ValueError("Active certificate has revocation timestamp")
+                revoked: frozenset[str] = frozenset()
+            else:
+                if not isinstance(revoked_at, str):
+                    raise ValueError("Revoked certificate missing timestamp")
+                timestamp = datetime.fromisoformat(revoked_at.replace("Z", "+00:00"))
+                if timestamp.tzinfo is None:
+                    raise ValueError("Revocation timestamp missing timezone")
+                revoked = frozenset({certificate_id})
+        except HTTPException:
+            raise
+        except Exception as exc:
+            _logger.warning("AWID certificate status lookup failed", exc_info=True)
+            raise HTTPException(
+                status_code=503, detail="AWID certificate status unavailable"
+            ) from exc
+        facts = CachedTeamFacts(
+            team_did_key=payload["team_did_key"],
+            revoked_certificate_ids=revoked,
+            expires_at=now + min(self.ttl_seconds, 60),
+        )
+        self._certificate_cache[cache_key] = facts
         return facts
 
 
@@ -348,7 +410,7 @@ async def authenticate_request(
     )
 
     try:
-        facts = await team_cache.get(team_id)
+        facts = await team_cache.get(team_id, certificate_id)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid AWID team id") from exc
     if certificate_id in facts.revoked_certificate_ids:

@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 19
+`docs/vectors/*.json` is the only public protocol-vector authority for the 20
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -39,6 +39,14 @@ identity/trust vector family.
 ## Current protocol fixtures
 
 These fixtures govern shipped non-A2A protocol behavior.
+
+### `team-certificate-status-v1.json`
+
+Anonymous status response for one published certificate, public or private team:
+exactly the team ID, current team key, active/revoked status, and revocation time.
+Unknown team and unknown/mismatched certificate share one 404 response. The AWID
+real-route tests consume these bytes; active status does not authenticate an
+old-key certificate after rotation. See [the team contract](../awid-sot.md#teams).
 
 ### `message-signing-v1.json`
 

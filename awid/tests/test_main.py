@@ -272,6 +272,7 @@ _READ_LIMIT_ROUTES = [
     ("certificate_list", "/v1/namespaces/example.com/teams/ops/certificates", 404),
     ("team_member_get", "/v1/namespaces/example.com/teams/ops/members/alice", 404),
     ("certificate_fetch", "/v1/namespaces/example.com/teams/ops/certificates/missing", 401),
+    ("certificate_status", "/v1/namespaces/example.com/teams/ops/certificates/missing/status", 404),
     ("revocation_list", "/v1/namespaces/example.com/teams/ops/revocations", 404),
 ]
 
