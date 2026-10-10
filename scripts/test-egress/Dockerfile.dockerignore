@@ -5,6 +5,5 @@
 **/.pytest_cache
 **/dist
 **/build
-**/.aw
 **/.env
 **/.env.*

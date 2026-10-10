@@ -48,11 +48,12 @@ def main():
                 files = subprocess.check_output(['git', '-C', str(ROOT), 'ls-files', '-z', '--cached', '--others', '--exclude-standard']).decode().split('\0')
                 hashes = []
                 for name in dict.fromkeys(files):
-                    if name and (ROOT / name).is_file():
+                    if name and ((ROOT / name).is_file() or (ROOT / name).is_symlink()):
                         destination = Path(tmp) / name
                         destination.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(ROOT / name, destination)
-                        hashes.append(hashlib.sha256(destination.read_bytes()).hexdigest() + "  " + name)
+                        shutil.copy2(ROOT / name, destination, follow_symlinks=False)
+                        data = destination.readlink().as_posix().encode() if destination.is_symlink() else destination.read_bytes()
+                        hashes.append(hashlib.sha256(data).hexdigest() + "  " + name)
                 (evidence / 'source-files.sha256').write_text('\n'.join(hashes) + '\n')
                 subprocess.run(['docker', 'build', '--build-arg', 'TOOLS_IMAGE=' + tools_image,
                                 '-f', str(Path(tmp) / 'scripts/test-egress/Dockerfile'), '-t', image, tmp], check=True)
@@ -68,7 +69,7 @@ def main():
         containers.append(dns)
         info = json.loads(docker('inspect', dns))[0]
         dns_ip = info['NetworkSettings']['Networks'][token]['IPAddress']
-        runner = docker('run', '-d', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
+        runner = docker('run', '-d', '--init', '--user', '1000:1000', '--network', token, '--dns', dns_ip,
                         '--add-host', '127.0.0.1.nip.io:127.0.0.1',
                         '--name', token + '-runner', '--cpus', '2', '--memory', '8g', '--pids-limit', '2048',
                         '-e', 'PGHOST=127.0.0.1', '-e', 'PGUSER=postgres', '-e', 'PGPASSWORD=postgres',
