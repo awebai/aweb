@@ -7,25 +7,26 @@ import awid "github.com/awebai/aw/awid"
 
 // Event represents an event received during chat (message or read receipt).
 type Event struct {
-	Type               string `json:"type"`
-	Agent              string `json:"agent,omitempty"`
-	SessionID          string `json:"session_id,omitempty"`
-	MessageID          string `json:"message_id,omitempty"`
-	FromAgent          string `json:"from_agent,omitempty"`
-	FromAddress        string `json:"from_address,omitempty"`
-	ToAddress          string `json:"to_address,omitempty"`
-	Body               string `json:"body,omitempty"`
-	ContentMode        string `json:"content_mode,omitempty"`
-	MessageVersion     int    `json:"message_version,omitempty"`
-	By                 string `json:"by,omitempty"`
-	Reason             string `json:"reason,omitempty"`
-	Timestamp          string `json:"timestamp,omitempty"`
-	SenderLeaving      bool   `json:"sender_leaving,omitempty"`
-	SenderWaiting      bool   `json:"sender_waiting,omitempty"`
-	ReaderAlias        string `json:"reader_alias,omitempty"`
-	ExtendWait         bool   `json:"hang_on,omitempty"`
-	ExtendsWaitSeconds int    `json:"extends_wait_seconds,omitempty"`
-	ReplyToMessageID   string `json:"reply_to_message_id,omitempty"`
+	SenderMembership   *awid.SenderMembership `json:"sender_membership,omitempty"`
+	Type               string                 `json:"type"`
+	Agent              string                 `json:"agent,omitempty"`
+	SessionID          string                 `json:"session_id,omitempty"`
+	MessageID          string                 `json:"message_id,omitempty"`
+	FromAgent          string                 `json:"from_agent,omitempty"`
+	FromAddress        string                 `json:"from_address,omitempty"`
+	ToAddress          string                 `json:"to_address,omitempty"`
+	Body               string                 `json:"body,omitempty"`
+	ContentMode        string                 `json:"content_mode,omitempty"`
+	MessageVersion     int                    `json:"message_version,omitempty"`
+	By                 string                 `json:"by,omitempty"`
+	Reason             string                 `json:"reason,omitempty"`
+	Timestamp          string                 `json:"timestamp,omitempty"`
+	SenderLeaving      bool                   `json:"sender_leaving,omitempty"`
+	SenderWaiting      bool                   `json:"sender_waiting,omitempty"`
+	ReaderAlias        string                 `json:"reader_alias,omitempty"`
+	ExtendWait         bool                   `json:"hang_on,omitempty"`
+	ExtendsWaitSeconds int                    `json:"extends_wait_seconds,omitempty"`
+	ReplyToMessageID   string                 `json:"reply_to_message_id,omitempty"`
 
 	// Identity fields for message verification.
 	FromDID                 string                        `json:"from_did,omitempty"`

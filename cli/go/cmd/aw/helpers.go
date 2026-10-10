@@ -717,11 +717,28 @@ func configureResolvedClientWithRoster(c, rosterClient *aweb.Client, sel *awconf
 		return err
 	}
 	registry.TeamReadSigningKey = c.SigningKey()
+	// Received addressless identities are verified at the selected TEAM's
+	// registry. Do not inherit a global identity's unrelated home registry.
+	teamRegistry := awid.NewRegistryResolver(c.Client.HTTPClient(), nil)
+	teamRegistryURL := strings.TrimSpace(os.Getenv("AWID_REGISTRY_URL"))
+	if state, err := awconfig.LoadTeamStateFromIdentityHome(sel.IdentityHome); err == nil && state != nil {
+		if membership := state.Membership(sel.TeamID); membership != nil {
+			if pinned := registryURLForTeamMembersMembership(membership); pinned != "" {
+				teamRegistryURL = pinned
+			}
+		}
+	}
+	if teamRegistryURL != "" {
+		if err := teamRegistry.SetFallbackRegistryURL(teamRegistryURL); err != nil {
+			return err
+		}
+	}
 	c.SetResolver(&awid.ChainResolver{
-		DIDKey:   &awid.DIDKeyResolver{},
-		Registry: registry,
-		Pin:      &awid.PinResolver{Store: ps},
-		Team:     &awid.TeamRosterResolver{Client: rosterClient.Client, TeamID: sel.TeamID},
+		DeliveryTeamRegistry: teamRegistry,
+		DIDKey:               &awid.DIDKeyResolver{},
+		Registry:             registry,
+		Pin:                  &awid.PinResolver{Store: ps},
+		Team:                 &awid.TeamRosterResolver{Client: rosterClient.Client, TeamID: sel.TeamID},
 	})
 
 	configureBaseURLFallback(c, sel, baseURL)

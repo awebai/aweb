@@ -732,9 +732,7 @@ func applyE2EEPlaintextMailMetadata(m *InboxMessage, plain *E2EEInnerPayload) {
 	if strings.TrimSpace(plain.From.DID) != "" {
 		m.FromDID = strings.TrimSpace(plain.From.DID)
 	}
-	if strings.TrimSpace(plain.From.StableID) != "" {
-		m.FromStableID = strings.TrimSpace(plain.From.StableID)
-	}
+	m.FromStableID = strings.TrimSpace(plain.From.StableID)
 	// An authenticated empty address is meaningful; never retain a projected
 	// alias/address here. Server-attested membership remains separate.
 	m.FromAddress = strings.TrimSpace(plain.From.Address)
@@ -800,7 +798,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 			applyE2EEPlaintextMailMetadata(m, plain)
 			m.VerificationStatus = Verified
 		}
-		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok {
+		if meta, ok := parseSignedEnvelopeMetadata(m.SignedPayload); ok && m.ContentMode != ContentModeEncryptedV2 {
 			if meta.FromDID != "" {
 				m.FromDID = meta.FromDID
 			}
@@ -818,6 +816,10 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 			}
 			if m.ToAddress == "" && meta.To != "" {
 				m.ToAddress = meta.To
+			}
+			if strings.HasPrefix(meta.FromStableID, "did:aw:") && !strings.Contains(meta.From, "/") {
+				m.FromStableID = meta.FromStableID
+				m.FromAddress = ""
 			}
 		}
 		from := m.FromAlias

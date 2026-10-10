@@ -128,6 +128,12 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 		return ev
 	}
 
+	if raw, ok := data["sender_membership"]; ok {
+		encoded, err := json.Marshal(raw)
+		if err == nil {
+			_ = json.Unmarshal(encoded, &ev.SenderMembership)
+		}
+	}
 	if v, ok := data["agent"].(string); ok {
 		ev.Agent = v
 	}
@@ -324,6 +330,13 @@ func decryptChatEvent(client *awid.Client, ev *Event) error {
 	plain, err := client.DecryptE2EEEnvelope(ev.Encrypted)
 	if err != nil {
 		return err
+	}
+	if plain.MessageID != ev.MessageID || plain.ConversationID != ev.SessionID {
+		return fmt.Errorf("encrypted chat event identity mismatch")
+	}
+	ev.FromDID, ev.FromStableID, ev.FromAddress = plain.From.DID, plain.From.StableID, plain.From.Address
+	if len(plain.Recipients) == 1 {
+		ev.ToDID, ev.ToStableID = plain.Recipients[0].DID, plain.Recipients[0].StableID
 	}
 	ev.Body = plain.Body
 	// Verified means the encrypted-envelope signature is valid, not that the
@@ -932,6 +945,7 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 	for i, m := range messages {
 		events[i] = Event{
 			Type:                    "message",
+			SenderMembership:        m.SenderMembership,
 			MessageID:               m.MessageID,
 			FromAgent:               m.FromAgent,
 			FromAddress:             m.FromAddress,
@@ -1128,7 +1142,7 @@ func waitForMessage(ctx context.Context, client *awid.Client, openStream streamO
 				return nil, err
 			}
 			tofuFrom := chatEventTrustAddress(chatEvent, participants)
-			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeSenderTrust(ctx, chatEvent.VerificationStatus, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
+			chatEvent.VerificationStatus, chatEvent.IsContact = client.NormalizeReceivedSenderTrust(ctx, chatEvent.VerificationStatus, chatEvent.FromAddress, tofuFrom, chatEvent.FromDID, chatEvent.FromStableID, chatEvent.SenderMembership, chatEvent.RotationAnnouncement, chatEvent.ReplacementAnnouncement, chatEvent.IsContact)
 			chatEvent.VerificationStatus = client.NormalizeRecipientBinding(chatEvent.VerificationStatus, chatEvent.ToDID, chatEvent.ToStableID)
 
 			if chatEvent.Type == "read_receipt" {

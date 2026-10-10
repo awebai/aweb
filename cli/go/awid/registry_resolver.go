@@ -335,11 +335,11 @@ func (r *RegistryResolver) VerifyStableIdentityCurrent(ctx context.Context, addr
 			}
 		}
 	}
-	return r.verifyStableIdentityAtRegistry(ctx, addr.authority.RegistryURL, stableID, expectedCurrentDIDKey)
+	return r.verifyStableIdentityAtRegistry(ctx, addr.authority.RegistryURL, stableID, expectedCurrentDIDKey, false)
 }
 
-func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, registryURL, stableID, expectedCurrentDIDKey string) *StableIdentityVerification {
-	keyRes, err := r.resolveKey(ctx, registryURL, stableID)
+func (r *RegistryResolver) verifyStableIdentityAtRegistry(ctx context.Context, registryURL, stableID, expectedCurrentDIDKey string, fresh bool) *StableIdentityVerification {
+	keyRes, err := r.resolveKeyFresh(ctx, registryURL, stableID, fresh)
 	if err != nil {
 		return &StableIdentityVerification{
 			Outcome: StableIdentityDegraded,

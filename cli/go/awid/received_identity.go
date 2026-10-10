@@ -62,7 +62,7 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 		return VerificationStale, nil
 	}
 	chain, ok := c.resolver.(*ChainResolver)
-	if !ok || chain.Registry == nil || chain.Team == nil {
+	if !ok || chain.DeliveryTeamRegistry == nil || chain.Team == nil {
 		return VerificationStale, nil
 	}
 	// Team is configured from the selected authenticated membership, while
@@ -71,7 +71,7 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 	if membership.State != "active" || teamID == "" || membership.TeamID != teamID || membership.MemberDIDAW != stableID {
 		return IdentityMismatch, nil
 	}
-	registryURL, registry, err := chain.Registry.receivedRegistry(ctx, teamID)
+	registryURL, registry, err := chain.DeliveryTeamRegistry.receivedRegistry(ctx, teamID)
 	if err != nil {
 		return VerificationStale, nil
 	}
@@ -80,7 +80,7 @@ func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status Verifi
 		return VerificationStale, nil
 	}
 	registry.SeedVerifiedHead(stableID, checkpoint)
-	result := registry.verifyStableIdentityAtRegistry(ctx, registryURL, stableID, did)
+	result := registry.verifyStableIdentityAtRegistry(ctx, registryURL, stableID, did, true)
 	if result == nil {
 		return VerificationStale, nil
 	}

@@ -405,3 +405,26 @@ See [Receiving events and waking agents](receiving-events.md) for raw SSE,
 runtime integrations, current no-cursor behavior, reconnect, and presentation
 acknowledgement. Follow the complete two-agent exercise in the
 [CLI tutorial](cli-tutorial.md).
+
+### Sender membership on participant reads
+
+Mail inbox, exact-message and conversation reads, and chat history/message-stream
+reads add a server-attested field alongside the message fields:
+
+```json
+{"sender_membership":{"team_id":"team:example.com","member_did_aw":"did:aw:…","state":"active"}}
+```
+
+`state` is `active`, `inactive`, or `unknown`. The server computes it at read
+time from the stored sender's certificate-derived membership in that delivery
+team, including certificate revocation. Missing provenance or an unavailable
+revocation check yields `unknown`; this field is never copied from an envelope.
+It does not grant access: the existing participant authorization still runs
+first, and it does not expose humans in the agent roster.
+
+Clients verifying an addressless global sender require active membership with
+matching team/stable ID, the message signature, recipient binding, and a current
+public DID key/log check at the delivery team's registry. A display alias is not
+an address. Older clients ignore the added field; older servers omit it, so a
+new client cannot mark such a sender verified until the server is upgraded.
+See [the identity/messaging contract](identity-messaging-contract.md#received-global-senders-without-an-address).

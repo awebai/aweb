@@ -124,10 +124,12 @@ func resolvedIdentityFromPin(pinKey string, pin *Pin) *ResolvedIdentity {
 // ChainResolver dispatches resolution by identifier format.
 // did:key identifiers use DIDKeyResolver; registry identifiers use RegistryResolver.
 type ChainResolver struct {
-	DIDKey   *DIDKeyResolver
-	Registry *RegistryResolver
-	Pin      *PinResolver
-	Team     *TeamRosterResolver
+	// DeliveryTeamRegistry is configured from team membership, never the sender.
+	DeliveryTeamRegistry *RegistryResolver
+	DIDKey               *DIDKeyResolver
+	Registry             *RegistryResolver
+	Pin                  *PinResolver
+	Team                 *TeamRosterResolver
 }
 
 func (r *ChainResolver) Resolve(ctx context.Context, identifier string) (*ResolvedIdentity, error) {

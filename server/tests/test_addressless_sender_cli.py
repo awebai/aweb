@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import socket
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 import uvicorn
@@ -85,7 +85,8 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
     chat_source = encrypt_e2ee_chat(sender=human, recipients=[agent], body="Human chat",
                                    message_id=chat_message_id, conversation_id=chat_id, created_at=now)
     chat_sent = await _request(env, "alice", "POST", "/v1/chat/sessions", {
-        "to_dids": [agent["did"]], "session_id": chat_id,
+        "to_dids": [agent["did"]], "session_id": chat_id, "message": "",
+        "message_id": chat_message_id, "timestamp": chat_source["created_at"],
         "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": chat_source,
     })
     assert chat_sent.status_code == 200, chat_sent.text
@@ -160,6 +161,19 @@ async def test_addressless_global_sender_verified(privacy_app, tmp_path, global_
                     assert shown["from_stable_id"] == human["stable_id"]
                     assert not shown.get("from_address")
             await read_both("verified")
+            # Read-time metadata must not promote a forged encrypted signature.
+            stored = await env.db.fetch_value("SELECT encrypted_envelope FROM {{tables.messages}} WHERE message_id=$1", UUID(message_id))
+            envelope = json.loads(stored) if isinstance(stored, str) else dict(stored)
+            damaged = dict(envelope, signature=sign_message(env.actors["carol"].sk, b"wrong message"))
+            await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2", json.dumps(damaged), UUID(message_id))
+            refused = await asyncio.create_subprocess_exec(str(binary), "mail", "show", "--message-id", message_id, "--json",
+                cwd=command_dir, env=command_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            _, error = await asyncio.wait_for(refused.communicate(), 30)
+            assert refused.returncode != 0, error.decode()
+            await env.db.execute("UPDATE {{tables.messages}} SET encrypted_envelope=$1::jsonb WHERE message_id=$2", json.dumps(envelope), UUID(message_id))
+            await env.db.execute("UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1", env.actors["alice"].id)
+            await read_both("verification_stale")
+            await env.db.execute("UPDATE {{tables.agents}} SET certificate_id='privacy-alice' WHERE agent_id=$1", env.actors["alice"].id)
             # A second CLI process restores the registry-scoped checkpoint.
             await read_both("verified")
             await env.db.execute("UPDATE {{tables.agents}} SET status='retired' WHERE agent_id=$1", env.actors["alice"].id)

@@ -1999,7 +1999,7 @@ async def mark_read(
     session_uuid = UUID(session_id.strip())
 
     aweb_db = db.get_manager("aweb")
-    sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
+    sess = await aweb_db.fetch_one("SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
@@ -2064,6 +2064,7 @@ async def _sse_events(
     deadline: datetime,
     auth: MessagingAuth,
     after: datetime | None = None,
+    delivery_team_id: str | None = None,
 ) -> AsyncIterator[str]:
     aweb_db = db.get_manager("aweb")
     session_id_str = str(session_id)
@@ -2163,6 +2164,7 @@ async def _sse_events(
                 return
             if datetime.now(timezone.utc) >= deadline:
                 return
+            memberships = await sender_memberships(request, db, [dict(r, team_id=delivery_team_id) for r in recent])
             for row in recent:
                 is_hang_on = bool(row["hang_on"])
                 from_did = (row.get("from_did") or "").strip()
@@ -2172,6 +2174,7 @@ async def _sse_events(
                     row["from_alias"],
                 )
                 payload = {
+                    "sender_membership": memberships[(str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))].model_dump(),
                     "type": "message",
                     "session_id": session_id_str,
                     "conversation_id": session_id_str,
@@ -2278,6 +2281,7 @@ async def _sse_events(
                 if reason:
                     yield grant_terminal_sse(reason)
                     return
+                memberships = await sender_memberships(request, db, [dict(r, team_id=delivery_team_id) for r in new_msgs])
                 for row in new_msgs:
                     last_message_at = max(last_message_at, row["created_at"])
                     is_hang_on = bool(row["hang_on"])
@@ -2288,6 +2292,7 @@ async def _sse_events(
                         row["from_alias"],
                     )
                     payload = {
+                        "sender_membership": memberships[(str(delivery_team_id or ""), str(row.get("from_agent_id") or ""))].model_dump(),
                         "type": "message",
                         "session_id": session_id_str,
                         "conversation_id": session_id_str,
@@ -2417,6 +2422,7 @@ async def stream(
             deadline=deadline_dt,
             auth=auth,
             after=after_dt,
+            delivery_team_id=sess.get("team_id"),
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},

@@ -282,3 +282,36 @@ certificates, local aliases, or registry caching must prove:
   controller-proved replacement requires recipient acceptance, and
 - every stable federation error and encrypted-v2 no-downgrade branch matches the
   generated error reference.
+
+## Received global senders without an address
+
+A received mail or chat message may be signed by a global `did:aw` identity
+with no address. Its team display alias is not a public address and is never
+expanded to select registry authority. This does not enable bare-`did:aw`
+first-contact sending.
+
+Participant-authorized reads include a separate `sender_membership` projection
+computed at read time for the stored sender in the stored delivery team. The
+server derives the stable ID from its certificate-derived member row. `active`
+requires an active, nondeleted member with a certificate that is not revoked
+under the existing revocation check. A revoked or inactive member is
+`inactive`; missing provenance or unavailable revocation authority is `unknown`.
+The projection includes humans without publishing them in the agent roster.
+Encrypted-envelope normalization never overwrites this server-attested field.
+
+For an addressless global sender, the client reports `verified` only when the
+message signature verifies, recipient binding passes, the projection is active
+and binds the signed stable ID to the selected delivery team, and the public
+DID key/log read at that team's registry establishes that the signer is the
+current key. Identity proof comes from AWID; current membership comes from the
+delivery server. Self-custodial and grant recipients use the same checks. A
+grant recipient binds delivery to its resident identity, not its session key.
+No private AWID member read or additional custody permission is needed.
+
+The registry is selected from the delivery team's configuration/authority,
+never a sender-supplied URL, alias, or unrelated global identity's home registry.
+Key/log caches and durable receive checkpoints are scoped by registry and stable
+ID. Existing rotation/log and anti-rollback checks apply. A wrong key or inactive
+membership gives `identity_mismatch`; an unavailable registry, missing projection
+(including old servers), or unknown membership gives `verification_stale`.
+Neither a failed signature nor an existing recipient mismatch is promoted.
