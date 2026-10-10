@@ -164,10 +164,16 @@ func TestInitWithCertificateConnectsToServer(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
+	registryURL := realAWIDFixture(t)
+	registry := awid.NewAWIDRegistryClient(nil, nil)
+	if _, err := registry.RegisterIdentity(ctx, registryURL, memberDIDKey, awid.ComputeStableID(memberPub), memberKey); err != nil {
+		t.Fatalf("register real AWID fixture identity: %v", err)
+	}
 	// Write identity
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:           memberDIDKey,
 		StableID:      awid.ComputeStableID(memberPub),
+		RegistryURL:   registryURL,
 		Address:       "acme.com/alice",
 		Custody:       awid.CustodySelf,
 		IdentityScope: awid.IdentityModeGlobal,
@@ -569,9 +575,15 @@ func TestInitWithCertificatePreservesExplicitAPIPath(t *testing.T) {
 	bin := filepath.Join(tmp, "aw")
 	buildAwBinary(t, ctx, bin)
 
+	registryURL := realAWIDFixture(t)
+	registry := awid.NewAWIDRegistryClient(nil, nil)
+	if _, err := registry.RegisterIdentity(ctx, registryURL, memberDIDKey, awid.ComputeStableID(memberPub), memberKey); err != nil {
+		t.Fatalf("register real AWID fixture identity: %v", err)
+	}
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(tmp, ".aw", "identity.yaml"), &awconfig.WorktreeIdentity{
 		DID:           memberDIDKey,
 		StableID:      awid.ComputeStableID(memberPub),
+		RegistryURL:   registryURL,
 		Address:       "acme.com/alice",
 		Custody:       awid.CustodySelf,
 		IdentityScope: awid.IdentityModeGlobal,

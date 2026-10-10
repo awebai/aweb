@@ -204,7 +204,7 @@ func TestAwChatHistoryBySessionMessageIDJSON(t *testing.T) {
 					MessageID:      "chat-1",
 					ConversationID: "session-1",
 					FromAgent:      "athena",
-					FromAddress:    "aweb.ai/athena",
+					FromAddress:    "demo/athena",
 					Body:           "decrypted chat body",
 					Timestamp:      "2026-05-26T00:00:00Z",
 				}},
@@ -230,7 +230,7 @@ func TestAwChatHistoryBySessionMessageIDJSON(t *testing.T) {
 		"--limit", "1",
 		"--json",
 	)
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {

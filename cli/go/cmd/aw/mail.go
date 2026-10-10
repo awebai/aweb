@@ -117,7 +117,7 @@ func mailConversationIsExactPair(c *awid.Client, conv awid.ConversationItem, kin
 	}
 	var participants, self []string
 	if kind == "did" {
-		participants, self = conv.ParticipantDIDs, []string{c.DID(), c.StableID()}
+		participants, self = conv.ParticipantDIDs, []string{c.ParticipantDID(), c.StableID()}
 	} else {
 		participants, self = conv.ParticipantAddresses, []string{c.Address()}
 	}
@@ -174,7 +174,7 @@ func mailConversationParticipantTarget(c *awid.Client, conv awid.ConversationIte
 			conv.ParticipantDIDs,
 			conv.ParticipantAddresses,
 			c.StableID(),
-			c.DID(),
+			c.ParticipantDID(),
 			c.Address(),
 		)
 		if len(otherDIDs) == 1 {
@@ -205,7 +205,7 @@ func mailInboxMessageParticipantTarget(c *awid.Client, msg awid.InboxMessage, fa
 		return target
 	}
 	selfStableID := strings.TrimSpace(c.StableID())
-	selfDID := strings.TrimSpace(c.DID())
+	selfDID := strings.TrimSpace(c.ParticipantDID())
 	selfAddress := strings.TrimSpace(c.Address())
 	for _, participant := range []struct {
 		stableID string

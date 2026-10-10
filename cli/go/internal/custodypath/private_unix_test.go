@@ -69,6 +69,24 @@ func TestPrivateRuntimeDirectory(t *testing.T) {
 type foreignOwnerInfo struct{ os.FileInfo }
 
 func (f foreignOwnerInfo) Sys() any { return &syscall.Stat_t{Uid: uint32(os.Geteuid() + 1)} }
+func TestRuntimeRejectsRealForeignOwner(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to assign a distinct uid; exercised in the Linux test container")
+	}
+	dir := t.TempDir()
+	if err := os.Chown(dir, 65534, 65534); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chown(dir, 0, 0)
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ownerOnly(info); err == nil {
+		t.Fatal("real foreign owner accepted")
+	}
+}
+
 func TestRuntimeRejectsForeignOwner(t *testing.T) {
 	info, err := os.Stat(t.TempDir())
 	if err != nil {

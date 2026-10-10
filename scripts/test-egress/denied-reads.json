@@ -1,0 +1,7 @@
+[
+  {
+    "host": "app.aweb.ai",
+    "owner": "TestResolveBaseURLForInitFallsBackToDefault",
+    "method": "GET"
+  }
+]

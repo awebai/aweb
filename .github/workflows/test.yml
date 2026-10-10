@@ -105,5 +105,18 @@ jobs:
       - name: Install tmux for the guarded launcher tests
         run: sudo apt-get update && sudo apt-get install -y tmux
 
-      - name: Run the test suite
-        run: make test
+      - name: Run Go, Python and Node suites without external network access
+        run: make test-isolated
+        env:
+          TEST_EGRESS_EVIDENCE: ${{ runner.temp }}/test-egress
+
+      - name: Run remaining test targets
+        # These suites ran above on the isolated Docker network.
+        run: make -o test-server -o test-awid -o test-cli -o test-channel -o test-channel-name-live-contract -o test-channel-core -o test-pi-extension test
+
+      - name: Preserve network isolation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-egress
+          path: ${{ runner.temp }}/test-egress
