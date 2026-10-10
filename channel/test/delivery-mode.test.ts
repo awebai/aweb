@@ -93,7 +93,9 @@ async function launchFixtureChild(delivery: string | undefined) {
   process.env.HOME = mkdtempSync(join(tmpdir(), "claude-channel-delivery-home-"));
   restoreEnvironment("AWEB_DELIVERY", delivery);
 
-  const launched = await launchPackagedMCPChild(channelRoot, workdir);
+  const launched = await launchPackagedMCPChild(channelRoot, workdir, {
+    AWEB_DELIVERY: process.env.AWEB_DELIVERY,
+  });
   child = launched.child;
   return launched;
 }

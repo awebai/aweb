@@ -11,6 +11,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { NotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v4";
+import { childEnvironment } from "./helpers/child_env.js";
 import {
   processGroupIDForPID,
   stopOwnedProcessTree,
@@ -524,7 +525,7 @@ describe.sequential("channel integration", () => {
       args,
       cwd: bobDir,
       env: {
-        ...stringEnv(process.env),
+        ...childEnvironment(),
         HOME: homeDir,
         AWEB_DELIVERY: "channel",
         AW_BIN: awBinary,
@@ -993,7 +994,7 @@ async function runAw(
     cwd: workspaceDir,
     encoding: "utf8",
     env: {
-      ...stringEnv(process.env),
+      ...childEnvironment(),
       HOME: homeDir,
       AW_CONFIG_PATH: join(homeDir, ".config", "aw", "config.yaml"),
       AWID_REGISTRY_URL: awidURL,
@@ -1086,14 +1087,6 @@ async function reserveLoopbackPorts(count: number): Promise<number[]> {
       server.close((error) => error ? rejectClose(error) : resolveClose());
     })));
   }
-}
-
-function stringEnv(source: NodeJS.ProcessEnv): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(source)) {
-    if (typeof value === "string") env[key] = value;
-  }
-  return env;
 }
 
 function delay(ms: number): Promise<void> {
