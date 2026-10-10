@@ -115,7 +115,7 @@ def main():
         return result.returncode
     finally:
         for container in reversed(containers):
-            subprocess.run(['docker', 'rm', '-f', container], stdout=subprocess.DEVNULL, check=True)
+            subprocess.run(['docker', 'rm', '-f', '-v', container], stdout=subprocess.DEVNULL, check=True)
         if network:
             subprocess.run(['docker', 'network', 'rm', network], stdout=subprocess.DEVNULL, check=True)
         if not args.image:
