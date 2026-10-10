@@ -1511,10 +1511,10 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 		RegistryURL:   registryServer.URL,
 		SigningKey:    priv,
 	})
-	writeKnownAgentPinForTest(t, tmp, "test.local/monitor", registryServer.URL)
+	writeKnownAgentPinForTest(t, tmp, "test.example/monitor", registryServer.URL)
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
-		"--to-address", "test.local/monitor",
+		"--to-address", "test.example/monitor",
 		"--body", "hello from address",
 	)
 	run.Env = testCommandEnv(tmp)
@@ -1528,7 +1528,7 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	if gotBody["from_did"] != did {
 		t.Fatalf("from_did=%v, want %s", gotBody["from_did"], did)
 	}
-	if gotBody["to_address"] != "test.local/monitor" {
+	if gotBody["to_address"] != "test.example/monitor" {
 		t.Fatalf("to_address=%v", gotBody["to_address"])
 	}
 	sig, ok := gotBody["signature"].(string)

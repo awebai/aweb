@@ -210,9 +210,9 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 		RegistryURL:   registryServer.URL,
 		SigningKey:    priv,
 	})
-	writeKnownAgentPinForTest(t, tmp, "acme/researcher", registryServer.URL)
+	writeKnownAgentPinForTest(t, tmp, "acme.example/researcher", registryServer.URL)
 
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", "acme/researcher", "--body", "hello network", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to-address", "acme.example/researcher", "--body", "hello network", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -223,7 +223,7 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	if gotPath != "/api/v1/messages" {
 		t.Fatalf("path=%s", gotPath)
 	}
-	if gotBody["to_address"] != "acme/researcher" {
+	if gotBody["to_address"] != "acme.example/researcher" {
 		t.Fatalf("to_address=%v", gotBody["to_address"])
 	}
 	if gotBody["body"] != "hello network" {
@@ -304,11 +304,11 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 		RegistryURL:   registryServer.URL,
 		SigningKey:    priv,
 	})
-	writeKnownAgentPinForTest(t, tmp, "acme/researcher", registryServer.URL)
+	writeKnownAgentPinForTest(t, tmp, "acme.example/researcher", registryServer.URL)
 
 	// Use --to with a full address (contains /). Should auto-detect as address
 	// and route to the identity messaging endpoint, not the team-scoped alias endpoint.
-	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "acme/researcher", "--body", "hello auto-detect", "--json")
+	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext", "--to", "acme.example/researcher", "--body", "hello auto-detect", "--json")
 	run.Env = testCommandEnv(tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -319,8 +319,8 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 	if gotPath != "/api/v1/messages" {
 		t.Fatalf("path=%s, want /api/v1/messages (identity endpoint)", gotPath)
 	}
-	if gotBody["to_address"] != "acme/researcher" {
-		t.Fatalf("to_address=%v, want acme/researcher", gotBody["to_address"])
+	if gotBody["to_address"] != "acme.example/researcher" {
+		t.Fatalf("to_address=%v, want acme.example/researcher", gotBody["to_address"])
 	}
 	if gotBody["to_alias"] != nil {
 		t.Fatalf("to_alias should be absent for address target, got %v", gotBody["to_alias"])
@@ -507,7 +507,7 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
-	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--plaintext", "--start-conversation", "aweb/merlin", "hello")
+	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--plaintext", "--start-conversation", "aweb.example/merlin", "hello")
 	run.Env = append(testCommandEnv(tmp), "AWID_REGISTRY_URL=http://127.0.0.1:1")
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
@@ -515,7 +515,7 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 		t.Fatalf("expected error, got success: %s", out)
 	}
 	output := string(out)
-	if !strings.Contains(output, "aweb/merlin") {
+	if !strings.Contains(output, "aweb.example/merlin") {
 		t.Fatalf("error should mention target address, got: %s", output)
 	}
 	if !strings.Contains(strings.ToLower(output), "not found") {

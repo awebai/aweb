@@ -802,7 +802,7 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 				{
 					MessageID:      "msg-in",
 					ConversationID: conversationID,
-					FromAddress:    "otherco.com/bob",
+					FromAddress:    "otherco.example/bob",
 					FromDID:        "did:aw:bob",
 					ToAddress:      "acme.com/alice",
 					ToDID:          stableID,
@@ -847,7 +847,7 @@ func TestAwMailSendToAddressAutoThreadsUniqueConversation(t *testing.T) {
 	}
 
 	run := exec.CommandContext(ctx, bin, "mail", "send", "--plaintext",
-		"--to-address", "otherco.com/bob",
+		"--to-address", "otherco.example/bob",
 		"--subject", "Re",
 		"--body", "reply",
 	)
@@ -1271,7 +1271,7 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 				{
 					MessageID:      "msg-in",
 					ConversationID: conversationID,
-					FromAddress:    "otherco.com/bob",
+					FromAddress:    "otherco.example/bob",
 					Subject:        "hello",
 					Body:           "hi",
 					CreatedAt:      "2026-05-02T00:00:00Z",
@@ -1284,7 +1284,7 @@ func TestAwMailReplyUsesMessageConversation(t *testing.T) {
 					ConversationID:       conversationID,
 					Participants:         []string{"alice", "bob"},
 					ParticipantDIDs:      []string{stableID, "did:aw:bob"},
-					ParticipantAddresses: []string{"acme.com/alice", "otherco.com/bob"},
+					ParticipantAddresses: []string{"acme.com/alice", "otherco.example/bob"},
 				},
 			}})
 		case "/v1/messages":
