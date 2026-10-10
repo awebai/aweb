@@ -42,6 +42,20 @@ TERMINAL_STATUSES = {"live", "deactivated", *FAILURE_STATUSES}
 KNOWN_STATUSES = {*IN_PROGRESS_STATUSES, *TERMINAL_STATUSES}
 ROLLBACK_ARTIFACT_STATUSES = {"live", "deactivated"}
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
+# Environment variables through which an inherited Git context (a hook, `git rebase --exec`)
+# would redirect `git -C <repo>` to a different repository.
+GIT_REPOSITORY_ENV = frozenset(
+    {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_PREFIX",
+    }
+)
 DEPLOY_RE = re.compile(r"^dep-[a-z0-9]+$")
 SERVICE_RE = re.compile(r"^srv-[a-z0-9]+$")
 HEALTH_READINESS_TIMEOUT_SECONDS = 90.0
@@ -964,26 +978,32 @@ def canonical_git_repo(value: str) -> str:
     return normalized.removesuffix(".git").rstrip("/")
 
 
+def _run_git(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]:
+    """Run git against the repository named in args, never an inherited Git context."""
+    env = {key: value for key, value in os.environ.items() if key not in GIT_REPOSITORY_ENV}
+    return subprocess.run(["git", *args], env=env, **kwargs)
+
+
 def verify_git_target(
     repo_root: Path, commit: str, *, expected_repo: str, expected_branch: str
 ) -> None:
     require_commit(commit)
     remote_ref = f"origin/{expected_branch}"
     try:
-        origin_url = subprocess.run(
-            ["git", "-C", str(repo_root), "remote", "get-url", "origin"],
+        origin_url = _run_git(
+            ["-C", str(repo_root), "remote", "get-url", "origin"],
             check=True,
             text=True,
             capture_output=True,
         ).stdout.strip()
-        remote_commit = subprocess.run(
-            ["git", "-C", str(repo_root), "rev-parse", remote_ref],
+        remote_commit = _run_git(
+            ["-C", str(repo_root), "rev-parse", remote_ref],
             check=True,
             text=True,
             capture_output=True,
         ).stdout.strip()
-        subprocess.run(
-            ["git", "-C", str(repo_root), "cat-file", "-e", f"{commit}^{{commit}}"],
+        _run_git(
+            ["-C", str(repo_root), "cat-file", "-e", f"{commit}^{{commit}}"],
             check=True,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -1348,8 +1368,8 @@ def _verifier_identity(
         script = script_path.resolve(strict=True)
         relative_script = script.relative_to(root)
         top_level = Path(
-            subprocess.run(
-                ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            _run_git(
+                ["-C", str(root), "rev-parse", "--show-toplevel"],
                 check=True,
                 text=True,
                 capture_output=True,
@@ -1357,24 +1377,24 @@ def _verifier_identity(
         ).resolve(strict=True)
         if top_level != root:
             raise OpsError("verifier repository root does not match the executing script")
-        source_sha = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "HEAD"],
+        source_sha = _run_git(
+            ["-C", str(root), "rev-parse", "HEAD"],
             check=True,
             text=True,
             capture_output=True,
         ).stdout.strip()
         if not COMMIT_RE.fullmatch(source_sha):
             raise OpsError("verifier source commit is invalid")
-        tracked_changes = subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"],
+        tracked_changes = _run_git(
+            ["-C", str(root), "status", "--porcelain", "--untracked-files=no"],
             check=True,
             text=True,
             capture_output=True,
         ).stdout
         if tracked_changes:
             raise OpsError("verifier repository has tracked changes")
-        committed_script = subprocess.run(
-            ["git", "-C", str(root), "show", f"HEAD:{relative_script.as_posix()}"],
+        committed_script = _run_git(
+            ["-C", str(root), "show", f"HEAD:{relative_script.as_posix()}"],
             check=True,
             capture_output=True,
         ).stdout
