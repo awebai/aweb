@@ -508,7 +508,7 @@ Flags:
 - `--label string Optional label for the grant`
 - `--out string Directory to write the grant home (created fresh; a non-empty directory is refused)`
 - `--scope stringArray Grant scope, repeatable or comma-separated (mail.read, mail.send, chat.read, chat.send, events.read, coord.read, coord.write, presence.write, contacts.read, contacts.write)`
-- `--ttl string Grant lifetime: never (revocation-only) or a duration from 60s to 720h (default "never")`
+- `--ttl string Grant duration: never (revocation-only) or a duration from 60s to 720h (default "never")`
 
 ## `id grant revoke`
 

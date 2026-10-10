@@ -72,7 +72,7 @@ func (grantTTLFlag) String() string {
 }
 func (grantTTLFlag) Type() string { return "string" }
 
-// Never is an explicit lifetime, not a malformed timestamp or missing freshness.
+// Never is an explicit duration, not a malformed timestamp or missing freshness.
 func checkGrantExpiry(raw string, now time.Time) error {
 	if raw == "never" {
 		return nil
@@ -568,7 +568,7 @@ func init() {
 	mintCmd.Flags().StringArrayVar(&grantMintAppTools, "app-tool", nil, "Legacy one-mint app:verb selection; replaces the resident approval catalog for this mint only")
 	mintCmd.Flags().StringVar(&grantMintCustodySocket, "custody-socket", "", "Resident custody Unix socket path to write into grant.yaml, or auto for the resident identity home's default custody socket")
 	grantMintTTL = identityGrantNeverTTL
-	mintCmd.Flags().Var(grantTTLFlag{}, "ttl", "Grant lifetime: never (revocation-only) or a duration from 60s to 720h")
+	mintCmd.Flags().Var(grantTTLFlag{}, "ttl", "Grant duration: never (revocation-only) or a duration from 60s to 720h")
 	mintCmd.Flags().StringVar(&grantMintLabel, "label", "", "Optional label for the grant")
 	mintCmd.Flags().StringVar(&grantMintOut, "out", "", "Directory to write the grant home (created fresh; a non-empty directory is refused)")
 	listCmd := &cobra.Command{

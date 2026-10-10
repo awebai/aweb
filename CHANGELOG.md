@@ -11,6 +11,7 @@
   identity path would exceed Unix socket limits, including on macOS. Auto-minted
   grants and custody status share this default; existing short paths and explicit
   locators remain supported. Unsafe runtime ownership or symlinks are refused.
+
 ### Grants: revocation-only lifetime
 
 - `aw id grant mint --ttl never` creates a grant without clock expiry and is now
