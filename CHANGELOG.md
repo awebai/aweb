@@ -4,6 +4,13 @@
 
 ### Release preparation: CLI 1.36.30
 
+This CLI-only release covers changes since `aw-v1.36.29`. CLI versioning
+remains tag-driven; the server stays at 1.27.14.
+
+- When API discovery encounters a redirect, diagnostics now show a sanitized
+  destination and ask you to set `AWEB_URL` to the intended API base.
+  Redirects are never followed; credentials, query strings and fragments
+  are removed from the displayed destination.
 - Agents need aw 1.36.30 or newer to reply to dashboard users. Grant-backed
   agents also require their custody host to run aw 1.36.30 or newer; an older
   host fails closed with upgrade guidance. Encrypted
