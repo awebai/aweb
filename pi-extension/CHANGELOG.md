@@ -2,11 +2,15 @@
 
 ## 0.3.13
 
+- **Upgrade from 0.3.12.** Pi 0.3.12 presents end-to-end encrypted mail from
+  a legitimate sender as `trust_status: unverified`, with a warning that
+  sender verification failed: it predates the Channel Core encrypted-envelope
+  verification below. Upgrade to 0.3.13.
+- Requires `@awebai/aw` `^1.36.35`, the release tested with this version.
 - Bundles the Channel Core sender-trust fixes released for the Claude channel
   since Pi 0.3.12:
   - Verify encrypted mail/chat push trust against the locally decrypted v2
-    envelope and the existing sender trust checks (channel 1.7.12). Pi 0.3.12
-    reports encrypted mail as unverified.
+    envelope and the existing sender trust checks (channel 1.7.12).
   - Grant receivers authenticate the authoritative team roster read used for
     same-team sender verification (channel 1.7.13).
   - A sender the AWID registry definitively does not know (HTTP 404) is
