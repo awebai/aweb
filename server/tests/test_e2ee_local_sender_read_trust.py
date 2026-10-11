@@ -128,7 +128,8 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
     async def recorded_registry(scope, receive, send):
         async def record(event):
             if event["type"] == "http.response.start":
-                registry.responses.append((scope["method"], scope["path"], event["status"]))
+                user_agent = dict(scope.get("headers") or []).get(b"user-agent", b"").decode()
+                registry.responses.append((scope["method"], scope["path"], event["status"], user_agent))
             await send(event)
         if registry.address_lookup_status and scope["type"] == "http" and "/addresses/" in scope["path"]:
             await record({"type": "http.response.start", "status": registry.address_lookup_status, "headers": []})
@@ -299,7 +300,8 @@ async def test_channel_core_runtimes_present_local_sender_e2ee_mail_trust(
         registry_condition, expected):
     if runtime == "pi" and grant:
         request.applymarker(pytest.mark.xfail(
-            strict=True, reason="aweb-abua: the Pi extension does not start its channel in a resident-grant seat"))
+            strict=True, raises=AssertionError,
+            reason="aweb-abua: the Pi extension does not start its channel in a resident-grant seat"))
     async with _local_sender_mail(privacy_app, tmp_path, global_resident, grant, sender_retired) as (
             message_id, conversation_id, binary, command_dir, command_env, registry):
         runtime_env = dict(command_env, PATH=f"{binary.parent}{os.pathsep}{command_env.get('PATH', '')}")
@@ -307,9 +309,20 @@ async def test_channel_core_runtimes_present_local_sender_e2ee_mail_trust(
             registry.address_lookup_status = 503
         if registry_condition == "unreachable":
             runtime_env["AWID_REGISTRY_URL"] = _unreachable_url()
-        status, text = await PRESENTERS[runtime](
-            tmp_path, binary, command_dir, runtime_env, message_id, conversation_id)
+        try:
+            status, text = await PRESENTERS[runtime](
+                tmp_path, binary, command_dir, runtime_env, message_id, conversation_id)
+        except AssertionError as refused:
+            if runtime == "pi" and grant and "not ready" not in str(refused):
+                pytest.fail(f"Pi in a grant seat failed for a reason other than aweb-abua: {refused}")
+            raise
         assert "local sender private text" in text, text
         assert status == expected, text
+        # The runtimes resolve through Node's fetch; aw's own lookups are Go's.
+        runtime_lookups = [(method, path, code) for method, path, code, agent in registry.responses
+                           if agent == "node"]
+        alice = ("GET", "/v1/namespaces/example.test/addresses/alice")
         if sender_retired and registry_condition == "available":
-            assert ("GET", "/v1/namespaces/example.test/addresses/alice", 404) in registry.responses, registry.responses
+            assert (*alice, 404) in runtime_lookups, registry.responses
+        if registry_condition == "unavailable":
+            assert (*alice, 503) in runtime_lookups, registry.responses
