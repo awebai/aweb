@@ -383,7 +383,12 @@ export class RegistryResolver {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      throw new Error(await readSafeErrorExcerpt(response).catch(() => `${response.status}`));
+      // The status lets trust tell a registry's definitive "no such
+      // identity" (404) from a registry that could not answer.
+      throw Object.assign(
+        new Error(await readSafeErrorExcerpt(response).catch(() => `${response.status}`)),
+        { statusCode: response.status },
+      );
     }
     return readBoundedJSON<T>(response);
   }

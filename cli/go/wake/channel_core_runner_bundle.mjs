@@ -7902,7 +7902,10 @@ var RegistryResolver = class {
       signal: AbortSignal.timeout(1e4)
     });
     if (!response.ok) {
-      throw new Error(await readSafeErrorExcerpt(response).catch(() => `${response.status}`));
+      throw Object.assign(
+        new Error(await readSafeErrorExcerpt(response).catch(() => `${response.status}`)),
+        { statusCode: response.status }
+      );
     }
     return readBoundedJSON(response);
   }
