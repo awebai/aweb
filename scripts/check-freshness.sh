@@ -5,7 +5,7 @@
 # than it validated:
 #   1. Intentionally committed GENERATED artifacts are regenerated and must not
 #      drift from their source (uv locks, CLI and MCP references, resource packs,
-#      reserved app ids, the claude-channel and pi bundles).
+#      reserved app ids, the claude-channel, pi and aw wake bundles).
 #   2. Public AWID site document mirrors exactly match their canonical docs.
 #   3. Repository paths REFERENCED IN DOCUMENTATION exist (check-doc-paths.sh).
 #   4. Every lock/reference/dist/mirror check passes a clean fixture and rejects
@@ -95,6 +95,17 @@ if (cd pi-extension && node scripts/ensure-channel-core.mjs >/dev/null 2>&1 && n
   echo "pi-extension bundle is up to date"
 else
   echo "FAIL: pi-extension bundle failed to build/validate from source"
+  status=1
+fi
+
+# 6b. The aw wake broker embeds a committed channel-core build (go:embed). A
+#    channel-core trust fix that never reaches it ships in the plugin but not in
+#    aw wake, so one message gets two trust answers (aweb-abtq).
+section "aw wake channel-core bundle freshness"
+if scripts/check-wake-channel-core-bundle.sh; then
+  echo "wake channel-core bundle is up to date"
+else
+  echo "FAIL: cli/go/wake/channel_core_runner_bundle.mjs is stale; run scripts/check-wake-channel-core-bundle.sh --write and commit it"
   status=1
 fi
 

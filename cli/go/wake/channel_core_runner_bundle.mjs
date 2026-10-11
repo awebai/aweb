@@ -2458,7 +2458,7 @@ var uvRatio = (u, v) => {
     x = M(-x);
   return { isValid: useRoot1 || useRoot2, value: x };
 };
-var modL_LE = (hash) => modN(bytesToNumLE(hash));
+var modL_LE = (hash2) => modN(bytesToNumLE(hash2));
 var sha512s = (...m) => callHash("sha512Sync")(...m);
 var hash2extK = (hashed) => {
   const head = hashed.slice(0, L);
@@ -3211,8 +3211,8 @@ async function readBoundedResponse(response, maxBytes = MAX_HTTP_RESPONSE_BYTES)
   return new TextDecoder("utf-8", { fatal: true }).decode(body);
 }
 async function readSafeErrorExcerpt(response) {
-  const text = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
-  return text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
+  const text2 = await readBoundedResponse(response, MAX_HTTP_ERROR_BYTES);
+  return text2.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ").replace(/\s+/g, " ").trim();
 }
 async function readBoundedJSON(response) {
   return JSON.parse(await readBoundedResponse(response));
@@ -3383,8 +3383,8 @@ function extractPublicKey(did) {
   return decoded.slice(2);
 }
 function computeStableID(publicKey) {
-  const hash = createHash("sha256").update(publicKey).digest();
-  return "did:aw:" + esm_default2.encode(hash.subarray(0, 20));
+  const hash2 = createHash("sha256").update(publicKey).digest();
+  return "did:aw:" + esm_default2.encode(hash2.subarray(0, 20));
 }
 
 // channel-core/src/api/client.ts
@@ -3430,6 +3430,12 @@ var APIClient = class {
   hasTeamCertificateAuth(teamID) {
     return this.auth.teamID === teamID && this.auth.teamCertificateHeader.trim() !== "" && this.auth.did.trim() !== "" && this.auth.signingKey.length > 0;
   }
+  // Credential availability only. The service still enforces grant validity,
+  // scope and membership for the same authenticated /v1/agents read.
+  hasTeamRosterAuth(teamID) {
+    if (this.auth.authMode !== "grant") return this.hasTeamCertificateAuth(teamID);
+    return this.auth.teamID === teamID && (this.auth.grantID || "").trim() !== "" && this.auth.did.trim() !== "" && this.auth.signingKey.length === 32;
+  }
   async get(path) {
     return this.request("GET", path);
   }
@@ -3459,8 +3465,8 @@ var APIClient = class {
     }
     const resp = await fetch(url, init);
     if (!resp.ok) {
-      const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text);
+      const text2 = await readSafeErrorExcerpt(resp).catch(() => "");
+      throw new APIError(resp.status, text2);
     }
     return readBoundedJSON(resp);
   }
@@ -3477,8 +3483,8 @@ var APIClient = class {
       }
     });
     if (!resp.ok) {
-      const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text);
+      const text2 = await readSafeErrorExcerpt(resp).catch(() => "");
+      throw new APIError(resp.status, text2);
     }
     return resp;
   }
@@ -4307,8 +4313,8 @@ function require_null() {
   function constructYamlNull() {
     return null;
   }
-  function isNull(object) {
-    return object === null;
+  function isNull(object2) {
+    return object2 === null;
   }
   _null = new Type2("tag:yaml.org,2002:null", {
     kind: "scalar",
@@ -4350,8 +4356,8 @@ function requireBool() {
   function constructYamlBoolean(data) {
     return data === "true" || data === "True" || data === "TRUE";
   }
-  function isBoolean(object) {
-    return Object.prototype.toString.call(object) === "[object Boolean]";
+  function isBoolean(object2) {
+    return Object.prototype.toString.call(object2) === "[object Boolean]";
   }
   bool = new Type2("tag:yaml.org,2002:bool", {
     kind: "scalar",
@@ -4359,14 +4365,14 @@ function requireBool() {
     construct: constructYamlBoolean,
     predicate: isBoolean,
     represent: {
-      lowercase: function(object) {
-        return object ? "true" : "false";
+      lowercase: function(object2) {
+        return object2 ? "true" : "false";
       },
-      uppercase: function(object) {
-        return object ? "TRUE" : "FALSE";
+      uppercase: function(object2) {
+        return object2 ? "TRUE" : "FALSE";
       },
-      camelcase: function(object) {
-        return object ? "True" : "False";
+      camelcase: function(object2) {
+        return object2 ? "True" : "False";
       }
     },
     defaultStyle: "lowercase"
@@ -4457,8 +4463,8 @@ function requireInt() {
   function constructYamlInteger(data) {
     return parseYamlInteger(data);
   }
-  function isInteger(object) {
-    return Object.prototype.toString.call(object) === "[object Number]" && (object % 1 === 0 && !common2.isNegativeZero(object));
+  function isInteger(object2) {
+    return Object.prototype.toString.call(object2) === "[object Number]" && (object2 % 1 === 0 && !common2.isNegativeZero(object2));
   }
   int = new Type2("tag:yaml.org,2002:int", {
     kind: "scalar",
@@ -4527,8 +4533,8 @@ function requireFloat() {
     return sign2 * parseFloat(value, 10);
   }
   const SCIENTIFIC_WITHOUT_DOT = /^[-+]?[0-9]+e/;
-  function representYamlFloat(object, style) {
-    if (isNaN(object)) {
+  function representYamlFloat(object2, style) {
+    if (isNaN(object2)) {
       switch (style) {
         case "lowercase":
           return ".nan";
@@ -4537,7 +4543,7 @@ function requireFloat() {
         case "camelcase":
           return ".NaN";
       }
-    } else if (Number.POSITIVE_INFINITY === object) {
+    } else if (Number.POSITIVE_INFINITY === object2) {
       switch (style) {
         case "lowercase":
           return ".inf";
@@ -4546,7 +4552,7 @@ function requireFloat() {
         case "camelcase":
           return ".Inf";
       }
-    } else if (Number.NEGATIVE_INFINITY === object) {
+    } else if (Number.NEGATIVE_INFINITY === object2) {
       switch (style) {
         case "lowercase":
           return "-.inf";
@@ -4555,14 +4561,14 @@ function requireFloat() {
         case "camelcase":
           return "-.Inf";
       }
-    } else if (common2.isNegativeZero(object)) {
+    } else if (common2.isNegativeZero(object2)) {
       return "-0.0";
     }
-    const res = object.toString(10);
+    const res = object2.toString(10);
     return SCIENTIFIC_WITHOUT_DOT.test(res) ? res.replace("e", ".e") : res;
   }
-  function isFloat(object) {
-    return Object.prototype.toString.call(object) === "[object Number]" && (object % 1 !== 0 || common2.isNegativeZero(object));
+  function isFloat(object2) {
+    return Object.prototype.toString.call(object2) === "[object Number]" && (object2 % 1 !== 0 || common2.isNegativeZero(object2));
   }
   float = new Type2("tag:yaml.org,2002:float", {
     kind: "scalar",
@@ -4647,8 +4653,8 @@ function requireTimestamp() {
     if (delta) date.setTime(date.getTime() - delta);
     return date;
   }
-  function representYamlTimestamp(object) {
-    return object.toISOString();
+  function representYamlTimestamp(object2) {
+    return object2.toISOString();
   }
   timestamp = new Type2("tag:yaml.org,2002:timestamp", {
     kind: "scalar",
@@ -4721,10 +4727,10 @@ function requireBinary() {
     }
     return new Uint8Array(result);
   }
-  function representYamlBinary(object) {
+  function representYamlBinary(object2) {
     let result = "";
     let bits = 0;
-    const max = object.length;
+    const max = object2.length;
     const map2 = BASE64_MAP;
     for (let idx = 0; idx < max; idx++) {
       if (idx % 3 === 0 && idx) {
@@ -4733,7 +4739,7 @@ function requireBinary() {
         result += map2[bits >> 6 & 63];
         result += map2[bits & 63];
       }
-      bits = (bits << 8) + object[idx];
+      bits = (bits << 8) + object2[idx];
     }
     const tail = max % 3;
     if (tail === 0) {
@@ -4777,9 +4783,9 @@ function requireOmap() {
   function resolveYamlOmap(data) {
     if (data === null) return true;
     const objectKeys = {};
-    const object = data;
-    for (let index = 0, length = object.length; index < length; index += 1) {
-      const pair = object[index];
+    const object2 = data;
+    for (let index = 0, length = object2.length; index < length; index += 1) {
+      const pair = object2[index];
       let pairHasKey = false;
       if (_toString.call(pair) !== "[object Object]") return false;
       let pairKey;
@@ -4814,10 +4820,10 @@ function requirePairs() {
   const _toString = Object.prototype.toString;
   function resolveYamlPairs(data) {
     if (data === null) return true;
-    const object = data;
-    const result = new Array(object.length);
-    for (let index = 0, length = object.length; index < length; index += 1) {
-      const pair = object[index];
+    const object2 = data;
+    const result = new Array(object2.length);
+    for (let index = 0, length = object2.length; index < length; index += 1) {
+      const pair = object2[index];
       if (_toString.call(pair) !== "[object Object]") return false;
       const keys = Object.keys(pair);
       if (keys.length !== 1) return false;
@@ -4827,10 +4833,10 @@ function requirePairs() {
   }
   function constructYamlPairs(data) {
     if (data === null) return [];
-    const object = data;
-    const result = new Array(object.length);
-    for (let index = 0, length = object.length; index < length; index += 1) {
-      const pair = object[index];
+    const object2 = data;
+    const result = new Array(object2.length);
+    for (let index = 0, length = object2.length; index < length; index += 1) {
+      const pair = object2[index];
       const keys = Object.keys(pair);
       result[index] = [keys[0], pair[keys[0]]];
     }
@@ -4852,10 +4858,10 @@ function requireSet() {
   const _hasOwnProperty = Object.prototype.hasOwnProperty;
   function resolveYamlSet(data) {
     if (data === null) return true;
-    const object = data;
-    for (const key in object) {
-      if (_hasOwnProperty.call(object, key)) {
-        if (object[key] !== null) return false;
+    const object2 = data;
+    for (const key in object2) {
+      if (_hasOwnProperty.call(object2, key)) {
+        if (object2[key] !== null) return false;
       }
     }
     return true;
@@ -5004,16 +5010,16 @@ function requireLoader() {
       (c - 65536 & 1023) + 56320
     );
   }
-  function setProperty(object, key, value) {
+  function setProperty(object2, key, value) {
     if (key === "__proto__") {
-      Object.defineProperty(object, key, {
+      Object.defineProperty(object2, key, {
         configurable: true,
         enumerable: true,
         writable: true,
         value
       });
     } else {
-      object[key] = value;
+      object2[key] = value;
     }
   }
   const simpleEscapeCheck = new Array(256);
@@ -6639,13 +6645,13 @@ function requireDumper() {
     }
     return result;
   }
-  function writeFlowSequence(state, level, object) {
+  function writeFlowSequence(state, level, object2) {
     let _result = "";
     const _tag = state.tag;
-    for (let index = 0, length = object.length; index < length; index += 1) {
-      let value = object[index];
+    for (let index = 0, length = object2.length; index < length; index += 1) {
+      let value = object2[index];
       if (state.replacer) {
-        value = state.replacer.call(object, String(index), value);
+        value = state.replacer.call(object2, String(index), value);
       }
       if (writeNode(state, level, value, false, false) || typeof value === "undefined" && writeNode(state, level, null, false, false)) {
         if (_result !== "") _result += "," + (!state.condenseFlow ? " " : "");
@@ -6655,13 +6661,13 @@ function requireDumper() {
     state.tag = _tag;
     state.dump = "[" + _result + "]";
   }
-  function writeBlockSequence(state, level, object, compact) {
+  function writeBlockSequence(state, level, object2, compact) {
     let _result = "";
     const _tag = state.tag;
-    for (let index = 0, length = object.length; index < length; index += 1) {
-      let value = object[index];
+    for (let index = 0, length = object2.length; index < length; index += 1) {
+      let value = object2[index];
       if (state.replacer) {
-        value = state.replacer.call(object, String(index), value);
+        value = state.replacer.call(object2, String(index), value);
       }
       if (writeNode(state, level + 1, value, true, true, false, true) || typeof value === "undefined" && writeNode(state, level + 1, null, true, true, false, true)) {
         if (!compact || _result !== "") {
@@ -6678,18 +6684,18 @@ function requireDumper() {
     state.tag = _tag;
     state.dump = _result || "[]";
   }
-  function writeFlowMapping(state, level, object) {
+  function writeFlowMapping(state, level, object2) {
     let _result = "";
     const _tag = state.tag;
-    const objectKeyList = Object.keys(object);
+    const objectKeyList = Object.keys(object2);
     for (let index = 0, length = objectKeyList.length; index < length; index += 1) {
       let pairBuffer = "";
       if (_result !== "") pairBuffer += ", ";
       if (state.condenseFlow) pairBuffer += '"';
       const objectKey = objectKeyList[index];
-      let objectValue = object[objectKey];
+      let objectValue = object2[objectKey];
       if (state.replacer) {
-        objectValue = state.replacer.call(object, objectKey, objectValue);
+        objectValue = state.replacer.call(object2, objectKey, objectValue);
       }
       if (!writeNode(state, level, objectKey, false, false)) {
         continue;
@@ -6705,10 +6711,10 @@ function requireDumper() {
     state.tag = _tag;
     state.dump = "{" + _result + "}";
   }
-  function writeBlockMapping(state, level, object, compact) {
+  function writeBlockMapping(state, level, object2, compact) {
     let _result = "";
     const _tag = state.tag;
-    const objectKeyList = Object.keys(object);
+    const objectKeyList = Object.keys(object2);
     if (state.sortKeys === true) {
       objectKeyList.sort();
     } else if (typeof state.sortKeys === "function") {
@@ -6722,9 +6728,9 @@ function requireDumper() {
         pairBuffer += generateNextLine(state, level);
       }
       const objectKey = objectKeyList[index];
-      let objectValue = object[objectKey];
+      let objectValue = object2[objectKey];
       if (state.replacer) {
-        objectValue = state.replacer.call(object, objectKey, objectValue);
+        objectValue = state.replacer.call(object2, objectKey, objectValue);
       }
       if (!writeNode(state, level + 1, objectKey, true, true, true)) {
         continue;
@@ -6755,14 +6761,14 @@ function requireDumper() {
     state.tag = _tag;
     state.dump = _result || "{}";
   }
-  function detectType(state, object, explicit) {
+  function detectType(state, object2, explicit) {
     const typeList = explicit ? state.explicitTypes : state.implicitTypes;
     for (let index = 0, length = typeList.length; index < length; index += 1) {
       const type2 = typeList[index];
-      if ((type2.instanceOf || type2.predicate) && (!type2.instanceOf || typeof object === "object" && object instanceof type2.instanceOf) && (!type2.predicate || type2.predicate(object))) {
+      if ((type2.instanceOf || type2.predicate) && (!type2.instanceOf || typeof object2 === "object" && object2 instanceof type2.instanceOf) && (!type2.predicate || type2.predicate(object2))) {
         if (explicit) {
           if (type2.multi && type2.representName) {
-            state.tag = type2.representName(object);
+            state.tag = type2.representName(object2);
           } else {
             state.tag = type2.tag;
           }
@@ -6773,9 +6779,9 @@ function requireDumper() {
           const style = state.styleMap[type2.tag] || type2.defaultStyle;
           let _result;
           if (_toString.call(type2.represent) === "[object Function]") {
-            _result = type2.represent(object, style);
+            _result = type2.represent(object2, style);
           } else if (_hasOwnProperty.call(type2.represent, style)) {
-            _result = type2.represent[style](object, style);
+            _result = type2.represent[style](object2, style);
           } else {
             throw new YAMLException2("!<" + type2.tag + '> tag resolver accepts not "' + style + '" style');
           }
@@ -6786,11 +6792,11 @@ function requireDumper() {
     }
     return false;
   }
-  function writeNode(state, level, object, block, compact, iskey, isblockseq) {
+  function writeNode(state, level, object2, block, compact, iskey, isblockseq) {
     state.tag = null;
-    state.dump = object;
-    if (!detectType(state, object, false)) {
-      detectType(state, object, true);
+    state.dump = object2;
+    if (!detectType(state, object2, false)) {
+      detectType(state, object2, true);
     }
     const type2 = _toString.call(state.dump);
     const inblock = block;
@@ -6801,7 +6807,7 @@ function requireDumper() {
     let duplicateIndex;
     let duplicate;
     if (objectOrArray) {
-      duplicateIndex = state.duplicates.indexOf(object);
+      duplicateIndex = state.duplicates.indexOf(object2);
       duplicate = duplicateIndex !== -1;
     }
     if (state.tag !== null && state.tag !== "?" || duplicate || state.indent !== 2 && level > 0) {
@@ -6867,33 +6873,33 @@ function requireDumper() {
     }
     return true;
   }
-  function getDuplicateReferences(object, state) {
+  function getDuplicateReferences(object2, state) {
     const objects = [];
     const duplicatesIndexes = [];
-    inspectNode(object, objects, duplicatesIndexes);
+    inspectNode(object2, objects, duplicatesIndexes);
     const length = duplicatesIndexes.length;
     for (let index = 0; index < length; index += 1) {
       state.duplicates.push(objects[duplicatesIndexes[index]]);
     }
     state.usedDuplicates = new Array(length);
   }
-  function inspectNode(object, objects, duplicatesIndexes) {
-    if (object !== null && typeof object === "object") {
-      const index = objects.indexOf(object);
+  function inspectNode(object2, objects, duplicatesIndexes) {
+    if (object2 !== null && typeof object2 === "object") {
+      const index = objects.indexOf(object2);
       if (index !== -1) {
         if (duplicatesIndexes.indexOf(index) === -1) {
           duplicatesIndexes.push(index);
         }
       } else {
-        objects.push(object);
-        if (Array.isArray(object)) {
-          for (let i = 0, length = object.length; i < length; i += 1) {
-            inspectNode(object[i], objects, duplicatesIndexes);
+        objects.push(object2);
+        if (Array.isArray(object2)) {
+          for (let i = 0, length = object2.length; i < length; i += 1) {
+            inspectNode(object2[i], objects, duplicatesIndexes);
           }
         } else {
-          const objectKeyList = Object.keys(object);
+          const objectKeyList = Object.keys(object2);
           for (let i = 0, length = objectKeyList.length; i < length; i += 1) {
-            inspectNode(object[objectKeyList[i]], objects, duplicatesIndexes);
+            inspectNode(object2[objectKeyList[i]], objects, duplicatesIndexes);
           }
         }
       }
@@ -8793,8 +8799,8 @@ var SenderTrustManager = class {
       }
       throw new Error(`unsupported local address ${trimmed}`);
     }
-    if (!this.client.hasTeamCertificateAuth(this.teamID)) {
-      throw new Error("team roster resolution requires team-certificate authentication");
+    if (!(this.client.hasTeamRosterAuth?.(this.teamID) ?? this.client.hasTeamCertificateAuth(this.teamID))) {
+      throw new Error("team roster resolution requires authenticated team access");
     }
     const roster = await this.resolveAuthenticatedTeamRoster();
     const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === localAlias);
@@ -8939,6 +8945,103 @@ import { dirname as dirname2, join as join2 } from "node:path";
 import { homedir } from "node:os";
 import { appendFile, mkdir, open, readFile as readFile4, rename, rm } from "node:fs/promises";
 
+// channel-core/src/identity/encrypted.ts
+import { createHash as createHash3 } from "node:crypto";
+function object(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("expected object");
+  return value;
+}
+function text(value) {
+  if (value === void 0) return "";
+  if (typeof value !== "string") throw new Error("expected string");
+  return value;
+}
+function canonicalEncryptedJSON(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalEncryptedJSON).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const obj = object(value);
+    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalEncryptedJSON(obj[key])}`).join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
+  throw new Error("unsupported encrypted envelope value");
+}
+function optionalStrings(value, keys) {
+  for (const key of keys) {
+    if (value[key] === void 0) continue;
+    const normalized = text(value[key]).trim();
+    if (normalized) value[key] = normalized;
+    else delete value[key];
+  }
+}
+function envelopeForSignature(value) {
+  const envelope = structuredClone(object(value));
+  optionalStrings(envelope, ["reply_to_message_id"]);
+  const identityKeys = ["address", "did", "stable_id", "team_id", "encryption_key_id"];
+  optionalStrings(object(envelope.from), identityKeys);
+  if (!Array.isArray(envelope.recipients) || !Array.isArray(envelope.key_wraps)) throw new Error("missing recipient proof");
+  for (const ref of envelope.recipients) optionalStrings(object(ref), [...identityKeys, "wrap_id"]);
+  optionalStrings(object(envelope.routing), ["to", "to_did", "to_stable_id", "delivery_origin", "sender_observed_inbound_mode"]);
+  optionalStrings(object(envelope.crypto), ["ciphertext_hash"]);
+  for (const wrap of envelope.key_wraps) optionalStrings(object(wrap), ["recipient_stable_id", "recipient_did", "recipient_address", "sender_stable_id"]);
+  if (envelope.sender_encryption_key === null) delete envelope.sender_encryption_key;
+  if (envelope.sender_encryption_key !== void 0) {
+    const key = object(envelope.sender_encryption_key);
+    for (const field of ["identity_stable_id", "previous_encryption_key_id"]) if (key[field] === null) delete key[field];
+    optionalStrings(key, ["identity_stable_id", "previous_encryption_key_id", "custody"]);
+    for (const field of ["operation", "version", "identity_did", "encryption_key_id", "encryption_public_key", "algorithm", "created_at", "not_before", "expires_at", "signature"]) {
+      key[field] = text(key[field]).trim();
+    }
+  }
+  return envelope;
+}
+var hash = (value) => `sha256:${createHash3("sha256").update(value).digest("base64").replace(/=+$/, "")}`;
+async function verifyDecryptedMessage(fetched, decrypted, kind, conversationID, self) {
+  try {
+    const envelope = envelopeForSignature(decrypted.encrypted_envelope);
+    if (canonicalEncryptedJSON(envelope) !== canonicalEncryptedJSON(envelopeForSignature(fetched.encrypted_envelope))) return;
+    if (envelope.message_version !== 2 || envelope.envelope_type !== "aweb.e2ee.message" || envelope.kind !== kind) return;
+    if (!text(envelope.message_id) || envelope.message_id !== fetched.message_id || envelope.message_id !== decrypted.message_id) return;
+    if (!text(envelope.conversation_id) || envelope.conversation_id !== conversationID || envelope.conversation_id !== decrypted.conversation_id) return;
+    if (fetched.conversation_id && fetched.conversation_id !== envelope.conversation_id) return;
+    const from = object(envelope.from);
+    const did = text(from.did);
+    const stable = text(from.stable_id);
+    const address = text(from.address);
+    if (!did || envelope.signing_key_id !== did) return;
+    const { signature, ...signed } = envelope;
+    if (await verifySignedPayload(canonicalEncryptedJSON(signed), text(signature), did, text(envelope.signing_key_id)) !== "verified") return;
+    const crypto = object(envelope.crypto);
+    if (crypto.suite !== "aweb-e2ee-v2.x25519-hkdf-sha256-aes256gcm-ed25519") return;
+    const ciphertext = decodeRawStdBase64(text(envelope.ciphertext));
+    if (crypto.ciphertext_size !== ciphertext.length || crypto.ciphertext_hash !== hash(ciphertext)) return;
+    if (!Array.isArray(envelope.key_wraps) || crypto.key_wraps_hash !== hash(canonicalEncryptedJSON(envelope.key_wraps))) return;
+    if (!Array.isArray(envelope.recipients)) return;
+    const recipients = envelope.recipients.map(object);
+    const recipient = recipients.find((ref) => self.stableID && text(ref.stable_id) ? ref.stable_id === self.stableID : !!self.did && ref.did === self.did);
+    if (!recipient) return;
+    const recipientDID = text(recipient.did);
+    const recipientStable = text(recipient.stable_id);
+    if (decrypted.from_did !== did || text(decrypted.from_stable_id) !== stable) return;
+    if (address && decrypted.from_address !== address) return;
+    const didMatches = (observed, key, stableID) => !observed || observed === key || !!stableID && observed === stableID;
+    if (!didMatches(fetched.from_did, did, stable) || fetched.from_stable_id && fetched.from_stable_id !== stable) return;
+    if (fetched.from_address && address && fetched.from_address !== address) return;
+    for (const projection of [fetched, decrypted]) {
+      if (!didMatches(projection.to_did, recipientDID, recipientStable)) return;
+      if (projection.to_stable_id && projection.to_stable_id !== recipientStable) return;
+    }
+    return {
+      from_did: did,
+      from_stable_id: stable,
+      signed_from: address,
+      to_did: recipientDID,
+      to_stable_id: recipientStable
+    };
+  } catch {
+    return;
+  }
+}
+
 // channel-core/src/local_aw.ts
 import { execFile, spawn as spawn2 } from "node:child_process";
 import { promisify } from "node:util";
@@ -8979,7 +9082,7 @@ function createLocalAWDecryptProvider(options) {
       );
       const payload = parseJSONOutput(stdout);
       const message = (payload.messages || []).find((msg) => msg.message_id === id);
-      return message ? { message_id: message.message_id, subject: message.subject, body: message.body } : null;
+      return message ? { ...decryptionProof(message), subject: message.subject, body: message.body } : null;
     },
     async chatMessage(sessionID, messageID) {
       const session = sessionID.trim();
@@ -8992,7 +9095,7 @@ function createLocalAWDecryptProvider(options) {
       );
       const payload = parseJSONOutput(stdout);
       const message = (payload.messages || []).find((msg) => msg.message_id === id);
-      return message ? { message_id: message.message_id, body: message.body } : null;
+      return message ? { ...decryptionProof(message), conversation_id: payload.session_id, body: message.body } : null;
     }
   };
 }
@@ -9047,6 +9150,18 @@ function parseJSONOutput(stdout) {
   const start2 = trimmed.indexOf("{");
   if (start2 < 0) throw new Error("aw JSON output did not contain an object");
   return JSON.parse(trimmed.slice(start2));
+}
+function decryptionProof(message) {
+  return {
+    message_id: message.message_id,
+    conversation_id: message.conversation_id,
+    from_did: message.from_did,
+    from_stable_id: message.from_stable_id,
+    from_address: message.from_address,
+    to_did: message.to_did,
+    to_stable_id: message.to_stable_id,
+    encrypted_envelope: message.encrypted_envelope
+  };
 }
 
 // channel-core/src/channel.ts
@@ -9518,7 +9633,7 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       }
       continue;
     }
-    const from = senderDisplayAddress(msg.from_alias, msg.from_address);
+    let from = senderDisplayAddress(msg.from_alias, msg.from_address);
     emitTrace(options, "decrypt_started", messageEvent, "mail");
     const decrypt = await resolveMailForDelivery(options, msg);
     emitTrace(options, "decrypt_completed", messageEvent, "mail");
@@ -9531,6 +9646,7 @@ async function dispatchMailEvent(options, dispatched, event, log) {
       });
       continue;
     }
+    from = senderDisplayAddress(msg.from_alias, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, "mail");
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -9586,7 +9702,7 @@ async function dispatchChatEvent(options, dispatched, event) {
       presentedMessageIds.push(msg.message_id);
       continue;
     }
-    const from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    let from = senderDisplayAddress(msg.from_agent, msg.from_address);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
@@ -9599,6 +9715,7 @@ async function dispatchChatEvent(options, dispatched, event) {
       });
       continue;
     }
+    from = senderDisplayAddress(msg.from_agent, msg.from_address);
     emitTrace(options, "trust_started", messageEvent, lane);
     const trust = await normalizeAndPersistMessageTrust(
       options,
@@ -9739,6 +9856,12 @@ async function resolveMailForDelivery(options, msg) {
     if (!decrypted || typeof decrypted.body !== "string") {
       return { ok: false, error: "local aw did not return decrypted mail body" };
     }
+    const authenticated = await verifyDecryptedMessage(msg, decrypted, "mail", msg.conversation_id, options.self);
+    msg.verification_status = authenticated ? "verified" : "unverified";
+    if (authenticated) {
+      Object.assign(msg, authenticated);
+      if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
+    }
     msg.subject = decrypted.subject;
     msg.body = decrypted.body;
     return { ok: true };
@@ -9755,6 +9878,12 @@ async function resolveChatForDelivery(options, sessionID, msg) {
     const decrypted = await options.localDecrypt.chatMessage(sessionID, msg.message_id);
     if (!decrypted || typeof decrypted.body !== "string") {
       return { ok: false, error: "local aw did not return decrypted chat body" };
+    }
+    const authenticated = await verifyDecryptedMessage(msg, decrypted, "chat", sessionID, options.self);
+    msg.verification_status = authenticated ? "verified" : "unverified";
+    if (authenticated) {
+      Object.assign(msg, authenticated);
+      if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }
     msg.body = decrypted.body;
     return { ok: true };
@@ -9935,8 +10064,8 @@ function normalizeTerminalReadiness(raw, present = true) {
       return "unknown";
   }
 }
-function terminalInputSafeText(text) {
-  return text.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F]/g, "");
+function terminalInputSafeText(text2) {
+  return text2.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u0080-\u009F]/g, "");
 }
 function validatedNoticeID(value) {
   const raw = value || "";
@@ -10064,9 +10193,9 @@ function createTerminalAwakeningHandler(options) {
       throw new TerminalInactiveError(state);
     }
     if (options.isPaused?.()) throw new Error("terminal delivery is paused");
-    const text = [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
+    const text2 = [...ambientBatch, { awakening, receivingIdentityHome }].map((item) => textForTerminalAwakening(item.awakening, item.receivingIdentityHome)).join("\n\n---\n\n");
     throwIfAborted2(options.signal);
-    await options.session.input(options.home, text);
+    await options.session.input(options.home, text2);
     for (const item of ambientBatch) {
       if (ambient.get(item.key) === item) ambient.delete(item.key);
       item.resolve();
@@ -10160,8 +10289,8 @@ async function start(init) {
         throw error;
       }
     },
-    async input(home, text) {
-      const envelope = await runOATS(oatsBin, ["session", "input", "--home", home, "--json"], text);
+    async input(home, text2) {
+      const envelope = await runOATS(oatsBin, ["session", "input", "--home", home, "--json"], text2);
       if (!envelope.result?.submitted) throw new Error("oats session input did not report submitted:true");
       lastInputAt = (/* @__PURE__ */ new Date()).toISOString();
       status({ delivered: true });

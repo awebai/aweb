@@ -33,5 +33,8 @@ run_self_test "AWID public site document mirrors" \
 run_self_test "TypeScript dist" \
   "self-test passed: clean TypeScript builds pass and guarded source regressions fail" \
   bash scripts/test-typescript-dist-freshness.sh
+run_self_test "aw wake channel-core bundle" \
+  "self-test passed: a fresh wake bundle passes and a bundle older than its channel-core source fails" \
+  bash scripts/check-wake-channel-core-bundle.sh --self-test
 
 echo "freshness negative fixtures passed in both directions"

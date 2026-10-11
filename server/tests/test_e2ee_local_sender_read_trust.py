@@ -1,11 +1,14 @@
-"""Encrypted mail from a local sender is verified against the live team roster.
+"""Encrypted mail from a local sender is verified against the live team roster,
+both by `aw mail show` and by the channel-core bundle aw embeds for its wake broker.
 
 A local sender signs no address and no stable ID into the E2EE envelope.
-Real HTTP/DB/registry, real CLI subprocesses; nothing is mocked.
+Real HTTP/DB/registry and real CLI subprocesses; the only stand-in records
+what the wake broker types into the terminal.
 """
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
 import os
@@ -16,6 +19,7 @@ import pytest
 
 from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
+from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import encrypt_e2ee_mail, generate_x25519_keypair
 from test_addressless_sender_cli import _registry_http
@@ -24,12 +28,13 @@ from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair, _make_certificate
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("sender_retired", [False, True])
-@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
-async def test_local_sender_e2ee_mail_read_trust(privacy_app, tmp_path, global_resident, grant, sender_retired):
-    env = privacy_app
+@asynccontextmanager
+async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retired):
+    """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context."""
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
+    # Keep this test's DID registrations out of the per-IP Redis window that
+    # every privacy_app test shares; registry rate limits are not under test.
+    env.registry_app.state.rate_limiter = MemoryFixedWindowRateLimiter()
     now = datetime.now(timezone.utc)
     identities = {}
     for name in ("alice", "bob"):
@@ -40,6 +45,7 @@ async def test_local_sender_e2ee_mail_read_trust(privacy_app, tmp_path, global_r
         if stable_id:
             await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2 WHERE agent_id = $3",
                                  stable_id, address, actor.id)
+            await env.app.state.awid_registry_client.register_did(actor.did, actor.sk)
         assertion = build_encryption_key_assertion(
             signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
             encryption_public_key=public, custody="self", now=now,
@@ -116,13 +122,73 @@ async def test_local_sender_e2ee_mail_read_trust(privacy_app, tmp_path, global_r
     async with _registry_http(env.registry_app) as (registry_url, _):
         child_env["AWID_REGISTRY_URL"] = registry_url
         async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
-            result = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
-            shown = result["messages"][0]
-            assert shown["body"] == "local sender private text"
-            # The live roster re-check is load-bearing: a removed member no
-            # longer binds its key (docs/trust-model.md threat-model rulings).
-            expected = "identity_mismatch" if sender_retired else "verified"
-            assert shown["verification_status"] == expected, {
-                k: shown.get(k) for k in ("verification_status", "from_alias", "from_address", "from_did",
-                                          "from_stable_id", "to_did", "to_stable_id", "sender_membership")
-            }
+            yield message_id, conversation_id, binary, command_dir, command_env
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sender_retired", [False, True])
+@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
+async def test_local_sender_e2ee_mail_read_trust(privacy_app, tmp_path, global_resident, grant, sender_retired):
+    async with _local_sender_mail(privacy_app, tmp_path, global_resident, grant, sender_retired) as (
+            message_id, _, binary, command_dir, command_env):
+        result = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
+        shown = result["messages"][0]
+        assert shown["body"] == "local sender private text"
+        # The live roster re-check is load-bearing: a removed member no
+        # longer binds its key (docs/trust-model.md threat-model rulings).
+        expected = "identity_mismatch" if sender_retired else "verified"
+        assert shown["verification_status"] == expected, {
+            k: shown.get(k) for k in ("verification_status", "from_alias", "from_address", "from_did",
+                                      "from_stable_id", "to_did", "to_stable_id", "sender_membership")
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
+async def test_wake_bundle_presents_local_sender_e2ee_mail_verified(privacy_app, tmp_path, global_resident, grant):
+    """Drive the bundle aw embeds for its wake broker, decrypting through real aw."""
+    async with _local_sender_mail(privacy_app, tmp_path, global_resident, grant, False) as (
+            message_id, conversation_id, binary, command_dir, command_env):
+        terminal = tmp_path / "terminal"
+        terminal.mkdir()
+        delivered = tmp_path / "terminal-input.txt"
+        # Stands in for the terminal multiplexer only: it records what the
+        # broker types. Delivery, decryption and trust are all real.
+        oats = tmp_path / "oats"
+        oats.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1 $2\" = \"session inspect\" ]; then echo '{\"ok\":true,\"result\":{\"present\":true,\"state\":\"idle\"}}'; exit 0; fi\n"
+            f"if [ \"$1 $2\" = \"session input\" ]; then cat >> '{delivered}'; echo '{{\"ok\":true,\"result\":{{\"submitted\":true}}}}'; exit 0; fi\n"
+            "exit 1\n")
+        oats.chmod(0o755)
+        identity_home = command_env["AWEB_IDENTITY_HOME"]
+        lines = [
+            {"type": "init", "home": str(terminal), "oatsBin": str(oats), "awCommand": str(binary),
+             "bindings": [{"binding_id": "bob", "identity_home": identity_home, "team_id": TEAM,
+                           "delivery_store_path": str(tmp_path / "delivery.json")}]},
+            {"type": "event", "binding_id": "bob",
+             "event": {"type": "mail_message", "message_id": message_id, "conversation_id": conversation_id}},
+        ]
+        bundle = Path(__file__).resolve().parents[2] / "cli/go/wake/channel_core_runner_bundle.mjs"
+        runner = await asyncio.create_subprocess_exec(
+            "node", str(bundle), cwd=command_dir, env=command_env, stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            runner.stdin.write("".join(json.dumps(line) + "\n" for line in lines).encode())
+            await runner.stdin.drain()
+            statuses = []
+            try:
+                async with asyncio.timeout(30):
+                    while not (delivered.exists() and "Use the aw CLI" in delivered.read_text()):
+                        line = await runner.stdout.readline()
+                        assert line, f"runner exited: {statuses}"
+                        statuses.append(line.decode().strip())
+            except TimeoutError:
+                pytest.fail(f"wake runner presented nothing; statuses: {statuses}")
+        finally:
+            runner.stdin.write(b'{"type":"shutdown"}\n')
+            await runner.stdin.drain()
+            await asyncio.wait_for(runner.wait(), 10)
+        text = delivered.read_text()
+        assert "local sender private text" in text, text
+        assert "- trust_status: verified\n" in text, text
