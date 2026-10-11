@@ -25,8 +25,9 @@ from test_messages_http import _make_keypair, _make_certificate
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sender_retired", [False, True])
 @pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
-async def test_local_sender_e2ee_mail_reads_verified(privacy_app, tmp_path, global_resident, grant):
+async def test_local_sender_e2ee_mail_reads_verified(privacy_app, tmp_path, global_resident, grant, sender_retired):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc)
@@ -56,6 +57,12 @@ async def test_local_sender_e2ee_mail_reads_verified(privacy_app, tmp_path, glob
         "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": source,
     })
     assert sent.status_code == 200, sent.text
+    if sender_retired:
+        # Team lifecycle removal of a local member after it sent.
+        await env.db.execute("UPDATE {{tables.workspaces}} SET deleted_at = NOW() WHERE workspace_id = $1",
+                             env.actors["alice"].workspace)
+        await env.db.execute("UPDATE {{tables.agents}} SET deleted_at = NOW(), status = 'deleted' WHERE agent_id = $1",
+                             env.actors["alice"].id)
 
     identity_home = tmp_path / ".aw"
     identity_home.mkdir(mode=0o700)
