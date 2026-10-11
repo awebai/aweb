@@ -693,6 +693,11 @@ func (c *Client) canonicalTrustAddress(address string) string {
 	if namespace := c.namespaceSlug(); namespace != "" {
 		return namespace + "/" + address
 	}
+	// An addressless client (a local-resident grant) still has an
+	// authenticated team; bare aliases are members of that team's roster.
+	if domain, _, err := ParseTeamID(strings.TrimSpace(c.teamID)); err == nil {
+		return domain + "/" + address
+	}
 	return address
 }
 
@@ -794,6 +799,12 @@ func (c *Client) NormalizeSenderTrust(ctx context.Context, status VerificationSt
 	}
 	var meta *agentMeta
 	acceptedSignature := status == Verified || status == VerifiedLegacy || status == VerifiedCustodial
+	// A local sender is verified only through the live team roster. A bare
+	// alias that cannot be formed into a roster reference fails closed.
+	if acceptedSignature && !recipientBindingMismatch && !localTeamReference && strings.TrimSpace(fromStableID) == "" &&
+		!strings.ContainsAny(trustAddress, "/~") {
+		return VerificationStale, nil
+	}
 	if acceptedSignature && !recipientBindingMismatch && localTeamReference && strings.TrimSpace(fromDID) != "" {
 		fresh := c.resolveAgentMetaFresh(ctx, rawAddress, true)
 		if fresh == nil || !fresh.Resolved {

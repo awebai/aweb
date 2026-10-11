@@ -288,3 +288,23 @@ func TestNormalizeSenderTrustReportsStaleWhenLocalRefreshUnavailable(t *testing.
 		t.Fatalf("unavailable refresh status=%q, want %q", status, VerificationStale)
 	}
 }
+
+// A local sender is verified only through the live roster. Without a formable
+// roster reference the signature alone is not enough.
+func TestNormalizeSenderTrustFailsClosedForLocalSenderWithoutRosterReference(t *testing.T) {
+	c, err := New("http://example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetPinStore(NewPinStore(), "")
+	resolver := &localFreshResolver{fresh: &ResolvedIdentity{DID: "did:key:current", IdentityScope: IdentityModeLocal}}
+	c.SetResolver(resolver)
+
+	status, _ := c.NormalizeSenderTrust(context.Background(), Verified, "carol", "did:key:current", "", nil, nil, nil)
+	if status != VerificationStale {
+		t.Fatalf("status=%q, want %q", status, VerificationStale)
+	}
+	if got, _ := c.NormalizeSenderTrust(context.Background(), Failed, "carol", "did:key:current", "", nil, nil, nil); got != Failed {
+		t.Fatalf("failed signature status=%q, want %q", got, Failed)
+	}
+}
