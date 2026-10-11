@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.14
+
+- Report a sender the AWID registry definitively does not know (HTTP 404), such
+  as a retired local member named by its team-namespace address, as
+  `identity_mismatch` instead of `verification_stale`. An unavailable or
+  unreachable registry still yields `verification_stale`.
+
 ## 1.7.13
 
 - Allow grant receivers to authenticate the authoritative team roster read used

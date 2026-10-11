@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.13
+
+- Bundles the Channel Core sender-trust fixes released for the Claude channel
+  since Pi 0.3.12:
+  - Verify encrypted mail/chat push trust against the locally decrypted v2
+    envelope and the existing sender trust checks (channel 1.7.12). Pi 0.3.12
+    reports encrypted mail as unverified.
+  - Grant receivers authenticate the authoritative team roster read used for
+    same-team sender verification (channel 1.7.13).
+  - A sender the AWID registry definitively does not know (HTTP 404) is
+    `identity_mismatch`; an unavailable or unreachable registry stays
+    `verification_stale` (channel 1.7.14).
+- Surfaces grant verification failures reported on the event stream.
+- Also bundles Channel Core's terminal wake adapter changes made for the
+  `aw wake` broker.
+
 ## 0.3.12
 
 - Bundles Channel Core 0.2.0, including the shared terminal wake adapter
