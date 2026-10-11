@@ -316,6 +316,9 @@ async def test_channel_core_runtimes_present_local_sender_e2ee_mail_trust(
             if runtime == "pi" and grant and "not ready" not in str(refused):
                 pytest.fail(f"Pi in a grant seat failed for a reason other than aweb-abua: {refused}")
             raise
+        if runtime == "pi" and grant:
+            # A presentation of any trust status must not be absorbed by the xfail.
+            pytest.fail("aweb-abua appears fixed: Pi presented in a grant seat; remove the xfail")
         assert "local sender private text" in text, text
         assert status == expected, text
         # The runtimes resolve through Node's fetch; aw's own lookups are Go's.
