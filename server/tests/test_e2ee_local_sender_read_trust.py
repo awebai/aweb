@@ -1,9 +1,12 @@
 """Encrypted mail from a local sender is verified against the live team roster,
-both by `aw mail show` and by the channel-core bundle aw embeds for its wake broker.
+by `aw mail show` and by every channel-core runtime: the Claude channel plugin,
+the Pi extension and the bundle aw embeds for its wake broker.
 
 A local sender signs no address and no stable ID into the E2EE envelope.
-Real HTTP/DB/registry and real CLI subprocesses; the only stand-in records
-what the wake broker types into the terminal.
+Real HTTP/DB/registry and real CLI subprocesses. The stand-ins are the hosts
+only: what records the wake broker's terminal input, and the Pi session the
+extension runs in. Registry faults are real conditions: an unreachable
+registry, and a registry front that answers an address lookup with a 503.
 """
 from __future__ import annotations
 
@@ -13,6 +16,10 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
+import socket
+import subprocess
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -29,7 +36,8 @@ from test_messages_http import _make_keypair, _make_certificate
 
 @asynccontextmanager
 async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retired):
-    """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context."""
+    """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context
+    and the registry it resolves through."""
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc)
     identities = {}
@@ -115,10 +123,24 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
     child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
     child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
                      HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"))
-    async with _registry_http(env.registry_app) as (registry_url, _):
+    registry = SimpleNamespace(url="", responses=[], address_lookup_status=None)
+
+    async def recorded_registry(scope, receive, send):
+        async def record(event):
+            if event["type"] == "http.response.start":
+                registry.responses.append((scope["method"], scope["path"], event["status"]))
+            await send(event)
+        if registry.address_lookup_status and scope["type"] == "http" and "/addresses/" in scope["path"]:
+            await record({"type": "http.response.start", "status": registry.address_lookup_status, "headers": []})
+            await send({"type": "http.response.body", "body": b"registry unavailable"})
+            return
+        await env.registry_app(scope, receive, record)
+
+    async with _registry_http(recorded_registry) as (registry_url, _):
+        registry.url = registry_url
         child_env["AWID_REGISTRY_URL"] = registry_url
         async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
-            yield message_id, conversation_id, binary, command_dir, command_env
+            yield message_id, conversation_id, binary, command_dir, command_env, registry
 
 
 @pytest.mark.asyncio
@@ -126,7 +148,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
 @pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
 async def test_local_sender_e2ee_mail_read_trust(privacy_app, tmp_path, global_resident, grant, sender_retired):
     async with _local_sender_mail(privacy_app, tmp_path, global_resident, grant, sender_retired) as (
-            message_id, _, binary, command_dir, command_env):
+            message_id, _, binary, command_dir, command_env, _):
         result = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
         shown = result["messages"][0]
         assert shown["body"] == "local sender private text"
@@ -139,52 +161,155 @@ async def test_local_sender_e2ee_mail_read_trust(privacy_app, tmp_path, global_r
         }
 
 
+REPO = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(scope="module")
+def runtime_packages():
+    """Build the channel plugin and the Pi extension as they are packaged."""
+    for package in ("channel", "pi-extension"):
+        build = subprocess.run(["npm", "run", "build"], cwd=REPO / package, capture_output=True, text=True)
+        assert build.returncode == 0, build.stdout + build.stderr
+
+
+async def _read_until(process, presented, description):
+    """Read JSON lines from a runtime until `presented` accepts one."""
+    lines = []
+    try:
+        async with asyncio.timeout(30):
+            while True:
+                line = await process.stdout.readline()
+                assert line, f"{description} exited: {lines}"
+                lines.append(line.decode().strip())
+                try:
+                    found = presented(json.loads(line))
+                except ValueError:
+                    continue
+                if found:
+                    return found
+    except TimeoutError:
+        pytest.fail(f"{description} presented nothing; output: {lines}")
+
+
+async def _present_by_wake(tmp_path, binary, command_dir, command_env, message_id, conversation_id):
+    terminal = tmp_path / "terminal"
+    terminal.mkdir()
+    delivered = tmp_path / "terminal-input.txt"
+    # Stands in for the terminal multiplexer only: it records what the broker types.
+    oats = tmp_path / "oats"
+    oats.write_text(
+        "#!/bin/sh\n"
+        "if [ \"$1 $2\" = \"session inspect\" ]; then echo '{\"ok\":true,\"result\":{\"present\":true,\"state\":\"idle\"}}'; exit 0; fi\n"
+        f"if [ \"$1 $2\" = \"session input\" ]; then cat >> '{delivered}'; echo '{{\"ok\":true,\"result\":{{\"submitted\":true}}}}'; exit 0; fi\n"
+        "exit 1\n")
+    oats.chmod(0o755)
+    lines = [
+        {"type": "init", "home": str(terminal), "oatsBin": str(oats), "awCommand": str(binary),
+         "bindings": [{"binding_id": "bob", "identity_home": command_env["AWEB_IDENTITY_HOME"], "team_id": TEAM,
+                       "delivery_store_path": str(tmp_path / "delivery.json")}]},
+        {"type": "event", "binding_id": "bob",
+         "event": {"type": "mail_message", "message_id": message_id, "conversation_id": conversation_id}},
+    ]
+    runner = await asyncio.create_subprocess_exec(
+        "node", str(REPO / "cli/go/wake/channel_core_runner_bundle.mjs"), cwd=command_dir, env=command_env,
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    try:
+        runner.stdin.write("".join(json.dumps(line) + "\n" for line in lines).encode())
+        await runner.stdin.drain()
+        await _read_until(
+            runner, lambda _: delivered.exists() and "Use the aw CLI" in delivered.read_text(), "wake runner")
+    finally:
+        runner.stdin.write(b'{"type":"shutdown"}\n')
+        await runner.stdin.drain()
+        await asyncio.wait_for(runner.wait(), 10)
+    text = delivered.read_text()
+    status = re.search(r"^- trust_status: (\S+)$", text, re.MULTILINE)
+    return (status.group(1) if status else None), text
+
+
+async def _present_by_channel(tmp_path, binary, command_dir, command_env, message_id, conversation_id):
+    stderr = (tmp_path / "channel.stderr").open("wb")
+    plugin = await asyncio.create_subprocess_exec(
+        "node", str(REPO / "channel/dist/index.js"), cwd=command_dir, env=command_env,
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=stderr)
+    try:
+        # The MCP handshake Claude Code performs before it accepts notifications.
+        for message in (
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "pytest", "version": "0"}}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        ):
+            plugin.stdin.write((json.dumps(message) + "\n").encode())
+        await plugin.stdin.drain()
+        params = await _read_until(plugin, lambda message: message.get("method") == "notifications/claude/channel"
+                                   and message["params"]["meta"].get("message_id") == message_id
+                                   and message["params"], "channel plugin")
+    finally:
+        plugin.stdin.close()
+        plugin.terminate()
+        await asyncio.wait_for(plugin.wait(), 10)
+        stderr.close()
+    return params["meta"].get("trust_status"), params["content"]
+
+
+async def _present_by_pi(tmp_path, binary, command_dir, command_env, message_id, conversation_id):
+    session = await asyncio.create_subprocess_exec(
+        "node", str(Path(__file__).with_name("pi_extension_host.mjs")), str(REPO / "pi-extension/dist/index.js"),
+        command_dir, cwd=command_dir, env=command_env,
+        stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    def presented(message):
+        assert not (message.get("customType") == "aweb-channel-status" and "not ready" in message["content"]), (
+            message["content"])
+        return (message.get("customType") == "aweb-channel"
+                and message["details"].get("message_id") == message_id and message)
+
+    try:
+        message = await _read_until(session, presented, "pi extension")
+    finally:
+        session.stdin.close()
+        await asyncio.wait_for(session.wait(), 10)
+    return message["details"].get("trust_status"), message["content"]
+
+
+PRESENTERS = {"wake": _present_by_wake, "channel": _present_by_channel, "pi": _present_by_pi}
+
+
+def _unreachable_url():
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return f"http://127.0.0.1:{port}"
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sender_retired,registry_condition,expected", [
+    (False, "available", "verified"),
+    # A retired local sender is absent from the roster; the registry knows no
+    # address for it, which is a definitive absence.
+    (True, "available", "identity_mismatch"),
+    # Without a registry answer the sender is unconfirmed, never mismatched.
+    (True, "unavailable", "verification_stale"),
+    (True, "unreachable", "verification_stale"),
+])
 @pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
-async def test_wake_bundle_presents_local_sender_e2ee_mail_verified(privacy_app, tmp_path, global_resident, grant):
-    """Drive the bundle aw embeds for its wake broker, decrypting through real aw."""
-    async with _local_sender_mail(privacy_app, tmp_path, global_resident, grant, False) as (
-            message_id, conversation_id, binary, command_dir, command_env):
-        terminal = tmp_path / "terminal"
-        terminal.mkdir()
-        delivered = tmp_path / "terminal-input.txt"
-        # Stands in for the terminal multiplexer only: it records what the
-        # broker types. Delivery, decryption and trust are all real.
-        oats = tmp_path / "oats"
-        oats.write_text(
-            "#!/bin/sh\n"
-            "if [ \"$1 $2\" = \"session inspect\" ]; then echo '{\"ok\":true,\"result\":{\"present\":true,\"state\":\"idle\"}}'; exit 0; fi\n"
-            f"if [ \"$1 $2\" = \"session input\" ]; then cat >> '{delivered}'; echo '{{\"ok\":true,\"result\":{{\"submitted\":true}}}}'; exit 0; fi\n"
-            "exit 1\n")
-        oats.chmod(0o755)
-        identity_home = command_env["AWEB_IDENTITY_HOME"]
-        lines = [
-            {"type": "init", "home": str(terminal), "oatsBin": str(oats), "awCommand": str(binary),
-             "bindings": [{"binding_id": "bob", "identity_home": identity_home, "team_id": TEAM,
-                           "delivery_store_path": str(tmp_path / "delivery.json")}]},
-            {"type": "event", "binding_id": "bob",
-             "event": {"type": "mail_message", "message_id": message_id, "conversation_id": conversation_id}},
-        ]
-        bundle = Path(__file__).resolve().parents[2] / "cli/go/wake/channel_core_runner_bundle.mjs"
-        runner = await asyncio.create_subprocess_exec(
-            "node", str(bundle), cwd=command_dir, env=command_env, stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        try:
-            runner.stdin.write("".join(json.dumps(line) + "\n" for line in lines).encode())
-            await runner.stdin.drain()
-            statuses = []
-            try:
-                async with asyncio.timeout(30):
-                    while not (delivered.exists() and "Use the aw CLI" in delivered.read_text()):
-                        line = await runner.stdout.readline()
-                        assert line, f"runner exited: {statuses}"
-                        statuses.append(line.decode().strip())
-            except TimeoutError:
-                pytest.fail(f"wake runner presented nothing; statuses: {statuses}")
-        finally:
-            runner.stdin.write(b'{"type":"shutdown"}\n')
-            await runner.stdin.drain()
-            await asyncio.wait_for(runner.wait(), 10)
-        text = delivered.read_text()
+@pytest.mark.parametrize("runtime", sorted(PRESENTERS))
+async def test_channel_core_runtimes_present_local_sender_e2ee_mail_trust(
+        request, privacy_app, runtime_packages, tmp_path, runtime, global_resident, grant, sender_retired,
+        registry_condition, expected):
+    if runtime == "pi" and grant:
+        request.applymarker(pytest.mark.xfail(
+            strict=True, reason="aweb-abua: the Pi extension does not start its channel in a resident-grant seat"))
+    async with _local_sender_mail(privacy_app, tmp_path, global_resident, grant, sender_retired) as (
+            message_id, conversation_id, binary, command_dir, command_env, registry):
+        runtime_env = dict(command_env, PATH=f"{binary.parent}{os.pathsep}{command_env.get('PATH', '')}")
+        if registry_condition == "unavailable":
+            registry.address_lookup_status = 503
+        if registry_condition == "unreachable":
+            runtime_env["AWID_REGISTRY_URL"] = _unreachable_url()
+        status, text = await PRESENTERS[runtime](
+            tmp_path, binary, command_dir, runtime_env, message_id, conversation_id)
         assert "local sender private text" in text, text
-        assert "- trust_status: verified\n" in text, text
+        assert status == expected, text
+        if sender_retired and registry_condition == "available":
+            assert ("GET", "/v1/namespaces/example.test/addresses/alice", 404) in registry.responses, registry.responses
