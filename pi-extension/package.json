@@ -30,7 +30,7 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "@awebai/aw": "^1.22.1"
+    "@awebai/aw": "^1.36.35"
   },
   "devDependencies": {
     "@awebai/channel-core": "file:../channel-core",
