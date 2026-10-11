@@ -1,4 +1,4 @@
-"""Encrypted mail from a local sender reads back verified through the real aw CLI.
+"""Encrypted mail from a local sender is verified against the live team roster.
 
 A local sender signs no address and no stable ID into the E2EE envelope.
 Real HTTP/DB/registry, real CLI subprocesses; nothing is mocked.
@@ -27,7 +27,7 @@ from test_messages_http import _make_keypair, _make_certificate
 @pytest.mark.asyncio
 @pytest.mark.parametrize("sender_retired", [False, True])
 @pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, False), (True, True)])
-async def test_local_sender_e2ee_mail_reads_verified(privacy_app, tmp_path, global_resident, grant, sender_retired):
+async def test_local_sender_e2ee_mail_read_trust(privacy_app, tmp_path, global_resident, grant, sender_retired):
     env = privacy_app
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
     now = datetime.now(timezone.utc)
@@ -119,7 +119,10 @@ async def test_local_sender_e2ee_mail_reads_verified(privacy_app, tmp_path, glob
             result = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
             shown = result["messages"][0]
             assert shown["body"] == "local sender private text"
-            assert shown["verification_status"] == "verified", {
+            # The live roster re-check is load-bearing: a removed member no
+            # longer binds its key (docs/trust-model.md threat-model rulings).
+            expected = "identity_mismatch" if sender_retired else "verified"
+            assert shown["verification_status"] == expected, {
                 k: shown.get(k) for k in ("verification_status", "from_alias", "from_address", "from_did",
                                           "from_stable_id", "to_did", "to_stable_id", "sender_membership")
             }
