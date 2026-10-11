@@ -32,6 +32,7 @@ from aweb.mutation_hooks import create_mutation_handler
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.status import status_stream
 from aweb.team_auth_deps import TeamIdentity
+from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.registry import RegistryClient
 from awid_service.db import AwidDatabaseInfra
 from awid_service.main import create_app as create_registry_app
@@ -64,7 +65,12 @@ async def privacy_app(shared_test_pool, monkeypatch):
         await db.initialize(shared_pool=shared_test_pool)
         registry_db = AwidDatabaseInfra(schema="privacy_registry")
         await registry_db.initialize(shared_pool=shared_test_pool)
-        registry_app = create_registry_app(db_infra=registry_db, redis=redis)
+        # Registry rate limits are not under test here; an in-memory window
+        # keeps each app's DID registrations out of the per-IP window that
+        # every run on the shared Redis would otherwise consume.
+        registry_app = create_registry_app(
+            db_infra=registry_db, redis=redis, rate_limiter=MemoryFixedWindowRateLimiter(),
+        )
         async with registry_app.router.lifespan_context(registry_app):
             registry = RegistryClient(
                 registry_url="http://registry.test",
@@ -167,6 +173,19 @@ async def _next_event(lines):
             if line.startswith("data: "):
                 return json.loads(line[6:])
     raise AssertionError("SSE ended before expected event")
+
+
+@pytest.mark.asyncio
+async def test_registry_rate_limit_window_is_private_to_each_app(privacy_app):
+    # DID registrations count against a per-IP window. Kept in shared Redis,
+    # every run on the host would draw from one window; the registry reports
+    # the limiter it counts in.
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=privacy_app.registry_app), base_url="http://registry.test",
+    ) as registry:
+        health = await registry.get("/health")
+    assert health.status_code == 200, health.text
+    assert health.json()["checks"]["rate_limiter"] == "MemoryFixedWindowRateLimiter"
 
 
 @pytest.mark.asyncio

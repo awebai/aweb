@@ -19,7 +19,6 @@ import pytest
 
 from awid.did import stable_id_from_did_key
 from awid.e2ee_keys import build_encryption_key_assertion
-from awid.ratelimit import MemoryFixedWindowRateLimiter
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import encrypt_e2ee_mail, generate_x25519_keypair
 from test_addressless_sender_cli import _registry_http
@@ -32,9 +31,6 @@ from test_messages_http import _make_keypair, _make_certificate
 async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retired):
     """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context."""
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
-    # Keep this test's DID registrations out of the per-IP Redis window that
-    # every privacy_app test shares; registry rate limits are not under test.
-    env.registry_app.state.rate_limiter = MemoryFixedWindowRateLimiter()
     now = datetime.now(timezone.utc)
     identities = {}
     for name in ("alice", "bob"):
