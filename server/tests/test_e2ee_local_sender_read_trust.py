@@ -19,7 +19,7 @@ from awid.signing import canonical_json_bytes, sign_message
 from aweb.e2ee_messages import generate_x25519_keypair
 from test_cli_human_reply import _cli, _pem
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
-from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers
+from test_messages_http import _encode_certificate, _make_keypair, _make_certificate, _signed_team_headers
 
 
 async def _cli_binary(tmp_path):
@@ -56,7 +56,7 @@ async def _home(env, tmp_path, name, team_sk, team_did, now, global_scope):
         cert.pop("member_address")
     cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
     body = json.dumps(assertion).encode()
-    headers = _signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate, body)
+    headers = _signed_team_headers(actor.sk, actor.did, TEAM, _encode_certificate(cert), body)
     headers["Content-Type"] = "application/json"
     published = await env.client.put("/v1/agents/me/encryption-key", content=body, headers=headers)
     assert published.status_code == 200, published.text
