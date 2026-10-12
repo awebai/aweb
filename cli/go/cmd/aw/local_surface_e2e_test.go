@@ -321,11 +321,13 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	teamHumanAddRuntime = ""
 	teamHumanAddHome = ""
 	for _, tc := range []struct {
-		name        string
-		prepareHome func(t *testing.T, home string) (outsidePath string, wantContent string)
+		name         string
+		linkRelative string
+		prepareHome  func(t *testing.T, home string) (outsidePath string, wantContent string)
 	}{
 		{
-			name: "unsafeclaudedir",
+			name:         "unsafeclaudedir",
+			linkRelative: ".claude",
 			prepareHome: func(t *testing.T, home string) (string, string) {
 				t.Helper()
 				outsideDir := t.TempDir()
@@ -337,7 +339,8 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			},
 		},
 		{
-			name: "unsafeclaudesettings",
+			name:         "unsafeclaudesettings",
+			linkRelative: ".claude/settings.json",
 			prepareHome: func(t *testing.T, home string) (string, string) {
 				t.Helper()
 				if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
@@ -355,18 +358,46 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 			},
 		},
 	} {
-		t.Run("unsafe coordination config "+tc.name, func(t *testing.T) {
+		t.Run("preserves unused Claude config "+tc.name, func(t *testing.T) {
 			unsafeHome := filepath.Join(root, tc.name+"-home")
 			if err := os.MkdirAll(unsafeHome, 0o755); err != nil {
 				t.Fatal(err)
 			}
 			outsidePath, wantContent := tc.prepareHome(t, unsafeHome)
-			teamHumanAddHome = unsafeHome
-			err := runTeamHumanAdd(nil, []string{tc.name + "@aweb.engineering/coordinator"})
-			teamHumanAddHome = ""
-			if err == nil || !strings.Contains(err.Error(), "must not be a symlink") {
-				t.Fatalf("unsafe profile add error=%v", err)
+			linkPath := filepath.Join(unsafeHome, filepath.FromSlash(tc.linkRelative))
+			linkBefore, err := os.Lstat(linkPath)
+			if err != nil {
+				t.Fatal(err)
 			}
+			targetBefore, err := os.Readlink(linkPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			teamHumanAddHome = unsafeHome
+			err = runTeamHumanAdd(nil, []string{tc.name + "@aweb.engineering/coordinator"})
+			teamHumanAddHome = ""
+			if err != nil {
+				t.Fatalf("materialization must leave unused Claude settings alone: %v", err)
+			}
+			linkAfter, err := os.Lstat(linkPath)
+			if err != nil || linkAfter.Mode()&os.ModeSymlink == 0 || !os.SameFile(linkBefore, linkAfter) {
+				t.Fatalf("Claude config symlink changed: %v", err)
+			}
+			targetAfter, err := os.Readlink(linkPath)
+			if err != nil || targetAfter != targetBefore {
+				t.Fatalf("Claude config link target changed: %q, %v", targetAfter, err)
+			}
+			agents, err := os.ReadFile(filepath.Join(unsafeHome, "AGENTS.md"))
+			if err != nil || !bytes.Contains(agents, []byte(awDocsMarkerStart)) || !bytes.Contains(agents, []byte("Use aw.")) {
+				t.Fatalf("coordination instructions missing: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(unsafeHome, ".aw", "profile", "ref.json")); err != nil {
+				t.Fatalf("profile not materialized: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(unsafeHome, ".mcp.json")); !os.IsNotExist(err) {
+				t.Fatalf("unexpected per-home MCP config: %v", err)
+			}
+
 			data, readErr := os.ReadFile(outsidePath)
 			if wantContent == "" {
 				if !os.IsNotExist(readErr) {
@@ -586,12 +617,8 @@ func assertMaterializedHomeHasAwebCoordination(t *testing.T, home, expectedBody 
 	if _, err := os.Stat(filepath.Join(home, ".mcp.json")); !os.IsNotExist(err) {
 		t.Fatalf("materialized home unexpectedly has per-home channel .mcp.json: %v", err)
 	}
-	hooksRaw, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
-	if err != nil {
-		t.Fatalf("materialized home missing Claude hook config: %v", err)
-	}
-	if !strings.Contains(string(hooksRaw), notifyHookCommand) {
-		t.Fatalf("Claude settings missing notify hook: %s", hooksRaw)
+	if _, err := os.Lstat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("fresh materialized home unexpectedly has Claude hook settings: %v", err)
 	}
 }
 
