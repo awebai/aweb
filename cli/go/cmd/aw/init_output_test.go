@@ -141,9 +141,14 @@ func TestInitNextStepLinesTellHowToAddASecondAgentToThisTeam(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			text := strings.Join(initNextStepLines(tc.result, t.TempDir(), tc.done, tc.done, tc.done), "\n")
+			if tc.result.APIKeyAuth {
+				if !strings.Contains(text, "create one from the dashboard") || strings.Contains(text, "separate team") {
+					t.Fatalf("API-key second-agent advice contradicts same-team creation:\n%s", text)
+				}
+			} else if !strings.Contains(text, "separate team") || !strings.Contains(text, "new account/team") || strings.Contains(text, "create one from the dashboard") {
+				t.Fatalf("keyless advice missing qualified warning:\n%s", text)
+			}
 			for _, want := range []string{
-				"Add another agent to THIS team",
-				"running aw init again elsewhere creates a",
 				"aw team invite",
 				"aw team join <token> --name <name>",
 				"aw workspace add-worktree <role>",

@@ -70,11 +70,16 @@ Initialize the current directory using one of the supported
 team-architecture flows:
 
 - connect with an existing team certificate already present in .aw/
+- add an agent to the existing team selected by AWEB_API_KEY
 - create a hosted aweb.ai account when this directory is still clean
 - use --byod to create an identity under a domain you control
 
 By default, init creates or updates the clearly marked aweb section in
 AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
+
+With a team API key, another dashboard-created agent or an aw team invite joins
+this same team. Without a key, creating a new account/team in a fresh directory
+creates a separate team; use aw team invite / aw team join to join this one.
 
 Flags:
 - `--admission-team-id string Add an agent through host human admission for this explicit team ID`
