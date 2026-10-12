@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
@@ -173,6 +173,7 @@ describe.sequential("channel integration", () => {
   let aliceDir = "";
   let bobDir = "";
   let server: ServerHandle;
+  let domain: string;
   let alice: IdentityInfo;
   let bob: IdentityInfo;
   let mcpClient: Client | undefined;
@@ -204,7 +205,7 @@ describe.sequential("channel integration", () => {
     server = await ensureServer(tempRoot);
     await ensureAwBinary();
 
-    const domain = `channel-${Date.now()}.test`;
+    domain = `channel-${Date.now()}.test`;
     const team = "devteam";
 
     alice = await createIdentity(homeDir, aliceDir, server.awidURL, "alice", domain);
@@ -369,6 +370,52 @@ describe.sequential("channel integration", () => {
 
     expect(channelStderr).not.toContain("fatal:");
   }, 120_000);
+
+  test("verifies a re-initialized same-alias local sender without restarting the receiver", async () => {
+    const senderDir = join(tempRoot, "rowan");
+    await mkdir(senderDir);
+    const invite = await inviteMember(homeDir, aliceDir, server.awidURL, domain, "devteam");
+    await runAwJSON(homeDir, senderDir, server.awidURL, [
+      "--json", "id", "team", "accept-invite", invite.token, "--local", "--name", "rowan",
+    ]);
+    await initWorkspace(homeDir, senderDir, server.awidURL, server.awebURL);
+    // This is a new local identity, not global rotation or address replacement.
+    const roster = await runAwJSON<{ members: Array<{ alias: string; member_did_key: string; identity_scope: string }> }>(
+      homeDir, aliceDir, server.awidURL, ["--json", "id", "team", "members", "--namespace", domain, "--team", "devteam"],
+    );
+    const member = roster.members.find(item => item.alias === "rowan");
+    expect(member?.identity_scope).toBe("local");
+    const oldDID = member?.member_did_key;
+    expect(oldDID).toBeTruthy();
+    await startChannelIfNeeded();
+    const receiverTransport = transport;
+    const before = await sendMailViaAW(homeDir, senderDir, server.awidURL, "bob", "local before re-init");
+    const first = await notifications.waitFor(item => item.meta.message_id === before.message_id);
+    expect(first.meta.trust_status).toBe("verified");
+    expect(first.meta.verified).toBe("true");
+
+    // Re-create the sender's lost key through the real BYOT team-controller
+    // replacement API, then re-init it. Only this disposable sender is changed.
+    await rename(join(senderDir, ".aw", "signing.key"), join(senderDir, ".aw", "signing.key.old"));
+    const replacement = await runAwJSON<{ new_did_key: string }>(homeDir, aliceDir, server.awidURL, [
+      "--json", "team", "admin", "replace-key", "rowan", "--old-did-key", oldDID!,
+      "--home", senderDir, "--generate-new-key", "--aweb-url", server.awebURL,
+    ]);
+    expect(replacement.new_did_key).not.toBe(oldDID);
+    await initWorkspace(homeDir, senderDir, server.awidURL, server.awebURL);
+    // The new did:key is a different participant; it cannot continue the old
+    // identity's conversation. Start a new signed conversation explicitly.
+    const after = await runAwJSON<MailSendInfo>(homeDir, senderDir, server.awidURL, [
+      "--json", "mail", "send", "--to", "bob", "--body", "local after re-init", "--new-conversation",
+    ]);
+    const second = await notifications.waitFor(item => item.meta.message_id === after.message_id);
+    console.log(`LOCAL_RESPAWN_PROOF ${JSON.stringify({ old_did: oldDID, new_did: replacement.new_did_key,
+      before: first.meta.trust_status, after: second.meta.trust_status, verified: second.meta.verified,
+      receiver_restarted: transport !== receiverTransport })}`);
+    expect(second.meta.trust_status, JSON.stringify(second)).toBe("verified");
+    expect(second.meta.verified).toBe("true");
+    expect(transport).toBe(receiverTransport);
+  }, 90_000);
 
   test("fresh isolated Claude session wakes through the exact distinct MCP name beside an aweb fixture", async () => {
     const configPath = process.env.AWEB_CHANNEL_NAME_LIVE_CONFIG;

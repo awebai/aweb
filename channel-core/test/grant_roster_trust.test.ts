@@ -61,6 +61,90 @@ describe.each(["grant", "team"] as const)("%s receiver authoritative roster", mo
     expect(requests).toHaveLength(variant === "forged-message" ? 0 : 1);
     expect(registry.resolveIdentity).not.toHaveBeenCalled();
   });
+  test.each([
+    ["replacement", "verified"], ["other-key", "identity_mismatch"], ["absent", "identity_mismatch"], ["absent-address", "identity_mismatch"],
+    ["unavailable", "verification_stale"], ["wrong-team", "verification_stale"],
+    ["global", "identity_mismatch"],
+  ])("cached local key refresh: %s => %s", async (variant, expected) => {
+    const receiver = seed(96), previous = seed(97), sender = seed(98);
+    const client = new APIClient("https://aweb.example", {
+      did: did(receiver), stableID: "", signingKey: receiver, teamID: team,
+      authMode: mode, grantID: mode === "grant" ? "synthetic-grant" : undefined,
+      teamCertificateHeader: mode === "team" ? "synthetic-certificate" : "",
+    });
+    // The external aweb HTTP boundary changes its authoritative roster after
+    // the receiver has cached the old local key. All auth/signature/trust code
+    // is real; this fixture stands only for the remote server response.
+    let phase = "before";
+    const freshHeaders: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+      freshHeaders.push(new Headers(init.headers).get("Cache-Control"));
+      if (phase !== "before" && variant === "unavailable") return new Response("unavailable", { status: 503 });
+      return new Response(JSON.stringify({
+        team_id: phase !== "before" && variant === "wrong-team" ? "other:acme.com" : team,
+        agents: phase !== "before" && variant.startsWith("absent") ? [] : [{ alias: "alice",
+          did_key: phase === "before" || variant === "other-key" ? did(previous) : did(sender),
+          identity_scope: phase !== "before" && variant === "global" ? "global" : "local" }],
+      }));
+    }));
+    let now = 0;
+    const trust = new SenderTrustManager(client, {} as never, team, did(receiver), "", () => now, () => 0);
+    const store = new PinStore();
+    const address = variant === "absent-address" ? "acme.com/alice" : "alice";
+    expect((await trust.normalizeTrust(store, "verified", address, did(previous), undefined, did(receiver))).status).toBe("verified");
+    phase = "after";
+    const payload = JSON.stringify({ from_did: did(sender), to_did: did(receiver), body: "replacement" });
+    const signature = Buffer.from(ed.sign(Buffer.from(payload), sender)).toString("base64").replace(/=+$/, "");
+    const verified = await verifySignedPayload(payload, signature, did(sender), did(sender));
+    const prepare = () => trust.resolveTrustMetadata(verified, address, undefined, did(receiver), undefined,
+      { pinStore: store, fromDID: did(sender), verificationAddress: "alice" });
+    // Concurrent arrivals coalesce one refresh before any pin lock/decision.
+    const metadata = await Promise.all(Array.from({ length: 10 }, prepare));
+    for (const resolved of metadata) {
+      expect((await trust.normalizeResolvedTrust(store, verified, address, did(sender), undefined, did(receiver),
+        undefined, undefined, undefined, undefined, resolved)).status).toBe(expected);
+    }
+    for (let n = 0; n < 10; n++) {
+      expect((await trust.normalizeTrust(store, verified, address, did(sender), undefined, did(receiver))).status).toBe(expected);
+    }
+    expect(freshHeaders).toEqual([null, "no-cache"]);
+    expect(store.pins.size).toBe(0);
+    if (variant === "other-key") {
+      now = 10_001;
+      await trust.normalizeTrust(store, verified, address, did(sender), undefined, did(receiver));
+      expect(freshHeaders).toEqual([null, "no-cache", "no-cache"]);
+    }
+  });
+
+  test.each(["match", "failed-signature", "wrong-recipient", "global-metadata", "stable-sender"])(
+    "cached mismatch refresh excludes %s", async variant => {
+      const receiver = seed(99), oldSender = seed(100), newSender = seed(101);
+      const client = new APIClient("https://aweb.example", {
+        did: did(receiver), stableID: "", signingKey: receiver, teamID: team,
+        authMode: mode, grantID: mode === "grant" ? "synthetic-grant" : undefined,
+        teamCertificateHeader: mode === "team" ? "synthetic-certificate" : "",
+      });
+      const requests: Array<string | null> = [];
+      vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
+        requests.push(new Headers(init.headers).get("Cache-Control"));
+        return new Response(JSON.stringify({ team_id: team, agents: [{ alias: "alice", did_key: did(oldSender),
+          identity_scope: variant === "global-metadata" ? "global" : "local" }] }));
+      }));
+      const trust = new SenderTrustManager(client, {} as never, team, did(receiver));
+      const store = new PinStore();
+      await trust.normalizeTrust(store, "verified", "alice", did(oldSender), undefined, did(receiver));
+      const presented = variant === "match" ? oldSender : newSender;
+      const payload = JSON.stringify({ from_did: did(presented), to_did: did(receiver), body: "guard" });
+      const signature = Buffer.from(ed.sign(Buffer.from(payload), variant === "failed-signature" ? oldSender : presented)).toString("base64").replace(/=+$/, "");
+      const status = await verifySignedPayload(payload, signature, did(presented), did(presented));
+      const result = await trust.normalizeTrust(store, status, "alice", did(presented),
+        variant === "stable-sender" ? "did:aw:alice" : undefined,
+        variant === "wrong-recipient" ? did(oldSender) : did(receiver));
+      expect(result.status).toBe(variant === "match" ? "verified" : variant === "failed-signature" ? "failed" : "identity_mismatch");
+      expect(requests).toEqual([null]);
+    },
+  );
+
 });
 
 test("grant roster capability never falls back to a certificate on incomplete grant state", () => {

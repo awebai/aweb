@@ -603,18 +603,19 @@ describe("SenderTrustManager", () => {
     expect(resolveIdentity).toHaveBeenCalledTimes(1);
   });
 
-  test("reconciles local metadata through a normal cached read after one hour", async () => {
+  test("refreshes a same-alias replacement before the roster or metadata cache expires", async () => {
     const previousIdentity = await didFromSeed(53);
     const currentIdentity = await didFromSeed(54);
     let now = 0;
     let rosterDID = previousIdentity.did;
+    const getFresh = vi.fn(async () => localRoster({ did_key: rosterDID, identity_scope: "local" }));
     const get = vi.fn(async () => localRoster({
       did_key: rosterDID,
       identity_scope: "local",
       custody: "self",
     }));
     const trust = new SenderTrustManager(
-      authenticatedTeamClient({ get }),
+      authenticatedTeamClient({ get, getFresh }),
       { verifyStableIdentity: async () => ({ outcome: "OK_DEGRADED" }) } as never,
       "backend:acme.com",
       "",
@@ -626,20 +627,21 @@ describe("SenderTrustManager", () => {
       new PinStore(), "verified", "alice", previousIdentity.did, undefined, undefined,
     )).status).toBe("verified");
     rosterDID = currentIdentity.did;
-    now = (60 * 60 * 1000) - 1;
+    now = 1;
     expect((await trust.normalizeTrust(
       new PinStore(), "verified", "alice", currentIdentity.did, undefined, undefined,
-    )).status).toBe("identity_mismatch");
+    )).status).toBe("verified");
     expect(get).toHaveBeenCalledTimes(1);
 
     now += 2;
     expect((await trust.normalizeTrust(
       new PinStore(), "verified", "alice", currentIdentity.did, undefined, undefined,
     )).status).toBe("verified");
-    expect(get).toHaveBeenCalledTimes(2);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(getFresh).toHaveBeenCalledTimes(1);
   });
 
-  test("repeated local mismatches use the cached roster and remain fail closed", async () => {
+  test("rate-bounds repeated local mismatches after one fresh roster read", async () => {
     const currentIdentity = await didFromSeed(51);
     const messageIdentity = await didFromSeed(52);
     const get = vi.fn(async () => localRoster({
@@ -671,7 +673,7 @@ describe("SenderTrustManager", () => {
       expect(result.status).toBe("identity_mismatch");
     }
 
-    expect(getFresh).not.toHaveBeenCalled();
+    expect(getFresh).toHaveBeenCalledTimes(1);
     expect(get).toHaveBeenCalledTimes(1);
   });
 

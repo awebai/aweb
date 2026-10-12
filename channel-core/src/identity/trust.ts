@@ -124,6 +124,7 @@ export function normalizeIdentityScope(
 export class SenderTrustManager {
   private readonly metaCache = new Map<string, AgentMetaCacheEntry>();
   private readonly preparedMetadata = new WeakSet<ResolvedTrustMetadata>();
+  private readonly localMismatchRefreshAfter = new Map<string, number>();
   private teamRosterCache: TeamRosterCacheEntry | undefined;
   private teamRosterRequest: Promise<LocalAgentsResponse> | undefined;
 
@@ -166,7 +167,32 @@ export class SenderTrustManager {
       return undefined;
     }
     const trustAddress = this.canonicalTrustAddress(trimmedAddress);
-    const meta = await this.resolveAgentMeta(trimmedAddress);
+    const cachedMeta = this.metaCache.get(trustAddress);
+    const cachedRoster = this.teamRosterCache;
+    const usedCachedMetadata = (cachedMeta && this.now() <= cachedMeta.expiresAt)
+      || (cachedRoster && "roster" in cachedRoster && this.now() <= cachedRoster.expiresAt);
+    let meta = await this.resolveAgentMeta(trimmedAddress);
+    if (
+      usedCachedMetadata
+      && rosterAlias !== undefined
+      && (status === "verified" || status === "verified_legacy" || status === "verified_custodial")
+      && context?.fromDID
+      && !fromStableID?.startsWith("did:aw:")
+      && meta.resolved
+      && meta.identityScope === "local"
+      && meta.did
+      && meta.did !== context.fromDID
+      && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)
+    ) {
+      // Resolve before the pin lock. Local aliases follow the authenticated
+      // roster, not global TOFU continuity. Concurrent refreshes share the
+      // roster request; repeated non-member keys get a short quiet interval.
+      meta = await this.resolveAgentMeta(trimmedAddress, true);
+      this.localMismatchRefreshAfter.set(trustAddress, this.now() + this.jitteredTTL(
+        TEAM_ROSTER_FAILURE_BACKOFF_MIN_MS,
+        TEAM_ROSTER_FAILURE_BACKOFF_JITTER_MS,
+      ));
+    }
     const stableIdentityCheck = context && meta.resolved && meta.identityScope !== "local"
       ? await this.prepareStableIdentityRegistry(
         context.pinStore,
@@ -769,17 +795,17 @@ export class SenderTrustManager {
     return { status: acceptedStatus, stored: removed };
   }
 
-  private async resolveAgentMeta(address: string): Promise<AgentMeta> {
+  private async resolveAgentMeta(address: string, forceRefresh = false): Promise<AgentMeta> {
     const rawAddress = address.trim();
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     if (!trustAddress) {
       return { identityScope: "global", custody: "self", resolved: false };
     }
     const cached = this.metaCache.get(trustAddress);
-    if (cached && this.now() <= cached.expiresAt) return cached.meta;
+    if (!forceRefresh && cached && this.now() <= cached.expiresAt) return cached.meta;
 
     try {
-      const identity = await this.resolveIdentity(rawAddress);
+      const identity = await this.resolveIdentity(rawAddress, forceRefresh);
       const meta: AgentMeta = {
         did: identity.did,
         identityScope: identity.identityScope,
@@ -825,7 +851,7 @@ export class SenderTrustManager {
     );
   }
 
-  private async resolveIdentity(address: string): Promise<ResolvedIdentity> {
+  private async resolveIdentity(address: string, forceRefresh = false): Promise<ResolvedIdentity> {
     const trimmed = address.trim();
     if (!trimmed) {
       throw new Error("missing address");
@@ -841,11 +867,14 @@ export class SenderTrustManager {
       throw new Error("team roster resolution requires authenticated team access");
     }
 
-    const roster = await this.resolveAuthenticatedTeamRoster();
+    const roster = await this.resolveAuthenticatedTeamRoster(forceRefresh);
     const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === localAlias);
     if (!response) {
       const qualifiedTeamPrefix = `${this.teamID.toLowerCase()}/`;
-      if (trimmed.includes("/") && !trimmed.toLowerCase().startsWith(qualifiedTeamPrefix)) {
+      // A forced refresh was selected for a previously confirmed local sender.
+      // Its projected domain address must not fall through to global authority
+      // when the authenticated roster says that local member is gone.
+      if (!forceRefresh && trimmed.includes("/") && !trimmed.toLowerCase().startsWith(qualifiedTeamPrefix)) {
         return this.registry.resolveIdentity(trimmed);
       }
       throw Object.assign(new Error(`local alias ${localAlias} is absent from the authenticated team roster`), {
@@ -865,15 +894,18 @@ export class SenderTrustManager {
     };
   }
 
-  private async resolveAuthenticatedTeamRoster(): Promise<LocalAgentsResponse> {
+  private async resolveAuthenticatedTeamRoster(forceRefresh = false): Promise<LocalAgentsResponse> {
     const cached = this.teamRosterCache;
     if (cached && this.now() <= cached.expiresAt) {
-      if ("roster" in cached) return cached.roster;
-      throw cached.error;
+      if ("error" in cached) throw cached.error;
+      if (!forceRefresh) return cached.roster;
     }
     if (this.teamRosterRequest) return this.teamRosterRequest;
 
-    const request = this.client.get<LocalAgentsResponse>("/v1/agents").then((roster) => {
+    const read = forceRefresh && typeof this.client.getFresh === "function"
+      ? this.client.getFresh<LocalAgentsResponse>("/v1/agents")
+      : this.client.get<LocalAgentsResponse>("/v1/agents");
+    const request = read.then((roster) => {
       if ((roster.team_id || "").trim() !== this.teamID) {
         throw new Error("team roster response does not match the authenticated team");
       }
