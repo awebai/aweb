@@ -76,6 +76,13 @@ team-architecture flows:
 By default, init creates or updates the clearly marked aweb section in
 AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
 
+The channel plugin or host wake broker is the preferred notification path.
+--setup-hooks explicitly enables a Claude Code chat-only polling fallback:
+notices arrive after tool calls, with no mail or idle wake-up support.
+After confirming channel/broker delivery, use --remove-notify-hook on its own
+for backed-up removal of the exact aw notify PostToolUse entry from this
+project's .claude/settings.json. Init and upgrades never remove it implicitly.
+
 Flags:
 - `--admission-team-id string Add an agent through host human admission for this explicit team ID`
 - `--agent-type string Runtime type (default: AWEB_AGENT_TYPE or agent)`
@@ -96,10 +103,11 @@ Flags:
 - `--new-account Explicitly create a new hosted aweb.ai account`
 - `--new-team Explicitly create a new self-hosted/BYOD team`
 - `--print-exports Print shell export lines after JSON output`
+- `--remove-notify-hook Remove only the exact aw notify PostToolUse hook from project settings, with a backup (standalone local action)`
 - `--role string Compatibility alias for --role-name`
 - `--role-name string Workspace role name (must match a role in the active team roles bundle)`
 - `--setup-channel Set up Claude Code aweb-channel plugin for real-time coordination`
-- `--setup-hooks Set up Claude Code PostToolUse hook for aw notify`
+- `--setup-hooks Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)`
 - `--url string Base URL for the aweb server used for init, bootstrap, and hosted onboarding flows`
 - `--username string Hosted username to create`
 - `--workspace-key string OATS canonical format-1 workspace key for --workspace-team`
@@ -2897,13 +2905,11 @@ Silent if no pending chats; outputs JSON with additionalContext if there are
 messages waiting. Designed for Claude Code PostToolUse hooks so notifications
 are surfaced to the agent automatically.
 
-Hook configuration in .claude/settings.json (set up via aw init --setup-hooks):
-  "hooks": {
-    "PostToolUse": [{
-      "matcher": ".*",
-      "hooks": [{"type": "command", "command": "aw notify"}]
-    }]
-  }
+This is an explicit Claude Code chat-polling fallback. Prefer the aweb channel
+plugin or host wake broker for mail, chat and idle wake-ups. It does not install
+Codex hooks. Use aw init --setup-hooks only when this fallback is needed.
+After confirming channel/broker delivery, aw init --remove-notify-hook removes
+only the exact project PostToolUse entry, with a backup.
 
 Flags:
 - `-h, --help help for notify`

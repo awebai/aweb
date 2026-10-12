@@ -73,7 +73,22 @@ Diagnose and fix the aweb channel setup for this project.
    Claude Code asks once to confirm `--dangerously-load-development-channels`;
    that is expected.
 
-5. **Mention Pi.** Pi is the other maintained wake-up path: `pi install
+5. **Offer removal of an old polling fallback after delivery works.** Plugin
+   installation alone does not prove delivery. Once the user confirms channel or
+   host broker delivery, explain the optional local cleanup:
+
+   ```bash
+   aw init --remove-notify-hook
+   ```
+
+   Run it when the user asks to remove the fallback. It backs up the historical
+   project `.claude/settings.json`, removes only exact `aw notify` commands under
+   `PostToolUse`, and preserves other settings bytes. Do not remove hooks merely
+   because init, an upgrade or plugin installation ran. `--setup-hooks` remains
+   an explicit Claude Code fallback for chat notices after tool calls, with no
+   mail or idle wake-ups; it does not configure Codex hooks.
+
+6. **Mention Pi.** Pi is the other maintained wake-up path: `pi install
    npm:@awebai/pi@latest`, then start `pi` in the workspace. Mail and chat wake
    the session, with the sender's verification shown.
 

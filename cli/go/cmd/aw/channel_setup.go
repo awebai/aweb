@@ -175,6 +175,8 @@ func printChannelStartInstructions() {
 	for _, line := range channelPiPathLines {
 		fmt.Println("  " + line)
 	}
+	fmt.Println("  Once channel or broker delivery works, remove an old chat-polling hook with:")
+	fmt.Println("    aw init --remove-notify-hook")
 }
 
 func printManualChannelInstructions() {

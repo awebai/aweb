@@ -31,7 +31,9 @@ var rootCmd = &cobra.Command{
 	Short: "aweb CLI",
 	Long:  "aweb CLI\n\nSet AW_NO_UPDATE_CHECK=1 to disable automatic update checks.",
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		if isIdentityHomeNeutralCommand(cmd) {
+		// Explicit Claude settings cleanup uses cwd only; no credential selection,
+		// assertion renewal or update checks are needed for this local action.
+		if isIdentityHomeNeutralCommand(cmd) || (cmd == initCmd && initRemoveNotifyHook) {
 			return nil
 		}
 		if !debugFlag && os.Getenv("AW_DEBUG") == "1" {

@@ -58,7 +58,7 @@ func SetupClaudeHooks(repoRoot string, askConfirmation bool) *claudeHooksResult 
 
 	migrated := replaceLegacyNotifyHooks(settings)
 	if !migrated && askConfirmation {
-		answer, err := promptString("Set up Claude Code hook for chat notifications? (y/n)", "y")
+		answer, err := promptString("Enable Claude Code polling fallback? (chat only, after tool calls; no mail or idle wake-ups) (y/n)", "n")
 		if err != nil {
 			result.Error = err
 			result.Skipped = true
@@ -216,9 +216,9 @@ func printClaudeHooksResult(result *claudeHooksResult) {
 	if result == nil {
 		return
 	}
+	fmt.Fprintln(os.Stderr, "Claude Code polling fallback: chat only, after tool calls; no mail or idle wake-ups. Prefer the aweb channel plugin or host wake broker.")
 	if result.Error != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not set up Claude Code hooks: %v\n", result.Error)
-		printManualHookInstructions()
 		return
 	}
 	if result.AlreadyExists {
@@ -227,7 +227,6 @@ func printClaudeHooksResult(result *claudeHooksResult) {
 	}
 	if result.Skipped {
 		fmt.Println("Claude Code hook: skipped")
-		printManualHookInstructions()
 		return
 	}
 	if result.Created {
@@ -237,17 +236,4 @@ func printClaudeHooksResult(result *claudeHooksResult) {
 	if result.Updated {
 		fmt.Printf("Added notification hook to %s\n", result.FilePath)
 	}
-}
-
-func printManualHookInstructions() {
-	fmt.Println()
-	fmt.Println("To enable chat notifications, add to .claude/settings.json:")
-	fmt.Println(`  {
-    "hooks": {
-      "PostToolUse": [{
-        "matcher": ".*",
-        "hooks": [{"type": "command", "command": "aw notify"}]
-      }]
-    }
-  }`)
 }

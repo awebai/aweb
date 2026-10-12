@@ -54,7 +54,7 @@ A bound (non-empty) profile materializes to:
   .claude/skills/<skill-name> -> ../../skills/<skill-name>
   artifacts/                     # installed
     <artifact files>
-  .claude/settings.json          # aw notify PostToolUse hook (§7)
+  .claude/settings.json          # optional, explicitly enabled chat polling (§7)
   .aw/
     profile/                     # the evolvable profile (§8)
       ref.json                   # the pin (digest + version)
@@ -198,8 +198,15 @@ materialization also converges the home with the normal `aw init` agent setup:
 
 - append/refresh the team's active aweb coordination instructions in `AGENTS.md`
   between `<!-- AWEB:START -->` and `<!-- AWEB:END -->` markers;
-- ensure the Claude Code `aweb-channel` plugin is installed when Claude Code is available;
-- create/update `.claude/settings.json` with the `aw notify` `PostToolUse` hook.
+- ensure the Claude Code `aweb-channel` plugin is installed when Claude Code is available.
+
+The channel or host wake broker is the preferred delivery path. Materialization
+never installs or removes the optional `aw notify` polling hook. A Claude Code
+user without push delivery can explicitly enable the chat-only, after-tool-call
+fallback with `aw init --setup-hooks`. Once replacement delivery works, explicit
+`aw init --remove-notify-hook` removes only the exact project `PostToolUse` entry,
+with a backup and byte-preserving edits. It does not change identity material,
+coordination instructions or other settings. See [Channel](channel.md).
 
 The coordination block is not duplicated in public profiles or blueprints. It is
 loaded from the active team instructions document at materialization time, so

@@ -128,9 +128,17 @@ Harness support differs:
 
 - **Pi**: install with `pi install npm:@awebai/pi@latest`; the aweb channel and these skills are bundled together. Existing installs on Pi 0.82+ update with `pi update npm:@awebai/pi`; pre-0.82 Pi falls back to `npm install @awebai/pi@latest --prefix ~/.pi/agent/npm`. Fully restart Pi afterward. A global npm upgrade does not update Pi's `~/.pi/agent/npm` package tree.
 - **Claude Code**: install the `aweb-channel` plugin from the `awebai/claude-plugins` marketplace. See <https://github.com/awebai/aweb/blob/main/docs/channel.md>.
-- **Codex**: no always-on channel install in v1. Use regular coordination polling loops or `aw run codex` for a session-bound runner.
+- **Codex**: use the OATS host wake broker where configured, regular coordination polling, or `aw run codex` for a session-bound runner. `aw init --setup-hooks` configures Claude Code only; Codex hook setup is not implemented.
 
 The channel is inbound only. Use `aw mail` or `aw chat` to respond.
+
+For Claude Code without channel/broker delivery, `aw init --setup-hooks` remains
+an explicit fallback: it notices chats after tool calls, with no mail or idle
+wake-ups. Prefer push delivery. Once replacement delivery works, the user can
+run `aw init --remove-notify-hook` to remove only the exact project's `aw notify`
+`PostToolUse` entries, with a backup and all other settings bytes preserved.
+Never infer working delivery merely from plugin installation or remove the
+fallback during ordinary init/upgrade.
 
 For E2E messages, channel/Pi/`aw run` may show plaintext only after local decryption in the user's workspace or client process. Server notifications and SSE payloads should be metadata-only for encrypted content. Recipient E2E capability and encryption keys must be identity-authorized; a service signature can assert route support only. If an event or tool error says an encryption key/capability is missing, stale, or mismatched, fail closed and report the error. Do not silently resend as plaintext. If the local channel/Pi process was upgraded from a pre-E2E version, run `aw id encryption-key setup` in the workspace before expecting it to receive encrypted messages.
 

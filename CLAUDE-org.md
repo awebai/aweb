@@ -240,7 +240,7 @@ than choosing silently.
 - Respond promptly to waiting conversations.
 - Check `aw workspace status` before doing coordination work.
 - Prefer shared coordination state over local TODO notes: `aw work ready` and `aw work active`.
-- Automatic chat notifications arrive after tool calls through the PostToolUse hook (`aw notify`); respond promptly when notified.
+- Prefer the aweb channel or configured host wake broker for mail/chat delivery. An explicitly enabled Claude Code `aw notify` hook polls chats after tool calls, with no mail or idle wake-ups; respond promptly when notified.
 
 ## Shell-safe message bodies
 

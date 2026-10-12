@@ -21,20 +21,18 @@ const notifyCooldown = 10 * time.Second
 
 var notifyCmd = &cobra.Command{
 	Use:   "notify",
-	Short: "Check for pending chat notifications for Claude Code hooks",
+	Short: "Poll pending chats for the explicit Claude Code fallback",
 	Long: `Check for pending chat notifications.
 
 Silent if no pending chats; outputs JSON with additionalContext if there are
 messages waiting. Designed for Claude Code PostToolUse hooks so notifications
 are surfaced to the agent automatically.
 
-Hook configuration in .claude/settings.json (set up via aw init --setup-hooks):
-  "hooks": {
-    "PostToolUse": [{
-      "matcher": ".*",
-      "hooks": [{"type": "command", "command": "aw notify"}]
-    }]
-  }`,
+This is an explicit Claude Code chat-polling fallback. Prefer the aweb channel
+plugin or host wake broker for mail, chat and idle wake-ups. It does not install
+Codex hooks. Use aw init --setup-hooks only when this fallback is needed.
+After confirming channel/broker delivery, aw init --remove-notify-hook removes
+only the exact project PostToolUse entry, with a backup.`,
 	Args: cobra.NoArgs,
 	RunE: runNotify,
 }

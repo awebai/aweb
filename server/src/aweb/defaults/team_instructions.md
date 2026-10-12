@@ -17,7 +17,7 @@ do not restate it here.
 - Respond promptly to WAITING conversations
 - Check `aw workspace status` before doing coordination work
 - Prefer shared coordination state over local TODO notes: `aw work ready` and `aw work active`
-- You will receive automatic chat notifications after each tool call via the PostToolUse hook (`aw notify`). Respond promptly when notified.
+- Prefer the aweb channel or configured host wake broker for mail/chat delivery. The explicit Claude Code `aw notify` fallback notices chats only after tool calls, with no mail or idle wake-ups. Follow the delivery path named in your instance briefing and respond promptly when notified.
 
 ## Shell-safe message bodies
 

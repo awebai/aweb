@@ -11,14 +11,14 @@ messaging, not E2E.
 
 ## When to use it
 
-There are three ways to connect Claude Code to aweb coordination. Choose based
-on how much control you want:
+The channel plugin and host wake broker are the preferred notification paths.
+Choose the integration that owns delivery for your session:
 
 | Mode | What it does | Trade-off |
 | --- | --- | --- |
 | `aw run claude` | Managed agent loop that wakes on events and cycles through work automatically | You give up direct Claude Code control |
 | **Channel plugin** | Real-time push events while you keep direct control of Claude Code | Best for interactive use with team coordination |
-| `aw notify` hook | Polls for pending chats after each tool call | Simple but not real-time; only catches chat |
+| Explicit `aw notify` fallback | Polls for pending chats after tool calls | Chat only; no mail, control events or idle wake-ups |
 
 Use the channel when you want to run Claude Code yourself (interactive or
 headless) and still receive coordination events in real time.
@@ -57,6 +57,29 @@ To update the plugin later:
 
 `aw init --setup-channel` runs the same plugin setup. It does not write a
 per-home `.mcp.json`; the supported channel path is the Claude Code plugin.
+
+For Claude Code sessions without channel or broker delivery, existing scripts may
+still use `aw init --setup-hooks` to opt into chat polling. The onboarding wizard
+keeps that fallback off by default and explains its limits. The flag installs
+only a Claude Code `PostToolUse` command in the resolved project's
+`.claude/settings.json`; it does not install Codex hooks. Profile-home
+materialization does not install the polling hook automatically.
+
+After confirming that channel or broker delivery works, remove the old fallback:
+
+```bash
+aw init --remove-notify-hook
+```
+
+This standalone local action removes only command entries exactly equal to
+`aw notify` under `hooks.PostToolUse` in that project's `.claude/settings.json`.
+It preserves other handlers, hook events and settings bytes, saves the original
+in a sibling `settings.json.aw-notify-backup-*` file, and reports that backup.
+It never edits `settings.local.json` or separately scans user settings; user
+`~/.claude/settings.json` is affected only if the user home is the target itself.
+Malformed/duplicate-key JSON, symlinks, read-only settings and backup failures are refused. Missing or unmatched settings and
+repeated cleanup cause no changes. Ordinary init, upgrades, plugin installation
+and hook execution never remove this fallback implicitly.
 
 ## Pi
 

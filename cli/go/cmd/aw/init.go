@@ -27,7 +27,14 @@ team-architecture flows:
 - use --byod to create an identity under a domain you control
 
 By default, init creates or updates the clearly marked aweb section in
-AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.`,
+AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
+
+The channel plugin or host wake broker is the preferred notification path.
+--setup-hooks explicitly enables a Claude Code chat-only polling fallback:
+notices arrive after tool calls, with no mail or idle wake-up support.
+After confirming channel/broker delivery, use --remove-notify-hook on its own
+for backed-up removal of the exact aw notify PostToolUse entry from this
+project's .claude/settings.json. Init and upgrades never remove it implicitly.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Root initialization runs first with hook traversal enabled.
 	},
@@ -45,6 +52,7 @@ var (
 	initName               string
 	initInjectDocs         bool
 	initSetupHooks         bool
+	initRemoveNotifyHook   bool
 	initSetupChannel       bool
 	initDoNotTouchAgentsMD bool
 	initHumanName          string
@@ -96,7 +104,8 @@ func init() {
 	initCmd.Flags().StringVar(&initName, "name", "", "Identity/member name (global address name with --global, local routing name otherwise)")
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initDoNotTouchAgentsMD, "do-not-touch-agents-md", false, "Do not create or update AGENTS.md or CLAUDE.md during init")
-	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Set up Claude Code PostToolUse hook for aw notify")
+	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)")
+	initCmd.Flags().BoolVar(&initRemoveNotifyHook, "remove-notify-hook", false, "Remove only the exact aw notify PostToolUse hook from project settings, with a backup (standalone local action)")
 	initCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code aweb-channel plugin for real-time coordination")
 	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
 	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")
@@ -487,6 +496,12 @@ func filepathAbs(path string) (string, error) {
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	if initRemoveNotifyHook {
+		if len(args) != 0 {
+			return usageError("--remove-notify-hook takes no positional arguments")
+		}
+		return runRemoveClaudeNotifyHook(cmd)
+	}
 	if initSetupChannel && initSetupHooks {
 		return fmt.Errorf("--setup-channel and --setup-hooks are mutually exclusive: the channel supersedes the notify hook")
 	}

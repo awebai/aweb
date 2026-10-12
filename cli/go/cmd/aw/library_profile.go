@@ -333,9 +333,6 @@ func configureMaterializedAgentHome(homeDir string, identityHomes ...awconfig.Id
 	if result := SetupChannelMCP(homeDir, false); result != nil && result.Error != nil {
 		return fmt.Errorf("set up Claude Code aweb-channel plugin: %w", result.Error)
 	}
-	if result := SetupClaudeHooks(homeDir, false); result != nil && result.Error != nil {
-		return fmt.Errorf("set up Claude hooks: %w", result.Error)
-	}
 	return nil
 }
 

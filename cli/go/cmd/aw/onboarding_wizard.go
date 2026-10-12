@@ -287,7 +287,7 @@ func runGuidedPostInitSetup(req guidedOnboardingRequest) error {
 	} else if err != nil {
 		return err
 	} else if !channel {
-		if hooks, err := promptYesNoWithIO("Set up Claude hooks for aw notify? (polling fallback)", false, req.PromptIn, req.PromptOut); err == nil && hooks {
+		if hooks, err := promptYesNoWithIO("Enable Claude Code polling fallback? (chat only, after tool calls; no mail or idle wake-ups)", false, req.PromptIn, req.PromptOut); err == nil && hooks {
 			printClaudeHooksResult(guidedOnboardingSetupHooks(repoRoot, false))
 		} else if err != nil {
 			return err
