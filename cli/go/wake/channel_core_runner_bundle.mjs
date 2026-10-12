@@ -8359,6 +8359,7 @@ var SenderTrustManager = class {
   random;
   metaCache = /* @__PURE__ */ new Map();
   preparedMetadata = /* @__PURE__ */ new WeakSet();
+  localMismatchRefreshAfter = /* @__PURE__ */ new Map();
   teamRosterCache;
   teamRosterRequest;
   async resolveTrustMetadata(verificationStatus, rawAddress, fromStableID, toDID, toStableID, context) {
@@ -8373,7 +8374,17 @@ var SenderTrustManager = class {
       return void 0;
     }
     const trustAddress = this.canonicalTrustAddress(trimmedAddress);
-    const meta = await this.resolveAgentMeta(trimmedAddress);
+    const cachedMeta = this.metaCache.get(trustAddress);
+    const cachedRoster = this.teamRosterCache;
+    const usedCachedMetadata = cachedMeta && this.now() <= cachedMeta.expiresAt || cachedRoster && "roster" in cachedRoster && this.now() <= cachedRoster.expiresAt;
+    let meta = await this.resolveAgentMeta(trimmedAddress);
+    if (usedCachedMetadata && rosterAlias !== void 0 && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial") && context?.fromDID && !fromStableID?.startsWith("did:aw:") && meta.resolved && meta.identityScope === "local" && meta.did && meta.did !== context.fromDID && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)) {
+      meta = await this.resolveAgentMeta(trimmedAddress, true);
+      this.localMismatchRefreshAfter.set(trustAddress, this.now() + this.jitteredTTL(
+        TEAM_ROSTER_FAILURE_BACKOFF_MIN_MS,
+        TEAM_ROSTER_FAILURE_BACKOFF_JITTER_MS
+      ));
+    }
     const stableIdentityCheck = context && meta.resolved && meta.identityScope !== "local" ? await this.prepareStableIdentityRegistry(
       context.pinStore,
       status2,
@@ -8746,16 +8757,16 @@ var SenderTrustManager = class {
     ]);
     return { status: acceptedStatus, stored: removed };
   }
-  async resolveAgentMeta(address) {
+  async resolveAgentMeta(address, forceRefresh = false) {
     const rawAddress = address.trim();
     const trustAddress = this.canonicalTrustAddress(rawAddress);
     if (!trustAddress) {
       return { identityScope: "global", custody: "self", resolved: false };
     }
     const cached = this.metaCache.get(trustAddress);
-    if (cached && this.now() <= cached.expiresAt) return cached.meta;
+    if (!forceRefresh && cached && this.now() <= cached.expiresAt) return cached.meta;
     try {
-      const identity = await this.resolveIdentity(rawAddress);
+      const identity = await this.resolveIdentity(rawAddress, forceRefresh);
       const meta = {
         did: identity.did,
         identityScope: identity.identityScope,
@@ -8798,7 +8809,7 @@ var SenderTrustManager = class {
       typeof client.hasTeamCertificateAuth === "function"
     );
   }
-  async resolveIdentity(address) {
+  async resolveIdentity(address, forceRefresh = false) {
     const trimmed = address.trim();
     if (!trimmed) {
       throw new Error("missing address");
@@ -8813,11 +8824,11 @@ var SenderTrustManager = class {
     if (!(this.client.hasTeamRosterAuth?.(this.teamID) ?? this.client.hasTeamCertificateAuth(this.teamID))) {
       throw new Error("team roster resolution requires authenticated team access");
     }
-    const roster = await this.resolveAuthenticatedTeamRoster();
+    const roster = await this.resolveAuthenticatedTeamRoster(forceRefresh);
     const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === localAlias);
     if (!response) {
       const qualifiedTeamPrefix = `${this.teamID.toLowerCase()}/`;
-      if (trimmed.includes("/") && !trimmed.toLowerCase().startsWith(qualifiedTeamPrefix)) {
+      if (!forceRefresh && trimmed.includes("/") && !trimmed.toLowerCase().startsWith(qualifiedTeamPrefix)) {
         return this.registry.resolveIdentity(trimmed);
       }
       throw Object.assign(new Error(`local alias ${localAlias} is absent from the authenticated team roster`), {
@@ -8836,14 +8847,15 @@ var SenderTrustManager = class {
       identityScope: normalizeIdentityScope(response.identity_scope, response.lifetime, "local")
     };
   }
-  async resolveAuthenticatedTeamRoster() {
+  async resolveAuthenticatedTeamRoster(forceRefresh = false) {
     const cached = this.teamRosterCache;
     if (cached && this.now() <= cached.expiresAt) {
-      if ("roster" in cached) return cached.roster;
-      throw cached.error;
+      if ("error" in cached) throw cached.error;
+      if (!forceRefresh) return cached.roster;
     }
     if (this.teamRosterRequest) return this.teamRosterRequest;
-    const request = this.client.get("/v1/agents").then((roster) => {
+    const read = forceRefresh && typeof this.client.getFresh === "function" ? this.client.getFresh("/v1/agents") : this.client.get("/v1/agents");
+    const request = read.then((roster) => {
       if ((roster.team_id || "").trim() !== this.teamID) {
         throw new Error("team roster response does not match the authenticated team");
       }
