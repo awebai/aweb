@@ -35,6 +35,9 @@ func CleanupClaudeNotifyHook(repoRoot string) *claudeNotifyCleanupResult {
 	return result
 }
 
+// Test seam for a concurrent settings edit after durable replacement write.
+var beforeClaudeNotifyCleanupRecheck func(string)
+
 func cleanupClaudeNotifyFile(result *claudeNotifyCleanupResult) error {
 	path := result.FilePath
 	preflight := func() error {
@@ -89,6 +92,9 @@ func cleanupClaudeNotifyFile(result *claudeNotifyCleanupResult) error {
 	}
 	if err := writeAndSyncHookFile(replacement, updated); err != nil {
 		return err
+	}
+	if beforeClaudeNotifyCleanupRecheck != nil {
+		beforeClaudeNotifyCleanupRecheck(path)
 	}
 	if err := preflight(); err != nil {
 		return err
@@ -328,6 +334,7 @@ func runRemoveClaudeNotifyHook(cmd *cobra.Command) error {
 				fmt.Fprintf(cmd.OutOrStdout(), "No exact aw notify PostToolUse hook in %s; settings unchanged\n", result.FilePath)
 			default:
 				fmt.Fprintf(cmd.OutOrStdout(), "Removed %d aw notify PostToolUse hook(s) from %s; backup: %s\n", result.Removed, result.FilePath, result.BackupPath)
+				fmt.Fprintln(cmd.OutOrStdout(), "You can delete the backup once you have checked the updated settings.")
 			}
 		}
 	}

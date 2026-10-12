@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -111,7 +115,7 @@ func TestClaudeHookCleanupCLIExplicitAndScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cleanup command: %v: %s", err, out)
 	}
-	if !bytes.Contains(out, []byte("backup")) {
+	if !bytes.Contains(out, []byte("backup")) || !bytes.Contains(out, []byte("delete the backup once")) {
 		t.Fatalf("missing backup notice: %s", out)
 	}
 	backupPaths, _ := filepath.Glob(path + ".aw-notify-backup-*")
@@ -289,6 +293,116 @@ func TestClaudeHookCleanupCLIMaterializedHomeInsideRepo(t *testing.T) {
 				}
 			} else if string(rootData) != rootOriginal || len(backups) != 0 {
 				t.Fatal("unmatched/unsafe root changed")
+			}
+		})
+	}
+}
+
+func TestClaudeHookCleanupCLISkipsEncryptionRenewal(t *testing.T) {
+	t.Setenv(awconfig.IdentityHomeEnv, "")
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	did := awid.ComputeDIDKey(pub)
+	var attempts atomic.Int32
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		if r.URL.Path == "/v1/messages/inbox" {
+			json.NewEncoder(w).Encode(awid.InboxResponse{})
+			return
+		}
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	writeMessagingPrincipalForTest(t, root, server.URL, "alice", did, key)
+	home := filepath.Join(root, ".aw")
+	a := installMailReadEncryptionKeyForTest(t, root, home, did, key)
+	state, err := awconfig.LoadEncryptionKeyStateFrom(filepath.Join(home, "encryption.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.CreatedAt = time.Now().Add(-80 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	a.NotBefore = a.CreatedAt
+	a.ExpiresAt = time.Now().Add(10 * 24 * time.Hour).UTC().Format(time.RFC3339)
+	if err := awid.SignEncryptionKeyAssertion(a, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveEncryptionAssertion(filepath.Join(home, state.ActiveRecord().AssertionPath), a); err != nil {
+		t.Fatal(err)
+	}
+	writeNotifySettings(t, root, `{"hooks":{"PostToolUse":[{"command":"aw notify"}]}}`)
+	before := fileDigestsForTest(t, home)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	run := exec.CommandContext(ctx, bin, "init", "--remove-notify-hook")
+	run.Dir, run.Env = root, testCommandEnv(t.TempDir())
+	if out, err := run.CombinedOutput(); err != nil {
+		t.Fatalf("cleanup: %v %s", err, out)
+	}
+	if attempts.Load() != 0 || !reflect.DeepEqual(before, fileDigestsForTest(t, home)) {
+		t.Fatal("cleanup performed encryption renewal network/state activity")
+	}
+	// Positive control: this identity really is due for automatic renewal.
+	run = exec.CommandContext(ctx, bin, "mail", "inbox")
+	run.Dir, run.Env = root, testCommandEnv(t.TempDir())
+	out, err := run.CombinedOutput()
+	if err != nil || attempts.Load() == 0 || !bytes.Contains(out, []byte("assertion renewal failed")) {
+		t.Fatalf("renewal control: %v attempts=%d %s", err, attempts.Load(), out)
+	}
+}
+
+func TestCleanupClaudeNotifyHookRefusesConcurrentChanges(t *testing.T) {
+	for _, mutation := range []string{"bytes", "mode", "inode"} {
+		t.Run(mutation, func(t *testing.T) {
+			original := `{"hooks":{"PostToolUse":[{"command":"aw notify"}]}}`
+			path := writeNotifySettings(t, t.TempDir(), original)
+			edited := original
+			beforeClaudeNotifyCleanupRecheck = func(target string) {
+				if target != path {
+					t.Fatal("unexpected recheck path")
+				}
+				switch mutation {
+				case "bytes":
+					edited = `{"hooks":{"PostToolUse":[{"command":"aw notify"}]},"new":"concurrent edit"}`
+					if err := os.WriteFile(path, []byte(edited), 0644); err != nil {
+						t.Fatal(err)
+					}
+				case "mode":
+					if err := os.Chmod(path, 0600); err != nil {
+						t.Fatal(err)
+					}
+				case "inode":
+					replacement := path + ".concurrent"
+					if err := os.WriteFile(replacement, []byte(original), 0644); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Rename(replacement, path); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			t.Cleanup(func() { beforeClaudeNotifyCleanupRecheck = nil })
+			result := CleanupClaudeNotifyHook(filepath.Dir(filepath.Dir(path)))
+			if result.Error == nil || !strings.Contains(result.Error.Error(), "changed during cleanup") || result.Removed != 0 || result.BackupPath == "" {
+				t.Fatalf("concurrent edit result=%+v", result)
+			}
+			after, _ := os.ReadFile(path)
+			if string(after) != edited {
+				t.Fatal("concurrent edit overwritten")
+			}
+			info, _ := os.Stat(path)
+			if mutation == "mode" && info.Mode().Perm() != 0600 {
+				t.Fatal("concurrent chmod overwritten")
+			}
+			backup, _ := os.ReadFile(result.BackupPath)
+			if string(backup) != original {
+				t.Fatal("original backup lost")
 			}
 		})
 	}
