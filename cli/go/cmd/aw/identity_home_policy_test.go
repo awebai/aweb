@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -223,6 +224,13 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 			args []string
 		}{
 			{name: "roles-show", args: []string{"roles", "show", "--json"}},
+			{name: "roles-list", args: []string{"roles", "list"}},
+			{name: "roles-history", args: []string{"roles", "history"}},
+			{name: "roles-set", args: []string{"roles", "set", "--bundle-json", `{"roles":{}}`}},
+			{name: "roles-add", args: []string{"roles", "add", "developer", "--playbook", "guidance"}},
+			{name: "roles-activate", args: []string{"roles", "activate", "bundle-id"}},
+			{name: "roles-reset", args: []string{"roles", "reset"}},
+			{name: "roles-deactivate", args: []string{"roles", "deactivate"}},
 		} {
 			t.Run(source+"/"+command.name, func(t *testing.T) {
 				instance := filepath.Join(root, "instances", source, command.name)
@@ -245,8 +253,9 @@ func TestUnthreadedPrincipalCommandsRefuseExternalIdentityHomeBeforeMutation(t *
 				cmd.Env = env
 				beforeRequests := requests.Load()
 				out, err := cmd.CombinedOutput()
-				if err == nil || !strings.Contains(string(out), "not yet identity-home-aware") {
-					t.Fatalf("unthreaded command did not fail closed: err=%v\n%s", err, out)
+				want := fmt.Sprintf("command %q is unavailable with an explicit identity home: team roles are not used in this mode. Under OATS, your role guidance comes from your soul; consult the soul source and instance briefing. Role bundles remain available to plain aw teams without an explicit identity home.", "aw roles "+command.args[1])
+				if err == nil || !strings.Contains(string(out), want) {
+					t.Fatalf("roles refusal must explain soul guidance: err=%v\nwant: %s\ngot: %s", err, want, out)
 				}
 				if got := requests.Load(); got != beforeRequests {
 					t.Fatalf("refusal happened after registry request: before=%d after=%d", beforeRequests, got)

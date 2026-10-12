@@ -152,6 +152,11 @@ func requireIdentityHomeAwareCommand(cmd *cobra.Command, external bool) error {
 	if _, ok := identityHomeAwareCommandPaths[path]; ok {
 		return nil
 	}
+	for ancestor := cmd; ancestor != nil; ancestor = ancestor.Parent() {
+		if ancestor == rolesCmd {
+			return usageError("command %q is unavailable with an explicit identity home: team roles are not used in this mode. Under OATS, your role guidance comes from your soul; consult the soul source and instance briefing. Role bundles remain available to plain aw teams without an explicit identity home.", path)
+		}
+	}
 	alternatives := identityHomeAwareAlternatives(cmd, identityHomeAwareCommandPaths)
 	if len(alternatives) == 0 {
 		return usageError("command %q is not yet identity-home-aware; refusing to use an external identity home so principal state cannot fall back to the instance directory. No command in this group is currently supported for an attached principal; stop rather than running the command against the disposable instance", path)

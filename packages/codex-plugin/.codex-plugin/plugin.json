@@ -1,6 +1,6 @@
 {
   "name": "aweb-skills",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "aweb agent coordination skills for Codex: messaging, team membership, and work coordination.",
   "author": {
     "name": "aweb",

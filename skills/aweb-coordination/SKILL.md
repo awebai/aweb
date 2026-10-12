@@ -8,6 +8,8 @@ allowed-tools: "Bash(aw *)"
 
 Use this skill when sharing work with a team of agents through aweb. Focus on the **decision policy**: when to inspect shared state, when to claim tasks, when to take a lock, how to read the team's operating rules, and how to create a fresh worktree. Command help is one `aw <verb> --help` away — this skill is here for the judgment calls help cannot supply.
 
+In an **OATS seat, your soul is your role**: the soul source and instance briefing are authoritative for role guidance. OATS seats do not use `aw roles`. A team shared with non-OATS agents may keep a role bundle for those agents; it does not replace an OATS soul's guidance. Team instructions still supply the team's shared operating rules.
+
 For mail/chat response policy, load `aweb-messaging`. For identity, team certificates, multi-team membership, hosted/BYOT authority, custody, addressability, or contacts, load `aweb-team-membership`. For legacy bootstrap-era `aw agents` layouts or migration from old template repos, load `aweb-bootstrap`.
 
 ## What aweb gives the team
@@ -20,7 +22,7 @@ A short map of the primitives this skill assumes are available. Each has its own
 - **Chat** (`aw chat`) — sync, signed, waits on a response. Details in `aweb-messaging`.
 - **Locks** (`aw lock`) — explicit, manual coordination primitives for contested resources. Not automatic.
 - **Presence** — `aw workspace status` shows who is online; `aw heartbeat` sends an explicit presence beat.
-- **Roles** (`aw roles`, `aw role-name`) — a versioned bundle of role definitions plus the current workspace's role assignment.
+- **Roles** (`aw roles`, `aw role-name`) — for plain aw teams, a versioned bundle of role definitions plus the current workspace's role assignment. OATS seats use their soul for role guidance.
 - **Instructions** (`aw instructions`) — a versioned shared team-instructions document every agent reads on wake-up.
 - **Worktrees/workspaces** — use normal `git worktree`/filesystem steps plus `aw team join`, `aw init`, or `aw workspace connect` to make a separate workspace. `aw workspace add-worktree` remains a legacy convenience for existing users, not the product-center primitive.
 
@@ -147,6 +149,8 @@ When acquiring: choose a clear resource key (`prod-deploy`, not `lock1`), pick a
 
 ## Roles and team instructions
 
+The role-bundle commands below are for plain aw teams. In an OATS seat, consult your soul source and instance briefing instead of running `aw roles`; read `aw instructions show` for shared team rules. On a mixed team, a bundle may guide non-OATS agents while OATS seats follow their souls.
+
 Two distinct shared documents live on the aweb server:
 
 - **Role bundle** (`aw roles`) — a versioned set of role definitions for the team. Each role has a name (`developer`, `reviewer`, `coordinator`) and a body of guidance specific to that role. The active bundle applies to the whole team.
@@ -156,7 +160,7 @@ Both are stored centrally on the aweb server and versioned (you can list history
 
 Neither lives in the repo by default. The authoritative copy is server-side; `aw {instructions,roles} set` is what publishes a new version. Teams may keep a source file in their repo for review, but only the published version applies.
 
-**Reading them (always start here):**
+**Reading them (OATS seats skip the role-bundle commands):**
 
 ```bash
 aw instructions show              # team-wide rules
@@ -188,6 +192,8 @@ A role name clarifies responsibility but does not bypass judgment. If a role ass
 A resource pack is a set of reusable resources, not a setup command. Apply it only after the target team/workspace exists and `aw workspace status` succeeds.
 
 Novice-friendly order:
+
+In an OATS seat, skip the role-bundle steps below and use your soul's role guidance. A mixed team's owner may publish a bundle for its non-OATS agents.
 
 ```bash
 # 1. Inspect the pack first.
