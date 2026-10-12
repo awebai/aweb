@@ -23,11 +23,16 @@ var initCmd = &cobra.Command{
 team-architecture flows:
 
 - connect with an existing team certificate already present in .aw/
+- add an agent to the existing team selected by AWEB_API_KEY
 - create a hosted aweb.ai account when this directory is still clean
 - use --byod to create an identity under a domain you control
 
 By default, init creates or updates the clearly marked aweb section in
 AGENTS.md or CLAUDE.md. Use --do-not-touch-agents-md to skip that file update.
+
+With a team API key, another dashboard-created agent or an aw team invite joins
+this same team. Without a key, creating a new account/team in a fresh directory
+creates a separate team; use aw team invite / aw team join to join this one.
 
 The channel plugin or host wake broker is the preferred notification path.
 --setup-hooks explicitly enables a Claude Code chat-only polling fallback:
@@ -89,6 +94,9 @@ type initResult struct {
 	// `aw claim-human` is misleading. Other init paths leave this false
 	// and the claim-human suggestion fires per shouldSuggestClaimHuman.
 	APIKeyAuth bool
+
+	// ServerAssignedName records that API-key init omitted a requested name.
+	ServerAssignedName bool
 }
 
 func init() {
@@ -558,6 +566,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		requestedAlias := resolveAliasValue(resolveInitLocalName())
 		result, err := runAPIKeyBootstrapInit(apiKeyInitRequest{
 			WorkingDir:   wd,
 			IdentityHome: identityHome.Root,
@@ -565,7 +574,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 			RegistryURL:  registryURL,
 			APIKey:       apiKey,
 			Name:         resolveInitGlobalName(initGlobal),
-			Alias:        resolveAliasValue(resolveInitLocalName()),
+			Alias:        requestedAlias,
 			Role:         resolveRequestedRole(strings.TrimSpace(initRole)),
 			HumanName:    resolveHumanNameValue(strings.TrimSpace(initHumanName)),
 			AgentType:    resolveAgentTypeValue(strings.TrimSpace(initAgentType)),
@@ -579,10 +588,11 @@ func runInit(cmd *cobra.Command, args []string) error {
 		didInjectDocs := runDefaultInitDocsInjection(wd)
 		if !jsonFlag {
 			printPostInitActions(&initResult{
-				ServerName:    hostFromBaseURL(result.AwebURL),
-				ExportBaseURL: result.AwebURL,
-				Alias:         strings.TrimSpace(result.Alias),
-				APIKeyAuth:    true,
+				ServerName:         hostFromBaseURL(result.AwebURL),
+				ExportBaseURL:      result.AwebURL,
+				Alias:              strings.TrimSpace(result.Alias),
+				APIKeyAuth:         true,
+				ServerAssignedName: !initGlobal && requestedAlias == "",
 			}, wd, didInjectDocs)
 		}
 		return nil
@@ -1095,6 +1105,9 @@ func runDefaultInitDocsInjection(workingDir string) bool {
 }
 
 func printPostInitActions(result *initResult, workingDir string, didDefaultInjectDocs bool) {
+	if !jsonFlag && result.ServerAssignedName && strings.TrimSpace(result.Alias) != "" {
+		fmt.Printf("\nYour agent is named %s.\n", strings.TrimSpace(result.Alias))
+	}
 	if initPrintExports {
 		fmt.Println("")
 		fmt.Println("# Copy/paste to configure your shell:")
@@ -1146,7 +1159,7 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	}
 
 	lines = append(lines, "")
-	lines = append(lines, secondAgentNextStepLines...)
+	lines = append(lines, secondAgentNextStepLines(result)...)
 	lines = append(lines, "")
 	lines = append(lines, "  Install the channel plugin once (real-time coordination in Claude Code):")
 	lines = append(lines, "    claude plugin marketplace add awebai/claude-plugins")
@@ -1167,15 +1180,27 @@ func initNextStepLines(result *initResult, workingDir string, didInjectDocs, did
 	return lines
 }
 
-// secondAgentNextStepLines tell the user how to put another agent in the team
-// this init just joined. Running aw init again in another directory creates a
-// separate account and team, whose agents cannot message this one.
-var secondAgentNextStepLines = []string{
-	"  Add another agent to THIS team (running aw init again elsewhere creates a",
-	"  separate team whose agents cannot message this one):",
-	"    aw team invite                        run here; prints a one-use token",
-	"    aw team join <token> --name <name>    run in the other agent's directory",
-	"    aw workspace add-worktree <role>      or, for a git worktree of this repo",
+// secondAgentNextStepLines distinguish existing-team API-key provisioning from
+// keyless new-account/team creation. Both dashboard provisioning and invites
+// add members to the team selected by the provisioning key.
+func secondAgentNextStepLines(result *initResult) []string {
+	var lines []string
+	if result != nil && result.APIKeyAuth {
+		lines = []string{
+			"  To add another agent to this team: create one from the dashboard,",
+			"  or run aw team invite here.",
+		}
+	} else {
+		lines = []string{
+			"  Add another agent to THIS team (running aw init again elsewhere to create a",
+			"  new account/team creates a separate team whose agents cannot message this one):",
+		}
+	}
+	return append(lines,
+		"    aw team invite                        run here; prints a one-use token",
+		"    aw team join <token> --name <name>    run in the other agent's directory",
+		"    aw workspace add-worktree <role>      or, for a git worktree of this repo",
+	)
 }
 
 func formatInitNextStep(command, description string) string {
