@@ -65,6 +65,9 @@ describe.each(["grant", "team"] as const)("%s receiver authoritative roster", mo
     ["replacement", "verified"], ["other-key", "identity_mismatch"], ["absent", "identity_mismatch"], ["absent-address", "identity_mismatch"],
     ["unavailable", "verification_stale"], ["wrong-team", "verification_stale"],
     ["global", "identity_mismatch"],
+    ["new-member", "verified"], ["new-member-absent", "identity_mismatch"],
+    ["new-member-other-key", "identity_mismatch"], ["new-member-unavailable", "verification_stale"],
+    ["new-member-wrong-team", "verification_stale"],
   ])("cached local key refresh: %s => %s", async (variant, expected) => {
     const receiver = seed(96), previous = seed(97), sender = seed(98);
     const client = new APIClient("https://aweb.example", {
@@ -73,25 +76,29 @@ describe.each(["grant", "team"] as const)("%s receiver authoritative roster", mo
       teamCertificateHeader: mode === "team" ? "synthetic-certificate" : "",
     });
     // The external aweb HTTP boundary changes its authoritative roster after
-    // the receiver has cached the old local key. All auth/signature/trust code
+    // the receiver has cached the old local key or an absent member. All auth/signature/trust code
     // is real; this fixture stands only for the remote server response.
     let phase = "before";
+    const initiallyAbsent = variant.startsWith("new-member");
+    const outcome = variant === "new-member" ? "replacement"
+      : initiallyAbsent ? variant.slice("new-member-".length) : variant;
     const freshHeaders: Array<string | null> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
       freshHeaders.push(new Headers(init.headers).get("Cache-Control"));
-      if (phase !== "before" && variant === "unavailable") return new Response("unavailable", { status: 503 });
+      if (phase !== "before" && outcome === "unavailable") return new Response("unavailable", { status: 503 });
       return new Response(JSON.stringify({
-        team_id: phase !== "before" && variant === "wrong-team" ? "other:acme.com" : team,
-        agents: phase !== "before" && variant.startsWith("absent") ? [] : [{ alias: "alice",
-          did_key: phase === "before" || variant === "other-key" ? did(previous) : did(sender),
-          identity_scope: phase !== "before" && variant === "global" ? "global" : "local" }],
+        team_id: phase !== "before" && outcome === "wrong-team" ? "other:acme.com" : team,
+        agents: (phase === "before" && initiallyAbsent) || (phase !== "before" && outcome.startsWith("absent")) ? [] : [{ alias: "alice",
+          did_key: phase === "before" || outcome === "other-key" ? did(previous) : did(sender),
+          identity_scope: phase !== "before" && outcome === "global" ? "global" : "local" }],
       }));
     }));
     let now = 0;
     const trust = new SenderTrustManager(client, {} as never, team, did(receiver), "", () => now, () => 0);
     const store = new PinStore();
     const address = variant === "absent-address" ? "acme.com/alice" : "alice";
-    expect((await trust.normalizeTrust(store, "verified", address, did(previous), undefined, did(receiver))).status).toBe("verified");
+    expect((await trust.normalizeTrust(store, "verified", address, did(previous), undefined, did(receiver))).status)
+      .toBe(initiallyAbsent ? "identity_mismatch" : "verified");
     phase = "after";
     const payload = JSON.stringify({ from_did: did(sender), to_did: did(receiver), body: "replacement" });
     const signature = Buffer.from(ed.sign(Buffer.from(payload), sender)).toString("base64").replace(/=+$/, "");
@@ -109,10 +116,23 @@ describe.each(["grant", "team"] as const)("%s receiver authoritative roster", mo
     }
     expect(freshHeaders).toEqual([null, "no-cache"]);
     expect(store.pins.size).toBe(0);
-    if (variant === "other-key") {
+    if (outcome === "other-key" || outcome.startsWith("absent")) {
       now = 10_001;
       await trust.normalizeTrust(store, verified, address, did(sender), undefined, did(receiver));
       expect(freshHeaders).toEqual([null, "no-cache", "no-cache"]);
+    }
+    if (expected === "verified") {
+      // After a successful transition, a key outside the current roster still
+      // gets only one fresh read per interval. Matching cached traffic cannot
+      // clear that unsuccessful refresh's backoff.
+      const rejected = () => trust.normalizeTrust(store, "verified", address, did(previous), undefined, did(receiver));
+      for (let n = 0; n < 10; n++) expect((await rejected()).status).toBe("identity_mismatch");
+      expect((await trust.normalizeTrust(store, "verified", address, did(sender), undefined, did(receiver))).status).toBe("verified");
+      expect((await rejected()).status).toBe("identity_mismatch");
+      expect(freshHeaders).toEqual([null, "no-cache", "no-cache"]);
+      now = 10_001;
+      expect((await rejected()).status).toBe("identity_mismatch");
+      expect(freshHeaders).toEqual([null, "no-cache", "no-cache", "no-cache"]);
     }
   });
 

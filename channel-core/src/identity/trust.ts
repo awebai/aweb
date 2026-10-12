@@ -172,26 +172,33 @@ export class SenderTrustManager {
     const usedCachedMetadata = (cachedMeta && this.now() <= cachedMeta.expiresAt)
       || (cachedRoster && "roster" in cachedRoster && this.now() <= cachedRoster.expiresAt);
     let meta = await this.resolveAgentMeta(trimmedAddress);
+    const localKeyMismatch = meta.resolved && meta.identityScope === "local"
+      && meta.did && meta.did !== context?.fromDID;
+    const cachedAbsence = !meta.resolved && meta.resolutionError === "not_found";
     if (
       usedCachedMetadata
       && rosterAlias !== undefined
       && (status === "verified" || status === "verified_legacy" || status === "verified_custodial")
       && context?.fromDID
       && !fromStableID?.startsWith("did:aw:")
-      && meta.resolved
-      && meta.identityScope === "local"
-      && meta.did
-      && meta.did !== context.fromDID
+      && (localKeyMismatch || cachedAbsence)
       && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)
     ) {
       // Resolve before the pin lock. Local aliases follow the authenticated
-      // roster, not global TOFU continuity. Concurrent refreshes share the
-      // roster request; repeated non-member keys get a short quiet interval.
+      // roster, not global TOFU continuity. A cached absence can predate a new
+      // member. Concurrent refreshes share the roster request; repeated
+      // non-member keys get a short quiet interval.
       meta = await this.resolveAgentMeta(trimmedAddress, true);
-      this.localMismatchRefreshAfter.set(trustAddress, this.now() + this.jitteredTTL(
-        TEAM_ROSTER_FAILURE_BACKOFF_MIN_MS,
-        TEAM_ROSTER_FAILURE_BACKOFF_JITTER_MS,
-      ));
+      if (meta.resolved && meta.identityScope === "local" && meta.did === context.fromDID) {
+        // The matching row is cached. Let a subsequent authorized transition
+        // refresh immediately, including re-init just after a member joins.
+        this.localMismatchRefreshAfter.delete(trustAddress);
+      } else {
+        this.localMismatchRefreshAfter.set(trustAddress, this.now() + this.jitteredTTL(
+          TEAM_ROSTER_FAILURE_BACKOFF_MIN_MS,
+          TEAM_ROSTER_FAILURE_BACKOFF_JITTER_MS,
+        ));
+      }
     }
     const stableIdentityCheck = context && meta.resolved && meta.identityScope !== "local"
       ? await this.prepareStableIdentityRegistry(
@@ -871,7 +878,7 @@ export class SenderTrustManager {
     const response = (roster.agents || []).find((agent) => (agent.alias || "").trim() === localAlias);
     if (!response) {
       const qualifiedTeamPrefix = `${this.teamID.toLowerCase()}/`;
-      // A forced refresh was selected for a previously confirmed local sender.
+      // A forced refresh was selected for a cached local key or absent alias.
       // Its projected domain address must not fall through to global authority
       // when the authenticated roster says that local member is gone.
       if (!forceRefresh && trimmed.includes("/") && !trimmed.toLowerCase().startsWith(qualifiedTeamPrefix)) {

@@ -371,6 +371,27 @@ describe.sequential("channel integration", () => {
     expect(channelStderr).not.toContain("fatal:");
   }, 120_000);
 
+  test("verifies a newly joined local sender's first message to a warm receiver", async () => {
+    await startChannelIfNeeded();
+    const receiverTransport = transport;
+    const warm = await sendMailViaAW(homeDir, aliceDir, server.awidURL, "bob", "warm receiver before local join");
+    const readiness = await notifications.waitFor(item => item.meta.message_id === warm.message_id);
+    expect(readiness.meta.trust_status).toBe("verified");
+
+    const senderDir = join(tempRoot, "finch");
+    await mkdir(senderDir);
+    const invite = await inviteMember(homeDir, aliceDir, server.awidURL, domain, "devteam");
+    await runAwJSON(homeDir, senderDir, server.awidURL, [
+      "--json", "id", "team", "accept-invite", invite.token, "--local", "--name", "finch",
+    ]);
+    await initWorkspace(homeDir, senderDir, server.awidURL, server.awebURL);
+    const mail = await sendMailViaAW(homeDir, senderDir, server.awidURL, "bob", "new local member's first mail");
+    const first = await notifications.waitFor(item => item.meta.message_id === mail.message_id);
+    expect(first.meta.trust_status, JSON.stringify(first)).toBe("verified");
+    expect(first.meta.verified).toBe("true");
+    expect(transport).toBe(receiverTransport);
+  }, 90_000);
+
   test("verifies a re-initialized same-alias local sender without restarting the receiver", async () => {
     const senderDir = join(tempRoot, "rowan");
     await mkdir(senderDir);

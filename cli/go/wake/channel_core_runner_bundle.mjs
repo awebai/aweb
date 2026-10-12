@@ -8378,12 +8378,18 @@ var SenderTrustManager = class {
     const cachedRoster = this.teamRosterCache;
     const usedCachedMetadata = cachedMeta && this.now() <= cachedMeta.expiresAt || cachedRoster && "roster" in cachedRoster && this.now() <= cachedRoster.expiresAt;
     let meta = await this.resolveAgentMeta(trimmedAddress);
-    if (usedCachedMetadata && rosterAlias !== void 0 && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial") && context?.fromDID && !fromStableID?.startsWith("did:aw:") && meta.resolved && meta.identityScope === "local" && meta.did && meta.did !== context.fromDID && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)) {
+    const localKeyMismatch = meta.resolved && meta.identityScope === "local" && meta.did && meta.did !== context?.fromDID;
+    const cachedAbsence = !meta.resolved && meta.resolutionError === "not_found";
+    if (usedCachedMetadata && rosterAlias !== void 0 && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial") && context?.fromDID && !fromStableID?.startsWith("did:aw:") && (localKeyMismatch || cachedAbsence) && this.now() >= (this.localMismatchRefreshAfter.get(trustAddress) ?? 0)) {
       meta = await this.resolveAgentMeta(trimmedAddress, true);
-      this.localMismatchRefreshAfter.set(trustAddress, this.now() + this.jitteredTTL(
-        TEAM_ROSTER_FAILURE_BACKOFF_MIN_MS,
-        TEAM_ROSTER_FAILURE_BACKOFF_JITTER_MS
-      ));
+      if (meta.resolved && meta.identityScope === "local" && meta.did === context.fromDID) {
+        this.localMismatchRefreshAfter.delete(trustAddress);
+      } else {
+        this.localMismatchRefreshAfter.set(trustAddress, this.now() + this.jitteredTTL(
+          TEAM_ROSTER_FAILURE_BACKOFF_MIN_MS,
+          TEAM_ROSTER_FAILURE_BACKOFF_JITTER_MS
+        ));
+      }
     }
     const stableIdentityCheck = context && meta.resolved && meta.identityScope !== "local" ? await this.prepareStableIdentityRegistry(
       context.pinStore,
