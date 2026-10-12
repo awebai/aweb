@@ -33,8 +33,9 @@ The channel plugin or host wake broker is the preferred notification path.
 --setup-hooks explicitly enables a Claude Code chat-only polling fallback:
 notices arrive after tool calls, with no mail or idle wake-up support.
 After confirming channel/broker delivery, use --remove-notify-hook on its own
-for backed-up removal of the exact aw notify PostToolUse entry from this
-project's .claude/settings.json. Init and upgrades never remove it implicitly.`,
+for backed-up removal of exact aw notify PostToolUse entries from the current
+directory's and, inside a git repo, the repository root's .claude/settings.json.
+Init and upgrades never remove them implicitly.`,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Root initialization runs first with hook traversal enabled.
 	},
@@ -105,7 +106,7 @@ func init() {
 	initCmd.Flags().BoolVar(&initInjectDocs, "inject-docs", false, "Inject aw coordination instructions into CLAUDE.md and AGENTS.md")
 	initCmd.Flags().BoolVar(&initDoNotTouchAgentsMD, "do-not-touch-agents-md", false, "Do not create or update AGENTS.md or CLAUDE.md during init")
 	initCmd.Flags().BoolVar(&initSetupHooks, "setup-hooks", false, "Enable Claude Code chat-only polling after tool calls (explicit fallback; no mail or idle wake-ups)")
-	initCmd.Flags().BoolVar(&initRemoveNotifyHook, "remove-notify-hook", false, "Remove only the exact aw notify PostToolUse hook from project settings, with a backup (standalone local action)")
+	initCmd.Flags().BoolVar(&initRemoveNotifyHook, "remove-notify-hook", false, "Remove only the exact aw notify PostToolUse hook from current directory and repository root settings, with backups (standalone local action)")
 	initCmd.Flags().BoolVar(&initSetupChannel, "setup-channel", false, "Set up Claude Code aweb-channel plugin for real-time coordination")
 	initCmd.Flags().StringVar(&initHumanName, "human-name", "", "Human name (default: AWEB_HUMAN or $USER)")
 	initCmd.Flags().StringVar(&initAgentType, "agent-type", "", "Runtime type (default: AWEB_AGENT_TYPE or agent)")

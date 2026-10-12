@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,11 +20,12 @@ type claudeNotifyCleanupResult struct {
 	BackupPath string `json:"backup_path,omitempty"`
 	Removed    int    `json:"removed"`
 	Error      error  `json:"-"`
+	ErrorText  string `json:"error,omitempty"`
 }
 
 // CleanupClaudeNotifyHook is an explicit local operation. Installing a plugin
 // does not establish working delivery, so setup/init/upgrade never call this
-// implicitly. The historical installer wrote only this settings.json.
+// implicitly. Explicit setup and historical materialization wrote this settings.json.
 func CleanupClaudeNotifyHook(repoRoot string) *claudeNotifyCleanupResult {
 	result := &claudeNotifyCleanupResult{FilePath: filepath.Join(repoRoot, ".claude", "settings.json")}
 	result.Error = cleanupClaudeNotifyFile(result)
@@ -305,17 +307,37 @@ func runRemoveClaudeNotifyHook(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	result := CleanupClaudeNotifyHook(resolveRepoRoot(wd))
-	if result.Error != nil {
-		return fmt.Errorf("could not remove Claude Code notify hook: %w", result.Error)
+	targets := []string{wd}
+	if root := resolveRepoRoot(wd); root != wd {
+		targets = append(targets, root)
+	}
+	results := make([]*claudeNotifyCleanupResult, 0, len(targets))
+	var failures []error
+	for _, target := range targets {
+		result := CleanupClaudeNotifyHook(target)
+		if result.Error != nil {
+			result.ErrorText = result.Error.Error()
+			failures = append(failures, fmt.Errorf("%s: %w", result.FilePath, result.Error))
+		}
+		results = append(results, result)
+		if !jsonFlag {
+			switch {
+			case result.Error != nil:
+				fmt.Fprintf(cmd.OutOrStdout(), "Could not remove Claude Code notify hook from %s: %v\n", result.FilePath, result.Error)
+			case result.Removed == 0:
+				fmt.Fprintf(cmd.OutOrStdout(), "No exact aw notify PostToolUse hook in %s; settings unchanged\n", result.FilePath)
+			default:
+				fmt.Fprintf(cmd.OutOrStdout(), "Removed %d aw notify PostToolUse hook(s) from %s; backup: %s\n", result.Removed, result.FilePath, result.BackupPath)
+			}
+		}
 	}
 	if jsonFlag {
-		return writeOutput(cmd.OutOrStdout(), result, nil)
+		output := struct {
+			Results []*claudeNotifyCleanupResult `json:"results"`
+		}{Results: results}
+		if err := writeOutput(cmd.OutOrStdout(), output, nil); err != nil {
+			failures = append(failures, err)
+		}
 	}
-	if result.Removed == 0 {
-		fmt.Fprintf(cmd.OutOrStdout(), "No exact aw notify PostToolUse hook in %s; settings unchanged\n", result.FilePath)
-		return nil
-	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Removed %d aw notify PostToolUse hook(s) from %s; backup: %s\n", result.Removed, result.FilePath, result.BackupPath)
-	return nil
+	return errors.Join(failures...)
 }

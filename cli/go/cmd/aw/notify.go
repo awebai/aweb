@@ -32,7 +32,8 @@ This is an explicit Claude Code chat-polling fallback. Prefer the aweb channel
 plugin or host wake broker for mail, chat and idle wake-ups. It does not install
 Codex hooks. Use aw init --setup-hooks only when this fallback is needed.
 After confirming channel/broker delivery, aw init --remove-notify-hook removes
-only the exact project PostToolUse entry, with a backup.`,
+only exact PostToolUse entries in the current directory's and, inside a git
+repo, the repository root's .claude/settings.json, with backups.`,
 	Args: cobra.NoArgs,
 	RunE: runNotify,
 }

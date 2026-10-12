@@ -144,11 +144,13 @@ func TestClaudeHookCleanupCLIExplicitAndScoped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("repeat cleanup: %v: %s", err, out)
 	}
-	var repeated claudeNotifyCleanupResult
+	var repeated struct {
+		Results []*claudeNotifyCleanupResult `json:"results"`
+	}
 	if err := json.Unmarshal(out, &repeated); err != nil {
 		t.Fatalf("cleanup JSON: %v: %s", err, out)
 	}
-	if repeated.Removed != 0 || repeated.BackupPath != "" {
+	if len(repeated.Results) != 1 || repeated.Results[0].Removed != 0 || repeated.Results[0].BackupPath != "" {
 		t.Fatalf("repeat result=%+v", repeated)
 	}
 	backupPaths, _ = filepath.Glob(path + ".aw-notify-backup-*")
@@ -217,5 +219,77 @@ func TestChannelSetupLeavesNotifyHookUntilExplicitRemoval(t *testing.T) {
 		if !bytes.Equal(before, after) {
 			t.Fatal("plugin installation implicitly removed fallback")
 		}
+	}
+}
+
+func TestClaudeHookCleanupCLIMaterializedHomeInsideRepo(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	bin := filepath.Join(t.TempDir(), "aw")
+	buildAwBinary(t, ctx, bin)
+	for _, scenario := range []string{"home-only", "both", "home-error", "both-errors"} {
+		t.Run(scenario, func(t *testing.T) {
+			repo, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			initGitRepoWithOrigin(t, repo, "https://example.test/repo.git")
+			home := filepath.Join(repo, "agents", "instances", "alice")
+			if err := os.MkdirAll(home, 0755); err != nil {
+				t.Fatal(err)
+			}
+			original := `{"hooks":{"PostToolUse":[{"command":"aw notify"}]},"other":42}`
+			homePath := writeNotifySettings(t, home, original)
+			rootOriginal := `{"other":42}`
+			if scenario == "both" {
+				rootOriginal = original
+			}
+			if scenario == "home-error" || scenario == "both-errors" {
+				writeNotifySettings(t, home, "{malformed")
+			}
+			if scenario == "both-errors" {
+				rootOriginal = "{malformed"
+			}
+			rootPath := writeNotifySettings(t, repo, rootOriginal)
+			run := exec.CommandContext(ctx, bin, "init", "--remove-notify-hook")
+			run.Dir = home
+			run.Env = testCommandEnv(t.TempDir())
+			out, err := run.CombinedOutput()
+			if (err != nil) != strings.Contains(scenario, "error") {
+				t.Fatalf("cleanup: %v %s", err, out)
+			}
+			for _, path := range []string{homePath, rootPath} {
+				if !bytes.Contains(out, []byte(path)) {
+					t.Fatalf("missing result for %s: %s", path, out)
+				}
+			}
+			homeData, _ := os.ReadFile(homePath)
+			rootData, _ := os.ReadFile(rootPath)
+			if strings.Contains(scenario, "error") {
+				if string(homeData) != "{malformed" {
+					t.Fatal("malformed home changed")
+				}
+			} else {
+				if bytes.Contains(homeData, []byte("aw notify")) {
+					t.Fatal("materialized home's hook survived")
+				}
+				backups, _ := filepath.Glob(homePath + ".aw-notify-backup-*")
+				if len(backups) != 1 {
+					t.Fatalf("home backups=%v", backups)
+				}
+				backup, _ := os.ReadFile(backups[0])
+				if string(backup) != original {
+					t.Fatal("home backup differs")
+				}
+			}
+			backups, _ := filepath.Glob(rootPath + ".aw-notify-backup-*")
+			if scenario == "both" {
+				if bytes.Contains(rootData, []byte("aw notify")) || len(backups) != 1 {
+					t.Fatal("root hook survived or backup missing")
+				}
+			} else if string(rootData) != rootOriginal || len(backups) != 0 {
+				t.Fatal("unmatched/unsafe root changed")
+			}
+		})
 	}
 }

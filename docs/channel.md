@@ -72,9 +72,13 @@ aw init --remove-notify-hook
 ```
 
 This standalone local action removes only command entries exactly equal to
-`aw notify` under `hooks.PostToolUse` in that project's `.claude/settings.json`.
-It preserves other handlers, hook events and settings bytes, saves the original
-in a sibling `settings.json.aw-notify-backup-*` file, and reports that backup.
+`aw notify` under `hooks.PostToolUse` in the current directory's and, inside a
+git repo, the repository root's `.claude/settings.json`. This covers agent homes
+inside a repository where historical materialization installed the fallback.
+Each distinct file is processed once, with its own result (a `results` list for
+`--json`); a failure in one does not prevent checking the other. It preserves
+other handlers, hook events and settings bytes, saves each changed original in
+a sibling `settings.json.aw-notify-backup-*` file, and reports that backup.
 It never edits `settings.local.json` or separately scans user settings; user
 `~/.claude/settings.json` is affected only if the user home is the target itself.
 Malformed/duplicate-key JSON, symlinks, read-only settings and backup failures are refused. Missing or unmatched settings and
