@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Server changes since `server-v1.27.16`
+
+- **Identity grant issuers:** minting an identity grant now requires an
+  authenticated identity with a nonblank issuing team-certificate id; without
+  one the mint returns 403 and writes nothing. Revoking the issuing
+  certificate is what ends a grant early, so a grant without an issuer could
+  never be ended that way. Existing grants with no recorded issuer, minted
+  before the issuer was stored, keep verifying unchanged.
+
 ### Release preparation: server 1.27.16 and CLI 1.36.33
 
 Server changes are since `server-v1.27.15`; CLI changes are since
