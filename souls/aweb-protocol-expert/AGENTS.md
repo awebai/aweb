@@ -101,9 +101,8 @@ in the shared coordination skill before declaring service evidence unavailable.
 - **Tasks** live on the aweb board of team aweb: run `aw task …` from your home.
 - Only the coordinator spawns or retires aweb instances. Ask it when your
   assignment needs another one.
-- You run on the launch `soul.yaml` records: Codex with its own default model,
-  the launch the lead chose from your predecessors' executions. A spawn that
-  overrides it departs from the record; tell the coordinator if you find one.
+- `soul.yaml` supplies a default launch. A spawn may explicitly choose any
+  harness or model; the resolved launch is frozen for the running instance.
 
 ## Verification and authority
 
