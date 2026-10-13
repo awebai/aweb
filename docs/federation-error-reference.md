@@ -1,6 +1,5 @@
 ---
 title: "Federation error reference"
-kicker: "Generated compatibility reference"
 description: "Stable cross-registry mail and chat errors generated from the canonical federation error source."
 weight: 96
 ---

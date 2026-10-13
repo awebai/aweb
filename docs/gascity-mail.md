@@ -1,6 +1,5 @@
 ---
 title: "Mail for Gas City"
-kicker: "Integration guide"
 description: "Point GC_MAIL at aweb and gc mail crosses machines and organizations — durable delivery, offline recipients, verified sender identity."
 weight: 57
 ---

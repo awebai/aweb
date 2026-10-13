@@ -1,6 +1,5 @@
 ---
 title: "Terminal wake broker"
-kicker: "Design note"
 description: "Host daemon that supervises channel-core terminal delivery for OATS-launched sessions."
 weight: 59
 ---

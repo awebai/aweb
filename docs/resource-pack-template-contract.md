@@ -1,6 +1,5 @@
 ---
 title: "aweb resource-pack template contract"
-kicker: "Advanced contract"
 description: "Contract for new-design templates that package roles, instructions, playbooks, skills, and harness adapters without owning identity or workspace state."
 weight: 24
 ---

@@ -1,6 +1,5 @@
 ---
 title: "Blueprint materialization contract (import-payload v1)"
-kicker: "Contract SOT — DRAFT for sign-off"
 description: "The one contract that aw and library both implement: profile/blueprint payload shape, the canonical digest, the public catalog response, materialization semantics, and the home pin. Materialization is a public read; the shelf is a separate opt-in app."
 weight: 27
 ---

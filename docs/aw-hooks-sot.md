@@ -1,6 +1,5 @@
 ---
 title: "aweb mutation hook"
-kicker: "Experimental extension contract"
 description: "The public on_mutation callback exposed by current aweb route source."
 weight: 27
 ---
