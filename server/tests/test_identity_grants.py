@@ -6,7 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from unittest.mock import AsyncMock
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -456,6 +456,42 @@ async def test_mint_duplicate_active_grant_did_key_conflicts(aweb_cloud_db):
         assert revoked.status_code == 200
         reminted = await _mint(client, grant_did_key=did_key, scopes=["mail.read"])
     assert reminted.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_mint_records_the_issuing_certificate(aweb_cloud_db):
+    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+    _, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        minted = await _mint(client, grant_did_key=did_key, scopes=["mail.read"])
+    assert minted.status_code == 200, minted.text
+    issuer = await aweb_cloud_db.aweb_db.fetch_value(
+        "SELECT issued_by_certificate_id FROM {{tables.identity_session_grants}} WHERE grant_id = $1::UUID",
+        minted.json()["grant_id"],
+    )
+    assert issuer == "cert-1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("certificate_id", ["", "   "])
+async def test_mint_refuses_an_identity_without_an_issuing_certificate(aweb_cloud_db, certificate_id):
+    """Revoking the issuing certificate ends a grant, so a grant needs one.
+
+    Certificate auth always carries a certificate id; an embedding app that
+    resolves the team identity itself may not.
+    """
+    app, _ = await _fixture(aweb_cloud_db.aweb_db)
+
+    async def _identity_without_certificate(request: Request):
+        return replace(await _identity(request), certificate_id=certificate_id)
+
+    app.dependency_overrides[get_team_identity] = _identity_without_certificate
+    _, did_key = _session_keypair()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        minted = await _mint(client, grant_did_key=did_key, scopes=["mail.read"])
+    assert minted.status_code == 403, minted.text
+    assert minted.json()["detail"] == "grants can only be minted with a team certificate"
+    assert await aweb_cloud_db.aweb_db.fetch_value("SELECT COUNT(*) FROM {{tables.identity_session_grants}}") == 0
 
 
 @pytest.mark.asyncio

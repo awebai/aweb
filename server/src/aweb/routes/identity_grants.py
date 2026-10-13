@@ -120,6 +120,10 @@ async def mint_identity_grant(
     _scheme_guard: None = Depends(reject_grant_scheme),
     identity: TeamIdentity = Depends(get_team_identity),
 ) -> GrantView:
+    # Revoking the issuing certificate ends the grant, so a grant needs one.
+    issuing_certificate_id = (identity.certificate_id or "").strip()
+    if not issuing_certificate_id:
+        raise HTTPException(status_code=403, detail="grants can only be minted with a team certificate")
     manager = db.get_manager("aweb")
     subject = await manager.fetch_one(
         """
@@ -177,7 +181,7 @@ async def mint_identity_grant(
             payload.grant_did_key,
             payload.scopes,
             (payload.label or "").strip() or None,
-            (identity.certificate_id or "").strip() or None,
+            issuing_certificate_id,
             now,
             expires_at,
         )
