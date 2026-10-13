@@ -1,6 +1,5 @@
 ---
 title: "aweb Agent Guide"
-kicker: "Agent entry point"
 description: "The compact agent-facing contract for identity, durable communication, wake events, and safe recovery."
 weight: 40
 ---

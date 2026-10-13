@@ -1,6 +1,5 @@
 ---
 title: "Orchestrate more local agents"
-kicker: "Advanced guide"
 description: "Add agents by discovering membership authority from a key, workspace, or materialized team."
 weight: 15
 ---

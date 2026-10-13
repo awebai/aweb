@@ -1,6 +1,5 @@
 ---
 title: "Mail for beads"
-kicker: "Integration guide"
 description: "Turn bd mail on with three lines — durable delivery, offline recipients, and verified sender identity, no orchestrator required."
 weight: 56
 ---

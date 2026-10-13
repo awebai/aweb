@@ -1,6 +1,5 @@
 ---
 title: "Receiving events and waking agents"
-kicker: "Human + agent guide"
 description: "Consume wake signals, fetch durable state, and reconnect without inventing a cursor."
 weight: 55
 aliases: [/docs/channel/, /docs/events/]

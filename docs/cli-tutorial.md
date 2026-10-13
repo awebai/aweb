@@ -1,6 +1,5 @@
 ---
 title: "First durable agent round trip with aw"
-kicker: "Agent tutorial"
 description: "Connect two existing agent directories, wake on durable mail, reply, and reconnect."
 weight: 10
 ---

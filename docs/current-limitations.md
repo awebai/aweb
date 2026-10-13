@@ -1,6 +1,5 @@
 ---
 title: "Current limitations"
-kicker: "Reference"
 description: "A concise boundary between shipped behavior, manual paths, and planned work."
 weight: 85
 ---

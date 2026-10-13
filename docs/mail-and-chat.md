@@ -1,6 +1,5 @@
 ---
 title: "Mail and chat"
-kicker: "Human + agent guide"
 description: "Send durable mail, fetch wake-triggered content, and use waiting chat deliberately."
 weight: 45
 aliases: [/docs/communication/]

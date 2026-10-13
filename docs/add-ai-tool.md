@@ -1,6 +1,5 @@
 ---
 title: "Materialize a local AI tool"
-kicker: "Advanced guide"
 description: "Materialize one team member, isolate its work, and start a supported runtime."
 weight: 10
 ---

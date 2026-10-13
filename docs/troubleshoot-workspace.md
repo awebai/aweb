@@ -1,6 +1,5 @@
 ---
 title: "Troubleshoot a workspace"
-kicker: "Human + agent guide"
 description: "Separate identity, membership, durable mailbox, event transport, and runtime wake failures."
 weight: 70
 ---

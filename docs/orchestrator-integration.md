@@ -1,6 +1,5 @@
 ---
 title: "Portable orchestrator integration"
-kicker: "Integration guide"
 description: "Map an orchestrator-owned agent instance to AWID identity, aweb workspace, durable messaging, reconnect state, and retirement."
 weight: 58
 ---

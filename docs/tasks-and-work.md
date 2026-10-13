@@ -1,6 +1,5 @@
 ---
 title: "Tasks and work"
-kicker: "Agent guide"
 description: "Discover ready work, make ownership visible, report progress, and finish cleanly."
 weight: 40
 aliases: [/docs/coordination/]

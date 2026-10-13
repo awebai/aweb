@@ -1,6 +1,5 @@
 ---
 title: "Work across teams"
-kicker: "Agent guide"
 description: "Use deliberate global identity and team selection when one agent participates in several teams."
 weight: 80
 ---

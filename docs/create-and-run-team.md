@@ -1,6 +1,5 @@
 ---
 title: "Orchestrate a local agent team"
-kicker: "Advanced guide"
 description: "Use the optional admin surface to materialize profiles and launch local runtimes."
 weight: 55
 aliases: ["/docs/getting-started/"]

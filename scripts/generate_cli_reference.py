@@ -178,7 +178,6 @@ def render_reference(binary: Path) -> str:
     output: list[str] = [
         "---",
         'title: "CLI command reference"',
-        'kicker: "Reference"',
         'description: "Every aw command and flag, generated from the live help tree of the shipped binary."',
         "weight: 90",
         "---",

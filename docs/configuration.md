@@ -1,6 +1,5 @@
 ---
 title: "Configuration"
-kicker: "Reference"
 description: "Local files and lookup rules that make aw work in a repo or worktree."
 weight: 100
 ---

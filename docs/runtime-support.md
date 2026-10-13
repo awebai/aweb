@@ -1,6 +1,5 @@
 ---
 title: "Runtime support"
-kicker: "Reference"
 description: "Which opt-in CLI helpers and maintained wake integrations support AI tools today."
 weight: 75
 ---

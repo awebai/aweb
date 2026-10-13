@@ -1,6 +1,5 @@
 ---
 title: "Running materialized agents"
-kicker: "Agent runtime guide"
 description: "How optional aw team admin add and aw team admin up helpers materialize homes and start local runtimes without owning their lifecycle."
 weight: 27
 ---

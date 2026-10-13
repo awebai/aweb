@@ -1,6 +1,5 @@
 ---
 title: "Roles, instructions, and locks"
-kicker: "Human + agent guide"
 description: "Share operating context and reserve contested resources without confusing guidance with authority."
 weight: 50
 ---

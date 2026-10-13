@@ -1,6 +1,5 @@
 ---
 title: "Improve a profile as the team works"
-kicker: "Human + agent guide"
 description: "Adopt a public profile, review agent proposals, and refresh approved improvements."
 weight: 35
 ---

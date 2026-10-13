@@ -1,6 +1,5 @@
 ---
 title: "Profiles and blueprints"
-kicker: "Human + agent guide"
 description: "Understand optional profile and blueprint helpers and the home/runtime boundaries that remain under operator control."
 weight: 30
 ---

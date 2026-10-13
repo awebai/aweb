@@ -167,7 +167,6 @@ def render_reference(tools: Mapping[str, Any]) -> str:
     sections = [
         """---
 title: "MCP tools reference"
-kicker: "Reference"
 description: "The OSS MCP tool surface, generated from the live server registration."
 weight: 95
 ---
