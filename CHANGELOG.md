@@ -7,7 +7,9 @@
   Pi reports a stopped channel loop to operator logs/status, with no session
   injection. Standalone channel-core retains disconnect/recovery logs by default.
 
-### Server changes since `server-v1.27.20`
+### Release preparation: server 1.27.21
+
+Server changes are since `server-v1.27.20`.
 
 - **A member can only heartbeat or update its own workspace:**
   `POST /v1/workspaces/heartbeat` and `PATCH /v1/workspaces/{id}` now answer
