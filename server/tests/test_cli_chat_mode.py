@@ -40,12 +40,9 @@ async def _publish_encryption_key(env, name, assertion):
     assert published.status_code == 200, published.text
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, True)])
-async def test_cli_chat_reply_follows_session_mode(privacy_app, tmp_path, global_resident, grant):
-    env = privacy_app
-    env.app.state.public_origin = str(env.client.base_url).rstrip("/")
-    now = datetime.now(timezone.utc)
+async def _cli_identities(env, global_resident, now):
+    """Keys for alice (hosted custodial), bob (the CLI identity, global when
+    global_resident) and carol (self-custodial). Nothing is published."""
     identities = {}
     for name, custody in (("alice", "hosted_custodial"), ("bob", "self"), ("carol", "self")):
         actor = env.actors[name]
@@ -61,6 +58,16 @@ async def test_cli_chat_reply_follows_session_mode(privacy_app, tmp_path, global
         )
         identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=TEAM,
                                 signing_key=actor.sk, private_key=private, encryption_key=assertion)
+    return identities
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, True)])
+async def test_cli_chat_reply_follows_session_mode(privacy_app, tmp_path, global_resident, grant):
+    env = privacy_app
+    env.app.state.public_origin = str(env.client.base_url).rstrip("/")
+    now = datetime.now(timezone.utc)
+    identities = await _cli_identities(env, global_resident, now)
     hosted, agent, peer = identities["alice"], identities["bob"], identities["carol"]
     await _publish_encryption_key(env, "alice", hosted["encryption_key"])
     await _publish_encryption_key(env, "carol", peer["encryption_key"])
