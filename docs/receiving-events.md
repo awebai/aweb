@@ -173,10 +173,16 @@ replay or acknowledgement semantics to control signals or other event types.
 
 `aw events stream` reconnects when a response ends or is cut, with backoff
 from 250 ms up to 30 s that resets after a stream that was served, and runs
-until Ctrl-C or `--timeout`. It stops with the server's error on an
-authentication or authorization refusal (any 4xx except 408 and 429). Each new
-connection announces still-actionable mail and chat again; the command prints
-each message (event type plus `message_id`) once per run.
+until Ctrl-C or `--timeout`, which also end a stream that is open and idle.
+Only an event that wakes counts as a served stream; `connected` and `error`
+frames do not. It stops with the server's error on an authentication or
+authorization refusal (any 4xx except 408 and 429), on a grant that ended
+(`grant_expired`, `grant_revoked`, `grant_subject_inactive`,
+`grant_issuer_revoked`), and on a frame it cannot parse; it reconnects with
+backoff on `verification_unavailable` and says why on stderr. Each new
+connection announces still-actionable mail and chat again. The command
+suppresses a repeated event whose type and `message_id` are among the newest
+10,000 it printed; events without a `message_id` are always printed.
 
 ### Server query maintenance
 

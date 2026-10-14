@@ -142,8 +142,9 @@ aw events stream --json
 The current raw stream has no resumable server cursor. A connection starts with
 current actionable unread/pending state, then emits changes until the response
 ends. The server caps a response at five minutes; `aw events stream` reconnects
-with backoff until Ctrl-C or `--timeout`, prints each message once per run, and
-stops on an authentication or authorization refusal. Read mail remains
+with backoff until Ctrl-C or `--timeout`, does not repeat a message it printed
+among the newest 10,000, and stops on an authentication or authorization
+refusal, a grant that ended, or a frame it cannot parse. Read mail remains
 available by exact message or conversation even though it is no longer emitted
 as unread.
 

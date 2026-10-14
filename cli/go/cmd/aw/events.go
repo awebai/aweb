@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/awebai/aw/awid"
@@ -52,7 +55,7 @@ var eventsStreamCmd = &cobra.Command{
 		// Ctrl-C) ends the subscription.
 		backoff := eventsReconnectInitialBackoff
 		for {
-			stream, closeStream, err := openEventStream(ctx, baseCtx, client.Client)
+			stream, closeStream, err := openEventStream(ctx, client.Client)
 			if err != nil {
 				if ctx.Err() != nil {
 					return nil
@@ -70,7 +73,7 @@ var eventsStreamCmd = &cobra.Command{
 			}
 
 			streamStartedAt := time.Now()
-			delivered, outputErr := drainEventStream(ctx, stream, enc, printed)
+			delivered, endErr, outputErr := drainEventStream(ctx, stream, enc, printed)
 			streamLasted := time.Since(streamStartedAt)
 			closeStream()
 
@@ -79,6 +82,17 @@ var eventsStreamCmd = &cobra.Command{
 			}
 			if ctx.Err() != nil {
 				return nil
+			}
+			retryable, fatal := classifyStreamEnd(endErr)
+			if fatal != nil {
+				return fatal
+			}
+			if retryable != nil {
+				// The server asked to be retried; say why, and back off as
+				// for a stream that was not served.
+				fmt.Fprintf(os.Stderr, "aw events stream: %v; reconnecting\n", retryable)
+				delivered = false
+				streamLasted = 0
 			}
 			// A stream that was served starts the next reconnect from the
 			// shortest delay, so a healthy subscription reconnecting at the
@@ -149,10 +163,10 @@ func sleepUntil(ctx context.Context, d time.Duration) bool {
 
 // openEventStream opens one stream, honouring cancellation while the open is in
 // flight. The deadline is the subscription's remaining time; the server
-// clamps it to its own cap. The returned close function releases the stream
-// body and the context governing it together, since cancelling the context
-// while the body is still being read would tear the connection down mid-event.
-func openEventStream(ctx, baseCtx context.Context, client *awid.Client) (*awid.AgentEventStream, func(), error) {
+// clamps it to its own cap. The stream's body is bound to the subscription's
+// context, so --timeout and Ctrl-C end a stream that is open and idle. The
+// returned close function releases the body and its context together.
+func openEventStream(ctx context.Context, client *awid.Client) (*awid.AgentEventStream, func(), error) {
 	deadline := time.Now().Add(24 * time.Hour)
 	if dl, ok := ctx.Deadline(); ok {
 		deadline = dl
@@ -162,7 +176,7 @@ func openEventStream(ctx, baseCtx context.Context, client *awid.Client) (*awid.A
 		stream *awid.AgentEventStream
 		err    error
 	}
-	openCtx, cancelOpen := context.WithCancel(baseCtx)
+	openCtx, cancelOpen := context.WithCancel(ctx)
 	streamCh := make(chan streamResult, 1)
 	go func() {
 		stream, err := client.EventStream(openCtx, deadline)
@@ -224,17 +238,16 @@ func (p *printedEvents) firstTime(ev *awid.AgentEvent) bool {
 	return true
 }
 
-// drainEventStream prints events until the stream ends, however it ends. It
-// reports whether the stream did real work and, separately, an output failure,
-// which is fatal. The connected preamble opens every stream, so it is not real
-// work.
-func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *json.Encoder, printed *printedEvents) (delivered bool, outputErr error) {
+// drainEventStream prints events until the stream ends. It reports whether the
+// stream did real work, why it ended, and, separately, an output failure, which
+// is fatal. The connected preamble and error frames are lifecycle, not work.
+func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *json.Encoder, printed *printedEvents) (delivered bool, endErr error, outputErr error) {
 	for {
 		ev, err := stream.Next(ctx)
 		if err != nil {
-			return delivered, nil
+			return delivered, err, nil
 		}
-		if ev.Type != awid.AgentEventConnected {
+		if ev.Type != awid.AgentEventConnected && ev.Type != awid.AgentEventError {
 			delivered = true
 		}
 		if !printed.firstTime(ev) {
@@ -244,12 +257,38 @@ func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *j
 			// Reconnecting cannot fix an output failure, and carrying on would
 			// drop the event without a trace.
 			if err := enc.Encode(ev); err != nil {
-				return delivered, err
+				return delivered, nil, err
 			}
 		} else {
 			printEventText(ev)
 		}
 	}
+}
+
+// classifyStreamEnd sorts why a stream ended. A transport end (EOF, a cut or
+// reset connection) is a reconnect and returns nothing. A grant-verification
+// outage the server asks to retry is returned as retryable. Anything else, a
+// grant that ended or a frame that does not parse, is fatal: reconnecting
+// would hide it, and the same server answers the same way.
+func classifyStreamEnd(err error) (retryable error, fatal error) {
+	if err == nil || isStreamTransportEnd(err) {
+		return nil, nil
+	}
+	var closed *awid.AgentEventStreamClosedError
+	if errors.As(err, &closed) && closed.Retryable() {
+		return err, nil
+	}
+	return nil, err
+}
+
+func isStreamTransportEnd(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
 }
 
 // isFatalStreamOpenError reports whether reopening would fail the same way: a

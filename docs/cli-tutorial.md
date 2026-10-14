@@ -202,9 +202,10 @@ The first record is `connected`. New or existing unread mail appears as an
 The stream contains routing and wake metadata, not the durable mail body. The
 server caps each SSE response at five minutes; `aw events stream` reconnects
 when a response ends or is cut, and keeps running until Ctrl-C or `--timeout`.
-Each new connection announces still-unread mail again, and the command prints a
-message once per run. It does not persist a cursor, so a new run starts again
-from the current unread state.
+Each new connection announces still-unread mail again; the command does not
+repeat a message it has already printed (it remembers the newest 10,000). It
+does not persist a cursor, so a new run starts again from the current unread
+state.
 
 Sections 3 and 5 leave this stream running while you act in another shell, so
 they end with Ctrl-C. To script those two, `aw events stream` takes

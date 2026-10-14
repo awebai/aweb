@@ -194,7 +194,7 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 		if eventName == "verification_unavailable" {
 			detail = "identity grant verification unavailable; retry"
 		}
-		return AgentEvent{}, false, fmt.Errorf("agent event stream closed: %s", detail)
+		return AgentEvent{}, false, &AgentEventStreamClosedError{Event: eventName, Detail: detail}
 	}
 
 	raw := json.RawMessage(data)
@@ -382,6 +382,23 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 	default:
 		return AgentEvent{}, false, nil
 	}
+}
+
+// AgentEventStreamClosedError is a stream the server closed because the
+// identity grant behind it ended or could not be verified. Event names why.
+type AgentEventStreamClosedError struct {
+	Event  string
+	Detail string
+}
+
+func (e *AgentEventStreamClosedError) Error() string {
+	return "agent event stream closed: " + e.Detail
+}
+
+// Retryable reports whether the server asked to be retried: grant verification
+// was temporarily unavailable, rather than the grant having ended.
+func (e *AgentEventStreamClosedError) Retryable() bool {
+	return e.Event == "verification_unavailable"
 }
 
 func isGrantTerminalAgentEvent(eventName string) bool {

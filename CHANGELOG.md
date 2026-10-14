@@ -13,9 +13,11 @@
   stream ends at the server's five-minute cap or is cut by a proxy, with
   backoff from 250 ms to 30 s, and runs until Ctrl-C or `--timeout`. Before, it
   exited at the first close, with exit 1 and "unexpected EOF" when the
-  connection was cut. Mail and chat the server announces again on a new
-  connection are printed once per run. A 4xx refusal other than 408 or 429
-  still stops it with the server's error.
+  connection was cut. `--timeout` and Ctrl-C also end a stream that is open
+  and idle. Mail and chat the server announces again on a new connection are
+  not printed again while among the newest 10,000 printed. A 4xx refusal other
+  than 408 or 429, a grant that ended, and a frame that does not parse stop it
+  with the cause; a temporary grant verification outage is retried.
 - **Cross-team local sender trust:** received plaintext and encrypted mail from
   a team-local `did:key` sender now verify consistently in `aw`, the channel and
   the wake broker, including resident grant seats. They use the delivery

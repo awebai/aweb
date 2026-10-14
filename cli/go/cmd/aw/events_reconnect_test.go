@@ -349,3 +349,116 @@ func TestThePrintedSetForgetsItsOldestMessagePastItsBound(t *testing.T) {
 		t.Fatal("the oldest message was not forgotten past the bound")
 	}
 }
+
+// --timeout ends the subscription even while a stream is open and idle: the
+// open stream's body is bound to the subscription, not only the open request.
+func TestEventsStreamTimeoutEndsAnOpenIdleStream(t *testing.T) {
+	t.Parallel()
+	_, url := eventsTestServer(t, func(open int64, w http.ResponseWriter, r *http.Request) {
+		serveStream(t, w, connectedPreamble)
+		<-r.Context().Done()
+	})
+
+	started := time.Now()
+	output, err := runEventsStream(t, url, 1)
+	elapsed := time.Since(started)
+
+	if err != nil {
+		t.Fatalf("aw events stream exited non-zero (%v) at its timeout:\n%s", err, output)
+	}
+	// The build happens inside runEventsStream, so measure only a generous bound.
+	if elapsed > 45*time.Second {
+		t.Fatalf("aw events stream ran %s with --timeout 1 on an open idle stream", elapsed)
+	}
+}
+
+// An error frame is lifecycle, not work: a server that answers with only the
+// preamble and an error, then closes, must push the reconnect delay up.
+func TestAnErrorOnlyStreamDoesNotHoldTheBackoffAtItsFloor(t *testing.T) {
+	t.Parallel()
+	opens, url := eventsTestServer(t, func(open int64, w http.ResponseWriter, r *http.Request) {
+		serveStream(t, w, connectedPreamble, "event: error\ndata: {\"detail\":\"poll failure\"}\n\n")
+	})
+
+	output, err := runEventsStream(t, url, 6)
+
+	if err != nil {
+		t.Fatalf("run exited non-zero (%v):\n%s", err, output)
+	}
+	if got := opens.Load(); got > 8 {
+		t.Fatalf("%d stream opens in 6s against a server that only sends an error; the backoff is not escalating", got)
+	}
+	if got := opens.Load(); got < 2 {
+		t.Fatalf("only %d open(s); the client stopped reconnecting", got)
+	}
+}
+
+// A malformed frame is a protocol failure, not a stream end: the command stops
+// and names it instead of silently reconnecting.
+func TestEventsStreamStopsAndNamesAMalformedFrame(t *testing.T) {
+	t.Parallel()
+	opens, url := eventsTestServer(t, func(open int64, w http.ResponseWriter, r *http.Request) {
+		serveStream(t, w, connectedPreamble, "event: actionable_mail\ndata: {not json\n\n")
+	})
+
+	output, err := runEventsStream(t, url, 6)
+
+	if err == nil {
+		t.Fatalf("aw events stream exited zero after a malformed frame:\n%s", output)
+	}
+	if !strings.Contains(output, "invalid character") {
+		t.Fatalf("the output does not name the parse failure:\n%s", output)
+	}
+	if got := opens.Load(); got != 1 {
+		t.Fatalf("the client opened %d streams after a malformed frame; it must stop at the first", got)
+	}
+}
+
+// A grant that ended (expired, revoked, its subject or issuer inactive) ends
+// the subscription with the server's reason.
+func TestEventsStreamStopsWhenTheGrantEnds(t *testing.T) {
+	t.Parallel()
+	opens, url := eventsTestServer(t, func(open int64, w http.ResponseWriter, r *http.Request) {
+		serveStream(t, w, connectedPreamble, "event: grant_revoked\ndata: {\"detail\":\"identity grant revoked\"}\n\n")
+	})
+
+	output, err := runEventsStream(t, url, 6)
+
+	if err == nil {
+		t.Fatalf("aw events stream exited zero after its grant was revoked:\n%s", output)
+	}
+	if !strings.Contains(output, "agent event stream closed: identity grant revoked") {
+		t.Fatalf("the output does not give the server's reason:\n%s", output)
+	}
+	if got := opens.Load(); got != 1 {
+		t.Fatalf("the client opened %d streams after its grant was revoked; it must stop at the first", got)
+	}
+}
+
+// Grant verification that is temporarily unavailable asks to be retried, so
+// the subscription reconnects, with backoff, and says why.
+func TestEventsStreamRetriesWhenGrantVerificationIsUnavailable(t *testing.T) {
+	t.Parallel()
+	opens, url := eventsTestServer(t, func(open int64, w http.ResponseWriter, r *http.Request) {
+		if open == 1 {
+			serveStream(t, w, connectedPreamble, "event: verification_unavailable\ndata: {\"detail\":\"identity grant verification unavailable\"}\n\n")
+			return
+		}
+		serveStream(t, w, connectedPreamble, mailEvent("m-after-retry", "verified again"))
+	})
+
+	output, err := runEventsStream(t, url, 6)
+
+	if err != nil {
+		t.Fatalf("aw events stream exited non-zero (%v) on a retryable verification outage:\n%s", err, output)
+	}
+	if got := opens.Load(); got < 2 {
+		t.Fatalf("the client opened %d stream(s); it must retry a verification outage", got)
+	}
+	if !strings.Contains(output, "identity grant verification unavailable; retry") {
+		t.Fatalf("the output does not say why it reconnected:\n%s", output)
+	}
+	if countMessage(decodeEventLines(output), "m-after-retry") != 1 {
+		t.Fatalf("the retried stream's event was not printed:\n%s", output)
+	}
+}
