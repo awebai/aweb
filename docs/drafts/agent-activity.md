@@ -1,7 +1,8 @@
 # Agent activity: a signed, ephemeral, opt-in status stream
 
-Status: **DESIGN DRAFT for review (aweb-acah.2). Not approved, not
-implemented.** Security review by Athena, then approval by Juan. Nothing in this
+Status: **DESIGN DRAFT (aweb-acah.2). Not approved, not implemented.**
+Security review by Athena (conditional ACK at 09a89df90, folded in here), then
+approval by Juan. Nothing in this
 document is a shipped contract.
 
 ## Purpose
@@ -132,10 +133,13 @@ POST /v1/agents/me/activity
 
 - **Auth.** The existing messaging auth dependency used by the chat routes
   (`server/src/aweb/identity_auth_deps.py:222-270`): grant, team certificate or
-  identity DIDKey. For grant callers it reuses the existing `presence.write`
-  scope (`server/src/aweb/auth_context.py:25-36`). Activity is a liveness
-  statement about the caller itself, like a heartbeat. Already-issued grants
-  therefore need no reissue. Athena should confirm that scope choice.
+  identity DIDKey. Grant callers need the existing `chat.send` scope
+  (`server/src/aweb/auth_context.py:25-36`). The server cannot enforce that a
+  summary was templated, so activity is a short text channel into a chat, and
+  it needs the authority that already gates putting text into chats. A grant
+  without `chat.send` cannot reach a session's participants through activity.
+  `chat.send` is already on the seat grants that matter, so no grant is
+  reissued and no scope is added (Athena's review).
 - **Body:** `{"signed_payload": "<base64url canonical JSON>", "signature": "<base64>"}`.
 - **The server verifies and refuses** (each refusal has a distinct 4xx status
   and message, and the real error is logged):
@@ -153,7 +157,9 @@ POST /v1/agents/me/activity
      relayed.
   6. Size, field and phase rules above.
   7. **Rate limit**, per agent: a token bucket of 2 events per second with a
-     burst of 10, kept in Redis. Over the limit, the response is 429 with
+     burst of 10, kept in Redis. Activity events are status, not messages: they
+     do not count against message allowances or quotas, and this limit plus
+     the 120-byte summary cap is what bounds them. Over the limit, the response is 429 with
      `Retry-After`. aweb has no route rate limiting today (the
      `app.state.rate_limiter` built at `server/src/aweb/api.py:255,315` is
      never enforced), so this is the first enforced use and needs its own
@@ -229,7 +235,8 @@ When the session's messages are end-to-end encrypted (encrypted v2), a
 summary attributed to that session would put server-readable words beside an
 encrypted conversation. In that case the emitter sends `phase` and `tool` only,
 with no summary. The dashboard copy says activity is visible to aweb's
-servers, as this chat is. Athena to confirm this rule.
+servers, as this chat is, and that in an encrypted chat the tool name itself
+remains visible to aweb.
 
 ## Attribution: which chat a turn serves
 
@@ -326,7 +333,7 @@ constraint, `aweb/aweb-protocol-expert/decisions/released-clients-are-a-permanen
 | channel-core (channel plugin 1.7.x, Pi 0.3.x) | None: they read only `/v1/events/stream`, which is unchanged. Even so, unknown event names there are dropped (`channel-core/src/api/events.ts:252-257,282`). |
 | Older emitters | They send nothing, and the dashboard shows what it shows today. |
 | Newer emitters against an older server | 404, so publishing stops for that process and one line is logged. No retry storm. |
-| Already-issued grants | Usable as they are; the route reuses `presence.write`. |
+| Already-issued grants | Usable as they are; the route reuses `chat.send`. |
 | Hosted dashboard | Opts in with `include=agent_activity`. It deploys with the server under the hosted-application rule, so no field client depends on this frame. |
 
 No migration, no new grant scope, no change to existing signed bytes. The new
@@ -346,14 +353,15 @@ Producer and verifier tests consume it.
   (aweb-acah.3) covers "can it hear you".
 - Activity of a human participant.
 
-## Questions for review
+## Review decisions (Athena)
 
-1. Athena: is `presence.write` the right grant scope, or should activity have
-   its own scope at the cost of reissuing grants?
-2. Athena: is the encrypted-session rule (no summary) sufficient?
-3. Athena: should `busy_elsewhere` reach other sessions at all? It reveals that
-   the agent is busy, though not with what. The alternative is silence, which
-   is the experience we are fixing.
+1. Grant scope: `chat.send`, not `presence.write`; see "Ingress".
+2. Encrypted sessions: `phase` and `tool` only, no summary, is sufficient; the
+   dashboard copy says the tool name is visible to aweb.
+3. `busy_elsewhere`: acceptable. It reveals only that the agent is busy in
+   another chat, and it stays server-derived.
+4. Activity does not count against message allowances; the rate limit and
+   size caps bound it.
 
 ## Implementation slices (after approval)
 
