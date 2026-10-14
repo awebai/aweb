@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from awid.signing import VerifyResult, verify_signature
 
+from aweb.e2ee_messages import verify_e2ee_message_envelope_signature
 from aweb.service_errors import ForbiddenError
 
 VerificationStatus = Literal["verified", "verified_legacy", "unverified", "failed"]
@@ -15,6 +16,8 @@ LEGACY_CONVERSATION_CONTINUATION_DETAIL = (
 
 
 def message_verification_status(row: dict[str, Any]) -> VerificationStatus:
+    if str(row.get("content_mode") or "") == "encrypted_v2":
+        return _encrypted_message_verification_status(row)
     signed_payload = str(row.get("signed_payload") or "")
     signature = str(row.get("signature") or "")
     if not signed_payload or not signature:
@@ -49,6 +52,39 @@ def message_verification_status(row: dict[str, Any]) -> VerificationStatus:
     if not signed_conversation_id:
         return "verified_legacy"
     return "failed"
+
+
+def _encrypted_message_verification_status(row: dict[str, Any]) -> VerificationStatus:
+    # An encrypted message carries its sender signature inside the envelope;
+    # the row's legacy signature columns stay empty by contract.
+    envelope = row.get("encrypted_envelope")
+    if isinstance(envelope, str) and envelope:
+        try:
+            envelope = json.loads(envelope)
+        except Exception:
+            return "failed"
+    if not envelope:
+        return "unverified"
+    if not isinstance(envelope, dict):
+        return "failed"
+    try:
+        verify_e2ee_message_envelope_signature(envelope)
+    except Exception:
+        return "failed"
+
+    # The signature covers the envelope; the envelope must also belong to this row.
+    sender = envelope.get("from") or {}
+    sender_dids = {str(sender.get("did") or "").strip(), str(sender.get("stable_id") or "").strip()} - {""}
+    bindings = (
+        (row.get("from_did"), sender_dids),
+        (row.get("message_id"), {str(envelope.get("message_id") or "").strip()}),
+        (row.get("conversation_id"), {str(envelope.get("conversation_id") or "").strip()}),
+    )
+    for row_value, envelope_values in bindings:
+        row_value = str(row_value or "").strip()
+        if row_value and row_value not in envelope_values:
+            return "failed"
+    return "verified"
 
 
 async def latest_message_verification_status(

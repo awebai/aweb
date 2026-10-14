@@ -299,8 +299,9 @@ async def _wait_for_replies(
 
             new_msgs = await aweb_db.fetch_all(
                 """
-                SELECT message_id, from_did, from_alias,
+                SELECT message_id, from_did, from_alias, from_address,
                        CASE WHEN content_mode = 'encrypted_v2' THEN '' ELSE body END AS body,
+                       signature, signed_payload,
                        content_mode, message_version, encrypted_envelope, created_at,
                        sender_leaving, hang_on
                 FROM {{tables.chat_messages}}
@@ -332,6 +333,7 @@ async def _wait_for_replies(
                         {
                             "message_id": str(row["message_id"]),
                             "from_alias": row["from_alias"],
+                            "from_address": row["from_address"],
                             "from_did": row["from_did"],
                             "body": content["body"],
                             "decryptable": content["decryptable"],
@@ -339,6 +341,9 @@ async def _wait_for_replies(
                             "hang_on": is_hang_on,
                             "sender_leaving": bool(row["sender_leaving"]),
                             "timestamp": row["created_at"].isoformat(),
+                            "verification_status": message_verification_status(
+                                {**row, "conversation_id": session_id_str}
+                            ),
                         }
                     )
                 if any(not reply["hang_on"] for reply in replies):
@@ -973,6 +978,7 @@ async def chat_history(
                 "message_id": msg["message_id"],
                 "conversation_id": str(session_uuid),
                 "from_alias": msg["from_alias"],
+                "from_address": msg.get("from_address"),
                 "from_did": msg.get("from_did"),
                 "body": content["body"],
                 "decryptable": content["decryptable"],

@@ -233,5 +233,5 @@ async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(awe
         json.dumps(envelope),
         row["message_id"],
     )
-    inbox = json.loads(await mail_tools.check_inbox(db, hosted_decryptor=None))
+    inbox = json.loads(await mail_tools.check_inbox(db, hosted_decryptor=None, unread_only=False))
     assert inbox["messages"][0]["verification_status"] == "failed"

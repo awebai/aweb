@@ -40,6 +40,14 @@
 
 ### Server changes since `server-v1.27.16`
 
+- **Encrypted messages verify by their envelope:** the MCP chat history, the
+  `send_chat` wait reply, MCP mail and the HTTP inbox now check an
+  `encrypted_v2` message's envelope signature and its binding to the row's
+  sender, message and conversation. A correctly signed message reads
+  `verified`, a tampered one `failed`, and one with no envelope `unverified`.
+  Before, chat history showed every encrypted message as `unverified`, and MCP
+  mail showed every one as `verified_envelope_v2` without checking. Chat
+  history and the wait reply also return the sender's `from_address`.
 - **MCP mail stays in the existing thread:** `send_mail` with a recipient and no
   conversation ID now continues the active one-to-one mail conversation, like
   the HTTP route. Custody signs or encrypts with that conversation ID; current
