@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -310,6 +311,18 @@ func resolveClientForSelection(workingDir string, sel *awconfig.Selection) (*awe
 }
 
 func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
+	c, sel, err := buildClientForSelectionAtIdentityHome(context.Background(), workingDir, identityHome, sel)
+	if err != nil {
+		return nil, nil, err
+	}
+	lastClient = c
+	return c, sel, nil
+}
+
+// buildClientForSelectionAtIdentityHome builds the selection's
+// certificate-authenticated client. With AWEB_URL set, resolving the API base
+// probes the server within ctx.
+func buildClientForSelectionAtIdentityHome(ctx context.Context, workingDir, identityHome string, sel *awconfig.Selection) (*aweb.Client, *awconfig.Selection, error) {
 	if sel != nil && strings.TrimSpace(sel.WorkspacePath) == "" {
 		if recovery, ok := workspaceConnectRecoveryCommand(workingDir, identityHome); ok {
 			return nil, nil, usageError("current identity is not connected to an aweb workspace; run `%s`", recovery)
@@ -319,7 +332,7 @@ func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, se
 		return nil, nil, err
 	}
 
-	baseURL, err := resolveAuthenticatedBaseURL(sel.BaseURL)
+	baseURL, err := resolveAuthenticatedBaseURLContext(ctx, sel.BaseURL)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -335,8 +348,6 @@ func resolveClientForSelectionAtIdentityHome(workingDir, identityHome string, se
 	if err := configureResolvedClient(c, sel, baseURL); err != nil {
 		return nil, nil, err
 	}
-
-	lastClient = c
 	return c, sel, nil
 }
 
@@ -798,36 +809,58 @@ func redirectLocationDisplay(raw string, base *url.URL) string {
 }
 
 func probeAwebBaseURL(ctx context.Context, baseURL string) (bool, error) {
+	ok, _, err := probeAwebBaseURLOutcome(ctx, baseURL)
+	return ok, err
+}
+
+const awebBaseURLProbeTimeout = 2 * time.Second
+
+// probeAwebBaseURLOutcome reports whether baseURL serves the aweb API. When it
+// does not, outcome says what answered instead. A server that is failing (a
+// 5xx, a 429, an HTML error or challenge page, a timeout) returns an error: it
+// says nothing about whether the URL is the API.
+func probeAwebBaseURLOutcome(ctx context.Context, baseURL string) (ok bool, outcome string, err error) {
 	// Stable across our servers: exists (POST) on /v1/agents/heartbeat.
 	// We use GET to avoid side effects; redirects and 404 reject a candidate.
 	// Other non-HTML responses distinguish an API from a web app.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/agents/heartbeat", nil)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
-	resp, err := awid.DoNoRedirect(&http.Client{Timeout: 2 * time.Second, Transport: awid.NewAPITransport()}, req)
+	resp, err := awid.DoNoRedirect(&http.Client{Timeout: awebBaseURLProbeTimeout, Transport: awid.NewAPITransport()}, req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return false, ctx.Err()
+			return false, "", ctx.Err()
+		}
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			return false, "", fmt.Errorf("heartbeat probe timed out after %s at %q", awebBaseURLProbeTimeout, redirectLocationDisplay(baseURL, req.URL))
 		}
 		// net/http may put an unparseable Location (including credentials) in err.
 		// Never reflect that server-controlled header through transport diagnostics.
-		return false, fmt.Errorf("heartbeat probe request failed at %q (transport failure or invalid redirect)", redirectLocationDisplay(baseURL, req.URL))
+		return false, "", fmt.Errorf("heartbeat probe request failed at %q (transport failure or invalid redirect)", redirectLocationDisplay(baseURL, req.URL))
 	}
 	_ = resp.Body.Close()
 	debugLog("probe aweb base url: %s -> %d", baseURL, resp.StatusCode)
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
-		return false, fmt.Errorf("server redirected %q to %q; set AWEB_URL to the intended API base at that address", redirectLocationDisplay(baseURL, req.URL), redirectLocationDisplay(resp.Header.Get("Location"), req.URL))
+		return false, "", fmt.Errorf("server redirected %q to %q; set AWEB_URL to the intended API base at that address", redirectLocationDisplay(baseURL, req.URL), redirectLocationDisplay(resp.Header.Get("Location"), req.URL))
 	}
 	if resp.StatusCode == http.StatusNotFound {
-		return false, nil
+		return false, "not found (HTTP 404)", nil
 	}
-	ct := resp.Header.Get("Content-Type")
-	if strings.Contains(ct, "text/html") {
-		debugLog("probe aweb base url: %s rejected (HTML response)", baseURL)
-		return false, nil
+	html := strings.Contains(resp.Header.Get("Content-Type"), "text/html")
+	htmlNote := ""
+	if html {
+		htmlNote = " HTML"
 	}
-	return true, nil
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 || (html && (resp.StatusCode < 200 || resp.StatusCode >= 300)) {
+		return false, "", fmt.Errorf("temporarily failing (HTTP %d%s)", resp.StatusCode, htmlNote)
+	}
+	if html {
+		debugLog("probe aweb base url: %s rejected (web app page)", baseURL)
+		return false, fmt.Sprintf("web app (HTTP %d HTML)", resp.StatusCode), nil
+	}
+	return true, "", nil
 }
 
 func resolveWorkingBaseURL(raw string) (string, error) {
@@ -869,33 +902,50 @@ func resolveWorkingBaseURLContext(ctx context.Context, raw string) (string, erro
 	}
 
 	var lastErr error
+	outcomes := make([]string, 0, len(candidates))
 	for _, cand := range candidates {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		debugLog("resolve base url: probing %s", cand)
-		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		ok, err := probeAwebBaseURL(probeCtx, cand)
+		probeCtx, cancel := context.WithTimeout(ctx, awebBaseURLProbeTimeout)
+		ok, outcome, err := probeAwebBaseURLOutcome(probeCtx, cand)
 		cancel()
 		if err != nil {
 			debugLog("resolve base url: probe %s failed: %v", cand, err)
 			lastErr = err
+			outcomes = append(outcomes, cand+": "+err.Error())
 			continue
 		}
 		if ok {
 			debugLog("resolve base url: selected %s", cand)
 			return cand, nil
 		}
+		outcomes = append(outcomes, cand+": "+outcome)
 	}
-	if lastErr != nil {
-		return "", fmt.Errorf("no aweb API detected at %q (tried %v): %w", raw, candidates, lastErr)
-	}
-	return "", fmt.Errorf("no aweb API detected at %q (tried %v)", raw, candidates)
+	return "", &baseURLResolveError{message: fmt.Sprintf("no aweb API detected at %q (tried %s)", raw, strings.Join(outcomes, "; ")), err: lastErr}
 }
 
+// baseURLResolveError names what each candidate answered, once, and keeps the
+// last probe failure for errors.Is and errors.As.
+type baseURLResolveError struct {
+	message string
+	err     error
+}
+
+func (e *baseURLResolveError) Error() string { return e.message }
+func (e *baseURLResolveError) Unwrap() error { return e.err }
+
 func resolveAuthenticatedBaseURL(raw string) (string, error) {
+	return resolveAuthenticatedBaseURLContext(context.Background(), raw)
+}
+
+// resolveAuthenticatedBaseURLContext returns the API base. AWEB_URL may name
+// the site rather than its API, so it is probed; a configured aweb_url was
+// resolved when it was saved and is used as given.
+func resolveAuthenticatedBaseURLContext(ctx context.Context, raw string) (string, error) {
 	if envBaseURL := strings.TrimSpace(os.Getenv("AWEB_URL")); envBaseURL != "" {
-		return resolveWorkingBaseURL(envBaseURL)
+		return resolveWorkingBaseURLContext(ctx, envBaseURL)
 	}
 	return cleanBaseURL(raw)
 }

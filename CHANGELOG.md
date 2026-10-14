@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### CLI changes since `aw-v1.36.35`
+
+- **Custody starts without the network:** `aw custody serve` does no network
+  I/O at start. It builds its aweb client on the first request that needs it,
+  inside that request; a failure fails that request, is logged with its cause
+  and shown by status, and the next request tries again. Before, with
+  `AWEB_URL` set, custody probed the server at start, and one failed probe
+  left it running and never ready, so launchd or systemd never restarted it.
+  `aw custody status` adds a `client` object (`connected`, `last_error`,
+  `last_error_at`) and `keys.signing_key_loaded`.
+- **API base probe:** resolving `AWEB_URL` tells a web app page (HTTP 2xx
+  HTML), which means the URL is not the API, apart from a failing server (a
+  5xx, a 429, an HTML error or challenge page, a timeout), which is a temporary
+  failure and no longer reads as "no aweb API". The error names what each
+  candidate URL answered.
+
 ### Server changes since `server-v1.27.16`
 
 - **Identity grant issuers:** minting an identity grant now requires an
