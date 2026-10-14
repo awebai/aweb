@@ -9,7 +9,9 @@ import awid.ratelimit as ratelimit_module
 from awid.did import did_from_public_key, generate_keypair, stable_id_from_did_key
 from awid.signing import canonical_json_bytes
 from awid.signing import sign_message
-from awid.ratelimit import normalize_service_token
+from awid.ratelimit import MemoryFixedWindowRateLimiter, normalize_service_token
+from awid.log import identity_state_hash
+from awid.e2ee_keys import build_encryption_key_assertion
 
 from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
@@ -113,7 +115,7 @@ async def test_namespace_and_address_read_routes_use_redis_rate_limiter(client, 
 
 
 @pytest.mark.asyncio
-async def test_trusted_service_token_uses_constant_time_comparison_for_reads(
+async def test_trusted_service_token_uses_constant_time_comparison_for_reads_and_provisioning(
     awid_db_infra, fake_redis, fake_domain_verifier, monkeypatch
 ):
     token = "trusted-service-token-with-at-least-32-bytes"
@@ -146,10 +148,8 @@ async def test_trusted_service_token_uses_constant_time_comparison_for_reads(
     assert addresses_response.status_code == 200
     assert namespace_response.status_code == 200
     assert write_response.status_code == 422
-    assert len(fake_redis.eval_calls) == 1
-    rate_keys = [call[0][2] for call in fake_redis.eval_calls]
-    assert any(":did_register:" in key for key in rate_keys)
-    assert compared == [(token.encode(), token.encode())] * 3
+    assert fake_redis.eval_calls == []
+    assert compared == [(token.encode(), token.encode())] * 4
 
 
 @pytest.mark.asyncio
@@ -277,10 +277,7 @@ _READ_LIMIT_ROUTES = [
 ]
 
 _WRITE_LIMIT_ROUTES = [
-    ("did_register", "POST", "/v1/did"),
     ("did_update", "PUT", "/v1/did/{did}"),
-    ("did_encryption_key_publish", "POST", "/v1/did/{did}/encryption-key"),
-    ("namespace_register", "POST", "/v1/namespaces"),
     ("namespace_reverify", "POST", "/v1/namespaces/example.com/reverify"),
     ("namespace_update", "PATCH", "/v1/namespaces/example.com"),
     ("namespace_rotate", "PUT", "/v1/namespaces/example.com"),
@@ -364,7 +361,7 @@ async def test_every_read_bucket_trusted_exemption(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("bucket,method,path", _WRITE_LIMIT_ROUTES, ids=[r[0] for r in _WRITE_LIMIT_ROUTES])
-async def test_service_token_never_exempts_write_buckets(
+async def test_service_token_keeps_other_write_buckets_limited(
     client, fake_redis, monkeypatch, caplog, bucket, method, path
 ):
     token = "trusted-service-token-with-at-least-32-bytes"
@@ -380,6 +377,135 @@ async def test_service_token_never_exempts_write_buckets(
     assert len(fake_redis.eval_calls) == 3
     assert all(f":{bucket}:" in call[0][2] for call in fake_redis.eval_calls)
     assert "event=awid_service_exempt" not in caplog.text
+
+
+def _new_registration():
+    signing_key, public_key = generate_keypair()
+    did_key = did_from_public_key(public_key)
+    did_aw = stable_id_from_did_key(did_key)
+    body = {
+        "did_aw": did_aw,
+        "seq": 1,
+        "operation": "register_did",
+        "previous_did_key": None,
+        "new_did_key": did_key,
+        "prev_entry_hash": None,
+        "state_hash": identity_state_hash(did_aw=did_aw, current_did_key=did_key),
+        "authorized_by": did_key,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+    }
+    body["proof"] = sign_message(signing_key, canonical_json_bytes(body))
+    return signing_key, body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["did_register", "namespace_register", "self", "hosted_custodial"])
+@pytest.mark.parametrize("credential", ["valid", "missing", "wrong", "unconfigured"])
+async def test_service_provisioning_keeps_public_hourly_limits(
+    client, controller_identity, monkeypatch, operation, credential
+):
+    # Exercise real routes, database writes, signatures and the fixed-window
+    # limiter at the published 10/h and 30/h boundaries, from one client IP.
+    token = "trusted-service-token-with-at-least-32-bytes"
+    app = client._transport.app
+    monkeypatch.setattr(app.state, "awid_service_token", None if credential == "unconfigured" else token)
+    monkeypatch.setattr(app.state, "rate_limiter", MemoryFixedWindowRateLimiter())
+    monkeypatch.setattr(ratelimit_module.time, "time", lambda: 1800000000.0)
+    headers = {} if credential == "missing" else {
+        "X-AWID-Service-Token": "wrong-service-token-with-at-least-32-bytes" if credential == "wrong" else token
+    }
+    limit = 10 if operation in ("did_register", "namespace_register") else 30
+
+    if limit == 30:
+        signing_key, registration = _new_registration()
+        registered = await client.post("/v1/did", json=registration)
+        assert registered.status_code == 200, registered.text
+        path = f"/v1/did/{registration['did_aw']}/encryption-key"
+
+    for attempt in range(limit + 1):
+        request_headers = dict(headers)
+        if operation == "did_register":
+            _, body = _new_registration()
+            path = "/v1/did"
+        elif operation == "namespace_register":
+            controller_key, controller_did = controller_identity
+            body = {"domain": f"customer-{attempt}.example.com"}
+            timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            signature = sign_message(controller_key, canonical_json_bytes({
+                "domain": body["domain"], "operation": "register", "timestamp": timestamp,
+            }))
+            request_headers.update({
+                "Authorization": f"DIDKey {controller_did} {signature}",
+                "X-AWEB-Timestamp": timestamp,
+            })
+            path = "/v1/namespaces"
+        else:
+            body = build_encryption_key_assertion(
+                signing_key=signing_key,
+                identity_did=registration["new_did_key"],
+                identity_stable_id=registration["did_aw"],
+                encryption_public_key=bytes([attempt + 1]) * 32,
+                custody=operation,
+            )
+        response = await client.post(path, json=body, headers=request_headers)
+        if credential == "valid" or attempt < limit:
+            assert response.status_code == 200, response.text
+            if credential == "valid" and attempt == limit:
+                assert "X-RateLimit-Limit" not in response.headers
+            elif credential != "valid":
+                assert response.headers["X-RateLimit-Limit"] == str(limit)
+                assert response.headers["X-RateLimit-Remaining"] == str(limit - attempt - 1)
+        else:
+            _assert_limited(response)
+            assert response.headers["X-RateLimit-Limit"] == str(limit)
+            assert int(response.headers["Retry-After"]) == 3600
+
+    # The trusted request still works after this IP's public bucket is full;
+    # missing/wrong tokens still fail after trusted traffic has succeeded.
+    monkeypatch.setattr(app.state, "awid_service_token", token)
+    if credential == "valid":
+        public_headers = dict(request_headers)
+        public_headers.pop("X-AWID-Service-Token", None)
+        for _ in range(limit):
+            response = await client.post(path, json=body, headers=public_headers)
+            assert response.status_code == 200, response.text
+    trusted_headers = {**request_headers, "X-AWID-Service-Token": token}
+    response = await client.post(path, json=body, headers=trusted_headers)
+    assert response.status_code == 200, response.text
+    for presented in (None, "wrong-service-token-with-at-least-32-bytes"):
+        limited_headers = dict(request_headers)
+        limited_headers.pop("X-AWID-Service-Token", None)
+        if presented:
+            limited_headers["X-AWID-Service-Token"] = presented
+        _assert_limited(await client.post(path, json=body, headers=limited_headers))
+
+
+@pytest.mark.asyncio
+async def test_service_provisioning_token_does_not_authorize_writes(client, monkeypatch):
+    token = "trusted-service-token-with-at-least-32-bytes"
+    monkeypatch.setattr(client._transport.app.state, "awid_service_token", token)
+    headers = {"X-AWID-Service-Token": token}
+    _, registration = _new_registration()
+    invalid = {**registration, "proof": "invalid"}
+    response = await client.post("/v1/did", json=invalid, headers=headers)
+    assert response.status_code == 401
+    assert response.json()["detail"] == "invalid proof"
+    response = await client.post("/v1/namespaces", json={"domain": "example.com"}, headers=headers)
+    assert response.status_code == 401
+
+    signing_key, registration = _new_registration()
+    response = await client.post("/v1/did", json=registration, headers=headers)
+    assert response.status_code == 200, response.text
+    for custody in ("self", "hosted_custodial"):
+        body = build_encryption_key_assertion(
+            signing_key=signing_key, identity_did=registration["new_did_key"],
+            identity_stable_id=registration["did_aw"], encryption_public_key=b"\x01" * 32,
+            custody=custody,
+        )
+        body["signature"] = "invalid"
+        response = await client.post(f"/v1/did/{registration['did_aw']}/encryption-key", json=body, headers=headers)
+        assert response.status_code == 422
+        assert "invalid signature" in response.json()["detail"]
 
 
 @pytest.mark.asyncio

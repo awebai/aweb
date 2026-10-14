@@ -227,7 +227,7 @@ async def _fetch_current_encryption_assertion(
     )
 
 
-@router.post("", dependencies=[Depends(rate_limit_dep("did_register"))])
+@router.post("", dependencies=[Depends(rate_limit_dep("did_register", allow_trusted_service=True))])
 async def register_did(request: Request, req: DidRegisterRequest) -> dict:
     try:
         validate_stable_id(req.did_aw)
@@ -396,7 +396,7 @@ async def get_key(request: Request, did_aw: str) -> DidKeyResponse:
     "/{did_aw}/encryption-key",
     response_model=EncryptionKeyAssertion,
     response_model_exclude_none=True,
-    dependencies=[Depends(rate_limit_dep("did_encryption_key_publish"))],
+    dependencies=[Depends(rate_limit_dep("did_encryption_key_publish", allow_trusted_service=True))],
 )
 async def publish_encryption_key(
     request: Request,
