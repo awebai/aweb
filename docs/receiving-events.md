@@ -22,8 +22,8 @@ repeated, delayed, or missed during a disconnect.
 | Claude Code | aweb channel plugin | Plugin/channel process |
 | Pi | bundled `npm:@awebai/pi` extension | Extension/runtime process |
 | Codex | `aw run codex` | Managed `aw run` event bus |
-| Other/headless | `aw events stream --json` or the same SSE API | Your consumer/orchestrator |
-| Claude Code or Pi behind a host wake service | `AWEB_DELIVERY=session` plus your own `aw events stream --json` | Your wake service |
+| Other/headless | `aw events stream --json` or the same SSE API | `aw events stream` within a run; your consumer/orchestrator for raw SSE |
+| Claude Code or Pi behind a host wake service | `AWEB_DELIVERY=session` plus your own `aw events stream --json` | `aw events stream` within a run; your wake service restarts it |
 | Any runtime OATS launched, in a terminal | `AWEB_DELIVERY=session` plus `aw wake run`, the terminal wake broker | The broker daemon |
 | Any runtime fallback | poll `aw mail inbox` and `aw chat pending` | Your polling loop |
 
@@ -166,8 +166,12 @@ polls do not replace the last successful actionable-state snapshot; recovery
 can therefore emit newly available mail or chat. This does not add durable
 replay or acknowledgement semantics to control signals or other event types.
 
-The low-level CLI exits on EOF or stream error. It intentionally leaves retry
-and backoff to its caller.
+`aw events stream` reconnects when a response ends or is cut, with backoff
+from 250 ms up to 30 s that resets after a stream that was served, and runs
+until Ctrl-C or `--timeout`. It stops with the server's error on an
+authentication or authorization refusal (any 4xx except 408 and 429). Each new
+connection announces still-actionable mail and chat again; the command prints
+each message (event type plus `message_id`) once per run.
 
 ### Server query maintenance
 

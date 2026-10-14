@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"time"
 
@@ -40,60 +42,212 @@ var eventsStreamCmd = &cobra.Command{
 			defer cancel()
 		}
 
-		deadline := time.Now().Add(24 * time.Hour)
-		if dl, ok := ctx.Deadline(); ok {
-			deadline = dl
-		}
+		enc := json.NewEncoder(os.Stdout)
+		printed := newPrintedEvents()
 
-		type streamResult struct {
-			stream *awid.AgentEventStream
-			err    error
-		}
-		openCtx, cancelOpen := context.WithCancel(baseCtx)
-		defer cancelOpen()
-
-		streamCh := make(chan streamResult, 1)
-		go func() {
-			stream, err := client.EventStream(openCtx, deadline)
-			streamCh <- streamResult{stream: stream, err: err}
-		}()
-
-		var stream *awid.AgentEventStream
-		select {
-		case <-ctx.Done():
-			cancelOpen()
-			return nil
-		case result := <-streamCh:
-			if result.err != nil {
+		// A subscription is made of several streams: the server closes every
+		// stream at its duration cap (MAX_STREAM_DURATION,
+		// server/src/aweb/routes/events.py) and a proxy may cut one sooner. So
+		// the end of a stream is a reconnect, and only the context (--timeout or
+		// Ctrl-C) ends the subscription.
+		backoff := eventsReconnectInitialBackoff
+		for {
+			stream, closeStream, err := openEventStream(ctx, baseCtx, client.Client)
+			if err != nil {
 				if ctx.Err() != nil {
 					return nil
 				}
-				return result.err
-			}
-			stream = result.stream
-		}
-		defer stream.Close()
-
-		enc := json.NewEncoder(os.Stdout)
-
-		for {
-			ev, err := stream.Next(ctx)
-			if err != nil {
-				if err == io.EOF || ctx.Err() != nil {
-					return nil
-				}
-				return err
-			}
-
-			if jsonFlag {
-				if err := enc.Encode(ev); err != nil {
+				// A request the server refuses on its merits is refused the same
+				// way on every retry; retrying would hide the reason.
+				if isFatalStreamOpenError(err) {
 					return err
 				}
-			} else {
-				printEventText(ev)
+				if !sleepUntil(ctx, backoff) {
+					return nil
+				}
+				backoff = nextEventsBackoff(backoff)
+				continue
+			}
+
+			streamStartedAt := time.Now()
+			delivered, outputErr := drainEventStream(ctx, stream, enc, printed)
+			streamLasted := time.Since(streamStartedAt)
+			closeStream()
+
+			if outputErr != nil {
+				return outputErr
+			}
+			if ctx.Err() != nil {
+				return nil
+			}
+			// A stream that was served starts the next reconnect from the
+			// shortest delay, so a healthy subscription reconnecting at the
+			// duration cap does not ratchet its delay upward. A healthy idle
+			// stream delivers nothing substantive (the preamble does not count
+			// and keepalives are comments that never become events), so having
+			// lasted past the health threshold also counts as served.
+			healthy := delivered || streamLasted >= healthyStreamDuration()
+			if healthy {
+				backoff = eventsReconnectInitialBackoff
+			}
+			if !sleepUntil(ctx, backoff) {
+				return nil
+			}
+			if !healthy {
+				backoff = nextEventsBackoff(backoff)
 			}
 		}
 	},
+}
+
+// Reconnect pacing. The common case is one reconnect every few minutes at the
+// server's duration cap, where the delay is irrelevant; the backoff exists for a
+// stream that ends immediately and repeatedly, so the client does not spin
+// against a server that is refusing or failing.
+const (
+	eventsReconnectInitialBackoff = 250 * time.Millisecond
+	eventsReconnectMaxBackoff     = 30 * time.Second
+)
+
+// defaultHealthyStreamDuration is how long a stream must last to count as
+// served even though it carried nothing substantive: one server heartbeat
+// interval. It is deliberately not the server's duration cap, since a stream a
+// proxy cut early still shows a working server.
+const defaultHealthyStreamDuration = 30 * time.Second
+
+// healthyStreamDuration is overridable through AW_EVENTS_HEALTHY_STREAM_MS so
+// tests need not hold a stream open for the real interval.
+func healthyStreamDuration() time.Duration {
+	if raw := os.Getenv("AW_EVENTS_HEALTHY_STREAM_MS"); raw != "" {
+		if ms, err := strconv.Atoi(raw); err == nil && ms > 0 {
+			return time.Duration(ms) * time.Millisecond
+		}
+	}
+	return defaultHealthyStreamDuration
+}
+
+func nextEventsBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > eventsReconnectMaxBackoff {
+		return eventsReconnectMaxBackoff
+	}
+	return next
+}
+
+// sleepUntil waits for d, reporting false when the context ended first so the
+// caller stops rather than reconnecting after a cancellation.
+func sleepUntil(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// openEventStream opens one stream, honouring cancellation while the open is in
+// flight. The deadline is the subscription's remaining time; the server
+// clamps it to its own cap. The returned close function releases the stream
+// body and the context governing it together, since cancelling the context
+// while the body is still being read would tear the connection down mid-event.
+func openEventStream(ctx, baseCtx context.Context, client *awid.Client) (*awid.AgentEventStream, func(), error) {
+	deadline := time.Now().Add(24 * time.Hour)
+	if dl, ok := ctx.Deadline(); ok {
+		deadline = dl
+	}
+
+	type streamResult struct {
+		stream *awid.AgentEventStream
+		err    error
+	}
+	openCtx, cancelOpen := context.WithCancel(baseCtx)
+	streamCh := make(chan streamResult, 1)
+	go func() {
+		stream, err := client.EventStream(openCtx, deadline)
+		streamCh <- streamResult{stream: stream, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		cancelOpen()
+		return nil, nil, ctx.Err()
+	case result := <-streamCh:
+		if result.err != nil {
+			cancelOpen()
+			return nil, nil, result.err
+		}
+		stream := result.stream
+		return stream, func() {
+			_ = stream.Close()
+			cancelOpen()
+		}, nil
+	}
+}
+
+// printedEvents remembers which messages this subscription has already printed.
+// Each new stream announces everything still actionable, so mail that stays
+// unread is announced again after every reconnect; a consumer is told once.
+type printedEvents map[string]struct{}
+
+func newPrintedEvents() printedEvents { return printedEvents{} }
+
+// firstTime reports whether ev should be printed: always for events that do not
+// name a message, and only the first time for one that does.
+func (p printedEvents) firstTime(ev *awid.AgentEvent) bool {
+	if strings.TrimSpace(ev.MessageID) == "" {
+		return true
+	}
+	key := string(ev.Type) + "\x00" + ev.MessageID
+	if _, seen := p[key]; seen {
+		return false
+	}
+	p[key] = struct{}{}
+	return true
+}
+
+// drainEventStream prints events until the stream ends, however it ends. It
+// reports whether the stream did real work and, separately, an output failure,
+// which is fatal. The connected preamble opens every stream, so it is not real
+// work.
+func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *json.Encoder, printed printedEvents) (delivered bool, outputErr error) {
+	for {
+		ev, err := stream.Next(ctx)
+		if err != nil {
+			return delivered, nil
+		}
+		if ev.Type != awid.AgentEventConnected {
+			delivered = true
+		}
+		if !printed.firstTime(ev) {
+			continue
+		}
+		if jsonFlag {
+			// Reconnecting cannot fix an output failure, and carrying on would
+			// drop the event without a trace.
+			if err := enc.Encode(ev); err != nil {
+				return delivered, err
+			}
+		} else {
+			printEventText(ev)
+		}
+	}
+}
+
+// isFatalStreamOpenError reports whether reopening would fail the same way: a
+// 4xx refusal (bad credentials, a revoked certificate, a malformed deadline),
+// except 408 and 429, whose meaning is to retry later.
+func isFatalStreamOpenError(err error) bool {
+	var apiErr *awid.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.StatusCode {
+		case http.StatusRequestTimeout, http.StatusTooManyRequests:
+			return false
+		}
+		return apiErr.StatusCode >= 400 && apiErr.StatusCode < 500
+	}
+	return false
 }
 
 func printEventText(ev *awid.AgentEvent) {

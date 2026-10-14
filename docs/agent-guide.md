@@ -141,9 +141,11 @@ aw events stream --json
 
 The current raw stream has no resumable server cursor. A connection starts with
 current actionable unread/pending state, then emits changes until the response
-ends. The server caps a response at five minutes; the low-level CLI command
-exits and leaves reconnect/backoff to its caller. Read mail remains available by
-exact message or conversation even though it is no longer emitted as unread.
+ends. The server caps a response at five minutes; `aw events stream` reconnects
+with backoff until Ctrl-C or `--timeout`, prints each message once per run, and
+stops on an authentication or authorization refusal. Read mail remains
+available by exact message or conversation even though it is no longer emitted
+as unread.
 
 Maintained runtime paths are:
 
@@ -152,7 +154,7 @@ Maintained runtime paths are:
 | Claude Code | aweb channel plugin |
 | Pi | `npm:@awebai/pi` extension |
 | Codex | `aw run codex` reconnecting event loop |
-| Other/headless | raw SSE/`aw events stream --json` plus caller-owned reconnect, or explicit polling |
+| Other/headless | `aw events stream --json` (reconnects within a run), raw SSE with caller-owned reconnect, or explicit polling |
 
 See [Receiving events and waking agents](receiving-events.md) before writing a
 custom loop.

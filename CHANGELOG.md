@@ -4,6 +4,13 @@
 
 ### CLI changes since `aw-v1.36.35`
 
+- **`aw events stream` keeps the subscription:** the command reconnects when a
+  stream ends at the server's five-minute cap or is cut by a proxy, with
+  backoff from 250 ms to 30 s, and runs until Ctrl-C or `--timeout`. Before, it
+  exited at the first close, with exit 1 and "unexpected EOF" when the
+  connection was cut. Mail and chat the server announces again on a new
+  connection are printed once per run. A 4xx refusal other than 408 or 429
+  still stops it with the server's error.
 - **Cross-team local sender trust:** received plaintext and encrypted mail from
   a team-local `did:key` sender now verify consistently in `aw`, the channel and
   the wake broker, including resident grant seats. They use the delivery

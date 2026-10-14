@@ -199,20 +199,19 @@ The first record is `connected`. New or existing unread mail appears as an
 {"type":"actionable_mail","message_id":"...","conversation_id":"...","from_alias":"alice","wake_mode":"idle","unread_count":1}
 ```
 
-The stream contains routing and wake metadata, not the durable mail body. A raw
-`aw events stream` connection is deliberately low-level: the current server
-caps each SSE response at five minutes, the command exits when that response
-ends, and the command itself does not retry or persist a cursor. Keep this first
-round trip shorter than that. Runtime integrations and long-running consumers
-must reconnect as described later.
+The stream contains routing and wake metadata, not the durable mail body. The
+server caps each SSE response at five minutes; `aw events stream` reconnects
+when a response ends or is cut, and keeps running until Ctrl-C or `--timeout`.
+Each new connection announces still-unread mail again, and the command prints a
+message once per run. It does not persist a cursor, so a new run starts again
+from the current unread state.
 
 Sections 3 and 5 leave this stream running while you act in another shell, so
 they end with Ctrl-C. To script those two, `aw events stream` takes
 `--timeout <seconds>` and exits on its own; see
 [Receiving events and waking agents](receiving-events.md). Give it long enough
-to cover the sends you make from the other directory, and note that the
-five-minute server cap still applies — a longer timeout does not extend the
-stream, it only adds a second way for it to end while you are mid-step.
+to cover the sends you make from the other directory; reconnects across the
+server's five-minute cap happen within it.
 
 Do not use `--timeout` in section 6. There, stopping the consumer is the
 behavior being demonstrated, not friction around it.
