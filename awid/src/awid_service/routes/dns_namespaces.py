@@ -203,7 +203,7 @@ class NamespaceDeleteRequest(BaseModel):
 @router.post(
     "",
     response_model=NamespaceResponse,
-    dependencies=[Depends(rate_limit_dep("namespace_register"))],
+    dependencies=[Depends(rate_limit_dep("namespace_register", allow_trusted_service=True))],
 )
 async def register_namespace(
     request: Request,
