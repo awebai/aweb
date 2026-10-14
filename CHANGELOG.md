@@ -2,16 +2,6 @@
 
 ## Unreleased
 
-### CLI changes since `aw-v1.36.35`
-
-- **Custody client retry:** `aw custody serve` keeps retrying client
-  initialization, with a backoff that doubles from one second up to one
-  minute, until the aweb server is reachable. Before, a custody host started
-  before the network was up (at boot) stayed alive and never became ready, so
-  launchd or systemd never restarted it. `aw custody status` adds a `client`
-  object with `ready`, the sanitized `last_error` code and the `retries`
-  count. Once ready, custody behaves as before.
-
 ### Server changes since `server-v1.27.16`
 
 - **Identity grant issuers:** minting an identity grant now requires an

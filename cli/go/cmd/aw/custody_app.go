@@ -132,7 +132,7 @@ func (s *custodyService) signAppRequest(ctx context.Context, req *awid.AppReques
 	if err != nil || requestOrigin != snapshotOrigin {
 		return nil, fmt.Errorf("app_request_not_allowed")
 	}
-	if canonicalOriginSet(s.clientDeps().appDeniedOrigins)[requestOrigin] {
+	if canonicalOriginSet(s.appDeniedOrigins)[requestOrigin] {
 		return nil, fmt.Errorf("app_request_not_allowed")
 	}
 	identity := &localSigningIdentity{
