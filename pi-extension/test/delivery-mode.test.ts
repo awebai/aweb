@@ -90,6 +90,17 @@ test("an unknown AWEB_DELIVERY warns once and still opens the event stream", asy
   }
 });
 
+test("a stopped channel reports to the operator without injecting a model turn", async () => {
+  const harness = await startSession(undefined, true);
+  try {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && !harness.statuses.some(([, value]) => value.includes("aweb disconnected"))) await settle(25);
+    assert.ok(harness.statuses.some(([, value]) => value.includes("aweb disconnected")), "loop failure did not reach operator status");
+    assert.equal(harness.messages.filter(message => String(message.content).startsWith("aweb channel stopped:")).length, 0);
+    assert.ok(harness.logs.some(message => message.startsWith("aweb channel stopped:")));
+  } finally { await harness.close(); }
+});
+
 interface RecordedMessage {
   customType?: string;
   content?: string;
@@ -99,16 +110,18 @@ interface RecordedMessage {
 interface SessionHarness {
   close(): Promise<void>;
   messages: RecordedMessage[];
+  logs: string[];
   requests: string[];
   statuses: Array<[string, string]>;
   waitForRequest(): Promise<void>;
 }
 
-async function startSession(delivery: string | undefined): Promise<SessionHarness> {
+async function startSession(delivery: string | undefined, corruptDeliveryStore = false): Promise<SessionHarness> {
   const { workdir } = await createShadowedPrincipalFixture();
   const requests: string[] = [];
   const server = await startProbeServer(requests);
   setAwebURL(join(workdir, ".aw"), serverURL(server));
+  if (corruptDeliveryStore) writeFileSync(join(workdir, ".aw/channel-delivered-ids.json"), "{malformed");
 
   // A stub `aw` first on PATH keeps the readiness probe hermetic: the extension
   // only needs `aw workspace status` to succeed.
@@ -127,6 +140,7 @@ async function startSession(delivery: string | undefined): Promise<SessionHarnes
   // The welcome sentinel is keyed by workspace directory, and every case gets a
   // fresh fixture, so no case is gated by an earlier one.
   const messages: RecordedMessage[] = [];
+  const logs: string[] = [];
   const statuses: Array<[string, string]> = [];
   const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
   const pi = {
@@ -139,7 +153,7 @@ async function startSession(delivery: string | undefined): Promise<SessionHarnes
     ui: {
       theme: { fg: (_role: string, text: string) => text },
       setStatus: (key: string, value: string) => { statuses.push([key, value]); },
-      notify: () => {},
+      notify: (message: string) => { logs.push(message); },
     },
   };
 
@@ -150,6 +164,7 @@ async function startSession(delivery: string | undefined): Promise<SessionHarnes
 
   return {
     messages,
+    logs,
     requests,
     statuses,
     waitForRequest: async () => {

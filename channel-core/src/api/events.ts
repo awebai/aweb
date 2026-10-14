@@ -295,7 +295,7 @@ export function parseAgentEvent(eventName: string, data: string): AgentEvent | n
 export function formatEventStreamState(state: EventStreamState): string {
   if (state.state === "connected") return "aweb: event stream connected";
   if (state.state === "reconnected") {
-    return "aweb: event stream reconnected; check aw mail inbox and aw chat pending for anything missed";
+    return "aweb: event stream reconnected";
   }
   const seconds = Math.max(1, Math.round((state.retryInMs || 0) / 1000));
   return `aweb: event stream disconnected (${state.cause || "connection failed"}) — retrying in ${seconds}s`;

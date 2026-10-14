@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Connection diagnostics stay out of agent turns:** reconnect logs no longer
+  ask for a manual inbox/chat scan; recovery already catches up automatically.
+  Pi reports a stopped channel loop to operator logs/status, with no session
+  injection. Standalone channel-core retains disconnect/recovery logs by default.
+
 ### CLI changes since `aw-v1.36.35`
 
 - **`aw events stream` keeps the subscription:** the command reconnects when a

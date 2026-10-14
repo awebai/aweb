@@ -419,11 +419,9 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     }).catch((error) => {
       if (signal.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
-      pi.sendMessage({
-        customType: "aweb-channel-status",
-        content: `aweb channel stopped: ${message}`,
-        display: true,
-      });
+      const diagnostic = `aweb channel stopped: ${message}`;
+      console.warn(diagnostic);
+      if (ctx.hasUI) ctx.ui.notify(diagnostic, "warning");
       if (ctx.hasUI) {
         const theme = ctx.ui.theme;
         ctx.ui.setStatus("aweb-channel", `${theme.fg("error", "✕")} ${theme.fg("dim", "aweb disconnected")}`);

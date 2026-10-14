@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.14
+
+- Connection and stopped-loop diagnostics stay in operator logs/status and do
+  not inject agent turns. Reconnect no longer asks for manual inbox/chat scans;
+  the resumed stream catches up from durable actionable state.
+- Bundles channel-core's addressless global and cross-team local sender trust
+  fixes, with signature and recipient binding checks retained.
+
 ## 0.3.13
 
 - **Upgrade from 0.3.12.** Pi 0.3.12 presents end-to-end encrypted mail from

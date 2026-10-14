@@ -540,3 +540,8 @@ test("terminal verification failure reports disconnect and drops later frames", 
   }]);
   expect(client.openSSE).toHaveBeenCalledTimes(1);
 });
+
+test("reconnect diagnostics do not ask an agent to fetch the automatic catch-up", () => {
+  const diagnostic = formatEventStreamState({ state: "reconnected" });
+  expect(diagnostic).not.toMatch(/check|aw mail inbox|aw chat pending/);
+});

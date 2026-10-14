@@ -282,7 +282,7 @@ describe.sequential("channel integration", () => {
     }
     await waitForHealthyServer(server.awebURL);
     await waitUntil(
-      async () => channelStderr.slice(stderrBeforeOutage).includes("aweb: event stream reconnected; check aw mail inbox and aw chat pending for anything missed"),
+      async () => channelStderr.slice(stderrBeforeOutage).includes("aweb: event stream reconnected"),
       30_000,
       () => `event stream reconnect was not logged\n${channelStderr.slice(stderrBeforeOutage)}`,
     );
