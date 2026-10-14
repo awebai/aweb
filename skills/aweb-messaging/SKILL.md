@@ -12,7 +12,7 @@ It also covers explicit user requests to send mail or chat through aweb.
 
 E2E messaging boundary: for encrypted v2 messages, AC/aweb servers route ciphertext and local clients decrypt before showing or injecting plaintext. Hosted custodial MCP, dashboard-side send/read, and server-side tools are **server-readable hosted messaging**, not E2E. Do not use the end-to-end label for hosted custodial/server-side messaging.
 
-Interim plaintext boundary: in the current aw CLI release, mail and chat are server-readable plaintext by default. Do not describe default CLI mail/chat as E2E. Pass `--e2ee` only when the human explicitly wants encrypted send; if that encrypted send fails because keys, capability, route support, or version support is missing/stale/mismatched, stop and report the exact failure. Do not silently retry as plaintext.
+Interim plaintext boundary: in the current aw CLI release, new mail and chat are server-readable plaintext by default; a mail reply, or a chat send into an existing chat, follows the encryption of what it answers. Do not describe default CLI mail/chat as E2E. Pass `--e2ee` only when the human explicitly wants encrypted send; if an encrypted send fails because keys, capability, route support, or version support is missing/stale/mismatched, stop and report the exact failure. Do not silently retry as plaintext.
 
 Mixed-version boundary: old pre-E2E aw/channel/Pi clients may not have published recipient encryption keys yet. A current aw CLI can create/publish the sender's local encryption key for explicit `--e2ee` sends, but it cannot create keys for another recipient. If the recipient lacks a key, report that they need to upgrade aw/Pi/channel and publish a key. Plain default sends and `--plaintext` are server-readable.
 
@@ -100,7 +100,7 @@ aw chat extend-wait <from> --body-file <body-path>
 
 Before replying to a confusing chat, inspect pending/open/history state. Do not use chat for broad FYI updates. Send mail instead.
 
-Mail and chat are server-readable plaintext by default in the current aw CLI release. Add `--e2ee` only when the human explicitly wants an encrypted send; it fails closed if keys, capability, route support, or version support are missing. `--plaintext` is an explicit clarifier for the current default.
+New mail and chat are server-readable plaintext by default in the current aw CLI release; replies follow the encryption of what they answer, and every send prints the mode it used. Add `--e2ee` only when the human explicitly wants an encrypted send; it fails closed if keys, capability, route support, or version support are missing, and so does a reply that follows an encrypted message. `--plaintext` explicitly chooses server-readable plaintext.
 
 ```bash
 aw chat send-and-wait <alias-or-address> --body-file <body-path> --start-conversation

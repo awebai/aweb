@@ -5,8 +5,10 @@ It defines canonical payload bytes, associated data, nonce policy, key wrapping,
 message schemas, downgrade handling, and server-readable exceptions.
 
 E2E is optional advanced messaging, not a prerequisite for the basic mail/chat
-round trip. Current `aw` sends server-readable plaintext by default; `--e2ee`
-explicitly selects encrypted v2 and then fails closed rather than falling back.
+round trip. Current `aw` sends new mail/chat as server-readable plaintext by
+default, and a reply follows the encryption of what it answers; `--e2ee`
+explicitly selects encrypted v2. Encrypted sends fail closed rather than falling
+back.
 The shipped protocol covers self-custodial mail/chat, sender archive copies,
 small groups, local/team identities, federation transport, and generic hosted
 custody boundaries.
@@ -581,11 +583,13 @@ omitted, so the signature also commits to the exact ciphertext bytes.
 
 ## Capability And No-Downgrade
 
-Current `aw` behavior is explicit opt-in. Without `--e2ee`, mail/chat remains
-server-readable plaintext; `--plaintext` makes that choice explicit and
-`--legacy-plaintext` is a deprecated compatibility alias. Once `--e2ee` is
-selected, missing or invalid key state fails closed with no automatic plaintext
-retry.
+Current `aw` behavior is explicit opt-in for new conversations. Without a mode
+flag, new mail/chat is server-readable plaintext, a mail reply follows its source
+message, and a chat send into an existing chat follows the chat's latest message;
+`--plaintext` makes the plaintext choice explicit and `--legacy-plaintext` is a
+deprecated compatibility alias. Once encryption is selected, by `--e2ee` or by
+following an encrypted source, missing or invalid key state fails closed with no
+automatic plaintext retry. Every send reports the `content_mode` it used.
 
 The shipped sender verifies recipient key authority before encryption and relies
 on the target service accepting or rejecting encrypted v2. A complete separate

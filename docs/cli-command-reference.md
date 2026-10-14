@@ -1973,7 +1973,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted wait extension; fails closed if encryption keys are missing`
 - `-h, --help help for extend-wait`
-- `--plaintext Send explicit server-readable plaintext wait extension (currently the default)`
+- `--plaintext Send explicit server-readable plaintext wait extension (the default, except in a chat whose latest message is encrypted)`
 
 ## `chat history`
 
@@ -2039,7 +2039,7 @@ Flags:
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send`
 - `--leave Leave the conversation after sending`
-- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
+- `--plaintext Send explicit server-readable plaintext chat (the default, except in a chat whose latest message is encrypted)`
 - `--session-id string Existing chat session id`
 
 ## `chat send-and-leave`
@@ -2052,7 +2052,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-leave`
-- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
+- `--plaintext Send explicit server-readable plaintext chat (the default, except in a chat whose latest message is encrypted)`
 - `--start-conversation Start a new conversation instead of continuing an existing one`
 
 ## `chat send-and-wait`
@@ -2065,7 +2065,7 @@ Flags:
 - `--body-file string Read message body from a file; safe for Markdown or command examples`
 - `--e2ee Send E2E encrypted chat; fails closed if encryption keys are missing`
 - `-h, --help help for send-and-wait`
-- `--plaintext Send explicit server-readable plaintext chat (currently the default)`
+- `--plaintext Send explicit server-readable plaintext chat (the default, except in a chat whose latest message is encrypted)`
 - `--start-conversation Start conversation (5min default wait)`
 - `--wait int Seconds to wait for reply (default 120)`
 

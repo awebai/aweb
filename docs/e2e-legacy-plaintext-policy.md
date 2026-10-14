@@ -4,9 +4,12 @@ Status: **public compatibility policy** subordinate to the
 [E2E messaging contract](e2e-messaging-contract.md) and
 [E2E operational metadata contract](e2e-operational-metadata.md).
 
-E2E is an optional advanced mode. Current `aw` sends ordinary mail/chat as
-server-readable plaintext by default. `--e2ee` explicitly selects encrypted v2;
-once selected, failures must not silently downgrade that send to plaintext.
+E2E is an optional advanced mode. Current `aw` sends new mail/chat as
+server-readable plaintext by default. A mail reply follows the encryption of its
+source message, and a chat send into an existing chat follows the encryption of
+that chat's latest message. `--e2ee` explicitly selects encrypted v2; once
+encryption is selected or followed, failures must not silently downgrade that
+send to plaintext.
 
 ## Stored modes and trust boundaries
 
@@ -74,7 +77,8 @@ service. Error handling must never add that flag automatically.
 | `--e2ee`, valid recipient key, accepting v2 service | Send `encrypted_v2`. |
 | `--e2ee`, missing/stale/mismatched recipient key | Fail before storage; no plaintext retry. |
 | `--e2ee`, target rejects v2 | Fail clearly; no plaintext retry. Complete route-capability preflight is not shipped for every route. |
-| ordinary current send without `--e2ee` | Send `legacy_plaintext_v1`, subject to normal delivery policy. |
+| new send without a mode flag | Send `legacy_plaintext_v1`, subject to normal delivery policy. |
+| reply without a mode flag to an encrypted mail, or into a chat whose latest message is encrypted | Send `encrypted_v2`; fail like `--e2ee`, with no plaintext retry. |
 | old sender to a recipient whose future policy requires E2E | A future E2E-required route must reject plaintext; this policy is a rollout requirement, not a claim that every current route enforces it. |
 | hosted compose/read with operator-held decrypt key | Hosted managed/server-readable boundary, even if stored as `encrypted_v2`. |
 | federation peer without v2 support | Intended E2E fails; no downgrade translation. |

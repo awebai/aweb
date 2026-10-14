@@ -9,6 +9,23 @@
 
 ### CLI changes since `aw-v1.36.35`
 
+- **Chat replies follow the chat's encryption:** `aw chat send-and-wait`,
+  `send-and-leave`, `send --session-id` and `extend-wait` with no mode flag now
+  encrypt when the latest message in the chat they continue is `encrypted_v2`,
+  and fail rather than send plaintext when they cannot encrypt. New chats stay
+  server-readable plaintext by default; `--plaintext` and `--e2ee` still choose
+  explicitly. Before, replies into a chat the peer had encrypted went out as
+  plaintext.
+- **Sends say their mode:** every `aw chat` and `aw mail` send prints whether it
+  went out encrypted or as server-readable plaintext, and `--json` output
+  carries `content_mode`.
+- **Chat lookup needs no keys:** finding the chat to continue no longer decrypts
+  its pending messages, so a sender without loaded keys no longer starts a new
+  chat because the pending one is encrypted.
+- **Grant seats send repeated encrypted chat:** a local-resident grant seat no
+  longer counts its own earlier encrypted messages as a second recipient, which
+  failed its second encrypted send into a chat with "encrypted envelope
+  recipient count mismatch".
 - **`aw events stream` keeps the subscription:** the command reconnects when a
   stream ends at the server's five-minute cap or is cut by a proxy, with
   backoff from 250 ms to 30 s, and runs until Ctrl-C or `--timeout`. Before, it
