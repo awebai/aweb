@@ -55,7 +55,7 @@ func (a AgentView) VerifyEncryptionKey(now time.Time) error {
 
 func (a AgentView) RequireEncryptionKey(now time.Time) (*EncryptionKeyAssertion, error) {
 	if a.EncryptionKey == nil {
-		return nil, fmt.Errorf("agent %s has no E2E encryption key; ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", a.Alias)
+		return nil, noEncryptionKey("agent %s has no E2E encryption key; ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", a.Alias)
 	}
 	if err := a.VerifyEncryptionKey(now); err != nil {
 		return nil, err
@@ -78,7 +78,7 @@ func (c *Client) e2eeRecipientFromAgent(ctx context.Context, agent AgentView) (E
 		return E2EERecipientKey{}, err
 	}
 
-	return E2EERecipientKey{}, fmt.Errorf("agent %s has no E2E encryption key; local-only recipients cannot be resolved through AWID, ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", agent.Alias)
+	return E2EERecipientKey{}, noEncryptionKey("agent %s has no E2E encryption key; local-only recipients cannot be resolved through AWID, ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", agent.Alias)
 }
 
 // localRosterRecipient resolves a team-local agent named by its did:key, its
@@ -142,7 +142,7 @@ func (c *Client) e2eeGlobalRecipientFromAgent(ctx context.Context, agent AgentVi
 		return E2EERecipientKey{}, fmt.Errorf("agent %s AWID key discovery stable id mismatch: roster has %s, address %s resolved to %s", agent.Alias, strings.TrimSpace(agent.DIDAW), address, strings.TrimSpace(identity.StableID))
 	}
 	if identity.EncryptionKey == nil {
-		return E2EERecipientKey{}, fmt.Errorf("agent %s has no AWID-published E2E encryption key; ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", agent.Alias)
+		return E2EERecipientKey{}, noEncryptionKey("agent %s has no AWID-published E2E encryption key; ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", agent.Alias)
 	}
 	return E2EERecipientKey{
 		Address:        strings.TrimSpace(identity.Address),

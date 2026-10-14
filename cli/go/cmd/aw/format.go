@@ -251,14 +251,17 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 
 // --- chat ---
 
-// formatContentModeNotice says how a send went out. A result without a mode
-// sent nothing, so it gets no notice.
-func formatContentModeNotice(mode string) string {
-	switch mode {
-	case "":
+// formatContentModeNotice says how a send went out, and why when a send that
+// encrypts by default went out as plaintext. A result without a mode sent
+// nothing, so it gets no notice.
+func formatContentModeNotice(mode, plaintextReason string) string {
+	switch {
+	case mode == "":
 		return ""
-	case awid.ContentModeEncryptedV2:
+	case mode == awid.ContentModeEncryptedV2:
 		return "Sent encrypted (encrypted_v2).\n"
+	case plaintextReason != "":
+		return "Sent as server-readable plaintext: " + plaintextReason + ".\n"
 	default:
 		return "Sent as server-readable plaintext; pass --e2ee to encrypt.\n"
 	}
@@ -266,7 +269,7 @@ func formatContentModeNotice(mode string) string {
 
 func formatChatSend(v any) string {
 	result := v.(*chat.SendResult)
-	return formatChatSendStatus(result) + formatContentModeNotice(result.ContentMode)
+	return formatChatSendStatus(result) + formatContentModeNotice(result.ContentMode, result.PlaintextReason)
 }
 
 func formatChatSendStatus(result *chat.SendResult) string {
@@ -658,7 +661,7 @@ func formatChatExtendWait(v any) string {
 		minutes := result.ExtendsWaitSeconds / 60
 		sb.WriteString(fmt.Sprintf("%s's wait extended by %d min\n", result.TargetAgent, minutes))
 	}
-	sb.WriteString(formatContentModeNotice(result.ContentMode))
+	sb.WriteString(formatContentModeNotice(result.ContentMode, ""))
 	return sb.String()
 }
 

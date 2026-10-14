@@ -13,13 +13,14 @@ import (
 )
 
 const (
-	doctorCheckMessagingMailSignature = "messaging.local.mail_signature_dry_run"
-	doctorCheckMessagingChatSignature = "messaging.local.chat_signature_dry_run"
-	doctorCheckMessagingInboxRead     = "messaging.server.inbox_read"
-	doctorCheckMessagingChatPending   = "messaging.server.chat_pending_read"
-	doctorCheckMessagingChatSessions  = "messaging.server.chat_sessions_read"
-	doctorCheckMessagingContactsRead  = "messaging.server.contacts_read"
-	doctorCheckMessagingPolicyRead    = "messaging.server.policy_read"
+	doctorCheckMessagingMailSignature  = "messaging.local.mail_signature_dry_run"
+	doctorCheckMessagingChatSignature  = "messaging.local.chat_signature_dry_run"
+	doctorCheckMessagingEncryptDefault = "messaging.local.encrypt_by_default"
+	doctorCheckMessagingInboxRead      = "messaging.server.inbox_read"
+	doctorCheckMessagingChatPending    = "messaging.server.chat_pending_read"
+	doctorCheckMessagingChatSessions   = "messaging.server.chat_sessions_read"
+	doctorCheckMessagingContactsRead   = "messaging.server.contacts_read"
+	doctorCheckMessagingPolicyRead     = "messaging.server.policy_read"
 )
 
 type doctorMessagingState struct {
@@ -44,6 +45,7 @@ type doctorContactsResponse struct {
 
 func (r *doctorRunner) runMessagingDoctorChecks() {
 	state := collectDoctorMessagingStateAt(r.workingDir, r.identityHome)
+	r.addMessagingEncryptDefaultCheck()
 	r.addMessagingLocalSignatureChecks(state)
 	networkIDs := []string{
 		doctorCheckMessagingInboxRead,
@@ -88,6 +90,22 @@ func collectDoctorMessagingStateAt(workingDir, identityHome string) *doctorMessa
 		state.signingErr = identityState.signingKeyErr
 	}
 	return state
+}
+
+// addMessagingEncryptDefaultCheck shows the effective
+// messaging.encrypt_by_default and where it comes from.
+func (r *doctorRunner) addMessagingEncryptDefaultCheck() {
+	settings, source, err := selectedIdentitySettings()
+	if err != nil {
+		r.add(localCheck(doctorCheckMessagingEncryptDefault, doctorStatusFail, nil, "Identity settings cannot be read.", "Fix or remove settings.yaml in the identity home.", map[string]any{"reason": err.Error()}))
+		return
+	}
+	value := settings.EncryptsByDefault()
+	message := "New mail and chat are server-readable plaintext unless --e2ee is passed."
+	if value {
+		message = "Mail and chat are encrypted by default when the recipient has a published key."
+	}
+	r.add(localCheck(doctorCheckMessagingEncryptDefault, doctorStatusOK, nil, message, "", map[string]any{"value": value, "source": source}))
 }
 
 func (r *doctorRunner) addMessagingLocalSignatureChecks(state *doctorMessagingState) {

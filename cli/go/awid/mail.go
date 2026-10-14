@@ -62,6 +62,9 @@ type SendMessageResponse struct {
 	DeliveredAt    string `json:"delivered_at"`
 	// ContentMode is the mode this client sent; the server does not echo it.
 	ContentMode string `json:"content_mode,omitempty"`
+	// PlaintextReason says why a send that encrypts by default went out as
+	// plaintext; aw sets it, the server does not.
+	PlaintextReason string `json:"plaintext_reason,omitempty"`
 }
 
 func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*SendMessageResponse, error) {
@@ -341,7 +344,7 @@ func (c *Client) MailReplyRecipient(ctx context.Context, source InboxMessage) (E
 		return E2EERecipientKey{}, errors.New("cannot reply: resolved address does not match the source sender identity")
 	}
 	if identity.EncryptionKey == nil {
-		return E2EERecipientKey{}, errors.New("recipient has no published E2E encryption key; ask them to run `aw id encryption-key setup` before replying")
+		return E2EERecipientKey{}, noEncryptionKey("recipient has no published E2E encryption key; ask them to run `aw id encryption-key setup` before replying")
 	}
 	if err := VerifyEncryptionKeyAssertion(identity.EncryptionKey, identity.DID, identity.StableID, time.Now()); err != nil {
 		return E2EERecipientKey{}, fmt.Errorf("cannot reply: recipient encryption key is invalid: %w", err)
@@ -383,7 +386,7 @@ func (c *Client) e2eeMailRecipient(ctx context.Context, payload *SendMessageRequ
 		return E2EERecipientKey{}, err
 	}
 	if identity.EncryptionKey == nil {
-		return E2EERecipientKey{}, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+		return E2EERecipientKey{}, noEncryptionKey("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
 	}
 	return E2EERecipientKey{
 		Address:        strings.TrimSpace(identity.Address),

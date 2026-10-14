@@ -351,6 +351,11 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	if len(appSnapshots) > 0 {
 		residentHome = residentIdentityHome.Root
 	}
+	// The seat takes the resident's settings now; it never reads the resident home.
+	residentSettings, err := awconfig.LoadIdentitySettings(residentIdentityHome.Root)
+	if err != nil {
+		return err
+	}
 
 	pub, sessionKey, err := awid.GenerateKeypair()
 	if err != nil {
@@ -411,6 +416,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 		ExpiresAt: strings.TrimSpace(view.ExpiresAt),
 		AwebURL:   sel.BaseURL,
 		MintedAt:  firstNonEmpty(strings.TrimSpace(view.IssuedAt), time.Now().UTC().Format(time.RFC3339)),
+		Settings:  residentSettings,
 	}
 	if custodySocketPath != "" {
 		state.Custody.SocketPath = custodySocketPath

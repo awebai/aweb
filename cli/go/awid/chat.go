@@ -618,7 +618,7 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 			return nil, err
 		}
 		if identity.EncryptionKey == nil {
-			return nil, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+			return nil, noEncryptionKey("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
 		}
 		recipients = append(recipients, E2EERecipientKey{
 			Address:        strings.TrimSpace(identity.Address),
@@ -646,7 +646,7 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 				recipients = append(recipients, recipient)
 				continue
 			}
-			return nil, errors.New("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
+			return nil, noEncryptionKey("recipient has no published E2E encryption key; ask them to upgrade aw/Pi/channel and run `aw id encryption-key setup`, or explicitly send a server-readable upgrade note with --plaintext")
 		}
 		recipients = append(recipients, E2EERecipientKey{
 			Address:        strings.TrimSpace(identity.Address),
@@ -1062,6 +1062,9 @@ type ChatSendMessageResponse struct {
 	ExtendsWaitSeconds int    `json:"extends_wait_seconds"`
 	// ContentMode is the mode this client sent; the server does not echo it.
 	ContentMode string `json:"content_mode,omitempty"`
+	// PlaintextReason says why a send that encrypts by default went out as
+	// plaintext; aw sets it, the server does not.
+	PlaintextReason string `json:"plaintext_reason,omitempty"`
 }
 
 func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *ChatSendMessageRequest) (*ChatSendMessageResponse, error) {

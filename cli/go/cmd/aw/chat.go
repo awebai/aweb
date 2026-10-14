@@ -44,6 +44,11 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 		}
 	} else if !modeChosen {
 		opts.FollowSessionEncryption = followSessionEncryption(c, sel)
+		settings, _, err := selectedIdentitySettings()
+		if err != nil {
+			return nil, nil, err
+		}
+		opts.EncryptByDefault = settings.EncryptsByDefault()
 	}
 	target := strings.TrimSpace(toAlias)
 	if shouldTryLiveRosterAliasFallback(target) {
@@ -364,9 +369,9 @@ func formatChatSendMessage(v any) string {
 		return ""
 	}
 	if resp.MessageID != "" {
-		return fmt.Sprintf("Sent chat message %s\n", resp.MessageID) + formatContentModeNotice(resp.ContentMode)
+		return fmt.Sprintf("Sent chat message %s\n", resp.MessageID) + formatContentModeNotice(resp.ContentMode, resp.PlaintextReason)
 	}
-	return "Sent chat message\n" + formatContentModeNotice(resp.ContentMode)
+	return "Sent chat message\n" + formatContentModeNotice(resp.ContentMode, resp.PlaintextReason)
 }
 
 var chatSendCmd = &cobra.Command{
@@ -406,14 +411,26 @@ var chatSendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		resp, err := c.Client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
-			Body:        body,
-			Leaving:     chatSendLeave,
-			EncryptE2EE: encrypt,
-		})
+		encryptByDefault := false
+		if follow != nil {
+			settings, _, err := selectedIdentitySettings()
+			if err != nil {
+				return err
+			}
+			encryptByDefault = settings.EncryptsByDefault()
+		}
+		resp, plaintextReason, err := awid.SendWithEncryptionDefault(ctx, encrypt, encryptByDefault, follow,
+			func(encrypt bool) (*awid.ChatSendMessageResponse, error) {
+				return c.Client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
+					Body:        body,
+					Leaving:     chatSendLeave,
+					EncryptE2EE: encrypt,
+				})
+			})
 		if err != nil {
 			return err
 		}
+		resp.PlaintextReason = plaintextReason
 		logsDir := defaultLogsDir()
 		appendCommLog(logsDir, commLogNameForSelection(sel), &CommLogEntry{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),

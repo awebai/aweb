@@ -59,6 +59,7 @@ type SendResult struct {
 	SenderWaiting      bool    `json:"sender_waiting,omitempty"`
 	WaitedSeconds      int     `json:"waited_seconds,omitempty"`
 	ContentMode        string  `json:"content_mode,omitempty"`
+	PlaintextReason    string  `json:"plaintext_reason,omitempty"`
 }
 
 // OpenResult is the result of opening unread messages for a conversation.
@@ -126,6 +127,10 @@ type SendOptions struct {
 	// encrypted too, after this prepares the client to encrypt. Its error
 	// fails the send; nothing falls back to plaintext.
 	FollowSessionEncryption func(context.Context) error
+	// EncryptByDefault is the identity's messaging.encrypt_by_default. It
+	// applies only when FollowSessionEncryption is set (no mode flag), to a
+	// send the chat's own encryption does not decide.
+	EncryptByDefault bool
 }
 
 // StatusCallback receives protocol status updates.

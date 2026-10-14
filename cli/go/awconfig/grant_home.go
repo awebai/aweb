@@ -41,6 +41,9 @@ type GrantHome struct {
 	AwebURL   string       `yaml:"aweb_url"`
 	MintedAt  string       `yaml:"minted_at,omitempty"`
 	Custody   GrantCustody `yaml:"custody,omitempty"`
+	// Settings is the subject's settings when the grant was minted; a seat
+	// never reads its resident's home.
+	Settings Settings `yaml:"settings,omitempty"`
 }
 
 func GrantHomeStatePath(root string) string {

@@ -1218,6 +1218,7 @@ type sendResponse struct {
 	TargetsConnected []string
 	TargetsLeft      []string
 	ContentMode      string
+	PlaintextReason  string
 }
 
 // Send sends a message to target agents and optionally waits for a reply.
@@ -1254,18 +1255,22 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 			if err != nil {
 				return nil, err
 			}
-			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
-				Body:        message,
-				Leaving:     opts.Leaving,
-				EncryptE2EE: encrypt,
-			})
+			msgResp, plaintextReason, err := awid.SendWithEncryptionDefault(ctx, encrypt, opts.EncryptByDefault, opts.FollowSessionEncryption,
+				func(encrypt bool) (*awid.ChatSendMessageResponse, error) {
+					return client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
+						Body:        message,
+						Leaving:     opts.Leaving,
+						EncryptE2EE: encrypt,
+					})
+				})
 			if err != nil {
 				return nil, fmt.Errorf("sending message: %w", err)
 			}
 			return sendCommon(ctx, client, client.ChatStream, sendResponse{
-				SessionID:   sessionID,
-				MessageID:   msgResp.MessageID,
-				ContentMode: msgResp.ContentMode,
+				SessionID:       sessionID,
+				MessageID:       msgResp.MessageID,
+				ContentMode:     msgResp.ContentMode,
+				PlaintextReason: plaintextReason,
 			}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
 		} else if findErr != nil &&
 			strings.Contains(findErr.Error(), "multiple conversations match") {
@@ -1276,7 +1281,12 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 			return nil, findErr
 		}
 	}
-	createResp, err := client.ChatCreateSession(ctx, req)
+	createResp, plaintextReason, err := awid.SendWithEncryptionDefault(ctx, opts.EncryptE2EE, opts.EncryptByDefault, opts.FollowSessionEncryption,
+		func(encrypt bool) (*awid.ChatCreateSessionResponse, error) {
+			attempt := *req
+			attempt.EncryptE2EE = encrypt
+			return client.ChatCreateSession(ctx, &attempt)
+		})
 	if err != nil {
 		return nil, fmt.Errorf("sending message: %w", err)
 	}
@@ -1288,6 +1298,7 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		TargetsConnected: createResp.TargetsConnected,
 		TargetsLeft:      createResp.TargetsLeft,
 		ContentMode:      createResp.ContentMode,
+		PlaintextReason:  plaintextReason,
 	}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
 }
 
@@ -1330,12 +1341,13 @@ func shouldProbeExistingSession(target string) bool {
 // StartConversation upgrades. This must match what was sent to the server.
 func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpener, resp sendResponse, myAlias string, targets []string, message string, resolvedWait int, opts SendOptions, after *time.Time, callback StatusCallback) (*SendResult, error) {
 	result := &SendResult{
-		SessionID:   resp.SessionID,
-		MessageID:   resp.MessageID,
-		Status:      "sent",
-		TargetAgent: strings.Join(targets, ", "),
-		Events:      []Event{},
-		ContentMode: resp.ContentMode,
+		SessionID:       resp.SessionID,
+		MessageID:       resp.MessageID,
+		Status:          "sent",
+		TargetAgent:     strings.Join(targets, ", "),
+		Events:          []Event{},
+		ContentMode:     resp.ContentMode,
+		PlaintextReason: resp.PlaintextReason,
 	}
 	targetStatusNames := make([][]string, 0, len(targets))
 	for _, target := range targets {

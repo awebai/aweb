@@ -459,159 +459,181 @@ var mailSendCmd = &cobra.Command{
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		sendEncryptE2EE := mailSendE2EE
+		if cmd.Flags().Changed("e2ee") && (mailSendPlaintext || mailSendLegacyPlaintext) {
+			return usageError("--e2ee and --plaintext are mutually exclusive")
+		}
 		var c *aweb.Client
 		var sel *awconfig.Selection
-		req := &awid.SendMessageRequest{
+		switch targetKind {
+		case "alias":
+			c, sel, err = resolveClientSelectionForAliasTarget(ctx, targetValue)
+		case "conversation", "did", "address":
+			c, sel, err = resolveMailMessagingClientSelection()
+		default:
+			return usageError("missing required recipient flag")
+		}
+		if err != nil {
+			return err
+		}
+		encryptByDefault := false
+		if !cmd.Flags().Changed("e2ee") && !mailSendPlaintext && !mailSendLegacyPlaintext {
+			settings, _, err := selectedIdentitySettings()
+			if err != nil {
+				return err
+			}
+			encryptByDefault = settings.EncryptsByDefault()
+		}
+		baseReq := awid.SendMessageRequest{
 			Subject:        mailSendSubject,
 			Body:           mailSendBody,
 			Priority:       awid.MessagePriority(mailSendPriority),
 			ConversationID: strings.TrimSpace(mailSendConversationID),
 		}
 		if mailSendNewConversation {
-			req.NewConversation = true
-			req.ConversationID, err = awid.GenerateUUID4()
+			baseReq.NewConversation = true
+			baseReq.ConversationID, err = awid.GenerateUUID4()
 			if err != nil {
 				return err
 			}
 		}
-		switch targetKind {
-		case "conversation":
-			c, sel, err = resolveMailMessagingClientSelection()
-			if err != nil {
-				return err
-			}
-		case "alias":
-			c, sel, err = resolveClientSelectionForAliasTarget(ctx, targetValue)
-			if err != nil {
-				return err
-			}
-			if agent, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
-				debugLog("list agents for mail auto-threading: %v", findErr)
-				req.ToAlias = targetValue
-			} else if found {
-				if agentMatchesSelection(agent, sel) {
+		requestedKind, requestedValue := targetKind, targetValue
+		var req *awid.SendMessageRequest
+		// shapeRequest addresses the request. An encrypted send keeps the
+		// recipient for key discovery; a plaintext one uses the target of the
+		// conversation it continues.
+		shapeRequest := func(sendEncryptE2EE bool) error {
+			attempt := baseReq
+			req = &attempt
+			targetKind, targetValue = requestedKind, requestedValue
+			switch targetKind {
+			case "conversation":
+			case "alias":
+				if agent, found, findErr := clientAgentForAlias(ctx, c, targetValue); findErr != nil {
+					debugLog("list agents for mail auto-threading: %v", findErr)
 					req.ToAlias = targetValue
-				} else if conversation, findErr := findMailSendConversationForAgent(ctx, c, agent); findErr != nil {
-					return findErr
-				} else if conversation.conversationID != "" {
-					// E2EE key discovery needs the recipient alias, not the
-					// conversation id that replaces targetValue below.
-					recipientAlias := targetValue
-					targetKind = "conversation"
-					targetValue = conversation.conversationID
-					req.ConversationID = conversation.conversationID
-					if sendEncryptE2EE {
-						req.ToAlias = recipientAlias
+				} else if found {
+					if agentMatchesSelection(agent, sel) {
+						req.ToAlias = targetValue
+					} else if conversation, findErr := findMailSendConversationForAgent(ctx, c, agent); findErr != nil {
+						return findErr
+					} else if conversation.conversationID != "" {
+						// E2EE key discovery needs the recipient alias, not the
+						// conversation id that replaces targetValue below.
+						recipientAlias := targetValue
+						targetKind = "conversation"
+						targetValue = conversation.conversationID
+						req.ConversationID = conversation.conversationID
+						if sendEncryptE2EE {
+							req.ToAlias = recipientAlias
+						} else {
+							applyMailRecipientTarget(req, conversation.kind, conversation.value)
+							if !mailRecipientTargetApplied(req) {
+								applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDAW))
+							}
+							if !mailRecipientTargetApplied(req) {
+								applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDKey))
+							}
+							if !mailRecipientTargetApplied(req) {
+								applyMailRecipientTarget(req, "address", strings.TrimSpace(agent.Address))
+							}
+							if !mailRecipientTargetApplied(req) {
+								applyMailRecipientTarget(req, "alias", strings.TrimSpace(agent.Alias))
+							}
+						}
 					} else {
-						applyMailRecipientTarget(req, conversation.kind, conversation.value)
-						if !mailRecipientTargetApplied(req) {
-							applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDAW))
-						}
-						if !mailRecipientTargetApplied(req) {
-							applyMailRecipientTarget(req, "did", strings.TrimSpace(agent.DIDKey))
-						}
-						if !mailRecipientTargetApplied(req) {
-							applyMailRecipientTarget(req, "address", strings.TrimSpace(agent.Address))
-						}
-						if !mailRecipientTargetApplied(req) {
-							applyMailRecipientTarget(req, "alias", strings.TrimSpace(agent.Alias))
-						}
+						req.ToAlias = targetValue
+					}
+				} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
+					debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), targetValue, liveErr)
+					req.ToAlias = targetValue
+				} else if liveFound {
+					kind, value := liveTarget.identityTarget()
+					applyMailRecipientTarget(req, kind, value)
+					if mailRecipientTargetApplied(req) {
+						targetKind = kind
+						targetValue = value
+					} else {
+						req.ToAlias = targetValue
 					}
 				} else {
 					req.ToAlias = targetValue
 				}
-			} else if liveTarget, liveFound, liveErr := resolveLiveTeamMemberAliasTarget(ctx, sel, targetValue); liveErr != nil {
-				debugLog("resolve live team member %s/%s: %v", strings.TrimSpace(sel.TeamID), targetValue, liveErr)
-				req.ToAlias = targetValue
-			} else if liveFound {
-				kind, value := liveTarget.identityTarget()
-				applyMailRecipientTarget(req, kind, value)
-				if mailRecipientTargetApplied(req) {
-					targetKind = kind
-					targetValue = value
-				} else {
-					req.ToAlias = targetValue
-				}
-			} else {
-				req.ToAlias = targetValue
-			}
-		case "did":
-			c, sel, err = resolveMailMessagingClientSelection()
-			if err != nil {
-				return err
-			}
-			recipientDID := targetValue
-			if conversation, findErr := findMailSendConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
-				return findErr
-			} else if conversation.conversationID != "" {
-				targetKind = "conversation"
-				targetValue = conversation.conversationID
-				req.ConversationID = conversation.conversationID
-				applyMailRecipientTarget(req, conversation.kind, conversation.value)
-				if req.ToDID == "" && req.ToStableID == "" {
-					applyMailRecipientTarget(req, "did", recipientDID)
-				}
-			} else {
-				req.ToDID = targetValue
-			}
-		case "address":
-			c, sel, err = resolveMailMessagingClientSelection()
-			if err != nil {
-				return err
-			}
-			if conversation, findErr := findMailSendConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
-				return findErr
-			} else if conversation.conversationID != "" {
-				// E2EE key discovery needs the recipient address, not the
-				// conversation id that replaces targetValue below.
-				recipientAddress := targetValue
-				targetKind = "conversation"
-				targetValue = conversation.conversationID
-				req.ConversationID = conversation.conversationID
-				if sendEncryptE2EE {
-					req.ToAddress = recipientAddress
-				} else {
+			case "did":
+				recipientDID := targetValue
+				if conversation, findErr := findMailSendConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
+					return findErr
+				} else if conversation.conversationID != "" {
+					targetKind = "conversation"
+					targetValue = conversation.conversationID
+					req.ConversationID = conversation.conversationID
 					applyMailRecipientTarget(req, conversation.kind, conversation.value)
+					if req.ToDID == "" && req.ToStableID == "" {
+						applyMailRecipientTarget(req, "did", recipientDID)
+					}
+				} else {
+					req.ToDID = targetValue
 				}
-			} else {
-				req.ToAddress = targetValue
+			case "address":
+				if conversation, findErr := findMailSendConversationForTarget(ctx, c, targetKind, targetValue); findErr != nil {
+					return findErr
+				} else if conversation.conversationID != "" {
+					// E2EE key discovery needs the recipient address, not the
+					// conversation id that replaces targetValue below.
+					recipientAddress := targetValue
+					targetKind = "conversation"
+					targetValue = conversation.conversationID
+					req.ConversationID = conversation.conversationID
+					if sendEncryptE2EE {
+						req.ToAddress = recipientAddress
+					} else {
+						applyMailRecipientTarget(req, conversation.kind, conversation.value)
+					}
+				} else {
+					req.ToAddress = targetValue
+				}
 			}
-		default:
-			return usageError("missing required recipient flag")
-		}
 
-		var resp *awid.SendMessageResponse
-		if cmd.Flags().Changed("e2ee") && (mailSendPlaintext || mailSendLegacyPlaintext) {
-			return usageError("--e2ee and --plaintext are mutually exclusive")
+			return nil
 		}
-		req.EncryptE2EE = sendEncryptE2EE
-		if req.EncryptE2EE {
+		send := func(encrypt bool) (*awid.SendMessageResponse, error) {
+			if err := shapeRequest(encrypt); err != nil {
+				return nil, err
+			}
+			req.EncryptE2EE = encrypt
+			var resp *awid.SendMessageResponse
+			var err error
+			if targetKind == "alias" {
+				resp, err = c.SendMessage(ctx, req)
+			} else {
+				resp, err = c.SendMessageByIdentity(ctx, req)
+			}
+			if err != nil && !mailSendNewConversation && strings.TrimSpace(mailSendConversationID) == "" && req.ConversationID != "" && mailConversationExpired(err) {
+				// The rejected request was not accepted. Keep its resolved recipient and
+				// selected identity, but let the library generate and sign fresh IDs.
+				req.ConversationID = ""
+				resp, err = c.SendMessageByIdentity(ctx, req)
+				if err == nil {
+					targetValue = resp.ConversationID
+				}
+			}
+			return resp, err
+		}
+		if mailSendE2EE {
 			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
 				return err
 			}
 		}
-		if targetKind == "alias" {
-			resp, err = c.SendMessage(ctx, req)
-		} else {
-			resp, err = c.SendMessageByIdentity(ctx, req)
+		prepareEncryption := func(ctx context.Context) error {
+			return configureClientE2EE(ctx, c, sel, true)
 		}
-
-		if err != nil && !mailSendNewConversation && strings.TrimSpace(mailSendConversationID) == "" && req.ConversationID != "" && mailConversationExpired(err) {
-			// The rejected request was not accepted. Keep its resolved recipient and
-			// selected identity, but let the library generate and sign fresh IDs.
-			req.ConversationID = ""
-			resp, err = c.SendMessageByIdentity(ctx, req)
-			if err == nil {
-				targetValue = resp.ConversationID
-			}
-		}
+		resp, plaintextReason, err := awid.SendWithEncryptionDefault(ctx, mailSendE2EE, encryptByDefault, prepareEncryption, send)
 		if err != nil {
 			if targetKind == "conversation" {
 				return err
 			}
 			return networkError(err, targetValue)
 		}
+		resp.PlaintextReason = plaintextReason
 		if mailSendNewConversation && resp.ConversationID != req.ConversationID {
 			return fmt.Errorf("server does not support new conversations: returned a different conversation_id; the message may already have been sent; do not retry automatically")
 		}
@@ -647,10 +669,10 @@ var mailSendCmd = &cobra.Command{
 			printJSON(resp)
 		} else if targetKind == "conversation" {
 			fmt.Printf("Sent mail in conversation %s (message_id=%s)\n", targetValue, resp.MessageID)
-			fmt.Print(formatContentModeNotice(resp.ContentMode))
+			fmt.Print(formatContentModeNotice(resp.ContentMode, resp.PlaintextReason))
 		} else {
 			fmt.Printf("Sent mail to %s (message_id=%s)\n", targetValue, resp.MessageID)
-			fmt.Print(formatContentModeNotice(resp.ContentMode))
+			fmt.Print(formatContentModeNotice(resp.ContentMode, resp.PlaintextReason))
 		}
 		return nil
 	},
@@ -720,9 +742,17 @@ var mailReplyCmd = &cobra.Command{
 			return fmt.Errorf("mail message not found: %s", messageID)
 		}
 		encryptReply := mailReplyE2EE
+		encryptByDefault := false
 		if !cmd.Flags().Changed("e2ee") && !mailReplyPlaintext && !mailReplyLegacyPlaintext {
 			source := inbox.Messages[0]
 			encryptReply = source.ContentMode == awid.ContentModeEncryptedV2 || source.MessageVersion == awid.E2EEMessageVersion || source.Encrypted != nil
+			if !encryptReply {
+				settings, _, err := selectedIdentitySettings()
+				if err != nil {
+					return err
+				}
+				encryptByDefault = settings.EncryptsByDefault()
+			}
 		}
 		if encryptReply {
 			if err := configureClientE2EE(ctx, c, sel, true); err != nil {
@@ -758,10 +788,19 @@ var mailReplyCmd = &cobra.Command{
 			req.ToDID = recipient.DID
 			req.ToStableID = recipient.StableID
 		}
-		resp, err := c.SendMessageByIdentity(ctx, req)
+		send := func(encrypt bool) (*awid.SendMessageResponse, error) {
+			attempt := *req
+			attempt.EncryptE2EE = encrypt
+			return c.SendMessageByIdentity(ctx, &attempt)
+		}
+		prepareEncryption := func(ctx context.Context) error {
+			return configureClientE2EE(ctx, c, sel, true)
+		}
+		resp, plaintextReason, err := awid.SendWithEncryptionDefault(ctx, encryptReply, encryptByDefault, prepareEncryption, send)
 		if err != nil {
 			return err
 		}
+		resp.PlaintextReason = plaintextReason
 		if _, ackErr := c.AckMessage(ctx, messageID); ackErr != nil {
 			debugLog("ack replied mail %s: %v", messageID, ackErr)
 		}
@@ -797,7 +836,7 @@ var mailReplyCmd = &cobra.Command{
 			printJSON(resp)
 		} else {
 			fmt.Printf("Sent mail in conversation %s (message_id=%s)\n", conversationID, resp.MessageID)
-			fmt.Print(formatContentModeNotice(resp.ContentMode))
+			fmt.Print(formatContentModeNotice(resp.ContentMode, resp.PlaintextReason))
 		}
 		return nil
 	},

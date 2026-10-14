@@ -113,6 +113,8 @@ var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw session lease renew":    {},
 	"aw session lease status":   {},
 	"aw session lease takeover": {},
+	"aw settings get":           {},
+	"aw settings set":           {},
 	"aw task close":             {},
 	"aw task comment add":       {},
 	"aw task comment list":      {},
