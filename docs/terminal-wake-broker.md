@@ -365,6 +365,100 @@ Restarting the daemon is safe for registered instances, but it is not a promise
 of lossless replay for already accepted presentations; use the recovery guidance
 above after uncertain crashes.
 
+## Upgrading aw under running services
+
+The units above run the `aw` that npm installed. `npm install -g @awebai/aw`
+replaces that package in place: while it runs, the path a unit starts can be the
+JavaScript launcher without its platform binary ("Could not find the aw binary
+for ..."). A unit restarted during that window crash-loops or comes up on a
+half-installed binary. So stop every unit that runs `aw` (the wake broker and
+each resident's `aw custody serve`) before the install, verify the installed
+binary, then start them. Run every step as the service user. Run the commands for
+each unit, from the unit's own definition.
+
+**1. Find the `aw` path and the npm prefix the units use.**
+
+```bash
+# launchd (macOS)
+UNIT_PLIST=~/Library/LaunchAgents/ai.aweb.wake.plist
+AW=$(plutil -extract ProgramArguments.0 raw "$UNIT_PLIST")
+
+# systemd (Linux user unit; for a system unit drop --user and use sudo)
+UNIT=aweb-wake.service
+AW=$(systemctl --user show -p ExecStart --value "$UNIT" | sed -n 's/.*path=\([^ ;]*\).*/\1/p')
+
+PREFIX=$(dirname "$(dirname "$AW")")
+npm prefix -g    # must print $PREFIX; otherwise add --prefix "$PREFIX" in step 3
+```
+
+List the units with `launchctl list | grep ai.aweb` or
+`systemctl --user list-units 'aweb*'`.
+
+**2. Stop the units.** A launchd `KeepAlive` agent restarts after a kill, so
+unload it. A systemd `Restart=always` unit stays down after an explicit stop.
+
+```bash
+# launchd
+launchctl bootout "gui/$(id -u)/ai.aweb.wake"
+launchctl print "gui/$(id -u)/ai.aweb.wake"   # must fail: not loaded
+
+# systemd
+systemctl --user stop "$UNIT"
+systemctl --user is-active "$UNIT"           # must print inactive
+```
+
+**3. Install the exact version.**
+
+```bash
+VERSION=1.36.36
+npm install -g "@awebai/aw@$VERSION"         # add --prefix "$PREFIX" if step 1 said so
+```
+
+**4. Verify the binary at the units' path before starting anything.** The
+expected commit is the one npm records for the version.
+
+```bash
+"$AW" version                                # first line: aw $VERSION
+npm view "@awebai/aw@$VERSION" gitHead       # must equal the commit line above
+file -L "$AW"                                # must be Mach-O (macOS) or ELF (Linux), not a script
+```
+
+If any check fails, do not start the units. Install again; the units stay down
+and nothing runs a half-installed binary.
+
+**5. Start the units.**
+
+```bash
+# launchd
+launchctl bootstrap "gui/$(id -u)" "$UNIT_PLIST"
+launchctl print "gui/$(id -u)/ai.aweb.wake" | grep 'state ='   # state = running
+
+# systemd
+systemctl --user start "$UNIT"
+systemctl --user is-active "$UNIT"                             # active
+```
+
+**6. Check that the services are ready.** The wake broker reports its own build:
+
+```bash
+aw wake status | head -1    # wake broker: running (pid N, aw $VERSION @ <commit>)
+```
+
+For each resident custody service, from any directory, with the identity home
+from the unit's arguments:
+
+```bash
+aw --identity-home <resident .aw> custody status
+```
+
+Ready means `"status": "running"`, `keys.signing_ready` true, every entry of
+`teams` has `"ready": true`, and there is no `errors` field. From aw 1.36.36,
+`client.connected` is true and `client.last_error` names any request that failed
+(the cause is in the unit's log).
+
+This procedure was rehearsed for an upgrade from aw 1.36.34 to 1.36.35 with a
+wake broker unit under launchd (macOS) and under systemd (Linux).
+
 ## Qualification coverage
 
 The retired standalone shell fixture implemented the old hint-only contract and

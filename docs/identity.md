@@ -415,7 +415,8 @@ capability marker for stored-source mail reply continuation through the existing
 envelope operation, not a separate RPC or a grant of permission. Consumers should
 require it for grant-seat replies to unlisted senders and still check readiness
 and grant scopes. Restart custody after upgrading: an already-running process
-keeps its old capabilities. The marker is advertised starting with aw 1.36.31.
+keeps its old capabilities. Upgrade with the services stopped, as in
+[Upgrading aw under running services](terminal-wake-broker.md#upgrading-aw-under-running-services). The marker is advertised starting with aw 1.36.31.
 
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,
