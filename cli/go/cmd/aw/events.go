@@ -43,7 +43,7 @@ var eventsStreamCmd = &cobra.Command{
 		}
 
 		enc := json.NewEncoder(os.Stdout)
-		printed := newPrintedEvents()
+		printed := newPrintedEvents(printedEventsLimit)
 
 		// A subscription is made of several streams: the server closes every
 		// stream at its duration cap (MAX_STREAM_DURATION,
@@ -188,22 +188,39 @@ func openEventStream(ctx, baseCtx context.Context, client *awid.Client) (*awid.A
 
 // printedEvents remembers which messages this subscription has already printed.
 // Each new stream announces everything still actionable, so mail that stays
-// unread is announced again after every reconnect; a consumer is told once.
-type printedEvents map[string]struct{}
+// unread is announced again after every reconnect; a consumer is told once. It
+// keeps the newest limit messages, forgetting the oldest first, so a
+// subscription that runs for weeks does not grow without bound; a forgotten
+// message that is announced again prints again.
+type printedEvents struct {
+	limit int
+	seen  map[string]struct{}
+	order []string
+}
 
-func newPrintedEvents() printedEvents { return printedEvents{} }
+// printedEventsLimit bounds how many messages a subscription remembers.
+const printedEventsLimit = 10_000
+
+func newPrintedEvents(limit int) *printedEvents {
+	return &printedEvents{limit: limit, seen: map[string]struct{}{}}
+}
 
 // firstTime reports whether ev should be printed: always for events that do not
 // name a message, and only the first time for one that does.
-func (p printedEvents) firstTime(ev *awid.AgentEvent) bool {
+func (p *printedEvents) firstTime(ev *awid.AgentEvent) bool {
 	if strings.TrimSpace(ev.MessageID) == "" {
 		return true
 	}
 	key := string(ev.Type) + "\x00" + ev.MessageID
-	if _, seen := p[key]; seen {
+	if _, seen := p.seen[key]; seen {
 		return false
 	}
-	p[key] = struct{}{}
+	if len(p.order) >= p.limit {
+		delete(p.seen, p.order[0])
+		p.order = p.order[1:]
+	}
+	p.seen[key] = struct{}{}
+	p.order = append(p.order, key)
 	return true
 }
 
@@ -211,7 +228,7 @@ func (p printedEvents) firstTime(ev *awid.AgentEvent) bool {
 // reports whether the stream did real work and, separately, an output failure,
 // which is fatal. The connected preamble opens every stream, so it is not real
 // work.
-func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *json.Encoder, printed printedEvents) (delivered bool, outputErr error) {
+func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *json.Encoder, printed *printedEvents) (delivered bool, outputErr error) {
 	for {
 		ev, err := stream.Next(ctx)
 		if err != nil {

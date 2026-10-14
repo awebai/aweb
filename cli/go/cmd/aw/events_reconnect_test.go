@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/awid"
 )
 
 // An events subscription is made of several streams: the server closes every
@@ -323,5 +325,27 @@ func TestALongLivedQuietStreamKeepsTheReconnectDelayAtItsFloor(t *testing.T) {
 	// escalates instead spends most of the window asleep.
 	if got := opens.Load(); got < 7 {
 		t.Fatalf("only %d opens in 6s for streams that each stayed open past the health threshold; a healthy idle subscription is backing off as if the server were failing", got)
+	}
+}
+
+// The printed set is bounded so a subscription that runs for weeks does not
+// grow without limit: past the bound the oldest message is forgotten, and if
+// it is announced again it prints again.
+func TestThePrintedSetForgetsItsOldestMessagePastItsBound(t *testing.T) {
+	printed := newPrintedEvents(2)
+	mail := func(id string) *awid.AgentEvent {
+		return &awid.AgentEvent{Type: awid.AgentEventActionableMail, MessageID: id}
+	}
+
+	for _, id := range []string{"m-1", "m-2", "m-3"} {
+		if !printed.firstTime(mail(id)) {
+			t.Fatalf("%s was not printed the first time it was announced", id)
+		}
+	}
+	if printed.firstTime(mail("m-3")) || printed.firstTime(mail("m-2")) {
+		t.Fatal("a message still within the bound was printed again")
+	}
+	if !printed.firstTime(mail("m-1")) {
+		t.Fatal("the oldest message was not forgotten past the bound")
 	}
 }
