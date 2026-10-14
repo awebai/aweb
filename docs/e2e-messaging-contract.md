@@ -620,9 +620,12 @@ client must not retry as plaintext automatically.
 For an **intended E2E send**, the only plaintext alternative is a separate,
 explicit user choice such as `--plaintext`; an error path must never select it.
 That mode must be visually and textually distinct from E2E and must not be
-enabled by policy fallback, old-client fallback, or server hint. This rule does
-not change the current default mode: users who never select `--e2ee` are using
-ordinary server-readable messaging.
+enabled by policy fallback, old-client fallback, or server hint. A reply that
+follows an encrypted source, or a chat send that follows an encrypted chat, is
+an intended E2E send; so a failed lookup of the chat to continue fails the send
+rather than starting a new plaintext chat. The default mode is unchanged for
+new sends: a new mail or chat sent without `--e2ee` is ordinary server-readable
+messaging.
 
 Mixed-version behavior after E2E intent:
 

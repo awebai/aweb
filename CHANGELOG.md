@@ -12,7 +12,8 @@
 - **Chat replies follow the chat's encryption:** `aw chat send-and-wait`,
   `send-and-leave`, `send --session-id` and `extend-wait` with no mode flag now
   encrypt when the latest message in the chat they continue is `encrypted_v2`,
-  and fail rather than send plaintext when they cannot encrypt. New chats stay
+  and fail rather than send plaintext when they cannot encrypt or cannot look
+  up the chat they continue. New chats stay
   server-readable plaintext by default; `--plaintext` and `--e2ee` still choose
   explicitly. Before, replies into a chat the peer had encrypted went out as
   plaintext.
