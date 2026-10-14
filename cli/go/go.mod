@@ -14,6 +14,7 @@ require (
 	github.com/mr-tron/base58 v1.2.0
 	github.com/muesli/cancelreader v0.2.2
 	github.com/spf13/cobra v1.10.2
+	github.com/spf13/pflag v1.0.9
 	golang.org/x/net v0.27.0
 	golang.org/x/sys v0.39.0
 	golang.org/x/term v0.38.0
@@ -42,7 +43,6 @@ require (
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yuin/goldmark v1.7.4 // indirect
 	github.com/yuin/goldmark-emoji v1.0.3 // indirect
