@@ -52,7 +52,9 @@ Server changes are since `server-v1.27.19`.
   chat history and the `send_chat` wait reply also return the sender's
   `from_address`.
 
-### Server changes since `server-v1.27.16`
+### Release preparation: server 1.27.19
+
+Server changes are since `server-v1.27.16`.
 
 - **MCP mail stays in the existing thread:** `send_mail` with a recipient and no
   conversation ID now continues the active one-to-one mail conversation, like
