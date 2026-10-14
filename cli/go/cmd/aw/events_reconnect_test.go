@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -460,5 +462,61 @@ func TestEventsStreamRetriesWhenGrantVerificationIsUnavailable(t *testing.T) {
 	}
 	if countMessage(decodeEventLines(output), "m-after-retry") != 1 {
 		t.Fatalf("the retried stream's event was not printed:\n%s", output)
+	}
+}
+
+// A proxy that resets an HTTP/2 stream mid-response is a transport end. The
+// CLI's SSE transport attempts HTTP/2, and the reset surfaces as an HTTP/2
+// stream error that is not a net.Error, so the classifier must reconnect on
+// it rather than recognise transport errors by type.
+func TestAnHTTP2StreamResetIsATransportEnd(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			t.Errorf("expected HTTP/2, got %s", r.Proto)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, connectedPreamble)
+		w.(http.Flusher).Flush()
+		panic(http.ErrAbortHandler) // RST_STREAM, as a proxy cutting the stream.
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+
+	client, err := awid.New(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The production SSE transport, trusting only this test server.
+	transport := awid.NewSSETransport()
+	transport.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	client.SetSSEClient(&http.Client{Transport: transport})
+	defer transport.CloseIdleConnections()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	stream, err := client.EventStream(ctx, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if ev, err := stream.Next(ctx); err != nil || ev.Type != awid.AgentEventConnected {
+		t.Fatalf("preamble: event=%v err=%v", ev, err)
+	}
+	_, err = stream.Next(ctx)
+	if err == nil {
+		t.Fatal("expected the stream reset to end the read")
+	}
+	if retryable, fatal := classifyStreamEnd(err); retryable != nil || fatal != nil {
+		t.Fatalf("an HTTP/2 stream reset (%T: %v) did not classify as a reconnect: retryable=%v fatal=%v", err, err, retryable, fatal)
+	}
+}
+
+// Only the failures that reconnecting cannot fix stop the subscription: a grant
+// that ended and a frame that does not decode. Any other read error, including
+// one the client has never seen, reconnects.
+func TestAnUnrecognisedReadErrorReconnects(t *testing.T) {
+	if retryable, fatal := classifyStreamEnd(errors.New("an error no one listed")); retryable != nil || fatal != nil {
+		t.Fatalf("an unrecognised read error stopped the subscription: retryable=%v fatal=%v", retryable, fatal)
 	}
 }

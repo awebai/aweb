@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -112,7 +113,11 @@ func (s *AgentEventStream) Next(_ context.Context) (*AgentEvent, error) {
 		}
 		out, ok, err := parseAgentEvent(ev.Event, ev.Data)
 		if err != nil {
-			return nil, err
+			var closed *AgentEventStreamClosedError
+			if errors.As(err, &closed) {
+				return nil, err
+			}
+			return nil, &AgentEventDecodeError{Event: ev.Event, Err: err}
 		}
 		if !ok {
 			continue
@@ -383,6 +388,17 @@ func parseAgentEvent(eventName, data string) (AgentEvent, bool, error) {
 		return AgentEvent{}, false, nil
 	}
 }
+
+// AgentEventDecodeError is a frame the stream delivered whole that does not
+// decode as the event it names: a protocol failure, not a transport one.
+type AgentEventDecodeError struct {
+	Event string
+	Err   error
+}
+
+func (e *AgentEventDecodeError) Error() string { return e.Err.Error() }
+
+func (e *AgentEventDecodeError) Unwrap() error { return e.Err }
 
 // AgentEventStreamClosedError is a stream the server closed because the
 // identity grant behind it ended or could not be verified. Event names why.

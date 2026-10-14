@@ -5,14 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/awebai/aw/awid"
@@ -265,30 +262,28 @@ func drainEventStream(ctx context.Context, stream *awid.AgentEventStream, enc *j
 	}
 }
 
-// classifyStreamEnd sorts why a stream ended. A transport end (EOF, a cut or
-// reset connection) is a reconnect and returns nothing. A grant-verification
-// outage the server asks to retry is returned as retryable. Anything else, a
-// grant that ended or a frame that does not parse, is fatal: reconnecting
-// would hide it, and the same server answers the same way.
+// classifyStreamEnd sorts why a stream ended. Only the failures reconnecting
+// cannot fix are fatal: a grant that ended, and a frame that does not decode.
+// A grant-verification outage the server asks to retry is returned as
+// retryable. Every other read error is a transport end and reconnects, so an
+// error the client does not recognise (an HTTP/2 stream reset, say) never ends
+// the subscription.
 func classifyStreamEnd(err error) (retryable error, fatal error) {
-	if err == nil || isStreamTransportEnd(err) {
+	if err == nil {
 		return nil, nil
 	}
 	var closed *awid.AgentEventStreamClosedError
-	if errors.As(err, &closed) && closed.Retryable() {
-		return err, nil
+	if errors.As(err, &closed) {
+		if closed.Retryable() {
+			return err, nil
+		}
+		return nil, err
 	}
-	return nil, err
-}
-
-func isStreamTransportEnd(err error) bool {
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
-		return true
+	var decode *awid.AgentEventDecodeError
+	if errors.As(err, &decode) {
+		return nil, err
 	}
-	var netErr net.Error
-	return errors.As(err, &netErr)
+	return nil, nil
 }
 
 // isFatalStreamOpenError reports whether reopening would fail the same way: a
