@@ -376,7 +376,22 @@ each resident's `aw custody serve`) before the install, verify the installed
 binary, then start them. Run every step as the service user. Run the commands for
 each unit, from the unit's own definition.
 
-**1. Find the `aw` path and the npm prefix the units use.**
+**0. Before stopping anything, check that this host's platform binary exists.**
+The registry can list a version before its platform packages are published. An
+install in that window gets the launcher without its binary, so check first:
+
+```bash
+VERSION=1.36.36
+PLATFORM=$(node -p 'process.platform + "-" + process.arch')   # e.g. darwin-arm64, linux-x64
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "https://registry.npmjs.org/@awebai/aw-$PLATFORM/-/aw-$PLATFORM-$VERSION.tgz"
+```
+
+It must print `200`. Otherwise do not start the upgrade; the services keep
+running the current version.
+
+**1. Find the `aw` path and the npm prefix the units use, and record the
+version they run now.**
 
 ```bash
 # launchd (macOS)
@@ -388,7 +403,8 @@ UNIT=aweb-wake.service
 AW=$(systemctl --user show -p ExecStart --value "$UNIT" | sed -n 's/.*path=\([^ ;]*\).*/\1/p')
 
 PREFIX=$(dirname "$(dirname "$AW")")
-npm prefix -g    # must print $PREFIX; otherwise add --prefix "$PREFIX" in step 3
+npm prefix -g    # must print $PREFIX; otherwise add --prefix "$PREFIX" in steps 3 and 4
+PREVIOUS=$("$AW" version | head -1 | cut -d' ' -f2)   # the rollback version
 ```
 
 List the units with `launchctl list | grep ai.aweb` or
@@ -407,11 +423,11 @@ systemctl --user stop "$UNIT"
 systemctl --user is-active "$UNIT"           # must print inactive
 ```
 
-**3. Install the exact version.**
+**3. Install the exact version.** `--prefer-online` makes npm ask the registry
+again instead of reusing a cached "not found" for the platform package.
 
 ```bash
-VERSION=1.36.36
-npm install -g "@awebai/aw@$VERSION"         # add --prefix "$PREFIX" if step 1 said so
+npm install -g --prefer-online "@awebai/aw@$VERSION"   # add --prefix "$PREFIX" if step 1 said so
 ```
 
 **4. Verify the binary at the units' path before starting anything.** The
@@ -423,8 +439,18 @@ npm view "@awebai/aw@$VERSION" gitHead       # must equal the commit line above
 file -L "$AW"                                # must be Mach-O (macOS) or ELF (Linux), not a script
 ```
 
-If any check fails, do not start the units. Install again; the units stay down
-and nothing runs a half-installed binary.
+If any check fails, roll back before starting anything: install the version
+recorded in step 1 and verify it the same way.
+
+```bash
+npm install -g --prefer-online "@awebai/aw@$PREVIOUS"
+"$AW" version                                # first line: aw $PREVIOUS
+npm view "@awebai/aw@$PREVIOUS" gitHead      # must equal the commit line above
+file -L "$AW"                                # Mach-O or ELF
+```
+
+Then start the units (step 5) on the previous version and report the failed
+check.
 
 **5. Start the units.**
 
@@ -456,8 +482,8 @@ Ready means `"status": "running"`, `keys.signing_ready` true, every entry of
 `client.connected` is true and `client.last_error` names any request that failed
 (the cause is in the unit's log).
 
-This procedure was rehearsed for an upgrade from aw 1.36.34 to 1.36.35 with a
-wake broker unit under launchd (macOS) and under systemd (Linux).
+This procedure, including the rollback, was rehearsed for aw 1.36.34 and
+1.36.35 with a wake broker unit under launchd (macOS) and under systemd (Linux).
 
 ## Qualification coverage
 
