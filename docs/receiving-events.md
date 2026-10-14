@@ -121,7 +121,12 @@ Beyond dispatch, the channel also:
   undelivered log instead. Chat has no equivalent gate — it is presented with
   its verification status.
 - **suppresses duplicates** through a per-workspace delivery-id store, and
-  reports stream health once on disconnect and once on recovery.
+  reports stream health once on disconnect and once on recovery to operator
+  logs/status only. Connection loss, retries, recovery and a stopped channel loop
+  never inject a message into the agent session. Recovery needs no manual inbox
+  or pending-chat scan: the reopened stream re-derives actionable state. Startup
+  configuration errors with a concrete agent action retain their onboarding
+  messages; they are distinct from connection diagnostics.
 
 ## Raw event stream
 

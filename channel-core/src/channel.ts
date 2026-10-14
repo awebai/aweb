@@ -4,7 +4,7 @@ import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises"
 import { lock } from "proper-lockfile";
 
 import { APIClient } from "./api/client.js";
-import { streamAgentEvents, type AgentEvent, type EventStreamState } from "./api/events.js";
+import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamState } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
@@ -80,6 +80,7 @@ export interface ChannelLoopOptions {
   awCommand?: string;
   pinStoreWriter?: PinStoreWriter;
   log?: (message: string) => void;
+  /** Operator diagnostics only; stream state must never become an awakening. */
   onStreamState?: (state: EventStreamState) => void;
   onTrace?: (entry: ChannelTraceEntry) => void;
 }
@@ -421,16 +422,15 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
     }) : undefined
   );
   await consumeAgentEvents(
-    // UNGUARDED: no test covers this function, so removing any dependency from
-    // this spread silently disables it rather than failing. Deleting
-    // undeliveredLog here leaves all 281 tests passing while the channel stops
-    // recording dropped messages entirely. See aweb-aayl.
+    // Retain the undelivered log: dropping it silently loses failure evidence (aweb-aayl).
     { ...options, deliveryStore, undeliveredLog, localDecrypt },
     dispatched,
     streamAgentEvents(
       options.client,
       options.signal,
-      options.onStreamState,
+      options.onStreamState || ((state) => {
+        if (state.state !== "connected") (options.log || console.error)(formatEventStreamState(state));
+      }),
       (event) => emitTrace(options, "frame_parsed", event, eventDispatchLane(event)),
     ),
     options.log || (() => {}),
