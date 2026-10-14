@@ -65,3 +65,33 @@ async def test_cli_encrypts_to_a_local_peer_by_its_roster_key(privacy_app, tmp_p
             latest = history.json()["messages"][-1]
             assert latest["content_mode"] == "encrypted_v2"
             assert carol_reads(latest["encrypted_envelope"])["body"] == "Encrypted chat reply"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, True)])
+async def test_cli_mail_reply_reaches_the_peer_in_a_conversation_it_began(privacy_app, tmp_path, global_resident, grant):
+    env = privacy_app
+    env.app.state.public_origin = str(env.client.base_url).rstrip("/")
+    now = datetime.now(timezone.utc)
+    identities = await _cli_identities(env, global_resident, now)
+    agent = identities["bob"]
+    binary, child_env = await _cli_identity_home(env, tmp_path, agent, global_resident, now)
+    body_file = tmp_path / "body.txt"
+    async with _registry_http(env.registry_app) as (registry_url, _):
+        child_env["AWID_REGISTRY_URL"] = registry_url
+        async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
+            body_file.write_text("Opening from bob")
+            opening = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol", "--plaintext",
+                                 "--new-conversation", "--body-file", str(body_file), "--json")
+            answer = await _request(env, "carol", "POST", "/v1/messages", {
+                "to_did": agent["stable_id"] or agent["did"], "subject": "Answer", "body": "Answer from carol",
+                "conversation_id": opening["conversation_id"],
+            })
+            assert answer.status_code == 200, answer.text
+            assert answer.json()["conversation_id"] == opening["conversation_id"]
+            body_file.write_text("Reply from bob")
+            replied = await _cli(binary, command_dir, command_env, "mail", "reply", answer.json()["message_id"],
+                                 "--plaintext", "--body-file", str(body_file), "--json")
+            delivered = await _request(env, "carol", "GET", f"/v1/messages/{replied['message_id']}")
+            assert delivered.status_code == 200, delivered.text
+            assert delivered.json()["body"] == "Reply from bob"
