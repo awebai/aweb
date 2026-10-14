@@ -131,6 +131,24 @@ async def test_cli_chat_reply_follows_session_mode(privacy_app, tmp_path, global
             await assert_latest_encrypted_to_hosted("Default exact session send")
             assert ENCRYPTED_NOTICE in output, output
 
+            if grant:
+                # Fail closed: a grant seat with no custody socket cannot encrypt,
+                # so its default reply into the encrypted session errors instead of
+                # falling back to plaintext there or in a new chat.
+                keyless = tmp_path / "keyless"
+                keyless.mkdir()
+                await _cli(binary, tmp_path, child_env, "id", "grant", "mint", "--bundle", "normal-agent",
+                           "--ttl", "5m", "--out", str(keyless / ".aw"), "--json")
+                keyless_env = dict(child_env, AWEB_IDENTITY_HOME=str(keyless / ".aw"))
+                count_chat = "SELECT count(*) FROM {{tables.chat_messages}}"
+                before = await env.db.fetch_value(count_chat)
+                body_file.write_text("Must not be sent")
+                code, output = await _cli_output(binary, keyless, keyless_env, "chat", "send-and-leave", "alice",
+                                                 "--body-file", str(body_file))
+                assert code != 0, output
+                assert "the latest message in this chat is encrypted" in output, output
+                assert await env.db.fetch_value(count_chat) == before
+
             # An explicit --plaintext still wins, and says so.
             code, output = await _cli_output(binary, command_dir, command_env, "chat", "send", "--session-id", chat_id,
                                              "--plaintext", "--body", "Explicit plaintext")
@@ -163,15 +181,3 @@ async def test_cli_chat_reply_follows_session_mode(privacy_app, tmp_path, global
             encrypted_mail = await _cli(binary, command_dir, command_env, "mail", "send", "--to", "carol", "--e2ee",
                                         "--new-conversation", "--body-file", str(body_file), "--json")
             assert encrypted_mail["content_mode"] == "encrypted_v2"
-
-        if not grant:
-            # Fail closed: with the encryption key gone, a default reply into the
-            # encrypted session errors instead of falling back to plaintext.
-            before = len(await stored_messages())
-            (tmp_path / ".aw" / "encryption.yaml").unlink()
-            body_file.write_text("Must not be sent")
-            code, output = await _cli_output(binary, tmp_path, child_env, "chat", "send-and-leave", "alice",
-                                             "--body-file", str(body_file))
-            assert code != 0, output
-            assert "encrypt" in output.lower(), output
-            assert len(await stored_messages()) == before
