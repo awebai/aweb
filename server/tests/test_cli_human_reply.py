@@ -70,62 +70,7 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
     assert sent.status_code == 200, sent.text
     assert source["sender_encryption_key"]["custody"] == "hosted_custodial"
 
-    identity_home = tmp_path / ".aw"
-    identity_home.mkdir(mode=0o700)
-    # API-key local init intentionally omits identity.yaml. Neither root nor
-    # grant custody may require it or manufacture global identity state.
-    if global_resident:
-        (identity_home / "identity.yaml").write_text(json.dumps({
-            "did": agent["did"], "stable_id": agent["stable_id"], "address": agent["address"],
-            "custody": "self", "identity_scope": "global", "created_at": now.isoformat(),
-        }))
-    else:
-        assert not (identity_home / "identity.yaml").exists()
-    team_sk, _, team_did = _make_keypair()
-    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
-    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
-    cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
-                             member_did_aw=agent["stable_id"], member_address=agent["address"])
-    # Match the CLI wire format: absent optional local fields, not empty strings.
-    cert.pop("signature")
-    if not global_resident:
-        for field in ("member_did_aw", "member_address"):
-            cert.pop(field)
-    cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
-    cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
-    (identity_home / "team-certs").mkdir(mode=0o700)
-    (identity_home / cert_path).write_text(json.dumps(cert))
-    (identity_home / cert_path).chmod(0o600)
-    membership = {"team_id": TEAM, "alias": "bob", "cert_path": cert_path}
-    (identity_home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": [membership]}))
-    (identity_home / "workspace.yaml").write_text(json.dumps({
-        "aweb_url": str(env.client.base_url), "memberships": [{**membership, "workspace_id": str(env.actors["bob"].workspace)}],
-    }))
-    _pem(identity_home / "signing.key", "ED25519 PRIVATE KEY", agent["signing_key"])
-    _pem(identity_home / "encryption.key", "X25519 PRIVATE KEY", agent["private_key"])
-    assertion = agent["encryption_key"]
-    (identity_home / "assertion.json").write_text(json.dumps(assertion))
-    (identity_home / "encryption.yaml").write_text(json.dumps({
-        "active_key_id": assertion["encryption_key_id"], "keys": [{
-            "key_id": assertion["encryption_key_id"], "public_key": assertion["encryption_public_key"],
-            "private_key_path": "encryption.key",
-            "assertion_path": "assertion.json",
-            **{key: assertion[key] for key in ("created_at", "not_before", "expires_at")},
-            "published_at": now.isoformat(),
-        }],
-    }))
-    root = Path(__file__).resolve().parents[2]
-    binary = Path(os.environ.get("AW_TEST_CLI_BINARY", str(tmp_path / "aw")))
-    if "AW_TEST_CLI_BINARY" not in os.environ:
-        build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
-                                                    cwd=root / "cli/go", stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.STDOUT)
-        output, _ = await build.communicate()
-        assert build.returncode == 0, output.decode()
-    child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
-    child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
-                     HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),
-                     AWID_REGISTRY_URL=str(env.client.base_url))
+    binary, child_env = await _cli_identity_home(env, tmp_path, agent, global_resident, now)
     async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
         body_file = tmp_path / "reply.txt"
         body_file.write_text("Agent private reply")
@@ -226,6 +171,67 @@ async def test_custodial_human_receives_encrypted_cli_reply(privacy_app, tmp_pat
         chat_read = await _request(env, "carol", "GET", f"/v1/chat/sessions/{chat_first['session_id']}/messages")
         assert chat_read.status_code == 200, chat_read.text
         assert len(chat_read.json()["messages"]) == 2
+
+
+async def _cli_identity_home(env, tmp_path, agent, global_resident, now):
+    """Write a self-custodial aw identity home for bob and build the aw binary."""
+    identity_home = tmp_path / ".aw"
+    identity_home.mkdir(mode=0o700)
+    # API-key local init intentionally omits identity.yaml. Neither root nor
+    # grant custody may require it or manufacture global identity state.
+    if global_resident:
+        (identity_home / "identity.yaml").write_text(json.dumps({
+            "did": agent["did"], "stable_id": agent["stable_id"], "address": agent["address"],
+            "custody": "self", "identity_scope": "global", "created_at": now.isoformat(),
+        }))
+    else:
+        assert not (identity_home / "identity.yaml").exists()
+    team_sk, _, team_did = _make_keypair()
+    await env.db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE team_id = $2", team_did, TEAM)
+    await env.registry_db.execute("UPDATE {{tables.teams}} SET team_did_key = $1 WHERE name = $2", team_did, TEAM.split(":", 1)[0])
+    cert = _make_certificate(team_sk, team_did, agent["did"], team_id=TEAM, alias="bob", identity_scope="global" if global_resident else "local",
+                             member_did_aw=agent["stable_id"], member_address=agent["address"])
+    # Match the CLI wire format: absent optional local fields, not empty strings.
+    cert.pop("signature")
+    if not global_resident:
+        for field in ("member_did_aw", "member_address"):
+            cert.pop(field)
+    cert["signature"] = sign_message(team_sk, canonical_json_bytes(cert))
+    cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
+    (identity_home / "team-certs").mkdir(mode=0o700)
+    (identity_home / cert_path).write_text(json.dumps(cert))
+    (identity_home / cert_path).chmod(0o600)
+    membership = {"team_id": TEAM, "alias": "bob", "cert_path": cert_path}
+    (identity_home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": [membership]}))
+    (identity_home / "workspace.yaml").write_text(json.dumps({
+        "aweb_url": str(env.client.base_url), "memberships": [{**membership, "workspace_id": str(env.actors["bob"].workspace)}],
+    }))
+    _pem(identity_home / "signing.key", "ED25519 PRIVATE KEY", agent["signing_key"])
+    _pem(identity_home / "encryption.key", "X25519 PRIVATE KEY", agent["private_key"])
+    assertion = agent["encryption_key"]
+    (identity_home / "assertion.json").write_text(json.dumps(assertion))
+    (identity_home / "encryption.yaml").write_text(json.dumps({
+        "active_key_id": assertion["encryption_key_id"], "keys": [{
+            "key_id": assertion["encryption_key_id"], "public_key": assertion["encryption_public_key"],
+            "private_key_path": "encryption.key",
+            "assertion_path": "assertion.json",
+            **{key: assertion[key] for key in ("created_at", "not_before", "expires_at")},
+            "published_at": now.isoformat(),
+        }],
+    }))
+    root = Path(__file__).resolve().parents[2]
+    binary = Path(os.environ.get("AW_TEST_CLI_BINARY", str(tmp_path / "aw")))
+    if "AW_TEST_CLI_BINARY" not in os.environ:
+        build = await asyncio.create_subprocess_exec("go", "build", "-o", str(binary), "./cmd/aw",
+                                                    cwd=root / "cli/go", stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.STDOUT)
+        output, _ = await build.communicate()
+        assert build.returncode == 0, output.decode()
+    child_env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AWID_"))}
+    child_env.update(AWEB_IDENTITY_HOME=str(identity_home), AWEB_URL=str(env.client.base_url),
+                     HOME=str(tmp_path), XDG_CONFIG_HOME=str(tmp_path / "config"),
+                     AWID_REGISTRY_URL=str(env.client.base_url))
+    return binary, child_env
 
 
 async def _cli(binary, cwd, env, *args):
