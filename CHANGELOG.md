@@ -40,6 +40,11 @@
 
 ### Server changes since `server-v1.27.16`
 
+- **MCP mail stays in the existing thread:** `send_mail` with a recipient and no
+  conversation ID now continues the active one-to-one mail conversation, like
+  the HTTP route. Custody signs or encrypts with that conversation ID; current
+  recipient policy still applies. With no active match it creates a conversation.
+  This keeps an agent's unprompted mail to its human in their existing thread.
 - **Identity grant issuers:** minting an identity grant now requires an
   authenticated identity with a nonblank issuing team-certificate id; without
   one the mint returns 403 and writes nothing. Revoking the issuing

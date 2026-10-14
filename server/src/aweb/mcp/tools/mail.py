@@ -7,6 +7,8 @@ import uuid as uuid_mod
 from datetime import datetime, timezone
 from typing import cast
 
+from fastapi import HTTPException
+
 from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import awid_registry_not_configured_detail
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
@@ -59,7 +61,11 @@ from aweb.messaging.mail_routing import (
     remote_recipient_from_participant,
     with_requested_address as _with_requested_address,
 )
-from aweb.routes.messages import SendMessageRequest, _deliver_remote_mail_and_project_locally
+from aweb.routes.messages import (
+    SendMessageRequest,
+    _deliver_remote_mail_and_project_locally,
+    _existing_mail_conversation_for_target,
+)
 from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 VALID_PRIORITIES: set[str] = set(MessagePriority.__args__)  # type: ignore[attr-defined]
@@ -178,6 +184,32 @@ async def send_mail(
         return json.dumps({"error": "Provide to or conversation_id, not both"})
     if not recipient_ref and not conversation_ref:
         return json.dumps({"error": "Recipient or conversation_id is required"})
+
+    if recipient_ref:
+        if recipient_ref.startswith("did:aw:"):
+            selector = "to_stable_id"
+        elif recipient_ref.startswith("did:key:"):
+            selector = "to_did"
+        elif "/" in recipient_ref:
+            selector = "to_address"
+        else:
+            if not auth.team_id:
+                return json.dumps({"error": "Alias delivery requires team context"})
+            selector = "to_alias"
+        # Select the same active pair as HTTP before custody signs/encrypts.
+        # The continuation below still checks participants and recipient policy.
+        try:
+            existing = await _existing_mail_conversation_for_target(
+                db_infra,
+                auth=mcp_messaging_auth(auth),
+                sender_did=primary_auth_did(auth),
+                sender_address=sender_address,
+                payload=SendMessageRequest(body=body, **{selector: recipient_ref}),
+            )
+        except (HTTPException, ServiceError) as exc:
+            return json.dumps({"error": exc.detail})
+        if existing is not None:
+            conversation_ref = existing["conversation_id"]
 
     if conversation_ref:
         message_id = uuid_mod.uuid4()

@@ -42,7 +42,7 @@ MCP section of [`aweb-sot.md`](https://aweb.ai/docs/aweb-sot.md).
 
 | Tool | Parameters | Registered description |
 | --- | --- | --- |
-| `send_mail` | `to=""`, `body=""`, `conversation_id=""`, `subject=""`, `priority="normal"`, `plaintext=False` | Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id. Hosted custodial sends encrypt by default when the recipient has an E2E key; set plaintext=true only for explicit server-readable mail. |
+| `send_mail` | `to=""`, `body=""`, `conversation_id=""`, `subject=""`, `priority="normal"`, `plaintext=False` | Send async mail with a required body by recipient, or continue an existing mail conversation by conversation_id. Recipient sends reuse the existing active one-to-one conversation when present. Hosted custodial sends encrypt by default when the recipient has an E2E key; set plaintext=true only for explicit server-readable mail. |
 | `check_mail` | `unread_only=True`, `limit=50`, `include_bodies=True` | Check hosted mail. The tool marks returned unread messages read before returning. Hosted custodial identities decrypt encrypted E2E mail for this MCP session; self-custodial encrypted content remains metadata-only. |
 
 ## Presence

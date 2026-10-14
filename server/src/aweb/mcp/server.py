@@ -172,7 +172,8 @@ def register_tools(
         name="send_mail",
         description=(
             "Send async mail with a required body by recipient, or continue an existing "
-            "mail conversation by conversation_id. Hosted custodial sends encrypt by "
+            "mail conversation by conversation_id. Recipient sends reuse the existing "
+            "active one-to-one conversation when present. Hosted custodial sends encrypt by "
             "default when the recipient has an E2E key; set plaintext=true only for "
             "explicit server-readable mail."
         ),
