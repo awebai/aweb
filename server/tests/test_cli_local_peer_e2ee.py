@@ -130,3 +130,78 @@ async def test_cli_encrypted_reply_reaches_the_peer_in_a_conversation_it_began(p
                 **peer, "encryption_key_id": peer["encryption_key"]["encryption_key_id"],
             })
             assert plain["body"] == "Encrypted reply from bob"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, True)])
+async def test_cli_address_is_not_read_as_a_local_alias(privacy_app, tmp_path, global_resident, grant):
+    # example.test/carol is a namespace address, an AWID identity. The team's
+    # local member carol has no public address, so her roster key must not be
+    # used for it; AWID has no such address here, so the send fails.
+    env = privacy_app
+    env.app.state.public_origin = str(env.client.base_url).rstrip("/")
+    now = datetime.now(timezone.utc)
+    identities = await _cli_identities(env, global_resident, now)
+    agent, peer = identities["bob"], identities["carol"]
+    await _publish_encryption_key(env, "carol", peer["encryption_key"])
+    binary, child_env = await _cli_identity_home(env, tmp_path, agent, global_resident, now)
+    body_file = tmp_path / "body.txt"
+    body_file.write_text("Must not reach local carol")
+    count = "SELECT (SELECT count(*) FROM {{tables.messages}}) + (SELECT count(*) FROM {{tables.chat_messages}})"
+    async with _registry_http(env.registry_app) as (registry_url, _):
+        child_env["AWID_REGISTRY_URL"] = registry_url
+        async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
+            before = await env.db.fetch_value(count)
+            for args in (("mail", "send", "--to-address", "example.test/carol", "--e2ee", "--body-file", str(body_file)),
+                         ("chat", "send-and-leave", "example.test/carol", "--e2ee", "--body-file", str(body_file))):
+                code, output = await _cli_output(binary, command_dir, command_env, *args)
+                assert code != 0, (args, output)
+            assert await env.db.fetch_value(count) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("global_resident,grant", [(False, False), (False, True), (True, True)])
+async def test_cli_invalid_roster_key_fails_closed_under_the_setting(privacy_app, tmp_path, global_resident, grant):
+    # A local peer's roster key that fails verification is not "no key": with
+    # encrypt_by_default on, the send fails rather than going out as plaintext.
+    env = privacy_app
+    env.app.state.public_origin = str(env.client.base_url).rstrip("/")
+    now = datetime.now(timezone.utc)
+    identities = await _cli_identities(env, global_resident, now)
+    agent, peer = identities["bob"], identities["carol"]
+    await _publish_encryption_key(env, "carol", peer["encryption_key"])
+    binary, child_env = await _cli_identity_home(env, tmp_path, agent, global_resident, now)
+    body_file = tmp_path / "body.txt"
+    body_file.write_text("Must not be sent")
+    count = "SELECT (SELECT count(*) FROM {{tables.messages}}) + (SELECT count(*) FROM {{tables.chat_messages}})"
+    async with _registry_http(env.registry_app) as (registry_url, _):
+        child_env["AWID_REGISTRY_URL"] = registry_url
+        code, output = await _cli_output(binary, tmp_path, child_env, "settings", "set", "messaging.encrypt_by_default", "true")
+        assert code == 0, output
+        async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
+            opened = await _request(env, "carol", "POST", "/v1/chat/sessions", {
+                "to_dids": [agent["did"]], "message": "Plain chat opening",
+            })
+            assert opened.status_code == 200, opened.text
+            plain_in = await _request(env, "carol", "POST", "/v1/messages", {
+                "to_did": agent["stable_id"] or agent["did"], "subject": "Plain question", "body": "Plain question body",
+            })
+            assert plain_in.status_code == 200, plain_in.text
+            original = await env.db.fetch_value(
+                "SELECT assertion_signature FROM {{tables.agent_encryption_keys}} WHERE agent_id = $1",
+                env.actors["carol"].id,
+            )
+            await env.db.execute("UPDATE {{tables.agent_encryption_keys}} SET assertion_signature = $1 WHERE agent_id = $2",
+                                 "A" * len(original), env.actors["carol"].id)
+            before = await env.db.fetch_value(count)
+            try:
+                for args in (("mail", "send", "--to-did", peer["did"], "--new-conversation", "--body-file", str(body_file)),
+                             ("chat", "send", "--session-id", opened.json()["session_id"], "--body-file", str(body_file)),
+                             ("chat", "send-and-leave", "carol", "--body-file", str(body_file)),
+                             ("mail", "reply", plain_in.json()["message_id"], "--body-file", str(body_file))):
+                    code, output = await _cli_output(binary, command_dir, command_env, *args)
+                    assert code != 0, (args, output)
+                assert await env.db.fetch_value(count) == before
+            finally:
+                await env.db.execute("UPDATE {{tables.agent_encryption_keys}} SET assertion_signature = $1 WHERE agent_id = $2",
+                                     original, env.actors["carol"].id)
