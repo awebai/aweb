@@ -8,9 +8,11 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 import uuid
 from pathlib import Path
+from unittest.mock import patch
 
 # Reviewed digest-pinned probe service image; a constant, not a discovery.
 def _bind_tmp() -> tempfile.TemporaryDirectory:
@@ -39,8 +41,39 @@ def run(
     *args: str,
     check: bool = True,
     env: dict[str, str] | None = None,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, check=check, capture_output=True, text=True, env=env)
+    return subprocess.run(args, check=check, capture_output=True, text=True, env=env, timeout=timeout)
+
+
+def wait_for_published_port(container: str, *, timeout: float = 10.0) -> str:
+    """Wait for Docker Desktop to publish the requested loopback mapping."""
+    deadline = time.monotonic() + timeout
+    last = "no mapping observed"
+    while time.monotonic() < deadline:
+        try:
+            result = run("docker", "port", container, "80/tcp", check=False,
+                         timeout=max(0.001, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            last = "docker port timed out"
+            break
+        mapping = result.stdout.strip()
+        if result.returncode == 0 and mapping:
+            _, separator, port = mapping.rpartition(":")
+            if separator and port.isdecimal() and 0 < int(port) <= 65535:
+                return port
+        last = f"exit {result.returncode}: {result.stderr.strip() or mapping or 'empty mapping'}"
+        time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
+
+    try:
+        inspection = run("docker", "inspect", "--format", "{{json .State}}", container,
+                         check=False, timeout=1.0)
+        state = inspection.stdout.strip() if inspection.returncode == 0 else (
+            f"unavailable (exit {inspection.returncode}): {inspection.stderr.strip()}")
+    except subprocess.TimeoutExpired:
+        state = "unavailable (docker inspect timed out)"
+    raise AssertionError(f"Docker did not publish 80/tcp for container {container!r} within {timeout:g}s; "
+                         f"container state: {state}; last docker port result: {last}")
 
 
 def stable_buildx_du_records(output: str) -> list[dict[str, object]]:
@@ -91,6 +124,68 @@ class StableBuildxDuRecordsTests(unittest.TestCase):
         self.assertNotEqual(
             stable_buildx_du_records(before), stable_buildx_du_records(changed)
         )
+
+
+class PublishedPortWaitTests(unittest.TestCase):
+    def test_boundary_waits_for_delayed_published_mapping(self) -> None:
+        port_reads = 0
+
+        def docker(*args, check=True, **kwargs):
+            nonlocal port_reads
+            if args[:2] == ("docker", "port"):
+                port_reads += 1
+                if port_reads == 1:
+                    result = subprocess.CompletedProcess(args, 1, "", "mapping not published yet")
+                elif port_reads == 2:
+                    result = subprocess.CompletedProcess(args, 0, "", "")
+                else:
+                    result = subprocess.CompletedProcess(args, 0, "127.0.0.1:32768\n", "")
+            elif args[:3] == ("docker", "run", "--detach"):
+                result = subprocess.CompletedProcess(args, 0, "delayed-mapping-container\n", "")
+            elif args[:3] == ("docker", "container", "inspect"):
+                result = subprocess.CompletedProcess(args, 1, "", "removed")
+            else:
+                result = subprocess.CompletedProcess(args, 0, "", "")
+            if check and result.returncode:
+                raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
+            return result
+
+        boundary = DockerBoundaryTests("test_fixed_docker_host_reaches_published_port_but_loopback_does_not")
+        boundary.image = "synthetic-candidate"
+        # Only Docker's external command boundary is delayed. Exercise the real
+        # boundary test, including its host-vs-loopback command and cleanup.
+        with patch(__name__ + ".run", side_effect=docker):
+            try:
+                boundary.test_fixed_docker_host_reaches_published_port_but_loopback_does_not()
+            except subprocess.CalledProcessError as error:
+                self.fail(f"Delayed port publication must be retried, not fail at the first docker port: {error.stderr}")
+        self.assertEqual(port_reads, 3)
+
+    def test_missing_mapping_times_out_with_container_state(self) -> None:
+        def docker(*args, **kwargs):
+            if args[1] == "inspect":
+                return subprocess.CompletedProcess(args, 0, '{"Status":"exited","ExitCode":1}', "")
+            return subprocess.CompletedProcess(args, 1, "", "no public port")
+
+        with patch(__name__ + ".run", side_effect=docker):
+            with self.assertRaisesRegex(AssertionError, "container 'missing-port'.*container state:.*exited.*no public port"):
+                wait_for_published_port("missing-port", timeout=0.01)
+
+    def test_hung_port_command_is_bounded_and_inspect_failure_is_reported(self) -> None:
+        def docker(*args, **kwargs):
+            self.assertGreater(kwargs["timeout"], 0)
+            self.assertLessEqual(kwargs["timeout"], 1)
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+        with patch(__name__ + ".run", side_effect=docker):
+            with self.assertRaisesRegex(AssertionError, "container 'hung-port'.*inspect timed out.*docker port timed out"):
+                wait_for_published_port("hung-port", timeout=0.01)
+
+    def test_existing_mapping_returns_without_sleeping(self) -> None:
+        with patch(__name__ + ".run", return_value=subprocess.CompletedProcess(
+                (), 0, "127.0.0.1:32768\n", "")), patch(__name__ + ".time.sleep") as sleep:
+            self.assertEqual(wait_for_published_port("ready-port"), "32768")
+        sleep.assert_not_called()
 
 
 class DockerBoundaryTests(unittest.TestCase):
@@ -312,7 +407,7 @@ class DockerBoundaryTests(unittest.TestCase):
             PROBE_SERVICE_IMAGE,
         ).stdout.strip()
         try:
-            port = run("docker", "port", container, "80/tcp").stdout.strip().rsplit(":", 1)[1]
+            port = wait_for_published_port(container)
             result = run(
                 "docker", "run", "--rm",
                 "--add-host", "aweb-docker.test:host-gateway",

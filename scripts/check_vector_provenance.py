@@ -244,6 +244,10 @@ ROOT_CONSUMERS = {
         "pin-store-raw-wire-v1.json",
         'readRootVector(t, "pin-store-raw-wire-v1.json")',
     ),
+    PurePosixPath("channel-core/test/received_sender_trust.test.ts"): _consumer(
+        "identity-log-v1.json",
+        'new URL("../../docs/vectors/identity-log-v1.json", import.meta.url)',
+    ),
     PurePosixPath("channel-core/test/log_rollback.test.ts"): _consumer(
         "identity-log-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "identity-log-v1.json")',
