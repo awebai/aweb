@@ -1135,6 +1135,9 @@ func TestMailE2EEConversationReplyLearnsLocalOnlySenderKey(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = json.NewEncoder(w).Encode(SendMessageResponse{MessageID: posted.MessageID, ConversationID: posted.ConversationID, Status: "delivered"})
+		case "/v1/agents":
+			// The remote sender is not on the team roster.
+			_ = json.NewEncoder(w).Encode(ListAgentsResponse{})
 		default:
 			t.Fatalf("unexpected path=%s", r.URL.Path)
 		}

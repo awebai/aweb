@@ -438,6 +438,14 @@ func (c *Client) targetForMailConversation(ctx context.Context, conversationID s
 					return mailConversationTarget{}, target.err
 				}
 				if preferAddress && target.kind == "did" && strings.HasPrefix(strings.TrimSpace(target.value), "did:key:") {
+					// A local roster peer resolves by its did:key. Any other
+					// did:key is resolved from the conversation's messages below.
+					if _, ok, err := c.localRosterRecipient(ctx, target.value); ok {
+						if err != nil {
+							return mailConversationTarget{}, err
+						}
+						return target, nil
+					}
 					break
 				}
 				return target, nil
