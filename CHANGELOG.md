@@ -23,6 +23,10 @@
 - **Grant seats address replies to the peer:** a local-resident grant seat no
   longer takes its own identity for the other participant of a mail
   conversation, which addressed a reply to itself and failed with 409.
+- **Encrypted replies reach a local peer:** an encrypted mail reply in a
+  conversation the sender began by alias now targets the local peer's did:key.
+  Before, it took the bare alias, which AWID refuses, or the sender's own
+  member address.
 - **Chat replies follow the chat's encryption:** `aw chat send-and-wait`,
   `send-and-leave`, `send --session-id` and `extend-wait` with no mode flag now
   encrypt when the latest message in the chat they continue is `encrypted_v2`,
