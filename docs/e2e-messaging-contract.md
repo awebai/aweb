@@ -591,6 +591,26 @@ deprecated compatibility alias. Once encryption is selected, by `--e2ee` or by
 following an encrypted source, missing or invalid key state fails closed with no
 automatic plaintext retry. Every send reports the `content_mode` it used.
 
+An identity can make encryption its default with the setting
+`messaging.encrypt_by_default` (`aw settings set messaging.encrypt_by_default
+true`, kept in the identity home's `settings.yaml`; a grant seat carries the
+value its grant was minted with). A send's mode is chosen in this order:
+
+1. `--e2ee` or `--plaintext`.
+2. An encrypted source: the mail a reply answers, or the latest message of the
+   chat a send continues.
+3. The setting, when the recipient has a published key.
+4. Server-readable plaintext.
+
+With the setting on, a send that steps 1 and 2 do not decide tries encrypted.
+If key discovery finds that the recipient has no published key at all, which
+is established before anything is sent, the send goes out as plaintext and says
+so (`plaintext_reason`). That plaintext is part of the setting's definition,
+not an error path. Any other failure fails the send: a recipient key that is
+stale, unsigned, mismatched or otherwise fails its checks, or a sender that
+cannot encrypt. Under the setting, a reply into a plaintext conversation is
+therefore encrypted when the recipient has a key.
+
 The shipped sender verifies recipient key authority before encryption and relies
 on the target service accepting or rejecting encrypted v2. A complete separate
 route-capability preflight is not yet shipped for every route. The capability

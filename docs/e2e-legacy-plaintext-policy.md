@@ -79,6 +79,8 @@ service. Error handling must never add that flag automatically.
 | `--e2ee`, target rejects v2 | Fail clearly; no plaintext retry. Complete route-capability preflight is not shipped for every route. |
 | new send without a mode flag | Send `legacy_plaintext_v1`, subject to normal delivery policy. |
 | reply without a mode flag to an encrypted mail, or into a chat whose latest message is encrypted | Send `encrypted_v2`; fail like `--e2ee`, with no plaintext retry. |
+| send without a mode flag or encrypted source, `messaging.encrypt_by_default` on, recipient key published | Send `encrypted_v2`; a key that fails its checks fails the send. |
+| send without a mode flag or encrypted source, `messaging.encrypt_by_default` on, no recipient key published | Send `legacy_plaintext_v1` and report `plaintext_reason`; decided before anything is sent. |
 | old sender to a recipient whose future policy requires E2E | A future E2E-required route must reject plaintext; this policy is a rollout requirement, not a claim that every current route enforces it. |
 | hosted compose/read with operator-held decrypt key | Hosted managed/server-readable boundary, even if stored as `encrypted_v2`. |
 | federation peer without v2 support | Intended E2E fails; no downgrade translation. |

@@ -20,7 +20,7 @@ to refresh it.
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
 | Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
-| Additional Commands | `blueprint`, `session` |
+| Additional Commands | `blueprint`, `session`, `settings` |
 
 ## Global Flags
 
@@ -3756,3 +3756,41 @@ Flags:
 - `--session-id string Per-session identifier`
 - `--session-key string Per-session secret (at least 32 characters; avoid shell history)`
 - `--ttl-seconds int Lease TTL in seconds (default 300)`
+
+## `settings`
+
+### `settings`
+
+Show or change this identity's local settings, kept in settings.yaml of its identity home.
+
+Settings:
+  messaging.encrypt_by_default  true encrypts a mail or chat send that no --e2ee/--plaintext flag
+      or encrypted source decides, when the recipient has a published key (default false).
+
+A grant seat carries the settings its grant was minted with; change them on the
+resident identity and mint a new grant.
+
+Subcommands:
+- `get` Show a setting's effective value and where it comes from
+- `set` Change a setting of this identity
+
+Flags:
+- `-h, --help help for settings`
+
+## `settings get`
+
+### `settings get`
+
+Show a setting's effective value and where it comes from
+
+Flags:
+- `-h, --help help for get`
+
+## `settings set`
+
+### `settings set`
+
+Change a setting of this identity
+
+Flags:
+- `-h, --help help for set`

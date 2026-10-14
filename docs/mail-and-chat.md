@@ -391,7 +391,10 @@ New CLI mail and chat sends are server-readable plaintext by default. Mail
 replies preserve the source message's encryption by default, and a chat send
 into an existing chat follows the encryption of that chat's latest message;
 `--plaintext` and `--e2ee` explicitly select the mode. Every send says which
-mode it used. Encrypted delivery requires both
+mode it used. `aw settings set messaging.encrypt_by_default true` makes
+encryption the default for an identity: sends to recipients with a published
+key are encrypted, and a recipient without one gets plaintext with the reason
+stated. Encrypted delivery requires both
 identities to have valid encryption capability and fails closed rather than
 silently downgrading.
 

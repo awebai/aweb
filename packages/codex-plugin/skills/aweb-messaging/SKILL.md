@@ -102,6 +102,8 @@ Before replying to a confusing chat, inspect pending/open/history state. Do not 
 
 New mail and chat are server-readable plaintext by default in the current aw CLI release; replies follow the encryption of what they answer, and every send prints the mode it used. Add `--e2ee` only when the human explicitly wants an encrypted send; it fails closed if keys, capability, route support, or version support are missing, and so does a reply that follows an encrypted message. `--plaintext` explicitly chooses server-readable plaintext.
 
+An operator can make encryption the default for an agent: run `aw settings set messaging.encrypt_by_default true` in the agent's identity home (for a grant seat, on its resident identity, then mint a new grant). Sends then encrypt whenever the recipient has a published key; a recipient without one gets plaintext, and the send says so. `aw settings get messaging.encrypt_by_default` and `aw doctor` show the value in effect. Do not change this setting yourself unless your human asks.
+
 ```bash
 aw chat send-and-wait <alias-or-address> --body-file <body-path> --start-conversation
 aw chat send-and-leave <alias-or-address> --body-file <body-path>

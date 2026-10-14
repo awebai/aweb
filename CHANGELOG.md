@@ -9,6 +9,20 @@
 
 ### CLI changes since `aw-v1.36.35`
 
+- **Encrypt by default, per identity:** `aw settings set
+  messaging.encrypt_by_default true` makes mail and chat sends encrypted when
+  the recipient has a published key. A recipient without one gets plaintext,
+  and the send says why (`plaintext_reason` in `--json`); a key that fails its
+  checks, or a sender that cannot encrypt, fails the send. The order is a mode
+  flag, then an encrypted source, then the setting, then plaintext. A grant
+  takes the resident's setting at mint; `aw doctor` shows the value in effect.
+- **Local peers' keys come from the team roster:** encrypted mail and chat to
+  a team-local (`did:key`) peer named by DID or member address find the key
+  the peer published on the roster. Before, they failed with no key or a
+  registry 404 unless the key had been learned or pinned.
+- **Grant seats address replies to the peer:** a local-resident grant seat no
+  longer takes its own identity for the other participant of a mail
+  conversation, which addressed a reply to itself and failed with 409.
 - **Chat replies follow the chat's encryption:** `aw chat send-and-wait`,
   `send-and-leave`, `send --session-id` and `extend-wait` with no mode flag now
   encrypt when the latest message in the chat they continue is `encrypted_v2`,
