@@ -1,8 +1,9 @@
 # Agent health: a host-published status contract
 
-Status: **DESIGN DRAFT, aweb side (aweb-acah.3). Not approved, not
-implemented.** The OATS side is being agreed with oats-expert-juan; it then
-goes to the coordinator, for Athena's review and Juan's approval.
+Status: **DESIGN DRAFT (aweb-acah.3). Not approved, not implemented.** The
+OATS side is agreed with oats-expert-juan (OATS kernel 0.56.0, oats.aweb
+1.27.3). The OATS-side build still needs agreement from the OATS kernel and
+oats.aweb owners. Next: Athena's review, then Juan's approval.
 
 ## Purpose
 
@@ -35,11 +36,20 @@ other agents, aweb shows its own facts.
   The authority comes from the agent's own key, so no new team role is needed.
   It works the same for Fully Hosted and BYOT teams, because it touches neither
   certificate issuance (controller authority) nor custody.
+- **"Agent" means one identity in one team.** A joined-team identity is a
+  separate identity, so each team membership has its own status, published by
+  that team's host.
 - **What the host must be.** The host must be a certified member of the same
   team: it authenticates with team-auth v2 (`docs/team-auth-envelope-v2.md`).
-  For OATS this is the deployment's minting root for that team
-  (`settings.oats.aweb.roots[team]`, else `root`), which is to be confirmed by
-  oats-expert-juan.
+  For OATS it is the team's minting root on that host
+  (`settings.oats.aweb.roots[team]`, else the deployment's `root`). For
+  resident-grant deployments it is the resident custody root.
+- **The publisher must not depend on what it reports.** The publisher signs
+  with the root's on-disk `signing.key` and team certificate. The custody
+  service (`aw custody serve`) exists only to sign plain messages for grant
+  workers; it never signs auth payloads (`docs/identity.md:374-398`). So a dead
+  custody unit, the most common failure seen so far, does not stop its host
+  from reporting it.
 - **What aweb does.** aweb verifies the publisher is the agent or its designated
   host, stores the latest status per agent, and relays changes to the team
   dashboard stream. It computes staleness from a deadline the publisher set. It
@@ -63,9 +73,18 @@ GET    /v1/agents/me/status-host
 - `host_did` must resolve to an active member of the caller's team. An agent
   has at most one status host, and PUT replaces it.
 - Retiring or deleting the agent removes the designation. The team controller
-  can also clear it, through the same controller-signed path as local key
-  replacement (`server/src/aweb/routes/agents.py:886-941`). That is the
-  recovery path for a compromised host when the agent's key is gone.
+  can also set or clear it, through the same controller-signed path as local
+  key replacement (`server/src/aweb/routes/agents.py:886-941`). That covers a
+  seat whose credential is already dead, and a compromised host when the
+  agent's key is gone.
+- **When OATS designates** (agreed with oats-expert-juan):
+  - at spawn, from oats.aweb's spawn hook, right after it mints the identity;
+  - for existing instances, once at their next launch, with the agent's
+    working credential;
+  - for a resident-grant seat, at `oats aweb resident create`, by the
+    resident using root identity auth.
+  - A seat that is already dead is designated when it is repaired, or by the
+    team controller.
 - **Storage.** A new migration, `020_agent_status_hosts.sql`, with columns
   `agent_id PK`, `team_id`, `host_did`, `designated_at` and `designated_by_did`.
 
@@ -107,11 +126,18 @@ message-signing scheme (`docs/vectors/message-signing-v1.json`).
   `fixing.text` is at most 120 bytes and may name a role ("Nactiva's operator")
   but not a contact detail.
 - **`valid_until`**: at most 15 minutes after `observed_at`.
-- **`seq`**: increases monotonically per (agent, publisher). The server refuses
-  a status whose `seq` is not greater than the stored one, which rejects stale
-  replays.
+- **`seq`**: increases strictly per (agent, publisher). The server refuses a
+  status whose `seq` is not greater than the stored one, with 409, which
+  rejects stale replays. A publisher may use `observed_at` in milliseconds,
+  which needs no state file and survives reinstalls. The cost is that a clock
+  stepped backwards is refused until it passes the stored value, and the
+  publisher logs the 409. OATS uses that.
 - The whole document is at most 2 KiB. Unknown top-level fields are refused in
   v1, and additions need v2.
+
+`reason` and `fixing` carry reachability only. "Working on X for 3 h" and
+"waiting for someone" are activity, which aweb-acah.2 covers. They must not be
+put into `reason`.
 
 The version applies to the envelope, which aweb owns. The meaning of `code`,
 and when OATS says `yes`, `degraded` or `no`, is OATS's contract. aweb pins
@@ -148,10 +174,19 @@ Body: {"signed_payload": "<b64url>", "signature": "<b64>"}
   dashboard SSE already forwards every non-message, non-chat team event
   (`server/src/aweb/routes/dashboard.py:290-295`).
 
-Recommended cadence, which OATS confirms: publish at once on any change, and
-otherwise every 60 seconds with `valid_until` set 5 minutes ahead. A host that
-stops publishing therefore turns stale within 5 minutes. That stale state is
-itself the honest answer when the whole server is down.
+Cadence, agreed: publish at once on any change, and otherwise every 60
+seconds with `valid_until` set 5 minutes ahead. A host that stops publishing
+therefore turns stale within 5 minutes. That stale state is itself the honest
+answer when the whole server is down.
+
+OATS publishes from its schedule host tick. That is a launchd or systemd
+timer (`oats schedule host install`) that runs `oats` once a minute, outside
+every instance session, and depends on no custody daemon, wake broker or
+harness. Lifecycle changes such as stop, start and retire also publish at once.
+On a host whose agents publish, OATS makes the tick mandatory: `oats setup`
+installs it and `oats doctor` fails without it. When the tick itself dies,
+every status goes stale within 5 minutes. That has happened once already, on
+11 October, when its plist pinned a node that Homebrew removed.
 
 ## Reading
 
@@ -175,10 +210,12 @@ every surface agrees:
     `reachable: "unknown"` and the text "Its server hasn't reported yet".
 - **`source: "aweb"`**: no status host and no self-published status. See the
   fallback below.
-- **No mixing.** The dashboard renders host status alone, and never combines
-  it with presence or grant facts to produce a verdict. aweb's observations may
-  appear as separate, labelled facts under a details disclosure, never as the
-  answer (question 3 for oats-expert-juan).
+- **No mixing** (agreed). The dashboard renders host status alone, and never
+  combines it with presence or grant facts to produce a verdict. aweb's
+  observations may appear as separate, labelled facts under a details
+  disclosure, never as the answer. They help support when the host is stale.
+  Recommendation to the dashboard team: show the disclosure to admins and the
+  technical role only, never on the staff strip.
 
 ## Fallback for agents without a status host
 
@@ -229,30 +266,45 @@ aweb-acai: on the team-certificate path, `POST /v1/workspaces/heartbeat` and
 member can keep another seat looking alive. The fallback's "last active" fact
 inherits that weakness until aweb-acai is fixed.
 
-## Questions for oats-expert-juan (OATS side)
+## The OATS side (agreed with oats-expert-juan)
 
-1. **Publisher.** Is the deployment's per-team minting root the right status
-   host, and does it always hold its key on the host? What about
-   resident-grant deployments, where the resident custody root may be the
-   natural host?
-2. **Designation.** Does OATS call `PUT /v1/agents/me/status-host` as the new
-   instance right after minting it, and once at next launch for existing
-   instances? Does retire rely on aweb removing the designation with the agent?
-3. **Who computes, and where.** The failures that matter (a custody unit dead
-   after reboot, a stalled setup) need a publisher that does not depend on the
-   failing parts. Which OATS process publishes every 60 seconds, outside the
-   instance session?
-4. **Vocabulary.** How do the readiness codes map onto
-   `reachable`/`reason`/`fixing`? Examples: `wake-daemon-not-running`,
-   `custody`, `needs-configuration`, grant conditions, and setup stalled (from
-   the installed oats.aweb `binding-wire.mjs`; OATS readiness is outside this
-   repository). How does OATS know `fixing.by` (automatic retry versus
-   operator)?
-5. **No mixing.** Do you accept aweb observations shown as separate labelled
-   facts under a disclosure, or should a host-sourced agent show only the host
-   status?
-6. **Language.** Who sets the language of `reason.text` (for Nactiva,
-   Catalan): a deployment setting?
+This section is informative: OATS owns the meaning of its codes, and oats.aweb
+and the OATS kernel own the final table. It is recorded here so that review
+sees the whole picture.
+
+- **Codes** are `oats.<snake_case>`, one per condition, never a raw readiness
+  message. `reason.text` comes from a fixed table of plain phrases, one per
+  code, because readiness messages contain paths and hostnames.
+- **`yes`**: the session is present, the harness process is alive, delivery is
+  proven for the home (a channel or broker stream is receiving), and the grant
+  is valid.
+- **`degraded`**: it receives, with a limitation. Examples: poll-only receive
+  (`joined-team-poll-only`), a grant expiring within 24 hours, or
+  `native-receive-unproven`.
+- **`no`**:
+  - It is not running: stopped, crashed or retired. The kernel's instance
+    events tell an intended stop from a crash.
+  - It is waiting at a launch prompt for a key press.
+  - `custody` fails, or the wake broker is not running for a broker-served
+    home.
+  - The grant expired or was revoked.
+  - Setup is incomplete (`needs-configuration`, `authorization-required`), or
+    the provider is persistently unavailable.
+- **`unknown`**: the readiness probe failed or timed out, or the provider is
+  not qualified (`provider-not-qualified`).
+- **`fixing.by`** comes from the readiness item's existing `remedy`:
+  - `automatic` for codes OATS or its unit supervisor recovers by itself, from
+    a short list per code (custody restart under KeepAlive, grant renewal at
+    launch);
+  - `operator` when a remedy needs a person;
+  - `nobody` for an intended stop or a retirement ("stopped on purpose");
+  - `unknown` otherwise.
+- **`fixing.text`** names a role taken from deployment settings ("Nactiva's
+  operator", "aweb support").
+- **Language.** A deployment setting gives the status language (BCP 47, with
+  an English fallback), and the publisher renders `reason.text` and
+  `fixing.text` in it. Codes stay stable, so aweb could localise from codes
+  later without a contract change.
 
 ## Implementation slices (after agreement and approval)
 
