@@ -607,6 +607,12 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 		}
 	}
 	for _, target := range addresses {
+		if recipient, ok, err := c.localRosterRecipient(ctx, target); err != nil {
+			return nil, err
+		} else if ok {
+			recipients = append(recipients, recipient)
+			continue
+		}
 		identity, err := c.ResolveIdentity(ctx, target)
 		if err != nil {
 			return nil, err
@@ -623,6 +629,12 @@ func (c *Client) e2eeChatRecipients(ctx context.Context, aliases []string, dids 
 		})
 	}
 	for _, target := range dids {
+		if recipient, ok, err := c.localRosterRecipient(ctx, target); err != nil {
+			return nil, err
+		} else if ok {
+			recipients = append(recipients, recipient)
+			continue
+		}
 		identity, err := c.ResolveIdentity(ctx, target)
 		if err != nil {
 			return nil, err

@@ -373,6 +373,11 @@ func (c *Client) e2eeMailRecipient(ctx context.Context, payload *SendMessageRequ
 	if target == "" {
 		return E2EERecipientKey{}, errors.New("E2E mail requires an explicit recipient to resolve an encryption key")
 	}
+	if recipient, ok, err := c.localRosterRecipient(ctx, target); err != nil {
+		return E2EERecipientKey{}, err
+	} else if ok {
+		return recipient, nil
+	}
 	identity, err := c.ResolveIdentity(ctx, target)
 	if err != nil {
 		return E2EERecipientKey{}, err

@@ -81,6 +81,54 @@ func (c *Client) e2eeRecipientFromAgent(ctx context.Context, agent AgentView) (E
 	return E2EERecipientKey{}, fmt.Errorf("agent %s has no E2E encryption key; local-only recipients cannot be resolved through AWID, ask them to upgrade aw/Pi/channel and publish one, or explicitly send a server-readable upgrade note with --plaintext", agent.Alias)
 }
 
+// localRosterRecipient resolves a team-local agent named by its did:key, its
+// alias, or its member address in this team (team/alias or domain/alias).
+// Local agents publish their keys on the team roster, and AWID does not know
+// them. A target that is not a local roster agent is not found here; if the
+// roster cannot be listed, the caller's AWID path decides as before.
+func (c *Client) localRosterRecipient(ctx context.Context, target string) (E2EERecipientKey, bool, error) {
+	target = strings.TrimSpace(target)
+	alias, isMember := c.teamMemberAlias(target)
+	if !isLocalDIDKey(target) && !isMember {
+		return E2EERecipientKey{}, false, nil
+	}
+	resp, err := c.ListAgents(ctx)
+	if err != nil {
+		return E2EERecipientKey{}, false, nil
+	}
+	for _, agent := range resp.Agents {
+		if strings.TrimSpace(agent.DIDAW) != "" {
+			continue
+		}
+		if strings.TrimSpace(agent.DIDKey) == target || (isMember && strings.TrimSpace(agent.Alias) == alias) {
+			recipient, err := c.e2eeRecipientFromAgent(ctx, agent)
+			return recipient, true, err
+		}
+	}
+	return E2EERecipientKey{}, false, nil
+}
+
+// teamMemberAlias reads a bare alias, or a member address in this client's
+// team, as the member's alias.
+func (c *Client) teamMemberAlias(target string) (string, bool) {
+	if target == "" || strings.HasPrefix(target, "did:") {
+		return "", false
+	}
+	if !strings.Contains(target, "/") {
+		return target, true
+	}
+	teamID := strings.TrimSpace(c.teamID)
+	if referenceTeam, alias, ok := splitTeamMemberReference(target); ok {
+		return alias, referenceTeam == teamID
+	}
+	domain, alias, ok := splitRegistryAddress(target)
+	teamDomain, _, err := ParseTeamID(teamID)
+	if !ok || err != nil || domain != teamDomain {
+		return "", false
+	}
+	return alias, true
+}
+
 func (c *Client) e2eeGlobalRecipientFromAgent(ctx context.Context, agent AgentView) (E2EERecipientKey, error) {
 	address := strings.TrimSpace(agent.Address)
 	if address == "" {
