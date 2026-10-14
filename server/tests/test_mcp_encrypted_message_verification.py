@@ -19,6 +19,7 @@ from awid.e2ee_keys import build_encryption_key_assertion
 from aweb.e2ee_messages import decrypt_e2ee_message, encrypt_e2ee_message, generate_x25519_keypair
 from aweb.mcp.auth import AuthContext
 from aweb.mcp.tools import chat as chat_tools
+from aweb.mcp.tools import contacts as contacts_tools
 from aweb.mcp.tools import mail as mail_tools
 
 from test_mcp_mail_chat import DBInfra
@@ -235,3 +236,37 @@ async def test_hosted_encrypted_mail_reads_verified_and_a_tampered_one_fails(awe
     )
     inbox = json.loads(await mail_tools.check_inbox(db, hosted_decryptor=None, unread_only=False))
     assert inbox["messages"][0]["verification_status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_hosted_encrypted_mail_reads_verified_from_a_contact(aweb_cloud_db, monkeypatch):
+    m = _identity("m")
+    bond = _identity("bond")
+    await _insert_agents(aweb_cloud_db.aweb_db, m, bond)
+    encryptor, _ = _custody(m, bond)
+    db = DBInfra(aweb_cloud_db.aweb_db)
+
+    monkeypatch.setattr(mail_tools, "get_auth", lambda: _auth(m))
+    sent = json.loads(
+        await mail_tools.send_mail(db, registry_client=None, hosted_encryptor=encryptor, to="bond", body="Signed by m")
+    )
+    assert "error" not in sent, sent
+    contact_id = await aweb_cloud_db.aweb_db.fetch_val(
+        """
+        INSERT INTO {{tables.contacts}} (owner_did, contact_address, label)
+        VALUES ($1, $2, 'm')
+        RETURNING contact_id
+        """,
+        bond["stable_id"],
+        m["address"],
+    )
+
+    monkeypatch.setattr(contacts_tools, "get_auth", lambda: _auth(bond))
+    result = json.loads(
+        await contacts_tools.read_messages_from_contact(
+            db, registry_client=None, contact_id=str(contact_id), channel="mail"
+        )
+    )
+    [message] = result["messages"]
+    assert message["verification_status"] == "verified", message
+    assert message["from_address"] == m["address"], message
