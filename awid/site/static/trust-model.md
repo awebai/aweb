@@ -208,7 +208,12 @@ metadata, certificate history, member references and revocations. It also
 bypasses per-IP rate limits on all 16 registry GET read buckets, so a service's
 users do not exhaust one shared public-IP budget. It does not replace the
 separate authentication for identity-private reads or certificate blobs, and
-does not authorize writes or exempt write rate limits. Missing, wrong, or
+does not authorize writes. The same credential exempts only DID registration
+(POST `/v1/did`), namespace registration (POST `/v1/namespaces`), and
+encryption-key publication (POST `/v1/did/{did_aw}/encryption-key`) from per-IP
+write limits. Their identity proofs, controller and DNS or parent authorization,
+and encryption-key assertion signatures remain required. All other write
+limits still apply. Missing, wrong, or
 unconfigured credentials retain the normal visibility and per-IP rules.
 
 Positive telemetry uses `event=awid_service_exempt` with only a fixed bucket
