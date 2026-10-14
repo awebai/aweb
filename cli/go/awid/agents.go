@@ -82,10 +82,12 @@ func (c *Client) e2eeRecipientFromAgent(ctx context.Context, agent AgentView) (E
 }
 
 // localRosterRecipient resolves a team-local agent named by its did:key, its
-// alias, or its member address in this team (team/alias or domain/alias).
+// bare alias, or an explicit member reference in this team (team_id/alias).
 // Local agents publish their keys on the team roster, and AWID does not know
-// them. A target that is not a local roster agent is not found here; if the
-// roster cannot be listed, the caller's AWID path decides as before.
+// them. A namespace address (domain/name) is never a local member: it belongs
+// to AWID. A target that is not a local roster agent is not found here. A
+// roster that cannot be listed or fails verification is an error, never an
+// absent key.
 func (c *Client) localRosterRecipient(ctx context.Context, target string) (E2EERecipientKey, bool, error) {
 	target = strings.TrimSpace(target)
 	alias, isMember := c.teamMemberAlias(target)
@@ -94,7 +96,7 @@ func (c *Client) localRosterRecipient(ctx context.Context, target string) (E2EER
 	}
 	resp, err := c.ListAgents(ctx)
 	if err != nil {
-		return E2EERecipientKey{}, false, nil
+		return E2EERecipientKey{}, false, err
 	}
 	for _, agent := range resp.Agents {
 		if strings.TrimSpace(agent.DIDAW) != "" {
@@ -108,8 +110,8 @@ func (c *Client) localRosterRecipient(ctx context.Context, target string) (E2EER
 	return E2EERecipientKey{}, false, nil
 }
 
-// teamMemberAlias reads a bare alias, or a member address in this client's
-// team, as the member's alias.
+// teamMemberAlias reads a bare alias, or an explicit member reference in this
+// client's team (team_id/alias), as the member's alias.
 func (c *Client) teamMemberAlias(target string) (string, bool) {
 	if target == "" || strings.HasPrefix(target, "did:") {
 		return "", false
@@ -117,16 +119,10 @@ func (c *Client) teamMemberAlias(target string) (string, bool) {
 	if !strings.Contains(target, "/") {
 		return target, true
 	}
-	teamID := strings.TrimSpace(c.teamID)
-	if referenceTeam, alias, ok := splitTeamMemberReference(target); ok {
-		return alias, referenceTeam == teamID
+	if referenceTeam, alias, ok := splitTeamMemberReference(target); ok && referenceTeam == strings.TrimSpace(c.teamID) {
+		return alias, true
 	}
-	domain, alias, ok := splitRegistryAddress(target)
-	teamDomain, _, err := ParseTeamID(teamID)
-	if !ok || err != nil || domain != teamDomain {
-		return "", false
-	}
-	return alias, true
+	return "", false
 }
 
 func (c *Client) e2eeGlobalRecipientFromAgent(ctx context.Context, agent AgentView) (E2EERecipientKey, error) {

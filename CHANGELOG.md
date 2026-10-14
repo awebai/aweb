@@ -17,9 +17,11 @@
   flag, then an encrypted source, then the setting, then plaintext. A grant
   takes the resident's setting at mint; `aw doctor` shows the value in effect.
 - **Local peers' keys come from the team roster:** encrypted mail and chat to
-  a team-local (`did:key`) peer named by DID or member address find the key
-  the peer published on the roster. Before, they failed with no key or a
-  registry 404 unless the key had been learned or pinned.
+  a team-local (`did:key`) peer named by its did:key, alias or `team_id/alias`
+  find the key the peer published on the roster. Before, they failed with no
+  key or a registry 404 unless the key had been learned or pinned. A namespace
+  address (`domain/name`) still resolves through AWID only, and a roster that
+  cannot be read or fails verification fails the send.
 - **Grant seats address replies to the peer:** a local-resident grant seat no
   longer takes its own identity for the other participant of a mail
   conversation, which addressed a reply to itself and failed with 409.
