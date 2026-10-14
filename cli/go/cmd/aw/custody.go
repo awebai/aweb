@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/awebai/aw/internal/custodypath"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -69,11 +70,21 @@ type custodyStatusReport struct {
 		Address string `json:"address,omitempty"`
 		Alias   string `json:"alias,omitempty"`
 	} `json:"resident"`
-	Teams     []map[string]any `json:"teams"`
-	Keys      map[string]any   `json:"keys"`
-	Ops       []string         `json:"ops"`
-	Freshness map[string]any   `json:"freshness"`
-	Errors    []string         `json:"errors,omitempty"`
+	Teams     []map[string]any    `json:"teams"`
+	Keys      map[string]any      `json:"keys"`
+	Ops       []string            `json:"ops"`
+	Freshness map[string]any      `json:"freshness"`
+	Client    custodyClientStatus `json:"client"`
+	Errors    []string            `json:"errors,omitempty"`
+}
+
+// custodyClientStatus reports custody's connection to the aweb server. The
+// client is built on the first request that needs it; last_error is the
+// sanitized code of the latest failed request and when it failed.
+type custodyClientStatus struct {
+	Connected   bool   `json:"connected"`
+	LastError   string `json:"last_error,omitempty"`
+	LastErrorAt string `json:"last_error_at,omitempty"`
 }
 
 type custodyGrantStatus struct {
@@ -97,16 +108,26 @@ type custodyService struct {
 	readStoredMailReply func(context.Context, string) (*awid.InboxMessage, error)
 	resolveRecipient    func(context.Context, string) (*awid.ResolvedIdentity, error)
 	e2eeKeyError        string
-	clientInitError     string
-	selectedTeam        string
-	appDeniedOrigins    []string
-	serviceID           string
-	now                 func() time.Time
-	mu                  sync.Mutex
-	replay              map[string]string
-	replayAt            map[string]time.Time
-	results             map[string]any
-	server              *http.Server
+	// connectClient selects the resident's team and builds its aweb client.
+	// With AWEB_URL set it probes the server for the API base, so custody
+	// calls it on the first request that needs the client, never at start.
+	connectClient func(context.Context) (*awconfig.Selection, *aweb.Client, error)
+	// clientMu serializes building the client and guards the client, the
+	// functions derived from it, the selection-derived fields and the last
+	// failure.
+	clientMu         sync.Mutex
+	lastError        string
+	lastErrorAt      string
+	logOut           io.Writer
+	selectedTeam     string
+	appDeniedOrigins []string
+	serviceID        string
+	now              func() time.Time
+	mu               sync.Mutex
+	replay           map[string]string
+	replayAt         map[string]time.Time
+	results          map[string]any
+	server           *http.Server
 }
 
 func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
@@ -147,32 +168,108 @@ func newCustodyService(home awconfig.IdentityHome) (*custodyService, error) {
 	if e2eeKeyErr != nil {
 		e2eeKeyError = "encryption_key_unavailable"
 	}
-	// Keep the validated selection even when client construction fails so status
-	// can report the selected team without exposing resolver details.
-	sel, clientErr := resolveSelectionAtIdentityHome(wd, "", home)
-	var client *aweb.Client
-	if clientErr == nil {
-		client, _, clientErr = resolveClientForSelectionAtIdentityHome(wd, externalIdentityHomeRoot(home), sel)
-	}
 	serviceID, _ := awid.GenerateUUID4()
 	svc := &custodyService{residentHome: home.Root, socketPath: awconfig.CustodySocketPath(home.Root), identity: identity, signingKey: key, e2eeAssertion: e2eeAssertion, e2eePrivateKey: e2eePrivateKey, e2eeKeyError: e2eeKeyError, serviceID: serviceID, now: time.Now, replay: map[string]string{}, replayAt: map[string]time.Time{}, results: map[string]any{}}
-	if sel != nil {
-		svc.selectedTeam = strings.TrimSpace(sel.TeamID)
-		svc.appDeniedOrigins = grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL)
-	}
-	if clientErr == nil && client != nil {
-		svc.client = client
-		svc.grantStatus = grantStatusViaClient(client)
-		svc.readStoredEnvelope = svc.storedE2EEEnvelopeViaClient
-		svc.readStoredMailReply = svc.storedMailReplyViaClient
-		svc.resolveRecipient = client.ResolveIdentity
-		svc.readinessCheck = func(ctx context.Context) (string, error) {
-			return client.ProbeIdentityGrantStatus(ctx)
+	svc.connectClient = func(ctx context.Context) (*awconfig.Selection, *aweb.Client, error) {
+		sel, err := resolveSelectionAtIdentityHome(wd, "", home)
+		if err != nil {
+			return nil, nil, err
 		}
+		client, _, err := buildClientForSelectionAtIdentityHome(ctx, wd, externalIdentityHomeRoot(home), sel)
+		return sel, client, err
+	}
+	// Selection reads local configuration only. Keep it even when it later
+	// fails to build a client so status can report the selected team without
+	// exposing resolver details.
+	if sel, err := resolveSelectionAtIdentityHome(wd, "", home); err != nil {
+		svc.reportFailure("select team", custodyClientInitializationErrorCode(err), err)
 	} else {
-		svc.clientInitError = custodyClientInitializationErrorCode(clientErr)
+		svc.applySelectionLocked(sel)
 	}
 	return svc, nil
+}
+
+func (s *custodyService) applySelectionLocked(sel *awconfig.Selection) {
+	if sel == nil {
+		return
+	}
+	s.selectedTeam = strings.TrimSpace(sel.TeamID)
+	s.appDeniedOrigins = grantAppDeniedOrigins(sel.BaseURL, sel.RegistryURL)
+}
+
+// custodyClientDeps is a consistent view of the client-derived state.
+type custodyClientDeps struct {
+	client              *aweb.Client
+	grantStatus         func(context.Context, string) (custodyGrantStatus, error)
+	readinessCheck      func(context.Context) (string, error)
+	readStoredEnvelope  func(context.Context, string, string, string) (*awid.E2EEMessageEnvelope, error)
+	readStoredMailReply func(context.Context, string) (*awid.InboxMessage, error)
+	resolveRecipient    func(context.Context, string) (*awid.ResolvedIdentity, error)
+	appDeniedOrigins    []string
+}
+
+// clientDeps returns the client-derived functions, building the aweb client on
+// the first request that needs it. A failure is logged and reported by status
+// and nothing is kept, so the next request tries again.
+func (s *custodyService) clientDeps(ctx context.Context) custodyClientDeps {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	if s.client == nil && s.connectClient != nil {
+		sel, client, err := s.connectClient(ctx)
+		if err == nil && client == nil {
+			err = errors.New("no aweb client for the selected team")
+		}
+		if err != nil {
+			s.reportFailureLocked("connect to aweb", custodyClientInitializationErrorCode(err), err)
+		} else {
+			s.applySelectionLocked(sel)
+			s.attachClientLocked(client)
+		}
+	}
+	return custodyClientDeps{
+		client: s.client, grantStatus: s.grantStatus, readinessCheck: s.readinessCheck,
+		readStoredEnvelope: s.readStoredEnvelope, readStoredMailReply: s.readStoredMailReply,
+		resolveRecipient: s.resolveRecipient, appDeniedOrigins: s.appDeniedOrigins,
+	}
+}
+
+func (s *custodyService) attachClientLocked(client *aweb.Client) {
+	s.client = client
+	s.grantStatus = grantStatusViaClient(client)
+	s.readStoredEnvelope = s.storedE2EEEnvelopeViaClient
+	s.readStoredMailReply = s.storedMailReplyViaClient
+	s.resolveRecipient = client.ResolveIdentity
+	s.readinessCheck = func(ctx context.Context) (string, error) {
+		return client.ProbeIdentityGrantStatus(ctx)
+	}
+}
+
+// reportFailure logs a failed operation with its cause and keeps its sanitized
+// code for status. Status reports only the code; the log has the cause.
+func (s *custodyService) reportFailure(op, code string, err error) {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	s.reportFailureLocked(op, code, err)
+}
+
+func (s *custodyService) reportFailureLocked(op, code string, err error) {
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	s.lastError = code
+	s.lastErrorAt = now().UTC().Format(time.RFC3339)
+	out := s.logOut
+	if out == nil {
+		out = os.Stderr
+	}
+	fmt.Fprintf(out, "%s aw custody: %s failed: %s: %v\n", s.lastErrorAt, op, code, err)
+}
+
+func (s *custodyService) clientStatus() custodyClientStatus {
+	s.clientMu.Lock()
+	defer s.clientMu.Unlock()
+	return custodyClientStatus{Connected: s.client != nil || (s.connectClient == nil && s.grantStatus != nil), LastError: s.lastError, LastErrorAt: s.lastErrorAt}
 }
 
 func custodyClientInitializationErrorCode(err error) string {
@@ -283,18 +380,22 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 	out.Resident.DIDKey = s.identity.DID
 	out.Resident.Address = s.identity.Address
 	out.Resident.Alias = s.identity.Handle
-	if strings.TrimSpace(s.clientInitError) != "" {
-		errs = append(errs, strings.TrimSpace(s.clientInitError))
+	deps := s.clientDeps(ctx)
+	if deps.grantStatus == nil {
+		if code := s.clientStatus().LastError; code != "" {
+			errs = append(errs, code)
+		}
 	}
-	grantStatusReady := s.grantStatus != nil
+	grantStatusReady := deps.grantStatus != nil
 	lastCheckedAt := any(nil)
-	if s.readinessCheck != nil {
+	if deps.readinessCheck != nil {
 		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		checkedAt, err := s.readinessCheck(checkCtx)
+		checkedAt, err := deps.readinessCheck(checkCtx)
 		cancel()
 		if err != nil {
 			grantStatusReady = false
 			errs = append(errs, "grant_status_unavailable")
+			s.reportFailure("check grant status endpoint", "grant_status_unavailable", err)
 		} else {
 			lastCheckedAt = strings.TrimSpace(checkedAt)
 		}
@@ -311,12 +412,13 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 	if strings.TrimSpace(s.e2eeKeyError) != "" {
 		errs = append(errs, strings.TrimSpace(s.e2eeKeyError))
 	}
-	out.Keys = map[string]any{"signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": s.e2eeAssertion != nil && s.e2eePrivateKey != nil && grantStatusReady, "encryption_key_id": encryptionKeyID}
+	out.Keys = map[string]any{"signing_key_loaded": s.signingKey != nil, "signing_ready": s.signingKey != nil && grantStatusReady, "encryption_ready": s.e2eeAssertion != nil && s.e2eePrivateKey != nil && grantStatusReady, "encryption_key_id": encryptionKeyID}
 	out.Ops = []string{"status.v1", "sign_plain_message.v1", "sign_app_request.v1", "grant_never_ttl.v1"}
 	if s.e2eeAssertion != nil && s.e2eePrivateKey != nil {
 		out.Ops = append(out.Ops, "create_e2ee_envelope.v1", "unwrap_e2ee_message.v1", "mail_reply_continuation.v1")
 	}
 	out.Freshness = map[string]any{"source": "identity-grants", "last_checked_at": lastCheckedAt, "max_cache_age_seconds": 30}
+	out.Client = s.clientStatus()
 	out.Errors = errs
 	return out
 }
@@ -422,13 +524,15 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if from := strings.TrimSpace(req.Envelope.From); from != "" && from != strings.TrimSpace(s.identity.Address) && from != strings.TrimSpace(s.identity.Handle) {
 		return nil, fmt.Errorf("message_not_allowed")
 	}
-	if s.grantStatus == nil {
+	grantStatus := s.clientDeps(ctx).grantStatus
+	if grantStatus == nil {
 		return nil, fmt.Errorf("grant_freshness_unavailable")
 	}
 	freshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	st, err := s.grantStatus(freshCtx, req.GrantID)
+	st, err := grantStatus(freshCtx, req.GrantID)
 	if err != nil {
+		s.reportFailure("check grant freshness", "grant_freshness_unavailable", err)
 		return nil, fmt.Errorf("grant_freshness_unavailable")
 	}
 	if !st.Active {
@@ -779,13 +883,15 @@ func (s *custodyService) validateE2EECommon(ctx context.Context, op string, reqF
 	if reqFields["subject_did_key"] != s.identity.DID || (reqFields["subject_did_aw"] != "" && reqFields["subject_did_aw"] != s.identity.StableID) {
 		return custodyGrantStatus{}, fmt.Errorf("grant_subject_mismatch")
 	}
-	if s.grantStatus == nil {
+	grantStatus := s.clientDeps(ctx).grantStatus
+	if grantStatus == nil {
 		return custodyGrantStatus{}, fmt.Errorf("grant_freshness_unavailable")
 	}
 	freshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	st, err := s.grantStatus(freshCtx, reqFields["grant_id"])
+	st, err := grantStatus(freshCtx, reqFields["grant_id"])
 	if err != nil {
+		s.reportFailure("check grant freshness", "grant_freshness_unavailable", err)
 		return custodyGrantStatus{}, fmt.Errorf("grant_freshness_unavailable")
 	}
 	if !st.Active {
@@ -909,10 +1015,11 @@ func (s *custodyService) storedMailReplyRecipient(ctx context.Context, req *awid
 	if req.DeliveryOrigin != "" || req.ObservedInboundMode != "" || claimed.DeliveryOrigin != "" || claimed.InboundMode != "" {
 		return refuse("reply_routing_not_allowed")
 	}
-	if s.readStoredMailReply == nil {
+	readStoredMailReply := s.clientDeps(ctx).readStoredMailReply
+	if readStoredMailReply == nil {
 		return refuse("stored_message_unavailable")
 	}
-	message, err := s.readStoredMailReply(ctx, req.ReplyToMessageID)
+	message, err := readStoredMailReply(ctx, req.ReplyToMessageID)
 	if err != nil {
 		return awid.E2EERecipientKey{}, err
 	}
@@ -987,7 +1094,8 @@ func (s *custodyService) verifyE2EERecipients(ctx context.Context, recipients []
 	if len(recipients) == 0 {
 		return fmt.Errorf("recipient_binding_unavailable")
 	}
-	if s.resolveRecipient == nil {
+	resolveRecipient := s.clientDeps(ctx).resolveRecipient
+	if resolveRecipient == nil {
 		return fmt.Errorf("recipient_binding_unavailable")
 	}
 	for _, recipient := range recipients {
@@ -1003,8 +1111,12 @@ func (s *custodyService) verifyE2EERecipients(ctx context.Context, recipients []
 		if address == "" {
 			return fmt.Errorf("recipient_binding_unavailable")
 		}
-		resolved, err := s.resolveRecipient(ctx, address)
-		if err != nil || resolved == nil {
+		resolved, err := resolveRecipient(ctx, address)
+		if err != nil {
+			s.reportFailure("resolve recipient", "recipient_binding_unavailable", err)
+			return fmt.Errorf("recipient_binding_unavailable")
+		}
+		if resolved == nil {
 			return fmt.Errorf("recipient_binding_unavailable")
 		}
 		if strings.TrimSpace(resolved.DID) != strings.TrimSpace(recipient.DID) || strings.TrimSpace(resolved.StableID) != stableID {
@@ -1018,20 +1130,23 @@ func (s *custodyService) verifyE2EERecipients(ctx context.Context, recipients []
 }
 
 func (s *custodyService) storedMailReplyViaClient(ctx context.Context, messageID string) (*awid.InboxMessage, error) {
-	if s.client == nil {
+	client := s.clientDeps(ctx).client
+	if client == nil {
 		return nil, fmt.Errorf("stored_message_unavailable")
 	}
 	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var message awid.InboxMessage
-	if err := s.client.Get(readCtx, "/v1/messages/"+url.PathEscape(messageID), &message); err != nil {
+	if err := client.Get(readCtx, "/v1/messages/"+url.PathEscape(messageID), &message); err != nil {
+		s.reportFailure("read stored message", "stored_message_unavailable", err)
 		return nil, fmt.Errorf("stored_message_unavailable")
 	}
 	return &message, nil
 }
 
 func (s *custodyService) storedE2EEEnvelopeViaClient(ctx context.Context, kind, messageID, conversationID string) (*awid.E2EEMessageEnvelope, error) {
-	if s.client == nil {
+	client := s.clientDeps(ctx).client
+	if client == nil {
 		return nil, fmt.Errorf("stored_message_unavailable")
 	}
 	kind = strings.TrimSpace(kind)
@@ -1045,7 +1160,8 @@ func (s *custodyService) storedE2EEEnvelopeViaClient(ctx context.Context, kind, 
 	switch kind {
 	case "mail":
 		var msg awid.InboxMessage
-		if err := s.client.Get(readCtx, "/v1/messages/"+url.PathEscape(messageID), &msg); err != nil {
+		if err := client.Get(readCtx, "/v1/messages/"+url.PathEscape(messageID), &msg); err != nil {
+			s.reportFailure("read stored message", "stored_message_unavailable", err)
 			return nil, fmt.Errorf("stored_message_unavailable")
 		}
 		if strings.TrimSpace(msg.MessageID) != messageID || (conversationID != "" && strings.TrimSpace(msg.ConversationID) != conversationID) {
@@ -1061,7 +1177,8 @@ func (s *custodyService) storedE2EEEnvelopeViaClient(ctx context.Context, kind, 
 		}
 		var out awid.ChatHistoryResponse
 		path := "/v1/chat/sessions/" + url.PathEscape(conversationID) + "/messages?message_id=" + url.QueryEscape(messageID)
-		if err := s.client.Get(readCtx, path, &out); err != nil {
+		if err := client.Get(readCtx, path, &out); err != nil {
+			s.reportFailure("read stored message", "stored_message_unavailable", err)
 			return nil, fmt.Errorf("stored_message_unavailable")
 		}
 		if len(out.Messages) != 1 {
@@ -1191,10 +1308,11 @@ func (s *custodyService) unwrapE2EEMessage(ctx context.Context, req *awid.E2EEUn
 	if out, _ := cached.(*awid.E2EEUnwrapResponse); out != nil {
 		return out, nil
 	}
-	if s.readStoredEnvelope == nil {
+	readStoredEnvelope := s.clientDeps(ctx).readStoredEnvelope
+	if readStoredEnvelope == nil {
 		return nil, fmt.Errorf("stored_message_unavailable")
 	}
-	storedEnvelope, err := s.readStoredEnvelope(ctx, kind, strings.TrimSpace(req.MessageID), strings.TrimSpace(req.ConversationID))
+	storedEnvelope, err := readStoredEnvelope(ctx, kind, strings.TrimSpace(req.MessageID), strings.TrimSpace(req.ConversationID))
 	if err != nil {
 		return nil, err
 	}

@@ -397,7 +397,13 @@ constructs the canonical mail/chat envelope itself. It never signs
 caller-supplied bytes, digests, identity-auth payloads, certificate-auth
 payloads, identity operations, or grant/delegation payloads. `aw custody status
 --json` reports safe readiness (signing, encryption, selected team, and
-freshness), and `aw custody stop` asks the local service to exit.
+freshness), and `aw custody stop` asks the local service to exit. Custody
+does no network I/O at start: it builds its aweb client on the first request
+that needs it, so a host that starts custody before its network is up serves
+local status at once and reaches the server when a request needs it. A failed
+request is logged with its cause, and the status `client` object reports
+`connected`, the sanitized `last_error` code and `last_error_at`; nothing
+failed is kept, and the next request tries again.
 
 The status `ops` list includes `status.v1`, `sign_plain_message.v1`, and
 `sign_app_request.v1`, plus `grant_never_ttl.v1` when the running custody host

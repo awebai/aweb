@@ -175,3 +175,61 @@ func TestRedirectLocationDisplaySanitizes(t *testing.T) {
 		}
 	}
 }
+
+// A web app page is not an API; an error page or challenge from a failing
+// server is a temporary failure, never a verdict about the URL.
+func TestProbeAwebBaseURLReportsTemporaryFailures(t *testing.T) {
+	for _, tc := range []struct {
+		status      int
+		contentType string
+	}{
+		{502, "text/html"}, {503, "text/html"}, {503, "application/json"},
+		{500, "application/json"}, {429, "application/json"}, {403, "text/html"},
+	} {
+		t.Run(fmt.Sprintf("%d/%s", tc.status, tc.contentType), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", tc.contentType)
+				w.WriteHeader(tc.status)
+			}))
+			defer server.Close()
+			ok, err := probeAwebBaseURL(context.Background(), server.URL)
+			if ok || err == nil || !strings.Contains(err.Error(), "temporarily failing") || !strings.Contains(err.Error(), fmt.Sprintf("HTTP %d", tc.status)) {
+				t.Fatalf("ok=%v err=%v, want a temporary failure naming HTTP %d", ok, err, tc.status)
+			}
+		})
+	}
+}
+
+func TestResolveWorkingBaseURLNamesWhatEachCandidateAnswered(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	_, err := resolveWorkingBaseURL(server.URL)
+	if err == nil {
+		t.Fatal("a failing API behind a web app resolved")
+	}
+	for _, want := range []string{server.URL + ": web app (HTTP 200 HTML)", server.URL + "/api: temporarily failing (HTTP 502 HTML)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err=%v, want it to name %q", err, want)
+		}
+	}
+}
+
+func TestProbeAwebBaseURLNamesATimeout(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-release
+	}))
+	defer server.Close()
+	defer close(release)
+	ok, err := probeAwebBaseURL(context.Background(), server.URL)
+	if ok || err == nil || !strings.Contains(err.Error(), "timed out after 2s") {
+		t.Fatalf("ok=%v err=%v, want a named timeout", ok, err)
+	}
+}

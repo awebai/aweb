@@ -265,10 +265,15 @@ func TestCustodyGrantValidationFailsClosedOnEffectiveStatusExpiryBindingAndFresh
 		<-ctx.Done()
 		return custodyGrantStatus{}, ctx.Err()
 	}
+	var logs bytes.Buffer
+	svc.logOut = &logs
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 	if _, err := svc.signPlainMessage(ctx, req); err == nil || err.Error() != "grant_freshness_unavailable" {
 		t.Fatalf("err=%v, want grant_freshness_unavailable", err)
+	}
+	if !strings.Contains(logs.String(), "check grant freshness failed: grant_freshness_unavailable: context deadline exceeded") {
+		t.Fatalf("freshness failure was not logged with its cause: %q", logs.String())
 	}
 }
 
@@ -374,9 +379,14 @@ func TestCustodyStatusContainsOnlySafeReadiness(t *testing.T) {
 		t.Fatalf("status did not use real readiness and cert checks: keys=%#v freshness=%#v teams=%#v", ready.Keys, ready.Freshness, ready.Teams)
 	}
 	svc.readinessCheck = func(context.Context) (string, error) { return "", context.DeadlineExceeded }
+	var logs bytes.Buffer
+	svc.logOut = &logs
 	failed := svc.status(context.Background(), "running", nil)
 	if failed.Keys["signing_ready"] != false || len(failed.Errors) == 0 || failed.Errors[0] != "grant_status_unavailable" {
 		t.Fatalf("status did not fail closed on readiness error: %#v errors=%v", failed.Keys, failed.Errors)
+	}
+	if failed.Client.LastError != "grant_status_unavailable" || !strings.Contains(logs.String(), "check grant status endpoint failed: grant_status_unavailable: context deadline exceeded") {
+		t.Fatalf("readiness failure was not logged and reported: client=%#v logs=%q", failed.Client, logs.String())
 	}
 }
 
@@ -460,7 +470,13 @@ func TestCustodyClientInitializationFailureIsReportedWithoutResolverDetails(t *t
 	if svc.client != nil || svc.readinessCheck != nil || svc.selectedTeam != teamID {
 		t.Fatalf("constructor changed client or team selection unexpectedly: client=%v check=%v team=%q", svc.client, svc.readinessCheck != nil, svc.selectedTeam)
 	}
+	var logs bytes.Buffer
+	svc.logOut = &logs
 	status := svc.status(context.Background(), "running", nil)
+	// The log is local to the host and carries the cause; status carries only the code.
+	if !strings.Contains(logs.String(), "connect to aweb failed: client_initialization_failed: load team certificate for "+teamID) {
+		t.Fatalf("client initialization failure was not logged with its cause: %q", logs.String())
+	}
 	encoded, err := json.Marshal(status)
 	if err != nil {
 		t.Fatal(err)
@@ -549,10 +565,13 @@ func TestCustodyClientInitializationSuccessKeepsSelectedCertificateAuth(t *testi
 	if err != nil {
 		t.Fatalf("newCustodyService: %v", err)
 	}
-	if svc.client == nil || svc.selectedTeam != selectedTeamID {
-		t.Fatalf("constructor did not preserve selected client/team: client=%v team=%q", svc.client != nil, svc.selectedTeam)
+	if svc.client != nil || svc.selectedTeam != selectedTeamID {
+		t.Fatalf("constructor must select the team and leave the client to the first request: client=%v team=%q", svc.client != nil, svc.selectedTeam)
 	}
 	status := svc.status(context.Background(), "running", nil)
+	if svc.client == nil || !status.Client.Connected {
+		t.Fatalf("first status request did not build the selected client: %#v", status.Client)
+	}
 	if containsString(status.Errors, "client_initialization_failed") || containsString(status.Errors, "grant_status_unavailable") {
 		t.Fatalf("successful selected client was reported unavailable: %#v", status.Errors)
 	}
