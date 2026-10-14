@@ -712,6 +712,9 @@ async def test_send_encrypted_message_stores_opaque_envelope_only(aweb_cloud_db)
     assert "encrypted_envelope" in message
     assert "subject" not in message
     assert "body" not in message
+    # The envelope signature vouches for the sender, though the legacy signature columns are empty.
+    assert message["verification_status"] == "verified"
+    assert message["from_address"] == "acme.com/alice"
 
 
 @pytest.mark.asyncio

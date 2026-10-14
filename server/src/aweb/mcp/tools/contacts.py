@@ -471,7 +471,7 @@ async def _read_mail_messages_from_target(db_infra, *, target: dict, limit: int)
         SELECT m.message_id, m.conversation_id, m.from_agent_id, m.from_did, m.to_did,
                m.from_alias, m.from_address, m.to_alias, m.subject, m.body, m.priority,
                m.read_at, m.created_at, m.signature, m.signed_payload, m.content_mode,
-               m.message_version
+               m.message_version, m.encrypted_envelope
         FROM {{tables.messages}} m
         WHERE m.conversation_id IN (SELECT conversation_id FROM matching_conversations)
         ORDER BY m.created_at DESC, m.message_id DESC

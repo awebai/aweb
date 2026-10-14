@@ -2474,7 +2474,8 @@ async def test_mcp_check_inbox_returns_encrypted_mail_metadata_only(aweb_cloud_d
     assert message["message_version"] == 2
     assert message["subject"] == ""
     assert message["body"] == ""
-    assert message["verification_status"] == "verified_envelope_v2"
+    # The row carries no envelope signature, so nothing vouches for its sender.
+    assert message["verification_status"] == "unverified"
 
 
 @pytest.mark.asyncio

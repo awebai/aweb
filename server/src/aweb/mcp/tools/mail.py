@@ -125,7 +125,7 @@ def mcp_mail_message_from_row(
         msg["signature"] = row["signature"]
     if not encrypted and row.get("signed_payload"):
         msg["signed_payload"] = row["signed_payload"]
-    msg["verification_status"] = "verified_envelope_v2" if encrypted else message_verification_status(dict(row))
+    msg["verification_status"] = message_verification_status(dict(row))
     return msg
 
 

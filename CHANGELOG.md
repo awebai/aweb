@@ -55,7 +55,23 @@
   failure and no longer reads as "no aweb API". The error names what each
   candidate URL answered.
 
-### Server changes since `server-v1.27.16`
+### Release preparation: server 1.27.20
+
+Server changes are since `server-v1.27.19`.
+
+- **Encrypted messages verify by their envelope:** the MCP chat history, the
+  `send_chat` wait reply, MCP mail, contact mail and the HTTP inbox now check an
+  `encrypted_v2` message's envelope signature and its binding to the row's
+  sender, message and conversation. A correctly signed message reads
+  `verified`, a tampered one `failed`, and one with no envelope `unverified`.
+  Before, chat history showed every encrypted message as `unverified`, and MCP
+  mail showed every one as `verified_envelope_v2` without checking. The MCP
+  chat history and the `send_chat` wait reply also return the sender's
+  `from_address`.
+
+### Release preparation: server 1.27.19
+
+Server changes are since `server-v1.27.16`.
 
 - **MCP mail stays in the existing thread:** `send_mail` with a recipient and no
   conversation ID now continues the active one-to-one mail conversation, like
