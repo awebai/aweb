@@ -1322,7 +1322,7 @@ def _record_presence_updates(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_workspace_heartbeat_refuses_another_members_workspace(aweb_cloud_db, monkeypatch):
+async def test_workspace_heartbeat_refuses_another_members_workspace(aweb_cloud_db, monkeypatch, caplog):
     """A certified member cannot keep another member's seat looking alive."""
     team_did_key, _, owner_workspace_id, seen_at, caller_headers = await _seed_two_members_for_ownership(
         aweb_cloud_db
@@ -1344,6 +1344,9 @@ async def test_workspace_heartbeat_refuses_another_members_workspace(aweb_cloud_
     assert row["hostname"] is None
     assert row["last_seen_at"] == seen_at
     assert presence_updates == []
+    assert [record.getMessage() for record in caplog.records if record.levelname == "WARNING"] == [
+        "Workspace heartbeat refused: workspace belongs to another agent"
+    ]
 
 
 @pytest.mark.asyncio
@@ -1370,7 +1373,7 @@ async def test_workspace_heartbeat_refreshes_the_callers_own_workspace(aweb_clou
 
 
 @pytest.mark.asyncio
-async def test_workspace_patch_refuses_another_members_workspace(aweb_cloud_db):
+async def test_workspace_patch_refuses_another_members_workspace(aweb_cloud_db, caplog):
     """A certified member cannot overwrite another member's seat metadata."""
     team_did_key, _, owner_workspace_id, _, caller_headers = await _seed_two_members_for_ownership(
         aweb_cloud_db
@@ -1392,6 +1395,9 @@ async def test_workspace_patch_refuses_another_members_workspace(aweb_cloud_db):
     assert row["hostname"] is None
     assert row["workspace_path"] == "/tmp/bot-worktree"
     assert row["focus_task_ref"] is None
+    assert [record.getMessage() for record in caplog.records if record.levelname == "WARNING"] == [
+        "Workspace update refused: workspace belongs to another agent"
+    ]
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,16 @@
   Pi reports a stopped channel loop to operator logs/status, with no session
   injection. Standalone channel-core retains disconnect/recovery logs by default.
 
+### Server changes since `server-v1.27.20`
+
+- **A member can only heartbeat or update its own workspace:**
+  `POST /v1/workspaces/heartbeat` and `PATCH /v1/workspaces/{id}` now answer
+  403 "Workspace <id> belongs to another agent." when a team-certificate
+  caller names a workspace another agent owns, and change nothing. Before, any
+  certified member of the team could refresh another member's presence and
+  overwrite its role, hostname and path, which could keep a dead seat looking
+  alive. Grant callers were already limited to their own workspace.
+
 ### CLI changes since `aw-v1.36.35`
 
 - **`aw events stream` keeps the subscription:** the command reconnects when a

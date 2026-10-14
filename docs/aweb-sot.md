@@ -909,6 +909,13 @@ override, a durable actor-and-reason audit record, and atomic updates to claim,
 task status, assignment, and workspace focus. Display age bands must not be
 reused as automatic-release thresholds.
 
+`POST /v1/workspaces/heartbeat` and `PATCH /v1/workspaces/{workspace_id}`
+act only on the caller's own workspace: a team-certificate caller naming a
+workspace bound to another agent gets `403` and nothing changes, and a
+grant caller is limited to its subject's workspace and cannot set shared
+metadata. Team membership never authorizes refreshing another member's
+presence or rewriting its workspace metadata.
+
 `DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
 the workspace. It returns `409` if the bound agent is global

@@ -110,6 +110,18 @@ class WorkspaceHeartbeatResponse(BaseModel):
     workspace_id: str
 
 
+def _require_workspace_owner(existing, identity: TeamIdentity, workspace_id: str, *, operation: str) -> None:
+    """Refuse a team-certificate caller acting on a workspace another agent owns."""
+    if str(existing["agent_id"]) == identity.agent_id:
+        return
+    logger.warning(
+        "Workspace %s refused: workspace belongs to another agent",
+        operation,
+        extra={"workspace_id": workspace_id, "team_id": identity.team_id, "caller_agent_id": identity.agent_id},
+    )
+    raise HTTPException(status_code=403, detail=f"Workspace {workspace_id} belongs to another agent.")
+
+
 @router.post("/heartbeat", response_model=WorkspaceHeartbeatResponse)
 async def heartbeat(
     payload: WorkspaceHeartbeatRequest,
@@ -166,6 +178,9 @@ async def heartbeat(
             status_code=404,
             detail=f"Workspace {payload.workspace_id} not found. Run 'aw connect' to register.",
         )
+
+    if identity.grant is None:
+        _require_workspace_owner(existing, identity, payload.workspace_id, operation="heartbeat")
 
     if identity.grant is not None:
         if existing.get("agent_id") is not None and str(existing["agent_id"]) != identity.agent_id:
@@ -343,6 +358,9 @@ async def update_workspace(
 
     if existing["deleted_at"] is not None:
         raise HTTPException(status_code=410, detail=f"Workspace {workspace_id} is deleted")
+
+    if identity.grant is None:
+        _require_workspace_owner(existing, identity, validated_id, operation="update")
 
     set_clauses = []
     params: list = [UUID(validated_id)]
