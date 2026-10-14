@@ -131,6 +131,7 @@ async def test_cli_chat_reply_follows_session_mode(privacy_app, tmp_path, global
             await assert_latest_encrypted_to_hosted("Default exact session send")
             assert ENCRYPTED_NOTICE in output, output
 
+            count_chat = "SELECT count(*) FROM {{tables.chat_messages}}"
             if grant:
                 # Fail closed: a grant seat with no custody socket cannot encrypt,
                 # so its default reply into the encrypted session errors instead of
@@ -140,7 +141,6 @@ async def test_cli_chat_reply_follows_session_mode(privacy_app, tmp_path, global
                 await _cli(binary, tmp_path, child_env, "id", "grant", "mint", "--bundle", "normal-agent",
                            "--ttl", "5m", "--out", str(keyless / ".aw"), "--json")
                 keyless_env = dict(child_env, AWEB_IDENTITY_HOME=str(keyless / ".aw"))
-                count_chat = "SELECT count(*) FROM {{tables.chat_messages}}"
                 before = await env.db.fetch_value(count_chat)
                 body_file.write_text("Must not be sent")
                 code, output = await _cli_output(binary, keyless, keyless_env, "chat", "send-and-leave", "alice",
@@ -148,6 +148,23 @@ async def test_cli_chat_reply_follows_session_mode(privacy_app, tmp_path, global
                 assert code != 0, output
                 assert "the latest message in this chat is encrypted" in output, output
                 assert await env.db.fetch_value(count_chat) == before
+
+            # A failed chat lookup must not turn the encrypted chat into a new
+            # plaintext one. Hiding the read-receipt table fails /v1/chat/pending
+            # while starting a chat still works.
+            reads = await env.db.fetch_value("SELECT to_regclass('{{tables.chat_message_reads}}')::text")
+            schema = reads.rsplit(".", 1)[0]
+            before = await env.db.fetch_value(count_chat)
+            await env.db.execute(f"ALTER TABLE {reads} RENAME TO chat_message_reads_hidden")
+            try:
+                body_file.write_text("Must not be sent either")
+                code, output = await _cli_output(binary, command_dir, command_env, "chat", "send-and-leave", "alice",
+                                                 "--body-file", str(body_file))
+            finally:
+                await env.db.execute(f"ALTER TABLE {schema}.chat_message_reads_hidden RENAME TO chat_message_reads")
+            assert code != 0, output
+            assert "pending" in output, output
+            assert await env.db.fetch_value(count_chat) == before
 
             # An explicit --plaintext still wins, and says so.
             code, output = await _cli_output(binary, command_dir, command_env, "chat", "send", "--session-id", chat_id,
