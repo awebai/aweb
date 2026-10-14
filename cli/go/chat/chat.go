@@ -746,7 +746,7 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 		targetAlias != rawTarget &&
 		!strings.Contains(targetAlias, "/")
 	requireUniqueConcreteAlias := bareAliasTarget
-	pendingResp, err := client.ChatPending(ctx)
+	pendingResp, err := client.ChatPendingSessions(ctx)
 	if err != nil {
 		return "", false, fmt.Errorf("getting pending chats: %w", err)
 	}
@@ -1213,6 +1213,7 @@ type sendResponse struct {
 	Participants     []awid.ChatParticipant
 	TargetsConnected []string
 	TargetsLeft      []string
+	ContentMode      string
 }
 
 // Send sends a message to target agents and optionally waits for a reply.
@@ -1245,17 +1246,22 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 	}
 	if len(targets) == 1 && !opts.StartConversation && shouldProbeExistingSession(targets[0]) {
 		if sessionID, _, findErr := findLatestSession(ctx, client, targets[0]); findErr == nil && sessionID != "" {
+			encrypt, err := SessionEncryption(ctx, client, sessionID, opts.EncryptE2EE, opts.FollowSessionEncryption)
+			if err != nil {
+				return nil, err
+			}
 			msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 				Body:        message,
 				Leaving:     opts.Leaving,
-				EncryptE2EE: opts.EncryptE2EE,
+				EncryptE2EE: encrypt,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("sending message: %w", err)
 			}
 			return sendCommon(ctx, client, client.ChatStream, sendResponse{
-				SessionID: sessionID,
-				MessageID: msgResp.MessageID,
+				SessionID:   sessionID,
+				MessageID:   msgResp.MessageID,
+				ContentMode: msgResp.ContentMode,
 			}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
 		} else if findErr != nil &&
 			strings.Contains(findErr.Error(), "multiple conversations match") {
@@ -1273,7 +1279,28 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 		Participants:     createResp.Participants,
 		TargetsConnected: createResp.TargetsConnected,
 		TargetsLeft:      createResp.TargetsLeft,
+		ContentMode:      createResp.ContentMode,
 	}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
+}
+
+// SessionEncryption decides whether a send into an existing session is
+// encrypted. An explicit choice stands; with follow set, the send follows the
+// session's latest message and fails if it cannot encrypt.
+func SessionEncryption(ctx context.Context, client *awid.Client, sessionID string, encrypt bool, follow func(context.Context) error) (bool, error) {
+	if encrypt || follow == nil {
+		return encrypt, nil
+	}
+	encrypted, err := client.ChatSessionLatestEncrypted(ctx, sessionID)
+	if err != nil {
+		return false, fmt.Errorf("reading the chat's content mode: %w", err)
+	}
+	if !encrypted {
+		return false, nil
+	}
+	if err := follow(ctx); err != nil {
+		return false, fmt.Errorf("the latest message in this chat is encrypted, so this send must be too: %w", err)
+	}
+	return true, nil
 }
 
 func shouldProbeExistingSession(target string) bool {
@@ -1300,6 +1327,7 @@ func sendCommon(ctx context.Context, client *awid.Client, openStream streamOpene
 		Status:      "sent",
 		TargetAgent: strings.Join(targets, ", "),
 		Events:      []Event{},
+		ContentMode: resp.ContentMode,
 	}
 	targetStatusNames := make([][]string, 0, len(targets))
 	for _, target := range targets {
@@ -1565,8 +1593,12 @@ func Pending(ctx context.Context, client *awid.Client) (*PendingResult, error) {
 }
 
 // ExtendWait sends an extend-wait message requesting more time to reply.
-func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string, encryptE2EE ...bool) (*ExtendWaitResult, error) {
+func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, message string, encryptE2EE bool, followSessionEncryption func(context.Context) error) (*ExtendWaitResult, error) {
 	sessionID, _, err := findSession(ctx, client, targetAlias)
+	if err != nil {
+		return nil, err
+	}
+	encrypt, err := SessionEncryption(ctx, client, sessionID, encryptE2EE, followSessionEncryption)
 	if err != nil {
 		return nil, err
 	}
@@ -1574,7 +1606,7 @@ func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, me
 	msgResp, err := client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 		Body:        message,
 		ExtendWait:  true,
-		EncryptE2EE: len(encryptE2EE) > 0 && encryptE2EE[0],
+		EncryptE2EE: encrypt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sending extend-wait message: %w", err)
@@ -1585,6 +1617,7 @@ func ExtendWait(ctx context.Context, client *awid.Client, targetAlias string, me
 		TargetAgent:        targetAlias,
 		Message:            message,
 		ExtendsWaitSeconds: msgResp.ExtendsWaitSeconds,
+		ContentMode:        msgResp.ContentMode,
 	}, nil
 }
 

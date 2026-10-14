@@ -3,7 +3,11 @@
 
 package chat
 
-import awid "github.com/awebai/aw/awid"
+import (
+	"context"
+
+	awid "github.com/awebai/aw/awid"
+)
 
 // Event represents an event received during chat (message or read receipt).
 type Event struct {
@@ -54,6 +58,7 @@ type SendResult struct {
 	TargetNotConnected bool    `json:"target_not_connected,omitempty"`
 	SenderWaiting      bool    `json:"sender_waiting,omitempty"`
 	WaitedSeconds      int     `json:"waited_seconds,omitempty"`
+	ContentMode        string  `json:"content_mode,omitempty"`
 }
 
 // OpenResult is the result of opening unread messages for a conversation.
@@ -106,6 +111,7 @@ type ExtendWaitResult struct {
 	TargetAgent        string `json:"target_agent"`
 	Message            string `json:"message"`
 	ExtendsWaitSeconds int    `json:"extends_wait_seconds"`
+	ContentMode        string `json:"content_mode,omitempty"`
 }
 
 // SendOptions configures message sending behavior.
@@ -115,6 +121,11 @@ type SendOptions struct {
 	Leaving           bool // Sender is leaving the conversation
 	StartConversation bool // Ignore targets_left, use 5min default wait
 	EncryptE2EE       bool // Send encrypted_v2 chat; fail closed if keys are missing
+	// FollowSessionEncryption is set when the caller chose no content mode: a
+	// send into an existing session whose latest message is encrypted is
+	// encrypted too, after this prepares the client to encrypt. Its error
+	// fails the send; nothing falls back to plaintext.
+	FollowSessionEncryption func(context.Context) error
 }
 
 // StatusCallback receives protocol status updates.

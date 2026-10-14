@@ -114,7 +114,9 @@ func (c *Client) learnedE2EERecipientFromEnvelope(envelope *E2EEMessageEnvelope)
 	if strings.TrimSpace(from.DID) == "" {
 		return E2EERecipientKey{}, false, nil
 	}
-	for _, self := range []string{c.did, c.stableID, c.address} {
+	// A grant seat's own envelopes are signed by its resident identity, not
+	// its session key.
+	for _, self := range []string{c.did, c.ParticipantDID(), c.stableID, c.address} {
 		self = strings.TrimSpace(self)
 		if self == "" {
 			continue

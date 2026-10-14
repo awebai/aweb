@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/chat"
@@ -22,7 +23,17 @@ func chatStderrCallback(kind, message string) {
 	fmt.Fprintf(os.Stderr, "[chat:%s] %s\n", kind, message)
 }
 
-func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOptions) (*chat.SendResult, *awconfig.Selection, error) {
+// followSessionEncryption is the hook for a chat send with no mode flag: when
+// the chat it continues is encrypted, it prepares the client to encrypt.
+func followSessionEncryption(c *aweb.Client, sel *awconfig.Selection) func(context.Context) error {
+	return func(ctx context.Context) error {
+		return configureClientE2EE(ctx, c, sel, true)
+	}
+}
+
+// chatSend sends to toAlias. modeChosen says a flag chose the content mode;
+// without one, a send into an existing chat follows its encryption.
+func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOptions, modeChosen bool) (*chat.SendResult, *awconfig.Selection, error) {
 	c, sel, err := resolveClientSelectionForAliasTarget(ctx, toAlias)
 	if err != nil {
 		return nil, nil, err
@@ -31,6 +42,8 @@ func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOption
 		if err := configureClientE2EE(ctx, c, sel, true); err != nil {
 			return nil, nil, err
 		}
+	} else if !modeChosen {
+		opts.FollowSessionEncryption = followSessionEncryption(c, sel)
 	}
 	target := strings.TrimSpace(toAlias)
 	if shouldTryLiveRosterAliasFallback(target) {
@@ -170,7 +183,7 @@ var chatSendAndWaitCmd = &cobra.Command{
 			WaitExplicit:      cmd.Flags().Changed("wait"),
 			StartConversation: chatSendAndWaitStartConversation,
 			EncryptE2EE:       chatSendAndWaitE2EE,
-		})
+		}, cmd.Flags().Changed("e2ee") || chatSendAndWaitPlaintext)
 		if err != nil {
 			return networkError(err, args[0])
 		}
@@ -224,7 +237,7 @@ var chatSendAndLeaveCmd = &cobra.Command{
 			Leaving:           true,
 			StartConversation: chatSendAndLeaveStartConversation,
 			EncryptE2EE:       chatSendAndLeaveE2EE,
-		})
+		}, cmd.Flags().Changed("e2ee") || chatSendAndLeavePlaintext)
 		if err != nil {
 			return networkError(err, args[0])
 		}
@@ -351,9 +364,9 @@ func formatChatSendMessage(v any) string {
 		return ""
 	}
 	if resp.MessageID != "" {
-		return fmt.Sprintf("Sent chat message %s\n", resp.MessageID)
+		return fmt.Sprintf("Sent chat message %s\n", resp.MessageID) + formatContentModeNotice(resp.ContentMode)
 	}
-	return "Sent chat message\n"
+	return "Sent chat message\n" + formatContentModeNotice(resp.ContentMode)
 }
 
 var chatSendCmd = &cobra.Command{
@@ -385,10 +398,18 @@ var chatSendCmd = &cobra.Command{
 				return err
 			}
 		}
+		var follow func(context.Context) error
+		if !cmd.Flags().Changed("e2ee") && !chatSendPlaintext {
+			follow = followSessionEncryption(c, sel)
+		}
+		encrypt, err := chat.SessionEncryption(ctx, c.Client, sessionID, chatSendE2EE, follow)
+		if err != nil {
+			return err
+		}
 		resp, err := c.Client.ChatSendMessage(ctx, sessionID, &awid.ChatSendMessageRequest{
 			Body:        body,
 			Leaving:     chatSendLeave,
-			EncryptE2EE: chatSendE2EE,
+			EncryptE2EE: encrypt,
 		})
 		if err != nil {
 			return err
@@ -475,7 +496,11 @@ var chatExtendWaitCmd = &cobra.Command{
 				return err
 			}
 		}
-		result, err := chat.ExtendWait(ctx, c.Client, args[0], message, encryptE2EE)
+		var follow func(context.Context) error
+		if !cmd.Flags().Changed("e2ee") && !chatExtendWaitPlaintext {
+			follow = followSessionEncryption(c, sel)
+		}
+		result, err := chat.ExtendWait(ctx, c.Client, args[0], message, encryptE2EE, follow)
 		if err != nil {
 			return err
 		}
@@ -559,20 +584,20 @@ var chatShowPendingCmd = &cobra.Command{
 func init() {
 	chatSendAndWaitCmd.Flags().IntVar(&chatSendAndWaitWait, "wait", chat.DefaultWait, "Seconds to wait for reply")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitStartConversation, "start-conversation", false, "Start conversation (5min default wait)")
-	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
+	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default, except in a chat whose latest message is encrypted)")
 	chatSendAndWaitCmd.Flags().BoolVar(&chatSendAndWaitE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
 	chatSendAndWaitCmd.Flags().StringVar(&chatSendAndWaitBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveStartConversation, "start-conversation", false, "Start a new conversation instead of continuing an existing one")
-	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeavePlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
+	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeavePlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default, except in a chat whose latest message is encrypted)")
 	chatSendAndLeaveCmd.Flags().BoolVar(&chatSendAndLeaveE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
 	chatSendAndLeaveCmd.Flags().StringVar(&chatSendAndLeaveBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendCmd.Flags().StringVar(&chatSendSessionID, "session-id", "", "Existing chat session id")
 	chatSendCmd.Flags().StringVar(&chatSendBody, "body", "", shellExpandedInlineHelp("Body", "--body-file"))
 	chatSendCmd.Flags().StringVar(&chatSendBodyFile, "body-file", "", safeFileInputHelp("message body"))
 	chatSendCmd.Flags().BoolVar(&chatSendLeave, "leave", false, "Leave the conversation after sending")
-	chatSendCmd.Flags().BoolVar(&chatSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (currently the default)")
+	chatSendCmd.Flags().BoolVar(&chatSendPlaintext, "plaintext", false, "Send explicit server-readable plaintext chat (the default, except in a chat whose latest message is encrypted)")
 	chatSendCmd.Flags().BoolVar(&chatSendE2EE, "e2ee", false, "Send E2E encrypted chat; fails closed if encryption keys are missing")
-	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (currently the default)")
+	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitPlaintext, "plaintext", false, "Send explicit server-readable plaintext wait extension (the default, except in a chat whose latest message is encrypted)")
 	chatExtendWaitCmd.Flags().BoolVar(&chatExtendWaitE2EE, "e2ee", false, "Send E2E encrypted wait extension; fails closed if encryption keys are missing")
 	chatExtendWaitCmd.Flags().StringVar(&chatExtendWaitBodyFile, "body-file", "", safeFileInputHelp("message body"))
 

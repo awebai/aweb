@@ -214,6 +214,8 @@ type ChatCreateSessionResponse struct {
 	SSEURL           string            `json:"sse_url"`
 	TargetsConnected []string          `json:"targets_connected"`
 	TargetsLeft      []string          `json:"targets_left"`
+	// ContentMode is the mode this client sent; the server does not echo it.
+	ContentMode string `json:"content_mode,omitempty"`
 }
 
 type ChatParticipant struct {
@@ -243,6 +245,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 		if err := c.Post(ctx, "/v1/chat/sessions", &payload, &out); err != nil {
 			return nil, err
 		}
+		out.ContentMode = sentContentMode(payload.ContentMode)
 		return &out, nil
 	}
 
@@ -298,6 +301,7 @@ func (c *Client) ChatCreateSession(ctx context.Context, req *ChatCreateSessionRe
 	if err := c.Post(ctx, "/v1/chat/sessions", &payload, &out); err != nil {
 		return nil, err
 	}
+	out.ContentMode = sentContentMode(payload.ContentMode)
 	return &out, nil
 }
 
@@ -671,9 +675,19 @@ type ChatPendingItem struct {
 	TimeRemainingSeconds   *int                 `json:"time_remaining_seconds"`
 }
 
-func (c *Client) ChatPending(ctx context.Context) (*ChatPendingResponse, error) {
+// ChatPendingSessions lists pending chat sessions without decrypting their
+// last messages, so finding a session needs no encryption keys.
+func (c *Client) ChatPendingSessions(ctx context.Context) (*ChatPendingResponse, error) {
 	var out ChatPendingResponse
 	if err := c.Get(ctx, "/v1/chat/pending", &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+func (c *Client) ChatPending(ctx context.Context) (*ChatPendingResponse, error) {
+	out, err := c.ChatPendingSessions(ctx)
+	if err != nil {
 		return nil, err
 	}
 	for i := range out.Pending {
@@ -689,7 +703,7 @@ func (c *Client) ChatPending(ctx context.Context) (*ChatPendingResponse, error) 
 			item.LastMessage = plain.Body
 		}
 	}
-	return &out, nil
+	return out, nil
 }
 
 type ChatHistoryResponse struct {
@@ -721,6 +735,26 @@ type ChatMessage struct {
 	ReplacementAnnouncement *ReplacementAnnouncement `json:"replacement_announcement,omitempty"`
 	VerificationStatus      VerificationStatus       `json:"verification_status,omitempty"`
 	IsContact               *bool                    `json:"is_contact,omitempty"`
+}
+
+// ChatSessionLatestEncrypted reports whether the newest message in a chat
+// session is encrypted. It reads only the content mode, so it needs no keys.
+func (c *Client) ChatSessionLatestEncrypted(ctx context.Context, sessionID string) (bool, error) {
+	var out struct {
+		Messages []struct {
+			ContentMode    string               `json:"content_mode"`
+			MessageVersion int                  `json:"message_version"`
+			Encrypted      *E2EEMessageEnvelope `json:"encrypted_envelope"`
+		} `json:"messages"`
+	}
+	if err := c.Get(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages?limit=1", &out); err != nil {
+		return false, err
+	}
+	if len(out.Messages) == 0 {
+		return false, nil
+	}
+	latest := out.Messages[0]
+	return latest.ContentMode == ContentModeEncryptedV2 || latest.MessageVersion == E2EEMessageVersion || latest.Encrypted != nil, nil
 }
 
 type ChatHistoryParams struct {
@@ -1014,6 +1048,8 @@ type ChatSendMessageResponse struct {
 	MessageID          string `json:"message_id"`
 	Delivered          bool   `json:"delivered"`
 	ExtendsWaitSeconds int    `json:"extends_wait_seconds"`
+	// ContentMode is the mode this client sent; the server does not echo it.
+	ContentMode string `json:"content_mode,omitempty"`
 }
 
 func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *ChatSendMessageRequest) (*ChatSendMessageResponse, error) {
@@ -1029,6 +1065,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 		if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {
 			return nil, err
 		}
+		out.ContentMode = sentContentMode(payload.ContentMode)
 		return &out, nil
 	}
 
@@ -1076,6 +1113,7 @@ func (c *Client) ChatSendMessage(ctx context.Context, sessionID string, req *Cha
 	if err := c.Post(ctx, "/v1/chat/sessions/"+urlPathEscape(sessionID)+"/messages", &payload, &out); err != nil {
 		return nil, err
 	}
+	out.ContentMode = sentContentMode(payload.ContentMode)
 	return &out, nil
 }
 

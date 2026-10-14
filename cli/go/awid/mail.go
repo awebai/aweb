@@ -21,6 +21,15 @@ const (
 	ContentModeEncryptedV2       = "encrypted_v2"
 )
 
+// sentContentMode is the content mode of a request as sent: the server stores
+// a request without one as legacy plaintext.
+func sentContentMode(mode string) string {
+	if strings.TrimSpace(mode) == "" {
+		return ContentModeLegacyPlaintextV1
+	}
+	return mode
+}
+
 type SendMessageRequest struct {
 	ToAgentID        string               `json:"to_agent_id,omitempty"`
 	ToAlias          string               `json:"to_alias,omitempty"`
@@ -51,6 +60,8 @@ type SendMessageResponse struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	Status         string `json:"status"`
 	DeliveredAt    string `json:"delivered_at"`
+	// ContentMode is the mode this client sent; the server does not echo it.
+	ContentMode string `json:"content_mode,omitempty"`
 }
 
 func (c *Client) SendMessage(ctx context.Context, req *SendMessageRequest) (*SendMessageResponse, error) {
@@ -127,6 +138,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 		if err := c.Post(ctx, "/v1/messages", &payload, &out); err != nil {
 			return nil, err
 		}
+		out.ContentMode = sentContentMode(payload.ContentMode)
 		return &out, nil
 	}
 	from := c.address
@@ -163,6 +175,7 @@ func (c *Client) sendMessage(ctx context.Context, req *SendMessageRequest, ident
 	if err := c.Post(ctx, "/v1/messages", &payload, &out); err != nil {
 		return nil, err
 	}
+	out.ContentMode = sentContentMode(payload.ContentMode)
 	return &out, nil
 }
 

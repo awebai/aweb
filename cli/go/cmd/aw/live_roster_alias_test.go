@@ -244,7 +244,7 @@ func TestChatSendBareAliasFallsBackToLiveTeamRoster(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	if _, _, err := chatSend(ctx, "grace", "hello", chat.SendOptions{Leaving: true}); err != nil {
+	if _, _, err := chatSend(ctx, "grace", "hello", chat.SendOptions{Leaving: true}, false); err != nil {
 		t.Fatalf("chat send: %v", err)
 	}
 	if len(gotBody.ToDIDs) != 1 || gotBody.ToDIDs[0] != "did:key:grace" {
