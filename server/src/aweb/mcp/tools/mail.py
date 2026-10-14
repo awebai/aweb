@@ -204,7 +204,9 @@ async def send_mail(
                 auth=mcp_messaging_auth(auth),
                 sender_did=primary_auth_did(auth),
                 sender_address=sender_address,
-                payload=SendMessageRequest(body=body, **{selector: recipient_ref}),
+                # Read-only lookup data: MCP already validates its own inputs.
+                # Do not impose HTTP's stricter selector/body validators here.
+                payload=SendMessageRequest.model_construct(body=body, **{selector: recipient_ref}),
             )
         except (HTTPException, ServiceError) as exc:
             return json.dumps({"error": exc.detail})

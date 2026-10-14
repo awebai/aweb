@@ -190,3 +190,17 @@ async def test_mcp_lookup_does_not_reuse_another_senders_conversation(mail_serve
     assert "error" not in sent, sent
     assert sent["conversation_id"] != old
     assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.conversations}}"))["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_mcp_lookup_preserves_its_existing_selector_validation(mail_server):
+    server = mail_server
+    # MCP's published `to` is an unconstrained string, unlike the HTTP model's
+    # 64-character alias validator. Sharing its lookup must not narrow MCP.
+    alias = "a" * 65
+    await server.db.execute(
+        "UPDATE {{tables.agents}} SET alias=$2, agent_type='agent' WHERE agent_id=$1", UUID(server.human), alias,
+    )
+    sent = await server.mcp_mail(to=alias, plaintext=True)
+    assert "error" not in sent, sent
+    assert (await server.db.fetch_one("SELECT count(*) AS n FROM {{tables.messages}}"))["n"] == 1
