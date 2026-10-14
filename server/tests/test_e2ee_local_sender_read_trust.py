@@ -31,11 +31,11 @@ from aweb.e2ee_messages import encrypt_e2ee_mail, generate_x25519_keypair
 from test_addressless_sender_cli import _registry_http
 from test_cli_human_reply import _cli, _pem, _reply_context
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
-from test_messages_http import _make_keypair, _make_certificate
+from test_messages_http import _make_keypair, _make_certificate, _signed_team_headers, _encode_certificate
 
 
 @asynccontextmanager
-async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retired):
+async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retired, *, human=False):
     """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context
     and the registry it resolves through."""
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
@@ -45,23 +45,27 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
         actor = env.actors[name]
         private, public = generate_x25519_keypair()
         address = "example.test/bob" if global_resident and name == "bob" else ""
-        stable_id = stable_id_from_did_key(actor.did) if address else ""
+        stable_id = stable_id_from_did_key(actor.did) if address or (human and name == "alice") else ""
         if stable_id:
             await env.db.execute("UPDATE {{tables.agents}} SET identity_scope = 'global', did_aw = $1, address = $2 WHERE agent_id = $3",
                                  stable_id, address, actor.id)
             await env.app.state.awid_registry_client.register_did(actor.did, actor.sk)
         assertion = build_encryption_key_assertion(
             signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
-            encryption_public_key=public, custody="self", now=now,
+            encryption_public_key=public, custody="hosted_custodial" if human and name == "alice" else "self", now=now,
         )
         identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=TEAM,
                                 signing_key=actor.sk, private_key=private, encryption_key=assertion)
     sender, agent = identities["alice"], identities["bob"]
+    if human:
+        await env.db.execute("UPDATE {{tables.agents}} SET agent_type='human', certificate_id='privacy-alice' WHERE agent_id=$1",
+                             env.actors["alice"].id)
     message_id, conversation_id = str(uuid4()), str(uuid4())
     source = encrypt_e2ee_mail(sender=sender, recipients=[agent], subject="Local encrypted",
                               body="local sender private text", message_id=message_id,
                               conversation_id=conversation_id, created_at=now)
-    assert not source["from"].get("address") and not source["from"].get("stable_id")
+    assert not source["from"].get("address")
+    assert bool(source["from"].get("stable_id")) == human
     sent = await _request(env, "alice", "POST", "/v1/messages", {
         "to_did": agent["did"], "message_id": message_id, "conversation_id": conversation_id,
         "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": source,
@@ -329,3 +333,34 @@ async def test_channel_core_runtimes_present_local_sender_e2ee_mail_trust(
             assert (*alice, 404) in runtime_lookups, registry.responses
         if registry_condition == "unavailable":
             assert (*alice, 503) in runtime_lookups, registry.responses
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime", ["channel", "wake"])
+@pytest.mark.parametrize("grant", [False, True])
+@pytest.mark.parametrize("sender_retired,expected", [(False, "verified"), (True, "identity_mismatch")])
+async def test_channel_core_addressless_human_mail(
+        privacy_app, runtime_packages, tmp_path, runtime, grant, sender_retired, expected):
+    async with _local_sender_mail(privacy_app, tmp_path, True, grant, sender_retired, human=True) as (
+            message_id, conversation_id, binary, command_dir, command_env, registry):
+        # Humans are deliberately absent from the discovery roster. Trust uses
+        # the participant-authorized stored sender membership and public DID.
+        roster_actor = privacy_app.actors["bob"]
+        roster_cert = json.loads(next((tmp_path / ".aw/team-certs").glob("*.pem")).read_text())
+        roster = await privacy_app.client.get("/v1/agents", headers=_signed_team_headers(
+            roster_actor.sk, roster_actor.did, TEAM, _encode_certificate(roster_cert), b""))
+        assert roster.status_code == 200, roster.text
+        assert "alice" not in [row["alias"] for row in roster.json()["agents"]]
+        inbox = await _request(privacy_app, "bob", "GET", f"/v1/messages/inbox?message_id={message_id}")
+        assert inbox.status_code == 200, inbox.text
+        projection = inbox.json()["messages"][0]["sender_membership"]
+        assert projection["state"] == ("inactive" if sender_retired else "active"), projection
+        runtime_env = dict(command_env, PATH=f"{binary.parent}{os.pathsep}{command_env.get('PATH', '')}")
+        status, text = await PRESENTERS[runtime](
+            tmp_path, binary, command_dir, runtime_env, message_id, conversation_id)
+        assert "local sender private text" in text
+        assert status == expected, (text, projection, registry.responses)
+        node_reads = [path for _, path, _, agent in registry.responses if agent == "node"]
+        assert not any("/addresses/" in path for path in node_reads), node_reads
+        if not sender_retired:
+            assert any(path.endswith("/key") for path in node_reads), node_reads

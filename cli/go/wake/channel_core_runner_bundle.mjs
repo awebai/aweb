@@ -7238,422 +7238,6 @@ async function readYAML(path) {
   }
 }
 
-// channel-core/src/identity/pinstore.ts
-var LAST_SEEN_COALESCE_MS = 6e4;
-function lastSeenIsStale(previous, now) {
-  const previousMs = Date.parse(previous);
-  const nowMs = Date.parse(now);
-  if (!Number.isFinite(previousMs) || !Number.isFinite(nowMs)) return true;
-  return nowMs - previousMs >= LAST_SEEN_COALESCE_MS || nowMs < previousMs;
-}
-var ROOT_FIELDS = /* @__PURE__ */ new Set(["pins", "addresses"]);
-var PIN_FIELDS = /* @__PURE__ */ new Set([
-  "address",
-  "handle",
-  "stable_id",
-  "did_key",
-  "log_seq",
-  "log_entry_hash",
-  "first_seen",
-  "last_seen",
-  "server"
-]);
-var PinStore = class _PinStore {
-  mutablePins = /* @__PURE__ */ new Map();
-  addresses = /* @__PURE__ */ new Map();
-  unknownRootFields = /* @__PURE__ */ new Map();
-  // Object identity binds a pin to its preserved fields, so rekeying carries
-  // them without a second key-migration invariant. Pin membership stays private
-  // to prevent callers from replacing the object and silently losing that state.
-  unknownPinFields = /* @__PURE__ */ new WeakMap();
-  persistedYAML;
-  operationTail = Promise.resolve();
-  commitTail = Promise.resolve();
-  pendingCommits = 0;
-  undurable = false;
-  constructor() {
-    this.persistedYAML = this.toYAML();
-  }
-  get pins() {
-    return this.mutablePins;
-  }
-  /** Check whether a DID matches the stored pin for a global address. */
-  checkPin(address, did, identityScope) {
-    if (identityScope === "local") return "skipped";
-    const pinnedDID = this.addresses.get(address);
-    if (pinnedDID === void 0) return "new";
-    if (pinnedDID === did) return "ok";
-    return "mismatch";
-  }
-  /**
-   * Record or update a TOFU pin. Returns whether anything changed, which is what
-   * decides if the caller must commit.
-   *
-   * A last_seen refresh is not a continuity claim — the same distinction Go draws
-   * between commitContinuity and commitRefresh. Refreshing it on every accepted
-   * message made every such message force a commit, and with several resident
-   * processes sharing one known_agents.yaml that made CAS conflicts the steady
-   * state, each one deferring a wake (aweb-abdk).
-   *
-   * last_seen is therefore advanced at most once per LAST_SEEN_COALESCE_MS. It is
-   * left untouched inside that window rather than advanced-but-not-persisted, so
-   * memory and disk keep agreeing; nothing reads the value to make a decision, so
-   * the coarser resolution costs no behaviour.
-   */
-  storePin(did, address, handle, server) {
-    const now = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
-    const existing = this.mutablePins.get(did);
-    if (existing) {
-      let changed = false;
-      if (existing.address !== address) {
-        this.addresses.delete(existing.address);
-        this.addresses.set(address, did);
-        existing.address = address;
-        changed = true;
-      }
-      if (existing.handle !== handle) {
-        existing.handle = handle;
-        changed = true;
-      }
-      if (existing.server !== server) {
-        existing.server = server;
-        changed = true;
-      }
-      if (lastSeenIsStale(existing.last_seen, now)) {
-        existing.last_seen = now;
-        changed = true;
-      }
-      return changed;
-    }
-    this.mutablePins.set(did, {
-      address,
-      handle,
-      first_seen: now,
-      last_seen: now,
-      server
-    });
-    this.addresses.set(address, did);
-    return true;
-  }
-  rekeyPin(currentKey, nextKey) {
-    const pin = this.mutablePins.get(currentKey);
-    if (!pin) return { status: "missing" };
-    if (currentKey === nextKey) return { status: "unchanged", pin };
-    const occupied = this.mutablePins.get(nextKey);
-    if (occupied && occupied !== pin) return { status: "conflict" };
-    this.mutablePins.delete(currentKey);
-    this.mutablePins.set(nextKey, pin);
-    for (const [address, pinKey] of this.addresses) {
-      if (pinKey === currentKey) this.addresses.set(address, nextKey);
-    }
-    return { status: "rekeyed", pin };
-  }
-  deletePin(key) {
-    const removed = this.mutablePins.delete(key);
-    if (!removed) return false;
-    for (const [address, pinKey] of this.addresses) {
-      if (pinKey === key) this.addresses.delete(address);
-    }
-    return true;
-  }
-  removeAddress(address) {
-    let removed = false;
-    const pinnedDID = this.addresses.get(address);
-    if (pinnedDID !== void 0) {
-      this.addresses.delete(address);
-      const pin = this.mutablePins.get(pinnedDID);
-      if (pin?.address === address) {
-        this.deletePin(pinnedDID);
-      }
-      removed = true;
-    }
-    for (const [pinKey, pin] of this.mutablePins) {
-      if (pin.address !== address) continue;
-      this.deletePin(pinKey);
-      if (this.addresses.get(address) === pinKey) {
-        this.addresses.delete(address);
-      }
-      removed = true;
-    }
-    return removed;
-  }
-  removeAddresses(addresses) {
-    let removed = false;
-    for (const address of addresses) {
-      if (address) removed = this.removeAddress(address) || removed;
-    }
-    return removed;
-  }
-  bindStableIdentity(currentKey, stableID) {
-    const rekey = this.rekeyPin(currentKey, stableID);
-    if ("pin" in rekey) rekey.pin.stable_id = stableID;
-    return rekey;
-  }
-  /** Returns whether anything changed, so the caller can skip a needless commit. */
-  recordVerifiedIdentity(pinKey, address, stableID, didKey) {
-    let changed = this.storePin(pinKey, address, "", "");
-    if (!stableID) return changed;
-    const pin = this.mutablePins.get(pinKey);
-    if (pin.stable_id !== stableID) {
-      pin.stable_id = stableID;
-      changed = true;
-    }
-    if (didKey && pin.did_key !== didKey) {
-      pin.did_key = didKey;
-      changed = true;
-    }
-    return changed;
-  }
-  replaceVerifiedIdentity(previousPinKey, pinKey, address, stableID, didKey) {
-    const removed = previousPinKey ? this.deletePin(previousPinKey) : false;
-    const recorded = this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
-    return removed || recorded;
-  }
-  advanceLogCheckpoint(stableID, seq2, entryHash) {
-    const pin = this.mutablePins.get(stableID);
-    if (!pin || seq2 <= (pin.log_seq ?? 0)) return false;
-    pin.log_seq = seq2;
-    pin.log_entry_hash = entryHash;
-    return true;
-  }
-  // Keep a trust decision and its commit in one per-process critical section.
-  // A CAS conflict can then replace stale in-memory state without racing another
-  // decision that was computed from that state.
-  async runExclusive(operation) {
-    const attempt = this.operationTail.then(operation);
-    this.operationTail = attempt.then(() => {
-    }, () => {
-    });
-    return attempt;
-  }
-  /**
-   * Submit this process's desired snapshot with the exact semantic baseline it
-   * read. aw reloads and checks that precondition while holding the shared file
-   * lock. Concurrent commits are queued so each successful desired snapshot
-   * becomes the next precondition.
-   */
-  async commit(writer, path) {
-    this.pendingCommits += 1;
-    const attempt = this.commitTail.then(async () => {
-      try {
-        const desiredYAML = this.toYAML();
-        await writer.compareAndSet(path, this.persistedYAML, desiredYAML);
-        this.persistedYAML = desiredYAML;
-        if (this.pendingCommits === 1) this.undurable = false;
-      } catch (error) {
-        this.undurable = true;
-        throw error;
-      } finally {
-        this.pendingCommits -= 1;
-      }
-    });
-    this.commitTail = attempt.catch(() => {
-    });
-    return attempt;
-  }
-  hasUndurableChanges() {
-    return this.undurable || this.pendingCommits > 0;
-  }
-  // Adopt a native reread after aw refused a stale CAS. The refused desired
-  // snapshot was never written and must not influence the next trust decision.
-  replaceWithDurableState(source) {
-    if (this.pendingCommits !== 0) {
-      throw new Error("cannot replace pin store while a commit is pending");
-    }
-    this.mutablePins.clear();
-    for (const [key, pin] of source.mutablePins) {
-      this.mutablePins.set(key, pin);
-      const unknown = source.unknownPinFields.get(pin);
-      if (unknown) this.unknownPinFields.set(pin, new Map(unknown));
-    }
-    this.addresses.clear();
-    for (const [address, pinKey] of source.addresses) this.addresses.set(address, pinKey);
-    this.unknownRootFields = new Map(source.unknownRootFields);
-    this.persistedYAML = source.persistedYAML;
-    this.undurable = false;
-  }
-  /** Serialize to YAML (compatible with Go's known_agents.yaml). */
-  toYAML() {
-    const pinsObj = emptyRecord();
-    for (const [key, pin] of this.mutablePins) {
-      const pinObj = recordFromUnknown(this.unknownPinFields.get(pin));
-      pinObj.address = pin.address;
-      pinObj.handle = pin.handle;
-      if (pin.stable_id !== void 0) pinObj.stable_id = pin.stable_id;
-      if (pin.did_key !== void 0) pinObj.did_key = pin.did_key;
-      if (pin.log_seq !== void 0) pinObj.log_seq = pin.log_seq;
-      if (pin.log_entry_hash !== void 0) pinObj.log_entry_hash = pin.log_entry_hash;
-      pinObj.first_seen = pin.first_seen;
-      pinObj.last_seen = pin.last_seen;
-      pinObj.server = pin.server;
-      pinsObj[key] = pinObj;
-    }
-    const addressesObj = emptyRecord();
-    for (const [key, value] of this.addresses) addressesObj[key] = value;
-    const root = recordFromUnknown(this.unknownRootFields);
-    root.pins = pinsObj;
-    root.addresses = addressesObj;
-    return yaml.dump(root);
-  }
-  /**
-   * Deserialize from YAML with strict schema validation. Throws on any
-   * malformed input so a corrupt trust database fails closed rather than being
-   * silently replaced by an empty store. js-yaml's default load rejects
-   * duplicate mapping keys and unknown/unsafe tags.
-   */
-  static fromYAML(content) {
-    let data;
-    let hasAnchor = false;
-    try {
-      data = yaml.load(content, {
-        schema: yaml.JSON_SCHEMA,
-        listener(eventType, state) {
-          if (eventType === "close" && state.anchor) {
-            hasAnchor = true;
-          }
-        }
-      });
-    } catch (error) {
-      const ex = error;
-      const where = ex.mark ? ` at line ${(ex.mark.line ?? 0) + 1} column ${(ex.mark.column ?? 0) + 1}` : "";
-      throw new Error(`pin store YAML is invalid${where}: ${ex.reason ?? "parse error"}`);
-    }
-    if (hasAnchor) {
-      throw new Error("pin store YAML must not use anchors or aliases");
-    }
-    const store = new _PinStore();
-    if (data === null || data === void 0) {
-      throw new Error("pin store is empty or has no document (truncated?); an intentional empty store is '{}'");
-    }
-    if (typeof data !== "object" || Array.isArray(data)) {
-      throw new Error("pin store root must be a mapping");
-    }
-    const root = data;
-    rejectMergeKeys(root);
-    store.unknownRootFields = collectUnknownFields(root, ROOT_FIELDS);
-    if (root.pins !== void 0 && root.pins !== null) {
-      if (typeof root.pins !== "object" || Array.isArray(root.pins)) {
-        throw new Error("pin store 'pins' must be a mapping");
-      }
-      for (const [key, value] of Object.entries(root.pins)) {
-        if (!key) throw new Error("pin store has an empty pin key");
-        const pin = validatePin(key, value);
-        store.mutablePins.set(key, pin);
-        const unknown = collectUnknownFields(value, PIN_FIELDS);
-        if (unknown.size > 0) store.unknownPinFields.set(pin, unknown);
-      }
-    }
-    if (root.addresses !== void 0 && root.addresses !== null) {
-      if (typeof root.addresses !== "object" || Array.isArray(root.addresses)) {
-        throw new Error("pin store 'addresses' must be a mapping");
-      }
-      for (const [key, value] of Object.entries(root.addresses)) {
-        if (!key) throw new Error("pin store has an empty address key");
-        if (typeof value !== "string" || !value) {
-          throw new Error(`pin store address '${key}' must reference a non-empty pin key`);
-        }
-        store.addresses.set(key, value);
-      }
-    }
-    for (const [address, pinKey] of store.addresses) {
-      const pin = store.mutablePins.get(pinKey);
-      if (!pin) {
-        throw new Error(`pin store address '${address}' references unknown pin`);
-      }
-      if (pin.address !== address) {
-        throw new Error(
-          `pin store reverse index for '${address}' points at a pin whose address is '${pin.address}'`
-        );
-      }
-    }
-    for (const [pinKey, pin] of store.mutablePins) {
-      const mapped = store.addresses.get(pin.address);
-      if (mapped === void 0) {
-        throw new Error(
-          `pin store pin '${pinKey}' claims address '${pin.address}' with no reverse index entry`
-        );
-      }
-      if (mapped !== pinKey) {
-        throw new Error(
-          `pin store pin '${pinKey}' claims address '${pin.address}', but the reverse index points at '${mapped}'`
-        );
-      }
-    }
-    store.persistedYAML = store.toYAML();
-    return store;
-  }
-};
-function emptyRecord() {
-  return /* @__PURE__ */ Object.create(null);
-}
-function recordFromUnknown(fields) {
-  const record = emptyRecord();
-  for (const [key, value] of fields ?? []) record[key] = value;
-  return record;
-}
-function collectUnknownFields(source, knownFields) {
-  const unknown = /* @__PURE__ */ new Map();
-  for (const [key, value] of Object.entries(source)) {
-    if (!knownFields.has(key)) unknown.set(key, value);
-  }
-  return unknown;
-}
-function rejectMergeKeys(value) {
-  if (Array.isArray(value)) {
-    for (const item of value) rejectMergeKeys(item);
-    return;
-  }
-  if (typeof value !== "object" || value === null) return;
-  for (const [key, child] of Object.entries(value)) {
-    if (key === "<<") {
-      throw new Error("pin store YAML must not use merge keys");
-    }
-    rejectMergeKeys(child);
-  }
-}
-function validatePin(key, value) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new Error(`pin '${key}' must be a mapping`);
-  }
-  const raw = value;
-  const requireString = (field) => {
-    const v = raw[field];
-    if (typeof v !== "string" || v === "") {
-      throw new Error(`pin '${key}' field '${field}' must be a non-empty string`);
-    }
-    return v;
-  };
-  const optionalString = (field) => {
-    const v = raw[field];
-    if (v === void 0 || v === null) return void 0;
-    if (typeof v !== "string") {
-      throw new Error(`pin '${key}' field '${field}' must be a string`);
-    }
-    return v;
-  };
-  const pin = {
-    address: requireString("address"),
-    handle: optionalString("handle") ?? "",
-    first_seen: requireString("first_seen"),
-    last_seen: requireString("last_seen"),
-    server: optionalString("server") ?? ""
-  };
-  const stableId = optionalString("stable_id");
-  if (stableId !== void 0) pin.stable_id = stableId;
-  const didKey = optionalString("did_key");
-  if (didKey !== void 0) pin.did_key = didKey;
-  const logSeq = raw["log_seq"];
-  if (logSeq !== void 0 && logSeq !== null) {
-    if (typeof logSeq !== "number" || !Number.isInteger(logSeq) || logSeq < 1) {
-      throw new Error(`pin '${key}' field 'log_seq' must be a positive integer`);
-    }
-    pin.log_seq = logSeq;
-  }
-  const logEntryHash = optionalString("log_entry_hash");
-  if (logEntryHash !== void 0) pin.log_entry_hash = logEntryHash;
-  return pin;
-}
-
 // channel-core/src/identity/registry.ts
 import * as dns from "node:dns/promises";
 import { isIP } from "node:net";
@@ -7669,7 +7253,7 @@ function pathSafeSegment(value) {
 function isValidDidLogSequence(seq2) {
   return Number.isSafeInteger(seq2) && seq2 >= 1;
 }
-var RegistryResolver = class {
+var RegistryResolver = class _RegistryResolver {
   constructor(fetchImpl = fetch, resolveTxtImpl = dns.resolveTxt, now = () => Date.now(), options) {
     this.fetchImpl = fetchImpl;
     this.resolveTxtImpl = resolveTxtImpl;
@@ -7689,6 +7273,7 @@ var RegistryResolver = class {
   addressCache = /* @__PURE__ */ new Map();
   keyCache = /* @__PURE__ */ new Map();
   headCache = /* @__PURE__ */ new Map();
+  receivedRegistries = /* @__PURE__ */ new Map();
   fallbackRegistryURL;
   identityDomain;
   async verifyStableIdentity(address, stableID, expectedCurrentDidKey = "") {
@@ -7705,16 +7290,38 @@ var RegistryResolver = class {
     if (resolvedAddress.response.did_aw !== stableID) {
       return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
     }
+    return this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+  }
+  /** Addressless receive authority comes only from the selected delivery team.
+   * Each registry has independent key/log caches; no address is manufactured. */
+  async verifyReceivedIdentity(teamID, stableID, did, checkpointFor) {
+    try {
+      const separator = teamID.indexOf(":");
+      if (separator < 1 || teamID.indexOf(":", separator + 1) !== -1) throw new Error("invalid delivery team");
+      const registryURL = (await this.discoverRegistry(teamID.slice(separator + 1))).replace(/\/+$/, "");
+      let scoped = this.receivedRegistries.get(registryURL);
+      if (!scoped) {
+        scoped = new _RegistryResolver(this.fetchImpl, this.resolveTxtImpl, this.now);
+        this.receivedRegistries.set(registryURL, scoped);
+      }
+      const checkpoint = checkpointFor?.(registryURL);
+      if (checkpoint) scoped.seedVerifiedHead(stableID, checkpoint);
+      return { registryURL, result: await scoped.verifyStableIdentityAtRegistry(registryURL, stableID, did, true) };
+    } catch (error) {
+      return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
+    }
+  }
+  async verifyStableIdentityAtRegistry(registryURL, stableID, expectedCurrentDidKey, fresh = false) {
     let resolution;
     try {
-      resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID);
+      resolution = await this.resolveDidKey(registryURL, stableID, fresh);
     } catch (error) {
       return { outcome: "OK_DEGRADED", error: String(error) };
     }
     const expectedKey = expectedCurrentDidKey.trim();
     if (expectedKey && resolution.current_did_key !== expectedKey) {
       return {
-        outcome: "STALE_CACHE",
+        outcome: fresh ? "HARD_ERROR" : "STALE_CACHE",
         currentDidKey: resolution.current_did_key,
         error: "registry key cache does not match the signed current key"
       };
@@ -7729,7 +7336,7 @@ var RegistryResolver = class {
     }
     if (verification.outcome === "OK_DEGRADED" && !verification.error) {
       return this.verifyStableIdentityViaFullLog(
-        resolvedAddress.registryURL,
+        registryURL,
         stableID,
         resolution.current_did_key
       );
@@ -7884,14 +7491,15 @@ var RegistryResolver = class {
     this.addressCache.set(key, { value, expiresAt: this.now() + REGISTRY_ADDRESS_TTL_MS });
     return value;
   }
-  async resolveDidKey(registryURL, stableID) {
+  async resolveDidKey(registryURL, stableID, fresh = false) {
     const cached = this.keyCache.get(stableID);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!fresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const response = await this.getJSON(
       registryURL,
-      `/v1/did/${pathSafeSegment(stableID)}/key`
+      `/v1/did/${pathSafeSegment(stableID)}/key`,
+      fresh
     );
     this.keyCache.set(stableID, {
       value: response,
@@ -8323,6 +7931,464 @@ function didLogContainsEntry(entries, seq2, entryHash) {
   return false;
 }
 
+// channel-core/src/identity/pinstore.ts
+var LAST_SEEN_COALESCE_MS = 6e4;
+function lastSeenIsStale(previous, now) {
+  const previousMs = Date.parse(previous);
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(previousMs) || !Number.isFinite(nowMs)) return true;
+  return nowMs - previousMs >= LAST_SEEN_COALESCE_MS || nowMs < previousMs;
+}
+var ROOT_FIELDS = /* @__PURE__ */ new Set(["pins", "addresses"]);
+var PIN_FIELDS = /* @__PURE__ */ new Set([
+  "address",
+  "handle",
+  "stable_id",
+  "did_key",
+  "log_seq",
+  "log_entry_hash",
+  "first_seen",
+  "last_seen",
+  "server"
+]);
+var PinStore = class _PinStore {
+  mutablePins = /* @__PURE__ */ new Map();
+  addresses = /* @__PURE__ */ new Map();
+  unknownRootFields = /* @__PURE__ */ new Map();
+  // Object identity binds a pin to its preserved fields, so rekeying carries
+  // them without a second key-migration invariant. Pin membership stays private
+  // to prevent callers from replacing the object and silently losing that state.
+  unknownPinFields = /* @__PURE__ */ new WeakMap();
+  persistedYAML;
+  operationTail = Promise.resolve();
+  commitTail = Promise.resolve();
+  pendingCommits = 0;
+  undurable = false;
+  constructor() {
+    this.persistedYAML = this.toYAML();
+  }
+  get pins() {
+    return this.mutablePins;
+  }
+  /** Check whether a DID matches the stored pin for a global address. */
+  checkPin(address, did, identityScope) {
+    if (identityScope === "local") return "skipped";
+    const pinnedDID = this.addresses.get(address);
+    if (pinnedDID === void 0) return "new";
+    if (pinnedDID === did) return "ok";
+    return "mismatch";
+  }
+  /**
+   * Record or update a TOFU pin. Returns whether anything changed, which is what
+   * decides if the caller must commit.
+   *
+   * A last_seen refresh is not a continuity claim — the same distinction Go draws
+   * between commitContinuity and commitRefresh. Refreshing it on every accepted
+   * message made every such message force a commit, and with several resident
+   * processes sharing one known_agents.yaml that made CAS conflicts the steady
+   * state, each one deferring a wake (aweb-abdk).
+   *
+   * last_seen is therefore advanced at most once per LAST_SEEN_COALESCE_MS. It is
+   * left untouched inside that window rather than advanced-but-not-persisted, so
+   * memory and disk keep agreeing; nothing reads the value to make a decision, so
+   * the coarser resolution costs no behaviour.
+   */
+  storePin(did, address, handle, server) {
+    const now = (/* @__PURE__ */ new Date()).toISOString().replace(/\.\d{3}Z$/, "Z");
+    const existing = this.mutablePins.get(did);
+    if (existing) {
+      let changed = false;
+      if (existing.address !== address) {
+        this.addresses.delete(existing.address);
+        this.addresses.set(address, did);
+        existing.address = address;
+        changed = true;
+      }
+      if (existing.handle !== handle) {
+        existing.handle = handle;
+        changed = true;
+      }
+      if (existing.server !== server) {
+        existing.server = server;
+        changed = true;
+      }
+      if (lastSeenIsStale(existing.last_seen, now)) {
+        existing.last_seen = now;
+        changed = true;
+      }
+      return changed;
+    }
+    this.mutablePins.set(did, {
+      address,
+      handle,
+      first_seen: now,
+      last_seen: now,
+      server
+    });
+    this.addresses.set(address, did);
+    return true;
+  }
+  rekeyPin(currentKey, nextKey) {
+    const pin = this.mutablePins.get(currentKey);
+    if (!pin) return { status: "missing" };
+    if (currentKey === nextKey) return { status: "unchanged", pin };
+    const occupied = this.mutablePins.get(nextKey);
+    if (occupied && occupied !== pin) return { status: "conflict" };
+    this.mutablePins.delete(currentKey);
+    this.mutablePins.set(nextKey, pin);
+    for (const [address, pinKey] of this.addresses) {
+      if (pinKey === currentKey) this.addresses.set(address, nextKey);
+    }
+    return { status: "rekeyed", pin };
+  }
+  deletePin(key) {
+    const removed = this.mutablePins.delete(key);
+    if (!removed) return false;
+    for (const [address, pinKey] of this.addresses) {
+      if (pinKey === key) this.addresses.delete(address);
+    }
+    return true;
+  }
+  removeAddress(address) {
+    let removed = false;
+    const pinnedDID = this.addresses.get(address);
+    if (pinnedDID !== void 0) {
+      this.addresses.delete(address);
+      const pin = this.mutablePins.get(pinnedDID);
+      if (pin?.address === address) {
+        this.deletePin(pinnedDID);
+      }
+      removed = true;
+    }
+    for (const [pinKey, pin] of this.mutablePins) {
+      if (pin.address !== address) continue;
+      this.deletePin(pinKey);
+      if (this.addresses.get(address) === pinKey) {
+        this.addresses.delete(address);
+      }
+      removed = true;
+    }
+    return removed;
+  }
+  removeAddresses(addresses) {
+    let removed = false;
+    for (const address of addresses) {
+      if (address) removed = this.removeAddress(address) || removed;
+    }
+    return removed;
+  }
+  bindStableIdentity(currentKey, stableID) {
+    const rekey = this.rekeyPin(currentKey, stableID);
+    if ("pin" in rekey) rekey.pin.stable_id = stableID;
+    return rekey;
+  }
+  /** Returns whether anything changed, so the caller can skip a needless commit. */
+  recordVerifiedIdentity(pinKey, address, stableID, didKey) {
+    let changed = this.storePin(pinKey, address, "", "");
+    if (!stableID) return changed;
+    const pin = this.mutablePins.get(pinKey);
+    if (pin.stable_id !== stableID) {
+      pin.stable_id = stableID;
+      changed = true;
+    }
+    if (didKey && pin.did_key !== didKey) {
+      pin.did_key = didKey;
+      changed = true;
+    }
+    return changed;
+  }
+  replaceVerifiedIdentity(previousPinKey, pinKey, address, stableID, didKey) {
+    const removed = previousPinKey ? this.deletePin(previousPinKey) : false;
+    const recorded = this.recordVerifiedIdentity(pinKey, address, stableID, didKey);
+    return removed || recorded;
+  }
+  advanceLogCheckpoint(stableID, seq2, entryHash) {
+    const pin = this.mutablePins.get(stableID);
+    if (!pin || seq2 <= (pin.log_seq ?? 0)) return false;
+    pin.log_seq = seq2;
+    pin.log_entry_hash = entryHash;
+    return true;
+  }
+  // Keep a trust decision and its commit in one per-process critical section.
+  // A CAS conflict can then replace stale in-memory state without racing another
+  // decision that was computed from that state.
+  async runExclusive(operation) {
+    const attempt = this.operationTail.then(operation);
+    this.operationTail = attempt.then(() => {
+    }, () => {
+    });
+    return attempt;
+  }
+  /**
+   * Submit this process's desired snapshot with the exact semantic baseline it
+   * read. aw reloads and checks that precondition while holding the shared file
+   * lock. Concurrent commits are queued so each successful desired snapshot
+   * becomes the next precondition.
+   */
+  async commit(writer, path) {
+    this.pendingCommits += 1;
+    const attempt = this.commitTail.then(async () => {
+      try {
+        const desiredYAML = this.toYAML();
+        await writer.compareAndSet(path, this.persistedYAML, desiredYAML);
+        this.persistedYAML = desiredYAML;
+        if (this.pendingCommits === 1) this.undurable = false;
+      } catch (error) {
+        this.undurable = true;
+        throw error;
+      } finally {
+        this.pendingCommits -= 1;
+      }
+    });
+    this.commitTail = attempt.catch(() => {
+    });
+    return attempt;
+  }
+  // Shared with Go; addressless receive checkpoints never create address pins.
+  receivedIdentityCheckpoint(registryURL, stableID) {
+    const raw = this.unknownRootFields.get("received_identity_heads");
+    if (raw === void 0) return void 0;
+    const mapping = (value2) => {
+      if (!value2 || typeof value2 !== "object" || Array.isArray(value2)) throw new Error("invalid received identity checkpoints");
+      return value2;
+    };
+    const registry = mapping(raw)[registryURL];
+    if (registry === void 0) return void 0;
+    const value = mapping(registry)[stableID];
+    if (value === void 0) return void 0;
+    const head = mapping(value);
+    if (!isValidDidLogSequence(head.Seq) || typeof head.EntryHash !== "string" || !/^[a-f0-9]{64}$/.test(head.EntryHash) || typeof head.CurrentDIDKey !== "string") {
+      throw new Error("invalid received identity checkpoint");
+    }
+    extractPublicKey(head.CurrentDIDKey);
+    return {
+      seq: head.Seq,
+      entryHash: head.EntryHash,
+      currentDidKey: head.CurrentDIDKey,
+      stateHash: "",
+      fetchedAt: 0
+    };
+  }
+  advanceReceivedIdentityCheckpoint(registryURL, stableID, head) {
+    const previous = this.receivedIdentityCheckpoint(registryURL, stableID);
+    if (previous && (head.seq < previous.seq || head.seq === previous.seq && head.entryHash !== previous.entryHash)) {
+      throw new Error("received identity checkpoint rollback or fork");
+    }
+    if (previous?.seq === head.seq && previous.entryHash === head.entryHash) return false;
+    const heads = this.unknownRootFields.get("received_identity_heads");
+    const registry = heads?.[registryURL];
+    this.unknownRootFields.set("received_identity_heads", { ...heads, [registryURL]: { ...registry, [stableID]: {
+      Seq: head.seq,
+      EntryHash: head.entryHash,
+      CurrentDIDKey: head.currentDidKey,
+      StateHash: head.stateHash,
+      FetchedAt: new Date(head.fetchedAt).toISOString()
+    } } });
+    return true;
+  }
+  hasUndurableChanges() {
+    return this.undurable || this.pendingCommits > 0;
+  }
+  // Adopt a native reread after aw refused a stale CAS. The refused desired
+  // snapshot was never written and must not influence the next trust decision.
+  replaceWithDurableState(source) {
+    if (this.pendingCommits !== 0) {
+      throw new Error("cannot replace pin store while a commit is pending");
+    }
+    this.mutablePins.clear();
+    for (const [key, pin] of source.mutablePins) {
+      this.mutablePins.set(key, pin);
+      const unknown = source.unknownPinFields.get(pin);
+      if (unknown) this.unknownPinFields.set(pin, new Map(unknown));
+    }
+    this.addresses.clear();
+    for (const [address, pinKey] of source.addresses) this.addresses.set(address, pinKey);
+    this.unknownRootFields = new Map(source.unknownRootFields);
+    this.persistedYAML = source.persistedYAML;
+    this.undurable = false;
+  }
+  /** Serialize to YAML (compatible with Go's known_agents.yaml). */
+  toYAML() {
+    const pinsObj = emptyRecord();
+    for (const [key, pin] of this.mutablePins) {
+      const pinObj = recordFromUnknown(this.unknownPinFields.get(pin));
+      pinObj.address = pin.address;
+      pinObj.handle = pin.handle;
+      if (pin.stable_id !== void 0) pinObj.stable_id = pin.stable_id;
+      if (pin.did_key !== void 0) pinObj.did_key = pin.did_key;
+      if (pin.log_seq !== void 0) pinObj.log_seq = pin.log_seq;
+      if (pin.log_entry_hash !== void 0) pinObj.log_entry_hash = pin.log_entry_hash;
+      pinObj.first_seen = pin.first_seen;
+      pinObj.last_seen = pin.last_seen;
+      pinObj.server = pin.server;
+      pinsObj[key] = pinObj;
+    }
+    const addressesObj = emptyRecord();
+    for (const [key, value] of this.addresses) addressesObj[key] = value;
+    const root = recordFromUnknown(this.unknownRootFields);
+    root.pins = pinsObj;
+    root.addresses = addressesObj;
+    return yaml.dump(root);
+  }
+  /**
+   * Deserialize from YAML with strict schema validation. Throws on any
+   * malformed input so a corrupt trust database fails closed rather than being
+   * silently replaced by an empty store. js-yaml's default load rejects
+   * duplicate mapping keys and unknown/unsafe tags.
+   */
+  static fromYAML(content) {
+    let data;
+    let hasAnchor = false;
+    try {
+      data = yaml.load(content, {
+        schema: yaml.JSON_SCHEMA,
+        listener(eventType, state) {
+          if (eventType === "close" && state.anchor) {
+            hasAnchor = true;
+          }
+        }
+      });
+    } catch (error) {
+      const ex = error;
+      const where = ex.mark ? ` at line ${(ex.mark.line ?? 0) + 1} column ${(ex.mark.column ?? 0) + 1}` : "";
+      throw new Error(`pin store YAML is invalid${where}: ${ex.reason ?? "parse error"}`);
+    }
+    if (hasAnchor) {
+      throw new Error("pin store YAML must not use anchors or aliases");
+    }
+    const store = new _PinStore();
+    if (data === null || data === void 0) {
+      throw new Error("pin store is empty or has no document (truncated?); an intentional empty store is '{}'");
+    }
+    if (typeof data !== "object" || Array.isArray(data)) {
+      throw new Error("pin store root must be a mapping");
+    }
+    const root = data;
+    rejectMergeKeys(root);
+    store.unknownRootFields = collectUnknownFields(root, ROOT_FIELDS);
+    if (root.pins !== void 0 && root.pins !== null) {
+      if (typeof root.pins !== "object" || Array.isArray(root.pins)) {
+        throw new Error("pin store 'pins' must be a mapping");
+      }
+      for (const [key, value] of Object.entries(root.pins)) {
+        if (!key) throw new Error("pin store has an empty pin key");
+        const pin = validatePin(key, value);
+        store.mutablePins.set(key, pin);
+        const unknown = collectUnknownFields(value, PIN_FIELDS);
+        if (unknown.size > 0) store.unknownPinFields.set(pin, unknown);
+      }
+    }
+    if (root.addresses !== void 0 && root.addresses !== null) {
+      if (typeof root.addresses !== "object" || Array.isArray(root.addresses)) {
+        throw new Error("pin store 'addresses' must be a mapping");
+      }
+      for (const [key, value] of Object.entries(root.addresses)) {
+        if (!key) throw new Error("pin store has an empty address key");
+        if (typeof value !== "string" || !value) {
+          throw new Error(`pin store address '${key}' must reference a non-empty pin key`);
+        }
+        store.addresses.set(key, value);
+      }
+    }
+    for (const [address, pinKey] of store.addresses) {
+      const pin = store.mutablePins.get(pinKey);
+      if (!pin) {
+        throw new Error(`pin store address '${address}' references unknown pin`);
+      }
+      if (pin.address !== address) {
+        throw new Error(
+          `pin store reverse index for '${address}' points at a pin whose address is '${pin.address}'`
+        );
+      }
+    }
+    for (const [pinKey, pin] of store.mutablePins) {
+      const mapped = store.addresses.get(pin.address);
+      if (mapped === void 0) {
+        throw new Error(
+          `pin store pin '${pinKey}' claims address '${pin.address}' with no reverse index entry`
+        );
+      }
+      if (mapped !== pinKey) {
+        throw new Error(
+          `pin store pin '${pinKey}' claims address '${pin.address}', but the reverse index points at '${mapped}'`
+        );
+      }
+    }
+    store.persistedYAML = store.toYAML();
+    return store;
+  }
+};
+function emptyRecord() {
+  return /* @__PURE__ */ Object.create(null);
+}
+function recordFromUnknown(fields) {
+  const record = emptyRecord();
+  for (const [key, value] of fields ?? []) record[key] = value;
+  return record;
+}
+function collectUnknownFields(source, knownFields) {
+  const unknown = /* @__PURE__ */ new Map();
+  for (const [key, value] of Object.entries(source)) {
+    if (!knownFields.has(key)) unknown.set(key, value);
+  }
+  return unknown;
+}
+function rejectMergeKeys(value) {
+  if (Array.isArray(value)) {
+    for (const item of value) rejectMergeKeys(item);
+    return;
+  }
+  if (typeof value !== "object" || value === null) return;
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "<<") {
+      throw new Error("pin store YAML must not use merge keys");
+    }
+    rejectMergeKeys(child);
+  }
+}
+function validatePin(key, value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`pin '${key}' must be a mapping`);
+  }
+  const raw = value;
+  const requireString = (field) => {
+    const v = raw[field];
+    if (typeof v !== "string" || v === "") {
+      throw new Error(`pin '${key}' field '${field}' must be a non-empty string`);
+    }
+    return v;
+  };
+  const optionalString = (field) => {
+    const v = raw[field];
+    if (v === void 0 || v === null) return void 0;
+    if (typeof v !== "string") {
+      throw new Error(`pin '${key}' field '${field}' must be a string`);
+    }
+    return v;
+  };
+  const pin = {
+    address: requireString("address"),
+    handle: optionalString("handle") ?? "",
+    first_seen: requireString("first_seen"),
+    last_seen: requireString("last_seen"),
+    server: optionalString("server") ?? ""
+  };
+  const stableId = optionalString("stable_id");
+  if (stableId !== void 0) pin.stable_id = stableId;
+  const didKey = optionalString("did_key");
+  if (didKey !== void 0) pin.did_key = didKey;
+  const logSeq = raw["log_seq"];
+  if (logSeq !== void 0 && logSeq !== null) {
+    if (typeof logSeq !== "number" || !Number.isInteger(logSeq) || logSeq < 1) {
+      throw new Error(`pin '${key}' field 'log_seq' must be a positive integer`);
+    }
+    pin.log_seq = logSeq;
+  }
+  const logEntryHash = optionalString("log_entry_hash");
+  if (logEntryHash !== void 0) pin.log_entry_hash = logEntryHash;
+  return pin;
+}
+
 // channel-core/src/identity/trust.ts
 etc.sha512Sync = (...m) => sha512(etc.concatBytes(...m));
 var ANNOUNCEMENT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -8365,6 +8431,15 @@ var SenderTrustManager = class {
   async resolveTrustMetadata(verificationStatus, rawAddress, fromStableID, toDID, toStableID, context) {
     const status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const trimmedAddress = rawAddress.trim();
+    if (context && context.senderAddress === "" && fromStableID?.startsWith("did:aw:")) {
+      const resolved2 = {
+        trustAddress: this.canonicalTrustAddress(trimmedAddress),
+        meta: this.unavailableAgentMeta(),
+        receivedSender: await this.prepareReceivedSender(status2, fromStableID, context)
+      };
+      this.preparedMetadata.add(resolved2);
+      return resolved2;
+    }
     if (!status2 || !trimmedAddress) return void 0;
     if (context && !context.fromDID && (status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial")) {
       return void 0;
@@ -8408,7 +8483,7 @@ var SenderTrustManager = class {
       this.checkRecipientBinding(verificationStatus, toDID, toStableID),
       fromDID,
       fromStableID
-    ) && resolved.meta.identityScope !== "local" && !resolved.stableIdentityCheck) {
+    ) && resolved.meta.identityScope !== "local" && !resolved.stableIdentityCheck && !resolved.receivedSender) {
       resolved = void 0;
     }
     if (!resolved) {
@@ -8461,6 +8536,28 @@ var SenderTrustManager = class {
     let status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const acceptedInput = verificationStatus === "verified" || verificationStatus === "verified_legacy" || verificationStatus === "verified_custodial";
     const recipientBindingMismatch = acceptedInput && status2 === "identity_mismatch";
+    if (resolved?.receivedSender) {
+      const received = resolved.receivedSender;
+      if (!acceptedInput || recipientBindingMismatch || !fromDID) return { status: status2, stored: false };
+      if (received.fromDID !== fromDID || received.stableID !== fromStableID) {
+        return { status: "verification_stale", stored: false };
+      }
+      if (received.status !== "verified" || !received.registryURL || !received.head) {
+        return { status: received.status, stored: false };
+      }
+      try {
+        const checkpoint = store.receivedIdentityCheckpoint(received.registryURL, received.stableID);
+        if (!this.sameCheckpoint(checkpoint, received.checkpoint)) return { status: "verification_stale", stored: false };
+        return { status: "verified", stored: store.advanceReceivedIdentityCheckpoint(
+          received.registryURL,
+          received.stableID,
+          received.head
+        ) };
+      } catch (error) {
+        console.error("aweb: received sender checkpoint unavailable:", error);
+        return { status: "verification_stale", stored: false };
+      }
+    }
     if (!status2 || !rawAddress.trim()) return { status: status2, stored: false };
     const acceptedSignature = status2 === "verified" || status2 === "verified_legacy" || status2 === "verified_custodial";
     if (!acceptedSignature || recipientBindingMismatch || !fromDID) return { status: status2, stored: false };
@@ -8509,6 +8606,31 @@ var SenderTrustManager = class {
       return checkpointAdvanced ? { ...localResult, stored: true } : localResult;
     }
     return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
+  }
+  async prepareReceivedSender(status2, stableID, context) {
+    const check = { fromDID: context.fromDID || "", stableID, status: status2 || "unverified" };
+    if (!["verified", "verified_legacy", "verified_custodial"].includes(check.status) || !context.fromDID) return check;
+    const membership = context.senderMembership;
+    check.status = "verification_stale";
+    if (!membership || membership.state === "unknown") return check;
+    if (membership.state !== "active" || membership.member_did_aw !== stableID) {
+      check.status = "identity_mismatch";
+      return check;
+    }
+    if (!this.teamID || membership.team_id !== this.teamID) return check;
+    const verified = await this.registry.verifyReceivedIdentity(this.teamID, stableID, context.fromDID, (registryURL) => {
+      const head = context.pinStore.receivedIdentityCheckpoint(registryURL, stableID);
+      check.checkpoint = head;
+      return head;
+    });
+    if (verified.result.error) console.error("aweb: received sender identity verification:", verified.result.error);
+    if (verified.result.outcome === "HARD_ERROR") check.status = "identity_mismatch";
+    if (verified.result.outcome === "OK_VERIFIED" && verified.result.currentDidKey === context.fromDID && verified.result.verifiedHead) {
+      check.status = "verified";
+      check.registryURL = verified.registryURL;
+      check.head = verified.result.verifiedHead;
+    }
+    return check;
   }
   checkRecipientBinding(status2, toDID, toStableID) {
     if (status2 !== "verified" && status2 !== "verified_legacy" && status2 !== "verified_custodial") {
@@ -9815,6 +9937,10 @@ async function normalizeAndPersistMessageTrust(options, msg, fromAlias, fromAddr
       toDID,
       toStableID,
       {
+        // Read-time attestation stays on the HTTP record; local decrypt and
+        // signed-envelope normalization cannot supply membership authority.
+        senderAddress: fromAddress?.trim() || (msg.signed_from?.includes("/") ? msg.signed_from : ""),
+        senderMembership: msg.sender_membership,
         pinStore: options.pinStore,
         fromDID: msg.from_did,
         verificationAddress: msg.signed_from || fromAddress || fromAlias || ""

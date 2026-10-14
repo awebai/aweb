@@ -110,6 +110,7 @@ export class RegistryResolver {
   private addressCache = new Map<string, CacheEntry<{ registryURL: string; response: AddressResponse }>>();
   private keyCache = new Map<string, CacheEntry<DidKeyResolution>>();
   private headCache = new Map<string, VerifiedLogHead>();
+  private receivedRegistries = new Map<string, RegistryResolver>();
   private readonly fallbackRegistryURL: string;
   private readonly identityDomain: string;
 
@@ -151,16 +152,44 @@ export class RegistryResolver {
       return { outcome: "HARD_ERROR", error: "registry address did:aw mismatch" };
     }
 
+    return this.verifyStableIdentityAtRegistry(resolvedAddress.registryURL, stableID, expectedCurrentDidKey);
+  }
+
+  /** Addressless receive authority comes only from the selected delivery team.
+   * Each registry has independent key/log caches; no address is manufactured. */
+  async verifyReceivedIdentity(
+    teamID: string, stableID: string, did: string, checkpointFor?: (registryURL: string) => VerifiedLogHead | undefined,
+  ): Promise<{ registryURL: string; result: StableIdentityVerification }> {
+    try {
+      const separator = teamID.indexOf(":");
+      if (separator < 1 || teamID.indexOf(":", separator + 1) !== -1) throw new Error("invalid delivery team");
+      const registryURL = (await this.discoverRegistry(teamID.slice(separator + 1))).replace(/\/+$/, "");
+      let scoped = this.receivedRegistries.get(registryURL);
+      if (!scoped) {
+        scoped = new RegistryResolver(this.fetchImpl, this.resolveTxtImpl, this.now);
+        this.receivedRegistries.set(registryURL, scoped);
+      }
+      const checkpoint = checkpointFor?.(registryURL);
+      if (checkpoint) scoped.seedVerifiedHead(stableID, checkpoint);
+      return { registryURL, result: await scoped.verifyStableIdentityAtRegistry(registryURL, stableID, did, true) };
+    } catch (error) {
+      return { registryURL: "", result: { outcome: "OK_DEGRADED", error: String(error) } };
+    }
+  }
+
+  private async verifyStableIdentityAtRegistry(
+    registryURL: string, stableID: string, expectedCurrentDidKey: string, fresh = false,
+  ): Promise<StableIdentityVerification> {
     let resolution: DidKeyResolution;
     try {
-      resolution = await this.resolveDidKey(resolvedAddress.registryURL, stableID);
+      resolution = await this.resolveDidKey(registryURL, stableID, fresh);
     } catch (error) {
       return { outcome: "OK_DEGRADED", error: String(error) };
     }
     const expectedKey = expectedCurrentDidKey.trim();
     if (expectedKey && resolution.current_did_key !== expectedKey) {
       return {
-        outcome: "STALE_CACHE",
+        outcome: fresh ? "HARD_ERROR" : "STALE_CACHE",
         currentDidKey: resolution.current_did_key,
         error: "registry key cache does not match the signed current key",
       };
@@ -178,7 +207,7 @@ export class RegistryResolver {
     // anchoring the full log to genesis, matching the Go resolver.
     if (verification.outcome === "OK_DEGRADED" && !verification.error) {
       return this.verifyStableIdentityViaFullLog(
-        resolvedAddress.registryURL,
+        registryURL,
         stableID,
         resolution.current_did_key,
       );
@@ -356,14 +385,15 @@ export class RegistryResolver {
     return value;
   }
 
-  private async resolveDidKey(registryURL: string, stableID: string): Promise<DidKeyResolution> {
+  private async resolveDidKey(registryURL: string, stableID: string, fresh = false): Promise<DidKeyResolution> {
     const cached = this.keyCache.get(stableID);
-    if (cached && this.now() <= cached.expiresAt) {
+    if (!fresh && cached && this.now() <= cached.expiresAt) {
       return cached.value;
     }
     const response = await this.getJSON<DidKeyResolution>(
       registryURL,
       `/v1/did/${pathSafeSegment(stableID)}/key`,
+      fresh,
     );
     this.keyCache.set(stableID, {
       value: response,

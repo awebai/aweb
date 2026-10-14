@@ -1,6 +1,6 @@
 import { APIError, type APIClient } from "./client.js";
 import type { MessageEnvelope, VerificationStatus } from "../identity/signing.js";
-import type { ReplacementAnnouncement, RotationAnnouncement } from "../identity/trust.js";
+import type { ReplacementAnnouncement, RotationAnnouncement, SenderMembership } from "../identity/trust.js";
 import {
   signedPayloadConversationStatus,
   verifyMessage,
@@ -19,6 +19,7 @@ export interface ChatMessage {
   from_did?: string;
   to_did?: string;
   from_stable_id?: string;
+  sender_membership?: SenderMembership;
   to_stable_id?: string;
   signature?: string;
   signing_key_id?: string;

@@ -1,4 +1,6 @@
 import yaml from "js-yaml";
+import { extractPublicKey } from "./did.js";
+import { isValidDidLogSequence, type VerifiedLogHead } from "./registry.js";
 
 export type PinResult = "ok" | "new" | "mismatch" | "skipped";
 export type IdentityScope = "global" | "local";
@@ -310,6 +312,43 @@ export class PinStore {
     });
     this.commitTail = attempt.catch(() => {});
     return attempt;
+  }
+
+  // Shared with Go; addressless receive checkpoints never create address pins.
+  receivedIdentityCheckpoint(registryURL: string, stableID: string): VerifiedLogHead | undefined {
+    const raw = this.unknownRootFields.get("received_identity_heads");
+    if (raw === undefined) return undefined;
+    const mapping = (value: unknown): Record<string, unknown> => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid received identity checkpoints");
+      return value as Record<string, unknown>;
+    };
+    const registry = mapping(raw)[registryURL];
+    if (registry === undefined) return undefined;
+    const value = mapping(registry)[stableID];
+    if (value === undefined) return undefined;
+    const head = mapping(value);
+    if (!isValidDidLogSequence(head.Seq as number) || typeof head.EntryHash !== "string"
+        || !/^[a-f0-9]{64}$/.test(head.EntryHash) || typeof head.CurrentDIDKey !== "string") {
+      throw new Error("invalid received identity checkpoint");
+    }
+    extractPublicKey(head.CurrentDIDKey);
+    return { seq: head.Seq as number, entryHash: head.EntryHash,
+      currentDidKey: head.CurrentDIDKey, stateHash: "", fetchedAt: 0 };
+  }
+
+  advanceReceivedIdentityCheckpoint(registryURL: string, stableID: string, head: VerifiedLogHead): boolean {
+    const previous = this.receivedIdentityCheckpoint(registryURL, stableID);
+    if (previous && (head.seq < previous.seq || (head.seq === previous.seq && head.entryHash !== previous.entryHash))) {
+      throw new Error("received identity checkpoint rollback or fork");
+    }
+    if (previous?.seq === head.seq && previous.entryHash === head.entryHash) return false;
+    const heads = this.unknownRootFields.get("received_identity_heads") as Record<string, unknown> | undefined;
+    const registry = heads?.[registryURL] as Record<string, unknown> | undefined;
+    this.unknownRootFields.set("received_identity_heads", { ...heads, [registryURL]: { ...registry, [stableID]: {
+      Seq: head.seq, EntryHash: head.entryHash, CurrentDIDKey: head.currentDidKey,
+      StateHash: head.stateHash, FetchedAt: new Date(head.fetchedAt).toISOString(),
+    } } });
+    return true;
   }
 
   hasUndurableChanges(): boolean {

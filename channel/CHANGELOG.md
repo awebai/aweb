@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.7.15
+
+- Verify addressless dashboard human senders using their participant-authorized membership and the delivery team registry, preserving signature and recipient checks. Update the plugin and restart the seat to load the fix.
+
 ## 1.7.14
 
 - Report a sender the AWID registry definitively does not know (HTTP 404), such

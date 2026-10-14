@@ -80,16 +80,34 @@ interface PreparedStableIdentityCheck {
   result: StableIdentityVerification;
 }
 
+export interface SenderMembership {
+  team_id: string;
+  member_did_aw?: string | null;
+  state: "active" | "inactive" | "unknown";
+}
+
+interface ReceivedSenderCheck {
+  fromDID: string;
+  stableID: string;
+  status: VerificationStatus;
+  registryURL?: string;
+  checkpoint?: PinCheckpoint;
+  head?: VerifiedLogHead;
+}
+
 interface ResolvedTrustMetadata {
   trustAddress: string;
   meta: AgentMeta;
   stableIdentityCheck?: PreparedStableIdentityCheck;
+  receivedSender?: ReceivedSenderCheck;
 }
 
 interface ResolveTrustContext {
   pinStore: PinStore;
   fromDID: string | undefined;
   verificationAddress: string;
+  senderAddress?: string;
+  senderMembership?: SenderMembership;
 }
 
 interface AgentMetaCacheEntry {
@@ -148,6 +166,15 @@ export class SenderTrustManager {
   ): Promise<ResolvedTrustMetadata | undefined> {
     const status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const trimmedAddress = rawAddress.trim();
+    if (context && context.senderAddress === "" && fromStableID?.startsWith("did:aw:")) {
+      const resolved: ResolvedTrustMetadata = {
+        trustAddress: this.canonicalTrustAddress(trimmedAddress),
+        meta: this.unavailableAgentMeta(),
+        receivedSender: await this.prepareReceivedSender(status, fromStableID, context),
+      };
+      this.preparedMetadata.add(resolved);
+      return resolved;
+    }
     if (!status || !trimmedAddress) return undefined;
     if (
       context
@@ -237,6 +264,7 @@ export class SenderTrustManager {
       )
       && resolved.meta.identityScope !== "local"
       && !resolved.stableIdentityCheck
+      && !resolved.receivedSender
     ) {
       resolved = undefined;
     }
@@ -323,6 +351,25 @@ export class SenderTrustManager {
       || verificationStatus === "verified_legacy"
       || verificationStatus === "verified_custodial";
     const recipientBindingMismatch = acceptedInput && status === "identity_mismatch";
+    if (resolved?.receivedSender) {
+      const received = resolved.receivedSender;
+      if (!acceptedInput || recipientBindingMismatch || !fromDID) return { status, stored: false };
+      if (received.fromDID !== fromDID || received.stableID !== fromStableID) {
+        return { status: "verification_stale", stored: false };
+      }
+      if (received.status !== "verified" || !received.registryURL || !received.head) {
+        return { status: received.status, stored: false };
+      }
+      try {
+        const checkpoint = store.receivedIdentityCheckpoint(received.registryURL, received.stableID);
+        if (!this.sameCheckpoint(checkpoint, received.checkpoint)) return { status: "verification_stale", stored: false };
+        return { status: "verified", stored: store.advanceReceivedIdentityCheckpoint(
+          received.registryURL, received.stableID, received.head) };
+      } catch (error) {
+        console.error("aweb: received sender checkpoint unavailable:", error);
+        return { status: "verification_stale", stored: false };
+      }
+    }
     if (!status || !rawAddress.trim()) return { status, stored: false };
 
     const acceptedSignature = status === "verified" || status === "verified_legacy" || status === "verified_custodial";
@@ -383,6 +430,35 @@ export class SenderTrustManager {
       return checkpointAdvanced ? { ...localResult, stored: true } : localResult;
     }
     return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
+  }
+
+  private async prepareReceivedSender(
+    status: VerificationStatus | undefined, stableID: string, context: ResolveTrustContext,
+  ): Promise<ReceivedSenderCheck> {
+    const check: ReceivedSenderCheck = { fromDID: context.fromDID || "", stableID, status: status || "unverified" };
+    if (!["verified", "verified_legacy", "verified_custodial"].includes(check.status) || !context.fromDID) return check;
+    const membership = context.senderMembership;
+    check.status = "verification_stale";
+    if (!membership || membership.state === "unknown") return check;
+    if (membership.state !== "active" || membership.member_did_aw !== stableID) {
+      check.status = "identity_mismatch";
+      return check;
+    }
+    if (!this.teamID || membership.team_id !== this.teamID) return check;
+    const verified = await this.registry.verifyReceivedIdentity(this.teamID, stableID, context.fromDID, registryURL => {
+      const head = context.pinStore.receivedIdentityCheckpoint(registryURL, stableID);
+      check.checkpoint = head;
+      return head;
+    });
+    if (verified.result.error) console.error("aweb: received sender identity verification:", verified.result.error);
+    if (verified.result.outcome === "HARD_ERROR") check.status = "identity_mismatch";
+    if (verified.result.outcome === "OK_VERIFIED" && verified.result.currentDidKey === context.fromDID
+        && verified.result.verifiedHead) {
+      check.status = "verified";
+      check.registryURL = verified.registryURL;
+      check.head = verified.result.verifiedHead;
+    }
+    return check;
   }
 
   private checkRecipientBinding(

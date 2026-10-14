@@ -870,7 +870,7 @@ async function commitPinStore(
 
 async function normalizeAndPersistMessageTrust(
   options: Pick<ChannelLoopOptions, "trust" | "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand" | "onTrace">,
-  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from">,
+  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "sender_membership">,
   fromAlias: string | undefined,
   fromAddress: string | undefined,
   toDID: string | undefined,
@@ -892,6 +892,10 @@ async function normalizeAndPersistMessageTrust(
         toDID,
         toStableID,
         {
+          // Read-time attestation stays on the HTTP record; local decrypt and
+          // signed-envelope normalization cannot supply membership authority.
+          senderAddress: fromAddress?.trim() || (msg.signed_from?.includes("/") ? msg.signed_from : ""),
+          senderMembership: msg.sender_membership,
           pinStore: options.pinStore,
           fromDID: msg.from_did,
           verificationAddress: msg.signed_from || fromAddress || fromAlias || "",
@@ -950,7 +954,7 @@ async function persistDeliveryMark(
 
 async function normalizeMessageTrust(
   options: Pick<ChannelLoopOptions, "trust" | "pinStore">,
-  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from">,
+  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "sender_membership">,
   trustAddress: string,
   verificationAddress: string,
   toDID: string | undefined,
