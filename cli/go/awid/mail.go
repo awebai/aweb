@@ -463,11 +463,12 @@ func httpStatusIs(err error, status int) bool {
 }
 
 func (c *Client) mailConversationItemTarget(item ConversationItem, preferAddress bool) mailConversationTarget {
+	// A grant seat takes part as its resident identity, not its session key.
 	otherDIDs, otherAddresses := OtherConversationParticipants(
 		item.ParticipantDIDs,
 		item.ParticipantAddresses,
 		c.stableID,
-		c.did,
+		c.ParticipantDID(),
 		c.address,
 	)
 	if preferAddress && len(otherDIDs) == 1 && isLocalDIDKey(otherDIDs[0]) {
