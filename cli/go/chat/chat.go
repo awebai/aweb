@@ -711,6 +711,10 @@ func sessionActivity(session awid.ChatSessionItem) string {
 	return session.CreatedAt
 }
 
+// errNoConversationFound is a lookup that succeeded and matched no chat, as
+// opposed to a lookup that failed.
+var errNoConversationFound = errors.New("no conversation found")
+
 // findSession finds the session ID for a conversation with targetAlias.
 // Checks pending first (captures sender_waiting), falls back to listing sessions.
 //
@@ -936,7 +940,7 @@ func findSessionWithOptions(ctx context.Context, client *awid.Client, targetAlia
 		}
 	}
 
-	return "", false, fmt.Errorf("no conversation found with %s", targetAlias)
+	return "", false, fmt.Errorf("%w with %s", errNoConversationFound, targetAlias)
 }
 
 // buildMessages converts ChatMessage slice to Event slice.
@@ -1265,6 +1269,10 @@ func Send(ctx context.Context, client *awid.Client, myAlias string, targets []st
 			}, myAlias, targets, message, waitSeconds, opts, &sentAt, callback)
 		} else if findErr != nil &&
 			strings.Contains(findErr.Error(), "multiple conversations match") {
+			return nil, findErr
+		} else if findErr != nil && opts.FollowSessionEncryption != nil && !errors.Is(findErr, errNoConversationFound) {
+			// A failed lookup cannot tell an existing chat, which this send
+			// must follow, from a new one; it must not start a plaintext chat.
 			return nil, findErr
 		}
 	}
