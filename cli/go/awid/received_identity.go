@@ -45,9 +45,14 @@ func (r *RegistryResolver) receivedRegistry(ctx context.Context, teamID string) 
 	return registryURL, scoped, nil
 }
 
-// NormalizeReceivedSenderTrust keeps display aliases out of no-address global
-// verification. It cannot promote a failed signature or recipient mismatch.
-func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status VerificationStatus, address, alias, did, stableID string, membership *SenderMembership, ra *RotationAnnouncement, repl *ReplacementAnnouncement, contact *bool) (VerificationStatus, *bool) {
+// NormalizeReceivedSenderTrust keeps display labels out of cross-team local
+// and no-address global verification. It cannot promote a failed signature or recipient mismatch.
+func (c *Client) NormalizeReceivedSenderTrust(ctx context.Context, status VerificationStatus, address, alias, did, stableID string, membership *SenderMembership, ra *RotationAnnouncement, repl *ReplacementAnnouncement, contact *bool, binding ...ReceivedSenderBinding) (VerificationStatus, *bool) {
+	if len(binding) > 0 && strings.TrimSpace(stableID) == "" {
+		if localStatus, handled := c.receivedLocalSenderTrust(status, address, did, membership, binding[0]); handled {
+			return localStatus, nil
+		}
+	}
 	if strings.TrimSpace(address) != "" || !strings.HasPrefix(strings.TrimSpace(stableID), "did:aw:") {
 		reference := address
 		if reference == "" {
@@ -205,4 +210,66 @@ func (c *Client) saveReceivedCheckpoint(registryURL, stableID string, head *Veri
 		c.pinStore.undurable.Store(true)
 	}
 	return err
+}
+
+// ReceivedSenderBinding keeps the participant-authorized projection separate
+// from the sender's signed claims during read normalization.
+type ReceivedSenderBinding struct {
+	ProjectedDID string
+	TeamID       string
+}
+
+func (c *Client) receivedLocalSenderTrust(status VerificationStatus, address, did string, member *SenderMembership, binding ReceivedSenderBinding) (VerificationStatus, bool) {
+	chain, ok := c.resolver.(*ChainResolver)
+	if !ok || chain.Team == nil || chain.Team.TeamID == "" {
+		return status, false
+	}
+	selected := chain.Team.TeamID
+	namespace := func(team string) string {
+		domain, _, err := ParseTeamID(team)
+		if err != nil {
+			return ""
+		}
+		return domain
+	}
+	addressNamespace := ""
+	if before, _, found := strings.Cut(strings.TrimSpace(address), "/"); found {
+		addressNamespace = before
+	}
+	referenceMatches := func(team string) bool { return addressNamespace == team || addressNamespace == namespace(team) }
+	crossTeam := (member != nil && member.TeamID != "" && member.TeamID != selected) ||
+		(binding.TeamID != "" && binding.TeamID != selected) ||
+		(addressNamespace != "" && !referenceMatches(selected))
+	if !crossTeam {
+		return status, false
+	}
+	if status != Verified && status != VerifiedLegacy && status != VerifiedCustodial {
+		return status, true
+	}
+	if member == nil {
+		return VerificationStale, true
+	}
+	if member.MemberDIDAW != "" || member.State == "inactive" ||
+		(binding.TeamID != "" && member.TeamID != "" && binding.TeamID != member.TeamID) ||
+		(addressNamespace != "" && member.TeamID != "" && !referenceMatches(member.TeamID)) ||
+		(binding.ProjectedDID != "" && binding.ProjectedDID != did) {
+		return IdentityMismatch, true
+	}
+	if member.State != "active" || namespace(member.TeamID) == "" || binding.ProjectedDID == "" || did == "" {
+		return VerificationStale, true
+	}
+	if _, err := ExtractPublicKey(did); err != nil {
+		return IdentityMismatch, true
+	}
+	if c.pinStore != nil && strings.Contains(address, "/") {
+		c.pinStore.mu.Lock()
+		removed := c.pinStore.RemoveAddress(address)
+		c.pinStore.mu.Unlock()
+		if removed {
+			if err := c.savePinStore(); err != nil {
+				return VerificationStale, true
+			}
+		}
+	}
+	return Verified, true
 }

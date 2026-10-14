@@ -52,3 +52,63 @@ func TestReceivedSenderOtherTeamIsUnproven(t *testing.T) {
 		})
 	}
 }
+
+// Same decision matrix as "cross-team received local sender" in channel-core.
+func TestReceivedLocalSenderMatrix(t *testing.T) {
+	key := "did:key:z6Mkf5qoqVvkppr8VP9wGDqJNZoq1gMQy7KpGAaTZCpypWzH"
+	for _, tc := range []struct {
+		name string
+		want VerificationStatus
+	}{
+		{"active", Verified}, {"missing", VerificationStale}, {"unknown", VerificationStale},
+		{"empty-team", VerificationStale}, {"inactive", IdentityMismatch}, {"wrong-team", IdentityMismatch}, {"wrong-label", IdentityMismatch},
+		{"global-projection", IdentityMismatch}, {"wrong-projected-key", IdentityMismatch},
+		{"missing-projected-key", VerificationStale}, {"failed-signature", Failed},
+		{"wrong-recipient", IdentityMismatch}, {"plaintext-label", Verified}, {"qualified-team-label", Verified},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Client{resolver: &ChainResolver{Team: &TeamRosterResolver{TeamID: "support:acme.com"}}}
+			c.SetPinStore(NewPinStore(), "")
+			member := &SenderMembership{TeamID: "outbound:sender.test", State: "active"}
+			binding := ReceivedSenderBinding{ProjectedDID: key, TeamID: "outbound:sender.test"}
+			status, address := Verified, ""
+			switch tc.name {
+			case "missing":
+				member = nil
+			case "unknown":
+				member.State = "unknown"
+			case "empty-team":
+				member.TeamID = ""
+			case "inactive":
+				member.State = "inactive"
+			case "wrong-team":
+				member.TeamID = "another:another.test"
+			case "wrong-label":
+				address = "wrong.test/alice"
+			case "global-projection":
+				member.MemberDIDAW = "did:aw:sender"
+			case "wrong-projected-key":
+				binding.ProjectedDID = "did:key:other"
+			case "missing-projected-key":
+				binding.ProjectedDID = ""
+			case "failed-signature":
+				status = Failed
+			case "wrong-recipient":
+				status = IdentityMismatch
+			case "plaintext-label":
+				address = "sender.test/alice"
+				binding.TeamID = ""
+			case "qualified-team-label":
+				address = "outbound:sender.test/alice"
+				binding.TeamID = ""
+			}
+			got, contact := c.NormalizeReceivedSenderTrust(context.Background(), status, address, "alice", key, "", member, nil, nil, nil, binding)
+			if got != tc.want || contact != nil {
+				t.Fatalf("got %s, want %s", got, tc.want)
+			}
+			if len(c.pinStore.Pins) != 0 || len(c.pinStore.Addresses) != 0 {
+				t.Fatal("local sender pinned")
+			}
+		})
+	}
+}

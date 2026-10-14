@@ -767,6 +767,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
 		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !c.signedMailDisplayMatches(m.SignedPayload, map[string]string{
 			"type": "mail", "body": m.Body, "subject": m.Subject,
 			"message_id": m.MessageID, "conversation_id": m.ConversationID,
@@ -795,6 +796,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 
 			m.Subject = plain.Subject
 			m.Body = plain.Body
+			binding.TeamID = plain.From.TeamID
 			applyE2EEPlaintextMailMetadata(m, plain)
 			m.VerificationStatus = Verified
 		}
@@ -881,7 +883,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 		ownAddressless := senderRead && strings.TrimSpace(m.FromAddress) == "" && c.stableID != "" &&
 			m.FromStableID == c.stableID && c.ParticipantDID() != "" && m.FromDID == c.ParticipantDID()
 		if !ownAddressless {
-			m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAlias, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
+			m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAlias, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact, binding)
 		}
 	}
 	return out, nil

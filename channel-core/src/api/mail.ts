@@ -33,6 +33,8 @@ export interface InboxMessage {
   message_version?: number;
   encrypted_envelope?: unknown;
   signed_from?: string;
+  signed_from_team_id?: string;
+  projected_from_did?: string;
   rotation_announcement?: RotationAnnouncement;
   replacement_announcement?: ReplacementAnnouncement;
   is_contact?: boolean;
@@ -82,6 +84,7 @@ export async function fetchInbox(
 }
 
 function hydrateAddressesFromSignedPayload(msg: InboxMessage): void {
+  msg.projected_from_did = msg.from_did;
   if (!msg.signed_payload) return;
   try {
     const payload = JSON.parse(msg.signed_payload) as {

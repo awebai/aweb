@@ -870,7 +870,7 @@ async function commitPinStore(
 
 async function normalizeAndPersistMessageTrust(
   options: Pick<ChannelLoopOptions, "trust" | "pinStore" | "pinStorePath" | "pinStoreWriter" | "workdir" | "awCommand" | "onTrace">,
-  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "sender_membership">,
+  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "signed_from_team_id" | "projected_from_did" | "sender_membership">,
   fromAlias: string | undefined,
   fromAddress: string | undefined,
   toDID: string | undefined,
@@ -896,6 +896,8 @@ async function normalizeAndPersistMessageTrust(
           // signed-envelope normalization cannot supply membership authority.
           senderAddress: fromAddress?.trim() || (msg.signed_from?.includes("/") ? msg.signed_from : ""),
           senderMembership: msg.sender_membership,
+          senderTeamID: msg.signed_from_team_id,
+          projectedSenderDID: msg.projected_from_did,
           pinStore: options.pinStore,
           fromDID: msg.from_did,
           verificationAddress: msg.signed_from || fromAddress || fromAlias || "",
@@ -954,7 +956,7 @@ async function persistDeliveryMark(
 
 async function normalizeMessageTrust(
   options: Pick<ChannelLoopOptions, "trust" | "pinStore">,
-  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "sender_membership">,
+  msg: Pick<InboxMessage | ChatMessage, "verification_status" | "from_did" | "from_stable_id" | "rotation_announcement" | "replacement_announcement" | "signed_from" | "signed_from_team_id" | "projected_from_did" | "sender_membership">,
   trustAddress: string,
   verificationAddress: string,
   toDID: string | undefined,
@@ -992,6 +994,7 @@ async function resolveMailForDelivery(
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "mail", msg.conversation_id, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
     if (authenticated) {
+      msg.projected_from_did ??= msg.from_did;
       Object.assign(msg, authenticated);
       if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }
@@ -1020,6 +1023,7 @@ async function resolveChatForDelivery(
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "chat", sessionID, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
     if (authenticated) {
+      msg.projected_from_did ??= msg.from_did;
       Object.assign(msg, authenticated);
       if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }

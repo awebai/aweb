@@ -750,6 +750,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
 		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !signedDisplayMatches(m.SignedPayload, map[string]string{
 			"type": "chat", "body": m.Body,
 			"message_id": m.MessageID, "conversation_id": m.ConversationID,
@@ -777,6 +778,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 			}
 
 			m.Body = plain.Body
+			binding.TeamID = plain.From.TeamID
 			applyE2EEPlaintextChatMetadata(m, plain)
 			m.VerificationStatus = Verified
 		}
@@ -846,7 +848,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 				}
 			}
 		}
-		m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAgent, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact)
+		m.VerificationStatus, m.IsContact = c.NormalizeReceivedSenderTrust(ctx, m.VerificationStatus, m.FromAddress, m.FromAgent, m.FromDID, m.FromStableID, m.SenderMembership, m.RotationAnnouncement, m.ReplacementAnnouncement, m.IsContact, binding)
 	}
 	return &out, nil
 }

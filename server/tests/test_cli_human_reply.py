@@ -238,7 +238,7 @@ async def _cli(binary, cwd, env, *args):
 
 
 @asynccontextmanager
-async def _reply_context(binary, root, env, grant, address=""):
+async def _reply_context(binary, root, env, grant, address="", *, ttl="5m"):
     if not grant:
         yield root, env
         return
@@ -261,7 +261,7 @@ async def _reply_context(binary, root, env, grant, address=""):
             seat = root / "seat"
             seat.mkdir()
             minted = await _cli(binary, root, env, "id", "grant", "mint", "--bundle", "normal-agent",
-                       "--ttl", "5m", "--custody-socket", "auto", "--out", str(seat / ".aw"), "--json")
+                       "--ttl", ttl, "--custody-socket", "auto", "--out", str(seat / ".aw"), "--json")
             assert minted.get("address", "") == address
             assert minted["alias"] == "bob"
             assert not (seat / ".aw" / "signing.key").exists()

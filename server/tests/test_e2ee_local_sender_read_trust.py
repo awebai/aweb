@@ -35,11 +35,25 @@ from test_messages_http import _make_keypair, _make_certificate, _signed_team_he
 
 
 @asynccontextmanager
-async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retired, *, human=False):
+async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retired, *, human=False, cross_team=False, plaintext=False):
     """Deliver one local-sender E2EE mail to bob; yield bob's real CLI context
     and the registry it resolves through."""
     env.app.state.public_origin = str(env.client.base_url).rstrip("/")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    sender_team = TEAM
+    if cross_team:
+        sender_team = f"outbound-{uuid4().hex[:12]}:sender.test"
+        sender_team_sk, _, sender_team_did = _make_keypair()
+        await env.db.execute(
+            "INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key) VALUES ($1, 'sender.test', $2, $3)",
+            sender_team, sender_team.split(":", 1)[0], sender_team_did)
+        await env.registry_db.execute(
+            "INSERT INTO {{tables.teams}} (domain, name, team_did_key, visibility) VALUES ('sender.test', $1, $2, 'public')",
+            sender_team.split(":", 1)[0], sender_team_did)
+        await env.db.execute("UPDATE {{tables.agents}} SET team_id=$1, certificate_id='privacy-alice' WHERE agent_id=$2",
+                             sender_team, env.actors["alice"].id)
+        await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$1 WHERE workspace_id=$2",
+                             sender_team, env.actors["alice"].workspace)
     identities = {}
     for name in ("alice", "bob"):
         actor = env.actors[name]
@@ -54,7 +68,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
             signing_key=actor.sk, identity_did=actor.did, identity_stable_id=stable_id,
             encryption_public_key=public, custody="hosted_custodial" if human and name == "alice" else "self", now=now,
         )
-        identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=TEAM,
+        identities[name] = dict(address=address, did=actor.did, stable_id=stable_id, team_id=sender_team if name == "alice" else TEAM,
                                 signing_key=actor.sk, private_key=private, encryption_key=assertion)
     sender, agent = identities["alice"], identities["bob"]
     if human:
@@ -66,10 +80,21 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
                               conversation_id=conversation_id, created_at=now)
     assert not source["from"].get("address")
     assert bool(source["from"].get("stable_id")) == human
-    sent = await _request(env, "alice", "POST", "/v1/messages", {
-        "to_did": agent["did"], "message_id": message_id, "conversation_id": conversation_id,
-        "content_mode": "encrypted_v2", "message_version": 2, "encrypted_envelope": source,
-    })
+    if plaintext:
+        payload = canonical_json_bytes(dict(
+            type="mail", from_did=sender["did"], to_did=agent["did"], to_stable_id=agent["stable_id"],
+            subject="Local encrypted", body="local sender private text", message_id=message_id,
+            conversation_id=conversation_id, timestamp=now.isoformat(),
+            **{"from": sender_team.split(":", 1)[1] + "/alice", "to": agent["address"]},
+        ))
+        body = dict(to_did=agent["did"], to_address=agent["address"], subject="Local encrypted",
+                    body="local sender private text", message_id=message_id, conversation_id=conversation_id,
+                    timestamp=now.isoformat(), from_did=sender["did"], to_stable_id=agent["stable_id"],
+                    signature=sign_message(sender["signing_key"], payload), signed_payload=payload.decode())
+    else:
+        body = dict(to_did=agent["did"], message_id=message_id, conversation_id=conversation_id,
+                    content_mode="encrypted_v2", message_version=2, encrypted_envelope=source)
+    sent = await _request(env, "alice", "POST", "/v1/messages", body)
     assert sent.status_code == 200, sent.text
     if sender_retired:
         # Team lifecycle removal of a local member after it sent.
@@ -144,7 +169,7 @@ async def _local_sender_mail(env, tmp_path, global_resident, grant, sender_retir
     async with _registry_http(recorded_registry) as (registry_url, _):
         registry.url = registry_url
         child_env["AWID_REGISTRY_URL"] = registry_url
-        async with _reply_context(binary, tmp_path, child_env, grant, agent["address"]) as (command_dir, command_env):
+        async with _reply_context(binary, tmp_path, child_env, grant, agent["address"], ttl="never" if cross_team else "5m") as (command_dir, command_env):
             yield message_id, conversation_id, binary, command_dir, command_env, registry
 
 
@@ -364,3 +389,23 @@ async def test_channel_core_addressless_human_mail(
         assert not any("/addresses/" in path for path in node_reads), node_reads
         if not sender_retired:
             assert any(path.endswith("/key") for path in node_reads), node_reads
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("plaintext", [False, True], ids=["encrypted_v2", "plaintext"])
+@pytest.mark.parametrize("runtime", ["channel", "wake"])
+@pytest.mark.parametrize("state,expected", [("active", "verified"), ("inactive", "identity_mismatch"), ("unknown", "verification_stale")])
+async def test_cross_team_local_sender_to_global_grant(
+        privacy_app, runtime_packages, tmp_path, plaintext, runtime, state, expected):
+    async with _local_sender_mail(privacy_app, tmp_path, True, True, state == "inactive",
+                                 cross_team=True, plaintext=plaintext) as (
+            message_id, conversation_id, binary, command_dir, command_env, registry):
+        if state == "unknown":
+            await privacy_app.db.execute("UPDATE {{tables.agents}} SET certificate_id=NULL WHERE agent_id=$1", privacy_app.actors["alice"].id)
+        shown = await _cli(binary, command_dir, command_env, "mail", "show", "--message-id", message_id, "--json")
+        row = shown["messages"][0]
+        runtime_env = dict(command_env, PATH=f"{binary.parent}{os.pathsep}{command_env.get('PATH', '')}")
+        status, text = await PRESENTERS[runtime](tmp_path, binary, command_dir, runtime_env, message_id, conversation_id)
+        assert "local sender private text" in text
+        assert (row["verification_status"], status) == (expected, expected), (row["verification_status"], status, row.get("sender_membership"), registry.responses)
+        assert not any("/addresses/" in path for _, path, _, _ in registry.responses), registry.responses

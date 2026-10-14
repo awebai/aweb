@@ -75,6 +75,7 @@ export interface AuthenticatedEncryptedIdentity {
   from_did: string;
   from_stable_id: string;
   signed_from: string;
+  signed_from_team_id: string;
   to_did: string;
   to_stable_id: string;
 }
@@ -130,7 +131,7 @@ export async function verifyDecryptedMessage(
       if (!didMatches(projection.to_did, recipientDID, recipientStable)) return;
       if (projection.to_stable_id && projection.to_stable_id !== recipientStable) return;
     }
-    return { from_did: did, from_stable_id: stable, signed_from: address,
+    return { from_did: did, from_stable_id: stable, signed_from: address, signed_from_team_id: text(from.team_id),
       to_did: recipientDID, to_stable_id: recipientStable };
   } catch {
     // Missing proof (including older provider JSON), malformed data, and unknown

@@ -86,3 +86,39 @@ describe("addressless received human identity", () => {
     expect((await env.receive({ currentStore: PinStore.fromYAML("pins: {}\naddresses: {}\nreceived_identity_heads: null\n") })).status).toBe("verification_stale");
   });
 });
+
+// Same decision matrix as TestReceivedLocalSenderMatrix in Go.
+describe("cross-team received local sender", () => {
+  test.each([
+    ["active", "verified"], ["missing", "verification_stale"], ["unknown", "verification_stale"],
+    ["empty-team", "verification_stale"], ["inactive", "identity_mismatch"], ["wrong-team", "identity_mismatch"],
+    ["wrong-label", "identity_mismatch"], ["global-projection", "identity_mismatch"],
+    ["wrong-projected-key", "identity_mismatch"], ["missing-projected-key", "verification_stale"],
+    ["failed-signature", "failed"], ["wrong-recipient", "identity_mismatch"],
+    ["plaintext-label", "verified"], ["qualified-team-label", "verified"],
+  ])("%s => %s", async (variant, expected) => {
+    const env = setup();
+    const member: SenderMembership | undefined = variant === "missing" ? undefined : {
+      team_id: variant === "empty-team" ? "" : variant === "wrong-team" ? "another:another.test" : "outbound:sender.test",
+      state: variant === "unknown" ? "unknown" : variant === "inactive" ? "inactive" : "active",
+      member_did_aw: variant === "global-projection" ? stableID : "",
+    };
+    const raw = variant === "plaintext-label" ? "sender.test/alice"
+      : variant === "qualified-team-label" ? "outbound:sender.test/alice" : "alice";
+    const status = variant === "failed-signature" ? "failed" : "verified";
+    const recipient = variant === "wrong-recipient" ? rotatedKey : initialKey;
+    const prepared = await env.trust.resolveTrustMetadata(status, raw, undefined, recipient, undefined, {
+      pinStore: env.store, fromDID: initialKey,
+      projectedSenderDID: variant === "wrong-projected-key" ? rotatedKey : variant === "missing-projected-key" ? undefined : initialKey,
+      verificationAddress: variant === "wrong-label" ? "wrong.test/alice" : raw,
+      senderTeamID: variant.includes("label") && variant !== "wrong-label" ? "" : "outbound:sender.test",
+      senderMembership: member,
+    });
+    const got = await env.trust.normalizeResolvedTrust(env.store, status, raw, initialKey, undefined, recipient, undefined,
+      undefined, undefined, raw, prepared);
+    expect(got.status).toBe(expected);
+    expect(env.client.get).not.toHaveBeenCalled();
+    expect(env.requests).toEqual([]);
+    expect(env.store.pins.size).toBe(0); expect(env.store.addresses.size).toBe(0);
+  });
+});

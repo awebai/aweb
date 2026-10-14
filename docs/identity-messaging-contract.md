@@ -335,3 +335,41 @@ its existing authorship result when the signed stable ID is the client's own
 and the signature uses its current key (the resident key for a grant client).
 A claimed stable ID alone never establishes authorship; incoming reads still
 require the received-sender proof above.
+
+
+## Received cross-team local senders
+
+A local outbound sender remains a `did:key` identity with no AWID row. On a
+participant-authorized read, the authenticated delivery server vouches for the
+stored sender's membership in the **sender's** team, which can differ from the
+recipient's selected team. This receive attestation does not authorize first
+contact or create a global address; the delivery service still validates routing
+under the local outbound and stored-return-route rules above.
+
+For that cross-team local receive path, Go and channel-core require a valid
+message signature and recipient binding, no signed stable ID, an active
+`sender_membership` with empty `member_did_aw`, and agreement between the
+server-projected sender DID and the signed `did:key`. Any protected sender
+`team_id` must equal the attested team. A signed legacy namespace/member label
+must name that team's namespace (or its explicit team ID). The label remains a
+display/routing label: neither client looks up its address or alias or creates a
+global address pin. Same-team locals retain the authenticated live roster path;
+global `did:aw` senders retain their existing key/log and address checks.
+
+Both clients implement this decision matrix, exercised by
+`TestReceivedLocalSenderMatrix` and channel-core's `cross-team received local
+sender` tests. Real two-team mail tests cover a global resident grant, plaintext
+and encrypted-v2, CLI reads, channel presentation and wake presentation.
+
+| Evidence after signature and recipient checks | Result |
+| --- | --- |
+| Active local membership, agreeing protected team/label and projected DID | `verified` |
+| Missing/unknown membership or missing projected DID | `verification_stale` |
+| Inactive membership, nonempty member stable ID, contradictory team/label or projected DID | `identity_mismatch` |
+| Failed signature or recipient mismatch | Preserve failure; never promote |
+
+The encrypted sender's `from.team_id` is protected envelope data, not membership
+authority. The read-time server field supplies membership authority and survives
+decryption separately. Old servers lacking that field cannot establish this
+cross-team local receive proof and report `verification_stale` when the protected
+sender reference establishes a cross-team sender.

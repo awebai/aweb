@@ -100,6 +100,7 @@ interface ResolvedTrustMetadata {
   meta: AgentMeta;
   stableIdentityCheck?: PreparedStableIdentityCheck;
   receivedSender?: ReceivedSenderCheck;
+  receivedLocalSender?: { did: string; status: VerificationStatus };
 }
 
 interface ResolveTrustContext {
@@ -108,6 +109,8 @@ interface ResolveTrustContext {
   verificationAddress: string;
   senderAddress?: string;
   senderMembership?: SenderMembership;
+  senderTeamID?: string;
+  projectedSenderDID?: string;
 }
 
 interface AgentMetaCacheEntry {
@@ -166,6 +169,15 @@ export class SenderTrustManager {
   ): Promise<ResolvedTrustMetadata | undefined> {
     const status = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const trimmedAddress = rawAddress.trim();
+    const local = context && !fromStableID && this.prepareReceivedLocalSender(status, context);
+    if (local) {
+      const resolved: ResolvedTrustMetadata = {
+        trustAddress: this.canonicalTrustAddress(trimmedAddress), meta: this.unavailableAgentMeta(),
+        receivedLocalSender: local,
+      };
+      this.preparedMetadata.add(resolved);
+      return resolved;
+    }
     if (context && context.senderAddress === "" && fromStableID?.startsWith("did:aw:")) {
       const resolved: ResolvedTrustMetadata = {
         trustAddress: this.canonicalTrustAddress(trimmedAddress),
@@ -351,6 +363,13 @@ export class SenderTrustManager {
       || verificationStatus === "verified_legacy"
       || verificationStatus === "verified_custodial";
     const recipientBindingMismatch = acceptedInput && status === "identity_mismatch";
+    if (resolved?.receivedLocalSender) {
+      const local = resolved.receivedLocalSender;
+      if (!acceptedInput || recipientBindingMismatch) return { status, stored: false };
+      if (local.did !== fromDID || fromStableID) return { status: "verification_stale", stored: false };
+      return { status: local.status, stored: local.status === "verified" && rawAddress.includes("/")
+        ? store.removeAddresses([rawAddress]) : false };
+    }
     if (resolved?.receivedSender) {
       const received = resolved.receivedSender;
       if (!acceptedInput || recipientBindingMismatch || !fromDID) return { status, stored: false };
@@ -430,6 +449,39 @@ export class SenderTrustManager {
       return checkpointAdvanced ? { ...localResult, stored: true } : localResult;
     }
     return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
+  }
+
+  private prepareReceivedLocalSender(status: VerificationStatus | undefined, context: ResolveTrustContext)
+    : { did: string; status: VerificationStatus } | undefined {
+    const member = context.senderMembership;
+    const selected = this.teamID;
+    const namespace = (team: string) => {
+      const parts = team.split(":");
+      return parts.length === 2 && parts[0] && parts[1] ? parts[1] : "";
+    };
+    const protectedTeam = context.senderTeamID || "";
+    const address = context.verificationAddress.trim();
+    const addressNamespace = address.includes("/") ? address.split("/")[0] : "";
+    const referenceMatches = (team: string) => addressNamespace === team || addressNamespace === namespace(team);
+    const crossTeam = selected && ((member?.team_id && member.team_id !== selected)
+      || (protectedTeam && protectedTeam !== selected)
+      || (addressNamespace && !referenceMatches(selected)));
+    if (!crossTeam) return;
+    const result = { did: context.fromDID || "", status: status || "unverified" };
+    if (!["verified", "verified_legacy", "verified_custodial"].includes(result.status)) return result;
+    result.status = "verification_stale";
+    if (!member) return result;
+    if (member.member_did_aw || member.state === "inactive"
+      || (protectedTeam && member.team_id && protectedTeam !== member.team_id)
+      || (addressNamespace && member.team_id && !referenceMatches(member.team_id))
+      || (context.projectedSenderDID && context.projectedSenderDID !== context.fromDID)) {
+      result.status = "identity_mismatch";
+      return result;
+    }
+    if (member.state !== "active" || !namespace(member.team_id) || !context.projectedSenderDID || !context.fromDID) return result;
+    try { extractPublicKey(context.fromDID); } catch { result.status = "identity_mismatch"; return result; }
+    result.status = "verified";
+    return result;
   }
 
   private async prepareReceivedSender(

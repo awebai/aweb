@@ -3741,6 +3741,7 @@ async function fetchInbox(client, unreadOnly = true, limit = 50, messageID, log 
   return resp.messages;
 }
 function hydrateAddressesFromSignedPayload(msg) {
+  msg.projected_from_did = msg.from_did;
   if (!msg.signed_payload) return;
   try {
     const payload = JSON.parse(msg.signed_payload);
@@ -3821,6 +3822,7 @@ async function fetchHistory(client, sessionId, unreadOnly = false, limit = 50, m
   return resp.messages;
 }
 function hydrateAddressesFromSignedPayload2(msg) {
+  msg.projected_from_did = msg.from_did;
   if (!msg.signed_payload) return;
   try {
     const payload = JSON.parse(msg.signed_payload);
@@ -8431,6 +8433,16 @@ var SenderTrustManager = class {
   async resolveTrustMetadata(verificationStatus, rawAddress, fromStableID, toDID, toStableID, context) {
     const status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const trimmedAddress = rawAddress.trim();
+    const local = context && !fromStableID && this.prepareReceivedLocalSender(status2, context);
+    if (local) {
+      const resolved2 = {
+        trustAddress: this.canonicalTrustAddress(trimmedAddress),
+        meta: this.unavailableAgentMeta(),
+        receivedLocalSender: local
+      };
+      this.preparedMetadata.add(resolved2);
+      return resolved2;
+    }
     if (context && context.senderAddress === "" && fromStableID?.startsWith("did:aw:")) {
       const resolved2 = {
         trustAddress: this.canonicalTrustAddress(trimmedAddress),
@@ -8536,6 +8548,12 @@ var SenderTrustManager = class {
     let status2 = this.checkRecipientBinding(verificationStatus, toDID, toStableID);
     const acceptedInput = verificationStatus === "verified" || verificationStatus === "verified_legacy" || verificationStatus === "verified_custodial";
     const recipientBindingMismatch = acceptedInput && status2 === "identity_mismatch";
+    if (resolved?.receivedLocalSender) {
+      const local = resolved.receivedLocalSender;
+      if (!acceptedInput || recipientBindingMismatch) return { status: status2, stored: false };
+      if (local.did !== fromDID || fromStableID) return { status: "verification_stale", stored: false };
+      return { status: local.status, stored: local.status === "verified" && rawAddress.includes("/") ? store.removeAddresses([rawAddress]) : false };
+    }
     if (resolved?.receivedSender) {
       const received = resolved.receivedSender;
       if (!acceptedInput || recipientBindingMismatch || !fromDID) return { status: status2, stored: false };
@@ -8606,6 +8624,37 @@ var SenderTrustManager = class {
       return checkpointAdvanced ? { ...localResult, stored: true } : localResult;
     }
     return checkpointAdvanced ? { ...pinResult, stored: true } : pinResult;
+  }
+  prepareReceivedLocalSender(status2, context) {
+    const member = context.senderMembership;
+    const selected = this.teamID;
+    const namespace = (team) => {
+      const parts = team.split(":");
+      return parts.length === 2 && parts[0] && parts[1] ? parts[1] : "";
+    };
+    const protectedTeam = context.senderTeamID || "";
+    const address = context.verificationAddress.trim();
+    const addressNamespace = address.includes("/") ? address.split("/")[0] : "";
+    const referenceMatches = (team) => addressNamespace === team || addressNamespace === namespace(team);
+    const crossTeam = selected && (member?.team_id && member.team_id !== selected || protectedTeam && protectedTeam !== selected || addressNamespace && !referenceMatches(selected));
+    if (!crossTeam) return;
+    const result = { did: context.fromDID || "", status: status2 || "unverified" };
+    if (!["verified", "verified_legacy", "verified_custodial"].includes(result.status)) return result;
+    result.status = "verification_stale";
+    if (!member) return result;
+    if (member.member_did_aw || member.state === "inactive" || protectedTeam && member.team_id && protectedTeam !== member.team_id || addressNamespace && member.team_id && !referenceMatches(member.team_id) || context.projectedSenderDID && context.projectedSenderDID !== context.fromDID) {
+      result.status = "identity_mismatch";
+      return result;
+    }
+    if (member.state !== "active" || !namespace(member.team_id) || !context.projectedSenderDID || !context.fromDID) return result;
+    try {
+      extractPublicKey(context.fromDID);
+    } catch {
+      result.status = "identity_mismatch";
+      return result;
+    }
+    result.status = "verified";
+    return result;
   }
   async prepareReceivedSender(status2, stableID, context) {
     const check = { fromDID: context.fromDID || "", stableID, status: status2 || "unverified" };
@@ -9185,6 +9234,7 @@ async function verifyDecryptedMessage(fetched, decrypted, kind, conversationID, 
       from_did: did,
       from_stable_id: stable,
       signed_from: address,
+      signed_from_team_id: text(from.team_id),
       to_did: recipientDID,
       to_stable_id: recipientStable
     };
@@ -9941,6 +9991,8 @@ async function normalizeAndPersistMessageTrust(options, msg, fromAlias, fromAddr
         // signed-envelope normalization cannot supply membership authority.
         senderAddress: fromAddress?.trim() || (msg.signed_from?.includes("/") ? msg.signed_from : ""),
         senderMembership: msg.sender_membership,
+        senderTeamID: msg.signed_from_team_id,
+        projectedSenderDID: msg.projected_from_did,
         pinStore: options.pinStore,
         fromDID: msg.from_did,
         verificationAddress: msg.signed_from || fromAddress || fromAlias || ""
@@ -10014,6 +10066,7 @@ async function resolveMailForDelivery(options, msg) {
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "mail", msg.conversation_id, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
     if (authenticated) {
+      msg.projected_from_did ??= msg.from_did;
       Object.assign(msg, authenticated);
       if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }
@@ -10037,6 +10090,7 @@ async function resolveChatForDelivery(options, sessionID, msg) {
     const authenticated = await verifyDecryptedMessage(msg, decrypted, "chat", sessionID, options.self);
     msg.verification_status = authenticated ? "verified" : "unverified";
     if (authenticated) {
+      msg.projected_from_did ??= msg.from_did;
       Object.assign(msg, authenticated);
       if (authenticated.signed_from) msg.from_address = authenticated.signed_from;
     }

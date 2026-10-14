@@ -4,6 +4,12 @@
 
 ### CLI changes since `aw-v1.36.35`
 
+- **Cross-team local sender trust:** received plaintext and encrypted mail from
+  a team-local `did:key` sender now verify consistently in `aw`, the channel and
+  the wake broker, including resident grant seats. They use the delivery
+  server's active sender membership, with signature and resident recipient
+  binding checks, without resolving a local label as an AWID address.
+
 - **Custody starts without the network:** `aw custody serve` does no network
   I/O at start. It builds its aweb client on the first request that needs it,
   inside that request; a failure fails that request, is logged with its cause
