@@ -912,9 +912,11 @@ reused as automatic-release thresholds.
 `POST /v1/workspaces/heartbeat` and `PATCH /v1/workspaces/{workspace_id}`
 act only on the caller's own workspace: a team-certificate caller naming a
 workspace bound to another agent gets `403` and nothing changes, and a
-grant caller is limited to its subject's workspace and cannot set shared
-metadata. Team membership never authorizes refreshing another member's
-presence or rewriting its workspace metadata.
+grant caller is limited to its subject's workspace. A grant caller also
+cannot set `role`, `hostname`, `workspace_path` or `human_name`; it may
+update its subject workspace's `focus_task_ref`. Team membership never
+authorizes refreshing another member's presence or rewriting its workspace
+metadata.
 
 `DELETE /v1/workspaces/{workspace_id}` soft-deletes a gone local
 workspace and its bound agent row, plus releases any task claims held by
