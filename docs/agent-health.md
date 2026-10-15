@@ -173,6 +173,9 @@ message-signing scheme (`docs/vectors/message-signing-v1.json`).
   `automatic`, `operator`, `nobody` or `unknown`. `fixing.text` is optional, at
   most 120 bytes, and may name a role ("Nactiva's operator") but not a contact
   detail.
+- **Types**: a present field must have its type. An explicit `null` is not
+  an absent field: it is refused as `invalid_value`, as is any non-string
+  `reachable` or `fixing.by`.
 - **Timestamps**: `observed_at` and `valid_until` are exactly
   `YYYY-MM-DDTHH:MM:SSZ`, with no fractional seconds.
 - **`valid_until`**: at most 15 minutes after `observed_at`.

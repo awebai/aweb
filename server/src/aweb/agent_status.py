@@ -148,10 +148,10 @@ def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
         raise _refuse("invalid_value", "publisher_did must be a did:key")
     if not _is_safe_positive_integer(document["seq"]):
         raise _refuse("invalid_value", "seq must be an integer from 1 to 2^53-1")
-    if document["reachable"] not in REACHABLE_VALUES:
+    if not isinstance(document["reachable"], str) or document["reachable"] not in REACHABLE_VALUES:
         raise _refuse("invalid_value", "reachable must be yes, degraded, no or unknown")
-    reason = document.get("reason")
-    if reason is not None:
+    if "reason" in document:
+        reason = document["reason"]
         if not isinstance(reason, dict):
             raise _refuse("invalid_value", "reason must be an object")
         code = reason["code"]
@@ -163,11 +163,11 @@ def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
             raise _refuse("invalid_value", "reason.code must be a namespaced code of at most 64 bytes")
         if not isinstance(reason["text"], str):
             raise _refuse("invalid_value", "reason.text must be a string")
-    fixing = document.get("fixing")
-    if fixing is not None:
+    if "fixing" in document:
+        fixing = document["fixing"]
         if not isinstance(fixing, dict):
             raise _refuse("invalid_value", "fixing must be an object")
-        if fixing["by"] not in FIXING_BY_VALUES:
+        if not isinstance(fixing["by"], str) or fixing["by"] not in FIXING_BY_VALUES:
             raise _refuse("invalid_value", "fixing.by must be automatic, operator, nobody or unknown")
         if "text" in fixing and not isinstance(fixing["text"], str):
             raise _refuse("invalid_value", "fixing.text must be a string")
