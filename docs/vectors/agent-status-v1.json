@@ -1,6 +1,6 @@
 {
   "name": "agent-status-v1",
-  "status": "draft for agreement (aweb-acah.3)",
+  "status": "frozen (aweb-acah.3), agreed with the OATS publisher at 1aadc0914",
   "scheme": {
     "canonical": "UTF-8 JSON, keys sorted by code point, separators ',' and ':', no ASCII escaping",
     "signature": "Ed25519 over the canonical bytes, raw standard base64 without padding",

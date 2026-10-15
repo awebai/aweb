@@ -181,7 +181,8 @@ the text caps, control characters, the validity window, clock skew, expiry, a
 stale seq, a publisher that is not the signer, a wrong signature, oversize and
 non-canonical bytes, and a mail payload offered as a status. A cross-type entry
 records that a status signature does not verify as a message. The server and
-the OATS publisher agree these bytes before either implements them.
+the OATS publisher agreed these bytes at `1aadc0914` before either
+implemented them; changing them needs a new version.
 
 ## Experimental and compatibility A2A fixtures
 
