@@ -27,6 +27,7 @@ from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
 from .mcp.server import NormalizeMountedMCPPathMiddleware
+from .routes.agent_status import router as agent_status_router
 from .routes.agents import router as agents_router
 from .routes.apps import router as apps_router
 from .routes.connect import router as connect_router
@@ -511,6 +512,7 @@ def create_app(
         return {"status": "ok" if healthy else "unhealthy", "checks": checks}
 
     app.include_router(agents_router)
+    app.include_router(agent_status_router)
     app.include_router(apps_router)
     app.include_router(connect_router)
     app.include_router(chat_router)

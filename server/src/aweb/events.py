@@ -208,6 +208,22 @@ class TeamTaskAssigneeChangedEvent(TeamEvent):
 
 
 @dataclass
+class TeamAgentStatusEvent(TeamEvent):
+    """An agent's host-published reachability verdict changed (docs/agent-health.md)."""
+
+    type: str = field(default="agent.status", init=False)
+    agent_id: str = ""
+    alias: str = ""
+    reachable: str = ""
+    reason_code: str | None = None
+    reason_text: str | None = None
+    fixing_by: str | None = None
+    fixing_text: str | None = None
+    observed_at: str = ""
+    valid_until: str = ""
+
+
+@dataclass
 class TeamTaskClaimedEvent(TeamEvent):
     type: str = field(default="task.claimed", init=False)
     task_ref: str = ""

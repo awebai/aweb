@@ -1,0 +1,1054 @@
+{
+  "name": "agent-status-v1",
+  "status": "frozen (aweb-acah.3), agreed with the OATS publisher at 1aadc0914",
+  "scheme": {
+    "canonical": "UTF-8 JSON, keys sorted by code point, separators ',' and ':', no ASCII escaping",
+    "signature": "Ed25519 over the canonical bytes, raw standard base64 without padding",
+    "signed_payload": "base64url without padding of the canonical bytes",
+    "max_document_bytes": 2048,
+    "reason_text_max_bytes": 160,
+    "fixing_text_max_bytes": 120,
+    "reason_code": "^[a-z][a-z0-9]*\\.[a-z0-9_]+$, at most 64 bytes",
+    "timestamps": "YYYY-MM-DDTHH:MM:SSZ",
+    "max_validity_seconds": 900,
+    "clock_skew_seconds": 300,
+    "seq": "a JSON integer from 1 to 2^53-1 (not a float, not a boolean); the server requires it to be greater than the stored seq for the agent; it need not equal observed_at",
+    "agent": "the subject's did:aw when it has one, otherwise its did:key",
+    "publisher_did": "the signer's did:key; it must equal the designated status host",
+    "authenticated_signer": "every case is published by publisher_did_key; the signature is verified with that authenticated key, and publisher_did must equal it",
+    "now": "each case's evaluation time; stored_seq, when present, is the seq already stored for the agent",
+    "ordering": "size is checked before parsing, canonical bytes before fields, and type before any other field; every other negative has exactly one fault"
+  },
+  "signing_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "publisher_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+  "other_seed_hex": "1f1e1d1c1b1a191817161514131211100f0e0d0c0b0a09080706050403020100",
+  "other_did_key": "did:key:z6Mkn4x1HvZkkoREXWaXdWF8FjRTPd9PFqDab3QpbRG7M3Nu",
+  "valid": [
+    {
+      "name": "reachable_no",
+      "now": "2026-10-14T16:00:30Z",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "1SZTRWTh7vjC2k7UsqHF7vtXt9eEmVAJVQBENp9j9O71quSRbtgriUuNGx8IRMtVM3jHfR/Pp6CBtLXncnZnAA"
+    },
+    {
+      "name": "reachable_yes_minimal",
+      "now": "2026-10-14T16:00:30Z",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "yes",
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"yes\",\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwib2JzZXJ2ZWRfYXQiOiIyMDI2LTEwLTE0VDE2OjAwOjAwWiIsInB1Ymxpc2hlcl9kaWQiOiJkaWQ6a2V5Ono2TWtlaFJnZjd5SmJnYUdmWXNkb0FzS2RCUEUzZGoyQ1lob3dRZGNqcVNKZ3ZWZCIsInJlYWNoYWJsZSI6InllcyIsInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "YeU9deEOp2J2176xTDxejM1amd5hnxH+9Z6zj3t4dHndc6WWOkgp+J3qjrxxh5euGAPbFux+GhjLTBMKMl5WBw"
+    },
+    {
+      "name": "reachable_degraded",
+      "now": "2026-10-14T16:00:30Z",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "degraded",
+        "reason": {
+          "code": "oats.joined_team_poll_only",
+          "text": "It checks for messages only now and then."
+        },
+        "fixing": {
+          "by": "operator",
+          "text": "Nactiva's operator"
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"operator\",\"text\":\"Nactiva's operator\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"degraded\",\"reason\":{\"code\":\"oats.joined_team_poll_only\",\"text\":\"It checks for messages only now and then.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5Ijoib3BlcmF0b3IiLCJ0ZXh0IjoiTmFjdGl2YSdzIG9wZXJhdG9yIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJkZWdyYWRlZCIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5qb2luZWRfdGVhbV9wb2xsX29ubHkiLCJ0ZXh0IjoiSXQgY2hlY2tzIGZvciBtZXNzYWdlcyBvbmx5IG5vdyBhbmQgdGhlbi4ifSwic2VxIjoxNzkyMDgwMDAwMDAwLCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0eXBlIjoiYWdlbnRfc3RhdHVzIiwidiI6MSwidmFsaWRfdW50aWwiOiIyMDI2LTEwLTE0VDE2OjA1OjAwWiJ9",
+      "signature": "2DSLUcmVZYvmxEJ682Ja71MmY5z7srBsLbQOfqyDW8/jtMoTvsNLZfUll5uB0074sTmEJpukyj67ZU9OtDPCCA"
+    },
+    {
+      "name": "unknown_without_fixing_text",
+      "now": "2026-10-14T16:00:30Z",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "unknown",
+        "reason": {
+          "code": "oats.readiness_timeout",
+          "text": "Its server could not tell."
+        },
+        "fixing": {
+          "by": "unknown"
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"unknown\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"unknown\",\"reason\":{\"code\":\"oats.readiness_timeout\",\"text\":\"Its server could not tell.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoidW5rbm93biJ9LCJvYnNlcnZlZF9hdCI6IjIwMjYtMTAtMTRUMTY6MDA6MDBaIiwicHVibGlzaGVyX2RpZCI6ImRpZDprZXk6ejZNa2VoUmdmN3lKYmdhR2ZZc2RvQXNLZEJQRTNkajJDWWhvd1FkY2pxU0pndlZkIiwicmVhY2hhYmxlIjoidW5rbm93biIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5yZWFkaW5lc3NfdGltZW91dCIsInRleHQiOiJJdHMgc2VydmVyIGNvdWxkIG5vdCB0ZWxsLiJ9LCJzZXEiOjE3OTIwODAwMDAwMDAsInRlYW1faWQiOiJkZWZhdWx0OmFjbWUuYXdlYi5haSIsInR5cGUiOiJhZ2VudF9zdGF0dXMiLCJ2IjoxLCJ2YWxpZF91bnRpbCI6IjIwMjYtMTAtMTRUMTY6MDU6MDBaIn0",
+      "signature": "6GNIiq17vf+oalbj8r2skPaf7Sj5O8Fpf2bKn6CIB0PZrpTaRqbkgcVoEysiIpLobn2jR931Gx01n0RIFuKgBQ"
+    },
+    {
+      "name": "text_at_byte_caps_multibyte",
+      "now": "2026-10-14T16:00:30Z",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+        },
+        "fixing": {
+          "by": "nobody",
+          "text": "éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"nobody\",\"text\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"éééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5Ijoibm9ib2R5IiwidGV4dCI6IsOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqSJ9LCJvYnNlcnZlZF9hdCI6IjIwMjYtMTAtMTRUMTY6MDA6MDBaIiwicHVibGlzaGVyX2RpZCI6ImRpZDprZXk6ejZNa2VoUmdmN3lKYmdhR2ZZc2RvQXNLZEJQRTNkajJDWWhvd1FkY2pxU0pndlZkIiwicmVhY2hhYmxlIjoibm8iLCJyZWFzb24iOnsiY29kZSI6Im9hdHMuZ3JhbnRfZXhwaXJlZCIsInRleHQiOiLDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "1+MYh0b/AnXPmQ6+wURhQ/Or573khwYcBWergORIJNUw7Ou+X8LqZ7E0/GwdpB1uajzJVlw23fayM1SbPfizAQ"
+    },
+    {
+      "name": "valid_until_at_15_minutes",
+      "now": "2026-10-14T16:00:30Z",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:15:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:15:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjoxNTowMFoifQ",
+      "signature": "g0pw6oTfTPkathJbhEh+DbEqcqlstoixyjNk//bJ4edBeLRcUs6dWQTyLxrxYcfl+tL6dRwKlr5H+5PCQghyCg"
+    },
+    {
+      "name": "local_identity_agent_is_did_key",
+      "now": "2026-10-14T16:00:30Z",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:key:z6Mkn4x1HvZkkoREXWaXdWF8FjRTPd9PFqDab3QpbRG7M3Nu",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:key:z6Mkn4x1HvZkkoREXWaXdWF8FjRTPd9PFqDab3QpbRG7M3Nu\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDprZXk6ejZNa240eDFIdlpra29SRVhXYVhkV0Y4RmpSVFBkOVBGcURhYjNRcGJSRzdNM051IiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "0UNVct3KkPSn1IjwItXgPdJMS/mYFi3pxM5SS6y22BKiShgHz3DkWRo/eqAv6jQqE8xHt1nSxev0xX1V8rVSDg"
+    }
+  ],
+  "invalid": [
+    {
+      "name": "unknown_top_level_field",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "unknown_field",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z",
+        "note": "x"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"note\":\"x\",\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm5vdGUiOiJ4Iiwib2JzZXJ2ZWRfYXQiOiIyMDI2LTEwLTE0VDE2OjAwOjAwWiIsInB1Ymxpc2hlcl9kaWQiOiJkaWQ6a2V5Ono2TWtlaFJnZjd5SmJnYUdmWXNkb0FzS2RCUEUzZGoyQ1lob3dRZGNqcVNKZ3ZWZCIsInJlYWNoYWJsZSI6Im5vIiwicmVhc29uIjp7ImNvZGUiOiJvYXRzLmdyYW50X2V4cGlyZWQiLCJ0ZXh0IjoiSXRzIGNvbm5lY3Rpb24gZXhwaXJlZC4ifSwic2VxIjoxNzkyMDgwMDAwMDAwLCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0eXBlIjoiYWdlbnRfc3RhdHVzIiwidiI6MSwidmFsaWRfdW50aWwiOiIyMDI2LTEwLTE0VDE2OjA1OjAwWiJ9",
+      "signature": "z0/+Z6XJD7oT99iYz4CDUjIE8cKI3hMJS8BMxLulIOerKlMqfW4soYnxNcjngpmMwzTmhMU0nDrPxuEpHE7JDQ"
+    },
+    {
+      "name": "unknown_reason_field",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "unknown_field",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired.",
+          "hint": "x"
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"hint\":\"x\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwiaGludCI6IngiLCJ0ZXh0IjoiSXRzIGNvbm5lY3Rpb24gZXhwaXJlZC4ifSwic2VxIjoxNzkyMDgwMDAwMDAwLCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0eXBlIjoiYWdlbnRfc3RhdHVzIiwidiI6MSwidmFsaWRfdW50aWwiOiIyMDI2LTEwLTE0VDE2OjA1OjAwWiJ9",
+      "signature": "4cwT/hZI/QvDi2WTyMzouL6nSKfxMSjwpf0NnczMcPL3VLTyPCVZaPamp3u19tuge/a+eZJLDgwdtSrLuBRnDw"
+    },
+    {
+      "name": "unknown_fixing_field",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "unknown_field",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "x",
+          "eta": "5m"
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"eta\":\"5m\",\"text\":\"x\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwiZXRhIjoiNW0iLCJ0ZXh0IjoieCJ9LCJvYnNlcnZlZF9hdCI6IjIwMjYtMTAtMTRUMTY6MDA6MDBaIiwicHVibGlzaGVyX2RpZCI6ImRpZDprZXk6ejZNa2VoUmdmN3lKYmdhR2ZZc2RvQXNLZEJQRTNkajJDWWhvd1FkY2pxU0pndlZkIiwicmVhY2hhYmxlIjoibm8iLCJyZWFzb24iOnsiY29kZSI6Im9hdHMuZ3JhbnRfZXhwaXJlZCIsInRleHQiOiJJdHMgY29ubmVjdGlvbiBleHBpcmVkLiJ9LCJzZXEiOjE3OTIwODAwMDAwMDAsInRlYW1faWQiOiJkZWZhdWx0OmFjbWUuYXdlYi5haSIsInR5cGUiOiJhZ2VudF9zdGF0dXMiLCJ2IjoxLCJ2YWxpZF91bnRpbCI6IjIwMjYtMTAtMTRUMTY6MDU6MDBaIn0",
+      "signature": "c7GwWq5wyDNN4n+fFrTUQGWDLR0vnFWqUCo9rQxXw6FRngOWcVxq/QgfeFUsruNWXV731XtfUhEYwqYSYp+vDw"
+    },
+    {
+      "name": "missing_reason_when_not_yes",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "missing_field",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "bJ9hl5kKCCIEQ9UkJqaZMBqVUlVQgLf5WhxHPQ53PDrWoy7+UyzYhK1g8ID92EEdXNJDM4EXuOhueOymPwwdBQ"
+    },
+    {
+      "name": "missing_fixing_when_not_yes",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "missing_field",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwib2JzZXJ2ZWRfYXQiOiIyMDI2LTEwLTE0VDE2OjAwOjAwWiIsInB1Ymxpc2hlcl9kaWQiOiJkaWQ6a2V5Ono2TWtlaFJnZjd5SmJnYUdmWXNkb0FzS2RCUEUzZGoyQ1lob3dRZGNqcVNKZ3ZWZCIsInJlYWNoYWJsZSI6Im5vIiwicmVhc29uIjp7ImNvZGUiOiJvYXRzLmdyYW50X2V4cGlyZWQiLCJ0ZXh0IjoiSXRzIGNvbm5lY3Rpb24gZXhwaXJlZC4ifSwic2VxIjoxNzkyMDgwMDAwMDAwLCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0eXBlIjoiYWdlbnRfc3RhdHVzIiwidiI6MSwidmFsaWRfdW50aWwiOiIyMDI2LTEwLTE0VDE2OjA1OjAwWiJ9",
+      "signature": "rzDc8CKZJwlXTMIPu/G5rIatL5MkjuvVTt5yKYJdmlcsUjVXUhy2IDZhioTpRZwEiICJ9WH4f+xaDZvKdgtMDg"
+    },
+    {
+      "name": "missing_valid_until",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "missing_field",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjF9",
+      "signature": "Cz6TcN19eHDVxUUH8RzQH1S3zCXN2S+POOHh+ydyPbRq06dDPCjKGEE5QBirQqvrIdlUqVfHmxoThXm1m6/bCg"
+    },
+    {
+      "name": "reachable_not_in_enum",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "online",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"online\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJvbmxpbmUiLCJyZWFzb24iOnsiY29kZSI6Im9hdHMuZ3JhbnRfZXhwaXJlZCIsInRleHQiOiJJdHMgY29ubmVjdGlvbiBleHBpcmVkLiJ9LCJzZXEiOjE3OTIwODAwMDAwMDAsInRlYW1faWQiOiJkZWZhdWx0OmFjbWUuYXdlYi5haSIsInR5cGUiOiJhZ2VudF9zdGF0dXMiLCJ2IjoxLCJ2YWxpZF91bnRpbCI6IjIwMjYtMTAtMTRUMTY6MDU6MDBaIn0",
+      "signature": "DZu2GwiLzdpwtfTPrLsMDLTK0KJ04vmwqD3M8jS2Ekn8aK9ODrdKntn2lGo3ta77mD9GFg506IyeEe7/UfykBQ"
+    },
+    {
+      "name": "fixing_by_not_in_enum",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "someone",
+          "text": "x"
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"someone\",\"text\":\"x\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5Ijoic29tZW9uZSIsInRleHQiOiJ4In0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "yaTD9DodJyVbtZ7PAPPyCeY/1KsHG/j9ax6FolrfIue8grdE5GZKdf0vWLtDOfnBKH75ShJWW+IwJ7sW2K5dCA"
+    },
+    {
+      "name": "reason_code_not_namespaced",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "grant_expired",
+          "text": "x"
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"grant_expired\",\"text\":\"x\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoiZ3JhbnRfZXhwaXJlZCIsInRleHQiOiJ4In0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "3UkbNcVfSzMdie1o0V2iba0UuF7GIUhnOcbd1LEw60+EAD8TUUqThHz5shJLKumEL9JpwnWW5mkjcC6dbCWWBA"
+    },
+    {
+      "name": "reason_code_over_64_bytes",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "text": "x"
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"text\":\"x\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5hYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJ0ZXh0IjoieCJ9LCJzZXEiOjE3OTIwODAwMDAwMDAsInRlYW1faWQiOiJkZWZhdWx0OmFjbWUuYXdlYi5haSIsInR5cGUiOiJhZ2VudF9zdGF0dXMiLCJ2IjoxLCJ2YWxpZF91bnRpbCI6IjIwMjYtMTAtMTRUMTY6MDU6MDBaIn0",
+      "signature": "y8Wb2dzbX9YAm/qvs1mxis+WyOuqjeUtS2IaWQYm3K0xbel/HEpx/9vxOR/N4uck5j8gESpqByJUpoHT7drnDg"
+    },
+    {
+      "name": "seq_not_integer",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": "1792080000000",
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":\"1792080000000\",\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6IjE3OTIwODAwMDAwMDAiLCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0eXBlIjoiYWdlbnRfc3RhdHVzIiwidiI6MSwidmFsaWRfdW50aWwiOiIyMDI2LTEwLTE0VDE2OjA1OjAwWiJ9",
+      "signature": "vwePLR0NI6GV6b1M1IJ8JsPULZdxYmN6PJacmukse7e/9pGBbbeRig/A+ReVd4E/+glR7kRoM1BCrt2hscczCw"
+    },
+    {
+      "name": "seq_zero",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 0,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":0,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "BOyHUSZjXqzuDhsrIVF22m0zqE3qTk4mUJ02jR7NEM8T9jwdeT1wI/byCfKcSmeuG/+wahGrBQMS0xWQtqjiDA"
+    },
+    {
+      "name": "seq_float",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1.5,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1.5,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MS41LCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0eXBlIjoiYWdlbnRfc3RhdHVzIiwidiI6MSwidmFsaWRfdW50aWwiOiIyMDI2LTEwLTE0VDE2OjA1OjAwWiJ9",
+      "signature": "Vvhu1PN+ic4FzHZTQszRyeEPR3GvUD1kYc0imjM9u8r6gGkb3jOSdF8d6WT+kmPW7L6a35/I6RyboxG6v7JZBQ"
+    },
+    {
+      "name": "seq_above_safe_integer",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 9007199254740992,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":9007199254740992,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6OTAwNzE5OTI1NDc0MDk5MiwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "b55XtyfR+fsNKFtyuyERspuOaXYkTUeRHSZ2xzg5LU8FqJk03te+44XKOXb8JKPtBzDBEOPuD0T8Nv0Rui9bBQ"
+    },
+    {
+      "name": "seq_boolean",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": true,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":true,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6dHJ1ZSwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "GoLAVsRm1AE+OLYUw3NA9UF7eihSzx6Iows2Ukmu8/hGvhPXKr8FWQVTd8n2Go1Ythwf38CxzJ1megsHgnASBQ"
+    },
+    {
+      "name": "version_2",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 2,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":2,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjIsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "9yOgLXHuw2PBSJLbySfzrmM876AAIQ8Wajm9BcCXUBYhZxSYkbSxccuHcKIAkfUh3/Psgwb6RXTRnrpEsFhoAQ"
+    },
+    {
+      "name": "reason_text_over_160_bytes_multibyte",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "text_too_long",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6IsOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqSJ9LCJzZXEiOjE3OTIwODAwMDAwMDAsInRlYW1faWQiOiJkZWZhdWx0OmFjbWUuYXdlYi5haSIsInR5cGUiOiJhZ2VudF9zdGF0dXMiLCJ2IjoxLCJ2YWxpZF91bnRpbCI6IjIwMjYtMTAtMTRUMTY6MDU6MDBaIn0",
+      "signature": "xBifny1CoMsbdiPjjw2lmGrYVEm4MgZJJHcnD9/wXcN9Y/HgNy1f509SP0m2qCNq3rH51nz5RduIVxTQe6jyBw"
+    },
+    {
+      "name": "fixing_text_over_120_bytes_multibyte",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "text_too_long",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé"
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"ééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6IsOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpw6nDqcOpIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "GtDr7sBu78eH2jXKFKC79m2OGEtk0/T/3eeB8wS6TM7kXNlWqyQbWuMZ4S/QY7TM1NoO33jUvNvp7eCAZAI1Bw"
+    },
+    {
+      "name": "newline_in_text",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "control_character",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection\nexpired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection\\nexpired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uXG5leHBpcmVkLiJ9LCJzZXEiOjE3OTIwODAwMDAwMDAsInRlYW1faWQiOiJkZWZhdWx0OmFjbWUuYXdlYi5haSIsInR5cGUiOiJhZ2VudF9zdGF0dXMiLCJ2IjoxLCJ2YWxpZF91bnRpbCI6IjIwMjYtMTAtMTRUMTY6MDU6MDBaIn0",
+      "signature": "CJwd+0pkML4rnvsl7STw9wa/QJlJqbTQ2cOSCYvMgLqxS6Gt3JJ0MQBDrAeQ2RqXqdMFa+iPgU4urDHKkcxeBg"
+    },
+    {
+      "name": "timestamp_not_utc_seconds",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00.000Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00.000Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMC4wMDBaIiwicHVibGlzaGVyX2RpZCI6ImRpZDprZXk6ejZNa2VoUmdmN3lKYmdhR2ZZc2RvQXNLZEJQRTNkajJDWWhvd1FkY2pxU0pndlZkIiwicmVhY2hhYmxlIjoibm8iLCJyZWFzb24iOnsiY29kZSI6Im9hdHMuZ3JhbnRfZXhwaXJlZCIsInRleHQiOiJJdHMgY29ubmVjdGlvbiBleHBpcmVkLiJ9LCJzZXEiOjE3OTIwODAwMDAwMDAsInRlYW1faWQiOiJkZWZhdWx0OmFjbWUuYXdlYi5haSIsInR5cGUiOiJhZ2VudF9zdGF0dXMiLCJ2IjoxLCJ2YWxpZF91bnRpbCI6IjIwMjYtMTAtMTRUMTY6MDU6MDBaIn0",
+      "signature": "IdFwen1bp0Xi+dl2WWeE9Pa3MvZZ7vBRm/Oi36+4ncgryAz4DU66yBlNUw/xC1zl4zYG+rZzvK8pThCgoWFsCg"
+    },
+    {
+      "name": "valid_until_over_15_minutes",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "validity_window",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:15:01Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:15:01Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjoxNTowMVoifQ",
+      "signature": "wBKS3PvwZMdlqp1Ya5mv6LycEkMYk+q0b9yR3wSvRwu6ZcSQ9c7i/mvJMtm6vgUAEmbjg175ChvD+P48cvE2DA"
+    },
+    {
+      "name": "valid_until_not_after_observed_at",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "validity_window",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:00:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:00:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowMDowMFoifQ",
+      "signature": "4kN8Yy6RwJfPpJ02Guqjap9Q0s6eqwS13YvD6dDiwdXkHRJQYWK+cynrCFf1mz0NYPFfr3xXgOmo8ZtRCXedBg"
+    },
+    {
+      "name": "expired_at_now",
+      "now": "2026-10-14T16:01:01Z",
+      "error": "expired",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:01:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:01:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowMTowMFoifQ",
+      "signature": "RGaKOSj0jUvkc+ZQxgXlW/Z/eeyYhOjzcLcct+NBpAdQJTSa0PxoGJ2gEtsnkhFHYbDVl/ByXDQ3+BjRhG8JBQ"
+    },
+    {
+      "name": "observed_at_ahead_of_skew",
+      "now": "2026-10-14T15:54:59Z",
+      "error": "clock_skew",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "1SZTRWTh7vjC2k7UsqHF7vtXt9eEmVAJVQBENp9j9O71quSRbtgriUuNGx8IRMtVM3jHfR/Pp6CBtLXncnZnAA"
+    },
+    {
+      "name": "observed_at_behind_skew",
+      "now": "2026-10-14T16:05:01Z",
+      "error": "clock_skew",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:15:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:15:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjoxNTowMFoifQ",
+      "signature": "g0pw6oTfTPkathJbhEh+DbEqcqlstoixyjNk//bJ4edBeLRcUs6dWQTyLxrxYcfl+tL6dRwKlr5H+5PCQghyCg"
+    },
+    {
+      "name": "seq_not_greater_than_stored",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "stale_seq",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "1SZTRWTh7vjC2k7UsqHF7vtXt9eEmVAJVQBENp9j9O71quSRbtgriUuNGx8IRMtVM3jHfR/Pp6CBtLXncnZnAA",
+      "stored_seq": 1792080000000
+    },
+    {
+      "name": "publisher_did_not_signer",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "publisher_mismatch",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6Mkn4x1HvZkkoREXWaXdWF8FjRTPd9PFqDab3QpbRG7M3Nu",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6Mkn4x1HvZkkoREXWaXdWF8FjRTPd9PFqDab3QpbRG7M3Nu\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rbjR4MUh2Wmtrb1JFWFdhWGRXRjhGalJUUGQ5UEZxRGFiM1FwYlJHN00zTnUiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "lXiVGvp6k0IrpQhAvq1Rj3cn69lYMVxo+/wwvLVHC6sO4Bcq4EnUCvRLKaru2XJvJoNVuJKQ2doB/thJdsGwDA"
+    },
+    {
+      "name": "signed_by_other_key",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "bad_signature",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"Its connection expired.\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwdWJsaXNoZXJfZGlkIjoiZGlkOmtleTp6Nk1rZWhSZ2Y3eUpiZ2FHZllzZG9Bc0tkQlBFM2RqMkNZaG93UWRjanFTSmd2VmQiLCJyZWFjaGFibGUiOiJubyIsInJlYXNvbiI6eyJjb2RlIjoib2F0cy5ncmFudF9leHBpcmVkIiwidGV4dCI6Ikl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIn0sInNlcSI6MTc5MjA4MDAwMDAwMCwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidHlwZSI6ImFnZW50X3N0YXR1cyIsInYiOjEsInZhbGlkX3VudGlsIjoiMjAyNi0xMC0xNFQxNjowNTowMFoifQ",
+      "signature": "P+LkT/ODvrSvzafvEZ1S4CR79y+IhM1ivuLcWc8dQRNkUCkqilnbk9zcH15Ew+T41XetgnC+h+StdFOfAnzVBg"
+    },
+    {
+      "name": "document_over_2048_bytes",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "document_too_large",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "x"
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z",
+        "pad": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      },
+      "canonical_payload": "{\"agent\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"fixing\":{\"by\":\"automatic\",\"text\":\"Its server is renewing the connection.\"},\"observed_at\":\"2026-10-14T16:00:00Z\",\"pad\":\"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\",\"publisher_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"reachable\":\"no\",\"reason\":{\"code\":\"oats.grant_expired\",\"text\":\"x\"},\"seq\":1792080000000,\"team_id\":\"default:acme.aweb.ai\",\"type\":\"agent_status\",\"v\":1,\"valid_until\":\"2026-10-14T16:05:00Z\"}",
+      "signed_payload": "eyJhZ2VudCI6ImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwiZml4aW5nIjp7ImJ5IjoiYXV0b21hdGljIiwidGV4dCI6Ikl0cyBzZXJ2ZXIgaXMgcmVuZXdpbmcgdGhlIGNvbm5lY3Rpb24uIn0sIm9ic2VydmVkX2F0IjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJwYWQiOiJ5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eSIsInB1Ymxpc2hlcl9kaWQiOiJkaWQ6a2V5Ono2TWtlaFJnZjd5SmJnYUdmWXNkb0FzS2RCUEUzZGoyQ1lob3dRZGNqcVNKZ3ZWZCIsInJlYWNoYWJsZSI6Im5vIiwicmVhc29uIjp7ImNvZGUiOiJvYXRzLmdyYW50X2V4cGlyZWQiLCJ0ZXh0IjoieCJ9LCJzZXEiOjE3OTIwODAwMDAwMDAsInRlYW1faWQiOiJkZWZhdWx0OmFjbWUuYXdlYi5haSIsInR5cGUiOiJhZ2VudF9zdGF0dXMiLCJ2IjoxLCJ2YWxpZF91bnRpbCI6IjIwMjYtMTAtMTRUMTY6MDU6MDBaIn0",
+      "signature": "0iZsWbLm+myWv5fxCDiPDlhV0yZI3g81Jgvx22TxNdd6IPJ9WnuxnQ387LQhP8zA9byVD1Mq/tC8ZsdUwrDcCQ"
+    },
+    {
+      "name": "non_canonical_bytes",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "non_canonical",
+      "document": {
+        "v": 1,
+        "type": "agent_status",
+        "team_id": "default:acme.aweb.ai",
+        "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "seq": 1792080000000,
+        "reachable": "no",
+        "reason": {
+          "code": "oats.grant_expired",
+          "text": "Its connection expired."
+        },
+        "fixing": {
+          "by": "automatic",
+          "text": "Its server is renewing the connection."
+        },
+        "observed_at": "2026-10-14T16:00:00Z",
+        "valid_until": "2026-10-14T16:05:00Z"
+      },
+      "canonical_payload": "{\n \"agent\": \"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\n \"fixing\": {\n  \"by\": \"automatic\",\n  \"text\": \"Its server is renewing the connection.\"\n },\n \"observed_at\": \"2026-10-14T16:00:00Z\",\n \"publisher_did\": \"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\n \"reachable\": \"no\",\n \"reason\": {\n  \"code\": \"oats.grant_expired\",\n  \"text\": \"Its connection expired.\"\n },\n \"seq\": 1792080000000,\n \"team_id\": \"default:acme.aweb.ai\",\n \"type\": \"agent_status\",\n \"v\": 1,\n \"valid_until\": \"2026-10-14T16:05:00Z\"\n}",
+      "signed_payload": "ewogImFnZW50IjogImRpZDphdzoyQ2laODhoVkY0SnVRaW04bm5TdXllaVYySEYyIiwKICJmaXhpbmciOiB7CiAgImJ5IjogImF1dG9tYXRpYyIsCiAgInRleHQiOiAiSXRzIHNlcnZlciBpcyByZW5ld2luZyB0aGUgY29ubmVjdGlvbi4iCiB9LAogIm9ic2VydmVkX2F0IjogIjIwMjYtMTAtMTRUMTY6MDA6MDBaIiwKICJwdWJsaXNoZXJfZGlkIjogImRpZDprZXk6ejZNa2VoUmdmN3lKYmdhR2ZZc2RvQXNLZEJQRTNkajJDWWhvd1FkY2pxU0pndlZkIiwKICJyZWFjaGFibGUiOiAibm8iLAogInJlYXNvbiI6IHsKICAiY29kZSI6ICJvYXRzLmdyYW50X2V4cGlyZWQiLAogICJ0ZXh0IjogIkl0cyBjb25uZWN0aW9uIGV4cGlyZWQuIgogfSwKICJzZXEiOiAxNzkyMDgwMDAwMDAwLAogInRlYW1faWQiOiAiZGVmYXVsdDphY21lLmF3ZWIuYWkiLAogInR5cGUiOiAiYWdlbnRfc3RhdHVzIiwKICJ2IjogMSwKICJ2YWxpZF91bnRpbCI6ICIyMDI2LTEwLTE0VDE2OjA1OjAwWiIKfQ",
+      "signature": "yFluDS9TjKIKcUHf4R0ZJUE8T+GZkb2fsVKDlcjwWQKa+0z1L5+w913jfM2az5EqlH96fn3y25wvS0Adab8bCg"
+    },
+    {
+      "name": "mail_payload_as_status",
+      "now": "2026-10-14T16:00:30Z",
+      "error": "wrong_type",
+      "document": {
+        "from": "acme/monitor",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "to": "acme/ops",
+        "to_did": "did:key:z6Mkn4x1HvZkkoREXWaXdWF8FjRTPd9PFqDab3QpbRG7M3Nu",
+        "type": "mail",
+        "message_id": "8b1c2c69-7c2a-4fbb-9f4a-3dfb7d7a26c0",
+        "subject": "status",
+        "body": "ok",
+        "timestamp": "2026-10-14T16:00:00Z"
+      },
+      "canonical_payload": "{\"body\":\"ok\",\"from\":\"acme/monitor\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"message_id\":\"8b1c2c69-7c2a-4fbb-9f4a-3dfb7d7a26c0\",\"subject\":\"status\",\"timestamp\":\"2026-10-14T16:00:00Z\",\"to\":\"acme/ops\",\"to_did\":\"did:key:z6Mkn4x1HvZkkoREXWaXdWF8FjRTPd9PFqDab3QpbRG7M3Nu\",\"type\":\"mail\"}",
+      "signed_payload": "eyJib2R5Ijoib2siLCJmcm9tIjoiYWNtZS9tb25pdG9yIiwiZnJvbV9kaWQiOiJkaWQ6a2V5Ono2TWtlaFJnZjd5SmJnYUdmWXNkb0FzS2RCUEUzZGoyQ1lob3dRZGNqcVNKZ3ZWZCIsIm1lc3NhZ2VfaWQiOiI4YjFjMmM2OS03YzJhLTRmYmItOWY0YS0zZGZiN2Q3YTI2YzAiLCJzdWJqZWN0Ijoic3RhdHVzIiwidGltZXN0YW1wIjoiMjAyNi0xMC0xNFQxNjowMDowMFoiLCJ0byI6ImFjbWUvb3BzIiwidG9fZGlkIjoiZGlkOmtleTp6Nk1rbjR4MUh2Wmtrb1JFWFdhWGRXRjhGalJUUGQ5UEZxRGFiM1FwYlJHN00zTnUiLCJ0eXBlIjoibWFpbCJ9",
+      "signature": "zVoacek/FNFpQnhTQ1EOmRjew6ib+AmvbE9W5ovJHDtVE01duTmY5e/RkwucKH8O9qoOzJNMLakQThawZrYcDQ"
+    }
+  ],
+  "cross_type": {
+    "name": "status_payload_under_message_verification",
+    "description": "Message verification rebuilds the canonical payload from SIGNED_FIELDS only. For this document that is {\"type\":\"agent_status\"}, whose bytes differ from the signed status bytes, so the status signature does not verify as a message.",
+    "document": {
+      "v": 1,
+      "type": "agent_status",
+      "team_id": "default:acme.aweb.ai",
+      "agent": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+      "publisher_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "seq": 1792080000000,
+      "reachable": "no",
+      "reason": {
+        "code": "oats.grant_expired",
+        "text": "Its connection expired."
+      },
+      "fixing": {
+        "by": "automatic",
+        "text": "Its server is renewing the connection."
+      },
+      "observed_at": "2026-10-14T16:00:00Z",
+      "valid_until": "2026-10-14T16:05:00Z"
+    },
+    "message_canonical_payload": "{\"type\":\"agent_status\"}",
+    "signature": "1SZTRWTh7vjC2k7UsqHF7vtXt9eEmVAJVQBENp9j9O71quSRbtgriUuNGx8IRMtVM3jHfR/Pp6CBtLXncnZnAA",
+    "expected_message_verification": "failed"
+  }
+}
