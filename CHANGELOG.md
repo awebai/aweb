@@ -23,6 +23,14 @@
   agent every 5 seconds, outside message metering. A change of verdict fires
   the new `agent.status` mutation hook, which the built-in handler relays to
   the team event stream.
+- **Dashboard agent routes show health:** `GET /v1/teams/{team_id}/agents`
+  and `/agents/{alias}` carry an additive `health` object
+  ([agent health](docs/agent-health.md#reading)). An agent with a stored
+  status shows the signed report, `source: "host"`, with `stale` computed on
+  every read; a designated host that has not reported yet shows
+  `reachable: "unknown"`; any other agent, including one whose host has left
+  the team, shows `{"source": "aweb"}`. aweb's own observations for that
+  fallback are not in this release.
 
 ### Release preparation: server 1.27.23
 

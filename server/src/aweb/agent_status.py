@@ -201,6 +201,11 @@ def _check_texts(document: dict[str, Any]) -> None:
             raise _refuse("control_character", f"{name} must be one line without control characters")
 
 
+def stored_status_document(signed_payload: str) -> dict[str, Any]:
+    """Decode a status document that was verified when it was stored."""
+    return json.loads(_decode_payload(signed_payload).decode("utf-8"))
+
+
 def verify_status_document(
     signed_payload: str,
     signature: str,

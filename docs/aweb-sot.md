@@ -968,8 +968,8 @@ upstream operator that holds `AWEB_DASHBOARD_JWT_SECRET`.
 
 | Route | Purpose |
 |-------|---------|
-| `GET /v1/teams/{team_id}/agents` | List active agents in team |
-| `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail |
+| `GET /v1/teams/{team_id}/agents` | List active agents in team, each with its `health` object ([agent health](agent-health.md#reading)) |
+| `GET /v1/teams/{team_id}/agents/{alias}` | Agent detail, with the same `health` object |
 | `GET /v1/teams/{team_id}/tasks` | Task list with query params `status`, `assignee_alias`, `task_type`, `priority` (`P0`-`P4`), `labels`, `q`, `limit`, and `cursor`. Returns `{tasks, has_more, next_cursor}`. |
 | `GET /v1/teams/{team_id}/claims` | Active task claims |
 | `GET /v1/teams/{team_id}/events/stream` | Authenticated dashboard SSE, including for public teams. Subscribe to `team-events:{team_id}` before building the initial snapshot, then stream task, reservation and presence events. No mail/chat events or participant metadata. First frames are `connected` then `snapshot` with current `online_aliases` and `active_claims`. |

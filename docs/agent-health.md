@@ -307,12 +307,19 @@ every surface agrees:
 ```json
 {"source": "host", "reachable": "no", "reason_text": "Its connection expired.",
  "fixing_by": "automatic", "fixing_text": "Its server is renewing the connection.",
- "observed_at": "...", "stale": false, "verified": true,
- "signed_payload": "...", "signature": "..."}
+ "observed_at": "2026-10-14T16:00:00Z", "valid_until": "2026-10-14T16:05:00Z",
+ "stale": false, "verified": true, "signed_payload": "...", "signature": "..."}
 ```
 
 - **`source: "host"`**: the agent has a status host or self-publishes, and a
   stored status exists.
+  - Every key above is always present. `reachable`, `reason_text`,
+    `fixing_by`, `fixing_text`, `observed_at` and `valid_until` are the signed
+    document's values, verbatim; the three optional ones are `null` when the
+    document omits them (a `yes` report carries no reason). `signed_payload`
+    and `signature` are exactly what the publisher sent, so a reader can check
+    the signature itself. `verified: true` says the server verified them when
+    it stored the report.
   - If `now > valid_until`, the object has `stale: true`, and the dashboard
     says "No report from its server since <observed_at>". It does not say
     "online", and it does not guess why.
@@ -321,9 +328,12 @@ every surface agrees:
     `valid_until` on its own clock, and the server computes it again on every
     read.
   - A designated host that has never published shows as `source: "host"` with
-    `reachable: "unknown"` and the text "Its server hasn't reported yet".
-- **`source: "aweb"`**: no status host and no self-published status. See the
-  fallback below.
+    `reachable: "unknown"`, `reason_text` "Its server hasn't reported yet",
+    `stale: false`, `verified: false`, and `null` for every other key.
+- **`source: "aweb"`**: no status host and no self-published status, or a
+  designated host that is no longer an active member of the team (a host that
+  left speaks for no one, even if a report it published is still stored). See
+  the fallback below.
 - **No mixing** (agreed). The dashboard renders host status alone, and never
   combines it with presence or grant facts to produce a verdict. aweb's
   observations may appear as separate, labelled facts under a details

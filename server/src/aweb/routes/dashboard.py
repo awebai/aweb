@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from awid.pagination import encode_cursor, validate_pagination_params
 from awid.team_ids import parse_team_id
+from aweb.agent_health import agent_health
 from aweb.claims import list_active_claims
 from aweb.coordination.tasks_service import list_tasks_paginated
 from aweb.awid_error_handling import (
@@ -138,6 +139,7 @@ class AgentSummary(BaseModel):
     last_seen: Optional[str]
     workspace_path: Optional[str]
     created_at: str
+    health: dict[str, Any]
 
 
 class AgentDetail(BaseModel):
@@ -152,6 +154,7 @@ class AgentDetail(BaseModel):
     human_name: str
     agent_type: str
     created_at: str
+    health: dict[str, Any]
 
 
 class TaskSummary(BaseModel):
@@ -351,6 +354,9 @@ async def list_team_agents(
         """,
         team_id,
     )
+    health = await agent_health(
+        aweb_db, team_id=team_id, agent_ids=[r["agent_id"] for r in rows], now=datetime.now(timezone.utc),
+    )
 
     return {
         "agents": [
@@ -367,6 +373,7 @@ async def list_team_agents(
                 last_seen=(r["last_seen_at"].isoformat() if r["last_seen_at"] else None),
                 workspace_path=r["workspace_path"],
                 created_at=r["created_at"].isoformat(),
+                health=health[str(r["agent_id"])],
             ).model_dump()
             for r in rows
         ]
@@ -415,6 +422,9 @@ async def get_team_agent(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Agent not found")
+    health = await agent_health(
+        aweb_db, team_id=team_id, agent_ids=[row["agent_id"]], now=datetime.now(timezone.utc),
+    )
 
     return AgentDetail(
         agent_id=str(row["agent_id"]),
@@ -428,6 +438,7 @@ async def get_team_agent(
         human_name=row["human_name"],
         agent_type=row["agent_type"],
         created_at=row["created_at"].isoformat(),
+        health=health[str(row["agent_id"])],
     ).model_dump()
 
 
