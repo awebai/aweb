@@ -31,7 +31,8 @@ Optional environment:
   serves an aweb deployment. Configure the same >=32-byte value on both so
   aweb can read private-team keys and revocations and bypass the public-IP
   rate limits on all registry reads, DID registration, namespace registration,
-  and encryption-key publication. All other write limits and all write and
+  encryption-key publication, team creation, certificate registration and address
+  registration. All other write limits and all write authorization and
   identity-private/blob authentication still apply. `awid_service_exempt` logs cumulative per-bucket,
   process-local exemption counts at 1, 2, 4, 8 and later powers of two; the token
   is never logged. See [the trust model](../docs/trust-model.md#trusted-awid-service-reads).

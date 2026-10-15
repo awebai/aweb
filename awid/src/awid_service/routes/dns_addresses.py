@@ -551,7 +551,7 @@ async def _resolve_caller_did_aw(db, caller_did_key: str | None) -> str | None:
 @router.post(
     "",
     response_model=AddressResponse,
-    dependencies=[Depends(rate_limit_dep("address_register"))],
+    dependencies=[Depends(rate_limit_dep("address_register", allow_trusted_service=True))],
 )
 async def register_address(
     request: Request,

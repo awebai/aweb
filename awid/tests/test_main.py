@@ -282,18 +282,15 @@ _WRITE_LIMIT_ROUTES = [
     ("namespace_update", "PATCH", "/v1/namespaces/example.com"),
     ("namespace_rotate", "PUT", "/v1/namespaces/example.com"),
     ("namespace_delete", "DELETE", "/v1/namespaces/example.com"),
-    ("address_register", "POST", "/v1/namespaces/example.com/addresses"),
     ("address_atomic_claim", "POST", "/v1/namespaces/example.com/addresses/claims"),
     ("address_update", "PUT", "/v1/namespaces/example.com/addresses/alice"),
     ("address_delete", "DELETE", "/v1/namespaces/example.com/addresses/alice"),
     ("address_reassign", "POST", "/v1/namespaces/example.com/addresses/alice/reassign"),
     ("a2a_delegation_publish", "POST", "/v1/a2a/delegations"),
     ("a2a_publication_publish", "POST", "/v1/a2a/publications"),
-    ("team_create", "POST", "/v1/namespaces/example.com/teams"),
     ("team_delete", "DELETE", "/v1/namespaces/example.com/teams/ops"),
     ("team_rotate", "POST", "/v1/namespaces/example.com/teams/ops/rotate"),
     ("team_update", "POST", "/v1/namespaces/example.com/teams/ops/visibility"),
-    ("certificate_register", "POST", "/v1/namespaces/example.com/teams/ops/certificates"),
     ("certificate_revoke", "POST", "/v1/namespaces/example.com/teams/ops/certificates/revoke"),
 ]
 
