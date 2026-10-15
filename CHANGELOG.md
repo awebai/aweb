@@ -7,7 +7,9 @@
   Pi reports a stopped channel loop to operator logs/status, with no session
   injection. Standalone channel-core retains disconnect/recovery logs by default.
 
-### Server changes since `server-v1.27.21`
+### Release preparation: server 1.27.22
+
+Server changes are since `server-v1.27.21`.
 
 - **MCP mail and chat wake their recipients like HTTP:** `send_mail`,
   `send_chat` (and `send_message_to_contact`) fire `message.sent` and
