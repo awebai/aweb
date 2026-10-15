@@ -117,6 +117,13 @@ func TestAgentStatusProductionBinary(t *testing.T) {
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/agents/transport/status":
+			connection, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			_ = connection.Close()
 		case "/v1/agents/me/status-host":
 			if r.Method == "PUT" && !bytes.Contains(body, []byte(vector.DID)) {
 				t.Error("wrong host body")
@@ -155,13 +162,48 @@ func TestAgentStatusProductionBinary(t *testing.T) {
 		if code != 3 || out["code"] != "rate_limited" || out["message"] != "at most one status per agent every 5 seconds" || out["retry_after"] != float64(5) {
 			t.Fatalf("refusal: %d %#v", code, out)
 		}
+		out, code = run(t, env, vector.Valid[0].Document, append(prefix, "status", "publish", "--alias", "subject", "--document", "-", "--print-signed")...)
+		if code != 0 || out["signature"] != vector.Valid[0].Signature {
+			t.Fatalf("normal offline signer: %d %#v", code, out)
+		}
+		out, code = run(t, env, vector.Valid[0].Document, append(prefix, "status", "publish", "--alias", "transport", "--document", "-", "--json")...)
+		if code != 1 || out["code"] != "transport" || out["status"] != nil {
+			t.Fatalf("transport: %d %#v", code, out)
+		}
+	}
+	for _, args := range [][]string{
+		{"status", "publish", "--json"},
+		{"--identity-home", "relative", "status-host", "show", "--json"},
+		{"status-host", "show", "--unknown", "--json"},
+	} {
+		out, code := run(t, nil, nil, args...)
+		if code != 1 || out["ok"] != false || out["status"] != nil {
+			t.Fatalf("local error %v: %d %#v", args, code, out)
+		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(calls) != 10 {
+	if len(calls) != 12 {
 		t.Fatalf("unexpected network/renewal: %v", calls)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(err) {
 		t.Fatalf("wrote instance identity: %v", err)
+	}
+}
+
+func TestAgentStatusCanonicalUnicodeAndExactInteger(t *testing.T) {
+	seed := make([]byte, ed25519.SeedSize)
+	key := ed25519.NewKeyFromSeed(seed)
+	did := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	// Raw U+2028/U+2029 must remain UTF-8, while literal escape text is untouched.
+	raw := []byte(`{"seq":9007199254740991,"publisher_did":"` + did + `","reason":{"text":"é<>\u2028\u2029 and literal \\u2028"}}`)
+	signed, err := signAgentStatus(raw, &localSigningIdentity{DIDKey: did, SigningKey: key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := base64.RawURLEncoding.DecodeString(signed["signed_payload"])
+	want := `{"publisher_did":"` + did + `","reason":{"text":"é<>` + "\u2028\u2029" + ` and literal \\u2028"},"seq":9007199254740991}`
+	if string(payload) != want {
+		t.Fatalf("canonical UTF-8/integer: got %q want %q", payload, want)
 	}
 }

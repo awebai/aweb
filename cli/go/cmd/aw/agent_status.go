@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -132,10 +133,21 @@ func statusSigningIdentity() (*localSigningIdentity, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	identity, err := resolveLocalSigningIdentity()
+	home, err := identityHomeForDir(sel.WorkingDir)
 	if err != nil {
 		return nil, "", err
 	}
+	keyPath, err := awconfig.IdentityHomePath(home, "signing.key")
+	if err != nil {
+		return nil, "", err
+	}
+	key, err := awid.LoadSigningKey(keyPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("load status signing key: %w", err)
+	}
+	identity := &localSigningIdentity{SigningKey: key, SigningKeyPath: keyPath,
+		WorkingDir: sel.WorkingDir, IdentityHome: home.Root, TeamID: sel.TeamID,
+		StableID: sel.StableID, Custody: sel.Custody}
 	// Bind publisher_did to the loaded key, not an unchecked identity label.
 	identity.DIDKey = awid.ComputeDIDKey(identity.SigningKey.Public().(ed25519.PublicKey))
 	return identity, sel.BaseURL, nil
