@@ -159,3 +159,21 @@ async def test_public_team_shows_health_to_anonymous_readers(privacy_app):
     expected = _reported(env, "alice", document)
     assert next(agent["health"] for agent in listed.json()["agents"] if agent["alias"] == "alice") == expected
     assert detail.json()["health"] == expected
+
+
+@pytest.mark.asyncio
+async def test_private_team_shows_health_only_with_a_dashboard_token(privacy_app):
+    env = privacy_app
+    await env.registry_db.execute(
+        "UPDATE {{tables.teams}} SET visibility = 'private' WHERE domain = 'example.test'",
+    )
+    document = _document(env, "alice", "alice")
+    published = await _publish(env, "alice", "alice", document)
+    assert published.status_code == 200, published.text
+
+    for path in (f"/v1/teams/{TEAM}/agents", f"/v1/teams/{TEAM}/agents/alice"):
+        anonymous = await env.client.get(path)
+        assert anonymous.status_code == 401, anonymous.text
+        assert "health" not in anonymous.text
+
+    assert await _health(env, "alice") == _reported(env, "alice", document)
