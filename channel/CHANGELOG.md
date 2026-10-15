@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.17
+
+- Record successful event-stream reads in the selected identity directory's
+  `receive/stream.json` for host health publishers. The receipt includes the
+  signing DID, optional stable ID, process ID and read timestamps. It is written
+  atomically with mode 0600, refreshed at most every 30 seconds on server reads
+  (including keepalives), and removed on clean stream close or disconnect.
+  `AWEB_DELIVERY=session` opens no stream and writes no receipt.
+
 ## 1.7.15
 
 - Verify addressless dashboard human senders using their participant-authorized membership and the delivery team registry, preserving signature and recipient checks. Update the plugin and restart the seat to load the fix.

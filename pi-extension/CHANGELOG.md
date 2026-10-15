@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.15
+
+- Record successful event-stream reads in the selected identity directory's
+  `receive/stream.json` for host health publishers. The receipt includes the
+  signing DID, optional stable ID, process ID and read timestamps. It is written
+  atomically with mode 0600, refreshed at most every 30 seconds on server reads
+  (including keepalives), and removed on clean stream close or disconnect.
+  `AWEB_DELIVERY=session` opens no stream and writes no receipt.
+
 ## 0.3.14
 
 - Connection and stopped-loop diagnostics stay in operator logs/status and do

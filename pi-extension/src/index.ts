@@ -292,13 +292,15 @@ export default function awebPiExtension(pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     abortController?.abort();
     abortController = undefined;
-    await channelLoop;
     wakeDispatcher?.close(new Error("Pi session shut down before wake delivery"));
     wakeDispatcher = undefined;
+    await channelLoop;
   });
 
   pi.on("session_start", async (_event, ctx) => {
     abortController?.abort();
+    wakeDispatcher?.close(new Error("Pi session replaced before wake delivery"));
+    wakeDispatcher = undefined;
     await channelLoop;
     abortController = new AbortController();
 
