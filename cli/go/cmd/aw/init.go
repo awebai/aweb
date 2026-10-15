@@ -417,6 +417,7 @@ func ensureTeamAdmissionAuthForInit(cmd *cobra.Command) error {
 	if parent == nil {
 		parent = context.Background()
 	}
+	// Interactive browser authentication retains its login-specific wait budget.
 	ctx, cancel := context.WithTimeout(parent, cliAuthLoginTimeout)
 	defer cancel()
 	loginCmd := cmd

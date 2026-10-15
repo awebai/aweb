@@ -684,7 +684,7 @@ func manifestURLForSource(source string) (string, error) {
 }
 
 func fetchManifest(manifestURL string) ([]byte, string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
@@ -745,6 +745,7 @@ func installPluginSource(source, dest string) (string, error) {
 	var reader io.ReadCloser
 	var mode os.FileMode = 0o755
 	if u, err := url.Parse(source); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		// Artifact transfer has its own one-minute download budget, separate from API calls.
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
@@ -1248,7 +1249,7 @@ func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	signed, err := client.SignAppRequestViaCustody(ctx, name, verb, args, rawBody)
 	if err != nil {
@@ -1272,7 +1273,7 @@ func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []
 }
 
 func executeUnsignedManifestRequest(method string, parsedURL *url.URL, bodyBytes []byte, headers http.Header) (*installedManifestToolResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, parsedURL.String(), strings.NewReader(string(bodyBytes)))
 	if err != nil {

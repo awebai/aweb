@@ -161,7 +161,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 	localStableID := material.StableID
 
 	if req.Global {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := commandAPIContext(context.Background())
 		defer cancel()
 		if _, regErr := registry.RegisterIdentity(
 			ctx,
@@ -786,7 +786,7 @@ func persistAPIKeyBootstrapState(
 
 func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payload apiKeyBootstrapRequest) (*apiKeyBootstrapResponse, error) {
 	var cancel context.CancelFunc
-	ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel = commandAPIContext(ctx)
 	defer cancel()
 
 	body, err := json.Marshal(payload)

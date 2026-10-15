@@ -39,7 +39,7 @@ type idLogOutput struct {
 }
 
 func runDidLog(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	workingDir, _ := os.Getwd()

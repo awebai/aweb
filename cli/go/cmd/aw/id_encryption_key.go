@@ -111,7 +111,7 @@ func init() {
 }
 
 func runIDEncryptionKeySetup(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	out, err := setupOrRotateIdentityEncryptionKey(ctx, false)
@@ -123,7 +123,7 @@ func runIDEncryptionKeySetup(cmd *cobra.Command, args []string) error {
 }
 
 func runIDEncryptionKeyRotate(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	out, err := setupOrRotateIdentityEncryptionKey(ctx, true)
@@ -302,7 +302,7 @@ func ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir string, identit
 	if err := ensureLocalIdentityEncryptionKeyForDir(workingDir, identityHome); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	if _, _, err := publishEnsuredIdentityEncryptionKeyForDir(ctx, workingDir, identityHome); err != nil {
 		fmt.Fprintf(os.Stderr,

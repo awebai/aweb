@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -67,7 +66,7 @@ func runWorkReady(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	claimsResp, err := client.ClaimsList(ctx, "", 200)
@@ -110,7 +109,7 @@ func runWorkActive(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.TaskListActive(ctx)
@@ -172,7 +171,7 @@ func runWorkBlocked(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.TaskListBlocked(ctx)

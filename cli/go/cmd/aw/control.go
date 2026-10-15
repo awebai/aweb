@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"time"
 
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -30,7 +28,7 @@ func controlSignalCmd(signal awid.ControlSignal) *cobra.Command {
 				return err
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := commandAPIContext(cmd.Context())
 			defer cancel()
 
 			resp, err := client.SendControlSignal(ctx, agentAlias, signal)

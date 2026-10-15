@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
@@ -137,7 +136,7 @@ cryptographically verified identity.`,
 			fmt.Fprintln(os.Stderr, "note: high and urgent mail always wakes the recipient; --no-notify cannot suppress that. Lower the priority to send quietly.")
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 
 		cwd, err := os.Getwd()
@@ -279,7 +278,7 @@ var beadsMailReplyCmd = &cobra.Command{
 			return err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 		c, sel, err := resolveMailMessagingClientSelection()
 		if err != nil {

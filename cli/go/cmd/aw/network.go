@@ -1,9 +1,6 @@
 package main
 
 import (
-	"context"
-	"time"
-
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -20,7 +17,7 @@ var directoryCmd = &cobra.Command{
 	Short: "Search or look up global identities in the network directory",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 
 		c, err := resolveClient()

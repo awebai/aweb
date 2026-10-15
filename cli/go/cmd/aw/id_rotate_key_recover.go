@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -61,7 +60,7 @@ func runIDRotateKeyRecover(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	out, err := recoverPendingRotation(ctx, identity, rotationDir)
 	if err != nil {

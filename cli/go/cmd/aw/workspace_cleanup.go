@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awid"
@@ -29,7 +28,7 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	resp, err := client.WorkspaceList(ctx, aweb.WorkspaceListParams{

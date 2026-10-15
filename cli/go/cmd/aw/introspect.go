@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"strings"
 	"time"
 
@@ -65,7 +64,7 @@ var introspectCmd = &cobra.Command{
 			out.GrantScopes = grant.Scopes
 			out.GrantExpiresAt = strings.TrimSpace(grant.ExpiresAt)
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 		// Inbound mode is root-identity state; grant scopes cannot read it, so
 		// a grant home reports the subject identity plus grant status only.

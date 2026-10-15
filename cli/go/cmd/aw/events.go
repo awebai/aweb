@@ -38,6 +38,7 @@ var eventsStreamCmd = &cobra.Command{
 		ctx := baseCtx
 		if eventsStreamTimeout > 0 {
 			var cancel context.CancelFunc
+			// The event stream is indefinite unless the caller explicitly supplies --timeout.
 			ctx, cancel = context.WithTimeout(baseCtx, time.Duration(eventsStreamTimeout)*time.Second)
 			defer cancel()
 		}

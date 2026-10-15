@@ -191,6 +191,7 @@ func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) 
 	c.SetGrantSubject(sel.TeamID, sel.StableID, sel.DID, sel.Address, sel.Alias)
 	if socketPath := strings.TrimSpace(grant.Custody.SocketPath); socketPath != "" {
 		if grant.ExpiresAt == "never" {
+			// Custody status is a short local authority probe, not a normal API request.
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			var status custodyStatusReport
@@ -358,7 +359,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	}
 	grantDIDKey := awid.ComputeDIDKey(pub)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	view, err := client.MintIdentityGrant(ctx, &aweb.IdentityGrantMintRequest{
 		GrantDIDKey:  grantDIDKey,
@@ -379,7 +380,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 			Apps:    appSnapshots,
 		}
 		if err := saveGrantAppToolsSnapshot(residentHome, snap); err != nil {
-			revokeCtx, revokeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			revokeCtx, revokeCancel := commandAPIContext(cmd.Context())
 			defer revokeCancel()
 			if revokeErr := client.RevokeIdentityGrant(revokeCtx, snap.GrantID); revokeErr != nil {
 				return fmt.Errorf("record app tool policy for grant %s: %w (revoking the grant also failed: %v; revoke it manually)", snap.GrantID, err, revokeErr)
@@ -457,7 +458,7 @@ func runGrantList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	resp, err := client.ListIdentityGrants(ctx)
 	if err != nil {
@@ -479,7 +480,7 @@ func runGrantRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	if err := client.RevokeIdentityGrant(ctx, grantID); err != nil {
 		return err
@@ -502,7 +503,7 @@ func runGrantShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	resp, err := client.ListIdentityGrants(ctx)
 	if err != nil {

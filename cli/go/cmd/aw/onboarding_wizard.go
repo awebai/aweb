@@ -432,7 +432,7 @@ func provisionBYODIdentity(req guidedOnboardingRequest, name, domain string) (*g
 		return nil, fmt.Errorf("invalid planned registry URL: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	if req.Global {
@@ -543,7 +543,7 @@ func persistLocalSigningKeyAndCertificateAt(workingDir, identityHome string, sig
 }
 
 func ensureHostedOnboardingAvailable(awebURL string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	resp, err := guidedOnboardingCheckUsername(ctx, awebURL, "Invalid_Probe")
@@ -602,7 +602,7 @@ func resolveGuidedHostedUsername(req guidedOnboardingRequest, onboardingURL stri
 		return promptAvailableHostedUsername(req.PromptIn, req.PromptOut, onboardingURL)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	resp, err := guidedOnboardingCheckUsername(ctx, onboardingURL, username)
 	cancel()
 	if err != nil {
@@ -633,7 +633,7 @@ func promptAvailableHostedUsername(in io.Reader, out io.Writer, onboardingURL st
 			return "", err
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := commandAPIContext(context.Background())
 		resp, err := guidedOnboardingCheckUsername(ctx, onboardingURL, username)
 		cancel()
 		if err != nil {
@@ -693,7 +693,7 @@ func provisionHostedIdentity(
 		didAW = awid.ComputeStableID(pub)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	if global {

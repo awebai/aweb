@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/spf13/cobra"
@@ -40,7 +38,7 @@ func runSessionLeaseStatus(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	view, err := client.SessionLeaseGet(ctx)
 	if err != nil {
@@ -65,7 +63,7 @@ func runSessionLeaseAcquire(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	view, err := client.SessionLeaseAcquire(ctx, req)
 	if err != nil {
@@ -86,7 +84,7 @@ func runSessionLeaseRenew(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	view, err := client.SessionLeaseRenew(ctx, req)
 	if err != nil {
@@ -107,7 +105,7 @@ func runSessionLeaseRelease(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	if err := client.SessionLeaseRelease(ctx, &aweb.SessionLeaseReleaseRequest{SessionID: id, SessionKey: key}); err != nil {
 		return err
@@ -129,7 +127,7 @@ func runSessionLeaseTakeover(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	view, err := client.SessionLeaseTakeover(ctx, &aweb.SessionLeaseTakeoverRequest{SessionID: req.SessionID, SessionKey: req.SessionKey, TTLSeconds: req.TTLSeconds, Reason: reason})
 	if err != nil {

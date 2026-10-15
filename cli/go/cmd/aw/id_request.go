@@ -156,7 +156,7 @@ func executeSignedIDRequest(method string, parsedURL *url.URL, identity *localSi
 		return nil, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, method, parsedURL.String(), bytes.NewReader(bodyBytes))

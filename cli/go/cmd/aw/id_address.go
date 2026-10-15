@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -52,7 +51,7 @@ func init() {
 }
 
 func runIDAddressClaim(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	workingDir, _ := os.Getwd()
 	out, err := executeIDAddressClaim(ctx, workingDir, idAddressClaimOptions{

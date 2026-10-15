@@ -130,6 +130,7 @@ func maybeRenewIdentityEncryptionAssertion(ctx context.Context, workingDir strin
 	if err != nil || identity == nil {
 		return
 	}
+	// Pre-command renewal is best-effort and must not delay ordinary commands beyond five seconds.
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := renewIdentityEncryptionAssertionWithBackoff(ctx, workingDir, home, false); err != nil {

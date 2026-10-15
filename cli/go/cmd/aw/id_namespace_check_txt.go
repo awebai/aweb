@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -72,7 +71,7 @@ func executeIDNamespaceCheckTXT(opts idNamespaceCheckTXTOptions) (idNamespaceChe
 	}
 	localController := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	authority, err := awid.VerifyExactDomainAuthority(ctx, opts.TXTResolver, domain)
 	if err != nil {

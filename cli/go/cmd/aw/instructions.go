@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/spf13/cobra"
@@ -105,7 +103,7 @@ func runInstructionsShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	requestedID := ""
@@ -185,7 +183,7 @@ func runInstructionsHistory(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.TeamInstructionsHistory(ctx, instructionsHistoryLimit)
@@ -207,7 +205,7 @@ func runInstructionsSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	active, err := client.ActiveTeamInstructions(ctx)
@@ -244,7 +242,7 @@ func runInstructionsActivate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.ActivateTeamInstructions(ctx, strings.TrimSpace(args[0]))
@@ -265,7 +263,7 @@ func runInstructionsReset(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.ResetTeamInstructions(ctx)

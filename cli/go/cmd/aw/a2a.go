@@ -101,7 +101,7 @@ var a2aCardCmd = &cobra.Command{
 	Short: "Fetch and verify an A2A Agent Card",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 		out, err := buildA2ACardOutput(ctx, args[0], a2aCardAddress, a2aCardRegistry)
 		if err != nil {
@@ -128,6 +128,7 @@ var a2aSendCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		// Agent task completion can involve a wait; keep the explicit ninety-second task budget.
 		ctx, cancel := context.WithTimeout(cmd.Context(), 90*time.Second)
 		defer cancel()
 		task, err := runA2ASend(ctx, args[0], message)
@@ -150,7 +151,7 @@ var a2aStatusCmd = &cobra.Command{
 	Short: "Fetch an A2A task",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 		task, err := runA2AStatus(ctx, args[0], args[1])
 		if err != nil {
@@ -172,7 +173,7 @@ var a2aCancelCmd = &cobra.Command{
 	Short: "Cancel an A2A task",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 		task, err := runA2ACancel(ctx, args[0], args[1])
 		if err != nil {
@@ -194,6 +195,7 @@ var a2aPublishCmd = &cobra.Command{
 	Short: "Publish an A2A Agent Card route to AWID",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Card publication fetches, verifies and registers a route; keep its explicit forty-five-second workflow budget.
 		ctx, cancel := context.WithTimeout(cmd.Context(), 45*time.Second)
 		defer cancel()
 		out, err := runA2APublish(ctx, args[0])

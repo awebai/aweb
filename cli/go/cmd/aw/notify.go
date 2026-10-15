@@ -57,6 +57,7 @@ func runNotify(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// A tool hook must return promptly; keep the explicit five-second notification budget.
 	ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 	defer cancel()
 

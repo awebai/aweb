@@ -389,6 +389,7 @@ func (s *custodyService) status(ctx context.Context, status string, errs []strin
 	grantStatusReady := deps.grantStatus != nil
 	lastCheckedAt := any(nil)
 	if deps.readinessCheck != nil {
+		// Custody checks retain their short freshness/read budget within the calling request.
 		checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		checkedAt, err := deps.readinessCheck(checkCtx)
 		cancel()
@@ -528,6 +529,7 @@ func (s *custodyService) signPlainMessage(ctx context.Context, req *awid.PlainMe
 	if grantStatus == nil {
 		return nil, fmt.Errorf("grant_freshness_unavailable")
 	}
+	// Custody checks retain their short freshness/read budget within the calling request.
 	freshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	st, err := grantStatus(freshCtx, req.GrantID)
@@ -887,6 +889,7 @@ func (s *custodyService) validateE2EECommon(ctx context.Context, op string, reqF
 	if grantStatus == nil {
 		return custodyGrantStatus{}, fmt.Errorf("grant_freshness_unavailable")
 	}
+	// Custody checks retain their short freshness/read budget within the calling request.
 	freshCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	st, err := grantStatus(freshCtx, reqFields["grant_id"])
@@ -1134,6 +1137,7 @@ func (s *custodyService) storedMailReplyViaClient(ctx context.Context, messageID
 	if client == nil {
 		return nil, fmt.Errorf("stored_message_unavailable")
 	}
+	// Custody checks retain their short freshness/read budget within the calling request.
 	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	var message awid.InboxMessage
@@ -1155,6 +1159,7 @@ func (s *custodyService) storedE2EEEnvelopeViaClient(ctx context.Context, kind, 
 	if messageID == "" {
 		return nil, fmt.Errorf("bad_request")
 	}
+	// Custody checks retain their short freshness/read budget within the calling request.
 	readCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	switch kind {

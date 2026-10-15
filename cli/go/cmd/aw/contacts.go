@@ -1,9 +1,7 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"time"
 
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -21,7 +19,7 @@ var contactsListCmd = &cobra.Command{
 	Short: "List contacts",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 
 		client, err := resolveClient()
@@ -42,7 +40,7 @@ var contactsAddCmd = &cobra.Command{
 	Short: "Add a contact",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 
 		client, err := resolveClient()
@@ -66,7 +64,7 @@ var contactsRemoveCmd = &cobra.Command{
 	Short: "Remove a contact by address",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 
 		client, err := resolveClient()

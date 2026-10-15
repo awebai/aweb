@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/spf13/cobra"
@@ -40,7 +39,7 @@ func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string,
 		}
 	}
 	sort.Strings(scopes)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	body := map[string]any{
 		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
@@ -97,7 +96,7 @@ func init() {
 			if cmd.Flags().Changed("resource") {
 				body["resource_ref"] = resource
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+			ctx, cancel := commandAPIContext(cmd.Context())
 			defer cancel()
 			var result map[string]any
 			if err := client.Post(ctx, "/v1/events/subscriptions", body, &result); err != nil {

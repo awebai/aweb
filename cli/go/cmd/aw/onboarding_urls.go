@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awid"
 )
@@ -115,7 +114,7 @@ func discoverOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 		return onboardingServiceURLs{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	resp, err := awid.DiscoverServices(ctx, baseURL)

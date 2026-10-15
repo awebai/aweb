@@ -46,6 +46,7 @@ var authLoginCmd = &cobra.Command{
 	Short: "Start browser-based device login for this host aw CLI",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// Interactive browser authentication retains its login-specific wait budget.
 		ctx, cancel := context.WithTimeout(cmd.Context(), cliAuthLoginTimeout)
 		defer cancel()
 		return runAuthLogin(ctx, cmd)

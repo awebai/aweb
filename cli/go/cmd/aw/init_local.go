@@ -67,7 +67,7 @@ func runImplicitLocalInit(req implicitLocalInitRequest) (connectOutput, error) {
 		return connectOutput{}, fmt.Errorf("invalid planned registry URL: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	if err := ensureStandaloneNamespace(ctx, registry, prepared.Plan, prepared.ControllerKey); err != nil {

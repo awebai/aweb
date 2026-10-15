@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -41,7 +39,7 @@ polling: aw init --setup-channel.`,
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := commandAPIContext(cmd.Context())
 		defer cancel()
 		c, _, _, err := beadsMailReadClient(cmd, ctx)
 		if err != nil {

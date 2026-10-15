@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"strings"
-	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awid"
@@ -181,7 +180,7 @@ func (r *doctorRunner) doctorMessagingClient(state *doctorMessagingState) (*aweb
 }
 
 func (r *doctorRunner) addMessagingOnlineChecks(client *aweb.Client) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	if inbox, err := client.Inbox(ctx, awid.InboxParams{Limit: 1}); err != nil {
 		r.addAwebHTTPErrorCheck(doctorCheckMessagingInboxRead, err, "Inbox read failed under current identity credentials.", "Retry with the current identity credentials or repair local signing key state.")

@@ -908,6 +908,7 @@ func resolveWorkingBaseURLContext(ctx context.Context, raw string) (string, erro
 			return "", err
 		}
 		debugLog("resolve base url: probing %s", cand)
+		// API-base detection is deliberately a short probe for each candidate URL.
 		probeCtx, cancel := context.WithTimeout(ctx, awebBaseURLProbeTimeout)
 		ok, outcome, err := probeAwebBaseURLOutcome(probeCtx, cand)
 		cancel()

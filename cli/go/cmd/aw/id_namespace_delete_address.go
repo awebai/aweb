@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -53,7 +52,7 @@ func init() {
 }
 
 func runIDNamespaceDeleteAddress(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	out, err := executeIDNamespaceDeleteAddress(ctx, idNamespaceDeleteAddressOptions{

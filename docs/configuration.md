@@ -255,6 +255,11 @@ Normal `aw` API requests use a 30s timeout by default. Override it with
 AWEB_HTTP_TIMEOUT=45s aw work ready
 ```
 
+Ordinary command operations share this budget across their API preparation,
+reads and writes, and honor an earlier caller cancellation or deadline.
+Interactive login, chat waits, event streams, short operational probes and
+artifact downloads retain their explicitly separate deadlines.
+
 On conference or venue WiFi (NAT pressure, captive portals, silent
 blackholing), raise `AWEB_HTTP_TIMEOUT` above the 30s default and retry reads
 freely. For a timed-out write (task create/update, mail send), the request may

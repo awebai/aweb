@@ -5,7 +5,6 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -43,7 +42,7 @@ func init() {
 }
 
 func runIDNamespaceDeliveryOrigin(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	out, err := executeIDNamespaceDeliveryOrigin(ctx, idNamespaceDeliveryOriginOptions{

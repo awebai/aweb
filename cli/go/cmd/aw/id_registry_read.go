@@ -129,7 +129,7 @@ func init() {
 }
 
 func runIDAddresses(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	workingDir, _ := os.Getwd()
@@ -165,7 +165,7 @@ func runIDAddresses(cmd *cobra.Command, args []string) error {
 }
 
 func runIDNamespaceAddresses(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	workingDir, _ := os.Getwd()
@@ -208,7 +208,7 @@ func runIDNamespaceAddresses(cmd *cobra.Command, args []string) error {
 }
 
 func runIDNamespaceResolve(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	domain, name, ok := awconfig.CutIdentityAddress(args[0])

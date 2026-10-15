@@ -101,6 +101,7 @@ func beadsMailRecordBead(sel *awconfig.Selection, m beadsMailAddressMap, subject
 		}
 	}
 
+	// The optional local Beads dual-write has its own best-effort budget after mail delivery.
 	ctx, cancel := context.WithTimeout(context.Background(), beadsMailDualWriteTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "bd", args...)

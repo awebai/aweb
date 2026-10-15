@@ -22,14 +22,16 @@ var heartbeatCmd = &cobra.Command{
 			return err
 		}
 
-		heartbeatCtx, heartbeatCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Liveness and repair are short operational probes, independent of the normal API budget.
+		heartbeatCtx, heartbeatCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 		resp, err := client.Heartbeat(heartbeatCtx)
 		heartbeatCancel()
 		if err != nil {
 			return err
 		}
 
-		repairCtx, repairCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Liveness and repair are short operational probes, independent of the normal API budget.
+		repairCtx, repairCancel := context.WithTimeout(cmd.Context(), 5*time.Second)
 		defer repairCancel()
 		workingDir, _ := os.Getwd()
 		resp.RepoStatus, resp.CanonicalOrigin, resp.RepoID, err = repairHeartbeatRepoBinding(repairCtx, client, workingDir)

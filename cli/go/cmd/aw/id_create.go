@@ -141,7 +141,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		return idCreateOutput{}, err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	registry, err := newConfiguredRegistryClient(nil, "")
@@ -331,6 +331,7 @@ func identityHomeRoot(home *awconfig.IdentityHome) string {
 }
 
 func discoverIDCreateRegistryURL(domain string, resolver awid.TXTResolver) (string, error) {
+	// Registry discovery is a bounded DNS probe, not a normal API request.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -389,7 +390,7 @@ func confirmAndVerifyIDCreateDNS(plan *idCreatePlan, opts idCreateOptions) error
 		if !proceed {
 			return usageError("DNS verification cancelled; rerun after publishing the TXT record or pass --skip-dns-verify")
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ctx, cancel := commandAPIContext(context.Background())
 		err = verifyIDCreateDomainAuthority(ctx, opts.TXTResolver, plan.Domain, plan.ControllerDID, plan.RegistryURL)
 		cancel()
 		if err == nil {

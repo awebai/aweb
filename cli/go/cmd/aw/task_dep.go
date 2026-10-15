@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/spf13/cobra"
@@ -49,7 +47,7 @@ func runTaskDepAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	if err := client.TaskAddDep(ctx, ref, &aweb.TaskAddDepRequest{DependsOn: dependsOn}); err != nil {
@@ -70,7 +68,7 @@ func runTaskDepRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	if err := client.TaskRemoveDep(ctx, ref, depRef); err != nil {
@@ -96,7 +94,7 @@ func runTaskDepList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	task, err := client.TaskGet(ctx, ref)

@@ -125,7 +125,7 @@ func init() {
 }
 
 func runIDRegister(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	identity, err := resolveIdentity()
@@ -179,7 +179,7 @@ func runIDRegister(cmd *cobra.Command, args []string) error {
 }
 
 func runIDShow(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	identity, err := resolveIdentity()
@@ -227,7 +227,7 @@ func runIDShow(cmd *cobra.Command, args []string) error {
 }
 
 func runIDResolve(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	workingDir, _ := os.Getwd()
@@ -269,7 +269,7 @@ func runIDResolve(cmd *cobra.Command, args []string) error {
 }
 
 func runIDVerify(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	workingDir, _ := os.Getwd()
@@ -320,7 +320,7 @@ func runIDNamespace(cmd *cobra.Command, args []string) error {
 	if len(args) != 1 {
 		return usageError("domain is required")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	workingDir, _ := os.Getwd()
@@ -400,7 +400,7 @@ func executeIDNamespaceRotateController(opts idNamespaceRotateControllerOptions)
 		return idRotateOutput{}, usageError("local namespaces cannot be reverified via DNS")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	authority, err := awid.DiscoverAuthoritativeRegistry(ctx, opts.TXTResolver, domain)

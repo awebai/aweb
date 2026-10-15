@@ -1,10 +1,8 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
@@ -32,7 +30,7 @@ func init() {
 }
 
 func runInboundMode(cmd *cobra.Command, args []string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	c, _, err := resolveClientSelection()

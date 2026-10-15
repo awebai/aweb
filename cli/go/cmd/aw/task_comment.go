@@ -1,11 +1,9 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/spf13/cobra"
@@ -66,7 +64,7 @@ func runTaskCommentAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	comment, err := client.TaskCommentCreate(ctx, ref, &aweb.TaskCommentCreateRequest{Body: body})
@@ -88,7 +86,7 @@ func runTaskCommentList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.TaskCommentList(ctx, ref)

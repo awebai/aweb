@@ -1041,7 +1041,7 @@ func foundTeamWithNamespaceControllerAuthority(wd, teamName, alias, explicitDoma
 			return nil, err
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	firstAgentAddress := ""
 	if firstAgentScope == awid.IdentityModeGlobal && identityErr == nil && identity != nil {
@@ -1287,7 +1287,7 @@ func suggestTeamHumanAgentName(client *aweb.Client, scope string, used map[strin
 		exclude = append(exclude, name)
 	}
 	sort.Strings(exclude)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	suggestion, err := client.SuggestAgentNames(ctx, awid.SuggestAgentNamesRequest{
 		Scope:   scope,
 		Exclude: exclude,
@@ -1317,7 +1317,7 @@ func preflightTeamHumanAddRosterAliases(wd, agentsRoot string, specs []teamAgent
 		}
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	roster, err := client.Client.ListAgents(ctx)
 	cancel()
 	if err != nil {
@@ -2089,7 +2089,7 @@ func rollbackJustCreatedTeamMemberWithExplicitHostedAuth(anchorDir string, accep
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), awid.APITimeout())
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	if isAwebHostedNamespace(target.Domain) || strings.TrimSpace(explicitAPIKey) != "" {
 		awebURL, apiKey, authErr := resolveHostedTeamRemoveAuthWithAwebURL(anchorDir, target.TeamID, target.AwebURL, explicitAPIKey)
@@ -2515,7 +2515,8 @@ func runTeamHumanRemoveAgent(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// Member removal spans registry and coordination cascades; retain its explicit one-minute workflow budget.
+	ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
 	defer cancel()
 
 	if teamHumanRemoveListPending || strings.TrimSpace(teamHumanRemoveResumeOperation) != "" || strings.TrimSpace(teamHumanRemoveAbortOperation) != "" {

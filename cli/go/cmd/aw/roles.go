@@ -9,7 +9,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
@@ -179,7 +178,7 @@ func runTeamRolesShow(cmd *cobra.Command, args []string) error {
 	if rolesShowAllFlag {
 		roleName = ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{
@@ -219,7 +218,7 @@ func runRolesHistory(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.TeamRolesHistory(ctx, rolesHistoryLimit)
@@ -241,7 +240,7 @@ func runRolesSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	created, err := createAndActivateTeamRolesBundle(ctx, client, bundle, "")
@@ -279,7 +278,7 @@ func runRolesAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	active, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
@@ -343,7 +342,7 @@ func runRolesActivate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.ActivateTeamRoles(ctx, strings.TrimSpace(args[0]))
@@ -364,7 +363,7 @@ func runRolesReset(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.ResetTeamRoles(ctx)
@@ -381,7 +380,7 @@ func runRolesDeactivate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 
 	resp, err := client.DeactivateTeamRoles(ctx)
@@ -393,7 +392,7 @@ func runRolesDeactivate(cmd *cobra.Command, args []string) error {
 }
 
 func fetchAvailableRoleItems(client *aweb.Client) ([]teamRoleItem, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{

@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/internal/agentdocs"
@@ -36,7 +35,7 @@ func InjectAgentDocsAtIdentityHome(repoRoot string, identityHome awconfig.Identi
 	if err != nil {
 		return &injectDocsResult{Errors: []string{err.Error()}}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	resp, err := client.ActiveTeamInstructions(ctx)
 	if err != nil {
@@ -204,7 +203,7 @@ func loadTeamInstructionsBody(workingDir string) (string, error) {
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	resp, err := client.ActiveTeamInstructions(ctx)

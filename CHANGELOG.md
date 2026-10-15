@@ -2,10 +2,12 @@
 
 ## Unreleased
 
-- **Mail replies honor the API timeout:** `aw mail reply` uses the normal
-  30-second budget, configurable with `AWEB_HTTP_TIMEOUT`, instead of an
-  overriding 10-second command deadline. A source read that times out still
-  sends no reply and leaves the source unacknowledged.
+- **Commands honor the API timeout:** ordinary API operations share the normal
+  30-second budget, configurable with `AWEB_HTTP_TIMEOUT`, instead of overriding
+  it with hidden command deadlines. This includes mail, chat, tasks, workspace,
+  registry and coordination operations. Explicit waits and short operational
+  probes retain their own deadlines. A timed-out reply source read still sends
+  no reply and leaves the source unacknowledged.
 
 ### Release preparation: AWID 0.5.25
 

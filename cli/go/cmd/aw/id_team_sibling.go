@@ -1,13 +1,11 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
@@ -95,7 +93,7 @@ func runHostedTeamCreate(cmd *cobra.Command, name, domain string) error {
 		return usageError("source_team_mismatch: selected team and certificate do not match")
 	}
 	req := hostedSiblingRequest{RequestID: requestID, Name: name, DisplayName: strings.TrimSpace(teamCreateDisplayName), SourceTeamID: strings.TrimSpace(teamFlag)}
-	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	ctx, cancel := commandAPIContext(cmd.Context())
 	defer cancel()
 	// Show the selected service without echoing any URL userinfo.
 	displayURL, _ := url.Parse(baseURL) // cleanBaseURL already validated it.

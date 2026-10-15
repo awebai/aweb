@@ -258,6 +258,7 @@ func (r *doctorRunner) addOnlineServerProbeChecks(state *doctorAwebState) bool {
 		r.add(awebCheck(doctorCheckServerVersion, doctorStatusBlocked, nil, "Version header check requires a reachable aweb server.", "Resolve server.aweb_url.reachable first.", map[string]any{"prerequisite": doctorCheckServerReachable}))
 		return false
 	}
+	// Server reachability is a short probe; substantive API checks use commandAPIContext.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	probe := probeDoctorAwebRuntime(ctx, state.baseURL)
@@ -377,7 +378,7 @@ func (r *doctorRunner) doctorTeamClient(state *doctorAwebState) (*aweb.Client, s
 }
 
 func (r *doctorRunner) addWorkspaceOnlineChecks(state *doctorAwebState, client *aweb.Client) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 
 	workspaceID := ""
@@ -488,7 +489,7 @@ func (r *doctorRunner) addCoordinationChecks(workspaceID string, teamResp *aweb.
 }
 
 func (r *doctorRunner) addTeamOnlineChecks(state *doctorAwebState, client *aweb.Client) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := commandAPIContext(context.Background())
 	defer cancel()
 	localRole := ""
 	if state.membership != nil {

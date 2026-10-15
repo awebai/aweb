@@ -449,6 +449,7 @@ func resolveRunClaimedTaskRef(ctx context.Context, client *aweb.Client, workspac
 	if client == nil || strings.TrimSpace(workspaceID) == "" {
 		return "", nil
 	}
+	// This is a best-effort claimed-task refresh on the running-session path.
 	statusCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
