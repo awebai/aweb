@@ -11,8 +11,8 @@ The [repository README](../README.md) has install and server-start commands.
 Use this page to find the document you need, and to see which documents carry
 authority over shipped behavior.
 
-The baseline contains 78 tracked Markdown documents. This front door does not
-self-link. The remaining 77 public Markdown paths appear below exactly once.
+The baseline contains 79 tracked Markdown documents. This front door does not
+self-link. The remaining 78 public Markdown paths appear below exactly once.
 
 ## Start here
 
@@ -86,6 +86,8 @@ authority.
   request contract.
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
+- [Agent health](agent-health.md) — status-host designation and the signed
+  agent status document a host publishes.
 
 </details>
 
@@ -210,7 +212,7 @@ notice where one exists.
 - [Messaging contract matrix](messaging-contract-matrix.md) — subordinate
   maintainer cases for routing, read state, chat waits, reconnect, and content
   modes.
-- [Protocol conformance vectors](vectors/README.md) — canonical index for all 20
+- [Protocol conformance vectors](vectors/README.md) — canonical index for all 21
   root JSON fixtures, with current, experimental, compatibility, and digest-only
   authority distinguished.
 - [Self-hosted A2A gateway configuration](examples/a2a-gateway.yaml) — retained

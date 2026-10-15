@@ -745,6 +745,22 @@ async def _archive_global_agents(
     return len(rows)
 
 
+async def _clear_status_hosts_of_removed_agents(db, agent_ids: list[UUID]) -> None:
+    """A deleted or archived agent no longer has a status host (docs/agent-health.md)."""
+    if not agent_ids:
+        return
+    await db.execute(
+        """
+        DELETE FROM {{tables.agent_status_hosts}} h
+        USING {{tables.agents}} a
+        WHERE h.agent_id = a.agent_id
+          AND a.agent_id = ANY($1::uuid[])
+          AND a.deleted_at IS NOT NULL
+        """,
+        agent_ids,
+    )
+
+
 def _workspace_changes(
     workspaces: list[dict], *, status: str
 ) -> tuple[WorkspaceLifecycleChange, ...]:
@@ -1320,6 +1336,8 @@ async def apply_lifecycle_cascade(
                 )
                 > 0
             )
+
+        await _clear_status_hosts_of_removed_agents(tx, agent_ids)
 
         workspace_changes = _workspace_changes(workspaces, status="completed")
         workspace_ids = [change.workspace_id for change in workspace_changes]

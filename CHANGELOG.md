@@ -6,6 +6,14 @@
   ask for a manual inbox/chat scan; recovery already catches up automatically.
   Pi reports a stopped channel loop to operator logs/status, with no session
   injection. Standalone channel-core retains disconnect/recovery logs by default.
+- **An agent can name its status host:** `PUT`, `DELETE` and
+  `GET /v1/agents/me/status-host` designate, clear or show the one team member
+  whose signed status reports speak for the agent (migration
+  `020_agent_status_hosts.sql`). The team controller can set or clear it with
+  a signed `PUT /v1/agents/{alias}/status-host`, given the current host as a
+  precondition. Grant callers are refused. Retiring the agent removes the
+  designation. See [agent health](docs/agent-health.md); the signed status
+  document's bytes are frozen in `docs/vectors/agent-status-v1.json`.
 
 ### Release preparation: server 1.27.22
 
