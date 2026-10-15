@@ -97,6 +97,16 @@ def _verify_dashboard_auth(request: Request, team_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail=msg)
 
 
+def _state_redis(request: Request):
+    """The application's Redis, or None.
+
+    Read from app.state rather than injected, so an embedding application that
+    calls these route functions in process with (request, team_id, db) gets
+    the same health observations as an HTTP caller.
+    """
+    return getattr(request.app.state, "redis", None)
+
+
 def _is_dashboard_reader(request: Request, team_id: str) -> bool:
     """Whether the request carries a dashboard token valid for this team.
 
@@ -345,7 +355,7 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
 
 @router.get("/v1/teams/{team_id:path}/agents")
 async def list_team_agents(
-    request: Request, team_id: str, db=Depends(get_db), redis=Depends(get_redis)
+    request: Request, team_id: str, db=Depends(get_db)
 ) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
@@ -371,7 +381,7 @@ async def list_team_agents(
     )
     health = await agent_health(
         aweb_db,
-        redis,
+        _state_redis(request),
         request,
         team_id=team_id,
         agent_ids=[r["agent_id"] for r in rows],
@@ -425,7 +435,7 @@ async def list_team_claims(
 
 @router.get("/v1/teams/{team_id:path}/agents/{alias}")
 async def get_team_agent(
-    request: Request, team_id: str, alias: str, db=Depends(get_db), redis=Depends(get_redis)
+    request: Request, team_id: str, alias: str, db=Depends(get_db)
 ) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
@@ -445,7 +455,7 @@ async def get_team_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
     health = await agent_health(
         aweb_db,
-        redis,
+        _state_redis(request),
         request,
         team_id=team_id,
         agent_ids=[row["agent_id"]],
