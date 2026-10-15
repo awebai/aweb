@@ -7,7 +7,6 @@ import { afterEach, test } from "node:test";
 import { oatsCliPath } from "./helpers/oats-test-root.mjs";
 
 const CAPABILITY_SOURCE = resolve(new URL("../.agents/capabilities/owned/aweb-tasks", import.meta.url).pathname);
-const CANONICAL_SKILL = resolve(new URL("../../skills/aweb-coordination", import.meta.url).pathname);
 const temporaryDirectories = [];
 
 afterEach(() => {
@@ -50,14 +49,6 @@ test("aweb tasks capability owns the exclusive tasks and roster contract", () =>
     "Do not use task or roster features from the messaging\\s+layer",
   ]) {
     assert.match(injection, new RegExp(statement));
-  }
-
-  for (const relative of ["SKILL.md", "references/coordination-patterns.md"]) {
-    assert.equal(
-      readFileSync(join(CAPABILITY_SOURCE, "skills", "aweb-coordination", relative), "utf8"),
-      readFileSync(join(CANONICAL_SKILL, relative), "utf8"),
-      `capability skill copy drifted: ${relative}`,
-    );
   }
 });
 

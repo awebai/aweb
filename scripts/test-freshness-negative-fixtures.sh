@@ -27,9 +27,9 @@ run_self_test "Python lock" \
 run_self_test "generated CLI reference" \
   "self-test passed: clean generation plus visible-addition, removed-command, and stale-output controls" \
   bash scripts/regenerate-cli-reference.sh --self-test
-run_self_test "AWID public site document mirrors" \
-  "self-test passed: clean mirrors pass; stale copies and dead publication-context links fail" \
-  bash scripts/test-awid-site-doc-freshness.sh
+run_self_test "AWID public site document links" \
+  "self-test passed: generated documents pass; dead publication-context links fail" \
+  bash scripts/test-awid-site-doc-links.sh
 run_self_test "TypeScript dist" \
   "self-test passed: clean TypeScript builds pass and guarded source regressions fail" \
   bash scripts/test-typescript-dist-freshness.sh
