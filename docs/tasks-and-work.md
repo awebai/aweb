@@ -87,6 +87,30 @@ aw task comment add <ref> --body-file finding.md
 
 Use mail when a particular teammate needs the update or handoff.
 
+## Ask a human for a decision
+
+A human member of the same team is a valid task assignee, by their alias or
+member ID, just like an agent. The member must exist and not be deleted;
+assignment does not require an agent workspace. This does not publish humans
+in the agent roster.
+
+A task assigned to a human is a request: state the question, options and what
+answer would unblock the work. Assign it to the human whose message you are
+acting on, using that message's alias. Do not guess an alias from a display
+name or enumerate humans through the roster. Keep the request open while
+waiting. The answer arrives as mail with subject `Re: <ref> <title>`; read it,
+act on it, and update the task to reflect what remains.
+
+Team task events include nullable `assignee_alias` on `task.created` and
+`task.status_changed`. An actual reassignment additionally emits
+`task.assignee_changed`, with `old_assignee_alias` and `assignee_alias` (the new
+value, or null when unassigned), plus `team_id`, `task_ref`, `title` and `alias`
+(the actor). A combined status/assignment update emits both events; a no-op
+assignment emits no assignment event. A claim that changes the assignee also
+emits it. These are best-effort wake signals: refresh durable task state after
+a signal or reconnect. Existing event names and task request/response shapes
+remain accepted.
+
 ## Finish with evidence
 
 Close a task only after the requested outcome has been verified:

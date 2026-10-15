@@ -7,6 +7,16 @@
   Pi reports a stopped channel loop to operator logs/status, with no session
   injection. Standalone channel-core retains disconnect/recovery logs by default.
 
+### Server changes since `server-v1.27.22`
+
+- **Human task requests stay current:** human team members are supported task
+  assignees, covered by create/update/filter regressions. Team `task.created`
+  and `task.status_changed` events include `assignee_alias`; reassignment adds
+  `task.assignee_changed` with the previous and current assignee, including
+  unassignment and implicit claim assignment. Agent and MCP guidance explains
+  how to request a decision from the human whose message the agent is acting
+  on and receive the answer by mail.
+
 ### Release preparation: server 1.27.22
 
 Server changes are since `server-v1.27.21`.

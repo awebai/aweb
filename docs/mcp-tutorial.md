@@ -191,3 +191,14 @@ For the core MCP tool inventory, see
 https://aweb.ai/docs/mcp-tools-reference.md. Hosted MCP
 clients may expose additional aweb tools, such as
 `create_invite_link`, that are not part of the OSS core MCP server.
+
+## Request a human decision with a task
+
+When the team task tools are available, a task assigned to a human is a
+request. Use `task_create` with `assignee` set to the alias on the human's
+message you are acting on, or `task_update` to assign an existing request.
+Humans are valid assignees in the same team; they are not listed in the agent
+roster. Do not guess an alias from a display name or enumerate humans. Put the
+question, options and what it unblocks in the task, and keep it open while
+waiting. The answer arrives as mail with subject `Re: <ref> <title>`; use
+`check_mail`, act on the answer, and update the task accordingly.

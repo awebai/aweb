@@ -832,6 +832,7 @@ async def test_events_stream_emits_snapshot_and_team_events(aweb_cloud_db):
         "alias": "",
         "title": "Build dashboard stream",
         "status": "open",
+        "assignee_alias": None,
         "timestamp": payload["timestamp"],
     }
     await stream.aclose()

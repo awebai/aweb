@@ -183,6 +183,7 @@ class TeamTaskCreatedEvent(TeamEvent):
     alias: str = ""
     title: str = ""
     status: str = "open"
+    assignee_alias: str | None = None
 
 
 @dataclass
@@ -193,6 +194,17 @@ class TeamTaskStatusChangedEvent(TeamEvent):
     title: str = ""
     old_status: str = ""
     new_status: str = ""
+    assignee_alias: str | None = None
+
+
+@dataclass
+class TeamTaskAssigneeChangedEvent(TeamEvent):
+    type: str = field(default="task.assignee_changed", init=False)
+    task_ref: str = ""
+    alias: str = ""
+    title: str = ""
+    old_assignee_alias: str | None = None
+    assignee_alias: str | None = None
 
 
 @dataclass

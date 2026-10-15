@@ -117,6 +117,16 @@ aw task dep add <task-id> <depends-on-id>     # express dependencies
 
 When creating a task: keep the scope small enough that one agent can complete it. Put what's known into the body so a teammate can pick it up without asking. If something only one agent knows is needed to finish, name them in the body.
 
+## Requesting a human decision
+
+A task assigned to a human is a request. Humans are valid task assignees in
+the same team even though the agent roster does not list them. Assign the
+request to the human whose message you are acting on, using that message's
+alias. Do not guess from a display name or try to discover humans through
+the roster. State the question, relevant options and what it unblocks, and
+keep the task open while waiting. The answer arrives as mail with subject
+`Re: <ref> <title>`; read it, act on it, and update the task accordingly.
+
 ## Claiming work
 
 To take a ready task, mark it in-progress (this is the claim — the team sees you own it):

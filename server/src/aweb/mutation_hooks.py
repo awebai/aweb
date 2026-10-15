@@ -29,6 +29,7 @@ from .events import (
     TeamReservationAcquiredEvent,
     TeamReservationReleasedEvent,
     TeamReservationRenewedEvent,
+    TeamTaskAssigneeChangedEvent,
     TeamTaskClaimedEvent,
     TeamTaskCreatedEvent,
     TeamTaskStatusChangedEvent,
@@ -588,6 +589,7 @@ def _translate_team_event(event_type: str, ctx: dict):
             alias=str(ctx.get("actor_alias", "") or ""),
             title=str(ctx.get("title", "") or ""),
             status="open",
+            assignee_alias=ctx.get("assignee_alias"),
         )
 
     if event_type == "task.status_changed":
@@ -601,6 +603,20 @@ def _translate_team_event(event_type: str, ctx: dict):
             title=str(ctx.get("title", "") or ""),
             old_status=str(ctx.get("old_status", "") or ""),
             new_status=str(ctx.get("new_status", "") or ""),
+            assignee_alias=ctx.get("assignee_alias"),
+        )
+
+    if event_type == "task.assignee_changed":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        return TeamTaskAssigneeChangedEvent(
+            team_id=team_id,
+            task_ref=str(ctx.get("task_ref", "")).strip(),
+            alias=str(ctx.get("actor_alias", "") or ""),
+            title=str(ctx.get("title", "") or ""),
+            old_assignee_alias=ctx.get("old_assignee_alias"),
+            assignee_alias=ctx.get("assignee_alias"),
         )
 
     if event_type == "task.claimed":
