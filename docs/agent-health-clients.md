@@ -1,10 +1,10 @@
 # Agent health clients
 
 The [agent health contract](agent-health.md) defines publisher authority and
-the signed document. CLI support is prepared for **aw 1.36.38**; receive receipts
-are prepared for **Claude channel 1.7.17** and **Pi 0.3.15**. These version floors
-take effect when those releases are published. They also require a server with
-the agent-health routes.
+the signed document. CLI support needs **aw 1.36.38** or later; receive receipts
+need **Claude channel 1.7.17** and **Pi 0.3.15** or later. Designation and
+publishing need **server 1.27.24** or later, the first with the agent-health
+routes.
 
 ## Designate and publish with aw
 

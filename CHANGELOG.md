@@ -2,20 +2,16 @@
 
 ## Unreleased
 
-- **Host health publishing clients:** prepared for aw **1.36.38**,
-  `aw status-host set|clear|show` manages the selected agent's designation and
-  `aw status publish --alias <alias> --document -` signs and publishes the frozen
-  status document with team-auth v2. JSON output preserves refusal codes,
-  messages and retry hints; offline `--print-signed` supports vector testing.
-  Claude channel **1.7.17** and Pi **0.3.15** add atomic, mode-0600 receive
-  receipts refreshed only on successful stream reads. See
-  [agent health clients](docs/agent-health-clients.md). These floors apply on
-  publication; release tags remain a separate gate.
-
 - **Connection diagnostics stay out of agent turns:** reconnect logs no longer
   ask for a manual inbox/chat scan; recovery already catches up automatically.
   Pi reports a stopped channel loop to operator logs/status, with no session
   injection. Standalone channel-core retains disconnect/recovery logs by default.
+
+### Release preparation: server 1.27.24, aw 1.36.38, channel 1.7.17, pi 0.3.15
+
+Server changes are since `server-v1.27.23`; client changes are since
+`aw-v1.36.37`, `channel-v1.7.16` and `pi-v0.3.14`.
+
 - **An agent can name its status host:** `PUT`, `DELETE` and
   `GET /v1/agents/me/status-host` designate, clear or show the one team member
   whose signed status reports speak for the agent (migration
@@ -33,6 +29,14 @@
   agent every 5 seconds, outside message metering. A change of verdict fires
   the new `agent.status` mutation hook, which the built-in handler relays to
   the team event stream.
+- **Host health publishing clients:** aw **1.36.38** adds
+  `aw status-host set|clear|show`, which manages the selected agent's
+  designation, and `aw status publish --alias <alias> --document -`, which signs
+  and publishes the frozen status document with team-auth v2. JSON output
+  preserves refusal codes, messages and retry hints; offline `--print-signed`
+  supports vector testing. Claude channel **1.7.17** and Pi **0.3.15** add
+  atomic, mode-0600 receive receipts refreshed only on successful stream reads.
+  See [agent health clients](docs/agent-health-clients.md).
 
 ### Release preparation: server 1.27.23
 
