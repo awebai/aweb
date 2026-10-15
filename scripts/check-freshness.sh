@@ -6,9 +6,9 @@
 #   1. Intentionally committed GENERATED artifacts are regenerated and must not
 #      drift from their source (uv locks, CLI and MCP references, resource packs,
 #      reserved app ids, the claude-channel, pi and aw wake bundles).
-#   2. Public AWID site document mirrors exactly match their canonical docs.
+#   2. Public AWID site documents are generated before publication-link checks.
 #   3. Repository paths REFERENCED IN DOCUMENTATION exist (check-doc-paths.sh).
-#   4. Every lock/reference/dist/mirror check passes a clean fixture and rejects
+#   4. Every lock/reference/dist/link check passes a clean fixture and rejects
 #      the stale artifact it claims to detect (test-freshness-negative-fixtures.sh).
 #
 # WHAT IT CANNOT CHECK, and therefore what still requires human review: whether
@@ -109,17 +109,17 @@ else
   status=1
 fi
 
-# 7. Public docs served by the AWID site are tracked mirrors of their canonical
-#    docs. This is a comparison gate, not a release-time repair step.
-section "AWID public site document mirrors"
+# 7. Generate the AWID publication copies, then check their relative links.
+#    Prose copies are build output, not a byte-equality release gate.
+section "AWID public site document links"
 if make --no-print-directory check-awid-site-docs; then
-  echo "public AWID site documents match their canonical sources"
+  echo "public AWID site document links resolve"
 else
-  echo "FAIL: public AWID site document drift — sync the configured mirrors and commit them"
+  echo "FAIL: public AWID site document generation or publication links"
   status=1
 fi
 
-# 8. Negative controls for the other generated-artifact and mirror checks above.
+# 8. Negative controls for the generated-artifact and link checks above.
 #    The MCP inventory's negative controls run in its focused suite in section 3;
 #    federation error reference negatives run in section 4.
 #    Each self-test first accepts the clean artifact, then seeds the exact stale
@@ -182,19 +182,6 @@ if scripts/check-private-boundary.py --self-test && scripts/check-private-bounda
   echo "no private infrastructure outside the frozen baseline"
 else
   echo "FAIL: private infrastructure outside the frozen baseline (or the checker's self-test failed)"
-  status=1
-fi
-
-# 13. Hand-maintained copies. The Codex plugin ships its own copy of the
-#    canonical skill bodies and nothing regenerates it, so the two sides drift by
-#    editing one of them. Both files stay valid on their own and every other gate
-#    here passes, which is why this needs its own check rather than review
-#    attention.
-section "copied resources"
-if scripts/check-copied-resources.py --self-test && scripts/check-copied-resources.py; then
-  echo "copied resources match their sources"
-else
-  echo "FAIL: a copied resource has drifted from its source (or the checker's self-test failed)"
   status=1
 fi
 

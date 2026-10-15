@@ -130,9 +130,8 @@ cd cli/go && GOCACHE=/tmp/go-build-aweb go test ./...
 Some tracked files are generated from source and must not drift from it: the
 `uv.lock` files (`awid/`, `server/`), the CLI command reference
 (`docs/cli-command-reference.md`, regenerated and tested with the Make targets
-above), the reserved-app-ids artifacts, resource
-packs, the public AWID site mirrors of `docs/identity-guide.md` and
-`docs/trust-model.md`, and the built claude-channel and pi-extension bundles
+above), the reserved-app-ids artifacts, resource packs, and the built
+claude-channel and pi-extension bundles
 (both rebuilt from `channel-core` source at build time).
 
 Before finalizing a candidate, run the single freshness command and commit any
@@ -244,8 +243,8 @@ regenerating `server/uv.lock` (the server depends on the editable AWID source).
 ### What the freshness gate checks, and what it cannot
 
 `scripts/check-freshness.sh` mechanically verifies that committed generated
-artifacts and public AWID site document mirrors still match their sources, and
-that repository paths referenced in `docs/` actually exist
+artifacts still match their sources, generates the public AWID site documents,
+and checks that repository paths referenced in `docs/` actually exist
 (`scripts/check-doc-paths.sh`).
 
 Two further gates run in the same command and answer different questions:
@@ -270,11 +269,19 @@ Two further gates run in the same command and answer different questions:
   gate fails and that is a decision to argue in review, not a line to add.
   Re-measure with `scripts/check-private-boundary.py --derive`, which prints a
   freshly derived baseline and never writes.
-- **`scripts/check-copied-resources.py`** compares hand-maintained copies against
-  their sources. The Codex plugin ships its own copy of each canonical skill body
-  and nothing regenerates it, so editing one side leaves two valid files that
-  disagree. If you change a skill, change both — the gate names the copy, because
-  the copy is the side that gets forgotten.
+
+Runtime prose copies are generated, without equality tests. Edit canonical
+`skills/` and `docs/`, then run `make sync-doc-copies` before committing:
+
+- `scripts/sync-skill-copies.sh` generates the Codex plugin's skills and the
+  OATS `aweb.tasks` coordination skill, including their supporting files.
+- `make sync-awid-site-docs` generates the AWID site's public Markdown files.
+  `check-awid-site-docs` and `verify-site` run that sync before checking the
+  links in their publication context; `deploy-site` uses `verify-site`.
+
+The ordinary build and candidate skills-artifact build run `sync-doc-copies`.
+Copies stay committed for source-based plugin and OATS installations. They
+are build output; do not maintain a second version of their prose.
 
 It **cannot** verify that documentation prose is true. A path can resolve while
 the sentence around it is wrong, a `:LINE` anchor can point at unrelated code
