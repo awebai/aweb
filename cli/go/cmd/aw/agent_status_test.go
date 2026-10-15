@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -144,6 +145,25 @@ func TestAgentStatusProductionBinary(t *testing.T) {
 	}))
 	parent := filepath.Join(root, "principal")
 	writeSelectionFixtureForTest(t, parent, testSelectionFixture{AwebURL: server.URL, TeamID: "default:acme.aweb.ai", Alias: "attached", DID: vector.DID, StableID: awid.ComputeStableID(key.Public().(ed25519.PublicKey)), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, SigningKey: key})
+	// A valid principal makes the seed guard observable: without it this would
+	// succeed online, rather than merely failing later on missing credentials.
+	out, code = run(t, []string{"AWEB_IDENTITY_HOME=" + filepath.Join(parent, ".aw"), "AW_AGENT_STATUS_TEST_SEED_HEX=" + vector.Seed}, vector.Valid[0].Document,
+		"status", "publish", "--alias", "subject", "--document", "-", "--json")
+	if code != 1 || out["ok"] != false {
+		t.Fatalf("fixture seed reached network: %d %#v", code, out)
+	}
+	grantHome := filepath.Join(root, "grant")
+	if err := os.Mkdir(grantHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(grantHome, "grant.yaml"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, code = run(t, []string{"AWEB_IDENTITY_HOME=" + grantHome}, vector.Valid[0].Document,
+		"status", "publish", "--alias", "subject", "--document", "-", "--json")
+	if code != 1 || !strings.Contains(fmt.Sprint(out["message"]), "grant") {
+		t.Fatalf("grant root authority: %d %#v", code, out)
+	}
 	for _, byFlag := range []bool{false, true} {
 		env := []string{"AWEB_IDENTITY_HOME=" + filepath.Join(parent, ".aw")}
 		prefix := []string{}
