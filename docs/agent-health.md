@@ -330,6 +330,10 @@ every surface agrees:
   - A designated host that has never published shows as `source: "host"` with
     `reachable: "unknown"`, `reason_text` "Its server hasn't reported yet",
     `stale: false`, `verified: false`, and `null` for every other key.
+- **Visibility**: `health` has the visibility of the roster it is part of.
+  For a public team, the anonymous directory read includes it, as it includes
+  `last_seen`. The activity stream that carries `agent.status` still requires
+  a dashboard token.
 - **`source: "aweb"`**: no status host and no self-published status, or a
   designated host that is no longer an active member of the team (a host that
   left speaks for no one, even if a report it published is still stored). See

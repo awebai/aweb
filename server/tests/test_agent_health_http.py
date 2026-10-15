@@ -140,3 +140,22 @@ async def test_each_agent_gets_its_own_health_in_the_list(privacy_app):
     assert await _health(env, "alice") == NOT_REPORTED
     assert await _health(env, "bob") == {"source": "aweb"}
     assert await _health(env, "carol") == _reported(env, "carol", carol)
+
+
+@pytest.mark.asyncio
+async def test_public_team_shows_health_to_anonymous_readers(privacy_app):
+    # Health has the public directory's visibility, like last_seen
+    # (docs/agent-health.md "Reading"); changing that must be deliberate.
+    env = privacy_app
+    document = _document(env, "alice", "alice")
+    published = await _publish(env, "alice", "alice", document)
+    assert published.status_code == 200, published.text
+
+    listed = await env.client.get(f"/v1/teams/{TEAM}/agents")
+    detail = await env.client.get(f"/v1/teams/{TEAM}/agents/alice")
+
+    assert listed.status_code == 200, listed.text
+    assert detail.status_code == 200, detail.text
+    expected = _reported(env, "alice", document)
+    assert next(agent["health"] for agent in listed.json()["agents"] if agent["alias"] == "alice") == expected
+    assert detail.json()["health"] == expected
