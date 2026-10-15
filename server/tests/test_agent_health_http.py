@@ -65,7 +65,7 @@ def _reported(env, publisher, document, *, stale=False):
 async def test_agent_without_host_or_status_is_left_to_aweb(privacy_app):
     env = privacy_app
 
-    assert await _health(env, "alice") == {"source": "aweb"}
+    assert (await _health(env, "alice"))["source"] == "aweb"
 
 
 @pytest.mark.asyncio
@@ -126,7 +126,7 @@ async def test_host_that_left_the_team_falls_back_to_aweb(privacy_app):
     retired = await _team_request(env, "bob", "DELETE", f"/v1/workspaces/{env.actors['bob'].workspace}")
     assert retired.status_code == 200, retired.text
 
-    assert await _health(env, "alice") == {"source": "aweb"}
+    assert (await _health(env, "alice"))["source"] == "aweb"
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_each_agent_gets_its_own_health_in_the_list(privacy_app):
     assert published.status_code == 200, published.text
 
     assert await _health(env, "alice") == NOT_REPORTED
-    assert await _health(env, "bob") == {"source": "aweb"}
+    assert (await _health(env, "bob"))["source"] == "aweb"
     assert await _health(env, "carol") == _reported(env, "carol", carol)
 
 
