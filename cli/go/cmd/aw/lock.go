@@ -33,7 +33,7 @@ var lockAcquireCmd = &cobra.Command{
 			return err
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		resp, err := c.ReservationAcquire(ctx, &aweb.ReservationAcquireRequest{
@@ -71,7 +71,7 @@ var lockRenewCmd = &cobra.Command{
 			return err
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		resp, err := c.ReservationRenew(ctx, &aweb.ReservationRenewRequest{
@@ -106,7 +106,7 @@ var lockReleaseCmd = &cobra.Command{
 			return err
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		resp, err := c.ReservationRelease(ctx, &aweb.ReservationReleaseRequest{
@@ -136,7 +136,7 @@ var lockRevokeCmd = &cobra.Command{
 			return err
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		resp, err := c.ReservationRevoke(ctx, &aweb.ReservationRevokeRequest{
@@ -169,7 +169,7 @@ var lockListCmd = &cobra.Command{
 			return err
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		resp, err := c.ReservationList(ctx, lockListPrefix)

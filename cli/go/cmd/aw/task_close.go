@@ -48,7 +48,7 @@ func runTaskClose(cmd *cobra.Command, args []string) error {
 	}
 
 	for _, ref := range args {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 
 		status := "closed"
 		req := &aweb.TaskUpdateRequest{Status: &status}

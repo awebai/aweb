@@ -30,7 +30,7 @@ func init() {
 }
 
 func runInboundMode(cmd *cobra.Command, args []string) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	c, _, err := resolveClientSelection()

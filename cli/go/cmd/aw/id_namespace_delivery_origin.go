@@ -42,7 +42,7 @@ func init() {
 }
 
 func runIDNamespaceDeliveryOrigin(cmd *cobra.Command, args []string) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	out, err := executeIDNamespaceDeliveryOrigin(ctx, idNamespaceDeliveryOriginOptions{

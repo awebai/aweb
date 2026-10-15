@@ -56,7 +56,7 @@ func init() {
 }
 
 func runIDNamespaceDelete(cmd *cobra.Command, args []string) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	out, err := executeIDNamespaceDelete(ctx, idNamespaceDeleteOptions{

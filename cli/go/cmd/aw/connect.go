@@ -55,7 +55,7 @@ func runConnect(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	result, err := bootstrapConnect(ctx, workingDir, serviceURLs, token, address)

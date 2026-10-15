@@ -64,7 +64,7 @@ func runTaskCommentAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	comment, err := client.TaskCommentCreate(ctx, ref, &aweb.TaskCommentCreateRequest{Body: body})
@@ -86,7 +86,7 @@ func runTaskCommentList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	resp, err := client.TaskCommentList(ctx, ref)

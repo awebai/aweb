@@ -17,7 +17,7 @@ var directoryCmd = &cobra.Command{
 	Short: "Search or look up global identities in the network directory",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		c, err := resolveClient()

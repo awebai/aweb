@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
@@ -104,7 +103,7 @@ func claimHumanWithOptions(opts claimHumanOptions) (*awid.ClaimHumanResponse, st
 		return nil, "", fmt.Errorf("invalid identity configuration: %w", err)
 	}
 
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	resp, err := client.ClaimHuman(ctx, &awid.ClaimHumanRequest{

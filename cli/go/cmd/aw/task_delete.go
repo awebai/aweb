@@ -25,7 +25,7 @@ func runTaskDelete(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	if err := client.TaskDelete(ctx, ref); err != nil {

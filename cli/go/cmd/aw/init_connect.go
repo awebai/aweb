@@ -115,7 +115,7 @@ func initCertificateConnectWithOptions(workingDir, awebURL string, opts certific
 		AgentType:     resolveAgentTypeValue(strings.TrimSpace(opts.AgentType)),
 	}
 
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	resp, err := postConnect(ctx, awebURL, signingKey, cert, reqBody)

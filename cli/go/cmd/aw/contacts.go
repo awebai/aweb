@@ -19,7 +19,7 @@ var contactsListCmd = &cobra.Command{
 	Short: "List contacts",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		client, err := resolveClient()
@@ -40,7 +40,7 @@ var contactsAddCmd = &cobra.Command{
 	Short: "Add a contact",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		client, err := resolveClient()
@@ -64,7 +64,7 @@ var contactsRemoveCmd = &cobra.Command{
 	Short: "Remove a contact by address",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		client, err := resolveClient()

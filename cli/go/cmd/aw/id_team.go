@@ -705,7 +705,7 @@ func runTeamCreate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	registration, err := ensureLocalTeamRegistered(
@@ -1357,7 +1357,7 @@ func runTeamMembers(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("invalid --registry: %w", err)
 		}
 	}
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	signers := teamReadSigners(workingDir, domain, team)
 	var certs []awid.RegistryCertificate
@@ -1426,7 +1426,7 @@ func runGrantTeamMembers(cmd *cobra.Command, workingDir string, home awconfig.Id
 	if requested != selection.TeamID {
 		return usageError("grant home is bound to team %s; requested team %s conflicts", selection.TeamID, requested)
 	}
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	// Use the existing grant-authorized roster. A session key is not an AWID
 	// member key; never fall back to root/controller credentials on a refusal.
@@ -1672,7 +1672,7 @@ func createHostedTeamInviteTokenAt(workingDir, identityHome, teamID string, loca
 			err,
 		)
 	}
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	created, err := client.CreateSpawnInvite(ctx, &awid.SpawnCreateInviteRequest{
 		AccessMode: "open",
@@ -1742,7 +1742,7 @@ func acceptTeamInviteWithDetails(workingDir, token string, opts teamAcceptInvite
 	if registryURL == "" {
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 	}
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	plan, err := resolveTeamMemberEnrollment(ctx, teamMemberEnrollmentResolveOptions{
@@ -1838,7 +1838,7 @@ func rollbackDefaultAddressClaimAfterCertificateFailure(
 			address,
 		)
 	}
-	rollbackCtx, cancel := commandAPIContext(context.Background())
+	rollbackCtx, cancel := commandAPIContext(nil)
 	defer cancel()
 	if err := registry.DeleteAddressIfMatchesAt(
 		rollbackCtx,
@@ -1943,7 +1943,7 @@ func acceptHostedTeamInviteWithDetails(workingDir, token string, opts teamAccept
 		return nil, err
 	}
 
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	registryURL := ""
 	var atomicAddressClaim *awid.AtomicAddressClaimIdentityProof
@@ -2249,7 +2249,7 @@ func revokeAcceptedTeamCertificate(accepted *acceptedTeamInvite) error {
 		return fmt.Errorf("load team key for %s/%s: %w", accepted.Domain, accepted.TeamName, err)
 	}
 
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	if err := registry.RevokeCertificate(
@@ -2404,7 +2404,7 @@ func runTeamAddMember(cmd *cobra.Command, args []string) error {
 		return teamKeyLoadError(teamID, domain, err)
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	registry, err := newConfiguredRegistryClient(nil, "")
@@ -2558,7 +2558,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		registryURL = strings.TrimSpace(registry.DefaultRegistryURL)
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	cert, err := registry.FetchTeamCertificate(ctx, registryURL, domain, team, certificateID, signingKey)
@@ -2630,7 +2630,7 @@ func runTeamRemoveMember(cmd *cobra.Command, args []string) error {
 
 	registryURL := resolveTeamRemoveRegistryURL(registry)
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	if certificateID == "" {
@@ -2820,7 +2820,7 @@ func registryReportsCertificateAlreadyRevoked(err error) bool {
 }
 
 func runHostedTeamRemoveMember(teamID, memberAddress, certificateID string) error {
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	result, err := revokeHostedTeamCertificate(ctx, teamID, memberAddress, certificateID)
 	if err != nil {
@@ -3028,7 +3028,7 @@ func runTeamImportRequest(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamRegister(cmd *cobra.Command, args []string) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	teamID := strings.TrimSpace(teamRegisterTeam)
@@ -3068,7 +3068,7 @@ func runTeamRegister(cmd *cobra.Command, args []string) error {
 }
 
 func runTeamCleanupCloud(cmd *cobra.Command, args []string) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	team := strings.ToLower(strings.TrimSpace(teamCleanupCloudTeam))

@@ -456,7 +456,7 @@ var mailSendCmd = &cobra.Command{
 			return err
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		sendEncryptE2EE := mailSendE2EE
@@ -685,7 +685,7 @@ var mailReplyCmd = &cobra.Command{
 
 		// Source reads and reply preparation share the configured API budget;
 		// a hidden shorter deadline must not defeat AWEB_HTTP_TIMEOUT.
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		var c *aweb.Client
@@ -1048,7 +1048,7 @@ var mailInboxCmd = &cobra.Command{
 	Long: "List inbox messages, newest first and unread only by default. Messages shown by this command are acknowledged as read.\n\n" +
 		"The response is one bounded page. Text output reports when more messages exist and prints a continuation command; JSON output carries has_more and next_cursor. Pass the returned value to --cursor to continue without overlap.",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		c, sel, err := resolveClientSelection()
@@ -1148,7 +1148,7 @@ var mailAckCmd = &cobra.Command{
 		if messageID == "" {
 			return usageError("message id is required")
 		}
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		c, _, err := resolveClientSelection()
@@ -1194,7 +1194,7 @@ var mailShowCmd = &cobra.Command{
 			return usageError("--conversation-id and --message-id are mutually exclusive")
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		// Same client selection as mail send/reply: certificate-authenticated

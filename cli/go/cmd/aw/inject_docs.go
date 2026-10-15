@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,7 +34,7 @@ func InjectAgentDocsAtIdentityHome(repoRoot string, identityHome awconfig.Identi
 	if err != nil {
 		return &injectDocsResult{Errors: []string{err.Error()}}
 	}
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	resp, err := client.ActiveTeamInstructions(ctx)
 	if err != nil {
@@ -203,7 +202,7 @@ func loadTeamInstructionsBody(workingDir string) (string, error) {
 		return "", err
 	}
 
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	resp, err := client.ActiveTeamInstructions(ctx)

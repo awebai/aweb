@@ -60,7 +60,7 @@ func runIDRotateKeyRecover(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	out, err := recoverPendingRotation(ctx, identity, rotationDir)
 	if err != nil {

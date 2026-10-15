@@ -529,7 +529,7 @@ func (r *doctorRunner) addRegistryChecks(state *doctorIdentityState) {
 }
 
 func (r *doctorRunner) runOnlineRegistryChecks(state *doctorIdentityState, client doctorRegistryClient) {
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	resolution, resolveOK, blockedPrerequisite := r.addDIDResolveChecks(ctx, state, client)

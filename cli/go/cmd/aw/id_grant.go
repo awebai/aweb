@@ -359,7 +359,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 	}
 	grantDIDKey := awid.ComputeDIDKey(pub)
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	view, err := client.MintIdentityGrant(ctx, &aweb.IdentityGrantMintRequest{
 		GrantDIDKey:  grantDIDKey,
@@ -380,7 +380,7 @@ func runGrantMint(cmd *cobra.Command, _ []string) error {
 			Apps:    appSnapshots,
 		}
 		if err := saveGrantAppToolsSnapshot(residentHome, snap); err != nil {
-			revokeCtx, revokeCancel := commandAPIContext(cmd.Context())
+			revokeCtx, revokeCancel := commandAPIContext(cmd)
 			defer revokeCancel()
 			if revokeErr := client.RevokeIdentityGrant(revokeCtx, snap.GrantID); revokeErr != nil {
 				return fmt.Errorf("record app tool policy for grant %s: %w (revoking the grant also failed: %v; revoke it manually)", snap.GrantID, err, revokeErr)
@@ -458,7 +458,7 @@ func runGrantList(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	resp, err := client.ListIdentityGrants(ctx)
 	if err != nil {
@@ -480,7 +480,7 @@ func runGrantRevoke(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	if err := client.RevokeIdentityGrant(ctx, grantID); err != nil {
 		return err
@@ -503,7 +503,7 @@ func runGrantShow(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	resp, err := client.ListIdentityGrants(ctx)
 	if err != nil {

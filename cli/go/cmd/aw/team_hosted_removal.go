@@ -233,7 +233,7 @@ func clearHostedRemovalRecovery(workingDir, operationID string) error {
 }
 
 func resolveExactRetirementWorkspace(ctx context.Context, client *aweb.Client, alias string) (*aweb.WorkspaceInfo, error) {
-	listCtx, cancel := commandAPIContext(ctx)
+	listCtx, cancel := commandAPIContext(nil, ctx)
 	defer cancel()
 	resp, err := client.WorkspaceList(listCtx, aweb.WorkspaceListParams{Alias: alias, IncludePresence: false, Limit: 2})
 	if err != nil {
@@ -255,7 +255,7 @@ func resolveExactRetirementWorkspace(ctx context.Context, client *aweb.Client, a
 }
 
 func releaseExactHostedWorkspace(ctx context.Context, client *aweb.Client, workspace aweb.WorkspaceInfo) (retireStoreOutcome, *aweb.DeleteWorkspaceResponse) {
-	deleteCtx, cancel := commandAPIContext(ctx)
+	deleteCtx, cancel := commandAPIContext(nil, ctx)
 	defer cancel()
 	deleted, err := client.WorkspaceDelete(deleteCtx, workspace.WorkspaceID)
 	if err != nil {

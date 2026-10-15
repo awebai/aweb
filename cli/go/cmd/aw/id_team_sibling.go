@@ -93,7 +93,7 @@ func runHostedTeamCreate(cmd *cobra.Command, name, domain string) error {
 		return usageError("source_team_mismatch: selected team and certificate do not match")
 	}
 	req := hostedSiblingRequest{RequestID: requestID, Name: name, DisplayName: strings.TrimSpace(teamCreateDisplayName), SourceTeamID: strings.TrimSpace(teamFlag)}
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	// Show the selected service without echoing any URL userinfo.
 	displayURL, _ := url.Parse(baseURL) // cleanBaseURL already validated it.

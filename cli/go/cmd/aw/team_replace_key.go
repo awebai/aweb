@@ -249,7 +249,7 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		TeamID: teamID, OldDIDKey: oldDIDKey, NewDIDKey: newDIDKey,
 		OldCertificateID: oldCertificateID, NewCertificateID: newCertificate.CertificateID,
 	}
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	rosterResult, err := postLocalIdentityKeyReplacement(ctx, serviceURL, alias, requestPayload, teamKey)
 	if err != nil {
@@ -280,7 +280,7 @@ func runTeamHumanReplaceKey(cmd *cobra.Command, args []string) (runErr error) {
 		}
 		output.CertificatePath = filepath.ToSlash(filepath.Join(homeDir, ".aw", filepath.FromSlash(certPath)))
 		output.SigningKeyPath = filepath.ToSlash(generatedKeyPath)
-		encryptionCtx, encryptionCancel := commandAPIContext(cmd.Context())
+		encryptionCtx, encryptionCancel := commandAPIContext(cmd)
 		encryptionOutput, encryptionErr := setupOrRotateIdentityEncryptionKeyForDir(encryptionCtx, homeDir, false, explicitEncryptionKeyIdentityHome(awconfig.WorktreeIdentityHome(homeDir)))
 		encryptionCancel()
 		if encryptionErr != nil {

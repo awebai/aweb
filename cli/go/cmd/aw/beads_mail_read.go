@@ -179,7 +179,7 @@ var beadsMailInboxCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, sel, addressMap, err := beadsMailReadClient(cmd, ctx)
 		if err != nil {
@@ -238,7 +238,7 @@ for a look that changes nothing.`,
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, sel, addressMap, err := beadsMailReadClient(cmd, ctx)
 		if err != nil {
@@ -271,7 +271,7 @@ var beadsMailPeekCmd = &cobra.Command{
 	Use:   "peek",
 	Short: "Preview the first unread message without marking it read",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, _, addressMap, err := beadsMailReadClient(cmd, ctx)
 		if err != nil {
@@ -303,7 +303,7 @@ var beadsMailThreadCmd = &cobra.Command{
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		const threadLimit = 500
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, _, addressMap, err := beadsMailReadClient(cmd, ctx)
 		if err != nil {
@@ -344,7 +344,7 @@ var beadsMailMarkReadCmd = &cobra.Command{
 		if len(args) > 0 && beadsMailMarkReadAll {
 			return usageError("give message ids or --all, not both")
 		}
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, sel, _, err := beadsMailReadClient(cmd, ctx)
 		if err != nil {

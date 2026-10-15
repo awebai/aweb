@@ -51,7 +51,7 @@ func init() {
 }
 
 func runIDAddressClaim(cmd *cobra.Command, args []string) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	workingDir, _ := os.Getwd()
 	out, err := executeIDAddressClaim(ctx, workingDir, idAddressClaimOptions{

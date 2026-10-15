@@ -47,7 +47,7 @@ func runTaskDepAdd(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	if err := client.TaskAddDep(ctx, ref, &aweb.TaskAddDepRequest{DependsOn: dependsOn}); err != nil {
@@ -68,7 +68,7 @@ func runTaskDepRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	if err := client.TaskRemoveDep(ctx, ref, depRef); err != nil {
@@ -94,7 +94,7 @@ func runTaskDepList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	task, err := client.TaskGet(ctx, ref)

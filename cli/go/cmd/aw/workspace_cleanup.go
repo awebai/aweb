@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,7 +27,7 @@ func detectGoneWorkspaces(client *aweb.Client, selfWorkspaceID string) []goneWor
 		return nil
 	}
 
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	resp, err := client.WorkspaceList(ctx, aweb.WorkspaceListParams{

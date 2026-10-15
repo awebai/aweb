@@ -28,7 +28,7 @@ func controlSignalCmd(signal awid.ControlSignal) *cobra.Command {
 				return err
 			}
 
-			ctx, cancel := commandAPIContext(cmd.Context())
+			ctx, cancel := commandAPIContext(cmd)
 			defer cancel()
 
 			resp, err := client.SendControlSignal(ctx, agentAlias, signal)

@@ -378,7 +378,7 @@ func (r *doctorRunner) doctorTeamClient(state *doctorAwebState) (*aweb.Client, s
 }
 
 func (r *doctorRunner) addWorkspaceOnlineChecks(state *doctorAwebState, client *aweb.Client) {
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	workspaceID := ""
@@ -489,7 +489,7 @@ func (r *doctorRunner) addCoordinationChecks(workspaceID string, teamResp *aweb.
 }
 
 func (r *doctorRunner) addTeamOnlineChecks(state *doctorAwebState, client *aweb.Client) {
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	localRole := ""
 	if state.membership != nil {

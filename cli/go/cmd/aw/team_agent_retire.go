@@ -249,7 +249,7 @@ func releaseCoordinationState(
 	client *aweb.Client,
 	alias string,
 ) (retireStoreOutcome, *aweb.DeleteWorkspaceResponse) {
-	listCtx, cancel := commandAPIContext(ctx)
+	listCtx, cancel := commandAPIContext(nil, ctx)
 	resp, err := client.WorkspaceList(listCtx, aweb.WorkspaceListParams{
 		Alias:           alias,
 		IncludePresence: false,
@@ -283,7 +283,7 @@ func releaseCoordinationState(
 		}, nil
 	}
 
-	deleteCtx, deleteCancel := commandAPIContext(ctx)
+	deleteCtx, deleteCancel := commandAPIContext(nil, ctx)
 	deleted, err := client.WorkspaceDelete(deleteCtx, matches[0].WorkspaceID)
 	deleteCancel()
 	if err != nil {
@@ -367,7 +367,7 @@ func verifyRetirementTarget(
 	registryURL, domain, team, memberAddress, alias string,
 	signers []ed25519.PrivateKey,
 ) (*verifiedMember, error) {
-	resolveCtx, cancel := commandAPIContext(ctx)
+	resolveCtx, cancel := commandAPIContext(nil, ctx)
 	var memberRef *awid.TeamMemberReference
 	_, err := readSignedTeamState(signers, func(key ed25519.PrivateKey) error {
 		var resolveErr error
@@ -434,7 +434,7 @@ func unresolvedRetirementTargetError(
 		memberAddress, resolveErr,
 	)
 
-	listCtx, cancel := commandAPIContext(ctx)
+	listCtx, cancel := commandAPIContext(nil, ctx)
 	resp, listErr := client.WorkspaceList(listCtx, aweb.WorkspaceListParams{Alias: alias, Limit: 2})
 	cancel()
 	if listErr != nil {
@@ -479,7 +479,7 @@ func unresolvedRetirementTargetError(
 // claim exists only while its task is in_progress. So the set it shows and the
 // set counted here are the same set.
 func claimsHeldByAlias(ctx context.Context, client *aweb.Client, alias string) (held int, complete bool, err error) {
-	listCtx, cancel := commandAPIContext(ctx)
+	listCtx, cancel := commandAPIContext(nil, ctx)
 	defer cancel()
 	// The claims route caps a page at 200. There is no alias filter, so the whole
 	// team's claims come back and are matched here.

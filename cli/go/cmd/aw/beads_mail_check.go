@@ -39,7 +39,7 @@ polling: aw init --setup-channel.`,
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, _, _, err := beadsMailReadClient(cmd, ctx)
 		if err != nil {

@@ -82,7 +82,7 @@ func runTaskCreate(cmd *cobra.Command, args []string) error {
 		req.ParentTaskID = &v
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	task, err := client.TaskCreate(ctx, req)

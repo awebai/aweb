@@ -101,7 +101,7 @@ var a2aCardCmd = &cobra.Command{
 	Short: "Fetch and verify an A2A Agent Card",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		out, err := buildA2ACardOutput(ctx, args[0], a2aCardAddress, a2aCardRegistry)
 		if err != nil {
@@ -151,7 +151,7 @@ var a2aStatusCmd = &cobra.Command{
 	Short: "Fetch an A2A task",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		task, err := runA2AStatus(ctx, args[0], args[1])
 		if err != nil {
@@ -173,7 +173,7 @@ var a2aCancelCmd = &cobra.Command{
 	Short: "Cancel an A2A task",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		task, err := runA2ACancel(ctx, args[0], args[1])
 		if err != nil {

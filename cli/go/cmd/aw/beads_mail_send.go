@@ -136,7 +136,7 @@ cryptographically verified identity.`,
 			fmt.Fprintln(os.Stderr, "note: high and urgent mail always wakes the recipient; --no-notify cannot suppress that. Lower the priority to send quietly.")
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		cwd, err := os.Getwd()
@@ -278,7 +278,7 @@ var beadsMailReplyCmd = &cobra.Command{
 			return err
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, sel, err := resolveMailMessagingClientSelection()
 		if err != nil {

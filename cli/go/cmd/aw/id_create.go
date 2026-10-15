@@ -141,7 +141,7 @@ func executeIDCreate(workingDir string, opts idCreateOptions) (idCreateOutput, e
 		return idCreateOutput{}, err
 	}
 
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	registry, err := newConfiguredRegistryClient(nil, "")
@@ -390,7 +390,7 @@ func confirmAndVerifyIDCreateDNS(plan *idCreatePlan, opts idCreateOptions) error
 		if !proceed {
 			return usageError("DNS verification cancelled; rerun after publishing the TXT record or pass --skip-dns-verify")
 		}
-		ctx, cancel := commandAPIContext(context.Background())
+		ctx, cancel := commandAPIContext(nil)
 		err = verifyIDCreateDomainAuthority(ctx, opts.TXTResolver, plan.Domain, plan.ControllerDID, plan.RegistryURL)
 		cancel()
 		if err == nil {

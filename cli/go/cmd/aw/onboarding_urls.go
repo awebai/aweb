@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"strings"
@@ -114,7 +113,7 @@ func discoverOnboardingServiceURLs(raw string) (onboardingServiceURLs, error) {
 		return onboardingServiceURLs{}, err
 	}
 
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	resp, err := awid.DiscoverServices(ctx, baseURL)

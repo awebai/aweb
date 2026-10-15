@@ -26,7 +26,7 @@ func runTaskShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	task, err := client.TaskGet(ctx, ref)

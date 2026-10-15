@@ -65,7 +65,7 @@ where a mapped name actually delivered.`,
 			return err
 		}
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 
 		var c *aweb.Client
@@ -135,7 +135,7 @@ is no recipient argument to get wrong.`,
 		}
 		messageID := strings.TrimSpace(args[0])
 
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, sel, err := gcMailReadClient(cmd, ctx)
 		if err != nil {
@@ -239,7 +239,7 @@ window.`,
 )
 
 func gcMailList(cmd *cobra.Command, unreadOnly bool) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	c, _, err := gcMailReadClient(cmd, ctx)
 	if err != nil {
@@ -277,7 +277,7 @@ message as read that is not.`,
 )
 
 func gcMailFetch(cmd *cobra.Command, ref string, markRead bool) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	c, sel, err := gcMailReadClient(cmd, ctx)
 	if err != nil {
@@ -307,7 +307,7 @@ var gcMailMarkReadCmd = gcMailOp(
 gc's protocol expects no output from this operation.`,
 	gcMailExactArgs(1, "aw gc-mail mark-read <message-id>"),
 	func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, _, err := gcMailReadClient(cmd, ctx)
 		if err != nil {
@@ -337,7 +337,7 @@ an aweb conversation id (what this provider reports as thread_id) or any
 message id inside it.`,
 	gcMailExactArgs(1, "aw gc-mail thread <thread-id|message-id>"),
 	func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, _, err := gcMailReadClient(cmd, ctx)
 		if err != nil {
@@ -379,7 +379,7 @@ it is not a cumulative all-time total. Counting stops after 4000 messages; a lar
 inbox reports that ceiling rather than a wrong number.`,
 	gcMailRecipientArgs,
 	func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		defer cancel()
 		c, _, err := gcMailReadClient(cmd, ctx)
 		if err != nil {

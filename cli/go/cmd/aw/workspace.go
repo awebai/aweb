@@ -199,7 +199,7 @@ func runWorkspaceStatus(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	teamResp, err := client.WorkspaceTeam(ctx, aweb.WorkspaceTeamParams{
@@ -329,7 +329,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		if !isValidWorkspaceAlias(workspaceID) {
 			return usageError("invalid workspace name %q", workspaceID)
 		}
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		resp, lookupErr := client.WorkspaceList(ctx, aweb.WorkspaceListParams{
 			Alias:           target,
 			IncludePresence: false,
@@ -372,7 +372,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 	}
 	if plan.eligible {
 		// Self-retirement spans registry and coordination cascades; retain its explicit one-minute workflow budget.
-		ctx, cancel := context.WithTimeout(cmd.Context(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		retired, retireErr := postSelfRetire(ctx, client, plan)
 		cancel()
 		if retireErr != nil {
@@ -400,7 +400,7 @@ func runWorkspaceDelete(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	deleteResp, err := client.WorkspaceDelete(ctx, workspaceID)
 	cancel()
 	if err != nil {
@@ -500,7 +500,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 			return usageError("name %q is already in use by this team", alias)
 		}
 	} else {
-		ctx, cancel := commandAPIContext(cmd.Context())
+		ctx, cancel := commandAPIContext(cmd)
 		suggestion, err := client.SuggestAliasPrefix(ctx)
 		cancel()
 		if err != nil {
@@ -984,7 +984,7 @@ func isValidWorkspaceRole(role string) bool {
 // fetchAvailableRoles returns the available roles from the team roles bundle.
 // This is the single source of truth for role lists.
 func fetchAvailableRoles(client *aweb.Client) ([]string, error) {
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	resp, err := client.ActiveTeamRoles(ctx, aweb.ActiveTeamRolesParams{OnlySelected: false})
@@ -1052,7 +1052,7 @@ func selectRoleFromAvailableRoles(requested string, roles []string, allowPrompt 
 }
 
 func fetchWorkspaceTeamAliases(client *aweb.Client, workspaceID string) (map[string]bool, error) {
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 
 	resp, err := client.WorkspaceTeam(ctx, aweb.WorkspaceTeamParams{

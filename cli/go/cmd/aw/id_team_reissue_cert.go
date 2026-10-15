@@ -158,7 +158,7 @@ func runTeamReissueCert(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	// The registry enforces one unrevoked certificate per (team, alias), so the

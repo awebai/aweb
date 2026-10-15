@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/spf13/cobra"
 )
 
 func TestCommandAPIContextBudgetAndParent(t *testing.T) {
@@ -15,7 +17,7 @@ func TestCommandAPIContextBudgetAndParent(t *testing.T) {
 		t.Run(tc.setting, func(t *testing.T) {
 			t.Setenv("AWEB_HTTP_TIMEOUT", tc.setting)
 			before := time.Now()
-			ctx, cancel := commandAPIContext(context.Background())
+			ctx, cancel := commandAPIContext(nil)
 			defer cancel()
 			after := time.Now()
 			deadline, ok := ctx.Deadline()
@@ -26,7 +28,9 @@ func TestCommandAPIContextBudgetAndParent(t *testing.T) {
 	}
 	t.Setenv("AWEB_HTTP_TIMEOUT", "45s")
 	parent, stop := context.WithCancel(context.Background())
-	ctx, cancel := commandAPIContext(parent)
+	cmd := &cobra.Command{}
+	cmd.SetContext(parent)
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 	stop()
 	if !errors.Is(ctx.Err(), context.Canceled) {
@@ -34,11 +38,19 @@ func TestCommandAPIContextBudgetAndParent(t *testing.T) {
 	}
 	parent, stop = context.WithDeadline(context.Background(), time.Now().Add(time.Second))
 	defer stop()
-	ctx, cancel = commandAPIContext(parent)
+	ctx, cancel = commandAPIContext(nil, parent)
 	defer cancel()
 	got, _ := ctx.Deadline()
 	want, _ := parent.Deadline()
 	if !got.Equal(want) {
 		t.Fatal("configured budget replaced a shorter caller deadline")
+	}
+	// Existing embedding callers pass both nil and unexecuted Cobra commands.
+	for _, cmd := range []*cobra.Command{nil, {}} {
+		ctx, cancel := commandAPIContext(cmd)
+		if ctx.Err() != nil {
+			t.Fatalf("direct invocation context is already invalid: %v", ctx.Err())
+		}
+		cancel()
 	}
 }

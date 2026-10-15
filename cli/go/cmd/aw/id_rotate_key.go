@@ -38,7 +38,7 @@ func runIDRotateKey(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = transactionLock.Close() }()
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	// A preceding lock holder may have completed a rotation while this process

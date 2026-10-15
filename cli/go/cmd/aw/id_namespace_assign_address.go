@@ -49,7 +49,7 @@ func init() {
 }
 
 func runIDNamespaceAssignAddress(cmd *cobra.Command, args []string) error {
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	out, err := executeIDNamespaceAssignAddress(ctx, idNamespaceAssignAddressOptions{

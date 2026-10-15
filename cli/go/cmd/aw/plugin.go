@@ -684,7 +684,7 @@ func manifestURLForSource(source string) (string, error) {
 }
 
 func fetchManifest(manifestURL string) ([]byte, string, error) {
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
@@ -1249,7 +1249,7 @@ func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	signed, err := client.SignAppRequestViaCustody(ctx, name, verb, args, rawBody)
 	if err != nil {
@@ -1273,7 +1273,7 @@ func executeGrantManifestTool(name, verb string, args map[string]any, rawBody []
 }
 
 func executeUnsignedManifestRequest(method string, parsedURL *url.URL, bodyBytes []byte, headers http.Header) (*installedManifestToolResult, error) {
-	ctx, cancel := commandAPIContext(context.Background())
+	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, method, parsedURL.String(), strings.NewReader(string(bodyBytes)))
 	if err != nil {

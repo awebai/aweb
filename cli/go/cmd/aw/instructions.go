@@ -103,7 +103,7 @@ func runInstructionsShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	requestedID := ""
@@ -183,7 +183,7 @@ func runInstructionsHistory(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	resp, err := client.TeamInstructionsHistory(ctx, instructionsHistoryLimit)
@@ -205,7 +205,7 @@ func runInstructionsSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	active, err := client.ActiveTeamInstructions(ctx)
@@ -242,7 +242,7 @@ func runInstructionsActivate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	resp, err := client.ActivateTeamInstructions(ctx, strings.TrimSpace(args[0]))
@@ -263,7 +263,7 @@ func runInstructionsReset(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ctx, cancel := commandAPIContext(cmd.Context())
+	ctx, cancel := commandAPIContext(cmd)
 	defer cancel()
 
 	resp, err := client.ResetTeamInstructions(ctx)
