@@ -100,9 +100,9 @@ async def test_designation_is_replaced_and_cleared(privacy_app):
 @pytest.mark.parametrize(
     "host_did,detail",
     [
-        ("outsider", "host_did is not an active member of this team"),
-        ("did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "host_did must be a did:key"),
-        ("", "host_did must be a did:key"),
+        ("outsider", "host_not_member: host_did is not an active member of this team"),
+        ("did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2", "host_not_did_key: host_did must be a did:key"),
+        ("", "host_not_did_key: host_did must be a did:key"),
     ],
 )
 async def test_designation_refuses_a_host_that_is_not_a_member_did_key(privacy_app, host_did, detail):
@@ -130,7 +130,7 @@ async def test_designation_refuses_a_deleted_member_as_host(privacy_app):
     )
 
     assert response.status_code == 422, response.text
-    assert response.json()["detail"] == "host_did is not an active member of this team"
+    assert response.json()["detail"] == "host_not_member: host_did is not an active member of this team"
 
 
 @pytest.mark.asyncio
@@ -175,7 +175,7 @@ async def test_controller_sets_and_clears_with_the_current_host_as_precondition(
 
     stale = await _controller_request(env, "alice", host_did=carol, previous_host_did="")
     assert stale.status_code == 409, stale.text
-    assert stale.json()["detail"] == "Status host changed since previous_host_did"
+    assert stale.json()["detail"] == "status_host_changed: Status host changed since previous_host_did"
     assert (await _stored_host(env, "alice"))["host_did"] == bob
 
     cleared = await _controller_request(env, "alice", host_did="", previous_host_did=bob)
@@ -194,7 +194,7 @@ async def test_controller_path_refuses_a_member_signature(privacy_app):
     )
 
     assert response.status_code == 403, response.text
-    assert response.json()["detail"] == "Team controller authorization is required to set a status host"
+    assert response.json()["detail"] == "controller_required: Team controller authorization is required to set a status host"
     assert await _stored_host(env, "alice") is None
 
 
@@ -206,7 +206,7 @@ async def test_controller_path_refuses_a_non_member_host(privacy_app):
     response = await _controller_request(env, "alice", host_did=outsider, previous_host_did="")
 
     assert response.status_code == 422, response.text
-    assert response.json()["detail"] == "host_did is not an active member of this team"
+    assert response.json()["detail"] == "host_not_member: host_did is not an active member of this team"
 
 
 @pytest.mark.asyncio

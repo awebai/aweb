@@ -113,7 +113,7 @@ async def test_only_the_designated_host_may_publish(privacy_app):
     for publisher in ("alice", "carol"):
         response = await _publish(env, publisher, "alice", _document(env, "alice", publisher))
         assert response.status_code == 403, response.text
-        assert response.json()["detail"] == "not the status host for alice"
+        assert response.json()["detail"] == "not_status_host: not the status host for alice"
     assert await _stored(env, "alice") is None
 
 
@@ -124,7 +124,7 @@ async def test_another_member_cannot_publish_for_an_agent_without_a_host(privacy
     response = await _publish(env, "carol", "alice", _document(env, "alice", "carol"))
 
     assert response.status_code == 403, response.text
-    assert response.json()["detail"] == "not the status host for alice"
+    assert response.json()["detail"] == "not_status_host: not the status host for alice"
 
 
 @pytest.mark.asyncio
@@ -225,7 +225,7 @@ async def test_unknown_agent_is_not_found(privacy_app):
     response = await _publish(env, "alice", "nobody", _document(env, "alice", "alice"))
 
     assert response.status_code == 404, response.text
-    assert response.json()["detail"] == "Agent not found"
+    assert response.json()["detail"] == "agent_not_found: Agent not found"
 
 
 @pytest.mark.asyncio
@@ -236,6 +236,7 @@ async def test_second_publish_within_five_seconds_is_rate_limited(privacy_app):
     response = await _publish(env, "alice", "alice", _document(env, "alice", "alice", seq=2))
 
     assert response.status_code == 429, response.text
+    assert response.json()["detail"] == "rate_limited: at most one status per agent every 5 seconds"
     assert 1 <= int(response.headers["Retry-After"]) <= 5
     assert (await _stored(env, "alice"))["seq"] == 1
 
