@@ -2,7 +2,10 @@ package aweb
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"go/scanner"
+	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
@@ -24,21 +27,19 @@ func TestRetiredIdentityVocabularyIsConfinedToCompatibilityBoundaries(t *testing
 			`return fmt.Errorf("identity_scope %q conflicts with deprecated ephemeral value", scope)`: 1,
 		},
 		"awconfig/identity.go": {
-			`// worktreeIdentityWire is the pre-v2 identity.yaml decode boundary. Lifetime`:               1,
-			"Lifetime       string `yaml:\"lifetime,omitempty\"`":                                         1,
-			`if err := normalizeWorktreeIdentityScope(&state, wire.Lifetime); err != nil {`:               1,
-			`func normalizeWorktreeIdentityScope(state *WorktreeIdentity, legacyLifetime string) error {`: 1,
-			`rawLifetime := strings.TrimSpace(legacyLifetime)`:                                            1,
-			`if rawScope == "" && rawLifetime == "" {`:                                                    1,
-			`if rawLifetime != "" {`: 1,
+			"Lifetime       string `yaml:\"lifetime,omitempty\"`":                                                 1,
+			`if err := normalizeWorktreeIdentityScope(&state, wire.Lifetime); err != nil {`:                       1,
+			`func normalizeWorktreeIdentityScope(state *WorktreeIdentity, legacyLifetime string) error {`:         1,
+			`rawLifetime := strings.TrimSpace(legacyLifetime)`:                                                    1,
+			`if rawScope == "" && rawLifetime == "" {`:                                                            1,
+			`if rawLifetime != "" {`:                                                                              1,
 			`compatScope := awid.IdentityScopeFromLegacyLifetime(rawLifetime)`:                                    1,
 			`return fmt.Errorf("deprecated lifetime must be %q or %q", "ephemeral", "persistent")`:                1,
 			`return fmt.Errorf("identity_scope %q conflicts with deprecated lifetime %q", rawScope, rawLifetime)`: 1,
 		},
 		"awid/identity_model.go": {
-			`// IdentityScopeFromLegacyLifetime is the explicit compatibility adapter for`: 1,
-			`func IdentityScopeFromLegacyLifetime(lifetime string) string {`:               1,
-			`switch strings.TrimSpace(strings.ToLower(lifetime)) {`:                        1,
+			`func IdentityScopeFromLegacyLifetime(lifetime string) string {`: 1,
+			`switch strings.TrimSpace(strings.ToLower(lifetime)) {`:          1,
 			`case "ephemeral":`:  1,
 			`case "persistent":`: 1,
 		},
@@ -88,7 +89,6 @@ func TestRetiredIdentityVocabularyIsConfinedToCompatibilityBoundaries(t *testing
 		"cmd/aw/root.go": {
 			`PersistentPreRunE: func(cmd *cobra.Command, args []string) error {`:                                                                       1,
 			`PersistentPreRun: func(cmd *cobra.Command, args []string) {`:                                                                              1,
-			`// Cobra normally runs only the nearest persistent hook. Traversal makes the`:                                                             1,
 			`rootCmd.PersistentFlags().StringVar(&serverFlag, "server-name", "", "Override the server host or name for this command")`:                 1,
 			`rootCmd.PersistentFlags().StringVar(&identityHomeFlag, "identity-home", "", "Use identity authority from this absolute credential root")`: 1,
 			`rootCmd.PersistentFlags().BoolVar(&debugFlag, "debug", false, "Log background errors to stderr")`:                                         1,
@@ -103,13 +103,6 @@ func TestRetiredIdentityVocabularyIsConfinedToCompatibilityBoundaries(t *testing
 		},
 		"cmd/aw/upgrade.go": {
 			`PersistentPreRun: func(cmd *cobra.Command, args []string) {`: 1,
-		},
-		"run/eventbus.go": {
-			`// EventBus maintains a persistent SSE connection and delivers events`:   1,
-			`// Start opens the persistent SSE connection in a background goroutine.`: 1,
-		},
-		"run/wake.go": {
-			`// repeatedly with backoff to maintain a persistent stream.`: 1,
 		},
 		"run/loop.go": {
 			`l.println("done: initial prompt consumed; use a persistent base prompt.")`: 1,
@@ -141,8 +134,6 @@ func TestRetiredIdentityVocabularyIsConfinedToCompatibilityBoundaries(t *testing
 		"cmd/aw/root.go":                 "uses Cobra persistent hooks and flags",
 		"cmd/aw/doctor.go":               "uses Cobra persistent flags",
 		"cmd/aw/upgrade.go":              "uses a Cobra persistent hook",
-		"run/eventbus.go":                "describes a durable network connection",
-		"run/wake.go":                    "describes a durable network stream",
 		"run/loop.go":                    "describes a retained prompt",
 		"cmd/aw/beads_mail_send.go":      "uses ephemeral for the beads message-issue field, their vocabulary for wisp lifecycle, not identity lifetime",
 		"cmd/aw/beads_mail_dualwrite.go": "records the beads message-issue ephemeral field in dual-write metadata, their vocabulary for wisp lifecycle, not identity lifetime",
@@ -187,13 +178,16 @@ func scanRetiredIdentityVocabulary(root string, allowed map[string]map[string]in
 			return err
 		}
 		rel = filepath.ToSlash(rel)
-		file, err := os.Open(path)
+		source, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		defer file.Close()
+		code, err := withoutGoComments(source)
+		if err != nil {
+			return fmt.Errorf("scan %s: %w", rel, err)
+		}
 
-		scanner := bufio.NewScanner(file)
+		scanner := bufio.NewScanner(bytes.NewReader(code))
 		scanner.Buffer(make([]byte, bufio.MaxScanTokenSize), maxRetiredIdentityVocabularyLineBytes)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
@@ -214,6 +208,45 @@ func scanRetiredIdentityVocabulary(root string, allowed map[string]map[string]in
 	return unexpected, err
 }
 
+func withoutGoComments(source []byte) ([]byte, error) {
+	code := bytes.Clone(source)
+	files := token.NewFileSet()
+	file := files.AddFile("", -1, len(source))
+	var scan scanner.Scanner
+	var scanErr error
+	scan.Init(file, source, func(pos token.Position, message string) {
+		if scanErr == nil {
+			scanErr = fmt.Errorf("%s: %s", pos, message)
+		}
+	}, scanner.ScanComments)
+	for {
+		pos, tok, _ := scan.Scan()
+		if tok == token.EOF {
+			break
+		}
+		if tok != token.COMMENT {
+			continue
+		}
+		start := file.Offset(pos)
+		end := len(source)
+		// Use the original bytes: scanner comment literals omit carriage returns.
+		if source[start+1] == '/' {
+			if newline := bytes.IndexByte(source[start:], '\n'); newline >= 0 {
+				end = start + newline
+			}
+		} else if closing := bytes.Index(source[start+2:], []byte("*/")); closing >= 0 {
+			end = start + 2 + closing + 2
+		}
+		// Preserve lines and token separation for the reviewed code allowlist.
+		for i := start; i < end; i++ {
+			if code[i] != '\n' && code[i] != '\r' {
+				code[i] = ' '
+			}
+		}
+	}
+	return code, scanErr
+}
+
 func hasRetiredIdentityVocabulary(line string) bool {
 	lower := strings.ToLower(line)
 	return strings.Contains(lower, "lifetime") || strings.Contains(lower, "persistent") || strings.Contains(lower, "ephemeral")
@@ -226,6 +259,39 @@ func TestRetiredIdentityVocabularyDetectorIncludesScopeMirrors(t *testing.T) {
 		if !hasRetiredIdentityVocabulary(line) {
 			t.Fatalf("detector missed %q", line)
 		}
+	}
+}
+
+func TestRetiredIdentityVocabularyScanIgnoresOnlyGoComments(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		source  string
+		wantHit bool
+	}{
+		{"line_comment", "// lifetime ephemeral persistent\nvar identityScope string", false},
+		{"block_comment", "/* lifetime\r\nephemeral persistent */\r\nvar identityScope string", false},
+		{"trailing_comment", "var identityScope string // lifetime", false},
+		{"inline_comment", "var /* lifetime */ identityScope string", false},
+		{"code_after_block_comment", "/* harmless */ var lifetime string", true},
+		{"code_before_trailing_comment", `var scope = "lifetime" // harmless`, true},
+		{"string", `var scope = "lifetime"`, true},
+		{"string_with_comment_markers", `var scope = "https://example.test/*lifetime*/"`, true},
+		{"raw_string", "var scope = `// lifetime /* persistent */`", true},
+		{"identifier", "var PersistentScopeMirror string", true},
+		{"wire_tag", "type config struct { Scope string `json:\"lifetime\"` }", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeResidueScanFixture(t, root, "scope.go", tc.source)
+			unexpected, err := scanRetiredIdentityVocabulary(root, map[string]map[string]int{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if gotHit := len(unexpected) > 0; gotHit != tc.wantHit {
+				t.Fatalf("residue detected = %v, want %v: %q", gotHit, tc.wantHit, unexpected)
+			}
+		})
 	}
 }
 
