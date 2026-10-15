@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: aw 1.36.39
+
+CLI changes are since `aw-v1.36.38`.
+
 - **Commands honor the API timeout:** ordinary API operations share the normal
   30-second budget, configurable with `AWEB_HTTP_TIMEOUT`, instead of overriding
   it with hidden command deadlines. This includes mail, chat, tasks, workspace,
