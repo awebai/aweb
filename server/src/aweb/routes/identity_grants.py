@@ -20,9 +20,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.grant_expiry import add_years, expiry_label, never_expires
 from aweb.deps import get_db
-from aweb.config import require_registered_certificates
 from aweb.identity_grant_auth import GRANT_AUTH_SCHEME, GRANT_SCOPES
-from aweb.team_auth_deps import TeamIdentity, _get_registered_certificates, _get_revoked_certificates, get_team_identity
+from aweb.identity_grant_status import effective_grant_status, grant_status
+from aweb.team_auth_deps import TeamIdentity, get_team_identity
 
 router = APIRouter(prefix="/v1/identity-grants", tags=["identity-grants"])
 
@@ -84,32 +84,6 @@ class GrantStatusView(GrantListItem):
 def reject_grant_scheme(request: Request) -> None:
     if (request.headers.get("Authorization") or "").lstrip().startswith(GRANT_AUTH_SCHEME):
         raise HTTPException(status_code=403, detail="grants cannot mint or revoke grants")
-
-
-def _status(row, now: datetime) -> str:
-    if row["revoked_at"] is not None:
-        return "revoked"
-    if not never_expires(row.get("issued_at"), row["expires_at"]) and row["expires_at"] <= now:
-        return "expired"
-    return "active"
-
-
-async def _effective_status(request: Request, row, now: datetime) -> tuple[str, Optional[str]]:
-    status = _status(row, now)
-    if status != "active":
-        return status, None
-    if row.get("subject_status") != "active" or row.get("subject_deleted_at") is not None:
-        return "subject_inactive", "grant subject identity is not active"
-    issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
-    if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(request, row["team_id"])
-        if issuing_certificate_id in revoked_certs:
-            return "issuer_revoked", "grant issuing certificate revoked"
-        if require_registered_certificates():
-            registered_certs = await _get_registered_certificates(request, row["team_id"])
-            if issuing_certificate_id not in registered_certs:
-                return "issuer_not_registered", "grant issuing certificate not registered"
-    return "active", None
 
 
 @router.post("")
@@ -225,7 +199,7 @@ async def list_identity_grants(
                 grant_did_key=row["grant_did_key"],
                 scopes=list(row["scopes"] or []),
                 label=row.get("label") or None,
-                status=_status(row, now),
+                status=grant_status(row, now),
                 issued_at=row["issued_at"].isoformat(),
                 expires_at=expiry_label(row["issued_at"], row["expires_at"]),
                 revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
@@ -270,7 +244,7 @@ async def identity_grant_status(
     if not row:
         return _grant_status_not_found()
     now = datetime.now(timezone.utc)
-    effective, detail = await _effective_status(request, row, now)
+    effective, detail = await effective_grant_status(request, row, now)
     return GrantStatusView(
         grant_id=str(row["grant_id"]),
         team_id=row["team_id"],
@@ -279,7 +253,7 @@ async def identity_grant_status(
         grant_did_key=row["grant_did_key"],
         scopes=list(row["scopes"] or []),
         label=row.get("label") or None,
-        status=_status(row, now),
+        status=grant_status(row, now),
         effective_status=effective,
         status_detail=detail,
         issued_at=row["issued_at"].isoformat(),

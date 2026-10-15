@@ -362,7 +362,7 @@ Mail carries no structured metadata: `SendMessageRequest` is
 `extra="forbid"` (`server/src/aweb/routes/messages.py:94-95`). Subject,
 body, and a four-value priority are the only carriers, and **priority is
 the wake lever**: `high|urgent` → `wake_mode: prompt`, everything else →
-`idle` (`server/src/aweb/routes/events.py:94`).
+`idle` (`_mail_wake_mode` in `server/src/aweb/routes/events.py`).
 
 Priority map (original beads value always preserved in the envelope):
 

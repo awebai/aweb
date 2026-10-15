@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Release preparation: AWID 0.5.25
+
+Changes are since `awid-v0.5.24` / `awid-service-v0.5.24`.
+
+Juan approved this identity-path extension on 2026-10-15 (`aweb-acax`).
+
+- **Trusted services can finish signup beyond the public IP budget:** a matching
+  `AWID_SERVICE_TOKEN` now also exempts team creation, certificate registration
+  and address registration from per-IP rate limits. Public callers retain the
+  existing 10/hour team and 30/hour certificate/address limits. The token grants
+  rate allowance only: controller signatures, certificate verification and
+  member/address binding checks remain required. See the
+  [AWID contract](docs/awid-sot.md#authentication).
+
 ### Release preparation: server 1.27.24, aw 1.36.38, channel 1.7.17, pi 0.3.15
 
 Server changes are since `server-v1.27.23`; client changes are since
@@ -30,10 +44,21 @@ Server changes are since `server-v1.27.23`; client changes are since
   status shows the signed report, `source: "host"`, with `stale` computed on
   every read; a designated host that has not reported yet shows
   `reachable: "unknown"`; any other agent, including one whose host has left
-  the team, shows `{"source": "aweb"}`. aweb's own observations for that
-  fallback are not in this release. `health` has the roster's visibility: a
-  public team's anonymous directory read includes it, a private team's needs
-  the dashboard token.
+  the team, shows aweb's own observations (next entry) with `source: "aweb"`.
+  `health` has the roster's visibility: a public team's anonymous directory
+  read includes it, a private team's needs the dashboard token.
+- **Health shows aweb's own observations when no host reports:** for an agent
+  without a status host or stored report, or whose host has left the team,
+  `health` is `{"source": "aweb", "listening", "listening_since",
+  "last_active", "connection"}` ([agent health](docs/agent-health.md#fallback-for-agents-without-a-status-host)).
+  `listening` says whether the agent holds an open `GET /v1/events/stream`,
+  recorded by the stream itself in Redis; `listening_since` is when the
+  current state began. `last_active` is the newest of heartbeat presence,
+  grant liveness and workspace `last_seen_at`, so an agent that only sends
+  grant heartbeats no longer looks inactive on the dashboard. `connection` is
+  a grant seat's `identity-grant-status.v1` effective status, shown only to
+  readers with a dashboard token valid for the team, and `null` for anyone
+  else, including anonymous public reads.
 - **Host health publishing clients:** aw **1.36.38** adds
   `aw status-host set|clear|show`, which manages the selected agent's
   designation, and `aw status publish --alias <alias> --document -`, which signs

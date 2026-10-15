@@ -97,6 +97,31 @@ def _verify_dashboard_auth(request: Request, team_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail=msg)
 
 
+def _state_redis(request: Request):
+    """The application's Redis, or None.
+
+    Read from app.state rather than injected, so an embedding application that
+    calls these route functions in process with (request, team_id, db) gets
+    the same health observations as an HTTP caller.
+    """
+    return getattr(request.app.state, "redis", None)
+
+
+def _is_dashboard_reader(request: Request, team_id: str) -> bool:
+    """Whether the request carries a dashboard token valid for this team.
+
+    A public team's directory is readable anonymously; facts disclosed only to
+    the team's dashboard readers check this rather than the route's access.
+    """
+    if not request.headers.get("X-Dashboard-Token"):
+        return False
+    try:
+        _verify_dashboard_auth(request, team_id)
+    except HTTPException:
+        return False
+    return True
+
+
 async def _get_team_visibility(request: Request, team_id: str) -> str:
     try:
         domain, team_name = parse_team_id(team_id)
@@ -355,7 +380,13 @@ async def list_team_agents(
         team_id,
     )
     health = await agent_health(
-        aweb_db, team_id=team_id, agent_ids=[r["agent_id"] for r in rows], now=datetime.now(timezone.utc),
+        aweb_db,
+        _state_redis(request),
+        request,
+        team_id=team_id,
+        agent_ids=[r["agent_id"] for r in rows],
+        now=datetime.now(timezone.utc),
+        show_connection=_is_dashboard_reader(request, team_id),
     )
 
     return {
@@ -423,7 +454,13 @@ async def get_team_agent(
     if not row:
         raise HTTPException(status_code=404, detail="Agent not found")
     health = await agent_health(
-        aweb_db, team_id=team_id, agent_ids=[row["agent_id"]], now=datetime.now(timezone.utc),
+        aweb_db,
+        _state_redis(request),
+        request,
+        team_id=team_id,
+        agent_ids=[row["agent_id"]],
+        now=datetime.now(timezone.utc),
+        show_connection=_is_dashboard_reader(request, team_id),
     )
 
     return AgentDetail(
