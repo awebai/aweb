@@ -18,7 +18,7 @@ to refresh it.
 | Workspace Setup | `check`, `claim-human`, `init`, `reset`, `service`, `workspace` |
 | Identity | `auth`, `custody`, `id`, `mcp-config`, `team`, `whoami` |
 | Messaging & Network | `a2a`, `beads-mail`, `chat`, `contacts`, `control`, `directory`, `events`, `gc-mail`, `heartbeat`, `inbound-mode`, `log`, `mail`, `wake` |
-| Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `task`, `work` |
+| Coordination & Runtime | `agent`, `instructions`, `lock`, `notify`, `role-name`, `roles`, `run`, `status`, `status-host`, `task`, `work` |
 | Utility | `completion`, `doctor`, `help`, `plugin`, `upgrade`, `version` |
 | Additional Commands | `blueprint`, `session` |
 
@@ -3093,6 +3093,72 @@ Flags:
 - `--trip-on-danger Remove provider bypass flags and use native provider safety checks`
 - `--wait int Idle seconds per wake-stream wait cycle (default 20)`
 - `--work-prompt-suffix string Override the configured work cycle prompt suffix for this run`
+
+## `status`
+
+### `status`
+
+Publish signed agent health
+
+Subcommands:
+- `publish` Sign and publish an agent-status-v1 JSON document
+
+Flags:
+- `-h, --help help for status`
+
+## `status publish`
+
+### `status publish`
+
+Sign and publish an agent-status-v1 JSON document
+
+Flags:
+- `--alias string Subject agent's team alias`
+- `--document string Read JSON from this file, or - for stdin`
+- `-h, --help help for publish`
+- `--print-signed Print only signed_payload and signature without network access`
+
+## `status-host`
+
+### `status-host`
+
+Designate the current agent's status publisher
+
+Subcommands:
+- `clear` Clear your status host designation
+- `set` Designate a certified team member as your status host
+- `show` Show your status host designation
+
+Flags:
+- `-h, --help help for status-host`
+
+## `status-host clear`
+
+### `status-host clear`
+
+Clear your status host designation
+
+Flags:
+- `-h, --help help for clear`
+
+## `status-host set`
+
+### `status-host set`
+
+Designate a certified team member as your status host
+
+Flags:
+- `-h, --help help for set`
+- `--host-did string Status host's did:key`
+
+## `status-host show`
+
+### `status-host show`
+
+Show your status host designation
+
+Flags:
+- `-h, --help help for show`
 
 ## `task`
 

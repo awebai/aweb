@@ -37,6 +37,8 @@
     "run",
     "service",
     "session",
+    "status",
+    "status-host",
     "task",
     "team",
     "upgrade",
