@@ -22,6 +22,7 @@ import {
   type RegistryIdentityConfig,
   type ResolveTxt,
   resolveConfig,
+  ReceiveStreamReceipt,
   resolveRegistryFallbackURL,
   type SelfIdentity,
   selectDeliveryMode,
@@ -202,6 +203,10 @@ Control events (type="control") are operational signals. On "pause", stop curren
     process.env.AWEB_CHANNEL_DEBUG_FILE
       || join(workdir, ".aw", `channel-trace-${process.pid}.jsonl`),
   );
+  const receipt = new ReceiveStreamReceipt({
+    identityHome: config.identityHome!, kind: "claude-channel", did: config.did, stableID: config.stableID,
+    onError: console.error,
+  });
   try {
     await startChannelLoop({
       client,
@@ -229,9 +234,11 @@ Control events (type="control") are operational signals. On "pause", stop curren
       mailAcknowledgment: "delivery",
       onTrace: traceSink?.onTrace,
       onStreamState: (state) => handleClaudeStreamState(state),
+      streamObserver: receipt,
       log: (message) => console.error(message),
     });
   } finally {
+    await receipt.onClose();
     await traceSink?.flush();
   }
 }

@@ -2,10 +2,23 @@
 
 ## Unreleased
 
-- **Connection diagnostics stay out of agent turns:** reconnect logs no longer
-  ask for a manual inbox/chat scan; recovery already catches up automatically.
-  Pi reports a stopped channel loop to operator logs/status, with no session
-  injection. Standalone channel-core retains disconnect/recovery logs by default.
+- **Health shows aweb's own observations when no host reports:** for an agent
+  without a status host or stored report, or whose host has left the team,
+  `health` is `{"source": "aweb", "listening", "listening_since",
+  "last_active", "connection"}` ([agent health](docs/agent-health.md#fallback-for-agents-without-a-status-host)).
+  `listening` says whether the agent holds an open `GET /v1/events/stream`,
+  recorded by the stream itself in Redis; `last_active` is the newest of
+  heartbeat presence, grant liveness and workspace `last_seen_at`, so an agent
+  that only sends grant heartbeats no longer looks inactive on the dashboard.
+  `connection` is a grant seat's `identity-grant-status.v1` effective status,
+  shown only to readers with a dashboard token valid for the team, and `null`
+  on anonymous public reads.
+
+### Release preparation: server 1.27.24, aw 1.36.38, channel 1.7.17, pi 0.3.15
+
+Server changes are since `server-v1.27.23`; client changes are since
+`aw-v1.36.37`, `channel-v1.7.16` and `pi-v0.3.14`.
+
 - **An agent can name its status host:** `PUT`, `DELETE` and
   `GET /v1/agents/me/status-host` designate, clear or show the one team member
   whose signed status reports speak for the agent (migration
@@ -30,18 +43,17 @@
   every read; a designated host that has not reported yet shows
   `reachable: "unknown"`; any other agent, including one whose host has left
   the team, shows `{"source": "aweb"}`. aweb's own observations for that
-  fallback are not in this release.
-- **Health shows aweb's own observations when no host reports:** for an agent
-  without a status host or stored report, or whose host has left the team,
-  `health` is `{"source": "aweb", "listening", "listening_since",
-  "last_active", "connection"}` ([agent health](docs/agent-health.md#fallback-for-agents-without-a-status-host)).
-  `listening` says whether the agent holds an open `GET /v1/events/stream`,
-  recorded by the stream itself in Redis; `last_active` is the newest of
-  heartbeat presence, grant liveness and workspace `last_seen_at`, so an agent
-  that only sends grant heartbeats no longer looks inactive on the dashboard.
-  `connection` is a grant seat's `identity-grant-status.v1` effective status,
-  shown only to readers with a dashboard token valid for the team, and `null`
-  on anonymous public reads.
+  fallback are not in this release. `health` has the roster's visibility: a
+  public team's anonymous directory read includes it, a private team's needs
+  the dashboard token.
+- **Host health publishing clients:** aw **1.36.38** adds
+  `aw status-host set|clear|show`, which manages the selected agent's
+  designation, and `aw status publish --alias <alias> --document -`, which signs
+  and publishes the frozen status document with team-auth v2. JSON output
+  preserves refusal codes, messages and retry hints; offline `--print-signed`
+  supports vector testing. Claude channel **1.7.17** and Pi **0.3.15** add
+  atomic, mode-0600 receive receipts refreshed only on successful stream reads.
+  See [agent health clients](docs/agent-health-clients.md).
 
 ### Release preparation: server 1.27.23
 
