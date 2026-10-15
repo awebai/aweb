@@ -235,11 +235,13 @@ async def update_task_route(
     if "parent_task_id" in payload.model_fields_set:
         kwargs["parent_task_id"] = payload.parent_task_id
 
+    assignment_change: dict[str, Any] = {}
     result = await update_task(
         db_infra,
         team_id=identity.team_id,
         ref=ref,
         actor_alias=identity.alias,
+        assignment_change=assignment_change,
         **kwargs,
     )
 
@@ -272,6 +274,21 @@ async def update_task_route(
                 "task_ref": result["task_ref"],
                 "actor_agent_id": identity.agent_id,
                 "actor_did_aw": identity.did_aw,
+            },
+        )
+    if assignment_change:
+        await fire_mutation_hook(
+            request,
+            "task.assignee_changed",
+            {
+                "task_id": result["task_id"],
+                "team_id": identity.team_id,
+                "task_ref": result["task_ref"],
+                "title": result["title"],
+                "actor_agent_id": identity.agent_id,
+                "actor_alias": identity.alias,
+                "actor_did_aw": identity.did_aw,
+                **assignment_change,
             },
         )
     return result

@@ -29,6 +29,11 @@
     {
       "source": "server/src/aweb/coordination/routes/tasks.py",
       "function": "update_task_route",
+      "event": "task.assignee_changed"
+    },
+    {
+      "source": "server/src/aweb/coordination/routes/tasks.py",
+      "function": "update_task_route",
       "event": "task.status_changed"
     },
     {

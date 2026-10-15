@@ -303,6 +303,7 @@ async def _resolve_assignee_alias(
     team_id: str,
     assignee_ref: str,
 ) -> str:
+    """Resolve a nondeleted team member, including humans hidden from the roster."""
     aweb_db = db.get_manager("aweb")
 
     try:
@@ -846,6 +847,7 @@ async def update_task(
     labels: list[str] | None = None,
     assignee_alias: str | None | object = _UNSET,
     parent_task_id: str | None | object = _UNSET,
+    assignment_change: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     task_id = await resolve_task_ref(db, team_id=team_id, ref=ref)
     slug = _get_team_slug(team_id)
@@ -1095,6 +1097,19 @@ async def update_task(
             *params,
         )
 
+    # Capture the actual write, including implicit claim assignment, from the
+    # locked row and resolved input. A post-commit read may see a later writer.
+    # Keep this hook metadata out of the public task response and MCP results.
+    new_assignee = (
+        actor_alias if status == "in_progress"
+        else resolved_assignee_alias if resolved_assignee_alias is not _UNSET
+        else current["assignee_alias"]
+    )
+    if assignment_change is not None and new_assignee != current["assignee_alias"]:
+        assignment_change.update(
+            old_assignee_alias=current["assignee_alias"],
+            assignee_alias=new_assignee,
+        )
     old_status = current["status"]
     result = await get_task(db, team_id=team_id, ref=str(task_id))
     if auto_closed:

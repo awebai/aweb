@@ -80,6 +80,7 @@ public HTTP behavior.
 | `POST /v1/tasks` | `task.created` | After task creation. |
 | `PATCH /v1/tasks/{ref}` | `task.status_changed` | When status changed. |
 | `PATCH /v1/tasks/{ref}` | `task.updated` | When the update did not change status. |
+| `PATCH /v1/tasks/{ref}` | `task.assignee_changed` | Additionally, when the stored assignee changes, including an implicit claim assignment. |
 | `DELETE /v1/tasks/{ref}` | `task.deleted` | After soft deletion. |
 | `POST /v1/tasks/{ref}/deps` | `task.dependency_added` | After dependency creation. |
 | `DELETE /v1/tasks/{ref}/deps/{dep_ref}` | `task.dependency_removed` | After dependency removal. |
@@ -155,10 +156,20 @@ content and carries `content_mode`/`encrypted` metadata instead.
 | `task.created` | `task_id`, `team_id`, `task_ref`, `title`, `parent_task_id`, `assignee_alias`, `actor_agent_id`, `actor_alias`, `actor_did_aw` |
 | `task.status_changed` | `task_id`, `team_id`, `task_ref`, `title`, `old_status`, `new_status`, `assignee_alias`, `parent_task_id`, `actor_agent_id`, `actor_alias`, `actor_did_aw`, `claim_preacquired` |
 | `task.updated` | `task_id`, `task_ref`, `actor_agent_id`, `actor_did_aw` |
+| `task.assignee_changed` | `task_id`, `team_id`, `task_ref`, `title`, `old_assignee_alias`, `assignee_alias`, `actor_agent_id`, `actor_alias`, `actor_did_aw` |
 | `task.deleted` | `task_id`, `task_ref`, `actor_agent_id`, `actor_did_aw` |
 | `task.dependency_added` | `task_id`, `depends_on_task_id`, `actor_agent_id`, `actor_did_aw` |
 | `task.dependency_removed` | `task_id`, `removed_depends_on_task_id`, `actor_agent_id`, `actor_did_aw` |
 | `task.comment_added` | `task_id`, `comment_id`, `actor_agent_id`, `actor_did_aw` |
+
+`task.assignee_changed` uses `assignee_alias` for the new value, with null
+meaning unassigned. Its old/new pair comes from the locked update, after alias
+or member-ID resolution; setting the same resolved assignee does not fire it.
+It is additional to the existing status/updated callback. The built-in team
+SSE translations of `task.created` and `task.status_changed` now include nullable
+`assignee_alias`; `task.assignee_changed` carries both assignment values and
+the task reference, title and actor alias. These signals carry task metadata,
+including human assignees, without listing humans in the agent roster.
 
 The default handler translates only a subset into SSE frames. In particular,
 `task.updated`, dependency, and comment events currently have no generic SSE
