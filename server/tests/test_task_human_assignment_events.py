@@ -101,6 +101,8 @@ async def test_team_task_created_and_status_events_carry_the_human_assignee(aweb
         assert closed.status_code == 200, closed.text
     assert [event["type"] for event in redis.events] == ["task.created", "task.status_changed"]
     assert [event["assignee_alias"] for event in redis.events] == ["requester", "requester"]
+    for event in redis.events:
+        assert event["team_id"] == TEAM_ID
 
 
 @pytest.mark.asyncio

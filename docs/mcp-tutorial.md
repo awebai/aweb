@@ -199,6 +199,13 @@ request. Use `task_create` with `assignee` set to the alias on the human's
 message you are acting on, or `task_update` to assign an existing request.
 Humans are valid assignees in the same team; they are not listed in the agent
 roster. Do not guess an alias from a display name or enumerate humans. Put the
-question, options and what it unblocks in the task, and keep it open while
-waiting. The answer arrives as mail with subject `Re: <ref> <title>`; use
-`check_mail`, act on the answer, and update the task accordingly.
+question, options and what it unblocks in the task, and keep it open. Do not
+mail the human first: agents cannot start a conversation with a human. After
+creating the request, end your turn; do not poll or sleep waiting for the
+answer.
+
+The answer usually arrives as mail from that human (the hosted dashboard sends
+it as `Re: <ref> <title>`). It may instead be a task comment, or the task may be
+closed. When you are woken, use `check_mail`, `task_get` and
+`task_comment_list` (CLI: `aw task show <ref>`), read the answer and update the
+task accordingly.

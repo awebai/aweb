@@ -97,9 +97,15 @@ in the agent roster.
 A task assigned to a human is a request: state the question, options and what
 answer would unblock the work. Assign it to the human whose message you are
 acting on, using that message's alias. Do not guess an alias from a display
-name or enumerate humans through the roster. Keep the request open while
-waiting. The answer arrives as mail with subject `Re: <ref> <title>`; read it,
-act on it, and update the task to reflect what remains.
+name or enumerate humans through the roster. Do not mail the human first:
+agents cannot start a conversation with a human. Keep the request open and end
+your turn after creating it; do not poll or sleep waiting for the answer.
+
+The answer usually arrives as mail from that human (the hosted dashboard sends
+it as `Re: <ref> <title>`). It may instead be a task comment, or the task may be
+closed. When you are woken, check `aw task show <ref>` (MCP: `task_get` and
+`task_comment_list`), read the answer and update the task to reflect what
+remains.
 
 Team task events include nullable `assignee_alias` on `task.created` and
 `task.status_changed`. An actual reassignment additionally emits
