@@ -213,31 +213,61 @@ PUT /v1/agents/{alias}/status
 Body: {"signed_payload": "<b64url>", "signature": "<b64>"}
 ```
 
-- **Auth.** Team-auth v2 from the agent's designated status host, or from the
-  agent itself only when no host is designated. Any other member, and the agent
-  itself while a host is designated, gets 403 "not the status host for
-  <alias>". Grant callers get 403.
-- **Verification.**
-  - The signature is valid, and `publisher_did` equals the authenticated
-    signer.
-  - `agent` and `team_id` match the path agent and the authenticated team.
-  - `observed_at` is within the 5-minute signed-request skew, and
-    `valid_until` is at most `observed_at` + 15 minutes.
-  - `seq` increases.
-  - Size and field rules.
-  - Each refusal has its own status and message, and the real error is logged.
-- **Rate limit.** At most 1 status per agent per 5 seconds; beyond that, 429
-  with `Retry-After`. Status publishes and designation calls are not messages:
-  they do not count against message allowances or message-rate counting, as
-  for agent activity (aweb-acah.2).
-- **Storage.** Migration `021_agent_status.sql` creates one row per agent:
-  `agent_id PK`, `team_id`, `publisher_did`, `seq`, `signed_payload`,
-  `signature`, `received_at`. The row is upserted and holds no history. It is
-  deleted with the agent.
-- **Relay.** On a change of `reachable`, `reason.code` or `fixing.by`, the
-  server publishes an `agent.status` event to `team-events:{team_id}`. The
-  dashboard SSE already forwards every non-message, non-chat team event
-  (`server/src/aweb/routes/dashboard.py:290-295`).
+Response: `{"agent_id": "...", "alias": "alice", "seq": 1792080000000}`.
+
+- **Auth.** Team-certificate auth from the agent's designated status host, or
+  from the agent itself only when no host is designated. Any other member, and
+  the agent itself while a host is designated, gets 403 `not the status host
+  for <alias>`. Grant callers get 403 `outside grant scope`. A host that is no
+  longer a member cannot authenticate at all.
+- **Verification**, in this order: the document rules of the vector
+  (canonical bytes, type, fields, caps), `publisher_did` equals the
+  authenticated signer, the signature verifies with that key, the validity
+  window, the clock skew and expiry; then `team_id` is the authenticated team,
+  `agent` names the path agent, and `seq` is greater than the stored one. The
+  authority check is repeated inside the storing transaction, which locks the
+  agent row as designation changes do, so a report cannot land after its
+  publisher lost the designation.
+- **Refusals.** Each is logged with the signer and the reason.
+
+  | Refusal | Status | Detail |
+  |---|---|---|
+  | Document rule (vector code) | 422 | `<code>: <message>`, for example `expired: valid_until has passed` |
+  | `signed_payload` is not unpadded base64url or not a JSON object | 422 | `malformed_payload: ...` |
+  | `team_id` is not the authenticated team | 422 | `team_mismatch: ...` |
+  | `agent` does not name the path agent | 422 | `agent_mismatch: ...` |
+  | `seq` not greater than the stored one | 409 | `stale_seq: seq is not greater than the stored seq` |
+  | Not the agent's publisher | 403 | `not the status host for <alias>` |
+  | Unknown agent | 404 | `Agent not found` |
+  | More than one publish in 5 seconds | 429 | `at most one status per agent every 5 seconds`, with `Retry-After` |
+
+- **Rate limit.** At most 1 publish attempt per agent per 5 seconds, counted
+  in Redis (`agent-status-rate:{agent_id}`) after the authority check, so
+  another member cannot use up the agent's window. Status publishes and
+  designation calls are not messages: they do not count against message
+  allowances or message-rate counting, as for agent activity (aweb-acah.2).
+- **Storage.** Migration `021_agent_status.sql`: one row per agent with
+  `publisher_did`, `seq`, `reachable`, `reason_code`, `fixing_by`,
+  `observed_at`, `valid_until`, `signed_payload`, `signature` and
+  `received_at`. The copied fields serve change detection; the signed payload
+  is the authority. The row is upserted and holds no history. It is deleted
+  when the agent is retired, deleted or archived, and when the designation
+  moves to a different publisher or is cleared.
+- **Relay.** When `reachable`, `reason.code` or `fixing.by` differs from the
+  stored row, including the agent's first status, the route fires the
+  `agent.status` mutation hook ([hook seam](aw-hooks-sot.md)). The built-in
+  handler publishes it to `team-events:{team_id}` as:
+
+  ```json
+  {"type": "agent.status", "team_id": "...", "agent_id": "...", "alias": "alice",
+   "reachable": "no", "reason_code": "oats.grant_expired",
+   "reason_text": "Its connection expired.", "fixing_by": "automatic",
+   "fixing_text": "Its server is renewing the connection.",
+   "observed_at": "...", "valid_until": "...", "timestamp": "..."}
+  ```
+
+  The dashboard SSE forwards every non-message, non-chat team event
+  (`server/src/aweb/routes/dashboard.py`).
 
 Cadence, agreed: publish at once on any change, and otherwise every 60
 seconds with `valid_until` set 5 minutes ahead. A host that stops publishing

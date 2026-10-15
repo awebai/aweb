@@ -26,6 +26,7 @@ from .events import (
     TaskCreatedEvent,
     TaskStatusChangedEvent,
     TaskUnclaimedEvent,
+    TeamAgentStatusEvent,
     TeamReservationAcquiredEvent,
     TeamReservationReleasedEvent,
     TeamReservationRenewedEvent,
@@ -578,6 +579,23 @@ def _translate_team_event(event_type: str, ctx: dict):
     # Mail/chat mutation hooks and participant events remain intact, including
     # metering context. A dashboard token is not a participant, so none of these
     # mutations has a team-wide event representation.
+    if event_type == "agent.status":
+        team_id = _team_id_from_context(ctx)
+        if not team_id:
+            return None
+        return TeamAgentStatusEvent(
+            team_id=team_id,
+            agent_id=str(ctx.get("agent_id", "") or ""),
+            alias=str(ctx.get("alias", "") or ""),
+            reachable=str(ctx.get("reachable", "") or ""),
+            reason_code=ctx.get("reason_code"),
+            reason_text=ctx.get("reason_text"),
+            fixing_by=ctx.get("fixing_by"),
+            fixing_text=ctx.get("fixing_text"),
+            observed_at=str(ctx.get("observed_at", "") or ""),
+            valid_until=str(ctx.get("valid_until", "") or ""),
+        )
+
     if event_type == "task.created":
         team_id = _team_id_from_context(ctx)
         if not team_id:

@@ -52,6 +52,11 @@
       "event": "message.acknowledged"
     },
     {
+      "source": "server/src/aweb/routes/agent_status.py",
+      "function": "publish_agent_status",
+      "event": "agent.status"
+    },
+    {
       "source": "server/src/aweb/routes/chat.py",
       "function": "create_or_send",
       "event": "chat.message_sent"

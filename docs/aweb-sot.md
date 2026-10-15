@@ -564,6 +564,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `identity_session_grants`
 - `identity_grant_liveness`
 - `agent_status_hosts`
+- `agent_status`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
@@ -831,6 +832,7 @@ transient `did:key`.
 | `POST /v1/agents/{alias}/control` | Control signals |
 | `GET`/`PUT`/`DELETE /v1/agents/me/status-host` | Read, designate or clear the caller's status host, the one team member whose signed status reports speak for it ([agent health](agent-health.md)); team-cert auth, grant callers refused |
 | `PUT /v1/agents/{alias}/status-host` | Set or clear an agent's status host; auth is a request signature by the team's controller `did:key`, with `previous_host_did` as a compare-and-swap precondition |
+| `PUT /v1/agents/{alias}/status` | Publish the agent's signed status document; auth is team-cert auth by the designated status host, or by the agent itself when none is designated ([agent health](agent-health.md)) |
 | `GET /v1/conversations` | List conversations visible to the authenticated identity across mail and chat. Auth: MessagingAuth (identity-scoped, not team-scoped). |
 | `GET /v1/contacts` | List contacts |
 | `POST /v1/contacts` | Add an identity-bound contact after strict resolution |

@@ -14,6 +14,15 @@
   precondition. Grant callers are refused. Retiring the agent removes the
   designation. See [agent health](docs/agent-health.md); the signed status
   document's bytes are frozen in `docs/vectors/agent-status-v1.json`.
+- **The status host publishes a signed agent status:**
+  `PUT /v1/agents/{alias}/status` stores the latest signed status document for
+  an agent, from its designated status host or, with none designated, from the
+  agent itself (migration `021_agent_status.sql`). The server verifies it
+  against the agent-status-v1 rules, binds it to the path agent and the
+  authenticated team, requires an increasing `seq`, and allows one publish per
+  agent every 5 seconds, outside message metering. A change of verdict fires
+  the new `agent.status` mutation hook, which the built-in handler relays to
+  the team event stream.
 
 ### Release preparation: server 1.27.22
 
