@@ -320,3 +320,19 @@ async def test_retiring_the_agent_removes_its_status(privacy_app):
     assert retired.status_code == 200, retired.text
     assert await _stored(env, "alice") is None
 
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "changes",
+    [{"reachable": []}, {"fixing": {"by": []}}, {"reason": None}, {"fixing": None}],
+    ids=repr,
+)
+async def test_malformed_field_shapes_are_refused_and_not_stored(privacy_app, changes):
+    env = privacy_app
+
+    response = await _publish(env, "alice", "alice", _document(env, "alice", "alice", **changes))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"].startswith("invalid_value:")
+    assert await _stored(env, "alice") is None
