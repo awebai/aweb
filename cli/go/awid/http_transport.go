@@ -97,7 +97,10 @@ func doNoRedirect(client *http.Client, req *http.Request, defaultTimeout time.Du
 	if req.Header.Get("User-Agent") == "" {
 		setUserAgent(req, "")
 	}
-	return noRedirectClient.Do(req)
+	tracedRequest, diagnostic := beginHTTPDiagnostics(req)
+	resp, err := noRedirectClient.Do(tracedRequest)
+	diagnostic.finish(err)
+	return resp, err
 }
 
 // APITimeout returns the overall timeout for normal API requests:

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
 
@@ -258,22 +259,30 @@ func refuseUnknownSubcommands(cmd *cobra.Command) {
 }
 
 func Execute() {
+	finishHTTPDiagnostics := awid.StartHTTPDiagnostics()
 	refuseUnknownSubcommands(rootCmd)
 	if argsContainTraceFlag(os.Args[1:]) {
 		_ = os.Setenv("AW_TRACE", "1")
 	}
 	restorePluginIdentityHome, err := activateIdentityHomeForPluginDispatch(os.Args[1:])
 	if err != nil {
+		finishHTTPDiagnostics(err)
 		err = normalizeStatusCommandError(os.Args[1:], err)
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(exitCode(err))
 	}
 	defer restorePluginIdentityHome()
 	if code, dispatched := dispatchPluginIfRequested(os.Args[1:]); dispatched {
+		if code != 0 {
+			finishHTTPDiagnostics(fmt.Errorf("plugin command exited %d", code))
+		} else {
+			finishHTTPDiagnostics(nil)
+		}
 		os.Exit(code)
 	}
 	err = rootCmd.Execute()
 	checkVersionFromHeader()
+	finishHTTPDiagnostics(err)
 	if err != nil {
 		err = normalizeStatusCommandError(os.Args[1:], err)
 		msg := err.Error()

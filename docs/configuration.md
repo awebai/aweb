@@ -260,6 +260,15 @@ reads and writes, and honor an earlier caller cancellation or deadline.
 Interactive login, chat waits, event streams, short operational probes and
 artifact downloads retain their explicitly separate deadlines.
 
+For failure-only transport diagnostics, set `AWEB_HTTP_DIAGNOSTICS=1`. A failed
+command emits one stderr line beginning `AW HTTP DIAGNOSTIC ` followed by JSON.
+It contains bounded phase timings, fixed route categories, remaining API budget,
+connection reuse, DNS/connect/TLS events, request-write and first-response-byte
+events. It records no URLs, query strings, headers, bodies, hostnames, IP
+addresses, identity paths or raw errors. Successful commands, including commands
+that recover from a transient request failure, emit no diagnostic record. This
+setting changes no timeout or retry policy.
+
 On conference or venue WiFi (NAT pressure, captive portals, silent
 blackholing), raise `AWEB_HTTP_TIMEOUT` above the 30s default and retry reads
 freely. For a timed-out write (task create/update, mail send), the request may

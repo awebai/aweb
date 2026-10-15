@@ -8,6 +8,11 @@
   registry and coordination operations. Explicit waits and short operational
   probes retain their own deadlines. A timed-out reply source read still sends
   no reply and leaves the source unacknowledged.
+- **Failed commands can report where HTTP stalled:** opt-in
+  `AWEB_HTTP_DIAGNOSTICS=1` buffers bounded transport and preparation timings and
+  emits a diagnostic only if the command fails. Fixed categories distinguish
+  expired local budgets, DNS, connection, TLS and response waits without logging
+  URLs, headers, bodies or identities. Timeout and retry behavior is unchanged.
 
 ### Release preparation: AWID 0.5.25
 

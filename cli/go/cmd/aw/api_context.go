@@ -22,5 +22,7 @@ func commandAPIContext(cmd *cobra.Command, parents ...context.Context) (context.
 	if parent == nil {
 		parent = context.Background()
 	}
-	return context.WithTimeout(parent, awid.APITimeout())
+	ctx, cancel := context.WithTimeout(parent, awid.APITimeout())
+	awid.RecordHTTPDiagnosticPhase("api_budget_started")
+	return ctx, cancel
 }
