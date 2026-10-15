@@ -336,3 +336,16 @@ async def test_malformed_field_shapes_are_refused_and_not_stored(privacy_app, ch
     assert response.status_code == 422, response.text
     assert response.json()["detail"].startswith("invalid_value:")
     assert await _stored(env, "alice") is None
+
+
+@pytest.mark.asyncio
+async def test_text_without_a_utf8_form_is_refused_and_not_stored(privacy_app):
+    env = privacy_app
+    document = _document(env, "alice", "alice", reason={"code": "oats.grant_expired", "text": "\ud800"})
+    raw = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+
+    response = await _publish(env, "alice", "alice", document, raw=raw)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"].startswith("non_canonical:")
+    assert await _stored(env, "alice") is None

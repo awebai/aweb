@@ -118,3 +118,40 @@ def test_well_formed_neighbour_of_the_malformed_shapes_verifies():
         now=_now(VECTOR["valid"][0]),
     )
     assert document["fixing"] == {"by": "unknown"}
+
+
+def _signed_raw(raw: bytes):
+    return (
+        base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii"),
+        sign_message(bytes.fromhex(VECTOR["signing_seed_hex"]), raw),
+    )
+
+
+@pytest.mark.parametrize("text", ["\ud800", "\udfff", "a\udc00b"], ids=repr)
+def test_text_without_a_utf8_form_is_refused_as_non_canonical(text):
+    document = copy.deepcopy(VECTOR["valid"][0]["document"])
+    document["reason"]["text"] = text
+    raw = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    signed_payload, signature = _signed_raw(raw)
+    with pytest.raises(StatusDocumentError) as refused:
+        verify_status_document(
+            signed_payload, signature, signer_did=VECTOR["publisher_did_key"], now=_now(VECTOR["valid"][0]),
+        )
+    assert refused.value.code == "non_canonical"
+
+
+def test_paired_surrogate_escape_is_refused_as_non_canonical_and_raw_utf8_verifies():
+    document = copy.deepcopy(VECTOR["valid"][0]["document"])
+    document["reason"]["text"] = "Its server \U0001f525"
+    escaped = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    with pytest.raises(StatusDocumentError) as refused:
+        verify_status_document(
+            *_signed_raw(escaped), signer_did=VECTOR["publisher_did_key"], now=_now(VECTOR["valid"][0]),
+        )
+    assert refused.value.code == "non_canonical"
+    verified = verify_status_document(
+        *_signed_raw(canonical_json_bytes(document)),
+        signer_did=VECTOR["publisher_did_key"],
+        now=_now(VECTOR["valid"][0]),
+    )
+    assert verified["reason"]["text"] == "Its server \U0001f525"
