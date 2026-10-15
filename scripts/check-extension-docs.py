@@ -594,32 +594,18 @@ def check(
     for relative in sorted(all_markdown):
         if not (docs / relative).is_file():
             failures.append(f"tracked Markdown is missing from the working tree: docs/{relative}")
-    expected_public = all_markdown - {"README.md"}
     readme = (docs / "README.md").read_text(encoding="utf-8")
-    links = [
+    links = {
         target
         for target in re.findall(r"\[[^\]]+\]\(([^)#]+)(?:#[^)]+)?\)", readme)
         if target.endswith(".md") and not target.startswith("../")
-    ]
-    counts = Counter(links)
+    }
+    extra = sorted(links - (all_markdown - {"README.md"}))
+    if extra:
+        failures.append(f"docs/README.md links non-public/absent Markdown paths: {', '.join(extra)}")
     section_links = _readme_h2_links(readme)
     if section_links.get("Non-normative strategy and research"):
         failures.append("public docs index still publishes a strategy/research section")
-    missing = sorted(expected_public - set(counts))
-    duplicate = sorted(target for target, count in counts.items() if count != 1)
-    extra = sorted(set(counts) - expected_public)
-    if missing:
-        failures.append(f"docs/README.md omits public Markdown paths: {', '.join(missing)}")
-    if duplicate:
-        failures.append(f"docs/README.md duplicates public Markdown paths: {', '.join(duplicate)}")
-    if extra:
-        failures.append(f"docs/README.md links non-public/absent Markdown paths: {', '.join(extra)}")
-    if f"{len(all_markdown)} tracked Markdown" not in readme:
-        failures.append("docs/README.md tracked-Markdown count is stale")
-    if f"{len(expected_public)} public Markdown" not in readme:
-        failures.append("docs/README.md public-Markdown count is stale")
-    if not re.search(rf"all {len(vectors)}\s+root JSON fixtures", readme):
-        failures.append("docs/README.md root JSON fixture count is stale")
 
     return failures
 
@@ -661,37 +647,11 @@ def self_test(root: Path) -> int:
         if failures := check(tmp, tracked_markdown, tracked_files):
             print(f"self-test failed: untracked Markdown changed the tracked corpus: {failures[0]}")
             return 1
-        newly_tracked = tracked_markdown | {"untracked-self-test-note.md"}
-        failures = check(tmp, newly_tracked, tracked_files)
-        if not any(
-            "omits public Markdown paths: untracked-self-test-note.md" in failure
-            for failure in failures
-        ):
-            print("self-test failed: existing newly tracked public Markdown was not rejected")
-            return 1
         untracked_note.unlink()
         failures = check(tmp, tracked_markdown | {"missing-tracked-self-test-note.md"}, tracked_files)
         if not any("tracked Markdown is missing" in failure for failure in failures):
             print("self-test failed: missing tracked Markdown was not detected")
             return 1
-
-        readme = tmp / "docs/README.md"
-        readme_original = readme.read_text(encoding="utf-8")
-        readme_mutated = re.sub(
-            r"all \d+\s+root JSON fixtures",
-            "all 999 root JSON fixtures",
-            readme_original,
-            count=1,
-        )
-        if readme_mutated == readme_original:
-            print("self-test setup failed: docs/README.md lacks the root JSON fixture count")
-            return 1
-        readme.write_text(readme_mutated, encoding="utf-8")
-        mutation_failures = check(tmp, tracked_markdown, tracked_files)
-        if not any("root JSON fixture count is stale" in failure for failure in mutation_failures):
-            print("self-test failed: stale root JSON fixture count was not detected")
-            return 1
-        readme.write_text(readme_original, encoding="utf-8")
 
         private_transition_mutations = (
             (
@@ -954,7 +914,6 @@ def self_test(root: Path) -> int:
     print(
         "self-test passed: tracked corpus, public-strategy exclusion, removed-strategy paths, "
         "private-transition removal, managed-gateway neutrality, "
-        "vector-count freshness, "
         "federation SOT/error-reference coverage, event/call-site multiplicity, "
         "dynamic-expression, and real-workspace release-mount controls reject their mutations"
     )

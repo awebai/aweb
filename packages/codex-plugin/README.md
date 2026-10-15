@@ -2,7 +2,7 @@
 
 Codex plugin packaging for the canonical aweb skill bodies.
 
-This directory is **not** the source of truth. The four skill bodies live at
+This directory is **not** the source of truth. The five skill bodies live at
 [`aweb/skills/`](../../skills/). The `skills/` subdirectory here holds
 generated copies of those bodies, produced by [`sync-skills.sh`](./sync-skills.sh)
 and committed to Git so the marketplace's `git-subdir` install delivers a
@@ -10,9 +10,10 @@ self-contained plugin.
 
 ## What this plugin ships
 
-Four skills, auto-discovered from the bundled `skills/` directory:
+Five skills, auto-discovered from the bundled `skills/` directory:
 
 - **`aweb-coordination`** — session/work-loop policy.
+- **`aweb-identity`** — identity custody, addressability and key lifecycle.
 - **`aweb-messaging`** — mail/chat policy + channel-awakening response.
 - **`aweb-team-membership`** — joining, BYOT, custody, addressability,
   inbound mode, contacts.
@@ -35,22 +36,22 @@ codex plugin marketplace add awebai/codex-plugins      # add marketplace
 
 ## Maintaining the bundled `skills/`
 
-Before committing any change to either `aweb/skills/` (canonical) or this
-directory, run:
+Edit the canonical `skills/` tree. From the repository root, generate all
+runtime copies before committing:
 
 ```bash
-./sync-skills.sh
+make sync-doc-copies
 ```
 
-The script copies the four canonical skill directories into
+The target calls `sync-skills.sh` to copy the five canonical skill directories into
 `packages/codex-plugin/skills/` and reports the count. The copies must be
 checked in: Codex's plugin installer treats `skills:` paths as relative to the
 plugin root and does not follow symlinks out of it, so a real directory of
 files is the only working shape. Manifest paths must "stay inside the plugin
 root" per the [Codex plugin docs](https://developers.openai.com/codex/plugins/build).
 
-If `aweb/skills/` and `packages/codex-plugin/skills/` ever drift, the script is
-idempotent — re-run it and commit the diff.
+The ordinary build and candidate skills-artifact build also generate these
+copies. Re-running the sync removes obsolete supporting files as well.
 
 ## Versioning
 

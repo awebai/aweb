@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Prove the AWID public-doc mirror gate accepts clean copies and rejects every
-# configured mirror when stale. The document list comes from the same Makefile
-# variable used by the production sync and check targets.
+# Check publication-context links after generating AWID public-doc copies.
+# The document list comes from the production sync target.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -35,7 +34,6 @@ fi
 
 for name in "${doc_names[@]}"; do
   cp "$ROOT/docs/$name" "$FIXTURE_ROOT/docs/$name"
-  cp "$ROOT/docs/$name" "$EXPECTED_MIRROR_DIR/$name"
 done
 
 if ! output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
@@ -43,32 +41,12 @@ if ! output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
   exit 1
 fi
 
-for name in "${doc_names[@]}"; do
-  printf '\nstale fixture\n' >>"$EXPECTED_MIRROR_DIR/$name"
-  if output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
-    printf 'FAIL: stale AWID site document mirror passed: %s\n%s\n' "$name" "$output" >&2
-    exit 1
-  fi
-  expected="awid/site/static/$name differs from docs/$name"
-  if ! grep -Fq "$expected" <<<"$output"; then
-    printf 'FAIL: stale AWID site document mirror failed for the wrong reason: %s\n%s\n' "$name" "$output" >&2
-    exit 1
-  fi
-  cp "$FIXTURE_ROOT/docs/$name" "$EXPECTED_MIRROR_DIR/$name"
-  if ! output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
-    printf 'FAIL: restored AWID site document mirrors did not pass after seeding %s:\n%s\n' "$name" "$output" >&2
-    exit 1
-  fi
-done
-
-# Equality must not certify dead links in the site's publication context. Add
-# the same broken link to source and mirror so byte freshness stays green while
-# the navigation check has to fail.
+# A generated document can still link to an unpublished target. The link
+# check must reject it after syncing from the canonical source.
 broken_name="${doc_names[0]}"
 printf '\n[unpublished target](not-published.md)\n' >>"$FIXTURE_ROOT/docs/$broken_name"
-printf '\n[unpublished target](not-published.md)\n' >>"$EXPECTED_MIRROR_DIR/$broken_name"
 if output="$(make_for_fixture check-awid-site-docs 2>&1)"; then
-  printf 'FAIL: byte-identical AWID site mirrors passed with a dead relative link:\n%s\n' "$output" >&2
+  printf 'FAIL: generated AWID site documents passed with a dead relative link:\n%s\n' "$output" >&2
   exit 1
 fi
 if ! grep -Fq "broken relative Markdown link in AWID site context: not-published.md" <<<"$output"; then
@@ -76,4 +54,4 @@ if ! grep -Fq "broken relative Markdown link in AWID site context: not-published
   exit 1
 fi
 
-echo "self-test passed: clean mirrors pass; stale copies and dead publication-context links fail"
+echo "self-test passed: generated documents pass; dead publication-context links fail"

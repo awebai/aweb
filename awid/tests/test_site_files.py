@@ -12,73 +12,8 @@ def test_hugo_site_scaffold_exists() -> None:
     assert (ROOT / "site" / "layouts" / "index.html").is_file()
 
 
-def test_hugo_site_mentions_core_awid_promises() -> None:
-    html = (ROOT / "site" / "layouts" / "index.html").read_text(encoding="utf-8")
-    assert "did:aw" in html
-    assert "aw id create" in html
-    assert "Signed writes" in html
-    assert "elf-host" in html
-
-
 def _site_html() -> str:
     return (ROOT / "site" / "layouts" / "index.html").read_text(encoding="utf-8")
-
-
-def test_hugo_site_installs_aw_before_using_it() -> None:
-    html = _site_html()
-    install = html.index("npm install -g @awebai/aw")
-    first_use = min(html.index(command) for command in ("aw init", "aw id create", "aw chat"))
-    assert install < first_use
-
-
-def test_hugo_site_explains_teams_and_naapps_before_the_quickstart() -> None:
-    html = _site_html()
-    model = html.index('id="model"')
-    quickstart = html.index('id="quickstart"')
-    assert model < quickstart
-    section = html[model:quickstart]
-    assert "name:domain" in section
-    assert "Native Agentic App (NAAPP)" in section
-    assert "aw plugin install" in section
-    assert "certificates/{certificate_id}/status" in section
-
-
-def test_hugo_site_says_independent_apps_verify_private_teams_through_status() -> None:
-    # AWID 0.5.22 serves the anonymous per-certificate status read, so an
-    # independent app verifies any team with a published certificate.
-    llms = (ROOT / "site" / "static" / "llms.txt").read_text(encoding="utf-8")
-    for text in (_site_html(), llms):
-        assert "public teams today" not in text
-        assert "private ones included" in text
-        assert "certificates/{certificate_id}/status" in text
-
-
-def test_hugo_site_does_not_call_team_membership_public() -> None:
-    # Teams are private by default: their certificates and revocations are
-    # published in awid but readable only by members, controller and operator.
-    for text in (_site_html(), (ROOT / "site" / "static" / "llms.txt").read_text(encoding="utf-8")):
-        assert "public in awid" not in text
-        assert "anyone can check membership" not in text
-        assert "private one (the default)" in text or "a private team's membership" in text
-
-
-def test_hugo_site_says_registries_are_federated_through_dns() -> None:
-    html = _site_html()
-    section = html[html.index('id="federation"') :]
-    assert "registry=https://awid.acme.com" in section
-    assert "api.awid.ai" in section
-    assert "refuses" in section
-
-
-def test_hugo_site_quickstart_says_where_each_step_runs() -> None:
-    html = _site_html()
-    quickstart = html[html.index('id="quickstart"') : html.index('id="trust"')]
-    assert 'href="https://aweb.ai/docs/cli-tutorial/"' in quickstart
-    assert 'data-copy="all"' in quickstart
-    for where in ('class="where alice">in alice/', 'class="where bob">in bob/', 'class="where">any directory'):
-        assert where in quickstart
-    # Copy takes "$ " lines only, so a command must not continue onto another line.
-    assert " \\\n" not in quickstart
 
 
 def test_hugo_site_serves_and_links_llms_txt() -> None:

@@ -11,7 +11,7 @@ TEST_EGRESS_RUNNER ?= python3 $(abspath scripts/test-egress/native.py) --
 	check-awid-locked-suite \
 	test-release-cli-version \
 	test-channel-integration \
-	list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
+	sync-doc-copies sync-skill-copies list-awid-site-docs sync-awid-site-docs check-awid-site-docs verify-site deploy-site \
 	test-npm-exact-publish test-pypi-exact-publish test-oci-exact-publish \
 	cli-e2e _candidate-gate-docker-boundaries _candidate-channel-version _candidate-node-deps \
 	_candidate-unit-channel _candidate-unit-channel-core _candidate-unit-pi _candidate-oats _candidate-oats-proof-helpers \
@@ -35,9 +35,8 @@ OATS_PIN_FILE := $(CURDIR)/oats/upstream-test-pin.json
 OATS_PINNED_ROOT := $(CURDIR)/.cache/oats-pinned
 OATS_TEST_ROOT ?= $(OATS_PINNED_ROOT)
 
-# Canonical docs mirrored onto the public AWID site. Sync, freshness checks, and
-# their negative controls all consume this one list so adding a mirror cannot
-# silently bypass the pre-merge gate.
+# Canonical docs generated into the public AWID site before builds/deploys.
+# The sync step and publication-context link checks consume the same list.
 AWID_SITE_DOC_NAMES := identity-guide.md trust-model.md hosted-global-bootstrap.md
 AWID_SITE_DOC_SOURCE_DIR ?= docs
 AWID_SITE_DOC_MIRROR_DIR ?= awid/site/static
@@ -69,6 +68,7 @@ help:
 	@echo "    real execution: OATS_RUN_REAL_PI_LAUNCH_ORDER=1 make test-oats"
 	@echo "    opt-in local OATS: make test-oats OATS_TEST_ROOT=/path/to/local/oats"
 	@echo "  freshness    Regenerate committed artifacts and fail on drift"
+	@echo "  sync-doc-copies Generate Codex/OATS skills and AWID site docs from their sources"
 	@echo "  check-node-audit Audit Node dependencies for known vulnerabilities"
 	@echo "  check-go-vulnerability-audit Audit Go dependencies (pinned toolchain)"
 	@echo "  test-a2a     Run A2A conformance, gateway, AWID lookup, and CLI command gates"
@@ -102,7 +102,7 @@ help:
 	@echo "  release-publish TAG=<tag>             publish one local tag without GitHub Actions"
 	@echo "  clean        Remove all build artifacts and caches"
 
-build:
+build: sync-doc-copies
 	cd cli/go && $(MAKE) build
 
 # ORDER IS LOAD-BEARING FOR THE FIRST FOUR - do not sort this list.
@@ -224,6 +224,13 @@ check-exception-deadlines:
 check-node-audit:
 	bash scripts/check-node-audit.sh
 
+# Runtime copies ship in Git for source-based plugin/capability installs. Edit
+# skills/ and docs/, then sync; normal builds regenerate these copies too.
+sync-doc-copies: sync-skill-copies sync-awid-site-docs
+
+sync-skill-copies:
+	bash scripts/sync-skill-copies.sh
+
 list-awid-site-docs:
 	@for name in $(AWID_SITE_DOC_NAMES); do printf '%s\n' "$$name"; done
 
@@ -233,21 +240,8 @@ sync-awid-site-docs:
 		cp "$(AWID_SITE_DOC_SOURCE_DIR)/$$name" "$(AWID_SITE_DOC_MIRROR_DIR)/$$name"; \
 	done
 
-check-awid-site-docs:
-	@status=0; for name in $(AWID_SITE_DOC_NAMES); do \
-		source="$(AWID_SITE_DOC_SOURCE_DIR)/$$name"; \
-		mirror="$(AWID_SITE_DOC_MIRROR_DIR)/$$name"; \
-		if [ ! -f "$$source" ]; then \
-			echo "FAIL: canonical AWID site document missing: $$source"; status=1; \
-		elif [ ! -f "$$mirror" ]; then \
-			echo "FAIL: public AWID site document mirror missing: $$mirror"; status=1; \
-		elif ! cmp -s "$$source" "$$mirror"; then \
-			echo "FAIL: public AWID site document mirror stale: $$mirror differs from $$source"; status=1; \
-		fi; \
-	done; \
-	if ! python3 scripts/check-awid-site-doc-links.py $(AWID_SITE_DOC_MIRRORS); then status=1; fi; \
-	if [ "$$status" -eq 0 ]; then echo "AWID site document mirrors are up to date"; fi; \
-	exit "$$status"
+check-awid-site-docs: sync-awid-site-docs
+	python3 scripts/check-awid-site-doc-links.py $(AWID_SITE_DOC_MIRRORS)
 
 verify-site: check-awid-site-docs
 	cd awid/site && hugo --minify --cleanDestinationDir
@@ -574,7 +568,7 @@ _candidate-artifact-pi:
 	cd pi-extension && npm run build
 	cd pi-extension && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 
-_candidate-artifact-skills:
+_candidate-artifact-skills: sync-doc-copies
 	@mkdir -p /tmp/aweb-candidate-gate
 	cd packages/claude-skills && npm pack --ignore-scripts --pack-destination /tmp/aweb-candidate-gate
 	cd packages/claude-ai-skills && ./build-zips.sh

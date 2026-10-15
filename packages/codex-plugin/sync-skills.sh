@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Copy the default customer skill bodies from ../../skills into ./skills.
-# Run before committing changes to packages/codex-plugin/ or aweb/skills/
-# so the Codex plugin ships current bodies.
+# Invoked by make sync-doc-copies and the ordinary/candidate builds.
+# Commit the generated files for source-based Codex installs.
 #
 # Codex's plugin installer does not follow symlinks, and manifest paths must
 # stay inside the plugin root — so we copy rather than symlink.
