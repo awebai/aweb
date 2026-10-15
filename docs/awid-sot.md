@@ -130,15 +130,21 @@ exempts all 17 registry GET read buckets from public-IP rate limits: DID key,
 addresses, head, full and log; namespace get/list; address get/list; A2A
 publication get; team get/list and member lookup; certificate list/fetch/status; and
 revocations. The exemption does not change identity-private or certificate-blob
-authentication. The same credential also exempts exactly three provisioning
+authentication. The same credential also exempts exactly six provisioning
 write buckets from public-IP rate limits: `did_register` (POST `/v1/did`),
-`namespace_register` (POST `/v1/namespaces`), and `did_encryption_key_publish`
-(POST `/v1/did/{did_aw}/encryption-key`). DID registration proofs, namespace
-controller signatures and DNS or parent authorization, and identity-signed
-encryption-key assertions remain required. All other write buckets remain
-rate-limited even with a matching token. Public callers keep the existing
-10/hour DID and namespace registration limits and 30/hour encryption-key
-publication limit.
+`namespace_register` (POST `/v1/namespaces`), `did_encryption_key_publish`
+(POST `/v1/did/{did_aw}/encryption-key`), `team_create`
+(POST `/v1/namespaces/{domain}/teams`), `certificate_register`
+(POST `/v1/namespaces/{domain}/teams/{name}/certificates`), and
+`address_register` (POST `/v1/namespaces/{domain}/addresses`). DID proofs,
+namespace controller signatures and DNS or parent authorization, and
+identity-signed encryption-key assertions remain required. Team creation and
+address binding retain namespace-controller authority; certificate registration
+retains team-controller authorization, member/address binding checks and
+verification of any supplied signed certificate blob. All other write buckets
+remain rate-limited even with a matching token. Public callers keep the existing
+10/hour DID, namespace and team creation limits and 30/hour encryption-key,
+certificate and address registration limits.
 It never authorizes a write, and must not be shared with
 clients or sent to a discovered external registry. Missing credentials use the
 normal visibility and public-IP rules. A wrong presented credential grants no

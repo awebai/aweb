@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Release preparation: AWID 0.5.25
+
+Changes are since `awid-v0.5.24` / `awid-service-v0.5.24`.
+
+- **Trusted services can finish signup beyond the public IP budget:** a matching
+  `AWID_SERVICE_TOKEN` now also exempts team creation, certificate registration
+  and address registration from per-IP rate limits. Public callers retain the
+  existing 10/hour team and 30/hour certificate/address limits. The token grants
+  rate allowance only: controller signatures, certificate verification and
+  member/address binding checks remain required. See the
+  [AWID contract](docs/awid-sot.md#authentication).
+
 ### Release preparation: server 1.27.24, aw 1.36.38, channel 1.7.17, pi 0.3.15
 
 Server changes are since `server-v1.27.23`; client changes are since

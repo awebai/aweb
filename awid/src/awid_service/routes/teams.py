@@ -539,7 +539,7 @@ class TeamRotateResponse(BaseModel):
 @router.post(
     "",
     response_model=TeamResponse,
-    dependencies=[Depends(rate_limit_dep("team_create"))],
+    dependencies=[Depends(rate_limit_dep("team_create", allow_trusted_service=True))],
 )
 async def create_team(
     request: Request,
@@ -807,7 +807,7 @@ async def rotate_team_key(
 @router.post(
     "/{name}/certificates",
     response_model=CertificateRegisterResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_register"))],
+    dependencies=[Depends(rate_limit_dep("certificate_register", allow_trusted_service=True))],
 )
 async def register_certificate(
     request: Request,
