@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import aweb.agent_health
+import aweb.routes.events
 from test_agent_health_http import _health
 from test_agent_status_host_http import _team_request
 from test_dashboard import _make_jwt
@@ -189,3 +190,58 @@ async def test_anonymous_public_reader_never_sees_the_connection(privacy_app):
             assert health["listening"] is True
 
     assert (await _health(env, "alice"))["connection"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_open_stream_keeps_listening_past_the_window(privacy_app, monkeypatch):
+    env = privacy_app
+    monkeypatch.setattr(aweb.routes.events, "LISTENING_REFRESH_SECONDS", 0.2)
+    monkeypatch.setattr(aweb.agent_health, "LISTENING_WINDOW_SECONDS", 2.5)
+    actor = env.actors["alice"]
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=6)).isoformat()
+    opened = asyncio.Event()
+
+    async def hold_stream():
+        async with env.client.stream(
+            "GET", "/v1/events/stream", params={"deadline": deadline},
+            headers=_signed_team_headers(actor.sk, actor.did, TEAM, actor.certificate), timeout=10,
+        ) as response:
+            assert response.status_code == 200
+            async for _ in response.aiter_lines():
+                opened.set()
+
+    holder = asyncio.create_task(hold_stream())
+    try:
+        await asyncio.wait_for(opened.wait(), 5)
+        await asyncio.sleep(0.5)
+        started = (await _health(env, "alice"))["listening_since"]
+
+        await asyncio.sleep(4)
+        health = await _health(env, "alice")
+
+        assert health["listening"] is True
+        assert health["listening_since"] == started
+    finally:
+        holder.cancel()
+        await asyncio.gather(holder, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_embedding_app_calling_the_route_in_process_gets_observations(privacy_app):
+    # An embedding application may call the route function directly with
+    # request, team_id and db, as Cloud does; Redis comes from app.state.
+    from starlette.requests import Request
+
+    from aweb.routes.dashboard import list_team_agents
+
+    env = privacy_app
+    await _open_stream(env, "alice")
+    request = Request({
+        "type": "http", "method": "GET", "path": f"/v1/teams/{TEAM}/agents", "query_string": b"",
+        "headers": [(b"x-dashboard-token", _make_jwt([TEAM]).encode())], "app": env.app,
+    })
+
+    listed = await list_team_agents(request, TEAM, db=env.infra)
+
+    health = next(agent["health"] for agent in listed["agents"] if agent["alias"] == "alice")
+    assert health["listening"] is True
