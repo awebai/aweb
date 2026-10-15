@@ -163,24 +163,52 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			// The retained trace name and HTTP fetch count do not identify
 			// completion of a particular delivery cycle. Wait for the broker
 			// to consume that cycle's exhausted-retry request and arm its timer.
-			waitForBackoff := func(next time.Duration) {
-				t.Helper()
-				waitForCond(t, "exhausted refusal scheduled its snapshot", func() bool {
-					broker.mu.Lock()
-					defer broker.mu.Unlock()
-					if len(broker.streams) != 1 {
+			scheduled := func(next time.Duration) bool {
+				broker.mu.Lock()
+				defer broker.mu.Unlock()
+				if len(broker.streams) != 1 {
+					return false
+				}
+				for _, stream := range broker.streams {
+					stream.mu.Lock()
+					armed := stream.snapshotTimer != nil && stream.snapshotBackoff == next
+					stream.mu.Unlock()
+					if !armed {
 						return false
 					}
-					for _, stream := range broker.streams {
-						stream.mu.Lock()
-						scheduled := stream.snapshotTimer != nil && stream.snapshotBackoff == next
-						stream.mu.Unlock()
-						if !scheduled {
-							return false
-						}
+				}
+				return true
+			}
+			// The cycle runs in the channel-core child: inbox fetches and
+			// terminal inspections whose duration depends on the host. Its
+			// progress is the fetch count and the child's delivery stage.
+			cycleProgress := func() string {
+				progress := fmt.Sprintf("fetches=%d", fetches.Load())
+				for _, inst := range broker.Status().Instances {
+					if inst.Home == home {
+						cc := inst.ChannelCore
+						progress += fmt.Sprintf(" stage=%s readiness=%s error=%q", cc.TraceStage, cc.ReadinessWaiting, cc.LastError)
 					}
-					return true
-				})
+				}
+				return progress
+			}
+			// Wait while the cycle makes progress. A cycle that stops moving
+			// without scheduling its snapshot, such as a lost request, fails.
+			waitForBackoff := func(next time.Duration) {
+				t.Helper()
+				const stalled = 5 * time.Second
+				const limit = 2 * time.Minute
+				start := time.Now()
+				last, lastMoved := cycleProgress(), time.Now()
+				for !scheduled(next) {
+					if now := cycleProgress(); now != last {
+						last, lastMoved = now, time.Now()
+					}
+					if time.Since(lastMoved) > stalled || time.Since(start) > limit {
+						t.Fatalf("timed out waiting for exhausted refusal scheduled its snapshot (last progress %s)", last)
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
 			}
 			waitForBackoff(2 * snapshotBackoffMin)
 			if tc.slowRefusalCycle {
