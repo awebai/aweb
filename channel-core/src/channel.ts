@@ -4,7 +4,7 @@ import { appendFile, mkdir, open, readFile, rename, rm } from "node:fs/promises"
 import { lock } from "proper-lockfile";
 
 import { APIClient } from "./api/client.js";
-import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamState } from "./api/events.js";
+import { streamAgentEvents, formatEventStreamState, type AgentEvent, type EventStreamState, type EventStreamObserver } from "./api/events.js";
 import { ackMessage, fetchInbox, type InboxMessage } from "./api/mail.js";
 import { fetchHistory, markRead, type ChatMessage } from "./api/chat.js";
 import { PinStore, type PinStoreWriter } from "./identity/pinstore.js";
@@ -82,6 +82,7 @@ export interface ChannelLoopOptions {
   log?: (message: string) => void;
   /** Operator diagnostics only; stream state must never become an awakening. */
   onStreamState?: (state: EventStreamState) => void;
+  streamObserver?: EventStreamObserver;
   onTrace?: (entry: ChannelTraceEntry) => void;
 }
 
@@ -432,6 +433,7 @@ export async function startChannelLoop(options: ChannelLoopOptions & { teamID: s
         if (state.state !== "connected") (options.log || console.error)(formatEventStreamState(state));
       }),
       (event) => emitTrace(options, "frame_parsed", event, eventDispatchLane(event)),
+      options.streamObserver,
     ),
     options.log || (() => {}),
   );

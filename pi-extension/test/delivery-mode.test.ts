@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer, type IncomingMessage, type Server } from "node:http";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 
@@ -59,6 +59,7 @@ test("AWEB_DELIVERY=session starts a Pi session that opens no event stream", asy
       harness.statuses.some(([, value]) => value.includes(PI_EXTERNAL_DELIVERY_STATUS)),
       `expected the external-delivery status line, got ${JSON.stringify(harness.statuses)}`,
     );
+    assert.equal(existsSync(harness.receiptPath), false);
     // Identity, skills, welcome and the aw CLI path are unaffected.
     assert.ok(harness.messages.some((message) => message.customType === "aweb-welcome"));
   } finally {
@@ -71,9 +72,17 @@ test("an unset AWEB_DELIVERY starts a Pi session that opens the event stream", a
   try {
     await harness.waitForRequest();
     assert.match(harness.requests[0] || "", /^\/v1\/events\/stream\?deadline=/);
+    const deadline = Date.now() + 5_000;
+    while (!existsSync(harness.receiptPath) && Date.now() < deadline) await settle(10);
+    const receipt = JSON.parse(readFileSync(harness.receiptPath, "utf8"));
+    assert.equal(receipt.kind, "pi-extension");
+    assert.equal(receipt.pid, process.pid);
+    assert.match(receipt.did, /^did:key:/);
+    assert.match(receipt.stable_id, /^did:aw:/);
     assert.ok(harness.messages.every((message) => message.content !== PI_EXTERNAL_DELIVERY_NOTICE));
   } finally {
     await harness.close();
+    assert.equal(existsSync(harness.receiptPath), false);
   }
 });
 
@@ -113,6 +122,7 @@ interface SessionHarness {
   logs: string[];
   requests: string[];
   statuses: Array<[string, string]>;
+  receiptPath: string;
   waitForRequest(): Promise<void>;
 }
 
@@ -163,6 +173,7 @@ async function startSession(delivery: string | undefined, corruptDeliveryStore =
   await sessionStart({}, ctx);
 
   return {
+    receiptPath: join(workdir, ".aw/receive/stream.json"),
     messages,
     logs,
     requests,
