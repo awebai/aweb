@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from awid.did import stable_id_from_did_key
+from awid.signing import canonical_json_bytes, sign_message
 from test_agent_status_publish_http import _document, _open_rate_window
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_certificate
@@ -38,6 +39,13 @@ async def test_cli_status_designation_publish_and_refusals(privacy_app, tmp_path
         cert = _make_certificate(env.team_sk, env.team_did, actor.did, team_id=TEAM, alias=name,
                                  identity_scope="global" if global_root else "local",
                                  member_did_aw=stable, member_address=address)
+        # Match the released Go certificate wire shape: optional local fields
+        # are absent, rather than signed as empty strings then dropped on load.
+        if not global_root:
+            cert.pop("member_did_aw")
+            cert.pop("member_address")
+            cert.pop("signature")
+            cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
         cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
         (home / "team-certs").mkdir()
         (home / cert_path).write_text(json.dumps(cert))
