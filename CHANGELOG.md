@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **AWID attributes public rate limits through configured proxies:** with valid
+  `AWEB_CF_EDGE_CIDRS` and `AWEB_TRUSTED_PROXY_CIDRS`, AWID checks the socket peer
+  and rightmost forwarded hop, then derives the client from the complete XFF
+  chain. Missing/invalid configuration and malformed chains use the peer.
+  First-party private proxy callers are trusted and may choose their rate
+  attribution. The unused blanket `AWEB_TRUST_PROXY_HEADERS` and `X-Real-IP`
+  paths are removed; token exemptions and write authority are unchanged.
+
 ## Release preparations
 
 ### Release preparation: aw 1.36.39

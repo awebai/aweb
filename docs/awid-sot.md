@@ -160,6 +160,35 @@ every request. Values are cumulative per bucket for that application process
 and reset on restart; they are not per-event increments or a cross-worker total.
 The event contains no credential, client IP or identity.
 
+### Client IP rate attribution
+
+AWID uses the socket peer for public rate-limit keys by default. To enable
+forwarded client attribution, configure both `AWEB_CF_EDGE_CIDRS` and
+`AWEB_TRUSTED_PROXY_CIDRS`. Each accepts a JSON array of CIDR strings, or a
+comma- or pipe-separated list. Both lists must be nonempty and every entry
+valid; an invalid entry invalidates the whole list. Empty or invalid settings
+retain the socket-peer key.
+
+Forwarded headers are trusted only from the configured trusted proxy range.
+The rightmost entry across all `X-Forwarded-For` field lines must be in a
+configured CF edge range. AWID then walks right to left past trusted proxy and
+CF hops to the client. A malformed chain or a chain containing only trusted
+hops uses the socket peer. `X-Real-IP`, `True-Client-IP`, `CF-Connecting-IP` and
+the retired `AWEB_TRUST_PROXY_HEADERS` setting do not select a rate key.
+
+On Render, the configured proxy range includes our first-party private
+services. These callers are trusted by assumption and may choose their rate
+attribution, including by fabricating an entire CF-looking chain. CF suffix
+membership is not independent ingress authentication. This model requires the
+private network to be restricted to the operator's services; an operator with
+untrusted private callers needs a different ingress trust boundary. The ASGI
+host must preserve the socket peer: keep Uvicorn's `FORWARDED_ALLOW_IPS` at its
+loopback default rather than adding private ranges or `*`.
+
+This selects rate-limit buckets only. Service-token exemptions and route
+authentication and write authority are unchanged. The Cloud resolver remains
+separate because its optional peer gate and tolerant CIDR parsing differ.
+
 ---
 
 ## Namespaces

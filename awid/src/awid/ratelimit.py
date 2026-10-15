@@ -15,6 +15,8 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request, Response
 
+from .client_ip import resolve_client_ip
+
 
 logger = logging.getLogger(__name__)
 
@@ -194,18 +196,7 @@ def _rate_config(bucket: str) -> tuple[int, int]:
 
 
 def _extract_client_ip(request: Request) -> str:
-    import os
-    if os.getenv("AWEB_TRUST_PROXY_HEADERS", "").strip().lower() in ("1", "true", "yes"):
-        xff = request.headers.get("x-forwarded-for")
-        if xff:
-            return xff.split(",")[0].strip()
-        xrip = request.headers.get("x-real-ip")
-        if xrip:
-            return xrip.strip()
-
-    if request.client and request.client.host:
-        return request.client.host
-    return "unknown"
+    return resolve_client_ip(request)
 
 
 def build_rate_limiter(*, redis=None, backend: str | None = None) -> RateLimiter:

@@ -106,6 +106,15 @@ def test_unproven_alternate_headers_and_old_blanket_switch_are_ignored(monkeypat
     assert ip_bucket_key(request(PUBLIC, [("x-forwarded-for", f"{CLIENT}, {EDGE}")])) == PUBLIC
 
 
+def test_other_ip_headers_do_not_override_a_valid_xff_client(monkeypatch):
+    configure(monkeypatch)
+    headers = [("x-forwarded-for", f"{CLIENT}, {EDGE}")]
+    headers.extend((name, "198.51.100.200") for name in (
+        "x-real-ip", "true-client-ip", "cf-connecting-ip",
+    ))
+    assert ip_bucket_key(request(PROXY, headers)) == CLIENT
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("peer, forwarded_key", [(PUBLIC, PUBLIC), (PROXY, CLIENT)])
 async def test_real_registry_route_redis_buckets(

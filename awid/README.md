@@ -27,6 +27,13 @@ Optional environment:
 - `AWID_PORT` default `8010`
 - `AWID_DB_SCHEMA` default `awid`
 - `AWID_RATE_LIMIT_BACKEND` default `redis`
+- `AWEB_CF_EDGE_CIDRS` and `AWEB_TRUSTED_PROXY_CIDRS` default empty. Both must
+  contain valid JSON-array, comma- or pipe-separated CIDR lists to use forwarded
+  client IPs for rate limits. Configured proxy peers are trusted first-party
+  callers, including private services on Render; they may choose their rate
+  attribution. Keep Uvicorn's `FORWARDED_ALLOW_IPS` at its loopback default.
+  See [client IP rate attribution](../docs/awid-sot.md#client-ip-rate-attribution)
+  for the full trust boundary and fallback behavior.
 - `AWID_SERVICE_TOKEN` optional for standalone AWID, but required when AWID
   serves an aweb deployment. Configure the same >=32-byte value on both so
   aweb can read private-team keys and revocations and bypass the public-IP
