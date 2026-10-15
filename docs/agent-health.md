@@ -88,11 +88,7 @@ GET    /v1/agents/me/status-host
   `host_active` is null when no host is designated, and false when the host is
   no longer an active member. DELETE is idempotent.
 
-  | Refusal | Status | Detail |
-  |---|---|---|
-  | `host_did` is not a `did:key` | 422 | `host_did must be a did:key` |
-  | `host_did` is not an active member | 422 | `host_did is not an active member of this team` |
-  | Grant caller | 403 | `outside grant scope` |
+  Refusals use the codes in "Refusal codes" below.
 - **One publisher at a time.** While a status host is designated, only that
   host may publish for the agent. The agent self-publishes only when no host is
   designated. Replacing or clearing the designation deletes the stored status
@@ -119,9 +115,8 @@ GET    /v1/agents/me/status-host
   (`set_agent_status_host`), `team_id`, `agent_alias`, `host_did`,
   `previous_host_did` and `timestamp`. An empty `host_did` clears.
   `previous_host_did` must equal the current host (empty for none), otherwise
-  409 `Status host changed since previous_host_did`, so a replayed controller
-  request cannot undo a later designation. Any other signer gets 403
-  `Team controller authorization is required to set a status host`.
+  409 `status_host_changed`, so a replayed controller request cannot undo a
+  later designation. Any other signer gets 403 `controller_required`.
 - **When OATS designates**:
   - at spawn, from oats.aweb's spawn hook, right after it mints the identity;
   - for existing instances, once at their next launch, with the agent's
@@ -217,8 +212,7 @@ Response: `{"agent_id": "...", "alias": "alice", "seq": 1792080000000}`.
 
 - **Auth.** Team-certificate auth from the agent's designated status host, or
   from the agent itself only when no host is designated. Any other member, and
-  the agent itself while a host is designated, gets 403 `not the status host
-  for <alias>`. Grant callers get 403 `outside grant scope`. A host that is no
+  the agent itself while a host is designated, gets 403 `not_status_host`. Grant callers get 403 `outside grant scope`. A host that is no
   longer a member cannot authenticate at all.
 - **Verification**, in this order: the document rules of the vector
   (canonical bytes, type, fields, caps), `publisher_did` equals the
@@ -228,19 +222,8 @@ Response: `{"agent_id": "...", "alias": "alice", "seq": 1792080000000}`.
   authority check is repeated inside the storing transaction, which locks the
   agent row as designation changes do, so a report cannot land after its
   publisher lost the designation.
-- **Refusals.** Each is logged with the signer and the reason.
-
-  | Refusal | Status | Detail |
-  |---|---|---|
-  | Document rule (vector code) | 422 | `<code>: <message>`, for example `expired: valid_until has passed` |
-  | `signed_payload` is not unpadded base64url or not a JSON object | 422 | `malformed_payload: ...` |
-  | `team_id` is not the authenticated team | 422 | `team_mismatch: ...` |
-  | `agent` does not name the path agent | 422 | `agent_mismatch: ...` |
-  | `seq` not greater than the stored one | 409 | `stale_seq: seq is not greater than the stored seq` |
-  | Not the agent's publisher | 403 | `not the status host for <alias>` |
-  | Unknown agent | 404 | `Agent not found` |
-  | More than one publish in 5 seconds | 429 | `at most one status per agent every 5 seconds`, with `Retry-After` |
-
+- **Refusals** use the codes in "Refusal codes" below. Each is logged with
+  the signer and the reason.
 - **Rate limit.** At most 1 publish attempt per agent per 5 seconds, counted
   in Redis (`agent-status-rate:{agent_id}`) after the authority check, so
   another member cannot use up the agent's window. Status publishes and
@@ -268,6 +251,35 @@ Response: `{"agent_id": "...", "alias": "alice", "seq": 1792080000000}`.
 
   The dashboard SSE forwards every non-message, non-chat team event
   (`server/src/aweb/routes/dashboard.py`).
+
+### Refusal codes
+
+Every refusal the status routes own has the body
+`{"detail": "<code>: <message>"}`. The code is the text before the first
+`": "`, matches `^[a-z_]+$`, and is stable; the message is plain words and may
+change. Refusals from shared authentication (certificate failures, grant
+callers' 403 `outside grant scope`) and FastAPI request validation (a 422
+whose detail is a list) carry no code: clients treat those as auth or request
+shape errors.
+
+| Code | Status | Routes | Meaning |
+|---|---|---|---|
+| `host_not_did_key` | 422 | status-host | `host_did` is not a `did:key` |
+| `host_not_member` | 422 | status-host | `host_did` is not an active member of the team |
+| `status_host_changed` | 409 | controller status-host | `previous_host_did` is not the current host |
+| `controller_required` | 403 | controller status-host | the signer is not the team controller |
+| `invalid_request` | 422 | controller status-host | the alias is empty |
+| `invalid_team_id` | 422 | controller status-host | `team_id` does not parse |
+| `team_not_found` | 404 | controller status-host | unknown team |
+| `agent_not_found` | 404 | controller status-host, status | unknown agent alias in the team |
+| `not_status_host` | 403 | status | the caller is not the agent's publisher |
+| `rate_limited` | 429 | status | more than one publish in 5 seconds; `Retry-After` gives the wait |
+| `publishing_unavailable` | 503 | status | the server has no Redis for rate limiting and relay |
+| `malformed_payload` | 422 | status | `signed_payload` is not unpadded base64url of a JSON object |
+| vector codes | 422 | status | every `error` in `docs/vectors/agent-status-v1.json` except `stale_seq` |
+| `team_mismatch` | 422 | status | `team_id` is not the authenticated team |
+| `agent_mismatch` | 422 | status | `agent` does not name the path agent |
+| `stale_seq` | 409 | status | `seq` is not greater than the stored one |
 
 Cadence, agreed: publish at once on any change, and otherwise every 60
 seconds with `valid_until` set 5 minutes ahead. A host that stops publishing

@@ -64,7 +64,7 @@ class StatusHostResponse(BaseModel):
 def _require_did_key(host_did: str) -> str:
     host_did = host_did.strip()
     if not host_did.startswith("did:key:z") or not validate_did(host_did):
-        raise HTTPException(status_code=422, detail="host_did must be a did:key")
+        raise HTTPException(status_code=422, detail="host_not_did_key: host_did must be a did:key")
     return host_did
 
 
@@ -83,7 +83,7 @@ async def _host_is_active_member(db, *, team_id: str, host_did: str) -> bool:
 async def _require_active_member_host(db, *, team_id: str, host_did: str) -> str:
     host_did = _require_did_key(host_did)
     if not await _host_is_active_member(db, team_id=team_id, host_did=host_did):
-        raise HTTPException(status_code=422, detail="host_did is not an active member of this team")
+        raise HTTPException(status_code=422, detail="host_not_member: host_did is not an active member of this team")
     return host_did
 
 
@@ -215,12 +215,12 @@ async def controller_set_status_host(
     """
     alias = alias.strip()
     if not alias:
-        raise HTTPException(status_code=422, detail="Agent alias is required")
+        raise HTTPException(status_code=422, detail="invalid_request: Agent alias is required")
     team_id = payload.team_id.strip()
     try:
         parse_team_id(team_id)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=f"invalid_team_id: {exc}") from exc
 
     aweb_db = db.get_manager("aweb")
     team = await aweb_db.fetch_one(
@@ -228,7 +228,7 @@ async def controller_set_status_host(
         team_id,
     )
     if team is None:
-        raise HTTPException(status_code=404, detail="Team not found")
+        raise HTTPException(status_code=404, detail="team_not_found: Team not found")
 
     authorizer_did = verify_signed_json_request(
         request,
@@ -243,7 +243,7 @@ async def controller_set_status_host(
     if authorizer_did != str(team["team_did_key"]):
         raise HTTPException(
             status_code=403,
-            detail="Team controller authorization is required to set a status host",
+            detail="controller_required: Team controller authorization is required to set a status host",
         )
 
     host_did = payload.host_did.strip()
@@ -261,14 +261,14 @@ async def controller_set_status_host(
             alias,
         )
         if agent is None:
-            raise HTTPException(status_code=404, detail="Agent not found")
+            raise HTTPException(status_code=404, detail="agent_not_found: Agent not found")
         current = await tx.fetch_one(
             "SELECT host_did FROM {{tables.agent_status_hosts}} WHERE agent_id = $1",
             agent["agent_id"],
         )
         current_host_did = current["host_did"] if current else ""
         if current_host_did != payload.previous_host_did.strip():
-            raise HTTPException(status_code=409, detail="Status host changed since previous_host_did")
+            raise HTTPException(status_code=409, detail="status_host_changed: Status host changed since previous_host_did")
         if host_did:
             await _designate(
                 tx,
@@ -305,7 +305,7 @@ async def _enforce_publish_rate(redis, agent_id) -> None:
     retry_after = ttl if isinstance(ttl, int) and ttl > 0 else PUBLISH_WINDOW_SECONDS
     raise HTTPException(
         status_code=429,
-        detail=f"at most one status per agent every {PUBLISH_WINDOW_SECONDS} seconds",
+        detail=f"rate_limited: at most one status per agent every {PUBLISH_WINDOW_SECONDS} seconds",
         headers={"Retry-After": str(retry_after)},
     )
 
@@ -342,13 +342,13 @@ async def publish_agent_status(
         alias,
     )
     if agent is None:
-        raise HTTPException(status_code=404, detail="Agent not found")
+        raise HTTPException(status_code=404, detail="agent_not_found: Agent not found")
     agent_id = agent["agent_id"]
-    not_host = HTTPException(status_code=403, detail=f"not the status host for {alias}")
+    not_host = HTTPException(status_code=403, detail=f"not_status_host: not the status host for {alias}")
     if not _may_publish(identity, agent_id=agent_id, host_did=await _current_host_did(aweb_db, agent_id)):
         raise not_host
     if redis is None:
-        raise HTTPException(status_code=503, detail="Status publishing is unavailable")
+        raise HTTPException(status_code=503, detail="publishing_unavailable: Status publishing is unavailable")
     await _enforce_publish_rate(redis, agent_id)
 
     try:
