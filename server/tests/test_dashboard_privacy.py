@@ -139,6 +139,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
                     yield SimpleNamespace(
                         client=client, db=manager, redis=redis, actors=actors,
                         registry_db=registry_db.get_manager(), registry_app=registry_app, dispatched=dispatched, app=app, infra=db,
+                        team_sk=team_sk, team_did=team_did,
                     )
             finally:
                 server.should_exit = True
