@@ -26,6 +26,10 @@ func isIdentityHomeNeutralCommand(cmd *cobra.Command) bool {
 // and an empty instance. A newly added command is denied until equivalent
 // evidence is added; plausible-looking code is not sufficient evidence.
 var identityHomeAwareCommandPaths = map[string]struct{}{
+	"aw status-host set":        {},
+	"aw status-host clear":      {},
+	"aw status-host show":       {},
+	"aw status publish":         {},
 	"aw a2a status":             {},
 	"aw beads-mail announces":   {},
 	"aw beads-mail archive":     {},

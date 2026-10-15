@@ -64,6 +64,9 @@ var rootCmd = &cobra.Command{
 			activeIdentityHome = home
 		}
 		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
+		if isAgentStatusCommand(cmd) {
+			return nil // Producer commands never renew encryption keys or check updates.
+		}
 		if !isTeamInviteInspectCommand(cmd) && cmd.Name() != "help" {
 			maybeRenewIdentityEncryptionAssertion(cmd.Context(), mustGetwd(), currentEncryptionKeyIdentityHome(), cmd.ErrOrStderr())
 		}
@@ -261,6 +264,7 @@ func Execute() {
 	}
 	restorePluginIdentityHome, err := activateIdentityHomeForPluginDispatch(os.Args[1:])
 	if err != nil {
+		err = normalizeStatusCommandError(os.Args[1:], err)
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(exitCode(err))
 	}
@@ -271,6 +275,7 @@ func Execute() {
 	err = rootCmd.Execute()
 	checkVersionFromHeader()
 	if err != nil {
+		err = normalizeStatusCommandError(os.Args[1:], err)
 		msg := err.Error()
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint

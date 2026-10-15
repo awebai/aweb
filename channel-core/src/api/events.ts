@@ -19,6 +19,11 @@ export interface EventStreamState {
   retryInMs?: number;
 }
 
+export interface EventStreamObserver {
+  onRead: (openedAt: number, readAt: number) => void;
+  onClose: () => Promise<void> | void;
+}
+
 export interface AgentEvent {
   type: AgentEventType;
   agent_id?: string;
@@ -57,6 +62,7 @@ export async function* streamAgentEvents(
   signal: AbortSignal,
   onState: (state: EventStreamState) => void = () => {},
   onEvent: (event: AgentEvent) => void = () => {},
+  observer?: EventStreamObserver,
 ): AsyncGenerator<AgentEvent> {
   let connectedOnce = false;
   let disconnected = false;
@@ -103,25 +109,32 @@ export async function* streamAgentEvents(
 
     try {
       let streamConfirmed = false;
-      for await (const event of parseSSEResponse(resp, attemptAbort.signal)) {
-        if (!streamConfirmed) {
-          streamConfirmed = true;
-          retryInMs = 1000;
-          if (disconnected) {
-            disconnected = false;
-            connectedOnce = true;
-            onState({ state: "reconnected" });
-          } else if (!connectedOnce) {
-            connectedOnce = true;
-            onState({ state: "connected" });
+      try {
+        for await (const event of parseSSEResponse(resp, attemptAbort.signal, () => {
+          try { observer?.onRead(openedAt, Date.now()); } catch { /* Local evidence cannot interrupt delivery. */ }
+        })) {
+          if (!streamConfirmed) {
+            streamConfirmed = true;
+            retryInMs = 1000;
+            if (disconnected) {
+              disconnected = false;
+              connectedOnce = true;
+              onState({ state: "reconnected" });
+            } else if (!connectedOnce) {
+              connectedOnce = true;
+              onState({ state: "connected" });
+            }
           }
+          try {
+            onEvent(event);
+          } catch {
+            // Diagnostics must never change event consumption.
+          }
+          yield event;
         }
-        try {
-          onEvent(event);
-        } catch {
-          // Diagnostics must never change event consumption.
-        }
-        yield event;
+      } finally {
+        // Remove proof before retry backoff, including errors and planned closes.
+        try { await observer?.onClose(); } catch { /* Keep delivery independent of diagnostics. */ }
       }
       if (!signal.aborted && !deadlineReached
         && Date.now() - openedAt < EVENT_STREAM_PLANNED_CLOSE_MS) {
@@ -154,6 +167,7 @@ export async function* streamAgentEvents(
 async function* parseSSEResponse(
   resp: Response,
   signal: AbortSignal,
+  onRead: () => void = () => {},
 ): AsyncGenerator<AgentEvent> {
   const reader = resp.body?.getReader();
   if (!reader) return;
@@ -171,6 +185,7 @@ async function* parseSSEResponse(
       // comments count as liveness even though they are not agent events.
       const { done, value } = await readWithInactivity(reader, signal);
       if (done) break;
+      if (value?.byteLength) onRead();
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");

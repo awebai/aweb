@@ -11,6 +11,8 @@ import { loadSigningKey } from "./identity/keys.js";
 ed.etc.sha512Sync = (...m) => sha512(ed.etc.concatBytes(...m));
 
 export interface AgentConfig {
+  /** Resolved credential directory (already .aw for the default workspace). */
+  identityHome?: string;
   baseURL: string;
   did: string;
   stableID: string;
@@ -222,6 +224,7 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
 
   return {
     baseURL,
+    identityHome: identityHome.root,
     did,
     stableID,
     address,
@@ -256,6 +259,7 @@ async function resolveGrantConfig(identityHome: IdentityHomeSelection, options: 
   const subject = grant.subject || {};
   return {
     baseURL: (grant.aweb_url || "").trim(),
+    identityHome: identityHome.root,
     did: (subject.did_key || "").trim(),
     stableID: (subject.did_aw || "").trim(),
     address: (subject.address || "").trim(),

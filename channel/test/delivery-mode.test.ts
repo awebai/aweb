@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage } from "node:http";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createShadowedPrincipalFixture } from "../../channel-core/test/helpers/config_fixture.js";
 import { launchPackagedMCPChild } from "./helpers/packaged_mcp.js";
 import { CHANNEL_EXTERNAL_DELIVERY_NOTICE, resolveChannelDelivery } from "../src/index.js";
@@ -21,6 +21,7 @@ interface ProbeServer {
 
 let child: ChildProcessWithoutNullStreams | undefined;
 let probe: ProbeServer | undefined;
+let receiptPath: string;
 
 afterEach(async () => {
   child?.kill("SIGTERM");
@@ -64,6 +65,7 @@ describe("packaged Claude channel delivery mode", () => {
     // per-identity stream, so this process must never open it.
     await settle(1_500);
     expect(probe?.requests).toEqual([]);
+    expect(existsSync(receiptPath)).toBe(false);
   }, 20_000);
 
   test("an unset AWEB_DELIVERY opens the event stream exactly as before", async () => {
@@ -72,6 +74,14 @@ describe("packaged Claude channel delivery mode", () => {
     expect(launched.initialize.capabilities?.experimental?.["claude/channel"]).toEqual({});
     expect(launched.stderr()).not.toContain("AWEB_DELIVERY");
     await expectStreamOpened(launched.stderr);
+    await vi.waitFor(() => expect(existsSync(receiptPath)).toBe(true));
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    expect(receipt.kind).toBe("claude-channel");
+    expect(receipt.pid).toBe(child!.pid);
+    expect(receipt.did).toMatch(/^did:key:/);
+    expect(receipt.stable_id).toMatch(/^did:aw:/);
+    child!.kill("SIGTERM");
+    await vi.waitFor(() => expect(existsSync(receiptPath)).toBe(false));
   }, 20_000);
 
   test("an unknown AWEB_DELIVERY warns once and still opens the event stream", async () => {
@@ -87,6 +97,7 @@ describe("packaged Claude channel delivery mode", () => {
 
 async function launchFixtureChild(delivery: string | undefined) {
   const { workdir } = await createShadowedPrincipalFixture();
+  receiptPath = join(workdir, ".aw/receive/stream.json");
   probe = await startProbeServer();
   setAwebURL(join(workdir, ".aw"), probe.url);
 

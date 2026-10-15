@@ -8,6 +8,7 @@ import {
   type RegistryIdentityConfig,
   type ResolveTxt,
   resolveConfig,
+  ReceiveStreamReceipt,
   selectDeliveryMode,
   type DeliveryMode,
   type EventStreamState,
@@ -267,6 +268,7 @@ export function createPiAwakeningHandler(wakeDispatcher: WakeDispatcher | undefi
 
 export default function awebPiExtension(pi: ExtensionAPI) {
   let abortController: AbortController | undefined;
+  let channelLoop: Promise<void> | undefined;
   let wakeDispatcher: WakeDispatcher | undefined;
   const wakeLog = createWakeLogger();
   installWakeDiagnostics(wakeLog);
@@ -292,10 +294,14 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     abortController = undefined;
     wakeDispatcher?.close(new Error("Pi session shut down before wake delivery"));
     wakeDispatcher = undefined;
+    await channelLoop;
   });
 
   pi.on("session_start", async (_event, ctx) => {
     abortController?.abort();
+    wakeDispatcher?.close(new Error("Pi session replaced before wake delivery"));
+    wakeDispatcher = undefined;
+    await channelLoop;
     abortController = new AbortController();
 
     const aw = await resolveAw();
@@ -397,8 +403,12 @@ export default function awebPiExtension(pi: ExtensionAPI) {
     announceWelcome();
 
     const signal = abortController.signal;
+    const receipt = new ReceiveStreamReceipt({
+      identityHome: config.identityHome!, kind: "pi-extension", did: config.did, stableID: config.stableID,
+      onError: (message) => console.warn(message),
+    });
     wakeDispatcher = createWakeDispatcher(pi, wakeLog);
-    void startChannelLoop({
+    channelLoop = startChannelLoop({
       client,
       pinStore,
       trust,
@@ -413,6 +423,7 @@ export default function awebPiExtension(pi: ExtensionAPI) {
       workdir: ctx.cwd,
       onAwakening: (awakening) => createPiAwakeningHandler(wakeDispatcher)(awakening),
       onStreamState: (state) => handlePiStreamState(state, ctx),
+      streamObserver: receipt,
       log: (message) => {
         if (ctx.hasUI) ctx.ui.notify(message, "warning");
       },
@@ -426,6 +437,6 @@ export default function awebPiExtension(pi: ExtensionAPI) {
         const theme = ctx.ui.theme;
         ctx.ui.setStatus("aweb-channel", `${theme.fg("error", "✕")} ${theme.fg("dim", "aweb disconnected")}`);
       }
-    });
+    }).finally(() => receipt.onClose());
   });
 }

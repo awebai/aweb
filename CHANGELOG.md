@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Host health publishing clients:** prepared for aw **1.36.38**,
+  `aw status-host set|clear|show` manages the selected agent's designation and
+  `aw status publish --alias <alias> --document -` signs and publishes the frozen
+  status document with team-auth v2. JSON output preserves refusal codes,
+  messages and retry hints; offline `--print-signed` supports vector testing.
+  Claude channel **1.7.17** and Pi **0.3.15** add atomic, mode-0600 receive
+  receipts refreshed only on successful stream reads. See
+  [agent health clients](docs/agent-health-clients.md). These floors apply on
+  publication; release tags remain a separate gate.
+
 - **Connection diagnostics stay out of agent turns:** reconnect logs no longer
   ask for a manual inbox/chat scan; recovery already catches up automatically.
   Pi reports a stopped channel loop to operator logs/status, with no session
