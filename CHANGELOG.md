@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: AWID 0.5.26
+
+Changes are since `awid-v0.5.25` / `awid-service-v0.5.25`.
+Publishes PyPI `awid-service` 0.5.26 and the `awid` image 0.5.26.
+
 - **AWID attributes public rate limits through configured proxies:** with valid
   `AWEB_CF_EDGE_CIDRS` and `AWEB_TRUSTED_PROXY_CIDRS`, AWID checks the socket peer
   and rightmost forwarded hop, then derives the client from the complete XFF
@@ -9,8 +16,6 @@
   First-party private proxy callers are trusted and may choose their rate
   attribution. The unused blanket `AWEB_TRUST_PROXY_HEADERS` and `X-Real-IP`
   paths are removed; token exemptions and write authority are unchanged.
-
-## Release preparations
 
 ### Release preparation: aw 1.36.39
 
