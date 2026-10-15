@@ -29,7 +29,7 @@ other agents, aweb shows its own facts.
   that sends only grant heartbeats shows online in `GET /v1/agents` and
   `/v1/status` but offline on every dashboard surface, because those read Redis
   presence or SQL `last_seen_at` only
-  (`server/src/aweb/routes/dashboard.py:328-367,600-622`).
+  (`list_team_agents` and `get_team_status` in `server/src/aweb/routes/dashboard.py`).
 - **Who may publish for an agent.** The agent itself, or one identity the agent
   has designated as its **status host**. The agent delegates while its
   credential works, at spawn. The host can then report on the agent precisely
@@ -350,29 +350,40 @@ every surface agrees:
 aweb states only what it observed, worded as observations, never as "can hear
 you":
 
-- **"Listening for messages"**: the time the agent last had an open
-  authenticated `GET /v1/events/stream`. This is the stream channel plugins,
-  the Pi extension and the wake broker hold open. Today the server records
-  nothing about that stream (`server/src/aweb/routes/events.py:658-697`). This
-  design adds a Redis key `events-stream:{agent_id}`, set at open and refreshed
-  on each 30-second keepalive, with a 120-second TTL. That is the closest
-  server-side evidence of a live receiver, and it needs no client change. Shown
-  as "Listening" while present, otherwise "Not listening since <time>".
-- **"Last active"**: the newest of heartbeat presence, grant liveness and SQL
-  `last_seen_at`. This also fixes the disagreement noted above for dashboard
-  surfaces.
+- **"Listening for messages"**: whether the agent has an open authenticated
+  `GET /v1/events/stream`. This is the stream channel plugins, the Pi
+  extension and the wake broker hold open, and the closest server-side
+  evidence of a live receiver; it needs no client change. The stream records
+  itself in the Redis key `events-stream:{agent_id}` when it opens and about
+  every 30 seconds while it stays open. The record holds `since`, when the
+  current listening period began, and `last`, the newest refresh. The agent is
+  `listening` while `last` is at most 120 seconds old. `listening_since` is
+  when the current state began: `since` while listening, and `last` once
+  listening has stopped, so the dashboard can say "Listening since <time>" or
+  "Not listening since <time>". The record is kept for 7 days after its last
+  refresh, so the stop time stays answerable; with no record, `listening` is
+  `false` and `listening_since` is `null`.
+- **"Last active"**: the newest of heartbeat presence (Redis), grant liveness
+  and the workspaces' SQL `last_seen_at`, or `null` when none exists. This
+  also fixes the disagreement noted above for dashboard surfaces.
 - **"Connection"**, for grant seats only: the grant's `effective_status` enum
-  from `identity-grant-status.v1` (`server/src/aweb/routes/identity_grants.py:89-112`).
-  Today it is readable only by the subject (:211,264). Athena approved this new
-  disclosure, with limits:
-  - only the enum, and only on the team dashboard routes;
+  from `identity-grant-status.v1` (`server/src/aweb/identity_grant_status.py`),
+  which the grant status route otherwise shows only to the subject. This
+  disclosure is approved with limits:
+  - only the enum, and only to the team's dashboard readers, those whose
+    request carries a dashboard token valid for the team. On an anonymous read
+    of a public team's roster, and on a read with an invalid token or a token
+    for another team, `connection` is `null`;
   - nothing else from the grant: no grant id, label, scopes, issuer or expiry
     time;
   - when a seat holds several grants for the team, it is `active` if any
-    non-revoked grant is active, otherwise the status of the newest grant.
+    non-revoked grant is active, otherwise the status of the newest grant;
+  - an agent with no grant in the team has `connection: null`.
 
-The fallback object is
-`{"source": "aweb", "listening": true, "listening_since": "...", "last_active": "...", "connection": "active|expired|revoked|..."|null}`.
+The fallback object always carries all five keys:
+`{"source": "aweb", "listening": true, "listening_since": "2026-10-14T16:00:00Z", "last_active": "2026-10-14T16:04:30Z", "connection": "active"}`.
+Timestamps are `YYYY-MM-DDTHH:MM:SSZ`. `listening` and `last_active` have the
+roster's visibility, like `last_seen`.
 
 ## Released-client compatibility
 
@@ -382,8 +393,8 @@ All additive:
 - A new `health` field on hosted-dashboard routes, whose consumer deploys with
   the server.
 - A new `agent.status` team event, on a stream that forwards non-message team
-  events (`server/src/aweb/routes/dashboard.py:290-295`).
-- A server-only Redis key for stream liveness.
+  events (`_sse_dashboard_events` in `server/src/aweb/routes/dashboard.py`).
+- A server-only Redis record of stream liveness.
 
 No existing request or response shape changes, no grant reissue, no client
 upgrade needed. A host that never publishes leaves the agent on the aweb

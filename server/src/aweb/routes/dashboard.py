@@ -97,6 +97,21 @@ def _verify_dashboard_auth(request: Request, team_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail=msg)
 
 
+def _is_dashboard_reader(request: Request, team_id: str) -> bool:
+    """Whether the request carries a dashboard token valid for this team.
+
+    A public team's directory is readable anonymously; facts disclosed only to
+    the team's dashboard readers check this rather than the route's access.
+    """
+    if not request.headers.get("X-Dashboard-Token"):
+        return False
+    try:
+        _verify_dashboard_auth(request, team_id)
+    except HTTPException:
+        return False
+    return True
+
+
 async def _get_team_visibility(request: Request, team_id: str) -> str:
     try:
         domain, team_name = parse_team_id(team_id)
@@ -330,7 +345,7 @@ async def _sse_dashboard_events(*, request: Request, db, redis, team_id: str):
 
 @router.get("/v1/teams/{team_id:path}/agents")
 async def list_team_agents(
-    request: Request, team_id: str, db=Depends(get_db)
+    request: Request, team_id: str, db=Depends(get_db), redis=Depends(get_redis)
 ) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
@@ -355,7 +370,13 @@ async def list_team_agents(
         team_id,
     )
     health = await agent_health(
-        aweb_db, team_id=team_id, agent_ids=[r["agent_id"] for r in rows], now=datetime.now(timezone.utc),
+        aweb_db,
+        redis,
+        request,
+        team_id=team_id,
+        agent_ids=[r["agent_id"] for r in rows],
+        now=datetime.now(timezone.utc),
+        show_connection=_is_dashboard_reader(request, team_id),
     )
 
     return {
@@ -404,7 +425,7 @@ async def list_team_claims(
 
 @router.get("/v1/teams/{team_id:path}/agents/{alias}")
 async def get_team_agent(
-    request: Request, team_id: str, alias: str, db=Depends(get_db)
+    request: Request, team_id: str, alias: str, db=Depends(get_db), redis=Depends(get_redis)
 ) -> dict:
     await _require_dashboard_auth(request, team_id)
     aweb_db = db.get_manager("aweb")
@@ -423,7 +444,13 @@ async def get_team_agent(
     if not row:
         raise HTTPException(status_code=404, detail="Agent not found")
     health = await agent_health(
-        aweb_db, team_id=team_id, agent_ids=[row["agent_id"]], now=datetime.now(timezone.utc),
+        aweb_db,
+        redis,
+        request,
+        team_id=team_id,
+        agent_ids=[row["agent_id"]],
+        now=datetime.now(timezone.utc),
+        show_connection=_is_dashboard_reader(request, team_id),
     )
 
     return AgentDetail(

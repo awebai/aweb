@@ -26,6 +26,7 @@ from aweb.app_events import (
     upsert_app_event_subscription,
     verify_app_event_auth,
 )
+from aweb.agent_health import LISTENING_REFRESH_SECONDS, record_stream_listening
 from aweb.deps import get_db, get_redis
 from aweb.identity_metadata import lookup_identity_metadata_by_did, routable_chat_address
 from aweb.messaging.chat import get_pending_conversations
@@ -427,6 +428,8 @@ async def _sse_agent_events(
     last_heartbeat_at = datetime.now(timezone.utc)
 
     yield f"event: connected\ndata: {json.dumps({'agent_id': agent_id, 'team_id': team_id})}\n\n"
+    await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
+    listening_recorded_at = monotonic()
 
     guard = NeverGrantStreamGuard(request, db, identity, grant_expiry_reason)
     reason = await guard.reason()
@@ -481,6 +484,10 @@ async def _sse_agent_events(
         # Guard against sleep or is_disconnected taking longer than remaining time.
         if datetime.now(timezone.utc) >= deadline:
             break
+
+        if monotonic() - listening_recorded_at >= LISTENING_REFRESH_SECONDS:
+            await record_stream_listening(redis, agent_id, now=datetime.now(timezone.utc))
+            listening_recorded_at = monotonic()
 
         reason = await guard.reason()
         if reason:

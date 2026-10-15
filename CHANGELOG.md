@@ -31,6 +31,17 @@
   `reachable: "unknown"`; any other agent, including one whose host has left
   the team, shows `{"source": "aweb"}`. aweb's own observations for that
   fallback are not in this release.
+- **Health shows aweb's own observations when no host reports:** for an agent
+  without a status host or stored report, or whose host has left the team,
+  `health` is `{"source": "aweb", "listening", "listening_since",
+  "last_active", "connection"}` ([agent health](docs/agent-health.md#fallback-for-agents-without-a-status-host)).
+  `listening` says whether the agent holds an open `GET /v1/events/stream`,
+  recorded by the stream itself in Redis; `last_active` is the newest of
+  heartbeat presence, grant liveness and workspace `last_seen_at`, so an agent
+  that only sends grant heartbeats no longer looks inactive on the dashboard.
+  `connection` is a grant seat's `identity-grant-status.v1` effective status,
+  shown only to readers with a dashboard token valid for the team, and `null`
+  on anonymous public reads.
 
 ### Release preparation: server 1.27.23
 

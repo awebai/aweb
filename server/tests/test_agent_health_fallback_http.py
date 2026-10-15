@@ -19,7 +19,7 @@ from test_agent_health_http import _health
 from test_agent_status_host_http import _team_request
 from test_dashboard import _make_jwt
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
-from test_identity_grants import _session_keypair
+from test_identity_grants import _grant_headers, _session_keypair
 from test_messages_http import _signed_team_headers
 
 
@@ -48,6 +48,27 @@ async def _mint_grant(env, alias):
     )
     assert minted.status_code == 200, minted.text
     return minted.json()["grant_id"]
+
+
+async def _grant_heartbeat(env, alias):
+    # Grant requests are signed for the server's public origin, which an
+    # embedding host supplies through app.state.
+    origin = str(env.client.base_url).rstrip("/")
+    env.app.state.public_origin = origin
+    signing_key, grant_did = _session_keypair()
+    minted = await _team_request(
+        env, alias, "POST", "/v1/identity-grants",
+        {"grant_did_key": grant_did, "scopes": ["presence.write"], "ttl_seconds": 600},
+    )
+    assert minted.status_code == 200, minted.text
+    beat = await env.client.post(
+        "/v1/agents/heartbeat",
+        headers=_grant_headers(
+            signing_key=signing_key, did_key=grant_did, grant_id=minted.json()["grant_id"],
+            method="POST", path="/v1/agents/heartbeat", aud=origin,
+        ),
+    )
+    assert beat.status_code == 200, beat.text
 
 
 @pytest.mark.asyncio
@@ -110,6 +131,21 @@ async def test_heartbeat_sets_last_active(privacy_app, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_grant_heartbeat_alone_sets_last_active(privacy_app):
+    env = privacy_app
+    before = datetime.now(timezone.utc).replace(microsecond=0)
+
+    await _grant_heartbeat(env, "alice")
+    health = await _health(env, "alice")
+
+    assert before <= _when(health["last_active"]) <= datetime.now(timezone.utc)
+    workspace = await env.db.fetch_one(
+        "SELECT last_seen_at FROM {{tables.workspaces}} WHERE workspace_id = $1", env.actors["alice"].workspace,
+    )
+    assert workspace["last_seen_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_grant_seat_shows_its_connection(privacy_app):
     env = privacy_app
     grant_id = await _mint_grant(env, "alice")
@@ -126,9 +162,10 @@ async def test_grant_seat_shows_its_connection(privacy_app):
 @pytest.mark.asyncio
 async def test_any_active_grant_makes_the_seat_active(privacy_app):
     env = privacy_app
-    first = await _mint_grant(env, "alice")
     await _mint_grant(env, "alice")
-    revoked = await _team_request(env, "alice", "POST", f"/v1/identity-grants/{first}/revoke")
+    newest = await _mint_grant(env, "alice")
+    # The newest grant is revoked, so only the any-active rule keeps the seat active.
+    revoked = await _team_request(env, "alice", "POST", f"/v1/identity-grants/{newest}/revoke")
     assert revoked.status_code == 200, revoked.text
 
     assert (await _health(env, "alice"))["connection"] == "active"
