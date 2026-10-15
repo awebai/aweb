@@ -37,6 +37,21 @@
       "event": "task.updated"
     },
     {
+      "source": "server/src/aweb/mcp/tools/chat.py",
+      "function": "chat_send",
+      "event": "chat.message_sent"
+    },
+    {
+      "source": "server/src/aweb/mcp/tools/mail.py",
+      "function": "_fire_message_sent",
+      "event": "message.sent"
+    },
+    {
+      "source": "server/src/aweb/mcp/tools/mail.py",
+      "function": "check_inbox",
+      "event": "message.acknowledged"
+    },
+    {
       "source": "server/src/aweb/routes/chat.py",
       "function": "create_or_send",
       "event": "chat.message_sent"

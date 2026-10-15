@@ -8,6 +8,7 @@ from typing import Any
 from aweb.config import get_settings
 from aweb.identity_auth_deps import MessagingAuth
 from aweb.mcp.auth import AuthContext
+from aweb.mcp.mutations import current_mutation_callback
 
 
 def mcp_messaging_auth(auth: AuthContext) -> MessagingAuth:
@@ -34,6 +35,7 @@ def mcp_federation_request(
         federation_mail_transport=mail_transport,
         federation_chat_transport=chat_transport,
         federation_message_transport=chat_transport,
+        on_mutation=current_mutation_callback(),
     )
     app = SimpleNamespace(state=state)
     return SimpleNamespace(app=app, headers={})

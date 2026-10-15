@@ -7,6 +7,18 @@
   Pi reports a stopped channel loop to operator logs/status, with no session
   injection. Standalone channel-core retains disconnect/recovery logs by default.
 
+### Server changes since `server-v1.27.21`
+
+- **MCP mail and chat wake their recipients like HTTP:** `send_mail`,
+  `send_chat` (and `send_message_to_contact`) fire `message.sent` and
+  `chat.message_sent`, and `check_mail` fires `message.acknowledged` once for
+  each message it marks read, through the same `app.state.on_mutation`
+  callback and with the same context as the HTTP routes. `mark_chat_read`
+  publishes the chat read receipt like the HTTP read route. Before, MCP sends
+  and reads published nothing, so a recipient's event stream or a dashboard
+  watching it was not woken. An embedder whose `on_mutation` counts or
+  meters these events now sees MCP sends too.
+
 ### Release preparation: server 1.27.21
 
 Server changes are since `server-v1.27.20`.

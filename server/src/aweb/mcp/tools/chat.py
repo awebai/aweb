@@ -35,6 +35,8 @@ from aweb.messaging.messages import authorize_message_delivery
 from aweb.messaging.verification import message_verification_status, require_conversation_not_legacy_bound
 from aweb.messaging.waiting import register_waiting, unregister_waiting
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.mcp.mutations import fire_mcp_mutation_hook
+from aweb.events import publish_chat_session_signal
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
     HostedMessageDecryptionError,
@@ -683,6 +685,8 @@ async def chat_send(
         )
         if msg is None:
             return json.dumps({"error": "Failed to send message"})
+        sent_from_did = signed.from_did if signed else actor_did
+        federated = bool(target.get("external"))
     else:
         try:
             sid = UUID(session_id.strip())
@@ -850,6 +854,28 @@ async def chat_send(
         )
         if msg is None:
             return json.dumps({"error": "Not a participant in this session"})
+        sent_from_did = session_actor_did
+        federated = bool(remote_recipients)
+
+    sent_context = {
+        "team_id": auth.team_id,
+        "session_id": str(sid),
+        "conversation_id": str(sid),
+        "message_id": str(msg["message_id"]),
+        "from_agent_id": actor_agent_id,
+        "from_alias": auth.alias or "",
+        "from_did": sent_from_did,
+        "from_did_aw": (auth.did_aw or "").strip() or None,
+        "to_aliases": [
+            row["alias"]
+            for row in await _session_recipient_rows(db_infra, session_id=sid, actor_dids=actor_dids)
+        ],
+        "preview": "" if encrypted_envelope is not None else message[:80],
+        "content_mode": content_mode,
+    }
+    if federated:
+        sent_context["federated"] = True
+    await fire_mcp_mutation_hook("chat.message_sent", sent_context)
 
     result: dict = {
         "session_id": str(sid),
@@ -1006,6 +1032,7 @@ async def chat_read(
     session_id: str,
     up_to_message_id: str | None = None,
     message_ids: list[str] | None = None,
+    redis=None,
 ) -> str:
     auth = get_auth()
     actor_dids = _actor_dids()
@@ -1062,6 +1089,15 @@ async def chat_read(
             )
     except ServiceError as exc:
         return json.dumps({"error": exc.detail})
+
+    if redis is not None and int(result["messages_marked"] or 0) > 0:
+        await publish_chat_session_signal(
+            redis,
+            session_id=str(session_uuid),
+            signal_type="read_receipt",
+            agent_id=actor_did,
+            message_id=normalized_message_ids[-1] if normalized_message_ids is not None else normalized_watermark,
+        )
 
     return json.dumps(
         {

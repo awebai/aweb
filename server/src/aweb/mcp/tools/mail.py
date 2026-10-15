@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from awid.federation_errors import FederationAuthorityError
 from aweb.awid_error_handling import awid_registry_not_configured_detail
 from aweb.mcp.auth import auth_dids, get_auth, primary_auth_did
+from aweb.mcp.mutations import fire_mcp_mutation_hook
 from aweb.mcp.signing import (
     HostedMessageDecryptor,
     HostedMessageDecryptionError,
@@ -149,6 +150,38 @@ async def _local_recipient_from_address(db_infra, *, domain: str, name: str) -> 
         return await get_agent_by_namespace_alias(db_infra, namespace=domain, alias=name)
     except AmbiguousLocalAddressError as exc:
         raise ServiceError(str(exc)) from exc
+
+
+async def _fire_message_sent(
+    auth,
+    *,
+    from_did: str,
+    to_agent_id: str | None,
+    to_alias: str | None,
+    message_id,
+    conversation_id: str,
+    subject: str,
+    priority: str,
+    content_mode: str,
+) -> None:
+    """Fire message.sent with the context the HTTP send routes give it."""
+    await fire_mcp_mutation_hook(
+        "message.sent",
+        {
+            "team_id": auth.team_id,
+            "from_agent_id": auth.agent_id,
+            "from_did": from_did,
+            "from_did_aw": (auth.did_aw or "").strip() or None,
+            "to_agent_id": to_agent_id,
+            "from_alias": auth.alias or from_did,
+            "message_id": str(message_id),
+            "conversation_id": conversation_id,
+            "to_alias": to_alias,
+            "subject": subject,
+            "priority": priority,
+            "content_mode": content_mode,
+        },
+    )
 
 
 async def send_mail(
@@ -378,6 +411,17 @@ async def send_mail(
             detail = getattr(exc, "detail", None)
             return json.dumps({"error": detail or str(exc)})
 
+        await _fire_message_sent(
+            auth,
+            from_did=sender_did,
+            to_agent_id=recipient_participant.get("agent_id"),
+            to_alias=recipient_participant.get("alias"),
+            message_id=message_id,
+            conversation_id=conversation_ref,
+            subject="" if encrypted is not None else subject,
+            priority=priority,
+            content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+        )
         return json.dumps(
             {
                 "message_id": str(message_id),
@@ -639,6 +683,17 @@ async def send_mail(
         detail = getattr(exc, "detail", None)
         return json.dumps({"error": detail or str(exc)})
 
+    await _fire_message_sent(
+        auth,
+        from_did=sender_did,
+        to_agent_id=str(recipient["agent_id"]) if recipient.get("agent_id") else None,
+        to_alias=recipient_alias,
+        message_id=message_id,
+        conversation_id=conversation["conversation_id"],
+        subject="" if encrypted is not None else subject,
+        priority=priority,
+        content_mode=encrypted.content_mode if encrypted is not None else "legacy_plaintext_v1",
+    )
     return json.dumps(
         {
             "message_id": str(message_id),
@@ -690,16 +745,31 @@ async def check_inbox(
     # Auto-acknowledge unread messages
     unread_message_ids = [r["message_id"] for r in rows if r["read_at"] is None]
     if unread_message_ids:
-        await aweb_db.execute(
+        acknowledged = await aweb_db.fetch_all(
             """
             UPDATE {{tables.messages}}
-            SET read_at = COALESCE(read_at, NOW())
+            SET read_at = NOW()
             WHERE to_did = ANY($1::text[])
               AND message_id = ANY($2::uuid[])
+              AND read_at IS NULL
+            RETURNING message_id, from_alias, subject, content_mode
             """,
             inbox_dids,
             unread_message_ids,
         )
+        for row in acknowledged:
+            await fire_mcp_mutation_hook(
+                "message.acknowledged",
+                {
+                    "team_id": auth.team_id,
+                    "agent_id": auth.agent_id,
+                    "alias": auth.alias,
+                    "message_id": str(row["message_id"]),
+                    "from_alias": row["from_alias"],
+                    "subject": row["subject"] or "",
+                    "content_mode": row["content_mode"] or "legacy_plaintext_v1",
+                },
+            )
 
     messages = []
     for r in rows:

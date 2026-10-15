@@ -333,6 +333,7 @@ def register_tools(
             session_id=conversation_id,
             up_to_message_id=up_to_message_id,
             message_ids=message_ids,
+            redis=redis,
         )
 
     # -- Tasks --
@@ -678,6 +679,7 @@ def register_tools(
             session_id=session_id,
             up_to_message_id=up_to_message_id,
             message_ids=message_ids,
+            redis=redis,
         )
 
     @mcp.tool(

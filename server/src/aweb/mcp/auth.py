@@ -20,6 +20,11 @@ from aweb.identity_auth_deps import (
     resolve_identity_auth,
 )
 from aweb.team_auth_deps import _aweb_db, verify_request_certificate
+from aweb.mcp.mutations import (
+    mutation_callback_from_scope,
+    reset_mutation_callback,
+    set_mutation_callback,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,9 +109,11 @@ class MCPAuthMiddleware:
             return
 
         cv_token = _auth_context.set(ctx)
+        mutation_token = set_mutation_callback(mutation_callback_from_scope(scope))
         try:
             await self.app(scope, receive, send)
         finally:
+            reset_mutation_callback(mutation_token)
             _auth_context.reset(cv_token)
 
     async def _resolve_auth(self, request: Request) -> AuthContext | None:

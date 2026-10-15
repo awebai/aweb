@@ -129,6 +129,9 @@ PUBLIC_EXTENSION_DOCS = (
 )
 
 HOOK_INVENTORY = "vectors/mutation-hook-call-sites-v1.json"
+# Functions that fire app.state.on_mutation, mapped to the position of their
+# event_type argument: HTTP routes pass the request first, MCP tools do not.
+HOOK_FIRING_FUNCTIONS = {"fire_mutation_hook": 1, "fire_mcp_mutation_hook": 0}
 
 FEDERATION_DOC_REQUIREMENTS = {
     "aweb-sot.md": (
@@ -259,15 +262,16 @@ class _HookCallVisitor(ast.NodeVisitor):
             name = function.attr
         else:
             name = ""
-        if name == "fire_mutation_hook":
-            event_expression = node.args[1] if len(node.args) >= 2 else next(
+        event_position = HOOK_FIRING_FUNCTIONS.get(name)
+        if event_position is not None:
+            event_expression = node.args[event_position] if len(node.args) > event_position else next(
                 (keyword.value for keyword in node.keywords if keyword.arg == "event_type"),
                 None,
             )
             literals = _string_literals(event_expression) if event_expression is not None else set()
             if not literals:
                 self.failures.append(
-                    f"unsupported non-literal fire_mutation_hook event expression: {self.relative}:{node.lineno}"
+                    f"unsupported non-literal {name} event expression: {self.relative}:{node.lineno}"
                 )
             else:
                 enclosing_function = ".".join(self.function_stack) or "<module>"

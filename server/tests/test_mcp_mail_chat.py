@@ -16,6 +16,7 @@ from aweb.internal_auth import build_internal_auth_header_value
 from aweb.identity_auth_deps import IdentityAuth
 from aweb.mcp import auth as mcp_auth
 from aweb.mcp.auth import AuthContext
+from aweb.mcp.mutations import reset_mutation_callback, set_mutation_callback
 from aweb.mcp.signing import (
     HostedMessageSigningResult,
     canonical_signed_payload,
@@ -949,24 +950,36 @@ async def test_mcp_send_mail_continues_federated_conversation(aweb_cloud_db, mon
             signing_key_id=alice_did_key,
         )
 
-    result = json.loads(
-        await mail_tools.send_mail(
-            DBInfra(aweb_cloud_db.aweb_db),
-            registry_client=_Registry(),
-            hosted_signer=_signer,
-            plaintext=True,
-            conversation_id=str(conversation_id),
-            subject="Re",
-            body="federated reply",
-            federation_transport=httpx.MockTransport(_remote_handler),
-            public_origin="https://local.example",
+    mutations: list[tuple[str, dict]] = []
+
+    async def _record_mutation(event_type: str, context: dict) -> None:
+        mutations.append((event_type, context))
+
+    mutation_token = set_mutation_callback(_record_mutation)
+    try:
+        result = json.loads(
+            await mail_tools.send_mail(
+                DBInfra(aweb_cloud_db.aweb_db),
+                registry_client=_Registry(),
+                hosted_signer=_signer,
+                plaintext=True,
+                conversation_id=str(conversation_id),
+                subject="Re",
+                body="federated reply",
+                federation_transport=httpx.MockTransport(_remote_handler),
+                public_origin="https://local.example",
+            )
         )
-    )
+    finally:
+        reset_mutation_callback(mutation_token)
 
     assert "error" not in result, result
     assert result["status"] == "delivered"
     assert result["conversation_id"] == str(conversation_id)
     assert len(remote_calls) == 1
+    assert [(event_type, context["message_id"], context["federated"]) for event_type, context in mutations] == [
+        ("message.sent", result["message_id"], True)
+    ]
     assert seen[0]["payload"]["from"] == "acme.com/alice"
     assert seen[0]["payload"]["to"] == "otherco.com/bob"
     assert seen[0]["payload"]["to_did"] == "did:key:bob"
@@ -2291,24 +2304,36 @@ async def test_mcp_chat_send_continues_federated_session(aweb_cloud_db, monkeypa
             signing_key_id=alice_did,
         )
 
-    result = json.loads(
-        await chat_tools.chat_send(
-            DBInfra(aweb_cloud_db.aweb_db),
-            None,
-            registry_client=_Registry(),
-            hosted_signer=_signer,
-            session_id=str(session_id),
-            message="federated continuation",
-            plaintext=True,
-            federation_transport=httpx.MockTransport(_remote_handler),
-            public_origin="https://local.example",
+    mutations: list[tuple[str, dict]] = []
+
+    async def _record_mutation(event_type: str, context: dict) -> None:
+        mutations.append((event_type, context))
+
+    mutation_token = set_mutation_callback(_record_mutation)
+    try:
+        result = json.loads(
+            await chat_tools.chat_send(
+                DBInfra(aweb_cloud_db.aweb_db),
+                None,
+                registry_client=_Registry(),
+                hosted_signer=_signer,
+                session_id=str(session_id),
+                message="federated continuation",
+                plaintext=True,
+                federation_transport=httpx.MockTransport(_remote_handler),
+                public_origin="https://local.example",
+            )
         )
-    )
+    finally:
+        reset_mutation_callback(mutation_token)
 
     assert "error" not in result, result
     assert result["delivered"] is True
     assert result["session_id"] == str(session_id)
     assert len(remote_calls) == 1
+    assert [(event_type, context["message_id"], context["federated"]) for event_type, context in mutations] == [
+        ("chat.message_sent", result["message_id"], True)
+    ]
     assert seen[0]["payload"]["from"] == "acme.com/alice"
     assert seen[0]["payload"]["to"] == "otherco.com/bob"
     assert seen[0]["payload"]["to_did"] == "did:key:bob"

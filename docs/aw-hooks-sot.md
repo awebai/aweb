@@ -11,7 +11,8 @@ Source authority is `server/src/aweb/hooks.py`; current registrations and
 translations live in `server/src/aweb/api.py` and
 `server/src/aweb/mutation_hooks.py`. Route-level behavior is exercised by
 `server/tests/test_messages_http.py`, `test_chat_http.py`,
-`test_tasks_http.py`, and `test_mutation_hooks.py`.
+`test_tasks_http.py`, and `test_mutation_hooks.py`; MCP parity by
+`test_mcp_mutation_hook_parity.py`.
 
 This document describes the only public hook seam that exists today. A plural
 hook registry, named extension points, externally loaded callbacks, and a
@@ -86,6 +87,21 @@ public HTTP behavior.
 | `POST /v1/reservations/acquire` | `reservation.acquired` | After lock acquisition. |
 | `POST /v1/reservations/renew` | `reservation.renewed` | After lock renewal. |
 | `POST /v1/reservations/release` | `reservation.released` | Only when a lock was released. |
+
+MCP tools that perform the same mutations fire the same events with the same
+context keys, through the `app.state.on_mutation` of the application the MCP
+app is mounted in (`server/src/aweb/mcp/mutations.py`):
+
+| MCP tool | Event | When called |
+|---|---|---|
+| `send_mail` (and `send_message_to_contact` for mail) | `message.sent` | After a successful local, stored-route, or federated send, as `POST /v1/messages`. |
+| `check_mail` | `message.acknowledged` | Once for each unread message the call marks read; already-read mail does not fire again. |
+| `send_chat` (and `send_message_to_contact` for chat) | `chat.message_sent` | After a new-session or continuation message is stored/sent, including federated delivery. |
+
+`mark_chat_read` and its `chat_read` alias publish the same chat-session
+`read_receipt` wake signal as `POST /v1/chat/sessions/{session_id}/read` when
+they mark at least one message read; like that route, they fire no mutation
+hook.
 
 Reads do not fire the hook. Reservation revoke does not fire it. The default
 handler contains support for `agent.deleted`, but no current route call site in
