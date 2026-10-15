@@ -298,7 +298,7 @@ func sendStatusRequest(cmd *cobra.Command, identity *localSigningIdentity, baseU
 		return statusLocalError("transport", err)
 	}
 	if response.Status < 200 || response.Status >= 300 {
-		message := string(response.Body)
+		var message any = string(response.Body)
 		var parsed struct {
 			Detail json.RawMessage `json:"detail"`
 		}
@@ -307,10 +307,18 @@ func sendStatusRequest(cmd *cobra.Command, identity *localSigningIdentity, baseU
 				message = string(parsed.Detail)
 			}
 		}
-		code := "request_refused"
-		if prefix, remainder, ok := strings.Cut(message, ": "); ok && statusErrorCode.MatchString(prefix) {
-			code = prefix
-			message = remainder
+		code := "http"
+		switch response.Status {
+		case 401, 403:
+			code = "auth"
+		case 422:
+			code = "request_shape"
+		}
+		if text, isString := message.(string); isString {
+			if prefix, remainder, ok := strings.Cut(text, ": "); ok && statusErrorCode.MatchString(prefix) {
+				code = prefix
+				message = remainder
+			}
 		}
 		var retry any
 		if seconds, e := strconv.Atoi(response.Header.Get("Retry-After")); e == nil && seconds >= 0 {

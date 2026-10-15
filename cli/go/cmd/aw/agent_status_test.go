@@ -52,7 +52,7 @@ func TestAgentStatusProductionBinary(t *testing.T) {
 		t.Helper()
 		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = root
-		cmd.Env = append(testCommandEnv(filepath.Join(root, "home")), append([]string{"AWEB_IDENTITY_HOME=", "AW_NO_UPDATE_CHECK=1", "AW_AGENT_STATUS_TEST_SEED_HEX="}, env...)...)
+		cmd.Env = append(testCommandEnv(filepath.Join(root, "home")), append([]string{"AWEB_IDENTITY_HOME=", "AWEB_URL=", "AW_TRACE=", "AW_NO_UPDATE_CHECK=1", "AW_AGENT_STATUS_TEST_SEED_HEX="}, env...)...)
 		cmd.Stdin = bytes.NewReader(stdin)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
@@ -118,6 +118,12 @@ func TestAgentStatusProductionBinary(t *testing.T) {
 		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
+		case "/v1/agents/auth/status":
+			w.WriteHeader(403)
+			_, _ = io.WriteString(w, `{"detail":"outside grant scope"}`)
+		case "/v1/agents/shape/status":
+			w.WriteHeader(422)
+			_, _ = io.WriteString(w, `{"detail":[{"loc":["body","signature"],"msg":"Field required","type":"missing"}]}`)
 		case "/v1/agents/transport/status":
 			connection, _, err := w.(http.Hijacker).Hijack()
 			if err != nil {
@@ -190,6 +196,18 @@ func TestAgentStatusProductionBinary(t *testing.T) {
 		if code != 1 || out["code"] != "transport" || out["status"] != nil {
 			t.Fatalf("transport: %d %#v", code, out)
 		}
+		out, code = run(t, env, vector.Valid[0].Document, append(prefix, "status", "publish", "--alias", "auth", "--document", "-", "--json")...)
+		if code != 3 || out["code"] != "auth" || out["message"] != "outside grant scope" {
+			t.Fatalf("auth detail: %d %#v", code, out)
+		}
+		out, code = run(t, env, vector.Valid[0].Document, append(prefix, "status", "publish", "--alias", "shape", "--document", "-", "--json")...)
+		if code != 3 || out["code"] != "request_shape" {
+			t.Fatalf("shape detail: %d %#v", code, out)
+		}
+		detail, ok := out["message"].([]any)
+		if !ok || len(detail) != 1 || detail[0].(map[string]any)["msg"] != "Field required" {
+			t.Fatalf("validation list lost: %#v", out)
+		}
 	}
 	for _, args := range [][]string{
 		{"status", "publish", "--json"},
@@ -203,7 +221,7 @@ func TestAgentStatusProductionBinary(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(calls) != 12 {
+	if len(calls) != 16 {
 		t.Fatalf("unexpected network/renewal: %v", calls)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(err) {

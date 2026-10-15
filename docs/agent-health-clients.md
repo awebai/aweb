@@ -31,8 +31,10 @@ Every `--json` invocation writes one JSON object to stdout. Success adds
 `"ok": true` and the HTTP `status` to the server object. A refusal has `ok: false`,
 HTTP `status`, `code`, the server's `message`, and `retry_after` (seconds or null).
 The server's `detail` string has the form `code: message`; aw splits at the first
-`: ` and preserves the message. Uncoded shared auth or request-shape refusals
-use `request_refused`. Transport failures use `code: "transport"` and
+`: ` and preserves the message. Uncoded 401/403 auth refusals use `auth`;
+uncoded 422 validation refusals use `request_shape`. Their `message` preserves
+the raw detail, including validation lists. Other uncoded HTTP errors use `http`.
+Transport failures use `code: "transport"` and
 `status: null`; other local failures use `code: "local"` and `status: null`.
 Exit codes are 0 for success, 3 for a server refusal, and 1 for other failures.
 Diagnostics may also appear on stderr.
