@@ -84,7 +84,14 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 			thirdSnapshot := make(chan time.Time, 1)
 			openCount := func() int { mu.Lock(); defer mu.Unlock(); return len(opens) }
 			registeredAt := time.Now()
-			broker, cancel := liveBroker(t, Config{Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(string, string) (run.EventStreamOpener, error) {
+			var traceMu sync.Mutex
+			var trace []string
+			record := func(format string, args ...any) {
+				traceMu.Lock()
+				defer traceMu.Unlock()
+				trace = append(trace, time.Now().Format("15:04:05.000")+" "+fmt.Sprintf(format, args...))
+			}
+			broker, cancel := liveBroker(t, Config{Log: record, Store: store, Session: &session.ExecClient{Bin: oats}, ChannelCore: NewChannelCoreRunner(store), OpenStream: func(string, string) (run.EventStreamOpener, error) {
 				return func(ctx context.Context, _ time.Time) (awid.EventSource, error) {
 					mu.Lock()
 					openedAt := time.Now()
@@ -101,6 +108,52 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				}, nil
 			}})
 			defer cancel()
+			// On failure, report what the broker and the channel-core child were
+			// doing, so a timeout says whether a delivery cycle was slow, its
+			// snapshot request was lost, or the child restarted.
+			sampling := make(chan struct{})
+			go func() {
+				last := ""
+				for {
+					select {
+					case <-sampling:
+						return
+					case <-time.After(20 * time.Millisecond):
+					}
+					for _, inst := range broker.Status().Instances {
+						if inst.Home != home {
+							continue
+						}
+						cc := inst.ChannelCore
+						now := fmt.Sprintf("child stage=%s running=%t restarts=%d readiness=%s/%s error=%q", cc.TraceStage, cc.Running, cc.RestartCount, cc.ReadinessState, cc.ReadinessWaiting, cc.LastError)
+						if now != last {
+							record("%s", now)
+							last = now
+						}
+					}
+				}
+			}()
+			defer func() {
+				close(sampling)
+				if !t.Failed() {
+					return
+				}
+				broker.mu.Lock()
+				for key, stream := range broker.streams {
+					stream.mu.Lock()
+					t.Logf("stream %s: timer=%t backoff=%s live=%t phase=%s", key, stream.snapshotTimer != nil, stream.snapshotBackoff, stream.streamCancel != nil, stream.phase)
+					stream.mu.Unlock()
+				}
+				broker.mu.Unlock()
+				mu.Lock()
+				t.Logf("snapshot opens=%v fetches=%d acks=%d", opens, fetches.Load(), acks.Load())
+				mu.Unlock()
+				traceMu.Lock()
+				for _, line := range trace {
+					t.Logf("trace %s", line)
+				}
+				traceMu.Unlock()
+			}()
 			// The retained trace name and HTTP fetch count do not identify
 			// completion of a particular delivery cycle. Wait for the broker
 			// to consume that cycle's exhausted-retry request and arm its timer.
