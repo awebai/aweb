@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Mail replies honor the API timeout:** `aw mail reply` uses the normal
+  30-second budget, configurable with `AWEB_HTTP_TIMEOUT`, instead of an
+  overriding 10-second command deadline. A source read that times out still
+  sends no reply and leaves the source unacknowledged.
+
 ### Release preparation: AWID 0.5.25
 
 Changes are since `awid-v0.5.24` / `awid-service-v0.5.24`.

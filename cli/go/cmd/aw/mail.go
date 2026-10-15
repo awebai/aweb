@@ -683,7 +683,9 @@ var mailReplyCmd = &cobra.Command{
 		}
 		messageID := strings.TrimSpace(args[0])
 
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// Source reads and reply preparation share the configured API budget;
+		// a hidden shorter deadline must not defeat AWEB_HTTP_TIMEOUT.
+		ctx, cancel := context.WithTimeout(cmd.Context(), awid.APITimeout())
 		defer cancel()
 
 		var c *aweb.Client
