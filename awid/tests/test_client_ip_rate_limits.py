@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
+import awid.ratelimit as ratelimit_module
 from awid.ratelimit import ip_bucket_key
 from awid_service.main import create_app
 
@@ -121,6 +122,8 @@ async def test_real_registry_route_redis_buckets(
     awid_db_infra, fake_redis, monkeypatch, peer, forwarded_key,
 ):
     configure(monkeypatch)
+    # Keep the 31-request boundary inside one window even across a wall-clock minute.
+    monkeypatch.setattr(ratelimit_module.time, "time", lambda: 1800000000.0)
     app = create_app(db_infra=awid_db_infra, redis=fake_redis)
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app, client=(peer, 12345))
