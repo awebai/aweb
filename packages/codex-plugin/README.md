@@ -43,8 +43,11 @@ runtime copies before committing:
 make sync-doc-copies
 ```
 
-The target calls `sync-skills.sh` to copy the five canonical skill directories into
-`packages/codex-plugin/skills/` and reports the count. The copies must be
+The target calls `sync-skills.sh` to discover every `skills/*/SKILL.md` and copy
+its entire directory into `packages/codex-plugin/skills/`. New skills are
+included automatically; removed skills and obsolete supporting files disappear
+on the next sync. `skills/DECISIONS.md` is not a skill and is not copied.
+The copies must be
 checked in: Codex's plugin installer treats `skills:` paths as relative to the
 plugin root and does not follow symlinks out of it, so a real directory of
 files is the only working shape. Manifest paths must "stay inside the plugin
