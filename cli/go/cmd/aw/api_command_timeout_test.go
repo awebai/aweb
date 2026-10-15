@@ -51,6 +51,10 @@ func TestMessagingCommandsRespectAPITimeout(t *testing.T) {
 						w.WriteHeader(http.StatusOK)
 						return
 					}
+					if operation.name == "chat_send" && r.URL.Path == "/v1/chat/sessions" {
+						_ = json.NewEncoder(w).Encode(awid.ChatListSessionsResponse{Sessions: []awid.ChatSessionItem{}})
+						return
+					}
 					if r.URL.Path != operation.path {
 						t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 						http.NotFound(w, r)
@@ -90,7 +94,7 @@ func TestMessagingCommandsRespectAPITimeout(t *testing.T) {
 				command.Env = append(testCommandEnv(home), "AWEB_HTTP_TIMEOUT="+budget.timeout, "AWID_REGISTRY_URL=http://127.0.0.1:1")
 				out, err := command.CombinedOutput()
 				if budget.wantErr {
-					if err == nil || (!strings.Contains(string(out), "timeout") && !strings.Contains(string(out), "deadline exceeded")) {
+					if err == nil || (!strings.Contains(strings.ToLower(string(out)), "timeout") && !strings.Contains(string(out), "deadline exceeded")) {
 						t.Fatalf("short API budget must reject the delayed request: err=%v output=%s", err, out)
 					}
 					if completed.Load() != 0 {
