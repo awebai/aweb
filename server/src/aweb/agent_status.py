@@ -95,7 +95,12 @@ def _parse_canonical(raw: bytes) -> dict[str, Any]:
         raise _refuse("malformed_payload", "signed_payload is not a JSON document") from exc
     if not isinstance(document, dict):
         raise _refuse("malformed_payload", "signed_payload is not a JSON object")
-    if canonical_json_bytes(document) != raw:
+    try:
+        canonical = canonical_json_bytes(document)
+    except UnicodeEncodeError as exc:
+        # An escaped lone surrogate parses, but has no canonical UTF-8 form.
+        raise _refuse("non_canonical", "signed_payload has text with no UTF-8 form") from exc
+    if canonical != raw:
         raise _refuse("non_canonical", "signed_payload is not in canonical form")
     return document
 
