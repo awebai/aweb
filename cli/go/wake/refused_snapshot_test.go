@@ -23,15 +23,20 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 	for _, tc := range []struct {
 		refusal              string
 		initialSnapshotDelay time.Duration
+		slowRefusalCycle     bool
 	}{
 		{refusal: "paused"}, {refusal: "shell"}, {refusal: "blocked"},
 		{refusal: "prelaunch-not-launched"}, {refusal: "prelaunch-stopped"},
 		// Registration age is not snapshot age: slow startup must not spend
 		// the delivery budget before the refusal backoff has elapsed.
 		{refusal: "prelaunch-not-launched-delayed", initialSnapshotDelay: 3 * time.Second},
+		// A loaded host can make one refused-delivery cycle take longer than a
+		// fixed wall-clock bound while the broker behaves correctly. Every
+		// terminal inspection of the second cycle is slow.
+		{refusal: "shell-slow-cycle", slowRefusalCycle: true},
 	} {
 		t.Run(tc.refusal, func(t *testing.T) {
-			refusal := strings.TrimSuffix(tc.refusal, "-delayed")
+			refusal := strings.TrimSuffix(strings.TrimSuffix(tc.refusal, "-delayed"), "-slow-cycle")
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			store, err := NewStore(filepath.Join(root, "state"))
 			if err != nil {
@@ -54,7 +59,8 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				setState(strings.TrimPrefix(refusal, "prelaunch-"))
 			}
 			oats := filepath.Join(root, "oats")
-			script := "#!/bin/sh\nif [ \"$1 $2\" = \"session inspect\" ]; then cat " + shellQuoteForTest(statePath) + "; else cat >> " + shellQuoteForTest(inputPath) + "; printf '{\"ok\":true,\"result\":{\"submitted\":true}}'; fi\n"
+			slowInspect := filepath.Join(root, "slow-inspect")
+			script := "#!/bin/sh\nif [ \"$1 $2\" = \"session inspect\" ]; then if [ -f " + shellQuoteForTest(slowInspect) + " ]; then sleep 1.5; fi; cat " + shellQuoteForTest(statePath) + "; else cat >> " + shellQuoteForTest(inputPath) + "; printf '{\"ok\":true,\"result\":{\"submitted\":true}}'; fi\n"
 			if err := os.WriteFile(oats, []byte(script), 0755); err != nil {
 				t.Fatal(err)
 			}
@@ -177,6 +183,11 @@ func TestRefusedMessageReturnsFromFreshSnapshot(t *testing.T) {
 				})
 			}
 			waitForBackoff(2 * snapshotBackoffMin)
+			if tc.slowRefusalCycle {
+				if err := os.WriteFile(slowInspect, nil, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			assertFileNotContains(t, inputPath, "snapshot recovery mail")
 			{
 				deadline := time.Now().Add(8 * time.Second)
