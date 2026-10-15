@@ -6,6 +6,8 @@
 
 Changes are since `awid-v0.5.24` / `awid-service-v0.5.24`.
 
+Juan approved this identity-path extension on 2026-10-15 (`aweb-acax`).
+
 - **Trusted services can finish signup beyond the public IP budget:** a matching
   `AWID_SERVICE_TOKEN` now also exempts team creation, certificate registration
   and address registration from per-IP rate limits. Public callers retain the
