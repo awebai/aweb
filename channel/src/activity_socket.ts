@@ -30,7 +30,7 @@ export interface HookEventTarget {
 const SUMMARY_INPUT_KEYS = ["file_path", "notebook_path", "path", "command", "url"];
 const MAX_FORWARDED_STRING = 4096;
 const PROMPT_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
-const ENDED_PROMPTS_KEPT = 32;
+const ENDED_PROMPTS_KEPT = 256;
 const MAX_LINE_BYTES = 64 * 1024;
 const CONNECT_TIMEOUT_MS = 300;
 

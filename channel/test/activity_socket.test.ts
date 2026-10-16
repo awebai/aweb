@@ -277,6 +277,15 @@ describe("hook events out of order", () => {
     expect(calls).toEqual(["tool:Read", "turnEnded", "tool:Bash", "thinking", "turnEnded"]);
   });
 
+  test("a stop for a prompt never seen does not end the open turn", () => {
+    const { handle, calls } = recorder();
+    handle({ hook_event_name: "PreToolUse", tool_name: "Bash", prompt_id: "p2" });
+    handle({ hook_event_name: "Stop", prompt_id: "p0" });
+    handle({ hook_event_name: "PostToolUse", tool_name: "Bash", prompt_id: "p2" });
+    handle({ hook_event_name: "Stop", prompt_id: "p2" });
+    expect(calls).toEqual(["tool:Bash", "thinking", "turnEnded"]);
+  });
+
   test("a straggler of an ended prompt is dropped while the next one runs", () => {
     const { handle, calls } = recorder();
     handle({ hook_event_name: "UserPromptSubmit", prompt_id: "p1" });
