@@ -252,6 +252,10 @@ func TestActivityHookCodex(t *testing.T) {
 	t.Run("off publishes nothing", func(t *testing.T) {
 		home, capture, _, _ := setup(t)
 		hook(t, home, event("UserPromptSubmit", "turn-1", map[string]any{"prompt": "hi"}))
+		// Outside any identity the hook stays silent and succeeds.
+		if stderr := hook(t, "", event("UserPromptSubmit", "turn-1", nil)); stderr != "" {
+			t.Fatalf("hook outside an identity: %q", stderr)
+		}
 		if _, _, requests := capture.snapshot(); requests != 0 {
 			t.Fatalf("published while off: %d", requests)
 		}

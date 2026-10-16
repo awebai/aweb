@@ -29,8 +29,17 @@ func init() {
 	disable := &cobra.Command{Use: "disable", Short: "Stop publishing this agent's live activity", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runActivitySet(cmd, "off") }}
 	show := &cobra.Command{Use: "show", Short: "Show whether this agent publishes live activity", Args: cobra.NoArgs, RunE: runActivityShow}
-	activityCmd.AddCommand(enable, disable, show)
+	activityCmd.AddCommand(enable, disable, show, activityHookCmd)
 	rootCmd.AddCommand(activityCmd)
+}
+
+func isActivityCommand(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		if current == activityCmd {
+			return true
+		}
+	}
+	return false
 }
 
 // activityIdentityRoot is the identity root the emitter signs with: an
@@ -66,23 +75,28 @@ func readActivitySetting(root string) string {
 }
 
 func writeActivitySetting(root, value string) error {
-	tmp, err := os.CreateTemp(root, ".activity-*.yaml")
+	return writeIdentityRootFile(root, activitySettingFile, []byte("activity: "+value+"\n"), 0o644)
+}
+
+// writeIdentityRootFile replaces root/name atomically with the given mode.
+func writeIdentityRootFile(root, name string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(root, ".activity-*.tmp")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(tmp.Name())
-	if _, err = tmp.WriteString("activity: " + value + "\n"); err != nil {
+	if _, err = tmp.Write(data); err != nil {
 		tmp.Close()
 		return err
 	}
-	if err = tmp.Chmod(0o644); err != nil {
+	if err = tmp.Chmod(mode); err != nil {
 		tmp.Close()
 		return err
 	}
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), filepath.Join(root, activitySettingFile))
+	return os.Rename(tmp.Name(), filepath.Join(root, name))
 }
 
 type activitySettingOutput struct {
