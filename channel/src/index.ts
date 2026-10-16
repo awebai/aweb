@@ -31,6 +31,7 @@ import {
   SenderTrustManager,
   startChannelLoop,
 } from "@awebai/channel-core";
+import { startClaudeActivity } from "./activity.js";
 
 // Re-exported so the built plugin bundle carries the channel-core security
 // contract sentinel that the freshness gate (check-package-dist.mjs) asserts.
@@ -140,6 +141,14 @@ async function main() {
   const workdir = process.cwd();
   const config = await loadChannelConfig(workdir);
 
+  // Agent activity runs in either delivery mode; it is attributed only when
+  // this plugin presents the chat wake itself. When Claude Code closes the
+  // session (stdin ends) or the loop stops, the open turn is ended once.
+  const activity = await startClaudeActivity(config, workdir);
+  let activityStopped: Promise<void> | undefined;
+  const stopActivity = (): Promise<void> => (activityStopped ??= activity?.stop() ?? Promise.resolve());
+  process.stdin.once("end", () => { void stopActivity(); });
+
   // An external wake path and this channel would both consume the same
   // per-identity event stream, including control signals, so they are mutually
   // exclusive. When delivery is external we stay a healthy but silent MCP
@@ -222,6 +231,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
       teamID: config.teamID,
       workdir,
       onAwakening: (awakening) => notifyClaudeAwakening(mcp, awakening),
+      onChatPresented: (sessionID, options) => activity?.emitter.chatWakeDelivered(sessionID, options),
       // On Claude the MCP notification IS the presentation of the mail to the
       // agent (Claude presents at the first tool boundary), so mail is marked read
       // at presentation — matching the honest semantic "presented = read". If the
@@ -238,6 +248,7 @@ Control events (type="control") are operational signals. On "pause", stop curren
       log: (message) => console.error(message),
     });
   } finally {
+    await stopActivity();
     await receipt.onClose();
     await traceSink?.flush();
   }
