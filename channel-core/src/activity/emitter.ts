@@ -75,6 +75,7 @@ export class ActivityEmitter {
   // front in their original order.
   private requeued = 0;
   private sending: Promise<void> = Promise.resolve();
+  private flushed: (() => void)[] = [];
 
   constructor(private readonly options: ActivityEmitterOptions) {}
 
@@ -104,6 +105,15 @@ export class ActivityEmitter {
 
   waitingPermission(name?: string): void {
     this.enqueue("waiting_permission", name !== undefined && IDENTIFIER.test(name) ? name : undefined);
+  }
+
+  /** Resolves when every queued event has been published, or publishing stopped. */
+  async drained(): Promise<void> {
+    for (;;) {
+      await this.sending;
+      if (this.queue.length === 0 || this.stopped) return;
+      await new Promise<void>(resolve => this.flushed.push(resolve));
+    }
   }
 
   turnEnded(): void {
@@ -169,6 +179,9 @@ export class ActivityEmitter {
       this.lastSentAt = Date.now();
       this.sending = this.sending.then(() => this.send(item));
     }
+    const waiting = this.flushed;
+    this.flushed = [];
+    void this.sending.then(() => waiting.forEach(resolve => resolve()));
     this.schedule();
   }
 
