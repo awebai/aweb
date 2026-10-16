@@ -25,7 +25,7 @@ func errorHeaderValue(value string) string {
 	return value
 }
 
-const blockedFirewallAdvice = "The server's firewall refused this message. That usually happens when it contains a curl or wget command with a web address inside backticks. Reword that part or remove the backticks, then send it again."
+const blockedFirewallAdvice = "The server's firewall refused this request. That usually happens when what you sent contains a curl or wget command with a web address inside backticks. Reword that part or remove the backticks, then try again."
 
 func newAPIError(resp *http.Response, body string) *APIError {
 	contentType := resp.Header.Get("Content-Type")

@@ -84,6 +84,7 @@ func TestAPIErrorBlockedFirewallGuidanceBoundary(t *testing.T) {
 		{"json-detail", 403, "application/json", `{"detail":"Blocked"}`, "", false},
 		{"json-in-html-type", 403, "text/html", `{"detail":"<html><title>Blocked</title></html>"}`, "", false},
 		{"plain-text", 403, "text/plain", "Blocked secret-body", "", false},
+		{"plain-text-with-title", 403, "text/plain", "<title>Blocked</title>secret-body", "", false},
 		{"wrong-status", 404, "text/html", "<html><title>Blocked</title>secret-body</html>", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
