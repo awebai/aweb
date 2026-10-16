@@ -5,7 +5,7 @@
 // named by that pid, in a per-user directory only its owner can enter: the
 // directory, not a peer-credential check, is what keeps other users out.
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Server } from "node:net";
 import { join } from "node:path";
 
@@ -52,6 +52,28 @@ export function ensureOwnerOnlyDir(dir: string): void {
     throw new Error(`activity socket directory ${dir} belongs to another user`);
   }
   if ((info.mode & 0o077) !== 0) throw new Error(`activity socket directory ${dir} is not owner-only`);
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Remove the sockets of Claude Code processes that no longer run, such as one killed outright. */
+export function removeDeadSockets(dir: string): void {
+  for (const name of readdirSync(dir)) {
+    const match = /^(\d+)\.sock$/.exec(name);
+    if (match === null || isRunning(Number(match[1]))) continue;
+    try {
+      unlinkSync(join(dir, name));
+    } catch {
+      // Removed meanwhile.
+    }
+  }
 }
 
 /** The part of a Claude Code hook payload that crosses the socket, or undefined. */

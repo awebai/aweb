@@ -14,6 +14,7 @@ import {
   applyHookEvent,
   ensureOwnerOnlyDir,
   listenForHookEvents,
+  removeDeadSockets,
 } from "./activity_socket.js";
 
 export interface ClaudeActivity {
@@ -38,6 +39,7 @@ export async function startClaudeActivity(
     const emitter = createActivityEmitter(config, createChannelClient(config), { workRoot: workdir, log });
     const dir = options.dir ?? activitySocketDir(process.getuid());
     ensureOwnerOnlyDir(dir);
+    removeDeadSockets(dir);
     const path = activitySocketPath(options.claudePid ?? process.ppid, dir);
     const server = await listenForHookEvents(path, event => applyHookEvent(emitter, event));
     return {

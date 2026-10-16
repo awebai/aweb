@@ -164,6 +164,13 @@ async function main() {
       instructions: CHANNEL_EXTERNAL_DELIVERY_INSTRUCTIONS,
     });
     await external.connect(new StdioServerTransport());
+    // Claude Code may end this process with a signal; end the open turn and
+    // remove the hook socket first, then let the signal take its course.
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+      process.once(signal, () => {
+        void stopActivity().finally(() => process.kill(process.pid, signal));
+      });
+    }
     return;
   }
 
