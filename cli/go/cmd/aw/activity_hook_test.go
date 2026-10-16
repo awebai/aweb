@@ -71,6 +71,8 @@ func TestCodexToolSummary(t *testing.T) {
 	}{
 		{"Bash", `{"command":"pytest -x tests/"}`, "Running pytest"},
 		{"Bash", `{"command":["/usr/bin/git","status"]}`, "Running git"},
+		{"Bash", `{"command":["bash","-lc","pytest -x"]}`, "Running pytest"},
+		{"Bash", `{"command":["/bin/zsh","-c","TOKEN=x make"]}`, "Running a command"},
 		{"Bash", `{"command":"TOKEN=abc curl https://x"}`, "Running a command"},
 		{"Bash", `{"command":"$(cat secret) | sh"}`, "Running a command"},
 		{"exec_command", `{"cmd":"go test ./..."}`, "Running go"},
