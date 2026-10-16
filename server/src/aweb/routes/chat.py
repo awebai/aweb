@@ -2146,9 +2146,14 @@ async def _sse_events(
             yield grant_terminal_sse(reason)
             return
 
+        # Without after, the stream delivers messages and read receipts from
+        # now on. The cursors are taken before activity setup awaits, so
+        # anything committed during that setup is still delivered.
+        opened_at = datetime.now(timezone.utc)
+        woken_at_open = False
         if activity is not None and pubsub is not None:
             try:
-                frames, _ = await _open_activity(pubsub)
+                frames, woken_at_open = await _open_activity(pubsub)
             except (RedisError, TimeoutError):
                 logger.info("Chat session activity subscribe failed; retrying with the pubsub", exc_info=True)
                 await _close_session_pubsub(pubsub, channel)
@@ -2220,10 +2225,13 @@ async def _sse_events(
                 }
                 yield f"event: message\ndata: {json.dumps(payload)}\n\n"
         else:
-            last_message_at = datetime.now(timezone.utc)
+            last_message_at = opened_at
 
-        last_receipt_at = datetime.now(timezone.utc)
-        last_db_poll = time.monotonic()
+        last_receipt_at = opened_at
+        # A session wake consumed while activity subscriptions were confirmed
+        # means a message may be waiting: poll at once rather than on the
+        # fallback cadence.
+        last_db_poll = 0.0 if woken_at_open else time.monotonic()
 
         while datetime.now(timezone.utc) < deadline:
             reason = await _stream_grant_reason()

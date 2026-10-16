@@ -59,8 +59,8 @@ _REQUIRED = (
     "timestamp",
     "expires_at",
 )
-_IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]+$")
-_SESSION_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]+")
+_SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _CONTROL = re.compile("[\u0000-\u001f\u007f-\u009f]")
 
 
@@ -72,7 +72,7 @@ def _is_identifier(value: Any) -> bool:
     return (
         isinstance(value, str)
         and len(value.encode("utf-8")) <= IDENTIFIER_MAX_BYTES
-        and _IDENTIFIER.match(value) is not None
+        and _IDENTIFIER.fullmatch(value) is not None
     )
 
 
@@ -100,7 +100,7 @@ def _check_values(event: dict[str, Any]) -> tuple[datetime, datetime]:
     if not isinstance(event["team_id"], str) or not event["team_id"]:
         raise ActivityEventError("invalid_value", "team_id must be a non-empty string")
     session_id = event["session_id"]
-    if session_id is not None and (not isinstance(session_id, str) or not _SESSION_ID.match(session_id)):
+    if session_id is not None and (not isinstance(session_id, str) or not _SESSION_ID.fullmatch(session_id)):
         raise ActivityEventError("invalid_value", "session_id must be null or a lowercase UUID")
     if not _is_identifier(event["turn_id"]):
         raise ActivityEventError("invalid_value", "turn_id must be 1 to 64 bytes of [A-Za-z0-9_.:-]")
