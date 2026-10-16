@@ -4,6 +4,24 @@
 
 ## Release preparations
 
+### Release preparation: channel 1.8.0, pi 0.4.0
+
+Client changes are since `channel-v1.7.17` and `pi-v0.3.15`. Tag only after
+the hosted deployment that runs server 1.27.26 or later.
+
+- **Live agent activity from Claude Code and Pi:** when the host owner opts an
+  agent in (`activity: status` in `<identity home>/activity.yaml`; off by
+  default, read at each turn), the Claude channel **1.8.0** and Pi **0.4.0**
+  publish signed, ephemeral status events to `POST /v1/agents/me/activity`:
+  the phase, the tool name and a templated one-line summary, never output,
+  arguments or file content, and no summary after an encrypted chat wake.
+  Claude Code reports through plugin hooks forwarded over a per-user,
+  owner-only socket; Pi through its lifecycle events. A turn is attributed to
+  the chat whose wake started it. A grant seat signs with its grant session
+  key and needs `chat.send`. Events coalesce to at most one per 500 ms, honour
+  the server's rate limit, and stop quietly against a server without the
+  route. See [agent activity](docs/agent-activity.md).
+
 ### Release preparation: awid-service 0.5.27
 
 Changes are since `awid-service-v0.5.26`.
