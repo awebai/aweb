@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from aweb.agent_activity import ActivityEventError, verify_activity_event
+from aweb.agent_activity import ActivityEventError, relay_activity, verify_activity_event
 from aweb.deps import get_db, get_redis
 from aweb.messaging.chat import resolve_session_actor_did
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
@@ -23,8 +22,6 @@ router = APIRouter(prefix="/v1/agents", tags=["agents"])
 MAX_REQUEST_BODY_BYTES = 2048
 RATE_WINDOW_SECONDS = 5
 RATE_LIMIT = 10
-MAX_LATEST_MS = 60_000
-REVISION_TTL_SECONDS = 3600
 
 # One fixed window per agent. The increment and the first expiry run together,
 # so an interrupted first write cannot leave a counter without a TTL.
@@ -35,29 +32,6 @@ if count == 1 then
 end
 return {count, redis.call('TTL', KEYS[1])}
 """
-
-# Assign the agent's next relay revision, store the latest state and publish,
-# as one step: revision, latest-state and channel order then agree even when
-# two requests for one agent race. ARGV[2] is a JSON object without "rev"; the
-# script prefixes it rather than re-encoding it, because Redis cjson would turn
-# large integers such as seq into doubles.
-_RELAY_SCRIPT = """
-local rev = redis.call('INCR', KEYS[1])
-redis.call('EXPIRE', KEYS[1], ARGV[1])
-local value = '{"rev":' .. rev .. ',' .. string.sub(ARGV[2], 2)
-redis.call('SET', KEYS[2], value, 'PX', ARGV[3])
-redis.call('PUBLISH', ARGV[4], value)
-return rev
-"""
-
-
-def activity_state_key(agent_id: str) -> str:
-    return f"agent-activity:{agent_id}"
-
-
-def activity_channel_name(agent_id: str) -> str:
-    return f"agent-activity:{agent_id}"
-
 
 class PublishActivityRequest(BaseModel):
     model_config = {"extra": "forbid"}
@@ -137,29 +111,15 @@ async def publish_agent_activity(
     if event["session_id"] is not None:
         await _require_participant(db, identity, event["session_id"])
 
-    expires_at = datetime.strptime(event["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    latest_ms = max(1, min(MAX_LATEST_MS, int((expires_at - now).total_seconds() * 1000)))
-    relayed = json.dumps(
-        {
-            "agent_id": identity.agent_id,
-            "alias": identity.alias,
-            "signed_payload": payload.signed_payload,
-            "signature": payload.signature,
-            "event": event,
-        },
-        separators=(",", ":"),
-        ensure_ascii=False,
-    )
     try:
-        await redis.eval(
-            _RELAY_SCRIPT,
-            2,
-            f"agent-activity-rev:{identity.agent_id}",
-            activity_state_key(identity.agent_id),
-            REVISION_TTL_SECONDS,
-            relayed,
-            latest_ms,
-            activity_channel_name(identity.agent_id),
+        await relay_activity(
+            redis,
+            agent_id=identity.agent_id,
+            alias=identity.alias,
+            signed_payload=payload.signed_payload,
+            signature=payload.signature,
+            event=event,
+            now=now,
         )
     except Exception as exc:
         logger.exception("Activity relay failed for %s", identity.agent_id)

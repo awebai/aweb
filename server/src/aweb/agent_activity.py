@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import json
 import re
 from typing import Any
 
@@ -24,6 +25,8 @@ SUMMARY_MAX_BYTES = 120
 IDENTIFIER_MAX_BYTES = 64
 MAX_VALIDITY = timedelta(seconds=60)
 CLOCK_SKEW = timedelta(minutes=5)
+MAX_LATEST_MS = 60_000
+REVISION_TTL_SECONDS = 3600
 
 PHASES = frozenset({"turn_started", "thinking", "tool", "waiting_permission", "writing", "turn_ended"})
 
@@ -158,3 +161,67 @@ def verify_activity_event(
     if now >= expires_at:
         raise ActivityEventError("expired", "expires_at has passed")
     return event
+
+
+# Assign the agent's next relay revision, store the latest state and publish,
+# as one step: revision, latest-state and channel order then agree even when
+# two requests for one agent race. ARGV[2] is a JSON object without "rev"; the
+# script prefixes it rather than re-encoding it, because Redis cjson would turn
+# large integers such as seq into doubles.
+_RELAY_SCRIPT = """
+local rev = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+local value = '{"rev":' .. rev .. ',' .. string.sub(ARGV[2], 2)
+redis.call('SET', KEYS[2], value, 'PX', ARGV[3])
+redis.call('PUBLISH', ARGV[4], value)
+return rev
+"""
+
+
+def activity_state_key(agent_id: str) -> str:
+    return f"agent-activity:{agent_id}"
+
+
+def activity_channel_name(agent_id: str) -> str:
+    return f"agent-activity:{agent_id}"
+
+
+async def relay_activity(
+    redis,
+    *,
+    agent_id: str,
+    alias: str,
+    signed_payload: str,
+    signature: str,
+    event: dict[str, Any],
+    now: datetime,
+) -> int:
+    """Relay a verified event with the agent's next revision; return that revision.
+
+    The latest state lives until the event expires, and at most 60 seconds.
+    """
+    expires_at = datetime.strptime(event["expires_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    latest_ms = max(1, min(MAX_LATEST_MS, int((expires_at - now).total_seconds() * 1000)))
+    relayed = json.dumps(
+        {
+            "agent_id": agent_id,
+            "alias": alias,
+            "signed_payload": signed_payload,
+            "signature": signature,
+            "event": event,
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    return int(
+        await redis.eval(
+            _RELAY_SCRIPT,
+            2,
+            f"agent-activity-rev:{agent_id}",
+            activity_state_key(agent_id),
+            REVISION_TTL_SECONDS,
+            relayed,
+            latest_ms,
+            activity_channel_name(agent_id),
+        )
+    )
