@@ -180,7 +180,9 @@ nested fields, missing fields, enums, a seq that is not a safe positive integer,
 the text caps, control characters, the validity window, clock skew, expiry, a
 stale seq, a publisher that is not the signer, a wrong signature, oversize and
 non-canonical bytes, and a mail payload offered as a status. A cross-type entry
-records that a status signature does not verify as a message. The server and
+is a producer construction check: message bytes built with `canonical_payload`
+never equal status bytes. Its description overstates this as message
+verification; ingress separation is the required `type` at every route. The server and
 the OATS publisher agreed these bytes at `1aadc0914` before either
 implemented them; changing them needs a new version.
 
