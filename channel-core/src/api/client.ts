@@ -85,12 +85,27 @@ export class APIClient {
     return this.request("POST", path, body);
   }
 
+  /** POST to a route that answers without a body, such as a 202. */
+  async postAccepted(path: string, body: unknown): Promise<void> {
+    const resp = await this.send("POST", path, body);
+    await resp.body?.cancel();
+  }
+
   private async request<T>(
     method: string,
     path: string,
     body?: unknown,
     noCache: boolean = false,
   ): Promise<T> {
+    return readBoundedJSON<T>(await this.send(method, path, body, noCache));
+  }
+
+  private async send(
+    method: string,
+    path: string,
+    body?: unknown,
+    noCache: boolean = false,
+  ): Promise<Response> {
     const url = this.baseURL + path;
     const bodyText = body === undefined ? "" : JSON.stringify(body);
     const headers: Record<string, string> = {
@@ -113,10 +128,10 @@ export class APIClient {
     const resp = await fetch(url, init);
     if (!resp.ok) {
       const text = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text);
+      throw new APIError(resp.status, text, retryAfterSeconds(resp.headers.get("Retry-After")));
     }
 
-    return readBoundedJSON<T>(resp);
+    return resp;
   }
 
   /** Open an SSE stream. Returns the raw Response for streaming. */
@@ -205,7 +220,13 @@ export class APIError extends Error {
   constructor(
     public statusCode: number,
     public body: string,
+    /** A Retry-After given as whole seconds; absent when missing or another form. */
+    public retryAfterSeconds?: number,
   ) {
     super(body ? `aweb: http ${statusCode}: ${body}` : `aweb: http ${statusCode}`);
   }
+}
+
+function retryAfterSeconds(header: string | null): number | undefined {
+  return header !== null && /^\d+$/.test(header.trim()) ? Number(header.trim()) : undefined;
 }
