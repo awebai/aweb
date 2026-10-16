@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -350,6 +351,39 @@ func TestActivityHookCodex(t *testing.T) {
 		}
 	})
 
+	t.Run("two Codex sessions on one identity keep their own turns", func(t *testing.T) {
+		home, capture, _, _ := setup(t)
+		enable(t, home)
+		in := func(name, session, turn string, extra map[string]any) map[string]any {
+			input := event(name, turn, extra)
+			input["session_id"] = session
+			return input
+		}
+		steps := []map[string]any{
+			in("UserPromptSubmit", "session-a", "turn-x", nil),
+			in("UserPromptSubmit", "session-b", "turn-y", nil),
+			in("PreToolUse", "session-a", "turn-x", bash("make")),
+			in("PreToolUse", "session-b", "turn-y", bash("pytest")),
+			in("Stop", "session-a", "turn-x", nil),
+			in("Stop", "session-b", "turn-y", nil),
+		}
+		for _, step := range steps {
+			hook(t, home, step)
+			time.Sleep(600 * time.Millisecond)
+		}
+		events, _, _ := capture.snapshot()
+		want := "turn-x:turn_started turn-y:turn_started turn-x:tool:Bash:Running make turn-y:tool:Bash:Running pytest turn-x:turn_ended turn-y:turn_ended"
+		if got := phases(events); got != want {
+			t.Fatalf("events:\n got %s\nwant %s", got, want)
+		}
+		// A session's turn state goes when the session ends.
+		hook(t, home, in("SessionEnd", "session-b", "", nil))
+		state, err := os.ReadFile(filepath.Join(home, ".activity-hook-state.json"))
+		if err != nil || bytes.Contains(state, []byte("session-b")) || !bytes.Contains(state, []byte("session-a")) {
+			t.Fatalf("state after SessionEnd: %s %v", state, err)
+		}
+	})
+
 	t.Run("rate limit pauses, then a boundary is sent after the pause", func(t *testing.T) {
 		home, capture, _, _ := setup(t)
 		enable(t, home)
@@ -442,4 +476,24 @@ func TestActivityHookCodex(t *testing.T) {
 			t.Fatalf("grant event: %#v", events)
 		}
 	})
+}
+
+// Sessions that never sent SessionEnd are pruned, least recently seen first.
+func TestPruneActivitySessions(t *testing.T) {
+	state := activityHookState{Sessions: map[string]*activityTurnState{}}
+	for i := 0; i < activitySessionsKept+3; i++ {
+		state.Sessions[fmt.Sprintf("session-%02d", i)] = &activityTurnState{LastSeenMs: int64(1000 + i)}
+	}
+	pruneActivitySessions(&state)
+	if len(state.Sessions) != activitySessionsKept {
+		t.Fatalf("kept %d sessions", len(state.Sessions))
+	}
+	for i := 0; i < 3; i++ {
+		if _, ok := state.Sessions[fmt.Sprintf("session-%02d", i)]; ok {
+			t.Fatalf("oldest session-%02d kept", i)
+		}
+	}
+	if _, ok := state.Sessions[fmt.Sprintf("session-%02d", activitySessionsKept+2)]; !ok {
+		t.Fatal("newest session pruned")
+	}
 }
