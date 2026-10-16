@@ -171,12 +171,19 @@ Content-Type: application/json
 {"signed_payload": "<base64url canonical bytes>", "signature": "<base64>"}
 ```
 
-**Authentication** is the messaging dependency the chat routes use
-(`server/src/aweb/identity_auth_deps.py:222-272`): grant, team certificate or
-identity DIDKey. Grant callers need the existing `chat.send` scope
-(`server/src/aweb/auth_context.py:24-36`). A grant without `chat.send` cannot
-reach a session's participants through activity. `chat.send` is already on the
-seat grants that matter, so no grant is reissued and no scope is added.
+**Authentication** is a team certificate, or an identity grant carrying the
+existing `chat.send` scope, through the route-declared grant scope
+`team_identity_with_grant_scope("chat.send")`
+(`server/src/aweb/team_auth_deps.py:295-306`), the same mechanism the agent
+heartbeat uses. The caller is always one authenticated team member, local or
+global. For a grant, the subject is the member, and the grant's session key
+signs (`server/src/aweb/identity_grant_auth.py:227-239`). Other grants get 403
+`outside grant scope`, with no rate, state or relay side effect. Every bare
+identity-DIDKey request is refused with the existing 401 of certificate
+authentication, including one whose identity resolves to a single team member:
+an event's `team_id` alone never establishes membership. No version 1 emitter
+uses that path. `chat.send` is already on the seat grants that matter, so no
+grant is reissued and no scope is added.
 
 **Verification order.** Each step refuses with its own code (see "Refusal
 codes"), and the server logs the real error.
@@ -593,6 +600,13 @@ session mode to check without new plumbing.
    atomic first expiry. The snapshot handoff is ordered by an internal relay
    revision assigned atomically with the latest-state write and the publish,
    not by timestamps, which cannot order two turns in the same second.
+5. **Authentication narrowed in implementation** (aweb-acah.2 S1; approved
+   by Athena, msg 93b170a4, and the protocol reviewer, msg bd190bc1). The
+   approved text named the chat routes' messaging dependency, which admits
+   bare identity-DIDKey callers and scopes grants by path. Under it, no grant
+   could reach this route (`identity_grant_auth.py:52-77`), and a global
+   identity might resolve to no single team member. Ingress instead declares
+   `chat.send` on the route, as "Authentication" above describes.
 
 ## Implementation slices
 

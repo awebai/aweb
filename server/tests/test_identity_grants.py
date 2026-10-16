@@ -1253,6 +1253,7 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
         ("PATCH", "/v1/tasks/{ref}", "coord.write"),
         ("PATCH", "/v1/workspaces/{workspace_id}", "presence.write"),
         ("POST", "/v1/agents/heartbeat", "presence.write"),
+        ("POST", "/v1/agents/me/activity", "chat.send"),
         ("POST", "/v1/repos/lookup", "coord.read"),
         ("POST", "/v1/reservations", "coord.write"),
         ("POST", "/v1/reservations/release", "coord.write"),
