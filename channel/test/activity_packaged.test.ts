@@ -82,4 +82,30 @@ describe("packaged plugin activity", () => {
       plugin.child.kill("SIGKILL");
     }
   });
+
+  test("a signalled plugin ends the open turn and removes its socket", async () => {
+    const home = join(root, ".aw");
+    await writeTestPrincipal(home, { alias: "agent", seedByte: 12, teamID: "default:acme.aweb.ai" });
+    const { port } = server.address() as AddressInfo;
+    const workspace = join(home, "workspace.yaml");
+    writeFileSync(workspace, readFileSync(workspace, "utf8").replace("https://app.aweb.ai", `http://127.0.0.1:${port}`));
+    writeFileSync(join(home, "activity.yaml"), "activity: status\n");
+
+    const plugin = await launchPackagedMCPChild(CHANNEL_ROOT, root, { AWEB_IDENTITY_HOME: home, AWEB_DELIVERY: "session" });
+    try {
+      await until(() => existsSync(SOCKET));
+      await forwardHookEvent({ hook_event_name: "UserPromptSubmit" }, { dir: DIR, candidates: [process.pid] });
+      await until(() => published.length === 1);
+
+      const exited = new Promise<NodeJS.Signals | null>(resolve => plugin.child.once("exit", (_code, signal) => resolve(signal)));
+      plugin.child.kill("SIGTERM");
+      const signal = await Promise.race([exited, new Promise<null>(resolve => setTimeout(() => resolve(null), 5000))]);
+
+      expect(signal).toBe("SIGTERM");
+      expect(published).toEqual(["turn_started", "turn_ended"]);
+      expect(existsSync(SOCKET)).toBe(false);
+    } finally {
+      plugin.child.kill("SIGKILL");
+    }
+  });
 });

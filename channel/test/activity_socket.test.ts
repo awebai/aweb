@@ -1,7 +1,7 @@
 // The Claude Code hook-to-plugin path for agent activity (docs/agent-activity.md,
 // "Emitters"): hooks forward their event over a per-user, owner-only socket
 // keyed by the Claude Code process both share; the plugin maps it to the emitter.
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import {
   forwardHookEvent,
   hookEventForSocket,
   listenForHookEvents,
+  removeDeadSockets,
   type HookEvent,
 } from "../src/activity_socket.js";
 
@@ -192,3 +193,21 @@ describe("listener and forwarding", () => {
     expect(statSync(activitySocketPath(9, dir)).mode & 0o777).toBe(0o600);
   });
 });
+
+describe("dead sockets", () => {
+  test("sockets of processes that no longer run are removed; live ones and other files are kept", () => {
+    const dir = join(base, "s");
+    ensureOwnerOnlyDir(dir);
+    const dead = 2_147_483_000;
+    writeFileSync(activitySocketPath(dead, dir), "");
+    writeFileSync(activitySocketPath(process.pid, dir), "");
+    writeFileSync(join(dir, "notes.txt"), "");
+
+    removeDeadSockets(dir);
+
+    expect(existsSync(activitySocketPath(dead, dir))).toBe(false);
+    expect(existsSync(activitySocketPath(process.pid, dir))).toBe(true);
+    expect(existsSync(join(dir, "notes.txt"))).toBe(true);
+  });
+});
+
