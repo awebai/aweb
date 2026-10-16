@@ -480,10 +480,17 @@ valid or unattributed event, and an absent route stops publishing.
     refused if it is a symlink, another user's, or open to others; the socket
     file is 0600. The directory is what keeps other users out: Node has no
     peer-credential check for Unix sockets.
-  - A hook forwards only the event name, the tool name, and the tool-input
-    fields the summary templates read (`file_path`, `notebook_path`, `path`,
-    `command`, `url`), each cut to 4 KiB; a file's content never crosses the
-    socket. The plugin caps a line at 64 KiB and ignores malformed ones.
+  - A hook forwards only the event name, Claude Code's `prompt_id`, the tool
+    name, and the tool-input fields the summary templates read (`file_path`,
+    `notebook_path`, `path`, `command`, `url`), each cut to 4 KiB; a file's
+    content never crosses the socket. The plugin caps a line at 64 KiB and
+    ignores malformed ones.
+  - Each hook is its own process, so their events can arrive out of order.
+    The plugin puts each in its prompt's turn: an event of a prompt that has
+    stopped is dropped, a submit for a prompt whose turn a tool event already
+    opened is ignored, and an event of a new prompt first closes a turn whose
+    stop never arrived. A turn need not start with `UserPromptSubmit`: a turn
+    woken by a channel event opens with its first tool event.
   - The plugin replaces a stale socket file but never takes over a live one,
     and at start removes sockets whose process no longer runs. When the
     session ends (stdin closes, or a signal), it ends the open turn, flushes
