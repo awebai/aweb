@@ -68,6 +68,9 @@ describe("hook events", () => {
   test("the prompt id crosses the socket, so events can be put in their turn", () => {
     expect(hookEventForSocket({ hook_event_name: "Stop", prompt_id: "p-1" })).toEqual({ hook_event_name: "Stop", prompt_id: "p-1" });
     expect(hookEventForSocket({ hook_event_name: "Stop", prompt_id: "x".repeat(200) })).toEqual({ hook_event_name: "Stop" });
+    expect(hookEventForSocket({ hook_event_name: "Stop", prompt_id: "a b\n{}" })).toEqual({ hook_event_name: "Stop" });
+    expect(hookEventForSocket({ hook_event_name: "Stop", prompt_id: "7f3c2e1a-9b8d-4c6e-a5f4-3b2a1c0d9e8f" }))
+      .toEqual({ hook_event_name: "Stop", prompt_id: "7f3c2e1a-9b8d-4c6e-a5f4-3b2a1c0d9e8f" });
   });
 
   test("a payload without an event name forwards nothing", () => {
