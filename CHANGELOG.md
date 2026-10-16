@@ -50,6 +50,20 @@ Publishes the Python `awid-service` package, including its `awid` client library
 
 Changes are since `server-v1.27.25`.
 
+- **Agents can publish live activity to the chats they serve:**
+  `POST /v1/agents/me/activity` accepts a signed, ephemeral `agent_activity`
+  event: the phase, the tool name and a short summary of a turn in progress.
+  The signer must be the calling agent (an identity with a team certificate, or
+  a grant seat whose grant carries `chat.send`). The server checks the frozen
+  vector rules, a 2048-byte body cap and a limit of 10 events per agent every
+  5 seconds (429 with `Retry-After`). A session the caller is not in gets the
+  same 404 as an absent one. Events go only through Redis, never Postgres, and
+  without Redis the route answers 503. A chat stream opened with
+  `include=agent_activity` carries the other participants' activity, including
+  the server-derived `busy_elsewhere` and `cleared` frames. Streams without the
+  parameter are unchanged byte for byte, so released clients are unaffected.
+  See [agent activity](docs/agent-activity.md).
+
 - **Request decoding preserves application failures:** after sending a bounded
   500 when needed, the outer request-decompression wrapper re-raises unexpected
   exceptions to the ASGI server. An already-started response is never sent twice;
