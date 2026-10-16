@@ -377,11 +377,14 @@ The component that delivered the wake that started the turn knows which chat
 it delivered, so it attributes:
 
 - **Claude Code and Pi.** channel-core's dispatcher delivers chat wakes for
-  both (`channel/src/index.ts:246-272`; Pi runs the same loop in-process,
-  `pi-extension/src/index.ts:411`). It records "the current turn serves
-  session S" when it injects a chat wake for S, and clears it at the turn
-  boundary. A turn started by local input, mail or an app event is unattributed
-  (`session_id: null`), and other chats see only `busy_elsewhere`.
+  both (`channel/src/index.ts:246-272`; Pi runs the same loop in-process).
+  Just before it presents a chat message of session S, it calls the loop's
+  `onChatPresented(S, {encrypted})` (`channel-core/src/channel.ts`, the chat
+  dispatch), and the emitter attributes the next turn to S; the turn after it
+  is unattributed again. If any presented message of S was encrypted, that
+  turn sends no summaries. A turn started by local input, mail or an app event
+  is unattributed (`session_id: null`), and other chats see only
+  `busy_elsewhere`.
 - **Codex.** The terminal wake broker types input into the session
   (`docs/terminal-wake-broker.md`). Version 1 Codex emitters publish
   unattributed activity. Attribution through the broker is a later, additive
@@ -474,12 +477,17 @@ valid or unattributed event, and an absent route stops publishing.
     documented, so the implementation verifies it before choosing.
   - The existing opt-in `aw notify` PostToolUse hook
     (`cli/go/cmd/aw/claude_hooks.go:14,129`) is unrelated and unchanged.
-- **Pi: the extension's existing lifecycle handlers.**
-  `pi-extension/src/index.ts` already subscribes to `tool_call` (:276) and
-  `turn_start`/`turn_end` (:284-288), and runs channel-core in-process with a
-  signed client (:411). The emitter maps them to `tool`, `turn_started` and
-  `turn_ended`. Finer phases (`thinking`, `writing`) depend on Pi exposing
-  message events, which the implementation verifies.
+- **Pi: the extension's lifecycle handlers** (`pi-extension/src/activity.ts`).
+  An agent run is the activity turn: `agent_start` is `turn_started` and
+  `agent_end` is `turn_ended`. Pi's `turn_start`/`turn_end` fire once per model
+  call inside a run, so they are not turn boundaries; the extension uses them
+  for wake delivery only. `message_update` with `thinking_start` is `thinking`
+  and with `text_start` is `writing`; `tool_execution_start` is `tool`, and
+  `tool_execution_end` returns to `thinking`. Pi has no permission-prompt
+  event, so `waiting_permission` is never sent. The extension builds the
+  session's emitter from its channel config at `session_start` and publishes
+  whichever way chat is delivered; it is attributed only when the extension
+  presents the chat wake itself. Verified against pi-coding-agent 0.74.1.
 - **Codex: hooks, with a transcript tail as the fallback.**
   - Codex 0.162.1 reports `hooks` as a stable feature (`codex features list`).
     The binary names `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`,
