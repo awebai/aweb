@@ -138,3 +138,27 @@ def test_undecodable_payloads_are_malformed(signed_payload):
     with pytest.raises(ActivityEventError) as refused:
         _verify(BASE_CASE, signed_payload, BASE_CASE["signature"])
     assert refused.value.code == "malformed_payload"
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"turn_id": BASE_CASE["document"]["turn_id"] + "\n"},
+        {"tool": "Bash\n"},
+        {"session_id": BASE_CASE["document"]["session_id"] + "\n"},
+    ],
+    ids=["turn_id", "tool", "session_id"],
+)
+def test_a_trailing_newline_is_not_part_of_an_identifier(changes):
+    signed_payload, signature = _signed_variant(**changes)
+    with pytest.raises(ActivityEventError) as refused:
+        _verify(BASE_CASE, signed_payload, signature)
+    assert refused.value.code == "invalid_value"
+
+
+def test_identifiers_without_the_newline_verify():
+    document = BASE_CASE["document"]
+    signed_payload, signature = _signed_variant(
+        turn_id=document["turn_id"], tool="Bash", session_id=document["session_id"],
+    )
+    assert _verify(BASE_CASE, signed_payload, signature)["tool"] == "Bash"

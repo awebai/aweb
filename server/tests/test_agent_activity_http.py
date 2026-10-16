@@ -22,6 +22,7 @@ import pytest
 from redis.asyncio import Redis
 
 from awid.signing import canonical_json_bytes, sign_message
+from aweb.messaging.activity_stream import SessionActivity
 from test_agent_status_host_http import _team_request
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_identity_grants import _grant_headers, _session_keypair
@@ -530,3 +531,40 @@ async def test_a_viewer_does_not_receive_its_own_activity(privacy_app):
 
     assert own_subscribers == 0
     assert frame["agent"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_message_sent_while_activity_is_being_set_up_arrives_once(privacy_app, monkeypatch):
+    # A barrier around the real subscription: the stream's activity setup is
+    # paused after Redis confirms it, while a real chat message is sent.
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+    confirmed, resume = asyncio.Event(), asyncio.Event()
+    subscribe = SessionActivity.subscribe
+
+    async def paused_subscribe(self, pubsub):
+        pending = await subscribe(self, pubsub)
+        confirmed.set()
+        await resume.wait()
+        return pending
+
+    monkeypatch.setattr(SessionActivity, "subscribe", paused_subscribe)
+
+    async with _stream(env, "bob", session_id, include="agent_activity", seconds=4) as response:
+        lines = response.aiter_lines()
+        async with asyncio.timeout(5):
+            await confirmed.wait()
+        sent = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/messages", {"body": "during setup"})
+        assert sent.status_code == 200, sent.text
+        resume.set()
+
+        bodies = []
+        event = None
+        async with asyncio.timeout(10):
+            async for line in lines:
+                if line.startswith("event: "):
+                    event = line[len("event: "):]
+                elif line.startswith("data: ") and event == "message":
+                    bodies.append(json.loads(line[len("data: "):])["body"])
+
+    assert bodies == ["during setup"]
