@@ -2,14 +2,6 @@
 
 ## Unreleased
 
-- **Hidden resources answer like missing resources:** private conversation and
-  chat refusals, cross-team version activation and workspace heartbeat, and
-  unauthorized installed-app lookups now return the same 404 as an absent ID.
-  Participation is checked before conversation state or type is disclosed, and
-  MCP chat refuses without revealing session existence. Dashboard permission
-  errors omit the team ID; authentication, grant and messaging policies keep
-  their existing behavior.
-
 ## Release preparations
 
 ### Release preparation: server 1.27.25, aw 1.36.40
@@ -22,6 +14,14 @@ Server changes are since `server-v1.27.24`; CLI changes are since `aw-v1.36.39`.
   1 MiB cap; plain requests retain their existing behavior and larger bodies
   can be sent plain. Embedding hosts can wrap their outer app with the same
   ASGI middleware.
+
+- **Hidden resources answer like missing resources:** private conversation and
+  chat refusals, cross-team version activation and workspace heartbeat, and
+  unauthorized installed-app lookups now return the same 404 as an absent ID.
+  Participation is checked before conversation state or type is disclosed, and
+  MCP chat refuses without revealing session existence. Dashboard permission
+  errors omit the team ID; authentication, grant and messaging policies keep
+  their existing behavior.
 
 - **Blocked message errors offer a next step:** an HTML 403 titled “Blocked”
   keeps its status and response identifiers and explains the firewall refusal,
