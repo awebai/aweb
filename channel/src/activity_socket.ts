@@ -29,7 +29,7 @@ export interface HookEventTarget {
 
 const SUMMARY_INPUT_KEYS = ["file_path", "notebook_path", "path", "command", "url"];
 const MAX_FORWARDED_STRING = 4096;
-const MAX_PROMPT_ID = 128;
+const PROMPT_ID = /^[A-Za-z0-9_.:-]{1,128}$/;
 const ENDED_PROMPTS_KEPT = 32;
 const MAX_LINE_BYTES = 64 * 1024;
 const CONNECT_TIMEOUT_MS = 300;
@@ -86,7 +86,7 @@ export function hookEventForSocket(payload: unknown): HookEvent | undefined {
   const fields = payload as Record<string, unknown>;
   if (typeof fields.hook_event_name !== "string" || !fields.hook_event_name) return undefined;
   const event: HookEvent = { hook_event_name: fields.hook_event_name };
-  if (typeof fields.prompt_id === "string" && fields.prompt_id && fields.prompt_id.length <= MAX_PROMPT_ID) {
+  if (typeof fields.prompt_id === "string" && PROMPT_ID.test(fields.prompt_id)) {
     event.prompt_id = fields.prompt_id;
   }
   if (typeof fields.tool_name === "string") event.tool_name = fields.tool_name;
