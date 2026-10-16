@@ -1,10 +1,10 @@
 # Agent activity: a signed, ephemeral, opt-in status stream
 
 Status: **approved by Juan on 2026-10-14 (aweb-acah.2); not yet implemented.**
-The amendments in "Amendments after approval" are under review by Athena.
+The amendments in "Amendments after approval" are approved by Athena.
 The signed event's wire bytes are pinned in
 [`docs/vectors/agent-activity-v1.json`](vectors/agent-activity-v1.json), which
-is frozen when that review closes.
+is frozen after the independent protocol review's ACK.
 
 ## Purpose
 
@@ -282,12 +282,23 @@ GET /v1/chat/sessions/{session_id}/stream?deadline=...&include=agent_activity
 
 ### Encrypted sessions
 
-When a session's messages are end-to-end encrypted (encrypted v2), a summary
+When a chat's messages are end-to-end encrypted (encrypted v2), a summary
 attributed to that session would put server-readable words beside an encrypted
-conversation. There the emitter sends `phase` and `tool` only, with no summary.
-This is an emitter rule; the server does not enforce it. The dashboard copy
-says activity is visible to aweb's servers, as this chat is, and that in an
-encrypted chat the tool name itself remains visible to aweb.
+conversation. So when the chat message whose wake started the turn is
+`encrypted_v2`, the emitter sends `phase` and `tool` only, with no summary, for
+the whole turn. The emitter knows that mode because it delivered the wake.
+
+**Known limit: the server does not enforce this.** A chat session has no
+encryption mode on the server. Encryption is chosen per message
+(`chat_messages.content_mode`, `server/src/aweb/migrations/aweb/004_chat_messages_encrypted_v2.sql`),
+one session can mix modes, and the mode given at session creation governs only
+the first message (`server/src/aweb/routes/chat.py:1244-1251`). A server check
+would first need a new rule for when a session counts as encrypted, plus a
+query per event, so version 1 leaves it to the emitter. Tool names stay
+visible in an encrypted chat; they are low-information, and nothing here claims
+end-to-end protection. The dashboard copy says activity is visible to aweb's
+servers, as this chat is, and that in an encrypted chat the tool name itself
+remains visible to aweb.
 
 ## Attribution: which chat a turn serves
 
@@ -460,7 +471,10 @@ The server's verifier and every emitter's producer consume it.
 
 ## Amendments after approval
 
-Under review by Athena. The coordinator accepted amendment 1 (msg 1b587051).
+Approved by Athena at 900eccc98 (msg 976c7854); the coordinator accepted
+amendment 1 (msg 1b587051). Her condition on encrypted sessions is met by
+the "Known limit" paragraph under "Encrypted sessions": the server has no
+session mode to check without new plumbing.
 
 1. **A foreign session gets the shared 404.** The approved draft refused a
    `session_id` the caller is not in with 403. Since then the refused-resource
