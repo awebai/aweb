@@ -237,8 +237,10 @@ func TestTeamJoinHarnessCommand(t *testing.T) {
 			if harness == "claude" && !strings.Contains(diagnostic, "installer-chatter") {
 				t.Fatal("installer diagnostic not separated")
 			}
-			if actual == "codex" && !wantFailure && setup["start_command"] != "aw run codex" {
-				t.Fatalf("codex guidance=%v", setup)
+			if actual == "codex" && !wantFailure {
+				if _, offered := setup["start_command"]; offered {
+					t.Fatalf("Codex setup must not offer a session launcher: %v", setup)
+				}
 			}
 			writeTool("claude", claudeScript)
 			writeTool("pi", piScript)
