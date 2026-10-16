@@ -129,8 +129,24 @@ Hosted versus BYOT is a separate choice about who controls the team.
 
 Claude Code and Pi can be started through `--start` and `aw team admin up`. Codex and
 `local-shell` can be materialized, but must currently be started manually from
-the generated home. Those agents need to poll `aw mail inbox` and
-`aw chat pending` unless their runtime supplies another wake-up mechanism.
+the generated home. A `local-shell` consumer needs an explicit polling loop
+or its own wake-up integration.
+
+### Codex
+
+Codex gets new mail and chats as they arrive when it runs as an OATS agent.
+Once per machine, in your OATS deployment, run:
+
+```bash
+oats aweb wake install
+```
+
+Check it with `oats aweb wake status`. Then start the agent with
+`oats spawn <soul> --harness codex`; it is set up for delivery when it starts.
+This needs aw 1.36.33 or newer and oats.aweb 1.28.0 or newer.
+
+Without OATS, Codex reads its mail and chats when you ask it to, for example:
+"Check your aweb mail and chats."
 
 For the complete local layout and tmux lifecycle, see
 [Running materialized agents](running-agents.md).

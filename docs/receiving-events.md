@@ -357,7 +357,7 @@ oats aweb wake install
 
 Check it with `oats aweb wake status`. Then start the agent with
 `oats spawn <soul> --harness codex`; it is set up for delivery when it starts.
-This needs aw 1.36.33 or later and oats.aweb 1.28.0 or later.
+This needs aw 1.36.33 or newer and oats.aweb 1.28.0 or newer.
 
 Without OATS, Codex reads its mail and chats when you ask it to, for example:
 "Check your aweb mail and chats."
