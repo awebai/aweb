@@ -16,7 +16,10 @@ import json
 from types import SimpleNamespace
 from uuid import uuid4
 
+import logging
+
 import pytest
+from redis.asyncio import Redis
 
 from awid.signing import canonical_json_bytes, sign_message
 from test_agent_status_host_http import _team_request
@@ -227,16 +230,39 @@ async def test_rate_limit_allows_ten_per_window_then_refuses(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_without_redis_publishing_is_unavailable(privacy_app):
+async def test_without_redis_publishing_is_unavailable_and_not_an_error(privacy_app, caplog):
     env = privacy_app
     redis, env.app.state.redis = env.app.state.redis, None
     try:
-        response = await _publish(env, "alice", _event(env, "alice"))
+        with caplog.at_level(logging.WARNING, logger="aweb.routes.agent_activity"):
+            response = await _publish(env, "alice", _event(env, "alice"))
     finally:
         env.app.state.redis = redis
 
     assert response.status_code == 503
     assert response.json()["detail"].startswith("publishing_unavailable: ")
+    assert [record for record in caplog.records if record.levelno >= logging.ERROR] == []
+
+
+@pytest.mark.asyncio
+async def test_failing_redis_is_unavailable_and_the_failure_is_logged(privacy_app, caplog):
+    env = privacy_app
+    # A real client for a port nothing listens on: every command fails to connect.
+    unreachable = Redis.from_url("redis://127.0.0.1:1/0", socket_connect_timeout=0.5)
+    redis, env.app.state.redis = env.app.state.redis, unreachable
+    try:
+        with caplog.at_level(logging.ERROR, logger="aweb.routes.agent_activity"):
+            response = await _publish(env, "alice", _event(env, "alice"))
+    finally:
+        env.app.state.redis = redis
+        await unreachable.aclose()
+
+    assert response.status_code == 503
+    assert response.json()["detail"].startswith("publishing_unavailable: ")
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Activity rate limit failed for {env.actors['alice'].id}"
+    ]
+    assert caplog.records[0].exc_info is not None
 
 
 async def _grant_publish(env, alias, scopes, *, event_from_session_key=True):
