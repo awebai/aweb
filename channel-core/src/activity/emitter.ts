@@ -82,7 +82,10 @@ export class ActivityEmitter {
 
   /** channel-core delivered a chat wake for this session; the next turn serves it. */
   chatWakeDelivered(sessionID: string, options: { encrypted: boolean }): void {
-    this.attribution = { sessionID, encrypted: options.encrypted };
+    // Any encrypted message of the pending session keeps its turn summary-free.
+    const encrypted = options.encrypted
+      || (this.attribution?.sessionID === sessionID && this.attribution.encrypted);
+    this.attribution = { sessionID, encrypted };
   }
 
   turnStarted(): void {
