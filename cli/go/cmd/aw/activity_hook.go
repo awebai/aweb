@@ -104,12 +104,15 @@ const (
 )
 
 func runCodexActivityHook(stdin io.Reader, stderr io.Writer) {
-	root, err := activityIdentityRoot()
-	if err != nil || readActivitySetting(root) != "status" {
+	// Read the whole event first, whatever happens next, so that Codex never
+	// writes into a closed pipe.
+	raw, err := io.ReadAll(io.LimitReader(stdin, activityHookInputLimit+1))
+	_, _ = io.Copy(io.Discard, stdin)
+	if err != nil || len(raw) > activityHookInputLimit {
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(stdin, activityHookInputLimit+1))
-	if err != nil || len(raw) > activityHookInputLimit {
+	root, err := activityIdentityRoot()
+	if err != nil || readActivitySetting(root) != "status" {
 		return
 	}
 	var in codexHookInput
@@ -148,6 +151,7 @@ type codexActivityHook struct {
 	publisher *activityPublisher
 	stderr    io.Writer
 	lock      interface{ Close() error }
+	unlocked  bool
 	state     activityHookState
 }
 
@@ -284,7 +288,7 @@ func (h *codexActivityHook) sendState(item activityItem) {
 		time.Sleep(time.Until(time.UnixMilli(ready)))
 		lock, err := awconfig.LockExclusive(filepath.Join(h.root, activityHookLockFile))
 		if err != nil {
-			h.lock = nopCloser{}
+			h.lock, h.unlocked = nopCloser{}, true
 			return
 		}
 		h.lock = lock
@@ -407,7 +411,11 @@ func loadActivityHookState(root string) activityHookState {
 	return state
 }
 
+// save writes the state; a hook that lost its lock writes nothing.
 func (h *codexActivityHook) save() {
+	if h.unlocked {
+		return
+	}
 	if data, err := json.Marshal(h.state); err == nil {
 		_ = writeFileAtomic(h.root, activityHookStateFile, data, 0o600)
 	}
