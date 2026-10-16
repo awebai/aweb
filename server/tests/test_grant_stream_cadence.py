@@ -108,7 +108,7 @@ def harness(monkeypatch):
         if kind == "event":
             return await events.event_stream(request, deadline=deadline, db=db, redis=None, identity=auth)
         if kind == "chat":
-            return await chat.stream(request, session_id=str(uuid4()), deadline=deadline, after=None, db=db, redis=None, auth=auth)
+            return await chat.stream(request, session_id=str(uuid4()), deadline=deadline, after=None, include=None, db=db, redis=None, auth=auth)
         return await status.status_stream(request, workspace_id=str(uuid4()), repo=None, human_name=None,
                                           limit=200, event_types=None, redis=redis, db_infra=db, identity=auth)
 
