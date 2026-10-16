@@ -15,6 +15,9 @@ export { PinStore, type IdentityScope, type Pin, type PinResult, type PinStoreWr
 export { RegistryResolver, DEFAULT_AWID_REGISTRY_URL, type ResolveTxt, type StableIdentityVerification } from "./identity/registry.js";
 export { SenderTrustManager, canonicalReplacementJSON, canonicalRotationJSON, normalizeIdentityScope, type TrustResult, type RotationAnnouncement, type ReplacementAnnouncement } from "./identity/trust.js";
 export { computeDIDKey, extractPublicKey } from "./identity/did.js";
+export { ActivityEmitter, type ActivityEmitterOptions, type ActivitySigner, type PublishOutcome } from "./activity/emitter.js";
+export { activitySigner, createActivityEmitter } from "./activity/runtime.js";
+export { readActivitySetting, ACTIVITY_SETTING_FILE, type ActivitySetting } from "./activity/setting.js";
 export { CHANNEL_CORE_SECURITY_CONTRACT } from "./contract.js";
 export { loadSigningKey } from "./identity/keys.js";
 export {
