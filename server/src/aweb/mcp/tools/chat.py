@@ -20,6 +20,7 @@ from aweb.messaging.chat import (
     mark_messages_read,
     mark_messages_read_up_to,
     resolve_agent_by_did,
+    resolve_session_actor_did,
     send_in_session,
 )
 from aweb.messaging.sender_address import sender_address as _sender_address
@@ -250,26 +251,6 @@ async def _resolve_actor_agent(db_infra, actor_dids: list[str]) -> dict | None:
         if actor_agent is not None:
             return actor_agent
     return None
-
-
-async def _resolve_session_actor_did(db_infra, *, session_id: UUID, actor_dids: list[str]) -> str:
-    if not actor_dids:
-        return ""
-    aweb_db = db_infra.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT did
-        FROM {{tables.chat_participants}}
-        WHERE session_id = $1
-          AND did = ANY($2::text[])
-        ORDER BY CASE WHEN did = $3 THEN 0 ELSE 1 END
-        LIMIT 1
-        """,
-        session_id,
-        actor_dids,
-        actor_dids[0],
-    )
-    return (row.get("did") or "").strip() if row else ""
 
 
 async def _wait_for_replies(
@@ -697,7 +678,7 @@ async def chat_send(
         if not sess:
             return json.dumps({"error": "Session not found"})
 
-        session_actor_did = await _resolve_session_actor_did(
+        session_actor_did = await resolve_session_actor_did(
             db_infra,
             session_id=sid,
             actor_dids=actor_dids,
@@ -973,7 +954,7 @@ async def chat_history(
     if not sess:
         return json.dumps({"error": "Session not found"})
 
-    actor_did = await _resolve_session_actor_did(
+    actor_did = await resolve_session_actor_did(
         db_infra,
         session_id=session_uuid,
         actor_dids=actor_dids,
@@ -1061,7 +1042,7 @@ async def chat_read(
     elif normalized_watermark is None:
         return json.dumps({"error": "up_to_message_id or message_ids is required"})
 
-    actor_did = await _resolve_session_actor_did(
+    actor_did = await resolve_session_actor_did(
         db_infra,
         session_id=session_uuid,
         actor_dids=actor_dids,

@@ -70,6 +70,7 @@ from aweb.messaging.chat import (
     mark_messages_read,
     mark_messages_read_up_to,
     resolve_agent_by_did,
+    resolve_session_actor_did,
     send_in_session,
 )
 from aweb.messaging.conversations import close_conversation
@@ -809,26 +810,6 @@ async def _resolve_actor_agent(db, actor_dids: list[str]) -> dict[str, Any] | No
         if actor_agent is not None:
             return actor_agent
     return None
-
-
-async def _resolve_session_actor_did(db, *, session_id: UUID, actor_dids: list[str]) -> str:
-    if not actor_dids:
-        return ""
-    aweb_db = db.get_manager("aweb")
-    row = await aweb_db.fetch_one(
-        """
-        SELECT did
-        FROM {{tables.chat_participants}}
-        WHERE session_id = $1
-          AND did = ANY($2::text[])
-        ORDER BY CASE WHEN did = $3 THEN 0 ELSE 1 END
-        LIMIT 1
-        """,
-        session_id,
-        actor_dids,
-        actor_dids[0],
-    )
-    return (row.get("did") or "").strip() if row else ""
 
 
 def _chat_to_address(participant_rows: list[dict[str, Any]], *, from_did: str) -> str:
@@ -1889,7 +1870,7 @@ async def history(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -1999,7 +1980,7 @@ async def mark_read(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -2392,7 +2373,7 @@ async def stream(
     if not sess:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
-    actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
@@ -2504,7 +2485,7 @@ async def send_message(
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
+    actor_did = await resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
         raise HTTPException(status_code=404, detail="Session not found")
     recipient_rows = await _resolve_session_recipient_rows(db, session_id=session_uuid, actor_dids=actor_dids)

@@ -39,6 +39,27 @@ def _json_object(value: Any) -> Any:
     return value
 
 
+async def resolve_session_actor_did(db_infra, *, session_id: UUID, actor_dids: list[str]) -> str:
+    """Return the caller's participant DID in a chat session, or "" when it is not a participant."""
+    if not actor_dids:
+        return ""
+    aweb_db = db_infra.get_manager("aweb")
+    row = await aweb_db.fetch_one(
+        """
+        SELECT did
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1
+          AND did = ANY($2::text[])
+        ORDER BY CASE WHEN did = $3 THEN 0 ELSE 1 END
+        LIMIT 1
+        """,
+        session_id,
+        actor_dids,
+        actor_dids[0],
+    )
+    return (row.get("did") or "").strip() if row else ""
+
+
 def _participant_did(row: dict[str, Any]) -> str:
     return (row.get("did") or row.get("did_aw") or row.get("did_key") or "").strip()
 
