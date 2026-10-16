@@ -583,3 +583,36 @@ async def test_session_id_with_a_trailing_newline_is_invalid_not_a_server_error(
     assert response.status_code == 422
     assert response.json()["detail"].startswith("invalid_value: ")
     assert await _latest(env, "alice") is None
+
+
+@pytest.mark.asyncio
+async def test_read_receipt_during_activity_setup_arrives(privacy_app, monkeypatch):
+    env = privacy_app
+    opened = await _request(env, "bob", "POST", "/v1/chat/sessions", {
+        "to_dids": [env.actors["alice"].did], "message": "hello",
+    })
+    assert opened.status_code == 200, opened.text
+    session_id, message_id = opened.json()["session_id"], opened.json()["message_id"]
+    confirmed, resume = asyncio.Event(), asyncio.Event()
+    subscribe = SessionActivity.subscribe
+
+    async def paused_subscribe(self, pubsub):
+        pending = await subscribe(self, pubsub)
+        confirmed.set()
+        await resume.wait()
+        return pending
+
+    monkeypatch.setattr(SessionActivity, "subscribe", paused_subscribe)
+
+    async with _stream(env, "bob", session_id, include="agent_activity", seconds=4) as response:
+        stream = _Stream(response.aiter_lines())
+        async with asyncio.timeout(5):
+            await confirmed.wait()
+        read = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/read", {"up_to_message_id": message_id})
+        assert read.status_code == 200, read.text
+        await asyncio.sleep(1)
+        resume.set()
+
+        receipt = await stream.next("read_receipt", timeout=10)
+
+    assert receipt["reader_alias"] == "alice"
