@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
-import base64
-import binascii
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import json
 import re
 from typing import Any
 import unicodedata
 
-from awid.signing import VerifyResult, canonical_json_bytes, verify_signature
+from awid.signing import VerifyResult, verify_signature
+
+from aweb.signed_document import (
+    SignedDocumentError,
+    decode_payload,
+    is_safe_positive_integer,
+    parse_json_object,
+    parse_timestamp,
+    require_canonical,
+)
 
 STATUS_TYPE = "agent_status"
 STATUS_VERSION = 1
@@ -20,7 +27,6 @@ FIXING_TEXT_MAX_BYTES = 120
 REASON_CODE_MAX_BYTES = 64
 MAX_VALIDITY = timedelta(minutes=15)
 CLOCK_SKEW = timedelta(minutes=5)
-MAX_SEQ = 2**53 - 1
 
 REACHABLE_VALUES = frozenset({"yes", "degraded", "no", "unknown"})
 FIXING_BY_VALUES = frozenset({"automatic", "operator", "nobody", "unknown"})
@@ -54,20 +60,10 @@ _ALWAYS_REQUIRED = (
 _REASON_FIELDS = frozenset({"code", "text"})
 _FIXING_FIELDS = frozenset({"by", "text"})
 _REASON_CODE = re.compile(r"^[a-z][a-z0-9]*\.[a-z0-9_]+$")
-_TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
-# Base64url without padding, as the publisher encodes the canonical bytes.
-_B64URL = re.compile(r"^[A-Za-z0-9_-]*$")
-# Encoded length of MAX_DOCUMENT_BYTES; longer input is oversize before decoding.
-_MAX_ENCODED_LENGTH = (MAX_DOCUMENT_BYTES * 4 + 2) // 3
 
 
-class StatusDocumentError(Exception):
+class StatusDocumentError(SignedDocumentError):
     """A status document refused with one of the contract's error codes."""
-
-    def __init__(self, code: str, message: str):
-        super().__init__(f"{code}: {message}")
-        self.code = code
-        self.message = message
 
 
 def _refuse(code: str, message: str) -> StatusDocumentError:
@@ -75,33 +71,12 @@ def _refuse(code: str, message: str) -> StatusDocumentError:
 
 
 def _decode_payload(signed_payload: str) -> bytes:
-    if len(signed_payload) > _MAX_ENCODED_LENGTH:
-        raise _refuse("document_too_large", f"the document exceeds {MAX_DOCUMENT_BYTES} bytes")
-    if not _B64URL.match(signed_payload):
-        raise _refuse("malformed_payload", "signed_payload is not unpadded base64url")
-    try:
-        raw = base64.urlsafe_b64decode(signed_payload + "=" * (-len(signed_payload) % 4))
-    except (binascii.Error, ValueError) as exc:
-        raise _refuse("malformed_payload", "signed_payload is not unpadded base64url") from exc
-    if len(raw) > MAX_DOCUMENT_BYTES:
-        raise _refuse("document_too_large", f"the document exceeds {MAX_DOCUMENT_BYTES} bytes")
-    return raw
+    return decode_payload(signed_payload, max_bytes=MAX_DOCUMENT_BYTES, error=StatusDocumentError)
 
 
 def _parse_canonical(raw: bytes) -> dict[str, Any]:
-    try:
-        document = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError) as exc:
-        raise _refuse("malformed_payload", "signed_payload is not a JSON document") from exc
-    if not isinstance(document, dict):
-        raise _refuse("malformed_payload", "signed_payload is not a JSON object")
-    try:
-        canonical = canonical_json_bytes(document)
-    except UnicodeEncodeError as exc:
-        # An escaped lone surrogate parses, but has no canonical UTF-8 form.
-        raise _refuse("non_canonical", "signed_payload has text with no UTF-8 form") from exc
-    if canonical != raw:
-        raise _refuse("non_canonical", "signed_payload is not in canonical form")
+    document = parse_json_object(raw, error=StatusDocumentError)
+    require_canonical(document, raw, error=StatusDocumentError)
     return document
 
 
@@ -127,19 +102,6 @@ def _check_required(document: dict[str, Any]) -> None:
         raise _refuse("missing_field", f"missing field {missing[0]}")
 
 
-def _is_safe_positive_integer(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= MAX_SEQ
-
-
-def _parse_timestamp(name: str, value: Any) -> datetime:
-    if not isinstance(value, str) or not _TIMESTAMP.match(value):
-        raise _refuse("invalid_value", f"{name} must be YYYY-MM-DDTHH:MM:SSZ")
-    try:
-        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    except ValueError as exc:
-        raise _refuse("invalid_value", f"{name} is not a valid time") from exc
-
-
 def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
     version = document["v"]
     if not isinstance(version, int) or isinstance(version, bool) or version != STATUS_VERSION:
@@ -151,7 +113,7 @@ def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
         raise _refuse("invalid_value", "agent must be a did:aw or did:key")
     if not document["publisher_did"].startswith("did:key:z"):
         raise _refuse("invalid_value", "publisher_did must be a did:key")
-    if not _is_safe_positive_integer(document["seq"]):
+    if not is_safe_positive_integer(document["seq"]):
         raise _refuse("invalid_value", "seq must be an integer from 1 to 2^53-1")
     if not isinstance(document["reachable"], str) or document["reachable"] not in REACHABLE_VALUES:
         raise _refuse("invalid_value", "reachable must be yes, degraded, no or unknown")
@@ -176,8 +138,8 @@ def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
             raise _refuse("invalid_value", "fixing.by must be automatic, operator, nobody or unknown")
         if "text" in fixing and not isinstance(fixing["text"], str):
             raise _refuse("invalid_value", "fixing.text must be a string")
-    observed_at = _parse_timestamp("observed_at", document["observed_at"])
-    valid_until = _parse_timestamp("valid_until", document["valid_until"])
+    observed_at = parse_timestamp("observed_at", document["observed_at"], error=StatusDocumentError)
+    valid_until = parse_timestamp("valid_until", document["valid_until"], error=StatusDocumentError)
     return observed_at, valid_until
 
 
