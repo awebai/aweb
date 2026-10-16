@@ -511,3 +511,22 @@ async def test_include_does_not_open_a_session_for_a_non_participant(privacy_app
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Not found"}
+
+
+@pytest.mark.asyncio
+async def test_a_viewer_does_not_receive_its_own_activity(privacy_app):
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+
+    async with _stream(env, "bob", session_id, include="agent_activity") as response:
+        stream = _Stream(response.aiter_lines())
+        await _subscribed(env, "alice")
+        own_channel = f"agent-activity:{env.actors['bob'].id}"
+        own_subscribers = dict(await env.redis.pubsub_numsub(own_channel))[own_channel]
+        assert (await _publish(env, "bob", _event(env, "bob", session_id=session_id))).status_code == 202
+        assert (await _publish(env, "alice", _event(env, "alice", session_id=session_id))).status_code == 202
+
+        frame = await stream.next("agent_activity")
+
+    assert own_subscribers == 0
+    assert frame["agent"] == "alice"
