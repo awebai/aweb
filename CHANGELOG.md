@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: AWID 0.5.28
+
+Changes are since `awid-v0.5.26` / `awid-service-v0.5.27`.
+Publishes PyPI `awid-service` 0.5.28 and the `awid` image 0.5.28.
+
 - **AWID: team visibility, deletion and revocation no longer hit low per-IP
   limits.** The aweb service, presenting its matching `AWID_SERVICE_TOKEN`, is
   exempt from the `team_update`, `team_delete` and `certificate_revoke` per-IP
@@ -12,8 +19,6 @@
   needs a controller signature, so the budget only stops a runaway client. The
   controller signatures and the deletion refusal while certificates are active
   are unchanged.
-
-## Release preparations
 
 ### Release preparation: channel 1.8.0, pi 0.4.0
 
