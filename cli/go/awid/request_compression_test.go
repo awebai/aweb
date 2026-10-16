@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -164,22 +163,35 @@ func TestClientRequestCompressionSignsDecodedBytes(t *testing.T) {
 }
 
 func TestClientRequestCompressionRefusalDisablesWithoutReplay(t *testing.T) {
-	for _, status := range []int{400, 415} {
-		t.Run(strconv.Itoa(status), func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		disable bool
+	}{
+		{"decoder", 400, "Invalid gzip request body", true},
+		{"unsupported", 415, "Unsupported Content-Encoding", true},
+		{"application", 400, `{"detail":"bad state"}`, false},
+		{"application_json_lookalike", 400, `{"detail":"Invalid gzip request body"}`, false},
+		{"application_long", 400, strings.Repeat("application refusal ", 10000), false},
+		{"application_plain_lookalike", 400, "Invalid gzip request body!", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			var probes, writes atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Accept-Encoding", "gzip")
 				if r.URL.Path == "/health" {
 					probes.Add(1)
-					w.Header().Set("Accept-Encoding", "gzip")
 					return
 				}
 				n := writes.Add(1)
 				compressed := r.Header.Get("Content-Encoding") == "gzip"
-				if compressed != (n == 1) {
-					t.Errorf("write %d compressed = %v", n, compressed)
+				if compressed != (n == 1 || !tc.disable) {
+					t.Errorf("write %d compressed=%v", n, compressed)
 				}
 				if n == 1 {
-					w.WriteHeader(status)
+					w.WriteHeader(tc.status)
+					w.Write([]byte(tc.body))
 				} else {
 					w.Write([]byte(`{}`))
 				}
@@ -191,10 +203,14 @@ func TestClientRequestCompressionRefusalDisablesWithoutReplay(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if n == 0 && resp.StatusCode != status {
-					t.Errorf("refusal = %d", resp.StatusCode)
-				}
+				body, err := io.ReadAll(resp.Body)
 				resp.Body.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if n == 0 && (resp.StatusCode != tc.status || string(body) != tc.body) {
+					t.Errorf("response changed: status=%d body length=%d", resp.StatusCode, len(body))
+				}
 			}
 			if writes.Load() != 2 || probes.Load() != 1 {
 				t.Errorf("writes=%d probes=%d", writes.Load(), probes.Load())

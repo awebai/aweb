@@ -256,8 +256,9 @@ plain bodies; a failed, redirected or unadvertised health probe also keeps write
 plain. Discovery has a two-second cap within the caller's API budget.
 
 Support is cached per server base URL for the current process only. A compressed
-write refused with 400 or 415 is returned without replay; later writes to that
-base use plain bodies for the rest of the process. Start a new command to discover
+write refused with 415 or the decoder's fixed invalid-gzip 400 is returned without
+replay; later writes to that base use plain bodies for the rest of the process.
+Application 400s keep compression enabled. Start a new command to discover
 support again after a server upgrade.
 
 Both the original and compressed representations must fit 1 MiB. Larger bodies

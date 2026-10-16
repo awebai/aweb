@@ -283,3 +283,38 @@ func TestOnboardingRequestCompression(t *testing.T) {
 		})
 	}
 }
+
+type compressionReadErrorBody struct {
+	body    []byte
+	failure error
+	closed  bool
+}
+
+func (b *compressionReadErrorBody) Read(p []byte) (int, error) {
+	n := copy(p, b.body)
+	b.body = b.body[n:]
+	if len(b.body) == 0 {
+		return n, b.failure
+	}
+	return n, nil
+}
+func (b *compressionReadErrorBody) Close() error { b.closed = true; return nil }
+
+func TestCompressionRefusalInspectionPreservesReadErrorAndClose(t *testing.T) {
+	failure := io.ErrUnexpectedEOF
+	original := &compressionReadErrorBody{body: []byte("Invalid gzip request body"), failure: failure}
+	support := &requestCompressionSupport{}
+	support.enabled.Store(true)
+	resp := &http.Response{StatusCode: 400, Body: original}
+	noteCompressionRefusal(support, resp)
+	body, err := io.ReadAll(resp.Body)
+	if string(body) != "Invalid gzip request body" || err != failure {
+		t.Errorf("body=%q error=%v", body, err)
+	}
+	if !support.enabled.Load() {
+		t.Error("incomplete response disabled compression")
+	}
+	if err := resp.Body.Close(); err != nil || !original.closed {
+		t.Error("response Close was not forwarded")
+	}
+}

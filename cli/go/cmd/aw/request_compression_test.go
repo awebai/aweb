@@ -280,3 +280,58 @@ func TestCompressionDiscoveryDoesNotTriggerBaseRecovery(t *testing.T) {
 		t.Errorf("health=%d writes=%d recovery=%d current=%s", probes.Load(), writes.Load(), recovery.Load(), state.current())
 	}
 }
+
+func TestFallbackRequestCompressionRefusalClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		disable bool
+	}{
+		{"unsupported", 415, "Unsupported Content-Encoding", true},
+		{"decoder", 400, "Invalid gzip request body", true},
+		{"application", 400, `{"detail":"bad state"}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var probes, writes atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Accept-Encoding", "gzip")
+				if r.URL.Path == "/health" {
+					probes.Add(1)
+					return
+				}
+				n := writes.Add(1)
+				if got := r.Header.Get("Content-Encoding") == "gzip"; got != (n == 1 || !tc.disable) {
+					t.Errorf("write %d compressed=%v", n, got)
+				}
+				if n == 1 {
+					w.WriteHeader(tc.status)
+					w.Write([]byte(tc.body))
+					return
+				}
+				w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+			state := &baseURLFallbackState{configuredBaseURL: srv.URL, currentBaseURL: srv.URL}
+			c, _ := awid.New(srv.URL)
+			c.SetHTTPClient(&http.Client{Transport: &baseURLFallbackTransport{base: awid.NewAPITransport(), state: state}})
+			for n := 0; n < 2; n++ {
+				resp, err := c.DoRaw(context.Background(), "POST", "/v1/messages", "application/json", map[string]string{"message_id": "test-id", "body": "test"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				body, err := io.ReadAll(resp.Body)
+				resp.Body.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if n == 0 && (resp.StatusCode != tc.status || string(body) != tc.body) {
+					t.Errorf("refusal changed: status=%d body=%q", resp.StatusCode, body)
+				}
+			}
+			if writes.Load() != 2 || probes.Load() != 1 {
+				t.Errorf("writes=%d probes=%d", writes.Load(), probes.Load())
+			}
+		})
+	}
+}

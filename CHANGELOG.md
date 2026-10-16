@@ -6,7 +6,8 @@
   probe enables compression only after an explicit gzip advertisement, cached per
   server base for the process. Signatures cover the original bytes. Older servers
   and bodies above either 1 MiB cap keep plain requests. A compressed write refused
-  with 400 or 415 is not replayed, and subsequent writes to that base stay plain.
+  with 415 or the decoder's invalid-gzip 400 is not replayed, and subsequent writes
+  to that base stay plain. Application 400s keep compression enabled.
 
 ## Release preparations
 

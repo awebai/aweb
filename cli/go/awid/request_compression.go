@@ -55,11 +55,7 @@ func doServerRequest(client *http.Client, req *http.Request, serverBase string, 
 	}
 	wire, support := compressedServerRequest(client, req, serverBase)
 	resp, err := doNoRedirect(client, wire, timeout)
-	if support != nil && resp != nil && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnsupportedMediaType) {
-		// A rejected write is never replayed to negotiate compression. Future
-		// writes use plain bytes, even if later responses advertise gzip again.
-		support.enabled.Store(false)
-	}
+	noteCompressionRefusal(support, resp)
 	return resp, err
 }
 
@@ -73,11 +69,54 @@ func RoundTripServerRequest(transport http.RoundTripper, req *http.Request, serv
 	}
 	wire, support := compressedServerRequest(&http.Client{Transport: transport}, req, serverBase)
 	resp, err := transport.RoundTrip(wire)
-	if support != nil && resp != nil && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnsupportedMediaType) {
-		support.enabled.Store(false)
-	}
+	noteCompressionRefusal(support, resp)
 	return resp, err
 }
+
+func noteCompressionRefusal(support *requestCompressionSupport, resp *http.Response) {
+	if support == nil || resp == nil {
+		return
+	}
+	if resp.StatusCode == http.StatusUnsupportedMediaType {
+		support.enabled.Store(false)
+		return
+	}
+	if resp.StatusCode != http.StatusBadRequest || resp.Body == nil {
+		return
+	}
+	// Ordinary application 400s say nothing about gzip support. Inspect only
+	// enough to distinguish the decoder's fixed plain-text refusal, and replay
+	// all bytes, read errors and Close to the caller unchanged.
+	const invalidGzipBody = "Invalid gzip request body"
+	prefix, err := io.ReadAll(io.LimitReader(resp.Body, int64(len(invalidGzipBody)+1)))
+	resp.Body = &compressionResponseBody{prefix: bytes.NewReader(prefix), original: resp.Body, readErr: err}
+	if err == nil && string(prefix) == invalidGzipBody {
+		support.enabled.Store(false)
+	}
+}
+
+type compressionResponseBody struct {
+	prefix   *bytes.Reader
+	original io.ReadCloser
+	readErr  error
+}
+
+func (b *compressionResponseBody) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if b.prefix.Len() > 0 {
+		return b.prefix.Read(p)
+	}
+	if b.readErr != nil {
+		err := b.readErr
+		b.readErr = nil
+		return 0, err
+	}
+	return b.original.Read(p)
+}
+
+func (b *compressionResponseBody) Close() error { return b.original.Close() }
 
 func compressedServerRequest(client *http.Client, req *http.Request, serverBase string) (*http.Request, *requestCompressionSupport) {
 	switch req.Method {
