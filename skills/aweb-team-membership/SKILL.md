@@ -233,34 +233,15 @@ aw id team add-member --team <team> --namespace <domain> --did <beta_did_key> --
 
 Use the actual `did`/`did_aw` values printed by `aw id create`. Do not guess them.
 
-Register with aweb cloud without using the dashboard:
-
-```bash
-aw id team register --service https://app.aweb.ai --team <team>:<domain>
-```
-
-This signs a service-registration request with the team controller key. It creates or syncs an aweb projection of the AWID team, but it does not upload controller private keys, create identities, or initialize any agent workspace. Read the returned next steps and run the required workspace connection command from each already-certified agent directory:
-
-```bash
-aw workspace connect --service https://app.aweb.ai --team <team>:<domain>
-# equivalent service-oriented primitive: aw service init --service https://app.aweb.ai --team <team>:<domain>
-```
-
 `aw workspace connect` / `aw service init` requires the local `.aw/signing.key`, `.aw/teams.yaml`, and `.aw/team-certs/*.pem` for that agent. If the certificate is not installed yet, fetch it first with the certificate id returned by `aw id team add-member`:
 
 ```bash
 aw id team fetch-cert --namespace <domain> --team <team> --cert-id <cert-id>
 ```
 
-After at least one workspace is initialized, the service may suggest a human-claim command such as:
+Choose the projection path before connecting any terminal workspace. For a team that will belong to a Cloud organization, complete the organization import below first. `aw id team register` can create an unowned service projection; a later organization-scoped import refuses an existing projection whose owner does not match, including an unowned one.
 
-```bash
-aw claim-human --email you@example.com
-```
-
-`claim-human` is a service-account/human-login step for billing and dashboard ownership. It is not AWID team-controller authority and it does not add members to the BYOT team.
-
-Import into an existing aweb organization:
+Import into a Cloud organization, then connect the terminals:
 
 1. In app.aweb.ai, create or select the owner organization that should contain the imported team.
 2. Open the BYOT import flow. Prefer the command shown by the dashboard because it contains the correct `--organization-id`.
@@ -270,7 +251,7 @@ Import into an existing aweb organization:
 aw id team import-request --team <team> --namespace <domain> --organization-id <org-id>
 ```
 
-Paste the signed output and use Preview.
+Paste the JSON under `Request body:` and use Preview. With `--json`, paste the `request_body` field rather than the whole output wrapper.
 
 4. If the preview is correct, regenerate an apply request:
 
@@ -278,7 +259,16 @@ Paste the signed output and use Preview.
 aw id team import-request --team <team> --namespace <domain> --organization-id <org-id> --apply
 ```
 
-Paste it and use Import / sync.
+Paste the new request body and use Import / sync. Preview and apply are separately signed; do not edit one into the other. Regenerate requests after five minutes.
+
+5. After the import succeeds, connect each certified agent from its own directory:
+
+```bash
+aw workspace connect --service https://app.aweb.ai --team <team>:<domain>
+# equivalent service-oriented primitive: aw service init --service https://app.aweb.ai --team <team>:<domain>
+```
+
+The customer retains both controller keys. Cloud login and organization permissions authorize the Cloud organization operation; the team-controller signature authorizes projecting the AWID team. Connecting a workspace grants neither namespace nor team-controller authority.
 
 Sync later changes:
 
@@ -288,6 +278,22 @@ Sync later changes:
 ```bash
 aw id team import-request --team <team> --namespace <domain> --cloud-team-id <cloud-team-id> --apply
 ```
+
+Register with a service when no Cloud organization import is intended:
+
+For a self-hosted service that supports team registration, or another service setup without Cloud organization ownership, register first with the team controller:
+
+```bash
+aw id team register --service <service-origin> --team <team>:<domain>
+```
+
+This signs a service-registration request and creates or syncs the team's projection. It does not upload controller private keys, create identities, or initialize member workspaces. Follow the returned next steps and connect each already-certified agent from its own directory:
+
+```bash
+aw workspace connect --service <service-origin> --team <team>:<domain>
+```
+
+If the service suggests `aw claim-human --email you@example.com` after connection, that is a human-login/billing ownership step. It does not add AWID members or grant controller authority, and it is not a substitute for the organization-scoped import above.
 
 ## Diagnostic recipes
 
