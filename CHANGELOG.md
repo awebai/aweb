@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **Live agent activity from Codex, and an opt-in switch for every host:**
+  `aw activity enable`, `disable` and `show` manage the host owner's opt-in,
+  `<identity home>/activity.yaml`, which the Claude channel, Pi and Codex
+  emitters read at each turn. `aw activity hook` publishes Codex's turns as
+  signed, unattributed activity: phases, tool names and templated summaries,
+  never output or arguments. It is coalesced and rate-limited like the other
+  emitters, and it stops quietly against a server without the route (server
+  1.27.26 or later has it). `aw activity hook install --codex` adds the hook
+  to `$CODEX_HOME/hooks.json` for hosts that OATS does not manage; Codex runs
+  it only after you trust it with `/hooks`. See
+  [agent activity](docs/agent-activity.md).
+
 ## Release preparations
 
 ### Release preparation: channel 1.8.0, pi 0.4.0
