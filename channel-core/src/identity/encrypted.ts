@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { verifySignedPayload } from "./signing.js";
 import { decodeRawStdBase64 } from "./base64.js";
+import { canonicalJSONValue } from "./canonical.js";
 
 export interface DecryptedMessageProof {
   message_id: string;
@@ -27,14 +28,7 @@ function text(value: unknown): string {
 // v2 signs the complete JSON envelope except signature. Object keys are sorted;
 // arrays retain their order. Do not project away unknown signed fields.
 export function canonicalEncryptedJSON(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalEncryptedJSON).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = object(value);
-    return `{${Object.keys(obj).sort().map(key => `${JSON.stringify(key)}:${canonicalEncryptedJSON(obj[key])}`).join(",")}}`;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null
-      || (typeof value === "number" && Number.isSafeInteger(value))) return JSON.stringify(value);
-  throw new Error("unsupported encrypted envelope value");
+  return canonicalJSONValue(value, "unsupported encrypted envelope value");
 }
 // Go/Python v2 canonicalization omits these optional empty strings. In
 // particular Python transmits empty routing fields that Go omits on readback.
