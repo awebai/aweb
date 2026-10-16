@@ -291,3 +291,31 @@ async def test_non_http_is_untouched(kind):
 async def test_disconnected_upload_never_calls_inner_app():
     sent, seen, _ = await _asgi_upload([])
     assert sent == seen == []
+
+
+@pytest.mark.asyncio
+async def test_inner_failure_after_response_start_never_sends_a_second_response(caplog):
+    from aweb.request_compression import RequestDecompressionMiddleware
+
+    sent = []
+    error = RuntimeError("fixture crash after response start")
+
+    async def inner(scope, receive, send):
+        await send({"type": "http.response.start", "status": 202, "headers": []})
+        await send({"type": "http.response.body", "body": b"partial", "more_body": True})
+        raise error
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    await RequestDecompressionMiddleware(inner)({"type": "http", "headers": []}, receive, send)
+    starts = [message for message in sent if message["type"] == "http.response.start"]
+    assert len(starts) == 1
+    assert starts[0]["status"] == 202
+    assert starts[0]["headers"] == [(b"accept-encoding", b"gzip")]
+    records = [record for record in caplog.records if record.name == "aweb.request_compression"]
+    assert len(records) == 1
+    assert records[0].exc_info[1] is error
