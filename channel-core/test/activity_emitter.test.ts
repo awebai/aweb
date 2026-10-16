@@ -293,3 +293,32 @@ describe("publish outcomes", () => {
     expect(sent.map(event => event.phase)).toEqual(["turn_started", "turn_ended"]);
   });
 });
+
+describe("drained", () => {
+  test("resolves once every queued event has been published", async () => {
+    vi.useRealTimers();
+    optIn();
+    let resolvePublish: (outcome: PublishOutcome) => void = () => {};
+    const e = emitter({
+      publish: async (body: SignedActivity) => {
+        sent.push(JSON.parse(Buffer.from(body.signed_payload, "base64url").toString("utf8")));
+        return new Promise<PublishOutcome>(resolve => { resolvePublish = resolve; });
+      },
+    });
+    e.turnStarted();
+    let done = false;
+    const drained = e.drained().then(() => { done = true; });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(done).toBe(false);
+    resolvePublish({ kind: "accepted" });
+    await drained;
+    expect(done).toBe(true);
+    expect(sent.map(event => event.phase)).toEqual(["turn_started"]);
+  });
+
+  test("resolves at once when nothing is queued", async () => {
+    vi.useRealTimers();
+    await expect(emitter().drained()).resolves.toBeUndefined();
+  });
+});
+
