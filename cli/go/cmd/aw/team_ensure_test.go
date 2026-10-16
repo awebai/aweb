@@ -112,6 +112,9 @@ func TestTeamEnsureReportsUnsupportedServerDiagnostics(t *testing.T) {
 			teamID := "3c0e24cc-ef76-4d98-ae4d-55b9c2f14dad"
 			canonicalTeamID := "unsupported:abjj-enroll.aweb.ai"
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
 				if r.URL.Path == tc.missing {
 					http.NotFound(w, r)
 					return
@@ -183,6 +186,9 @@ func TestTeamEnsureLostFirstEnrollResponseRetriesSameKeyAndBinds(t *testing.T) {
 	var enrollCount int
 	var spawnAuthSeen bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			if got := r.Header.Get("Authorization"); got != "Bearer awcli_test" {
@@ -347,6 +353,9 @@ func TestTeamEnsureOccupiedRootPreservesBytesAndSkipsHTTP(t *testing.T) {
 	}
 	enrollCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
@@ -415,6 +424,9 @@ func TestTeamEnsureForeignLocalRootPreservesBytesAndSkipsEnroll(t *testing.T) {
 
 	var enrollCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
@@ -476,6 +488,9 @@ func TestTeamEnsureExistingGlobalPreservesStableIDAndUsesServerReturnedStableID(
 	}
 	var sawGlobalEnroll bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
@@ -553,6 +568,9 @@ func TestTeamEnsureDoesNotReturnBoundWhenSpawnAuthorityFails(t *testing.T) {
 	teamID := "3c0e24cc-ef76-4d98-ae4d-55b9c2f14dad"
 	canonicalTeamID := "no-spawn:abjj-enroll.aweb.ai"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
@@ -695,6 +713,9 @@ func TestTeamEnsureOnlyTranslatesOwnerMismatchConflict(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
 				if r.URL.Path != workspaceTeamEnsurePath {
 					t.Fatalf("unexpected path %s", r.URL.Path)
 				}
@@ -724,6 +745,9 @@ func TestTeamEnsureRefusesRefreshedTokenDifferentAccountBeforeMutation(t *testin
 	t.Chdir(wd)
 	mutated := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/oauth/token":
 			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "new-access", "refresh_token": "new-refresh", "token_type": "bearer", "expires_in": 3600, "scope": cliAuthScope, "resource": serverFlag + "/cli"})
@@ -808,6 +832,9 @@ func TestWorkspaceTeamEnrollSignatureBindsExpectedAccountID(t *testing.T) {
 	ensure := &workspaceTeamEnsureResponse{TeamID: "team", CanonicalTeamID: "team"}
 	var captured workspaceTeamEnrollRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.URL.Path != workspaceTeamEnrollPath {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -930,6 +957,9 @@ func TestTeamEnsureTwoAccountsSameHomeRecordedOwnerIsolation(t *testing.T) {
 	mutationCounts := map[string]int{"acct-a": 0, "acct-b": 0}
 	serverURL := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		owner := ""
 		switch r.Header.Get("Authorization") {
 		case "Bearer access-a":

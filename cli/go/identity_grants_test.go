@@ -57,6 +57,10 @@ func TestIdentityGrant404RequiresServer1272(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var gotMethod, gotPath string
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
+
 				gotMethod = r.Method
 				gotPath = r.URL.Path
 				http.Error(w, "route absent", http.StatusNotFound)
@@ -80,6 +84,10 @@ func TestIdentityGrant404RequiresServer1272(t *testing.T) {
 
 func TestIdentityGrantNon404PreservesOriginalError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		http.Error(w, "grant backend unavailable", http.StatusBadGateway)
 	}))
 	t.Cleanup(server.Close)
@@ -110,6 +118,10 @@ func TestIdentityGrantNon404PreservesOriginalError(t *testing.T) {
 func TestMintIdentityGrantSendsWireContractBody(t *testing.T) {
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/identity-grants" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -197,6 +209,10 @@ func TestGrantAuthenticatedRequestsCarryCredentialHeaders(t *testing.T) {
 			var gotHeader http.Header
 			var gotBody []byte
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
+
 				gotHeader = r.Header.Clone()
 				gotBody, _ = io.ReadAll(r.Body)
 				w.Header().Set("Content-Type", "application/json")

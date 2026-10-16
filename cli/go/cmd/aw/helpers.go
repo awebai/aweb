@@ -1109,6 +1109,9 @@ type baseURLFallbackTransport struct {
 	state *baseURLFallbackState
 }
 
+// Compression is negotiated after requestForBase selects the actual mount.
+func (t *baseURLFallbackTransport) HandlesServerRequestCompression() bool { return true }
+
 func (t *baseURLFallbackTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	base := t.base
 	if base == nil {
@@ -1125,7 +1128,7 @@ func (t *baseURLFallbackTransport) RoundTrip(req *http.Request) (*http.Response,
 	if err != nil {
 		return nil, err
 	}
-	resp, err := base.RoundTrip(prepared)
+	resp, err := awid.RoundTripServerRequest(base, prepared, current)
 	if !shouldRetryBaseURLRequest(req.Method, resp, err) {
 		return resp, err
 	}
@@ -1144,7 +1147,7 @@ func (t *baseURLFallbackTransport) RoundTrip(req *http.Request) (*http.Response,
 	if err != nil {
 		return nil, err
 	}
-	resp, err = base.RoundTrip(retried)
+	resp, err = awid.RoundTripServerRequest(base, retried, fresh)
 	if err == nil && t.state.persist != nil {
 		t.state.persist(fresh)
 	}

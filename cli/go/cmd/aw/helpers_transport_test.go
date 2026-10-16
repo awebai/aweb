@@ -128,6 +128,9 @@ func TestBaseURLFallbackDoesNotReplayMutatingTransportError(t *testing.T) {
 func TestMutatingTimeoutThroughFallbackStillSaysMayHaveApplied(t *testing.T) {
 	var serverHits int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		atomic.AddInt32(&serverHits, 1)
 		time.Sleep(2 * time.Second)
 	}))

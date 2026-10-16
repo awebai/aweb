@@ -17,6 +17,10 @@ func TestTaskCreate(t *testing.T) {
 
 	var gotBody TaskCreateRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -66,6 +70,10 @@ func TestTaskList(t *testing.T) {
 
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -103,6 +111,10 @@ func TestTaskListReady(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks/ready" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -135,6 +147,10 @@ func TestTaskListBlocked(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks/blocked" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -172,6 +188,10 @@ func TestTaskListActive(t *testing.T) {
 	branch := "feat/summary"
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks/active" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -217,6 +237,10 @@ func TestTaskGet(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks/aw-042" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -264,6 +288,10 @@ func TestTaskUpdate(t *testing.T) {
 
 	var gotBody TaskUpdateRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodPatch || r.URL.Path != "/v1/tasks/aw-042" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -307,6 +335,10 @@ func TestTaskUpdateCascadeClose(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		_ = json.NewEncoder(w).Encode(TaskUpdateResponse{
 			Task: Task{
 				TaskID:  "task-001",
@@ -346,6 +378,10 @@ func TestTaskUpdate409ReturnsHeldError(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(TaskHeldError{
 			Detail:        "task already held",
@@ -381,6 +417,10 @@ func TestTaskDelete(t *testing.T) {
 
 	var gotMethod, gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
@@ -409,6 +449,10 @@ func TestTaskAddDep(t *testing.T) {
 
 	var gotBody TaskAddDepRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/aw-042/deps" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -439,6 +483,10 @@ func TestTaskAddDepCycleReturns422(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		_ = json.NewEncoder(w).Encode(map[string]string{"detail": "dependency cycle detected"})
 	}))
@@ -466,6 +514,10 @@ func TestTaskRemoveDep(t *testing.T) {
 
 	var gotMethod, gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		w.WriteHeader(http.StatusOK)
@@ -494,6 +546,10 @@ func TestTaskListQueryParams(t *testing.T) {
 
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		gotQuery = r.URL.RawQuery
 		_ = json.NewEncoder(w).Encode(TaskListResponse{})
 	}))
@@ -535,6 +591,10 @@ func TestTaskUpdateDirectCallerCannotReceiveRawAmbiguousNotFound(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		switch {
 		case r.Method == http.MethodPatch && r.URL.Path == "/v1/tasks/aw-042":
 			http.Error(w, `{"detail":"Task not found"}`, http.StatusNotFound)
@@ -570,6 +630,10 @@ func TestTaskCommentCreate(t *testing.T) {
 
 	var gotBody TaskCommentCreateRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/tasks/aw-042/comments" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}
@@ -610,6 +674,10 @@ func TestTaskCommentList(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodGet || r.URL.Path != "/v1/tasks/aw-042/comments" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

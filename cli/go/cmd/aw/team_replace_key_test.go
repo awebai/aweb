@@ -253,6 +253,9 @@ func TestTeamReplaceKeyWithOperatorIdentityHomeRefreshesOnlyTargetEncryptionKey(
 	var publishedEncryptionAssertion awid.EncryptionKeyAssertion
 	var servicePayload localIdentityKeyReplacementRequest
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/agents/alice/replace-key":
 			order = append(order, "roster")
@@ -379,6 +382,9 @@ func TestTeamReplaceKeyWithOperatorIdentityHomeRefreshesOnlyTargetEncryptionKey(
 func TestTeamReplaceKeyWithoutHomePrintsCertificatePlacementMaterial(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/agents/alice/replace-key":
 			var body localIdentityKeyReplacementRequest
@@ -457,6 +463,9 @@ func TestTeamReplaceKeyRefusesWithoutLocalControllerKey(t *testing.T) {
 func TestTeamReplaceKeyReconcilesCommittedRosterAfterResponseLoss(t *testing.T) {
 	var serviceCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/agents/alice/replace-key":
 			serviceCalls++
@@ -509,6 +518,9 @@ func TestTeamReplaceKeyReconcilesCommittedRosterAfterResponseLoss(t *testing.T) 
 
 func TestTeamReplaceKeyGenerateRetainsNewKeyOnRosterFailure(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.URL.Path == "/v1/agents/alice/replace-key" {
 			http.Error(w, "old key changed", http.StatusConflict)
 			return
@@ -544,6 +556,9 @@ func TestTeamReplaceKeyGenerateRetainsNewKeyOnRosterFailure(t *testing.T) {
 func TestTeamReplaceKeyRosterCASFailureMakesNoCertificateChanges(t *testing.T) {
 	var registryCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.URL.Path == "/v1/agents/alice/replace-key" {
 			http.Error(w, "old key changed", http.StatusConflict)
 			return
@@ -574,6 +589,9 @@ func TestTeamReplaceKeyRosterCASFailureMakesNoCertificateChanges(t *testing.T) {
 func TestTeamReplaceKeyReportsOldCertificateRevocationFailureState(t *testing.T) {
 	var registerCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/agents/alice/replace-key":
 			var body localIdentityKeyReplacementRequest
@@ -625,6 +643,9 @@ func TestTeamReplaceKeyReportsOldCertificateRevocationFailureState(t *testing.T)
 
 func TestTeamReplaceKeyReportsEncryptionRefreshFailureState(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/agents/alice/replace-key":
 			var body localIdentityKeyReplacementRequest
@@ -679,6 +700,9 @@ func TestTeamReplaceKeyReportsEncryptionRefreshFailureState(t *testing.T) {
 func TestTeamReplaceKeyReportsRegisteredCertificateFailureState(t *testing.T) {
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/agents/alice/replace-key":
 			var body localIdentityKeyReplacementRequest

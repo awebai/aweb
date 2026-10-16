@@ -45,6 +45,9 @@ func newHostedRemovalHTTPFixture(t *testing.T) (*hostedRemovalHTTPFixture, *http
 	t.Helper()
 	fixture := &hostedRemovalHTTPFixture{t: t, prepareStatus: http.StatusOK, commitStatus: http.StatusOK, commitOutcome: "revoked", getStatus: "prepared"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		fixture.mu.Lock()
 		defer fixture.mu.Unlock()
 		switch {

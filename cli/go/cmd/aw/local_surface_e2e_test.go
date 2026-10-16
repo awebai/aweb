@@ -73,6 +73,9 @@ func TestLocalSurfaceE2EEmptyProfileCreateAdd(t *testing.T) {
 
 	var sawTeamCreate, sawCertificate bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{"onboarding_url": "", "aweb_url": r.Host, "registry_url": r.Host})
@@ -176,6 +179,9 @@ func TestLocalSurfaceE2ELibraryBoundCreateAndAdd(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/.well-known/aweb-app.json":
 			w.Header().Set("Content-Type", "application/json")

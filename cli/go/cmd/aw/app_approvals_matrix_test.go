@@ -36,6 +36,9 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 				f := setupAppCustodyFixtureForTeam(t, nil, team, mode)
 				var served atomic.Value
 				f.app.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveUnadvertisedHealth(w, r) {
+						return
+					}
 					if r.URL.Path == "/.well-known/aweb-app.json" {
 						w.Write(served.Load().([]byte))
 						return
@@ -50,6 +53,9 @@ func TestAppApprovalBinaryMintAndDispatchMatrix(t *testing.T) {
 				keys := map[string]string{}
 				var mintRequests atomic.Int32
 				coordination := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveUnadvertisedHealth(w, r) {
+						return
+					}
 					if r.Method != "POST" || r.URL.Path != "/v1/identity-grants" {
 						http.NotFound(w, r)
 						return

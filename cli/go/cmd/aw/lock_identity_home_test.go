@@ -54,11 +54,17 @@ func TestLockCommandsUseExternalIdentityHome(t *testing.T) {
 					var calls, fallbackCalls atomic.Int32
 					var held, refuse atomic.Bool
 					fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if serveUnadvertisedHealth(w, r) {
+							return
+						}
 						fallbackCalls.Add(1)
 						http.Error(w, "must not use another principal or registry", 500)
 					}))
 					defer fallback.Close()
 					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if serveUnadvertisedHealth(w, r) {
+							return
+						}
 						calls.Add(1)
 						body, err := io.ReadAll(r.Body)
 						if err != nil {

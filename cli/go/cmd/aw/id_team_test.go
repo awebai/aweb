@@ -305,6 +305,9 @@ func TestRunTeamRemoveMemberHostedPostsCloudRevokeByMemberAddressWithExplicitTea
 	var gotBody map[string]any
 	var gotAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -405,6 +408,9 @@ func TestRunTeamRemoveMemberHostedPostsCloudRevokeByCertificateID(t *testing.T) 
 	t.Setenv(initAPIKeyEnvVar, "aw_sk_env")
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -438,6 +444,9 @@ func TestPostHostedTeamRemoveMemberPreservesTheStatusItReceived(t *testing.T) {
 	for _, wireStatus := range []string{"removed", "not_found"} {
 		t.Run(wireStatus, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
 				if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
 					t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 				}
@@ -508,6 +517,9 @@ func TestRevokeHostedTeamCertificateRefusesAnUnrecognisedStatus(t *testing.T) {
 
 func TestPostHostedTeamRemoveMemberTreatsHTTP404AsError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/default:alice.aweb.ai/agents/remove-member" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.String())
 		}
@@ -961,6 +973,9 @@ func TestExecuteTeamCleanupCloudSignsProjectionDeletePayload(t *testing.T) {
 	pub := teamKey.Public().(ed25519.PublicKey)
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/byoidt/projection-delete" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -1034,6 +1049,9 @@ func TestExecuteTeamCleanupCloudCanSignWithNamespaceControllerScope(t *testing.T
 	pub := namespaceKey.Public().(ed25519.PublicKey)
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/teams/byoidt/projection-delete" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}

@@ -52,6 +52,9 @@ func TestAuthLoginUsesDeviceFlowAndStoresHostCredentialsOnly(t *testing.T) {
 
 	var sawDevice, sawToken bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/oauth/device_authorization":
 			if r.Method != http.MethodPost {
@@ -150,6 +153,9 @@ func TestAuthLoginRejectsTokenResponseWrongResourceOrScope(t *testing.T) {
 			resetAuthCommandGlobals(t)
 			t.Setenv("HOME", t.TempDir())
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
 				switch r.URL.Path {
 				case "/oauth/device_authorization":
 					_ = json.NewEncoder(w).Encode(map[string]any{
@@ -196,6 +202,9 @@ func TestAuthStatusRefreshesWithoutPrintingTokens(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var gotStatusAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/oauth/token":
 			if err := r.ParseForm(); err != nil {
@@ -319,6 +328,9 @@ func TestAuthStatusRejectsRefreshTokenResponseWrongResourceOrScope(t *testing.T)
 			resetAuthCommandGlobals(t)
 			t.Setenv("HOME", t.TempDir())
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
 				if r.URL.Path != "/oauth/token" {
 					t.Fatalf("unexpected path %s", r.URL.Path)
 				}
@@ -363,6 +375,9 @@ func TestAuthLogoutReportsRevocationFailureAndRetainsCredentials(t *testing.T) {
 	var revoked []string
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.URL.Path != "/oauth/revoke" {
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -419,6 +434,9 @@ func TestAuthScopesAreStoredSeparately(t *testing.T) {
 	t.Setenv("HOME", home)
 	cliAuthScopeFlag = cliAuthScopeTeamAdmission
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/oauth/device_authorization":
 			if err := r.ParseForm(); err != nil {

@@ -1658,6 +1658,9 @@ func TestResolveChatWakePropagatesLocalDeliveryMarkFailure(t *testing.T) {
 func TestRunDispatcherDoesNotRepeatRejectedMalformedChatIDs(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls++
 		http.Error(w, "authoritative malformed uuid", http.StatusUnprocessableEntity)
 	}))

@@ -1351,6 +1351,9 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	)
 
 	registryServer := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/namespaces/source/teams/backend/certificates":
 			var body map[string]any
@@ -1372,6 +1375,9 @@ func TestAwWorkspaceAddWorktreeWithoutIdentityUsesDiscoveryAndMailRoundTrip(t *t
 	}))
 
 	awebServer := newRawLocalHTTPServerForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			mu.Lock()
@@ -1659,6 +1665,9 @@ func TestAPIKeyBootstrapAddWorktreeMailRoundTrip(t *testing.T) {
 	)
 
 	awebServer := newRawLocalHTTPServerForTest(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/discovery":
 			_ = json.NewEncoder(w).Encode(map[string]any{

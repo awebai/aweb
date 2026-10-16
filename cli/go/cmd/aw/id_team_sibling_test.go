@@ -68,6 +68,10 @@ func TestHostedSiblingCreateBinary(t *testing.T) {
 					prefix = "/aweb"
 				}
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveUnadvertisedHealth(w, r) {
+						return
+					}
+
 					n := calls.Add(1)
 					if r.Method != "POST" || r.URL.Path != prefix+"/api/v1/teams/sibling" {
 						t.Errorf("unexpected request %s %s", r.Method, r.URL)
@@ -178,6 +182,10 @@ func TestHostedSiblingCreateErrorsBinary(t *testing.T) {
 			pub, key, _ := awid.GenerateKeypair()
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
+
 				calls.Add(1)
 				body, _ := io.ReadAll(r.Body)
 				assertLockPrincipalRequest(t, r, body, "native", "runtime:aweb.test", pub)
@@ -212,7 +220,13 @@ func TestHostedSiblingCreateRefusalsBinary(t *testing.T) {
 			principal := filepath.Join(dir, "principal")
 			pub, key, _ := awid.GenerateKeypair()
 			var calls atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1); http.Error(w, "unexpected network", 500) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
+				calls.Add(1)
+				http.Error(w, "unexpected network", 500)
+			}))
 			defer server.Close()
 			writeMessagingPrincipalForTest(t, cwd, server.URL, "shadow", awid.ComputeDIDKey(pub), key)
 			writeMessagingPrincipalForTest(t, principal, server.URL, "alice", awid.ComputeDIDKey(pub), key)
@@ -405,6 +419,10 @@ func TestHostedSiblingAmbiguousFailureDoesNotRetry(t *testing.T) {
 	pub, key, _ := awid.GenerateKeypair()
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		calls.Add(1)
 		body, _ := io.ReadAll(r.Body)
 		assertLockPrincipalRequest(t, r, body, "native", "runtime:aweb.test", pub)
@@ -454,6 +472,10 @@ func TestTeamCreateAuthoritySelectionRefusalsBinary(t *testing.T) {
 			}
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
+
 				calls.Add(1)
 				http.Error(w, "unexpected authority call", 500)
 			}))

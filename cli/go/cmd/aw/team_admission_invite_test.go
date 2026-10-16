@@ -28,6 +28,9 @@ func TestTeamAdmissionInviteRequiresTeamAdmissionScopeAndDoesNotAcceptInvite(t *
 	var sawAdmission bool
 	serverURL := ""
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			if got := r.Header.Get("Authorization"); got != "Bearer team-access" {
@@ -94,6 +97,9 @@ func TestTeamAdmissionInviteAcceptsCanonicalTeamReference(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
@@ -133,6 +139,9 @@ func TestTeamAdmissionInviteRejectsMismatchedCanonicalResponse(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/api/v1/cli-auth/status":
 			_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})
@@ -225,6 +234,9 @@ func TestTeamAdmissionInviteOnlyTranslatesOwnerMismatchConflict(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
 				switch r.URL.Path {
 				case "/api/v1/cli-auth/status":
 					_ = json.NewEncoder(w).Encode(map[string]any{"status": "authorized", "account": map[string]string{"id": "acct-test", "handle": "alice"}})

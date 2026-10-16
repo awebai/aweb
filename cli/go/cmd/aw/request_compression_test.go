@@ -246,3 +246,37 @@ func TestRequestCompressionUsesActuallySelectedFallbackBase(t *testing.T) {
 		})
 	}
 }
+
+func TestCompressionDiscoveryDoesNotTriggerBaseRecovery(t *testing.T) {
+	var probes, writes, recovery atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/health":
+			probes.Add(1)
+			w.WriteHeader(404)
+		case "/api/v1/test":
+			writes.Add(1)
+			if r.Header.Get("Content-Encoding") != "" {
+				t.Error("unsupported base got gzip")
+			}
+			w.Write([]byte(`{}`))
+		default:
+			recovery.Add(1)
+			w.Header().Set("Accept-Encoding", "gzip")
+			w.Write([]byte(`{}`))
+		}
+	}))
+	defer srv.Close()
+	base := srv.URL + "/api"
+	state := &baseURLFallbackState{configuredBaseURL: base, currentBaseURL: base}
+	c, _ := awid.New(base)
+	c.SetHTTPClient(&http.Client{Transport: &baseURLFallbackTransport{base: awid.NewAPITransport(), state: state}})
+	resp, err := c.DoRaw(context.Background(), "POST", "/v1/test", "application/json", map[string]string{"body": "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if probes.Load() != 1 || writes.Load() != 1 || recovery.Load() != 0 || state.current() != base {
+		t.Errorf("health=%d writes=%d recovery=%d current=%s", probes.Load(), writes.Load(), recovery.Load(), state.current())
+	}
+}

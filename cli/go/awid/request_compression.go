@@ -47,11 +47,33 @@ func DoServerRequestWithTimeout(client *http.Client, req *http.Request, serverBa
 }
 
 func doServerRequest(client *http.Client, req *http.Request, serverBase string, timeout time.Duration) (*http.Response, error) {
+	// A relocating transport must negotiate after it selects each actual base.
+	if client != nil {
+		if owner, ok := client.Transport.(interface{ HandlesServerRequestCompression() bool }); ok && owner.HandlesServerRequestCompression() {
+			return doNoRedirect(client, req, timeout)
+		}
+	}
 	wire, support := compressedServerRequest(client, req, serverBase)
 	resp, err := doNoRedirect(client, wire, timeout)
 	if support != nil && resp != nil && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnsupportedMediaType) {
 		// A rejected write is never replayed to negotiate compression. Future
 		// writes use plain bytes, even if later responses advertise gzip again.
+		support.enabled.Store(false)
+	}
+	return resp, err
+}
+
+// RoundTripServerRequest lets a transport that selects API bases negotiate at
+// its actual-send boundary. transport must be the underlying sender, without
+// base recovery, and serverBase must be the base selected for this attempt.
+// The outer http.Client still owns cancellation, deadlines and redirects.
+func RoundTripServerRequest(transport http.RoundTripper, req *http.Request, serverBase string) (*http.Response, error) {
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	wire, support := compressedServerRequest(&http.Client{Transport: transport}, req, serverBase)
+	resp, err := transport.RoundTrip(wire)
+	if support != nil && resp != nil && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnsupportedMediaType) {
 		support.enabled.Store(false)
 	}
 	return resp, err

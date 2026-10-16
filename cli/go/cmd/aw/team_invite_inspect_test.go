@@ -27,11 +27,17 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 	var mode atomic.Value
 	mode.Store("active")
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		redirected.Add(1)
 	}))
 	defer other.Close()
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls.Add(1)
 		if r.URL.Path == "/api/v1/spawn/accept-invite" {
 			uses.Add(1)

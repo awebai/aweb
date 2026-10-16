@@ -108,6 +108,9 @@ func TestRunGrantMintWritesGrantHome(t *testing.T) {
 	var gotBody map[string]any
 	var gotAuthorization, gotTeamCert string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/identity-grants" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
@@ -231,6 +234,9 @@ func TestRunGrantMintAutoCustodySocketSupportsGrantSignedSend(t *testing.T) {
 	var gotMint map[string]any
 	var gotMessage map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/identity-grants":
 			if err := json.NewDecoder(r.Body).Decode(&gotMint); err != nil {
@@ -427,6 +433,9 @@ func TestGrantHomeCustodySocketSignsPlainMail(t *testing.T) {
 	residentDID := awid.ComputeDIDKey(residentKey.Public().(ed25519.PublicKey))
 	var got map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
