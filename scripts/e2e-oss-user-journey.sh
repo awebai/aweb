@@ -1919,7 +1919,7 @@ capture_success bob_restored_pending "bob_restored_pending" run_aw_in "$BOB_DIR"
 bob_restored_chat_from_address="$(echo "$bob_restored_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership restored primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary chat from_address" "test.local/alice" "$bob_restored_chat_from_address"
 
-if sse_initial_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
+if sse_initial_out="$(AWEB_HTTP_DIAGNOSTICS=1 run_aw_in "$BOB_DIR" mail send --plaintext \
   --to alice \
   --subject "SSE continuation initial" \
   --body "SSE continuation starts here" \
@@ -1927,6 +1927,7 @@ if sse_initial_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   sse_initial_exit=0
 else
   sse_initial_exit=$?
+  printf '  SSE initial mail failure: %s\n' "$sse_initial_out" >&2
 fi
 assert_eq "sse continuation initial mail exit" "0" "$sse_initial_exit"
 sse_conversation_id="$(echo "$sse_initial_out" | jq_field conversation_id)"
