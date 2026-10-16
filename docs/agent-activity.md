@@ -456,25 +456,38 @@ apart by the body:
 Emitter tests cover both: a refused session does not suppress a following
 valid or unattributed event, and an absent route stops publishing.
 
-- **Claude Code: plugin hooks, not a transcript tail.** The Claude Code docs
-  state the transcript format "is internal to Claude Code and changes between
-  versions" (code.claude.com/docs/en/sessions.md). Hooks are the supported
-  interface. The aweb channel plugin is a stdio MCP server that already loads
-  the agent's signing key and team certificate
-  (`channel-core/src/config.ts:160-320`) and signs requests
-  (`channel-core/src/api/client.ts:18-34`). Its manifest declares no hooks
-  today (`channel/.claude-plugin/plugin.json`).
-  - The plugin ships `hooks/hooks.json` with `async: true` command hooks, so
-    the hooks never delay a tool call: `UserPromptSubmit` to `turn_started`,
-    `PreToolUse` to `tool`, `PostToolUse` and `PostToolUseFailure` to
-    `thinking`, `PermissionRequest` to `waiting_permission`, and `Stop` and
-    `StopFailure` to `turn_ended` (code.claude.com/docs/en/hooks.md).
-  - Each hook passes its stdin JSON to the running plugin process over a local
-    socket in the plugin's data directory. The plugin applies the templates,
-    redaction, coalescing, attribution and signing.
-  - Alternatively, a hook can call an MCP tool of the plugin
-    (`type: "mcp_tool"`). Whether that hook type runs asynchronously is not
-    documented, so the implementation verifies it before choosing.
+- **Claude Code: plugin hooks, not a transcript tail.** Hooks are Claude
+  Code's documented interface for observing a session; the transcript is
+  written asynchronously and may lag the conversation
+  (code.claude.com/docs/en/hooks). The aweb channel plugin is a stdio MCP
+  server that already loads the agent's identity and signs requests; it owns
+  the session's emitter (`channel/src/activity.ts`). Verified on Claude Code
+  2.1.300, headless, with the packaged plugin.
+  - The plugin ships `hooks/hooks.json`. `UserPromptSubmit` is
+    `turn_started`, `PreToolUse` is `tool`, `PostToolUse` and
+    `PostToolUseFailure` return to `thinking`, `PermissionRequest` is
+    `waiting_permission`, and `Stop` and `StopFailure` are `turn_ended`. The
+    hooks are command hooks with `async: true`, so they never delay a tool
+    call, except `Stop` and `StopFailure`, which run synchronously (5 s
+    timeout): an async hook still running at a headless session's end is
+    killed. Each runs `dist/activity-hook.js`, a 3 KiB script that never writes
+    to stdout and always exits 0.
+  - The hook reaches its own session's plugin over a Unix socket. Both are
+    children of the same Claude Code process, so the plugin listens on
+    `<dir>/<that pid>.sock` and the hook connects to its parent's socket (or
+    a nearer ancestor's). `<dir>` is `/private/tmp/aweb-activity-<uid>` on
+    macOS and `/tmp/aweb-activity-<uid>` elsewhere, created mode 0700 and
+    refused if it is a symlink, another user's, or open to others; the socket
+    file is 0600. The directory is what keeps other users out: Node has no
+    peer-credential check for Unix sockets.
+  - A hook forwards only the event name, the tool name, and the tool-input
+    fields the summary templates read (`file_path`, `notebook_path`, `path`,
+    `command`, `url`), each cut to 4 KiB; a file's content never crosses the
+    socket. The plugin caps a line at 64 KiB and ignores malformed ones.
+  - The plugin replaces a stale socket file but never takes over a live one,
+    and at start removes sockets whose process no longer runs. When the
+    session ends (stdin closes, or a signal), it ends the open turn, flushes
+    for at most 2 s, and removes its socket.
   - The existing opt-in `aw notify` PostToolUse hook
     (`cli/go/cmd/aw/claude_hooks.go:14,129`) is unrelated and unchanged.
 - **Pi: the extension's lifecycle handlers** (`pi-extension/src/activity.ts`).
