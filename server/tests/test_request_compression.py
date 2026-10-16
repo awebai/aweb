@@ -263,11 +263,16 @@ async def test_decoder_internal_error_is_a_bounded_advertised_500(monkeypatch, c
         raise RuntimeError("fixture private internal detail")
 
     monkeypatch.setattr(RequestDecompressionMiddleware, "_decode", broken)
-    sent, seen, _ = await _asgi_upload([gzip.compress(b"hi")])
-    assert sent[0]["status"] == 500
-    assert sent[0]["headers"].count((b"accept-encoding", b"gzip")) == 1
-    assert sent[1]["body"] == b"Internal server error"
-    assert seen == []
+    async def inner(scope, receive, send):
+        pytest.fail("decoder failure must not call the inner app")
+
+    app = RequestDecompressionMiddleware(inner)
+    transport = httpx.ASGITransport(app, raise_app_exceptions=False)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post("/", content=gzip.compress(b"hi"), headers={"Content-Encoding": "gzip"})
+    assert response.status_code == 500
+    assert response.headers.get_list("accept-encoding") == ["gzip"]
+    assert response.content == b"Internal server error"
     assert "fixture private internal detail" in caplog.text
 
 
@@ -311,11 +316,57 @@ async def test_inner_failure_after_response_start_never_sends_a_second_response(
     async def send(message):
         sent.append(message)
 
-    await RequestDecompressionMiddleware(inner)({"type": "http", "headers": []}, receive, send)
+    with pytest.raises(RuntimeError) as raised:
+        await RequestDecompressionMiddleware(inner)({"type": "http", "headers": []}, receive, send)
+    assert raised.value is error
     starts = [message for message in sent if message["type"] == "http.response.start"]
     assert len(starts) == 1
     assert starts[0]["status"] == 202
     assert starts[0]["headers"] == [(b"accept-encoding", b"gzip")]
+    records = [record for record in caplog.records if record.name == "aweb.request_compression"]
+    assert len(records) == 1
+    assert records[0].exc_info[1] is error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", [None, "gzip"], ids=["plain", "gzip"])
+@pytest.mark.parametrize("started", [False, True], ids=["before-response", "after-response"])
+async def test_application_error_reaches_asgi_server_after_one_response(encoding, started, caplog):
+    from aweb.request_compression import RequestDecompressionMiddleware
+
+    error = RuntimeError("fixture application failure")
+    sent = []
+
+    async def inner(scope, receive, send):
+        assert (await receive())["body"] == b"original bytes"
+        if started:
+            await send({"type": "http.response.start", "status": 202, "headers": []})
+            await send({"type": "http.response.body", "body": b"partial", "more_body": True})
+        raise error
+
+    middleware = RequestDecompressionMiddleware(inner)
+
+    async def observed(scope, receive, send):
+        async def record(message):
+            sent.append(message)
+            await send(message)
+        await middleware(scope, receive, record)
+
+    transport = httpx.ASGITransport(observed, raise_app_exceptions=True)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        with pytest.raises(RuntimeError) as raised:
+            await client.post(
+                "/", content=gzip.compress(b"original bytes") if encoding else b"original bytes",
+                headers={"Content-Encoding": encoding} if encoding else {},
+            )
+    assert raised.value is error
+    starts = [message for message in sent if message["type"] == "http.response.start"]
+    assert len(starts) == 1
+    assert starts[0]["status"] == (202 if started else 500)
+    assert starts[0]["headers"].count((b"accept-encoding", b"gzip")) == 1
+    bodies = [message for message in sent if message["type"] == "http.response.body"]
+    assert len(bodies) == 1
+    assert bodies[0]["body"] == (b"partial" if started else b"Internal server error")
     records = [record for record in caplog.records if record.name == "aweb.request_compression"]
     assert len(records) == 1
     assert records[0].exc_info[1] is error
