@@ -34,6 +34,7 @@ var identityHomeAwareCommandPaths = map[string]struct{}{
 	"aw activity disable":       {},
 	"aw activity show":          {},
 	"aw activity hook":          {},
+	"aw activity hook install":  {},
 	"aw a2a status":             {},
 	"aw beads-mail announces":   {},
 	"aw beads-mail archive":     {},

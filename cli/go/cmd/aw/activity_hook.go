@@ -409,6 +409,6 @@ func loadActivityHookState(root string) activityHookState {
 
 func (h *codexActivityHook) save() {
 	if data, err := json.Marshal(h.state); err == nil {
-		_ = writeIdentityRootFile(h.root, activityHookStateFile, data, 0o600)
+		_ = writeFileAtomic(h.root, activityHookStateFile, data, 0o600)
 	}
 }

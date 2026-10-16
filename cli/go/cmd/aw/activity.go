@@ -75,12 +75,12 @@ func readActivitySetting(root string) string {
 }
 
 func writeActivitySetting(root, value string) error {
-	return writeIdentityRootFile(root, activitySettingFile, []byte("activity: "+value+"\n"), 0o644)
+	return writeFileAtomic(root, activitySettingFile, []byte("activity: "+value+"\n"), 0o644)
 }
 
-// writeIdentityRootFile replaces root/name atomically with the given mode.
-func writeIdentityRootFile(root, name string, data []byte, mode os.FileMode) error {
-	tmp, err := os.CreateTemp(root, ".activity-*.tmp")
+// writeFileAtomic replaces dir/name atomically with the given mode.
+func writeFileAtomic(dir, name string, data []byte, mode os.FileMode) error {
+	tmp, err := os.CreateTemp(dir, ".activity-*.tmp")
 	if err != nil {
 		return err
 	}
@@ -96,7 +96,7 @@ func writeIdentityRootFile(root, name string, data []byte, mode os.FileMode) err
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), filepath.Join(root, name))
+	return os.Rename(tmp.Name(), filepath.Join(dir, name))
 }
 
 type activitySettingOutput struct {
