@@ -13,6 +13,12 @@
   to `$CODEX_HOME/hooks.json` for hosts that OATS does not manage; Codex runs
   it only after you trust it with `/hooks`. See
   [agent activity](docs/agent-activity.md).
+- **The app id `activity` is reserved** for the new command, a stated
+  narrowing: the server refuses it at app registration and in app event types.
+  Production had zero uses of `activity` in apps, registry entries, event
+  types, installs, emitted events and subscriptions when measured on
+  2026-10-16. `status` and `status-host`, reserved in server 1.27.24, were
+  measured at the same time and also had zero uses.
 
 ## Release preparations
 
