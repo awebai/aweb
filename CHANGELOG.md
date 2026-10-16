@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Blocked message errors offer a next step:** an HTML 403 titled “Blocked”
+  keeps its status and response identifiers and explains the firewall refusal,
+  including how to reword a backticked curl or wget example before sending again.
+  Other errors, message content and retry behavior are unchanged.
+
 - **Codex guidance uses the OATS wake path:** joining with `--harness codex`
   installs team instructions without suggesting a session launcher. Codex gets
   mail and chat as they arrive through the OATS host wake broker; without OATS,

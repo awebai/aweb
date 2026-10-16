@@ -31,7 +31,7 @@ func TestAPIErrorResponseMetadataBound(t *testing.T) {
 		t.Fatal("body leaked")
 	}
 	for _, r := range out {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		if (unicode.IsControl(r) && r != '\n') || unicode.Is(unicode.Cf, r) {
 			t.Fatalf("unsafe output character %U", r)
 		}
 	}
@@ -92,6 +92,9 @@ func TestAPIErrorBlockedFirewallGuidanceBoundary(t *testing.T) {
 			out := err.Error()
 			if strings.Contains(out, "firewall") != tc.wantAdvice {
 				t.Fatalf("firewall guidance=%v, want %v: %s", strings.Contains(out, "firewall"), tc.wantAdvice, out)
+			}
+			if tc.wantAdvice && len(strings.Split(out, "\n")) != 2 {
+				t.Fatalf("expected status/title line above firewall guidance: %s", out)
 			}
 			if err.StatusCode != tc.status || err.Body != tc.body || !strings.Contains(out, "request-fixture") {
 				t.Fatal("display changed status, raw body, or response metadata")

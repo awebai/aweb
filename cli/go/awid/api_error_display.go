@@ -25,13 +25,22 @@ func errorHeaderValue(value string) string {
 	return value
 }
 
+const blockedFirewallAdvice = "The server's firewall refused this message. That usually happens when it contains a curl or wget command with a web address inside backticks. Reword that part or remove the backticks, then send it again."
+
 func newAPIError(resp *http.Response, body string) *APIError {
+	contentType := resp.Header.Get("Content-Type")
+	summary := nonJSONErrorSummary(body, contentType, resp.Header.Get("Cf-Mitigated"))
+	if resp.StatusCode == http.StatusForbidden && summary != "" && isHTMLResponse(body, contentType) {
+		if match := knownErrorPageTitle.FindStringSubmatch(body); len(match) > 1 && strings.EqualFold(match[1], "blocked") {
+			summary += "\n" + blockedFirewallAdvice
+		}
+	}
 	return &APIError{
 		StatusCode: resp.StatusCode, Body: body,
 		RequestID:       resp.Header.Get("X-Request-ID"),
 		CfRay:           resp.Header.Get("Cf-Ray"),
 		CfMitigated:     resp.Header.Get("Cf-Mitigated"),
-		responseSummary: nonJSONErrorSummary(body, resp.Header.Get("Content-Type"), resp.Header.Get("Cf-Mitigated")),
+		responseSummary: summary,
 	}
 }
 
@@ -44,9 +53,7 @@ func nonJSONErrorSummary(body, contentType, mitigated string) string {
 	if strings.EqualFold(strings.TrimSpace(mitigated), "challenge") {
 		return "challenge response (body omitted)"
 	}
-	lowerBody := strings.ToLower(strings.TrimSpace(body))
-	lowerType := strings.ToLower(contentType)
-	if strings.Contains(lowerType, "text/html") || strings.Contains(lowerType, "application/xhtml+xml") || strings.HasPrefix(lowerBody, "<html") || strings.HasPrefix(lowerBody, "<!doctype html") {
+	if isHTMLResponse(body, contentType) {
 		// Recognize only fixed titles; arbitrary page text can contain credentials.
 		// A title describes the received page, not its provider or the rule applied.
 		if match := knownErrorPageTitle.FindStringSubmatch(body); len(match) > 1 {
@@ -58,4 +65,10 @@ func nonJSONErrorSummary(body, contentType, mitigated string) string {
 		return "HTML error response (body omitted)"
 	}
 	return "non-JSON error response (body omitted)"
+}
+
+func isHTMLResponse(body, contentType string) bool {
+	lowerBody := strings.ToLower(strings.TrimSpace(body))
+	lowerType := strings.ToLower(contentType)
+	return strings.Contains(lowerType, "text/html") || strings.Contains(lowerType, "application/xhtml+xml") || strings.HasPrefix(lowerBody, "<html") || strings.HasPrefix(lowerBody, "<!doctype html")
 }
