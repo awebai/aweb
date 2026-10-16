@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from awid.did import did_from_public_key, generate_keypair
-from awid.ratelimit import MemoryFixedWindowRateLimiter
+from awid.ratelimit import MemoryFixedWindowRateLimiter, NoOpRateLimiter
 import awid.ratelimit as ratelimit_module
 
 from conftest import build_signed_headers as _sign
@@ -24,9 +24,11 @@ async def _controller_operation(client, controller_identity, operation):
     """Provision the targets through real routes, then build distinct signed writes.
 
     Every attempt has its own target: a visibility to flip, a team to delete or
-    a certificate to revoke. Setup runs before the test installs its limiter.
+    a certificate to revoke.
     """
     ns_key, ns_did = controller_identity
+    # Provisioning is not under test; the caller installs the limiter afterwards.
+    client._transport.app.state.rate_limiter = NoOpRateLimiter()
     team_key, team_did = await _setup_team(client, ns_key, ns_did, DOMAIN, "staff")
     targets = 2 * LIMITS[operation] + 4
     certificates = []
