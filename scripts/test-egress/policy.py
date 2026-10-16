@@ -2,10 +2,7 @@
 import json
 from pathlib import Path
 
-# One reviewed entry. HTTPS CONNECT is refused; its inner method is unknowable.
-# The refusal, not method attribution, guarantees no production access.
-# Another test attempting an HTTPS write to app.aweb.ai is reported but does
-# NOT fail natively. This is acceptable only because CONNECT never opens.
+# No production destination currently has an exception.
 DENIED_READS = json.loads(Path(__file__).with_name('denied-reads.json').read_text())
 
 

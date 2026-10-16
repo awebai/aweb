@@ -27,12 +27,14 @@ class NativeGuard(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn('TEST EGRESS DENIED', result.stdout)
 
-    def test_allowlisted_https_is_refused_and_reported(self):
+    def test_hosted_production_https_is_refused_and_fails(self):
         result = self.run_request('https://app.aweb.ai/anything', 'POST')
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('CONNECT app.aweb.ai:443', result.stdout)
 
-    def test_allowlisted_plain_http_write_fails(self):
+        self.assertIn('TEST EGRESS DENIED', result.stdout)
+
+    def test_hosted_production_plain_http_write_fails(self):
         result = self.run_request('http://app.aweb.ai/anything', 'POST')
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn('POST app.aweb.ai:80', result.stdout)

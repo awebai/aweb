@@ -28,11 +28,10 @@ the runner's network namespace, so fixtures remain loopback. A denied DNS query
 fails the run independently of the test process status. Logs and network inspect
 receipts remain in `TEST_EGRESS_EVIDENCE` (a new directory per run).
 
-`denied-reads.json` is the reviewed one-entry exception, owned by
-`TestResolveBaseURLForInitFallsBackToDefault`. All requests remain refused.
-HTTP non-GETs fail. HTTPS CONNECT exposes no inner method: another test's HTTPS
-write to this host would be visible but would not fail natively. Refusal is what
-guarantees no production access. New entries require architecture review.
+`denied-reads.json` is empty: no production destination is exempt from failing
+receipts. The init default-selection test checks selection without network I/O;
+API-mount discovery is tested against local servers. New exceptions require
+architecture review.
 
 The real AWID init fixture registers the DID before publishing. It uses the
 suite's PG/Redis when supplied, otherwise disposable local Docker services, and
