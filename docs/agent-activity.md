@@ -107,8 +107,8 @@ Fields. Version 1 refuses any other field.
 | `turn_ended` | The turn is over; clears the live state. |
 
 New phases are additive and need a new vector version; an unknown phase is
-refused at ingress. `busy_elsewhere` is a server-derived frame (see
-"Delivery"), never a signed phase.
+refused at ingress. `busy_elsewhere` and `cleared` are server-derived frames
+(see "Delivery"), never signed phases.
 
 Consumers discard an event whose `seq` is not greater than the last one they
 showed for that `turn_id`, which tolerates reordering and replay. A consumer
@@ -123,12 +123,25 @@ later contract with its own audience rule.
 ### Domain separation from messages
 
 Activity is signed with the same key as the agent's chat messages, so neither
-signature may verify as the other. Message verification rebuilds its canonical
-payload from `SIGNED_FIELDS` only (`awid/src/awid/signing.py:14-33,50-52`). An
-activity event always carries `v`, `team_id`, `phase` and other fields outside
-that set, so its bytes never equal a message's canonical bytes. A message's
-bytes offered as activity fail the `type` check, which runs before any other
-field. The vector pins both directions.
+kind of signed bytes may be accepted as the other. A raw signature check alone
+does not separate them: `verify_signature` verifies whatever bytes it is given
+(`awid/src/awid/signing.py:87-99`), and the server's read-side message verifier
+checks the stored raw `signed_payload` (`server/src/aweb/messaging/verification.py:33-53`).
+What separates them is a required, distinct `type` at every ingress:
+
+- Message ingress refuses activity bytes. Signed chat requires `type` `chat`
+  (`server/src/aweb/routes/chat.py:173-174`), and signed mail requires `mail`
+  (`server/src/aweb/routes/messages.py:509-510`). Both refuse with 422.
+- Activity ingress refuses message bytes. `type` must be `agent_activity`, and
+  it is checked before any other field (vector case
+  `chat_message_bytes_as_activity`).
+
+The vector's `cross_type` entry is a construction check for producers: an SDK
+that builds message bytes with `canonical_payload` (`signing.py:50-52`), which
+keeps only `SIGNED_FIELDS` (`:14-33`), never produces activity bytes, because
+activity always carries `v`, `team_id` and `phase`. It is not a claim that every
+verifier rebuilds those bytes. S1 pins the message-ingress refusal of an
+activity payload as conformance evidence.
 
 ### What a summary may contain
 
@@ -175,7 +188,12 @@ codes"), and the server logs the real error.
    request's signing key) before fields, `type` before any other field, field
    shapes before caller bindings, and bindings before time. The bindings are:
    `from_did` equals the request's signing key, `team_id` equals the caller's
-   team, and `from_stable_id`, when present, equals the caller's stable id. One
+   team, and `from_stable_id`, when present, equals the caller's stable id.
+   For a grant caller the signing key is the grant's session key
+   (`GrantContext.session_did_key`), not the subject key the request is
+   attributed to (`MessagingAuth.did_key`; `server/src/aweb/identity_grant_auth.py:200-224`).
+   The signature is verified with the session key; membership and the stable
+   id come from the subject. One
    agent can never publish as another. The time rules are the 60-second
    validity window, the 300-second clock skew of signed requests
    (`docs/team-auth-envelope-v2.md:45`) and expiry.
@@ -243,20 +261,43 @@ GET /v1/chat/sessions/{session_id}/stream?deadline=...&include=agent_activity
   `content_mode`, `message_version` and `encrypted_envelope` from any frame
   (`:160-174`). An unrequested frame is a risk this design avoids rather than
   analyses.
-- **Projection.** At stream open, for each other participant agent `A` of the
-  session, the handler reads `agent-activity:{A}` once as a snapshot and then
-  subscribes to channel `agent-activity:{A}`. The participant set is fixed at
-  open; streams last at most 300 seconds
+- **Order at open: subscribe, then snapshot, then drain.** At stream open, for
+  each other participant agent `A` of the session, the handler first
+  subscribes to channel `agent-activity:{A}` and confirms the subscription.
+  Only then does it read `agent-activity:{A}` as a snapshot, and then it
+  processes the events queued meanwhile. Reading the snapshot first would lose
+  any event published between the read and the subscription: a `turn_ended`
+  there would leave the viewer showing a finished turn until its `expires_at`.
+  The participant set is fixed at open; streams last at most 300 seconds
   (`server/src/aweb/routes/chat.py:109`), and a reopened stream sees the
   current set.
+- **Ordering and deduplication**, per agent, in the stream handler and before
+  projection. The handler remembers the last event it projected (`turn_id`,
+  `seq`, `timestamp`). A later event is projected only if it has the same
+  `turn_id` and a greater `seq`, or a different `turn_id` and a `timestamp` no
+  earlier than the remembered one. So the snapshot and a queued copy of the
+  same event produce one frame, and a stale queued event cannot overwrite a
+  newer snapshot.
+- **Projection.**
   - If the event's `session_id` is this session, the frame carries the full
-    verified event.
-  - If the event names another session or `null`, the frame carries only a
-    server-derived `{"agent": "<alias>", "phase": "busy_elsewhere",
-    "expires_at": ...}`, with no tool, no summary and no `signed_payload`. A
-    person learns only that the agent is working on something else, never
-    what. This is the same class of unsigned, server-derived signal as
-    `sender_waiting` (`server/src/aweb/messaging/waiting.py:32-53`).
+    verified event. Its `turn_ended` clears the agent's display.
+  - If the event names another session or `null` and is not `turn_ended`, the
+    frame carries only a server-derived `{"agent": "<alias>", "phase":
+    "busy_elsewhere", "expires_at": ...}`, with no tool, no summary and no
+    `signed_payload`. A person learns only that the agent is working on
+    something else, never what. This is the same class of unsigned,
+    server-derived signal as `sender_waiting`
+    (`server/src/aweb/messaging/waiting.py:32-53`).
+  - If the event names another session or `null` and is `turn_ended`, the
+    frame is the server-derived `{"agent": "<alias>", "phase": "cleared"}`:
+    no session, turn, tool, summary or signature. It tells the viewer to stop
+    showing the agent as busy elsewhere. Deleting the Redis key alone would
+    not reach an open stream.
+  - `busy_elsewhere` and `cleared` exist only as server-derived frames; a
+    signed event naming either phase is refused at ingress.
+  - S1 tests these interleavings: an event published between subscribe and
+    snapshot is not lost; a snapshot and its queued copy give one frame; and
+    busy elsewhere, then that turn's end, then the display is cleared.
 - **Frame.**
 
   ```sse
@@ -355,10 +396,23 @@ Agreed with oats-expert-juan on 2026-10-16.
 
 Each emitter is off unless the opt-in file says `status`. Each coalesces
 locally: latest wins, at most one event per 500 ms, and `turn_ended` is always
-sent. On a 404 from the route itself (an older server), publishing stops for
-the process lifetime and one line is logged. On 429 the emitter honours
-`Retry-After` and drops intermediate states. Signing uses the key the runtime
-integration already loads.
+sent. On 429 the emitter honours `Retry-After` and drops intermediate states.
+Signing uses the key the runtime integration already loads.
+
+The route answers 404 for two different reasons, and the emitter tells them
+apart by the body:
+
+- `{"detail":"Not found"}` (lower-case `f`, the shared resource answer,
+  `server/src/aweb/service_errors.py:6`): the session is absent, or the caller
+  is not in it. This is a normal refusal on a supported route. The emitter
+  drops that one event and keeps publishing; later events, attributed or not,
+  are sent as usual.
+- Any other 404 body, including the framework's absent-route
+  `{"detail":"Not Found"}`: the server does not have the route (an older
+  server). Publishing stops for the process lifetime, and one line is logged.
+
+Emitter tests cover both: a refused session does not suppress a following
+valid or unattributed event, and an absent route stops publishing.
 
 - **Claude Code: plugin hooks, not a transcript tail.** The Claude Code docs
   state the transcript format "is internal to Claude Code and changes between
@@ -437,16 +491,19 @@ default, the authenticated caller (signing key, stable id, team).
   (the encrypted-session form), every byte cap at its limit with multibyte
   text, the 60-second validity edge, a timestamp 300 seconds ahead, a local
   identity without a stable id, and a grant session signer.
-- Invalid, each with exactly one fault and one expected code: oversize,
+- Invalid, each with one expected code and, apart from the structural
+  oversize and wrong-type cases, exactly one fault: oversize,
   non-canonical bytes, a signature by another key, a chat message's signed
   bytes and a status type offered as activity, an unknown field, missing
   fields (including the `session_id` key and the tool of a `tool` phase), each
-  shape rule, `busy_elsewhere` offered as a signed phase, `from_did` not the
+  shape rule, `busy_elsewhere` and `cleared` offered as signed phases, `from_did` not the
   signer (including a grant caller naming the resident key), a foreign team, a
   wrong or unexpected stable id, the validity window, clock skew and expiry.
 - Route refusals: an absent session and a session the caller is not in, both
   the shared 404.
-- Cross-type: an activity signature does not verify as a message.
+- Cross-type: a producer construction check, showing that message bytes built
+  with `canonical_payload` never equal activity bytes (see "Domain separation
+  from messages").
 
 The server's verifier and every emitter's producer consume it.
 
@@ -489,15 +546,28 @@ session mode to check without new plumbing.
    not enforced by any route. Proposed: a fixed-window counter in the same
    style, `INCR` plus `EXPIRE` on `agent-activity-rate:{agent_id}`, at most 10
    events per 5-second window, 429 `rate_limited` with `Retry-After` set to
-   the window's remaining TTL. It gives the same sustained bound (2 per second)
-   and the same burst (10), is simpler, and needs no clock arithmetic to test.
-   Whether the bucket stays is Athena's call.
+   the window's remaining TTL. Its bound: at most 10 events in any one window,
+   a long-run rate of 2 per second, and up to 20 in quick succession across a
+   window boundary (a token bucket would allow only 10). Athena accepted that
+   as harmless for status events. It is simpler and needs no clock arithmetic
+   to test. The increment and the first expiry are set atomically (one
+   transaction or script), so an interrupted first write cannot leave a
+   counter without a TTL.
 3. **Binding details the draft left implicit.** `from_did` binds to the
    request's signing key, which is the grant session key for a grant caller.
    `from_stable_id` binds to the identity the caller is attributed to. Refusals
    carry stable codes, shared with agent health where the meaning is the same.
    The rate limit runs before the session lookup. The host-owner opt-in is the
    agreed file.
+4. **From the independent protocol review** (msg 85003495; endorsed by Athena,
+   msg d175a806). Stream open subscribes before it reads the snapshot, with
+   per-agent ordering and deduplication. A foreign turn's end projects to a
+   server-derived `cleared` frame. Emitters tell the shared resource 404 from
+   an absent route by its body, and only the latter stops publishing. The
+   domain-separation argument rests on the required `type` at each ingress,
+   not on verifiers rebuilding bytes. A grant caller's signature is verified
+   with the grant session key. The rate limit's real bound is stated, with an
+   atomic first expiry.
 
 ## Implementation slices
 

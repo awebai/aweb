@@ -27,7 +27,7 @@
     "caller": "the authenticated request: signer_did is the key that signed the request (the agent's did:key, or the grant session did:key for a grant caller), stable_id the identity it is attributed to (null when it has none), team_id its authenticated team. A case without caller uses default_caller.",
     "bindings": "the signature is verified with caller.signer_did; from_did must equal it; team_id must equal caller.team_id; from_stable_id, when present, must equal caller.stable_id",
     "now": "each case's evaluation time",
-    "ordering": "size is checked before parsing, canonical bytes before the signature, the signature before fields, type before any other field, field shapes before caller bindings, and bindings before time; every other negative has exactly one fault"
+    "ordering": "size is checked before parsing, canonical bytes before the signature, the signature before fields, type before any other field, field shapes before caller bindings, and bindings before time. Every negative has exactly one fault, except the structural cases document_too_large and wrong_type, which stop evaluation and may carry further faults behind them"
   },
   "agent_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   "agent_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
@@ -596,6 +596,27 @@
       "canonical_payload": "{\"expires_at\":\"2026-10-16T16:21:00Z\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"from_stable_id\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"phase\":\"busy_elsewhere\",\"seq\":17,\"session_id\":\"6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b\",\"team_id\":\"default:acme.aweb.ai\",\"timestamp\":\"2026-10-16T16:20:00Z\",\"turn_id\":\"turn-01J9Z8Q4\",\"type\":\"agent_activity\",\"v\":1}",
       "signed_payload": "eyJleHBpcmVzX2F0IjoiMjAyNi0xMC0xNlQxNjoyMTowMFoiLCJmcm9tX2RpZCI6ImRpZDprZXk6ejZNa2VoUmdmN3lKYmdhR2ZZc2RvQXNLZEJQRTNkajJDWWhvd1FkY2pxU0pndlZkIiwiZnJvbV9zdGFibGVfaWQiOiJkaWQ6YXc6MkNpWjg4aFZGNEp1UWltOG5uU3V5ZWlWMkhGMiIsInBoYXNlIjoiYnVzeV9lbHNld2hlcmUiLCJzZXEiOjE3LCJzZXNzaW9uX2lkIjoiNmYxYzJiM2EtNGQ1ZS00ZjYwLThhN2ItOWMwZDFlMmYzYTRiIiwidGVhbV9pZCI6ImRlZmF1bHQ6YWNtZS5hd2ViLmFpIiwidGltZXN0YW1wIjoiMjAyNi0xMC0xNlQxNjoyMDowMFoiLCJ0dXJuX2lkIjoidHVybi0wMUo5WjhRNCIsInR5cGUiOiJhZ2VudF9hY3Rpdml0eSIsInYiOjF9",
       "signature": "vB2Tq8/kADvWDWm7ZPNrm1Mrh+tuL5U6vpB6+qsxVsSaI/+i/BghCKM4WQsh/U/8p+aZ+W4JyVYMFZuM7rZbAQ"
+    },
+    {
+      "name": "phase_cleared_is_server_only",
+      "now": "2026-10-16T16:20:10Z",
+      "error": "invalid_value",
+      "document": {
+        "v": 1,
+        "type": "agent_activity",
+        "from_did": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "from_stable_id": "did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2",
+        "team_id": "default:acme.aweb.ai",
+        "session_id": "6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b",
+        "turn_id": "turn-01J9Z8Q4",
+        "seq": 17,
+        "phase": "cleared",
+        "timestamp": "2026-10-16T16:20:00Z",
+        "expires_at": "2026-10-16T16:21:00Z"
+      },
+      "canonical_payload": "{\"expires_at\":\"2026-10-16T16:21:00Z\",\"from_did\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"from_stable_id\":\"did:aw:2CiZ88hVF4JuQim8nnSuyeiV2HF2\",\"phase\":\"cleared\",\"seq\":17,\"session_id\":\"6f1c2b3a-4d5e-4f60-8a7b-9c0d1e2f3a4b\",\"team_id\":\"default:acme.aweb.ai\",\"timestamp\":\"2026-10-16T16:20:00Z\",\"turn_id\":\"turn-01J9Z8Q4\",\"type\":\"agent_activity\",\"v\":1}",
+      "signed_payload": "eyJleHBpcmVzX2F0IjoiMjAyNi0xMC0xNlQxNjoyMTowMFoiLCJmcm9tX2RpZCI6ImRpZDprZXk6ejZNa2VoUmdmN3lKYmdhR2ZZc2RvQXNLZEJQRTNkajJDWWhvd1FkY2pxU0pndlZkIiwiZnJvbV9zdGFibGVfaWQiOiJkaWQ6YXc6MkNpWjg4aFZGNEp1UWltOG5uU3V5ZWlWMkhGMiIsInBoYXNlIjoiY2xlYXJlZCIsInNlcSI6MTcsInNlc3Npb25faWQiOiI2ZjFjMmIzYS00ZDVlLTRmNjAtOGE3Yi05YzBkMWUyZjNhNGIiLCJ0ZWFtX2lkIjoiZGVmYXVsdDphY21lLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTEwLTE2VDE2OjIwOjAwWiIsInR1cm5faWQiOiJ0dXJuLTAxSjlaOFE0IiwidHlwZSI6ImFnZW50X2FjdGl2aXR5IiwidiI6MX0",
+      "signature": "/n3f6zGIrveWYbUmPeJcYpB63IAmdPY5D6FKTxpaNTqDMJjo1b2Sl35dFEgN22RR9Sz7UY2CbFMiBrZHQW3wDw"
     },
     {
       "name": "tool_with_space",
@@ -1192,7 +1213,7 @@
   ],
   "cross_type": {
     "name": "activity_payload_under_message_verification",
-    "description": "Message verification rebuilds the canonical payload from SIGNED_FIELDS only. For an activity document that keeps from_did, from_stable_id, timestamp and type, whose bytes differ from the signed activity bytes, so the activity signature does not verify as a message.",
+    "description": "A producer construction check, not a verifier claim: canonical_payload, which message producers use, keeps SIGNED_FIELDS only. For an activity document that leaves from_did, from_stable_id, timestamp and type, whose bytes differ from the signed activity bytes, so a producer never builds activity bytes as a message and the activity signature does not verify over them. Ingress separation is the required type at every route: chat and mail refuse type agent_activity, and activity refuses any other type.",
     "document": {
       "v": 1,
       "type": "agent_activity",

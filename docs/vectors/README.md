@@ -195,14 +195,16 @@ carries its evaluation time and, where it differs from the default, the
 authenticated caller the event binds to. Positive cases cover each phase, an
 unattributed session, a tool without a summary, the byte caps measured after
 UTF-8 encoding, the 60-second validity edge, the clock-skew edge, a local
-identity without a stable id, and a grant session signer. Each negative has
-exactly one fault and one expected refusal code: oversize and non-canonical
+identity without a stable id, and a grant session signer. Each negative has one
+expected refusal code and, apart from the structural oversize and wrong-type
+cases, exactly one fault: oversize and non-canonical
 bytes, a wrong signature, a chat message and a status offered as activity,
 unknown and missing fields, each shape rule, the server-only `busy_elsewhere`
-phase, signer, team and stable-id bindings, the validity window, clock skew and
+and `cleared` phases, signer, team and stable-id bindings, the validity window, clock skew and
 expiry. Two route refusals pin the shared 404 for an absent session and a
-session the caller is not in. A cross-type entry records that an activity
-signature does not verify as a message. These bytes are a draft until Athena's
+session the caller is not in. A cross-type entry is a producer construction
+check: message bytes built with `canonical_payload` never equal activity bytes.
+Ingress separation is the required `type` at every route. These bytes are a draft until Athena's
 review of the contract amendments; changing them after the freeze needs a new
 version.
 
