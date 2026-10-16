@@ -185,3 +185,17 @@ async def test_snapshot_of_an_ended_turn_elsewhere_is_a_clear(redis):
     frames = await SessionActivity(SESSION, {agent_id: "bob"}).snapshot(redis)
 
     assert [_frame(frame) for frame in frames] == [{"agent": "bob", "phase": "cleared"}]
+
+
+@pytest.mark.asyncio
+async def test_messages_seen_while_confirming_are_returned_not_dropped(redis):
+    session_channel = f"chat-session:{uuid4()}"
+    projection = SessionActivity(SESSION, {str(uuid4()): "bob"})
+    async with redis.pubsub() as pubsub:
+        await pubsub.subscribe(session_channel)
+        assert (await pubsub.get_message(timeout=2))["type"] == "subscribe"
+        await redis.publish(session_channel, "wake")
+
+        pending = await projection.subscribe(pubsub)
+
+    assert [(message["channel"], message["data"]) for message in pending] == [(session_channel, "wake")]
