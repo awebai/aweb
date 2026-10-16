@@ -11,7 +11,7 @@ import {
 import {
   activitySocketDir,
   activitySocketPath,
-  applyHookEvent,
+  createHookEventHandler,
   ensureOwnerOnlyDir,
   listenForHookEvents,
   removeDeadSockets,
@@ -41,7 +41,7 @@ export async function startClaudeActivity(
     ensureOwnerOnlyDir(dir);
     removeDeadSockets(dir);
     const path = activitySocketPath(options.claudePid ?? process.ppid, dir);
-    const server = await listenForHookEvents(path, event => applyHookEvent(emitter, event));
+    const server = await listenForHookEvents(path, createHookEventHandler(emitter));
     return {
       emitter,
       stop: async () => {

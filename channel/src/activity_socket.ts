@@ -12,6 +12,8 @@ import { join } from "node:path";
 /** What a hook forwards: the event name, the tool name, and only the input fields summaries use. */
 export interface HookEvent {
   hook_event_name: string;
+  /** Claude Code's id of the prompt being worked on: it puts each event in its turn. */
+  prompt_id?: string;
   tool_name?: string;
   tool_input?: Record<string, string>;
 }
@@ -27,6 +29,8 @@ export interface HookEventTarget {
 
 const SUMMARY_INPUT_KEYS = ["file_path", "notebook_path", "path", "command", "url"];
 const MAX_FORWARDED_STRING = 4096;
+const MAX_PROMPT_ID = 128;
+const ENDED_PROMPTS_KEPT = 32;
 const MAX_LINE_BYTES = 64 * 1024;
 const CONNECT_TIMEOUT_MS = 300;
 
@@ -82,6 +86,9 @@ export function hookEventForSocket(payload: unknown): HookEvent | undefined {
   const fields = payload as Record<string, unknown>;
   if (typeof fields.hook_event_name !== "string" || !fields.hook_event_name) return undefined;
   const event: HookEvent = { hook_event_name: fields.hook_event_name };
+  if (typeof fields.prompt_id === "string" && fields.prompt_id && fields.prompt_id.length <= MAX_PROMPT_ID) {
+    event.prompt_id = fields.prompt_id;
+  }
   if (typeof fields.tool_name === "string") event.tool_name = fields.tool_name;
   const input = fields.tool_input;
   if (input !== null && typeof input === "object" && !Array.isArray(input)) {
@@ -95,26 +102,62 @@ export function hookEventForSocket(payload: unknown): HookEvent | undefined {
   return event;
 }
 
-export function applyHookEvent(target: HookEventTarget, event: HookEvent): void {
-  switch (event.hook_event_name) {
-    case "UserPromptSubmit":
-      target.turnStarted();
-      break;
-    case "PreToolUse":
-      target.tool(event.tool_name ?? "unknown", event.tool_input ?? {});
-      break;
-    case "PermissionRequest":
-      target.waitingPermission(event.tool_name);
-      break;
-    case "PostToolUse":
-    case "PostToolUseFailure":
-      target.thinking();
-      break;
-    case "Stop":
-    case "StopFailure":
+/**
+ * A session's hook-event handler. Each hook is its own process, so events can
+ * arrive out of order; the prompt id puts each in its turn. An event of a
+ * prompt that has stopped is dropped; a submit for the prompt whose turn a
+ * tool event already opened is ignored; an event of a new prompt first closes
+ * a turn whose stop never arrived. Events without a prompt id map directly.
+ */
+export function createHookEventHandler(target: HookEventTarget): (event: HookEvent) => void {
+  let current: string | undefined;
+  const ended: string[] = [];
+  const markEnded = (prompt: string | undefined) => {
+    if (prompt === undefined) return;
+    ended.push(prompt);
+    if (ended.length > ENDED_PROMPTS_KEPT) ended.shift();
+  };
+  return (event) => {
+    const prompt = event.prompt_id;
+    const name = event.hook_event_name;
+    if (prompt !== undefined && ended.includes(prompt)) return;
+    const stop = name === "Stop" || name === "StopFailure";
+    if (stop && prompt !== undefined && current !== undefined && prompt !== current) {
+      markEnded(prompt);
+      return;
+    }
+    if (!stop && prompt !== undefined && current !== undefined && prompt !== current) {
       target.turnEnded();
-      break;
-  }
+      markEnded(current);
+      current = undefined;
+    }
+    switch (name) {
+      case "UserPromptSubmit":
+        if (prompt !== undefined && prompt === current) return;
+        target.turnStarted();
+        current = prompt;
+        break;
+      case "PreToolUse":
+        target.tool(event.tool_name ?? "unknown", event.tool_input ?? {});
+        current = prompt ?? current;
+        break;
+      case "PermissionRequest":
+        target.waitingPermission(event.tool_name);
+        current = prompt ?? current;
+        break;
+      case "PostToolUse":
+      case "PostToolUseFailure":
+        target.thinking();
+        current = prompt ?? current;
+        break;
+      case "Stop":
+      case "StopFailure":
+        target.turnEnded();
+        markEnded(prompt);
+        current = undefined;
+        break;
+    }
+  };
 }
 
 function isLive(path: string): Promise<boolean> {
