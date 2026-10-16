@@ -3,12 +3,13 @@
 GET /v1/teams/{team_id}/agents and /agents/{alias} carry an additive
 ``health`` object computed in one place (aweb-acah.3, docs/agent-health.md
 "Reading"). Statuses are published through the real routes; the only direct
-state writes are fixture provisioning and clearing the per-agent rate window.
+state writes are fixture provisioning, clearing the per-agent rate window, and
+storing a correctly signed report whose validity has already ended, which no
+publish can produce.
 """
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -100,20 +101,57 @@ async def test_host_report_is_the_health_and_a_reachable_report_has_no_reason(pr
     assert (health["reason_text"], health["fixing_by"], health["fixing_text"]) == (None, None, None)
 
 
+async def _store_expired_report(env, publisher, subject, document):
+    """Store a signed report exactly as the publish route does, after its validity ended."""
+    body = _body(env, publisher, document)
+    await env.db.execute(
+        """
+        INSERT INTO {{tables.agent_status}} (
+            agent_id, team_id, publisher_did, seq, reachable, reason_code, fixing_by,
+            observed_at, valid_until, signed_payload, signature
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        ON CONFLICT (agent_id) DO UPDATE
+        SET publisher_did = EXCLUDED.publisher_did, seq = EXCLUDED.seq,
+            reachable = EXCLUDED.reachable, reason_code = EXCLUDED.reason_code,
+            fixing_by = EXCLUDED.fixing_by, observed_at = EXCLUDED.observed_at,
+            valid_until = EXCLUDED.valid_until, signed_payload = EXCLUDED.signed_payload,
+            signature = EXCLUDED.signature, received_at = NOW()
+        """,
+        env.actors[subject].id,
+        TEAM,
+        env.actors[publisher].did,
+        document["seq"],
+        document["reachable"],
+        document["reason"]["code"],
+        document["fixing"]["by"],
+        datetime.fromisoformat(document["observed_at"].replace("Z", "+00:00")),
+        datetime.fromisoformat(document["valid_until"].replace("Z", "+00:00")),
+        body["signed_payload"],
+        body["signature"],
+    )
+
+
 @pytest.mark.asyncio
 async def test_report_past_valid_until_is_stale_on_read(privacy_app):
+    # No read here may straddle a validity boundary: the live report is valid
+    # for minutes, and the expired one ended minutes before the test began.
     env = privacy_app
-    observed = datetime.now(timezone.utc).replace(microsecond=0)
-    document = _document(
-        env, "alice", "alice", observed_at=_ts(observed), valid_until=_ts(observed + timedelta(seconds=1)),
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    live = _document(
+        env, "alice", "alice", observed_at=_ts(now), valid_until=_ts(now + timedelta(minutes=5)),
     )
-    published = await _publish(env, "alice", "alice", document)
+    published = await _publish(env, "alice", "alice", live)
     assert published.status_code == 200, published.text
-    assert (await _health(env, "alice"))["stale"] is False
+    assert await _health(env, "alice") == _reported(env, "alice", live, stale=False)
 
-    await asyncio.sleep(2.1)
+    expired = _document(
+        env, "alice", "alice", seq=live["seq"] + 1,
+        observed_at=_ts(now - timedelta(minutes=10)), valid_until=_ts(now - timedelta(minutes=5)),
+    )
+    await _store_expired_report(env, "alice", "alice", expired)
 
-    assert await _health(env, "alice") == _reported(env, "alice", document, stale=True)
+    assert await _health(env, "alice") == _reported(env, "alice", expired, stale=True)
 
 
 @pytest.mark.asyncio
