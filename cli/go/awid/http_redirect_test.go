@@ -231,6 +231,9 @@ func TestTrustRequestsDoNotFollowRedirects(t *testing.T) {
 
 			var sourceHits atomic.Int32
 			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if serveUnadvertisedHealth(w, r) {
+					return
+				}
 				sourceHits.Add(1)
 				if test.expectsAuthority && r.Header.Get("Authorization") == "" {
 					t.Error("production request did not carry the expected authority header")

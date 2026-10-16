@@ -455,7 +455,7 @@ func postCLIAuthForm(ctx context.Context, issuer, path string, values url.Values
 	if strings.TrimSpace(bearer) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearer))
 	}
-	return doCLIAuthJSON(req, out)
+	return doCLIAuthJSON(req, out, issuer)
 }
 
 func getCLIAuthJSON(ctx context.Context, issuer, path, bearer string, out any) error {
@@ -467,12 +467,12 @@ func getCLIAuthJSON(ctx context.Context, issuer, path, bearer string, out any) e
 	if strings.TrimSpace(bearer) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearer))
 	}
-	return doCLIAuthJSON(req, out)
+	return doCLIAuthJSON(req, out, issuer)
 }
 
-func doCLIAuthJSON(req *http.Request, out any) error {
+func doCLIAuthJSON(req *http.Request, out any, issuer string) error {
 	client := &http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}
-	resp, err := awid.DoNoRedirectWithTimeout(client, req, awid.APITimeout())
+	resp, err := awid.DoServerRequestWithTimeout(client, req, issuer, awid.APITimeout())
 	if err != nil {
 		return err
 	}

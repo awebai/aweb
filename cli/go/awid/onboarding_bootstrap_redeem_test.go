@@ -21,6 +21,9 @@ func TestBootstrapRedeem(t *testing.T) {
 	var gotTimestamp string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.URL.Path != onboardingBootstrapRedeemPath {
 			t.Fatalf("path=%s", r.URL.Path)
 		}

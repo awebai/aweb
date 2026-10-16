@@ -290,7 +290,7 @@ func postSelfRetireWithAPIKey(ctx context.Context, plan selfRetirePlan) (selfRet
 		return out, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	responseBody, err := executeHostedRemovalRequest(req, plan.apiKey, "self retirement")
+	responseBody, err := executeHostedRemovalRequest(req, plan.apiKey, "self retirement", plan.awebURL)
 	if err != nil {
 		return out, err
 	}

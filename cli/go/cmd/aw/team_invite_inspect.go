@@ -171,7 +171,7 @@ func inspectHostedInvite(ctx context.Context, token string, envelope hostedJoinT
 	if trace {
 		fmt.Fprintln(os.Stderr, "AW TRACE invite preview: POST /api/v1/spawn/invite-preview (credentials and response omitted)")
 	}
-	resp, err := awid.DoNoRedirect(&http.Client{Timeout: 15 * time.Second, Transport: transport}, req)
+	resp, err := awid.DoServerRequest(&http.Client{Timeout: 15 * time.Second, Transport: transport}, req, envelope.AwebURL)
 	if err != nil {
 		return nil, inspectUnavailable()
 	}

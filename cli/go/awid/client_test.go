@@ -209,6 +209,9 @@ func TestChatCreateSessionSignsDeterministicTo(t *testing.T) {
 
 	var gotBody ChatCreateSessionRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost {
 			t.Fatalf("method=%s", r.Method)
 		}
@@ -278,6 +281,9 @@ func TestChatCreateSessionSignsLocalAliases(t *testing.T) {
 
 	var gotBody ChatCreateSessionRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatal(err)
 		}
@@ -329,6 +335,9 @@ func TestChatCreateSessionDoesNotMutateInput(t *testing.T) {
 	did := ComputeDIDKey(pub)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.URL.Path != "/v1/chat/sessions" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -368,6 +377,9 @@ func TestChatCreateSessionUnsignedPreservesCallerSignatureFields(t *testing.T) {
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.URL.Path != "/v1/chat/sessions" {
 			t.Fatalf("path=%s", r.URL.Path)
 		}
@@ -424,6 +436,9 @@ func TestChatSendMessageSignsDeterministicTo(t *testing.T) {
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -492,6 +507,9 @@ func TestChatSendMessageSignsLocalAliases(t *testing.T) {
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -555,6 +573,9 @@ func TestChatSendMessagePrefersParticipantAddressesForDeterministicTo(t *testing
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -624,6 +645,9 @@ func TestChatSendMessageUsesParticipantStableDIDsForDeterministicTo(t *testing.T
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -1109,6 +1133,9 @@ func TestMailE2EEConversationReplyLearnsLocalOnlySenderKey(t *testing.T) {
 
 	var posted SendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/conversations":
 			_ = json.NewEncoder(w).Encode(ConversationsResponse{Conversations: []ConversationItem{{
@@ -1201,6 +1228,9 @@ func TestChatE2EEContinuationLearnsLocalOnlySenderKey(t *testing.T) {
 
 	var posted ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{Sessions: []ChatSessionItem{{
@@ -1276,6 +1306,9 @@ func TestChatSendMessageContinuationPrefersParticipantDIDOverAddress(t *testing.
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -1359,6 +1392,9 @@ func TestChatSendMessageRemovesOneSelfStableDIDFromDeterministicTo(t *testing.T)
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -1433,6 +1469,9 @@ func TestChatSendMessageRemovesOneSelfCurrentDIDFromDeterministicTo(t *testing.T
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -1506,6 +1545,9 @@ func TestChatSendMessageRemovesOneSelfAddressFromDeterministicTo(t *testing.T) {
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -1575,6 +1617,9 @@ func TestChatSendMessageRetainsForeignParticipantWithSameAliasAsSelf(t *testing.
 
 	var gotSend ChatSendMessageRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -1641,6 +1686,9 @@ func TestChatSendMessageDoesNotMutateInput(t *testing.T) {
 	did := ComputeDIDKey(pub)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -1678,6 +1726,9 @@ func TestChatSendMessageUnsignedPreservesCallerSignatureFields(t *testing.T) {
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions/sess-1/messages":
 			if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
@@ -1739,6 +1790,9 @@ func TestChatSendMessageSignedPayloadIncludesLeaving(t *testing.T) {
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch r.URL.Path {
 		case "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -1791,6 +1845,9 @@ func TestChatSendMessage(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost {
 			t.Fatalf("method=%s", r.Method)
 		}
@@ -1832,6 +1889,9 @@ func TestChatSendMessageExtendWait(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		var body ChatSendMessageRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatal(err)
@@ -1993,6 +2053,9 @@ func TestClientRetriesIdempotentSend503(t *testing.T) {
 
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls++
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -2039,6 +2102,9 @@ func TestClientDoesNotRetryUnsafeGeneric503(t *testing.T) {
 
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls++
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"detail":"upstream busy"}`))
@@ -2070,6 +2136,9 @@ func TestClientDoesNotRetryUnsafeTransientBody503(t *testing.T) {
 
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls++
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"detail":"service temporarily unavailable"}`))
@@ -2105,6 +2174,9 @@ func TestTraceLogsRedactedHTTPAndAPIErrorRequestID(t *testing.T) {
 	t.Setenv("AW_TRACE", "1")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Header.Get("Authorization") != "secret-auth" {
 			t.Fatalf("Authorization header not sent")
 		}
@@ -3913,6 +3985,9 @@ func TestChatSendMessageUsesCertAliasForSignedPayloadFrom(t *testing.T) {
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -3964,6 +4039,9 @@ func TestChatSendMessageIdentityAuthStillUsesAddressDerivedAlias(t *testing.T) {
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/chat/sessions":
 			_ = json.NewEncoder(w).Encode(ChatListSessionsResponse{
@@ -4464,6 +4542,9 @@ func TestRotateKeySendsSignedRequest(t *testing.T) {
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != http.MethodPut {
 			t.Fatalf("method=%s", r.Method)
 		}
@@ -4726,6 +4807,9 @@ func TestSendMessageIncludesMessageID(t *testing.T) {
 
 	var gotBody map[string]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatal(err)
 		}
@@ -4776,6 +4860,9 @@ func TestSendMessageNoMessageIDWithoutIdentity(t *testing.T) {
 
 	var gotBody map[string]string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatal(err)
 		}
@@ -4821,6 +4908,9 @@ func TestSendMessageResolvesRecipientDID(t *testing.T) {
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/messages":
 			_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -4885,6 +4975,9 @@ func TestSendMessageBareAliasDoesNotResolveRecipientDID(t *testing.T) {
 
 	var gotBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/v1/messages":
 			_ = json.NewDecoder(r.Body).Decode(&gotBody)
@@ -7593,6 +7686,9 @@ func TestGrantClientUsesSessionKeyOnlyForRequestAuthNotMessageEnvelope(t *testin
 	var gotChat map[string]any
 	var mailAuth, chatAuth string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/messages":
 			mailAuth = r.Header.Get("Authorization")

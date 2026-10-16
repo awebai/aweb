@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **aw negotiates gzip writes with the target server:** an unauthenticated health
+  probe enables compression only after an explicit gzip advertisement, cached per
+  server base for the process. Signatures cover the original bytes. Older servers
+  and bodies above either 1 MiB cap keep plain requests. A compressed write refused
+  with 400 or 415 is not replayed, and subsequent writes to that base stay plain.
+
 ## Release preparations
 
 ### Release preparation: server 1.27.25, aw 1.36.40

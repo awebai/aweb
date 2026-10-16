@@ -70,6 +70,10 @@ func newLocalHTTPServerWithURL(t *testing.T, build func(url string) http.Handler
 	return newHTTPTestServerWithURL(t, func(url string) http.Handler {
 		handler := build(url)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// These legacy fixtures do not advertise request compression.
+			if serveUnadvertisedHealth(w, r) {
+				return
+			}
 			// aw probes for aweb by calling GET /v1/agents/heartbeat on candidate bases.
 			// Return any non-404 to indicate "endpoint exists" without side effects.
 			// Only intercept GET; POST is the actual heartbeat and should reach the inner handler.
@@ -2314,4 +2318,12 @@ func TestMCPConfigRequiresChannelForCertificateAuth(t *testing.T) {
 	if !strings.Contains(string(out), "use `aw mcp-config --channel`") {
 		t.Fatalf("unexpected output:\n%s", string(out))
 	}
+}
+
+func serveUnadvertisedHealth(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/api/health") {
+		w.WriteHeader(http.StatusNotFound)
+		return true
+	}
+	return false
 }

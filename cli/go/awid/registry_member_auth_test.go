@@ -82,6 +82,9 @@ func TestMailAndChatPrivateTeamRecipientBinding(t *testing.T) {
 				gate := &teamVisibilityGate{t: t, visibility: "private", memberDIDs: map[string]bool{ComputeDIDKey(callerPub): true}}
 				posted := false
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if serveUnadvertisedHealth(w, r) {
+						return
+					}
 					switch r.URL.Path {
 					case "/v1/namespaces/acme.com/teams/backend/members/alice":
 						if !gate.admit(w, r) {

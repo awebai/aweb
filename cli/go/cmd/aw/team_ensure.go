@@ -504,7 +504,7 @@ func postCLIAuthJSON(ctx context.Context, issuer, path, bearer string, in any, o
 	if strings.TrimSpace(bearer) != "" {
 		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearer))
 	}
-	return doCLIAuthJSON(req, out)
+	return doCLIAuthJSON(req, out, issuer)
 }
 
 func cliAuthIssuerAudience(issuer string) (string, error) {

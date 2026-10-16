@@ -246,6 +246,26 @@ in the `aweb-coordination` skill. The skill is the sole source for the command
 order, so injected instructions defer to it rather than embedding a copy that
 can drift.
 
+## HTTP request compression
+
+Before its first write to an aweb server, `aw` makes an unauthenticated
+`GET /health` at that server base URL, including any mount prefix such as `/api`.
+If the response explicitly advertises `Accept-Encoding: gzip`, `aw` compresses
+write bodies. Signatures still cover the original bytes. Older servers receive
+plain bodies; a failed, redirected or unadvertised health probe also keeps writes
+plain. Discovery has a two-second cap within the caller's API budget.
+
+Support is cached per server base URL for the current process only. A compressed
+write refused with 400 or 415 is returned without replay; later writes to that
+base use plain bodies for the rest of the process. Start a new command to discover
+support again after a server upgrade.
+
+Both the original and compressed representations must fit 1 MiB. Larger bodies
+are sent plain, preserving existing writes; they can still encounter upstream
+firewall filtering. Reads, event streams and empty bodies are unchanged. Registry
+calls, local custody calls and arbitrary HTTP tools (`aw id request` and installed
+manifest HTTP requests) retain their own transport behavior.
+
 ## Network Timeouts and Hostile Venue WiFi
 
 Normal `aw` API requests use a 30s timeout by default. Override it with

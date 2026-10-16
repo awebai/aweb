@@ -130,6 +130,9 @@ func TestCliSignup_SignsBodyCorrectly(t *testing.T) {
 
 	var sigErr error
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		if r.Method != "POST" {
 			sigErr = errorMsg("method", "POST", r.Method)
 			w.WriteHeader(500)
@@ -253,6 +256,9 @@ func TestCliSignup_APIBasePath(t *testing.T) {
 	var gotBodyBytes []byte
 	var gotSignature string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		gotPath = r.URL.Path
 		gotTimestamp = r.Header.Get("X-AWEB-Timestamp")
 		auth := strings.Fields(r.Header.Get("Authorization"))

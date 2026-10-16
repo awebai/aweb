@@ -24,6 +24,9 @@ func TestChatMarkReadFallsBackToOldServerWatermarkSemantics(t *testing.T) {
 	read := map[string]bool{}
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls++
 		var body map[string]json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -87,6 +90,9 @@ func TestChatMarkReadUsesOneExactRequestOnNewServer(t *testing.T) {
 	ids := chatMarkReadTestIDs()[:2]
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls++
 		var body map[string]json.RawMessage
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -125,6 +131,9 @@ func TestChatMarkReadUsesOneExactRequestOnNewServer(t *testing.T) {
 func TestChatMarkReadMalformedIDReachesServerWithoutFallback(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls++
 		http.Error(w, "authoritative malformed uuid", http.StatusUnprocessableEntity)
 	}))
@@ -147,6 +156,9 @@ func TestChatMarkReadMalformedIDReachesServerWithoutFallback(t *testing.T) {
 func TestChatMarkReadFailedFallbackPreservesOriginal4xx(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		calls++
 		if calls == 1 {
 			http.Error(w, "original permission error", http.StatusForbidden)

@@ -14,6 +14,9 @@ func TestCreateContact(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotBody ContactCreateRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		gotMethod = r.Method
 		gotPath = r.URL.Path
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {

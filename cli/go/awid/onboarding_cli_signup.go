@@ -157,7 +157,7 @@ func postJSONNoAuth(ctx context.Context, baseURL, path string, in, out any) erro
 
 // postJSONWithHeaders sends a POST with a pre-marshaled body and a set of
 // headers (e.g. a DIDKey auth envelope). It guarantees the body bytes
-// transmitted on the wire are exactly the bytes the caller provided —
+// after HTTP decoding are exactly the bytes the caller provided —
 // critical for body_sha256-based authentication.
 func postJSONWithHeaders(
 	ctx context.Context,
@@ -181,7 +181,7 @@ func postJSONWithHeaders(
 		req.Header.Set(k, v)
 	}
 
-	resp, err := DoNoRedirect(&http.Client{Timeout: APITimeout(), Transport: NewAPITransport()}, req)
+	resp, err := DoServerRequest(&http.Client{Timeout: APITimeout(), Transport: NewAPITransport()}, req, baseURL)
 	if err != nil {
 		return err
 	}

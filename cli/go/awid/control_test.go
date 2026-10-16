@@ -17,6 +17,9 @@ func TestSendControlSignal(t *testing.T) {
 	var gotReq SendControlSignalRequest
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		gotAuth = r.Header.Get("Authorization")
 		gotPath = r.URL.Path
 		if r.Method != http.MethodPost {
@@ -76,6 +79,9 @@ func TestPauseResumeInterruptAgentWrappers(t *testing.T) {
 
 	var gotSignals []ControlSignal
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
 		var req SendControlSignalRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)

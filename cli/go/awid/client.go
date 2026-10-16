@@ -1453,7 +1453,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			return nil, err
 		}
 		TraceHTTPRequest(req, bodyBytes)
-		resp, err := DoNoRedirectWithTimeout(c.httpClient, req, APITimeout())
+		resp, err := DoServerRequestWithTimeout(c.httpClient, req, c.baseURL, APITimeout())
 		if err != nil {
 			decorated := decorateTimeoutError(method, err)
 			if shouldRetryAPITransportError(ctx, method, path, bodyBytes, attempt, err) {

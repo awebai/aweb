@@ -126,6 +126,9 @@ func TestClientRequestCompressionSignsDecodedBytes(t *testing.T) {
 					}
 				} else {
 					fields := map[string]string{"body_sha256": bodyHash, "timestamp": timestamp}
+					if kind == "identity" {
+						fields["did_aw"] = ""
+					}
 					if kind == "certificate" {
 						fields["team_id"] = "core:example.test"
 					}
@@ -242,4 +245,14 @@ func TestClientRequestCompressionConcurrentCacheAndMountIsolation(t *testing.T) 
 	if probes[0].Load() != 1 || probes[1].Load() != 1 {
 		t.Errorf("probes=%d/%d", probes[0].Load(), probes[1].Load())
 	}
+}
+
+// Existing request fixtures model servers without request-gzip support. Keep
+// their write assertions independent from the capability discovery GET.
+func serveUnadvertisedHealth(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/api/health") {
+		w.WriteHeader(http.StatusNotFound)
+		return true
+	}
+	return false
 }
