@@ -207,10 +207,23 @@ codes"), and the server logs the real error.
    same response: the shared 404 `{"detail":"Not found"}`, matching status,
    body and content type (`docs/aweb-sot.md:268-291`). Nothing is relayed.
 
-**On success** the server stores the verified event with
-`SETEX agent-activity:{agent_id}` and a TTL of `min(expires_at - now, 60s)`;
-`turn_ended` deletes the key instead. It publishes the event on Redis channel
-`agent-activity:{agent_id}` and returns 202. Redis pub/sub is the server's
+**On success** the server relays the verified event in one atomic Redis
+script, then returns 202. The script:
+
+1. increments the agent's relay revision, `agent-activity-rev:{agent_id}`, and
+   sets that counter's TTL to 3600 seconds;
+2. stores `{rev, event}` as the agent's latest state,
+   `agent-activity:{agent_id}`, with a TTL of `min(expires_at - now, 60s)`.
+   `turn_ended` is stored like any other phase, as a short-lived end marker,
+   so the latest state always carries the current revision;
+3. publishes `{rev, event}` on channel `agent-activity:{agent_id}`.
+
+Because the three steps run as one script, revision order, latest-state order
+and publish order are the same for every agent, even when two requests for one
+agent race. The revision is internal relay metadata: it is not signed, and it
+is not sent in frames. Signed bytes are unchanged. The counter outlives any
+stream (3600 seconds against a 300-second maximum), so a stream never sees it
+restart. Redis pub/sub is the server's
 existing fan-out (`server/src/aweb/events.py:320-371,396`). The per-session
 channel `chat-session:{session_id}` (`events.py:315-371`) is a wake hint for
 message delivery, and activity does not use it: the `busy_elsewhere`
@@ -271,13 +284,15 @@ GET /v1/chat/sessions/{session_id}/stream?deadline=...&include=agent_activity
   The participant set is fixed at open; streams last at most 300 seconds
   (`server/src/aweb/routes/chat.py:109`), and a reopened stream sees the
   current set.
-- **Ordering and deduplication**, per agent, in the stream handler and before
-  projection. The handler remembers the last event it projected (`turn_id`,
-  `seq`, `timestamp`). A later event is projected only if it has the same
-  `turn_id` and a greater `seq`, or a different `turn_id` and a `timestamp` no
-  earlier than the remembered one. So the snapshot and a queued copy of the
-  same event produce one frame, and a stale queued event cannot overwrite a
-  newer snapshot.
+- **Ordering and deduplication by relay revision**, per agent, in the stream
+  handler and before projection. The handler takes the snapshot's `rev` as the
+  last projected revision (0 when there is no snapshot), and then projects a
+  queued or live event only if its `rev` is greater, after which that becomes
+  the last. A snapshot and a queued copy of the same event therefore give one
+  frame, and an event published before the snapshot can never replace it,
+  whatever its turn or timestamp. A snapshot or event whose phase is
+  `turn_ended` projects as the end of that turn (below), never as live work.
+  Timestamps, with their one-second precision, are not used for ordering.
 - **Projection.**
   - If the event's `session_id` is this session, the frame carries the full
     verified event. Its `turn_ended` clears the agent's display.
@@ -291,13 +306,21 @@ GET /v1/chat/sessions/{session_id}/stream?deadline=...&include=agent_activity
   - If the event names another session or `null` and is `turn_ended`, the
     frame is the server-derived `{"agent": "<alias>", "phase": "cleared"}`:
     no session, turn, tool, summary or signature. It tells the viewer to stop
-    showing the agent as busy elsewhere. Deleting the Redis key alone would
-    not reach an open stream.
+    showing the agent as busy elsewhere. A stored end marker alone would not
+    reach an open stream. The frame is derived from that `turn_ended` and
+    carries its relay revision through the handler's check: it is projected
+    only when that revision is greater than the last projected one, so a stale
+    end can never clear a newer turn.
   - `busy_elsewhere` and `cleared` exist only as server-derived frames; a
     signed event naming either phase is refused at ingress.
   - S1 tests these interleavings: an event published between subscribe and
-    snapshot is not lost; a snapshot and its queued copy give one frame; and
-    busy elsewhere, then that turn's end, then the display is cleared.
+    snapshot is not lost; a snapshot and its queued copy give one frame; busy
+    elsewhere, then that turn's end, then the display is cleared; and the
+    equal-timestamp cross-turn case. In that case the snapshot is turn B,
+    seq 2, at second T, and queued before it are turn A, seq 9, and turn B,
+    seq 1, both at T. Neither queued event is projected, and a stale A
+    `turn_ended` does not clear live B. S1 also tests two racing publishes for
+    one agent, where latest state and channel order agree.
 - **Frame.**
 
   ```sse
@@ -567,7 +590,9 @@ session mode to check without new plumbing.
    domain-separation argument rests on the required `type` at each ingress,
    not on verifiers rebuilding bytes. A grant caller's signature is verified
    with the grant session key. The rate limit's real bound is stated, with an
-   atomic first expiry.
+   atomic first expiry. The snapshot handoff is ordered by an internal relay
+   revision assigned atomically with the latest-state write and the publish,
+   not by timestamps, which cannot order two turns in the same second.
 
 ## Implementation slices
 
