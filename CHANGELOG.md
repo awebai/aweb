@@ -2,12 +2,16 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: server 1.27.26
+
+Changes are since `server-v1.27.25`.
+
 - **Request decoding preserves application failures:** after sending a bounded
   500 when needed, the outer request-decompression wrapper re-raises unexpected
   exceptions to the ASGI server. An already-started response is never sent twice;
   gzip decoding refusals retain their existing 400, 413 and 415 responses.
-
-## Release preparations
 
 ### Release preparation: server 1.27.25, aw 1.36.40
 
