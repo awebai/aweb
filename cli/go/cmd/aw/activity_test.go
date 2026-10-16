@@ -98,6 +98,12 @@ func TestActivityOptInCommands(t *testing.T) {
 		if out, _, _ := run(t, home, "activity", "show", "--json"); out["activity"] != "off" {
 			t.Fatalf("show after disable = %v", out)
 		}
+		if _, err := os.Stat(filepath.Join(root, ".aw")); !os.IsNotExist(err) {
+			t.Fatalf("the instance directory gained .aw: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, "activity.yaml")); !os.IsNotExist(err) {
+			t.Fatalf("the instance directory gained activity.yaml: %v", err)
+		}
 		entries, _ := os.ReadDir(home)
 		for _, entry := range entries {
 			if entry.Name() != "signing.key" && entry.Name() != "activity.yaml" {

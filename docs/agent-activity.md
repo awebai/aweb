@@ -413,7 +413,9 @@ Agreed with oats-expert-juan on 2026-10-16.
   relative to the work tree ("Editing secrets/prod.env"), so the names of the
   files the agent touches are visible to them, and to aweb's servers.
 - **Non-OATS hosts.** `aw activity enable` and `aw activity disable` write the
-  file (mode 0644, atomic replace).
+  file (mode 0644, atomic replace); `aw activity show` reports the value the
+  emitters apply. Each refuses a directory that holds neither a signing key nor
+  a grant.
 - **OATS hosts.** The oats.aweb provider owns the file. The provider setting
   `settings.oats.aweb.activity: off | status` (default `off`) resolves like the
   provider's other settings (manifest default, deployment, soul, instance). The
