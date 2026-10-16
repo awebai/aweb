@@ -2297,7 +2297,7 @@ func TestMCPConfigRequiresChannelForCertificateAuth(t *testing.T) {
 }
 
 func serveUnadvertisedHealth(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/api/health") {
+	if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/health") {
 		w.WriteHeader(http.StatusNotFound)
 		return true
 	}

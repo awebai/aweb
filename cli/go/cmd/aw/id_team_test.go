@@ -3075,6 +3075,10 @@ func TestHostedGlobalAcceptNoAddressUsesExistingStableID(t *testing.T) {
 	var acceptVerifiedDID bool
 	var server *httptest.Server
 	server = newHTTPTestServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/spawn/accept-invite" {
 			t.Fatalf("unexpected %s %s", r.Method, r.URL.Path)
 		}

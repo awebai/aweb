@@ -725,6 +725,11 @@ func TestOpenSupportsStableDIDTargetViaResolvedAddress(t *testing.T) {
 func TestMarkReadBestEffortDoesNotRepeatRejectedMalformedIDs(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
 		calls++
 		http.Error(w, "authoritative malformed uuid", http.StatusUnprocessableEntity)
 	}))

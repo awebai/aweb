@@ -32,6 +32,11 @@ func TestA2AGatewayBuildsFromWorkspaceConfigServesCardAndSendsTask(t *testing.T)
 	recipientDID := awid.ComputeDIDKey(recipientPub)
 	recipientStableID := awid.ComputeStableID(recipientPub)
 	awebServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/health" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
 		switch r.URL.Path {
 		case "/v1/messages":
 			if r.Header.Get("X-AWID-Team-Certificate") == "" {

@@ -449,6 +449,10 @@ func TestHostedTeamAddProfiledAgentMaterializesAndAppliesRuntime(t *testing.T) {
 	var createInviteCalls, acceptInviteCalls int
 	var server *httptest.Server
 	server = newHTTPTestServerHandlerWithURL(t, func(serverURL string, w http.ResponseWriter, r *http.Request) {
+		if serveUnadvertisedHealth(w, r) {
+			return
+		}
+
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/spawn/create-invite":
 			cert := requireCertificateAuthForTest(t, r)

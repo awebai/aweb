@@ -266,7 +266,7 @@ func TestClientRequestCompressionConcurrentCacheAndMountIsolation(t *testing.T) 
 // Existing request fixtures model servers without request-gzip support. Keep
 // their write assertions independent from the capability discovery GET.
 func serveUnadvertisedHealth(w http.ResponseWriter, r *http.Request) bool {
-	if r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/api/health") {
+	if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/health") {
 		w.WriteHeader(http.StatusNotFound)
 		return true
 	}
