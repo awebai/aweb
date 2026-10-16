@@ -155,6 +155,18 @@ describe("attribution", () => {
     expect(sent.map(event => event.session_id)).toEqual([SESSION, SESSION]);
   });
 
+  test("an encrypted message of the session keeps the turn encrypted when a plaintext one follows", async () => {
+    optIn();
+    const e = emitter();
+    e.chatWakeDelivered(SESSION, { encrypted: true });
+    e.chatWakeDelivered(SESSION, { encrypted: false });
+    e.turnStarted();
+    await settle(600);
+    e.tool("Bash", { command: "pytest" });
+    await settle(600);
+    expect(sent[1].summary).toBeUndefined();
+  });
+
   test("the next turn is unattributed again", async () => {
     optIn();
     const e = emitter();
