@@ -214,10 +214,14 @@ registration (POST `/v1/namespaces`), encryption-key publication
 (POST `/v1/did/{did_aw}/encryption-key`), team creation
 (POST `/v1/namespaces/{domain}/teams`), certificate registration
 (POST `/v1/namespaces/{domain}/teams/{name}/certificates`), and address
-registration (POST `/v1/namespaces/{domain}/addresses`). Identity proofs,
-controller and DNS or parent authorization, encryption-key assertion signatures,
-and certificate/member binding checks remain required as before. All other
-write limits still apply. Missing, wrong, or
+registration (POST `/v1/namespaces/{domain}/addresses`). It also exempts three
+controller-signed team writes: visibility changes
+(POST `/v1/namespaces/{domain}/teams/{name}/visibility`), team deletion
+(DELETE `/v1/namespaces/{domain}/teams/{name}`) and certificate revocation
+(POST `/v1/namespaces/{domain}/teams/{name}/certificates/revoke`). Identity
+proofs, controller and DNS or parent authorization, encryption-key assertion
+signatures, and certificate/member binding checks remain required as before.
+All other write limits still apply. Missing, wrong, or
 unconfigured credentials retain the normal visibility and per-IP rules.
 
 Positive telemetry uses `event=awid_service_exempt` with only a fixed bucket

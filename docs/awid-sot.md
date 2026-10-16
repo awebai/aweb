@@ -141,10 +141,19 @@ namespace controller signatures and DNS or parent authorization, and
 identity-signed encryption-key assertions remain required. Team creation and
 address binding retain namespace-controller authority; certificate registration
 retains team-controller authorization, member/address binding checks and
-verification of any supplied signed certificate blob. All other write buckets
-remain rate-limited even with a matching token. Public callers keep the existing
-10/hour DID, namespace and team creation limits and 30/hour encryption-key,
-certificate and address registration limits.
+verification of any supplied signed certificate blob. The credential also
+exempts three controller-signed team writes: `team_update`
+(POST `/v1/namespaces/{domain}/teams/{name}/visibility`), `team_delete`
+(DELETE `/v1/namespaces/{domain}/teams/{name}`) and `certificate_revoke`
+(POST `/v1/namespaces/{domain}/teams/{name}/certificates/revoke`). Visibility
+changes and revocation retain team-controller authorization; deletion retains
+namespace-controller authorization and its refusal while active certificates
+remain. All other write buckets remain rate-limited even with a matching token.
+Public callers keep the existing 10/hour DID, namespace and team creation
+limits and 30/hour encryption-key, certificate and address registration limits.
+Visibility changes and team deletion allow 300/hour and certificate revocation
+1000/hour per IP: each already needs a controller signature, so the public
+budget only stops a runaway client.
 It never authorizes a write, and must not be shared with
 clients or sent to a discovered external registry. Missing credentials use the
 normal visibility and public-IP rules. A wrong presented credential grants no
