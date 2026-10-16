@@ -119,15 +119,15 @@ describe("events", () => {
     expect(sent[1].tool).toBe("unknown");
   });
 
-  test("a phase outside a turn starts one", async () => {
+  test("a phase outside a turn starts one, and announces it", async () => {
     optIn();
     const e = emitter();
     e.tool("Read", { file_path: "/home/ana/project/a.py" });
     await settle(600);
-    expect(sent.map(event => event.phase)).toEqual(["tool"]);
     e.turnEnded();
     await settle();
-    expect(sent.map(event => [event.phase, event.seq])).toEqual([["tool", 1], ["turn_ended", 2]]);
+    expect(sent.map(event => [event.phase, event.seq])).toEqual([["turn_started", 1], ["tool", 2], ["turn_ended", 3]]);
+    expect(new Set(sent.map(event => event.turn_id)).size).toBe(1);
   });
 
   test("each turn has its own turn_id and seq starts again", async () => {
@@ -256,6 +256,35 @@ describe("publish outcomes", () => {
     expect(sent.map(event => [event.phase, event.seq])).toEqual([
       ["turn_started", 1], ["turn_ended", 2], ["turn_started", 1], ["turn_ended", 2],
     ]);
+  });
+
+  test("a boundary that draws a 429 is sent once, after Retry-After", async () => {
+    optIn();
+    const e = emitter();
+    outcomes = [{ kind: "accepted" }, { kind: "rate_limited", retryAfterSeconds: 2 }];
+    e.turnStarted();
+    await settle();
+    e.turnEnded();
+    await settle();
+    expect(sent.map(event => event.phase)).toEqual(["turn_started", "turn_ended"]);
+    await settle(1999);
+    expect(sent).toHaveLength(2);
+    await settle(1);
+    expect(sent.map(event => event.phase)).toEqual(["turn_started", "turn_ended", "turn_ended"]);
+    await settle(5000);
+    expect(sent).toHaveLength(3);
+  });
+
+  test("a state that draws a 429 does not come back", async () => {
+    optIn();
+    const e = emitter();
+    outcomes = [{ kind: "accepted" }, { kind: "rate_limited", retryAfterSeconds: 2 }];
+    e.turnStarted();
+    await settle(600);
+    e.tool("Bash", { command: "pytest" });
+    await settle();
+    await settle(5000);
+    expect(sent.map(event => event.phase)).toEqual(["turn_started", "tool"]);
   });
 
   test("a refused session drops that event only", async () => {
