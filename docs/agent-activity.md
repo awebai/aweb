@@ -510,25 +510,47 @@ valid or unattributed event, and an absent route stops publishing.
   session's emitter from its channel config at `session_start` and publishes
   whichever way chat is delivered; it is attributed only when the extension
   presents the chat wake itself. Verified against pi-coding-agent 0.74.1.
-- **Codex: hooks, with a transcript tail as the fallback.**
-  - Codex 0.162.1 reports `hooks` as a stable feature (`codex features list`).
-    The binary names `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`,
-    `SessionStart` and `PermissionRequest` events, and hooks require persisted
-    trust. The emitter is an `aw activity hook` command, signing with the
-    home's identity like any `aw` command. Codex has no aweb channel process
-    (`docs/runtime-support.md:23,56-57`), and its packaged plugin is skills
-    only (`packages/codex-plugin/.codex-plugin/plugin.json`).
-  - The exact hook config and stdin schema are verified on the installed
-    binary before implementation; they were observed from the CLI and binary,
-    not from documentation.
-  - If hooks prove unusable, the fallback tails
-    `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`, using the record
-    mappings in the OATS repository's `packages/record/lib/formats.mjs`
-    (`response_item` with `payload.type` of `reasoning` to `thinking`,
-    `function_call`/`custom_tool_call` to `tool`, assistant `message` to
-    `writing`) and its byte-offset, complete-line reading discipline
-    (`lib/capture-cc.mjs`), not its 2-second debounce. `packages/record` itself
-    is a batch capture tool, not a live tail, and is a reference only.
+- **Codex: hooks** (`cli/go/cmd/aw/activity_hook.go`). Verified on Codex
+  0.162.1 from the binary's embedded hook schemas and the Codex hooks
+  documentation; a headless run against a live account is still to do.
+  - `hooks` is a stable feature (`codex features list`) and `plugin_hooks` is
+    removed, so no Codex plugin can ship hooks: they live in
+    `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`), `config.toml`,
+    or a managed layer. Codex has no aweb channel process
+    (`docs/runtime-support.md:23,56-57`).
+  - Every hook runs `aw activity hook`, a fixed command line, so the hook's
+    trust hash changes only with its entries. Codex skips a new or changed
+    hook until it is trusted. On a host that OATS does not manage,
+    `aw activity hook install --codex` adds the entries to `hooks.json`,
+    keeping the rest of the file, refusing a shape it does not know, and
+    printing the `/hooks` trust step. On an OATS host the provider installs
+    the same hook as a managed hook, trusted by policy, only where the host
+    owner turned activity on.
+  - `UserPromptSubmit` is `turn_started`, `PreToolUse` is `tool`,
+    `PostToolUse` returns to `thinking`, `PermissionRequest` is
+    `waiting_permission`, and `Stop`, `Interrupt` and `SessionEnd` are
+    `turn_ended`. Codex's `turn_id` is the activity turn. The tool and prompt
+    hooks run `async`; `Stop` (10 s), `Interrupt` and `SessionEnd` (3 s, Codex's
+    maximum) run in the foreground, because Codex cancels an unfinished
+    background hook when the session ends. A subagent's tool event (it carries
+    `agent_id`) belongs to its parent's open turn. Codex has no event for the
+    model composing its reply, so `writing` is never sent.
+  - Each hook is its own process. The open turn, its `seq`, the time of the
+    last send and any rate-limit pause are kept in
+    `<identity root>/.activity-hook-state.json` (0600), read and written under
+    an exclusive lock on `.activity-hook.lock`, so events are applied and sent
+    in order. The turn rules are Claude Code's: an event of an ended turn is
+    dropped, a repeated submit is ignored, and a new turn first closes one
+    whose stop never arrived. A state within 500 ms of the last send is left
+    pending while its process waits; a later state replaces it and the turn's
+    end discards it. A boundary waits out a pause with the lock held.
+  - Without a resident process, an absent route stops publishing for an hour
+    rather than for the process lifetime; the first hook to see it writes one
+    line to stderr.
+  - Summaries use the templates above. A shell command names its program
+    (for `bash -c` or `-lc`, the script's), and `apply_patch` names the first
+    file in the patch's header lines; the patch body is never read.
+  - Version 1 Codex activity is unattributed (see "Attribution").
 
 ## Released-client compatibility
 
