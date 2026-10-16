@@ -94,3 +94,65 @@ test("the handlers follow the current session's emitter", () => {
   assert.deepEqual(first.calls, [["turnStarted"]]);
   assert.deepEqual(second.calls, [["turnEnded"]]);
 });
+
+// Ending a session's activity (fix-review bc9da6e8 A1): a session shut down or
+// replaced mid-run still closes its turn for watchers.
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ActivityEmitter, type PublishOutcome } from "@awebai/channel-core";
+import { endActivity } from "../src/activity.js";
+
+function realEmitter(publish: (body: { signed_payload: string }) => Promise<PublishOutcome>) {
+  const root = mkdtempSync(join(tmpdir(), "pi-activity-end-"));
+  writeFileSync(join(root, "activity.yaml"), "activity: status\n");
+  const emitter = new ActivityEmitter({
+    identityRoot: root,
+    signer: { did: "did:key:z6MkExample", teamID: "default:acme.aweb.ai", seed: new Uint8Array(32).fill(7) },
+    publish,
+  });
+  return { emitter, cleanup: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+function phases(bodies: { signed_payload: string }[]): string[] {
+  return bodies.map(body => JSON.parse(Buffer.from(body.signed_payload, "base64url").toString("utf8")).phase);
+}
+
+test("ending a session mid-run publishes its turn_ended once", async () => {
+  const bodies: { signed_payload: string }[] = [];
+  const { emitter, cleanup } = realEmitter(async body => { bodies.push(body); return { kind: "accepted" }; });
+  emitter.turnStarted();
+
+  await endActivity(emitter);
+
+  assert.deepEqual(phases(bodies), ["turn_started", "turn_ended"]);
+  emitter.turnEnded();
+  await emitter.drained();
+  assert.equal(bodies.length, 2);
+  cleanup();
+});
+
+test("ending an idle session publishes nothing", async () => {
+  const bodies: { signed_payload: string }[] = [];
+  const { emitter, cleanup } = realEmitter(async body => { bodies.push(body); return { kind: "accepted" }; });
+
+  await endActivity(emitter);
+
+  assert.deepEqual(bodies, []);
+  cleanup();
+});
+
+test("ending waits at most its bound for an unresponsive server", async () => {
+  const { emitter, cleanup } = realEmitter(() => new Promise<PublishOutcome>(() => {}));
+  emitter.turnStarted();
+  const started = Date.now();
+
+  await endActivity(emitter, 50);
+
+  assert.ok(Date.now() - started < 1000);
+  cleanup();
+});
+
+test("ending without an emitter does nothing", async () => {
+  await endActivity(undefined);
+});
