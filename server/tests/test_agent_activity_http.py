@@ -556,6 +556,9 @@ async def test_message_sent_while_activity_is_being_set_up_arrives_once(privacy_
             await confirmed.wait()
         sent = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/messages", {"body": "during setup"})
         assert sent.status_code == 200, sent.text
+        # Setup outlasts the send by more than any clock difference between
+        # this process and the database.
+        await asyncio.sleep(1)
         resume.set()
 
         bodies = []
@@ -568,3 +571,15 @@ async def test_message_sent_while_activity_is_being_set_up_arrives_once(privacy_
                     bodies.append(json.loads(line[len("data: "):])["body"])
 
     assert bodies == ["during setup"]
+
+
+@pytest.mark.asyncio
+async def test_session_id_with_a_trailing_newline_is_invalid_not_a_server_error(privacy_app):
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+
+    response = await _publish(env, "alice", _event(env, "alice", session_id=session_id + "\n"))
+
+    assert response.status_code == 422
+    assert response.json()["detail"].startswith("invalid_value: ")
+    assert await _latest(env, "alice") is None
