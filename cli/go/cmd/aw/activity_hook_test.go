@@ -254,6 +254,25 @@ func TestActivityHookCodex(t *testing.T) {
 	t.Run("off publishes nothing", func(t *testing.T) {
 		home, capture, _, _ := setup(t)
 		hook(t, home, event("UserPromptSubmit", "turn-1", map[string]any{"prompt": "hi"}))
+		// A large event is read in full even when off, so Codex never meets a
+		// closed pipe.
+		large, _ := json.Marshal(event("PreToolUse", "turn-1", map[string]any{"tool_name": "apply_patch", "tool_input": map[string]any{"command": strings.Repeat("+line\n", 200000)}}))
+		cmd := exec.CommandContext(ctx, bin, "activity", "hook")
+		cmd.Dir = root
+		cmd.Env = append(testCommandEnv(filepath.Join(root, "home")), "AWEB_IDENTITY_HOME="+home, "AW_NO_UPDATE_CHECK=1", "AWEB_URL=")
+		pipe, err := cmd.StdinPipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(300 * time.Millisecond)
+		_, writeErr := pipe.Write(large)
+		_ = pipe.Close()
+		if err = cmd.Wait(); err != nil || writeErr != nil {
+			t.Fatalf("large input: exit %v, write %v", err, writeErr)
+		}
 		// Outside any identity the hook stays silent and succeeds.
 		if stderr := hook(t, "", event("UserPromptSubmit", "turn-1", nil)); stderr != "" {
 			t.Fatalf("hook outside an identity: %q", stderr)
