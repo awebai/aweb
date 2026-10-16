@@ -2101,7 +2101,7 @@ capture_success bob_hidden_reply_inbox "bob_hidden_reply_inbox" run_aw_in "$BOB_
 bob_hidden_reply_body="$(echo "$bob_hidden_reply_inbox" | python3 -c "import sys,json; msgs=json.load(sys.stdin).get('messages',[]); print(next((m.get('body','') for m in msgs if m.get('conversation_id')=='$bob_hidden_conversation_id' and m.get('subject')=='Global conversation reply'), ''))" 2>/dev/null || echo "")"
 assert_eq "global conversation bob receives stored-route reply" "Reply through stored participant route" "$bob_hidden_reply_body"
 
-if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" mail send --plaintext \
+if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" --trace mail send --plaintext \
   --conversation-id "$bob_hidden_conversation_id" \
   --subject "Conversation leaked id" \
   --body "Carol should not enter this conversation" 2>&1)"; then
@@ -2109,15 +2109,15 @@ if carol_leaked_conversation_out="$(run_aw_in "$CAROL_DIR" mail send --plaintext
 else
   carol_leaked_conversation_exit=$?
 fi
-if [[ "$carol_leaked_conversation_exit" != "0" ]] && echo "$carol_leaked_conversation_out" | grep -qi "not a participant\|403"; then
-  echo "  PASS: leaked conversation_id rejected as non-participant"
+if [[ "$carol_leaked_conversation_exit" != "0" ]]; then
+  echo "  PASS: leaked conversation_id send exits non-zero"
   pass=$((pass + 1))
 else
-  echo "  FAIL: leaked conversation_id should return participant rejection (exit=$carol_leaked_conversation_exit output=${carol_leaked_conversation_out:0:180})"
+  echo "  FAIL: leaked conversation_id send should fail"
   fail=$((fail + 1))
 fi
 
-if missing_conversation_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
+if missing_conversation_out="$(run_aw_in "$ALICE_DIR" --trace mail send --plaintext \
   --conversation-id "99999999-9999-4999-8999-999999999999" \
   --subject "Missing conversation" \
   --body "Missing conversation should fail" 2>&1)"; then
@@ -2125,11 +2125,48 @@ if missing_conversation_out="$(run_aw_in "$ALICE_DIR" mail send --plaintext \
 else
   missing_conversation_exit=$?
 fi
-if [[ "$missing_conversation_exit" != "0" ]] && echo "$missing_conversation_out" | grep -qi "Conversation not found\|404"; then
-  echo "  PASS: missing conversation_id returns not found"
+if [[ "$missing_conversation_exit" != "0" ]]; then
+  echo "  PASS: missing conversation_id send exits non-zero"
   pass=$((pass + 1))
 else
-  echo "  FAIL: missing conversation_id should return 404 (exit=$missing_conversation_exit output=${missing_conversation_out:0:180})"
+  echo "  FAIL: missing conversation_id send should fail"
+  fail=$((fail + 1))
+fi
+
+# Compare the actual POST responses, not CLI error wording or unrelated
+# heartbeat/lookup responses. Trace preserves the raw JSON response body;
+# Content-Length delimits it without normalizing whitespace or decoding JSON.
+printf '%s\n' "$carol_leaked_conversation_out" >"$E2E_ROOT/hidden-conversation.trace"
+printf '%s\n' "$missing_conversation_out" >"$E2E_ROOT/missing-conversation.trace"
+if python3 - "$AWEB_URL/v1/messages" \
+  "$E2E_ROOT/hidden-conversation.trace" "$E2E_ROOT/missing-conversation.trace" <<'PY'
+from pathlib import Path
+import sys
+
+def response(path):
+    requests = Path(path).read_bytes().split(b"AW TRACE request: ")
+    target = b"POST " + sys.argv[1].encode() + b"\n"
+    matches = [request for request in requests if request.startswith(target)]
+    assert len(matches) == 1, "expected exactly one mail POST"
+    head, body = matches[0].split(b"AW TRACE response: HTTP ", 1)[1].split(
+        b"AW TRACE response body: ", 1)
+    status = int(head.splitlines()[0])
+    prefix = b"AW TRACE response header: "
+    headers = dict(line[len(prefix):].split(b": ", 1)
+                   for line in head.splitlines() if line.startswith(prefix))
+    length = int(headers[b"Content-Length"])
+    assert length > 0 and body[length:length + 1] == b"\n", "incomplete response trace"
+    return status, body[:length], headers[b"Content-Type"]
+
+hidden, missing = map(response, sys.argv[2:])
+assert missing[0] == 404, "missing conversation must return 404"
+assert hidden == missing, "hidden and missing conversation wire responses differ"
+PY
+then
+  echo "  PASS: leaked and missing conversation_id have identical 404 status, body and content-type"
+  pass=$((pass + 1))
+else
+  echo "  FAIL: leaked and missing conversation_id must have identical not-found wire responses"
   fail=$((fail + 1))
 fi
 
