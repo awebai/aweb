@@ -184,3 +184,65 @@ func TestAwMailSendNegotiatesRequestCompression(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestCompressionUsesActuallySelectedFallbackBase(t *testing.T) {
+	for _, alreadyRecovered := range []bool{true, false} {
+		name := "recover_after_404"
+		if alreadyRecovered {
+			name = "already_recovered"
+		}
+		t.Run(name, func(t *testing.T) {
+			var configuredProbes, recoveredProbes, configuredWrites, recoveredWrites atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/health":
+					configuredProbes.Add(1)
+					w.Header().Set("Accept-Encoding", "gzip")
+				case "/health":
+					recoveredProbes.Add(1)
+				case "/api/v1/agents/heartbeat":
+					w.WriteHeader(404)
+				case "/v1/agents/heartbeat":
+					w.WriteHeader(405)
+				case "/api/v1/test":
+					configuredWrites.Add(1)
+					if r.Header.Get("Content-Encoding") != "gzip" {
+						t.Error("configured mount did not use its advertisement")
+					}
+					w.WriteHeader(404)
+				case "/v1/test":
+					recoveredWrites.Add(1)
+					if r.Header.Get("Content-Encoding") != "" {
+						t.Error("recovered base inherited another mount's advertisement")
+					}
+					w.Write([]byte(`{}`))
+				default:
+					t.Errorf("unexpected %s", r.URL.Path)
+					w.WriteHeader(404)
+				}
+			}))
+			defer srv.Close()
+			configured := srv.URL + "/api"
+			current := configured
+			if alreadyRecovered {
+				current = srv.URL
+			}
+			state := &baseURLFallbackState{configuredBaseURL: configured, currentBaseURL: current}
+			transport := &baseURLFallbackTransport{base: awid.NewAPITransport(), state: state}
+			c, _ := awid.New(configured)
+			c.SetHTTPClient(&http.Client{Transport: transport})
+			resp, err := c.DoRaw(context.Background(), "POST", "/v1/test", "application/json", map[string]string{"body": "test"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			expectedConfigured := int32(1)
+			if alreadyRecovered {
+				expectedConfigured = 0
+			}
+			if configuredWrites.Load() != expectedConfigured || configuredProbes.Load() != expectedConfigured || recoveredWrites.Load() != 1 || recoveredProbes.Load() != 1 {
+				t.Errorf("configured=%d/%d recovered=%d/%d", configuredWrites.Load(), configuredProbes.Load(), recoveredWrites.Load(), recoveredProbes.Load())
+			}
+		})
+	}
+}
