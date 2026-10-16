@@ -1,6 +1,6 @@
 {
   "name": "agent-activity-v1",
-  "status": "draft (aweb-acah.2 S0), not frozen",
+  "status": "frozen (aweb-acah.2 S0), ACKed by Athena and the protocol reviewer at 4502edac0",
   "scheme": {
     "canonical": "UTF-8 JSON, keys sorted by code point, separators ',' and ':', no ASCII escaping",
     "signature": "Ed25519 over the canonical bytes, raw standard base64 without padding",

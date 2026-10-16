@@ -206,9 +206,9 @@ and `cleared` phases, signer, team and stable-id bindings, the validity window, 
 expiry. Two route refusals pin the shared 404 for an absent session and a
 session the caller is not in. A cross-type entry is a producer construction
 check: message bytes built with `canonical_payload` never equal activity bytes.
-Ingress separation is the required `type` at every route. These bytes are a draft until Athena's
-review of the contract amendments; changing them after the freeze needs a new
-version.
+Ingress separation is the required `type` at every route. Athena and the
+protocol reviewer ACKed these bytes at `4502edac0` before either side
+implemented them; changing them needs a new version.
 
 ## Experimental and compatibility A2A fixtures
 

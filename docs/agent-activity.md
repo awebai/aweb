@@ -1,10 +1,10 @@
 # Agent activity: a signed, ephemeral, opt-in status stream
 
 Status: **approved by Juan on 2026-10-14 (aweb-acah.2); not yet implemented.**
-The amendments in "Amendments after approval" are approved by Athena.
-The signed event's wire bytes are pinned in
-[`docs/vectors/agent-activity-v1.json`](vectors/agent-activity-v1.json), which
-is frozen after the independent protocol review's ACK.
+The amendments in "Amendments after approval" are approved by Athena and the
+independent protocol reviewer. The signed event's wire bytes are frozen in
+[`docs/vectors/agent-activity-v1.json`](vectors/agent-activity-v1.json), ACKed
+at `4502edac0` before the server or any emitter implemented them.
 
 ## Purpose
 
