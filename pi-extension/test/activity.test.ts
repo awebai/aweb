@@ -3,8 +3,12 @@
 // is the activity turn; Pi's turn_start/turn_end fire per model call.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerActivityHandlers, type ActivityTarget } from "../src/activity.js";
+import { ActivityEmitter, type PublishOutcome } from "@awebai/channel-core";
+import { endActivity, registerActivityHandlers, type ActivityTarget } from "../src/activity.js";
 
 type Handler = (event: unknown, ctx?: unknown) => unknown;
 
@@ -97,11 +101,6 @@ test("the handlers follow the current session's emitter", () => {
 
 // Ending a session's activity (fix-review bc9da6e8 A1): a session shut down or
 // replaced mid-run still closes its turn for watchers.
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { ActivityEmitter, type PublishOutcome } from "@awebai/channel-core";
-import { endActivity } from "../src/activity.js";
 
 function realEmitter(publish: (body: { signed_payload: string }) => Promise<PublishOutcome>) {
   const root = mkdtempSync(join(tmpdir(), "pi-activity-end-"));

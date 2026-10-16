@@ -29,7 +29,7 @@ import {
   installWakeDiagnostics,
   type WakeDispatcher,
 } from "./wake.js";
-import { registerActivityHandlers } from "./activity.js";
+import { endActivity, registerActivityHandlers } from "./activity.js";
 
 interface AwResolution {
   command: string;
@@ -295,7 +295,9 @@ export default function awebPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", async () => {
+    const ending = activity;
     activity = undefined;
+    await endActivity(ending);
     abortController?.abort();
     abortController = undefined;
     wakeDispatcher?.close(new Error("Pi session shut down before wake delivery"));
@@ -304,7 +306,9 @@ export default function awebPiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_start", async (_event, ctx) => {
+    const replaced = activity;
     activity = undefined;
+    await endActivity(replaced);
     abortController?.abort();
     wakeDispatcher?.close(new Error("Pi session replaced before wake delivery"));
     wakeDispatcher = undefined;
