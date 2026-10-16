@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   type ActivityEmitter,
   createActivityEmitter,
+  endActivity,
   createChannelClient,
   createRegistryResolver,
   type ChannelAwakening,
@@ -29,7 +30,7 @@ import {
   installWakeDiagnostics,
   type WakeDispatcher,
 } from "./wake.js";
-import { endActivity, registerActivityHandlers } from "./activity.js";
+import { registerActivityHandlers } from "./activity.js";
 
 interface AwResolution {
   command: string;

@@ -7,8 +7,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ActivityEmitter, type PublishOutcome } from "@awebai/channel-core";
-import { endActivity, registerActivityHandlers, type ActivityTarget } from "../src/activity.js";
+import { ActivityEmitter, endActivity, type PublishOutcome } from "@awebai/channel-core";
+import { registerActivityHandlers, type ActivityTarget } from "../src/activity.js";
 
 type Handler = (event: unknown, ctx?: unknown) => unknown;
 

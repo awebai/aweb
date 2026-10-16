@@ -37,3 +37,22 @@ export function createActivityEmitter(
     log: options.log,
   });
 }
+
+/**
+ * End a session's open turn and wait, at most boundMs, for its events to be
+ * published: a session shut down or replaced mid-run still closes its turn for
+ * watchers. An idle session sends nothing.
+ */
+export async function endActivity(
+  emitter: Pick<ActivityEmitter, "turnEnded" | "drained"> | undefined,
+  boundMs = 2000,
+): Promise<void> {
+  if (emitter === undefined) return;
+  emitter.turnEnded();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    emitter.drained(),
+    new Promise<void>(resolve => { timer = setTimeout(resolve, boundMs); }),
+  ]);
+  clearTimeout(timer);
+}
