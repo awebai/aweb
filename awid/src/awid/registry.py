@@ -667,6 +667,50 @@ class RegistryClient:
             )
         )
 
+    async def set_team_visibility(
+        self,
+        domain: str,
+        name: str,
+        visibility: str,
+        team_controller_signing_key: bytes,
+    ) -> Team:
+        """Set visibility using the team's controller, not namespace authority."""
+        registry_url = await self._registry_url_for_domain(domain)
+        return _team_from_json(
+            await self._request_json(
+                "POST",
+                f"/v1/namespaces/{domain}/teams/{name}/visibility",
+                headers=self._signed_namespace_headers(
+                    domain=domain,
+                    operation="set_team_visibility",
+                    signing_key=team_controller_signing_key,
+                    extra_payload={"team_name": name, "visibility": visibility},
+                ),
+                json={"visibility": visibility},
+                registry_url=registry_url,
+            )
+        )
+
+    async def delete_team(
+        self,
+        domain: str,
+        name: str,
+        namespace_controller_signing_key: bytes,
+    ) -> dict[str, Any]:
+        """Delete using namespace authority; active certificates must be revoked first."""
+        registry_url = await self._registry_url_for_domain(domain)
+        return await self._request_json(
+            "DELETE",
+            f"/v1/namespaces/{domain}/teams/{name}",
+            headers=self._signed_namespace_headers(
+                domain=domain,
+                operation="delete_team",
+                signing_key=namespace_controller_signing_key,
+                extra_payload={"team_name": name},
+            ),
+            registry_url=registry_url,
+        )
+
     async def rotate_namespace_controller(
         self,
         domain: str,
@@ -1654,6 +1698,30 @@ class CachedRegistryClient(RegistryClient):
         )
         return team
 
+    async def set_team_visibility(
+        self,
+        domain: str,
+        name: str,
+        visibility: str,
+        team_controller_signing_key: bytes,
+    ) -> Team:
+        cache_key = self._team_metadata_cache_key(domain, name)
+        await self._invalidate_keys(cache_key)
+        team = await super().set_team_visibility(domain, name, visibility, team_controller_signing_key)
+        await self._invalidate_keys(cache_key)
+        return team
+
+    async def delete_team(
+        self,
+        domain: str,
+        name: str,
+        namespace_controller_signing_key: bytes,
+    ) -> dict[str, Any]:
+        await self._invalidate_team_cache(domain, name)
+        result = await super().delete_team(domain, name, namespace_controller_signing_key)
+        await self._invalidate_team_cache(domain, name)
+        return result
+
     async def rotate_namespace_controller(
         self,
         domain: str,
@@ -1905,6 +1973,16 @@ class CachedRegistryClient(RegistryClient):
         if cached_payload is None:
             return None
         return cached_payload["value"]
+
+    async def _invalidate_team_cache(self, domain: str, name: str) -> None:
+        certificate_keys = await self._team_certificate_cache_keys(
+            domain, name, tolerate_unavailable=True,
+        )
+        await self._invalidate_keys(
+            self._team_metadata_cache_key(domain, name),
+            self._team_revocations_cache_key(domain, name),
+            *certificate_keys,
+        )
 
     async def _invalidate_namespace_cache(self, domain: str) -> None:
         registry_url = await self._registry_url_for_domain(domain)

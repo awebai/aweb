@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The Python registry client can change visibility and delete teams:**
+  `RegistryClient.set_team_visibility` uses the team controller's signature and
+  returns the updated team. `RegistryClient.delete_team` uses the namespace
+  controller's signature and returns the deletion acknowledgment; active
+  certificates must be revoked first. Both use the domain's registry, and the
+  cached client invalidates affected team metadata, certificates and revocations.
+
 ## Release preparations
 
 ### Release preparation: server 1.27.26
