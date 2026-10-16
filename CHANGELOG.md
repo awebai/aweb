@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The server accepts gzip request bodies:** decoding precedes body hashing
+  and authentication, so signatures still cover the original bytes. Every HTTP
+  response advertises gzip support. Compressed and decoded bytes each have a
+  1 MiB cap; plain requests retain their existing behavior and larger bodies
+  can be sent plain. Embedding hosts can wrap their outer app with the same
+  ASGI middleware.
+
 - **Blocked message errors offer a next step:** an HTML 403 titled “Blocked”
   keeps its status and response identifiers and explains the firewall refusal,
   including how to reword a backticked curl or wget example before sending again.

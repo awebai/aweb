@@ -68,6 +68,31 @@ uv run aweb serve
 
 ## Runtime Inputs
 
+### HTTP request compression
+
+The server advertises `Accept-Encoding: gzip` on every HTTP response, including
+`GET /health` and errors. It accepts gzip request bodies before logging, body
+hashing and authentication. Sign the original uncompressed bytes. Both the
+compressed input and decoded body have a hard 1 MiB limit; an oversized gzip
+request returns 413, invalid or truncated gzip returns 400, and an unsupported
+`Content-Encoding` returns 415. Concatenated gzip members share the same limits.
+The decoded request has no `Content-Encoding` or `Transfer-Encoding` header and
+has a corrected `Content-Length`.
+
+Absent or `identity` encoding keeps the existing plain-body behavior, including
+larger writes. Clients should compress only after discovering the advertisement
+from that server's `/health`, and send the body plain if either its original or
+compressed byte count exceeds 1 MiB. A large plain request can still meet an
+upstream firewall's content filter; compression does not remove that limitation.
+
+Embedding hosts can use `aweb.request_compression.RequestDecompressionFastAPI`
+with the usual FastAPI constructor arguments. It wraps the completed middleware
+stack, including framework error handling. Alternatively, wrap a completed ASGI
+stack with `RequestDecompressionMiddleware` from the same module. Place it
+outside logging, rate limiting and authentication; using `add_middleware` alone
+misses framework-generated 500s. Nested wrappers are safe, advertise once, and
+leave websocket and lifespan traffic untouched.
+
 Common environment variables:
 
 - `AWEB_DATABASE_URL` or `DATABASE_URL`

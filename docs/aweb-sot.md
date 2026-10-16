@@ -265,6 +265,23 @@ able to distinguish:
 
 ## Authentication
 
+### HTTP request compression
+
+The aweb HTTP app decodes `Content-Encoding: gzip` before logging, body hashing
+and authentication. Signed request body hashes cover the decoded original bytes.
+Both compressed input and decoded output are limited to 1 MiB, across all gzip
+members: oversized input or output returns 413, corrupt or truncated gzip 400,
+and unsupported encodings 415. All HTTP responses advertise
+`Accept-Encoding: gzip`, including `/health` and error responses. Decoding strips
+`Content-Encoding` and `Transfer-Encoding` and sets the decoded `Content-Length`.
+Absent or `identity` encoding passes through unchanged, with no added body cap.
+
+Clients must discover support from the target server before compressing writes,
+and send bodies plain when either the original or compressed size exceeds 1 MiB.
+This preserves existing large plain writes; those remain subject to upstream
+firewall content filtering. Embedding apps must wrap their outer stack too; see
+the [server embedding guidance](../server/README.md#http-request-compression).
+
 ### Request format
 
 aweb has three authentication classes:

@@ -27,6 +27,7 @@ from awid.ratelimit import build_rate_limiter
 from .routing_utils import move_mount_before_spa_fallback
 from .service_errors import ServiceError
 from .mcp.server import NormalizeMountedMCPPathMiddleware
+from .request_compression import RequestDecompressionFastAPI
 from .routes.agent_status import router as agent_status_router
 from .routes.agents import router as agents_router
 from .routes.apps import router as apps_router
@@ -405,7 +406,7 @@ def create_app(
     else:
         lifespan = _make_standalone_lifespan()
 
-    app = FastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
+    app = RequestDecompressionFastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
     @app.middleware("http")
