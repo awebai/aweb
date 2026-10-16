@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **AWID: team visibility, deletion and revocation no longer hit low per-IP
+  limits.** The aweb service, presenting its matching `AWID_SERVICE_TOKEN`, is
+  exempt from the `team_update`, `team_delete` and `certificate_revoke` per-IP
+  limits, as it already was for team creation and certificate registration, so
+  Cloud's visibility pushes and team retirement no longer fail partway. Every
+  caller's limits rise from 10/hour to 300/hour for visibility changes and team
+  deletion, and from 30/hour to 1000/hour for revocation: each write already
+  needs a controller signature, so the budget only stops a runaway client. The
+  controller signatures and the deletion refusal while certificates are active
+  are unchanged.
+
 ## Release preparations
 
 ### Release preparation: channel 1.8.0, pi 0.4.0
