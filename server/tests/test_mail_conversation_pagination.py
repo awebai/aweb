@@ -97,7 +97,7 @@ async def test_conversation_cursor_does_not_authorize_nonparticipant(privacy_app
     cursor = page.json()["next_cursor"]
     assert cursor
     denied = await _request(env, "carol", "GET", path + "?order=desc&cursor=" + cursor)
-    assert denied.status_code == 403, denied.text
+    assert denied.status_code == 404, denied.text
     assert "history" not in denied.text
     anonymous = await env.client.get(path + "?order=desc&cursor=" + cursor)
     assert anonymous.status_code == 401
@@ -144,7 +144,7 @@ async def test_polling_drains_bursts_and_preserves_empty_watermark(privacy_app):
     assert idle.json()["messages"] == []
     assert idle.json()["after_cursor"] == watermark
     denied = await _request(env, "carol", "GET", path + "?after=" + watermark)
-    assert denied.status_code == 403
+    assert denied.status_code == 404
     assert all(m["message_id"] not in ascending for m in seen)
     read_state = await env.db.fetch_all(
         "SELECT read_at FROM {{tables.messages}} WHERE conversation_id=$1", UUID(conversation),
@@ -258,7 +258,7 @@ async def test_pagination_keeps_encrypted_projection_and_public_dashboard_isolat
         assert response.status_code == 401
         assert "opaque" not in response.text
     denied = await _request(env, "carol", "GET", path + "&cursor=" + cursor)
-    assert denied.status_code == 403
+    assert denied.status_code == 404
     assert "opaque" not in denied.text
 
     # A legitimate but empty conversation still has no invented message cursor.

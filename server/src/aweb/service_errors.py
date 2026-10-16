@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 
+RESOURCE_NOT_FOUND_DETAIL = "Not found"
+
+
 class ServiceError(Exception):
     """Base for service-layer errors with an HTTP-compatible status code."""
 
@@ -16,7 +19,7 @@ class ServiceError(Exception):
 class NotFoundError(ServiceError):
     status_code: int = 404
 
-    def __init__(self, detail: str = "Not found") -> None:
+    def __init__(self, detail: str = RESOURCE_NOT_FOUND_DETAIL) -> None:
         super().__init__(detail)
 
 

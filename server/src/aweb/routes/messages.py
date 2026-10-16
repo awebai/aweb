@@ -83,7 +83,7 @@ from aweb.messaging.verification import (
     message_verification_status,
     require_conversation_not_legacy_bound,
 )
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, ForbiddenError, NotFoundError, ServiceError, ValidationError
 
 from aweb.messaging.sender_membership import SenderMembership, sender_memberships
 
@@ -382,8 +382,6 @@ async def get_mail_conversation(
         conv_uuid,
     )
     if conversation:
-        if conversation["conversation_type"] != "mail":
-            raise HTTPException(status_code=422, detail="Conversation is not a mail conversation")
         participant = await aweb_db.fetch_one(
             """
             SELECT 1
@@ -396,7 +394,9 @@ async def get_mail_conversation(
             actor_dids,
         )
         if not participant:
-            raise HTTPException(status_code=403, detail="Authenticated identity is not a participant in this conversation")
+            raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
+        if conversation["conversation_type"] != "mail":
+            raise HTTPException(status_code=422, detail="Conversation is not a mail conversation")
         # A cursor selects a position, never an identity or authorization scope.
         # Keep the participant check above on every page, even for forged cursors.
         if after is not None and (cursor is not None or order != "asc"):
@@ -459,7 +459,7 @@ async def get_mail_conversation(
             status_code=404,
             detail="This is a legacy mail without a conversation; use --message-id",
         )
-    raise HTTPException(status_code=404, detail="Conversation not found")
+    raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
 
 def _parse_signed_timestamp(value: str) -> datetime:

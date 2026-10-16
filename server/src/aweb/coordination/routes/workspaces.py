@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from redis.asyncio import Redis
 
+from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...config import get_settings
@@ -154,15 +155,12 @@ async def heartbeat(
         UUID(payload.workspace_id),
     )
     if existing:
+        if existing.get("team_id") != team_id:
+            raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
         if existing.get("deleted_at") is not None:
             raise HTTPException(
                 status_code=410,
                 detail="Workspace was deleted. Run 'aw connect' to re-register.",
-            )
-        if existing.get("team_id") != team_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Workspace {payload.workspace_id} does not belong to this team.",
             )
         if existing.get("alias") and existing["alias"] != payload.alias:
             raise HTTPException(
@@ -174,10 +172,7 @@ async def heartbeat(
                 ),
             )
     else:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Workspace {payload.workspace_id} not found. Run 'aw connect' to register.",
-        )
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     if identity.grant is None:
         _require_workspace_owner(existing, identity, payload.workspace_id, operation="heartbeat")

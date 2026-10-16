@@ -265,6 +265,28 @@ able to distinguish:
 
 ## Authentication
 
+### Resource visibility on refusal
+
+When an authenticated caller cannot see a private resource, refusal must be
+indistinguishable from a missing ID at the same operation: status, response body
+and content type match. Mail conversation reads and continuation, chat history,
+read receipts and streams, installed-app team lookups, cross-team roles and
+instructions activation, and cross-team workspace heartbeats use the shared
+404 `{"detail":"Not found"}`. Conversation participation is checked before its
+type or closed/expired state is disclosed. Participants still receive the
+existing wrong-type 422 and closed/expired 403 responses.
+
+MCP chat sends likewise return the same `{"error":"Session not found"}` tool
+answer for absent sessions and non-participants, including loss of participation
+during a hosted signing callback. MCP's tool-result envelope is unchanged.
+
+Authentication failures remain 401. Grant scope and messaging-policy refusals,
+public AWID facts, and members lacking operation permission retain their existing
+403 behavior. Dashboard JWTs without the requested team receive the generic
+403 `{"detail":"Not authorized for this team"}`, without an echoed team ID;
+AWID team IDs are public. Same-team workspace owner-permission checks and an
+owner's deleted-workspace response are unchanged.
+
 ### HTTP request compression
 
 The aweb HTTP app decodes `Content-Encoding: gzip` before logging, body hashing

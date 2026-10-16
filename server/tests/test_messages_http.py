@@ -2731,8 +2731,8 @@ async def test_mail_conversation_history_requires_participant_and_includes_sent_
     app.dependency_overrides[get_messaging_auth] = _mallory_auth
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         forbidden = await client.get(f"/v1/messages/conversations/{conversation_id}")
-    assert forbidden.status_code == 403
-    assert "not a participant" in forbidden.json()["detail"]
+    assert forbidden.status_code == 404
+    assert forbidden.json() == {"detail": "Not found"}
 
 
 @pytest.mark.asyncio
@@ -2769,7 +2769,7 @@ async def test_mail_conversation_history_distinguishes_missing_and_legacy_messag
     assert legacy.status_code == 404
     assert "legacy mail without a conversation" in legacy.json()["detail"]
     assert missing.status_code == 404
-    assert missing.json()["detail"] == "Conversation not found"
+    assert missing.json() == {"detail": "Not found"}
 
 
 @pytest.mark.asyncio
@@ -2831,8 +2831,8 @@ async def test_send_message_continuation_rejects_non_participant_and_closed(aweb
             "/v1/messages",
             json={"conversation_id": conversation_id, "subject": "leak", "body": "nope"},
         )
-    assert leaked.status_code == 403
-    assert "not a participant" in leaked.json()["detail"]
+    assert leaked.status_code == 404
+    assert leaked.json() == {"detail": "Not found"}
 
     await aweb_cloud_db.aweb_db.execute(
         "UPDATE {{tables.conversations}} SET status = 'closed' WHERE conversation_id = $1",

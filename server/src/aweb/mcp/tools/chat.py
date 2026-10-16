@@ -703,7 +703,7 @@ async def chat_send(
             actor_dids=actor_dids,
         )
         if not session_actor_did:
-            return json.dumps({"error": "Not a participant in this session"})
+            return json.dumps({"error": "Session not found"})
         try:
             await require_conversation_not_legacy_bound(
                 db_infra,
@@ -853,7 +853,7 @@ async def chat_send(
             message_id=pre_message_id,
         )
         if msg is None:
-            return json.dumps({"error": "Not a participant in this session"})
+            return json.dumps({"error": "Session not found"})
         sent_from_did = session_actor_did
         federated = bool(remote_recipients)
 

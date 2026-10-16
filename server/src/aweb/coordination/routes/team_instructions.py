@@ -14,6 +14,7 @@ from pgdbm import AsyncDatabaseManager
 from pgdbm.errors import QueryError
 from pydantic import BaseModel, Field, field_validator
 
+from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL
 from aweb.team_auth_deps import TeamIdentity, get_team_identity, team_identity_with_grant_scope
 
 from ...db import DatabaseInfra, get_db_infra
@@ -221,13 +222,10 @@ async def activate_team_instructions(
         instructions_id,
     )
     if not target:
-        raise HTTPException(status_code=404, detail="Team instructions not found")
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     if target["team_id"] != team_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Team instructions do not belong to this team",
-        )
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     # Deactivate the currently active version (if any)
     await db.execute(

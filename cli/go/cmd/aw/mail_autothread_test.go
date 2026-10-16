@@ -60,6 +60,7 @@ func TestAwMailSendOpportunisticThreading(t *testing.T) {
 		{name: "expired_did", flag: "--to-did", target: peer, conversations: []awid.ConversationItem{older}, status: 403, detail: "Conversation is expired", wantPosts: 2},
 		{name: "expired_address", flag: "--to-address", target: "test.local/alice", conversations: []awid.ConversationItem{older}, status: 403, detail: "Conversation is expired", wantPosts: 2},
 		{name: "explicit_expired", flag: "--conversation-id", target: old, conversations: []awid.ConversationItem{older}, status: 403, detail: "Conversation is expired", wantPosts: 1, wantFailure: true},
+		{name: "hidden_404", conversations: []awid.ConversationItem{older}, status: 404, detail: "Not found", wantPosts: 1, wantFailure: true},
 		{name: "other_403", conversations: []awid.ConversationItem{older}, status: 403, detail: "Not a participant", wantPosts: 1, wantFailure: true},
 		{name: "auth_403", conversations: []awid.ConversationItem{older}, status: 403, detail: "grant expired", wantPosts: 1, wantFailure: true},
 		{name: "embedded_expiry_text", conversations: []awid.ConversationItem{older}, status: 403, detail: "Permission denied: Conversation is expired", wantPosts: 1, wantFailure: true},

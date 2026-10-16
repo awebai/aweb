@@ -7,7 +7,7 @@ import json
 from typing import Any
 from uuid import UUID
 
-from aweb.service_errors import ForbiddenError, NotFoundError, ServiceError, ValidationError
+from aweb.service_errors import NotFoundError, ServiceError, ValidationError
 from aweb.messaging.conversations import (
     _equivalent_identity_refs,
     find_active_one_to_one_conversation_between,
@@ -624,7 +624,7 @@ async def get_message_history(
         participant_did,
     )
     if not is_participant:
-        raise ForbiddenError("Not a participant in this session")
+        raise NotFoundError()
 
     message_uuid = _uuid_or_none(message_id)
 
@@ -727,7 +727,7 @@ async def mark_messages_read(
         participant_did,
     )
     if not is_participant:
-        raise ForbiddenError("Not a participant in this session")
+        raise NotFoundError()
 
     presented = await aweb_db.fetch_all(
         """
@@ -807,7 +807,7 @@ async def mark_messages_read_up_to(
         participant_did,
     )
     if not is_participant:
-        raise ForbiddenError("Not a participant in this session")
+        raise NotFoundError()
 
     watermark = await aweb_db.fetch_one(
         """

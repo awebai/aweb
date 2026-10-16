@@ -157,11 +157,11 @@ async def test_require_active_participant_accepts_verified_equivalent_did(aweb_c
 
 
 @pytest.mark.asyncio
-async def test_non_participant_with_leaked_conversation_id_gets_forbidden(aweb_cloud_db):
+async def test_non_participant_with_leaked_conversation_id_gets_not_found(aweb_cloud_db):
     db = _DbShim(aweb_cloud_db.aweb_db)
     conversation = await _create_two_party_conversation(aweb_cloud_db)
 
-    with pytest.raises(ForbiddenError, match="not a participant"):
+    with pytest.raises(NotFoundError):
         await require_active_conversation_participant(
             db,
             conversation_id=conversation["conversation_id"],
@@ -325,7 +325,7 @@ async def test_close_conversation_requires_participant_or_system_close(aweb_clou
 
     with pytest.raises(ValidationError, match="closed_by_did"):
         await close_conversation(db, conversation_id=conversation["conversation_id"])
-    with pytest.raises(ForbiddenError, match="not a participant"):
+    with pytest.raises(NotFoundError):
         await close_conversation(
             db,
             conversation_id=conversation["conversation_id"],

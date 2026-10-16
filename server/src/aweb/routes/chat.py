@@ -100,7 +100,7 @@ from aweb.grant_streams import (
     grant_terminal_sse,
     require_valid_stream_grant,
 )
-from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ConflictError, ForbiddenError, NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -1887,11 +1887,11 @@ async def history(
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one("SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     participant_rows = await aweb_db.fetch_all(
         """
@@ -1997,11 +1997,11 @@ async def mark_read(
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one("SELECT 1 FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     if payload.message_ids is not None:
         result = await mark_messages_read(
@@ -2390,11 +2390,11 @@ async def stream(
     aweb_db = db.get_manager("aweb")
     sess = await aweb_db.fetch_one("SELECT team_id FROM {{tables.chat_sessions}} WHERE session_id = $1", session_uuid)
     if not sess:
-        raise HTTPException(status_code=404, detail="Session not found")
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     actor_did = await _resolve_session_actor_did(db, session_id=session_uuid, actor_dids=actor_dids)
     if not actor_did:
-        raise HTTPException(status_code=403, detail="Not a participant in this session")
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
 
     deadline_dt = _parse_deadline(deadline)
     max_deadline = datetime.now(timezone.utc) + timedelta(seconds=MAX_CHAT_STREAM_DURATION)

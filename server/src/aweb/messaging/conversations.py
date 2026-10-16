@@ -161,7 +161,7 @@ async def _get_active_conversation(
     conversation_uuid = _parse_uuid(conversation_id, field_name="conversation_id")
     conversation = await get_conversation(db, conversation_id=conversation_uuid, now=effective_now)
     if conversation is None:
-        raise NotFoundError("Conversation not found")
+        raise NotFoundError()
     if conversation["status"] == "closed":
         raise ForbiddenError("Conversation is closed")
     if conversation["status"] == "expired":
@@ -518,7 +518,7 @@ async def add_conversation_participant(
 ) -> dict[str, Any]:
     conversation = await get_conversation(db, conversation_id=conversation_id)
     if conversation is None:
-        raise NotFoundError("Conversation not found")
+        raise NotFoundError()
     await _get_active_conversation(db, conversation_id=conversation_id)
 
     record = _participant_record(participant, role=role)
@@ -571,7 +571,6 @@ async def require_active_conversation_participant(
             candidate_dids.append(normalized)
 
     aweb_db = db.get_manager("aweb")
-    conversation = await _get_active_conversation(db, conversation_id=conversation_uuid)
 
     participant_row = await aweb_db.fetch_one(
         """
@@ -587,7 +586,10 @@ async def require_active_conversation_participant(
         primary_did,
     )
     if not participant_row:
-        raise ForbiddenError("Authenticated identity is not a participant in this conversation")
+        raise NotFoundError()
+
+    # A caller must prove participation before learning the conversation state.
+    conversation = await _get_active_conversation(db, conversation_id=conversation_uuid)
 
     return {
         "conversation": conversation,
@@ -664,7 +666,7 @@ async def close_conversation(
         now,
     )
     if not row:
-        raise NotFoundError("Conversation not found")
+        raise NotFoundError()
     return _conversation_dict(dict(row))
 
 
@@ -688,6 +690,6 @@ async def expire_conversation(db, *, conversation_id: str | UUID) -> dict[str, A
     if not row:
         existing = await get_conversation(db, conversation_id=conversation_uuid)
         if existing is None:
-            raise NotFoundError("Conversation not found")
+            raise NotFoundError()
         return existing
     return _conversation_dict(dict(row))

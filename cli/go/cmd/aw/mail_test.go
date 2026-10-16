@@ -1384,7 +1384,7 @@ func TestAwMailSendConversationIDSurfacesNonParticipantRejection(t *testing.T) {
 		case "/v1/conversations", "/v1/messages/conversations/" + conversationID:
 			http.NotFound(w, r)
 		case "/v1/messages":
-			http.Error(w, `{"detail":"Authenticated identity is not a participant in this conversation"}`, http.StatusForbidden)
+			http.Error(w, `{"detail":"Not found"}`, http.StatusNotFound)
 		case "/v1/agents/heartbeat":
 			w.WriteHeader(http.StatusOK)
 		default:
@@ -1419,8 +1419,8 @@ func TestAwMailSendConversationIDSurfacesNonParticipantRejection(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected failure, got success:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), "not a participant") {
-		t.Fatalf("expected participant rejection, got:\n%s", string(out))
+	if !strings.Contains(string(out), "404") || !strings.Contains(string(out), "Not found") {
+		t.Fatalf("expected hidden-resource rejection, got:\n%s", string(out))
 	}
 }
 

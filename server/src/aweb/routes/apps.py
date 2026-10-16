@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from aweb.app_registry import AppEmitKey, AppEventType, AppInstall, install_app, list_installed_apps, validate_team_id
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.internal_auth import parse_internal_auth_context
-from aweb.service_errors import ServiceError
+from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError
 from aweb.team_auth_deps import get_team_identity
 
 router = APIRouter(prefix="/v1/apps", tags=["apps"])
@@ -73,12 +73,12 @@ async def _authorized_team_id(request: Request, db_infra: DatabaseInfra, request
     internal = parse_internal_auth_context(request)
     if internal is not None:
         if internal["team_id"] != team_id:
-            raise HTTPException(status_code=403, detail="Not authorized for requested team_id")
+            raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
         return team_id, internal.get("actor_id")
 
     identity = await get_team_identity(request, db_infra)
     if identity.team_id != team_id:
-        raise HTTPException(status_code=403, detail="Not authorized for requested team_id")
+        raise HTTPException(status_code=404, detail=RESOURCE_NOT_FOUND_DETAIL)
     return team_id, identity.agent_id
 
 

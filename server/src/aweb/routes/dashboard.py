@@ -93,7 +93,7 @@ def _verify_dashboard_auth(request: Request, team_id: str) -> dict[str, Any]:
         if "not configured" in msg:
             raise HTTPException(status_code=500, detail="Dashboard auth misconfigured")
         if "not authorized" in msg:
-            raise HTTPException(status_code=403, detail=msg)
+            raise HTTPException(status_code=403, detail="Not authorized for this team")
         raise HTTPException(status_code=401, detail=msg)
 
 
