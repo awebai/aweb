@@ -73,6 +73,7 @@ from aweb.messaging.chat import (
     resolve_session_actor_did,
     send_in_session,
 )
+from aweb.messaging.activity_stream import SessionActivity
 from aweb.messaging.conversations import close_conversation
 from aweb.messaging.contacts import (
     get_contact_addresses,
@@ -2042,6 +2043,7 @@ async def _sse_events(
     auth: MessagingAuth,
     after: datetime | None = None,
     delivery_team_id: str | None = None,
+    include_activity: bool = False,
 ) -> AsyncIterator[str]:
     aweb_db = db.get_manager("aweb")
     session_id_str = str(session_id)
@@ -2077,7 +2079,7 @@ async def _sse_events(
     try:
         participant_rows = await aweb_db.fetch_all(
             """
-            SELECT p.did, p.alias, p.address
+            SELECT p.did, p.alias, p.address, p.agent_id
             FROM {{tables.chat_participants}} p
             WHERE p.session_id = $1
             ORDER BY p.alias ASC
@@ -2091,6 +2093,34 @@ async def _sse_events(
         if viewer_row is None:
             yield f"event: error\ndata: {json.dumps({'error': 'Session not found'})}\n\n"
             return
+        # The other participant agents' activity, for a stream that asked for it.
+        activity = None
+        if include_activity and redis is not None:
+            activity = SessionActivity(
+                session_id_str,
+                {
+                    str(row["agent_id"]): row["alias"]
+                    for row in participant_rows
+                    if row.get("agent_id") is not None and row is not viewer_row
+                },
+            )
+
+        async def _open_activity(ps: PubSub) -> tuple[list[str], bool]:
+            """Subscribe, confirm, snapshot, then drain what arrived meanwhile.
+
+            Returns the frames to send and whether a session wake arrived.
+            """
+            pending = await activity.subscribe(ps)
+            frames = await activity.snapshot(redis)
+            woken = False
+            for queued in pending:
+                if activity.owns(queued["channel"]):
+                    frame = activity.accept(queued["data"])
+                    if frame is not None:
+                        frames.append(frame)
+                else:
+                    woken = True
+            return frames, woken
 
         contact_addrs = await get_contact_addresses(db, owner_dids=contact_owner_dids)
 
@@ -2115,6 +2145,19 @@ async def _sse_events(
         if reason:
             yield grant_terminal_sse(reason)
             return
+
+        if activity is not None and pubsub is not None:
+            try:
+                frames, _ = await _open_activity(pubsub)
+            except (RedisError, TimeoutError):
+                logger.info("Chat session activity subscribe failed; retrying with the pubsub", exc_info=True)
+                await _close_session_pubsub(pubsub, channel)
+                pubsub = None
+                next_reconnect_at = time.monotonic() + reconnect_delay_seconds
+                reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
+            else:
+                for frame in frames:
+                    yield frame
 
         if after is not None:
             recent = await aweb_db.fetch_all(
@@ -2196,11 +2239,19 @@ async def _sse_events(
             if redis is not None and pubsub is None and (next_reconnect_at is None or now_mono >= next_reconnect_at):
                 try:
                     pubsub = await _connect_pubsub()
+                    if activity is not None:
+                        frames, woken = await _open_activity(pubsub)
+                        for frame in frames:
+                            yield frame
+                        if woken:
+                            last_db_poll = 0.0
                     reconnect_delay_seconds = 0.1
                     next_reconnect_at = None
                     last_pubsub_ping = time.monotonic()
-                except RedisError:
+                except (RedisError, TimeoutError):
                     logger.info("Chat session pubsub reconnect failed; using DB fallback polling", exc_info=True)
+                    await _close_session_pubsub(pubsub, channel)
+                    pubsub = None
                     next_reconnect_at = now_mono + reconnect_delay_seconds
                     reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
 
@@ -2225,7 +2276,12 @@ async def _sse_events(
                         reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
                         message = None
                     if message is not None and message["type"] == "message":
-                        should_poll = True
+                        if activity is not None and activity.owns(message["channel"]):
+                            frame = activity.accept(message["data"])
+                            if frame is not None:
+                                yield frame
+                        else:
+                            should_poll = True
                 else:
                     await asyncio.sleep(wait_timeout)
 
@@ -2354,6 +2410,7 @@ async def stream(
     session_id: str,
     deadline: str = Query(..., min_length=1),
     after: str | None = Query(None),
+    include: str | None = Query(None),
     db=Depends(get_db),
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
@@ -2400,6 +2457,7 @@ async def stream(
             auth=auth,
             after=after_dt,
             delivery_team_id=sess.get("team_id"),
+            include_activity="agent_activity" in {value.strip() for value in (include or "").split(",")},
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
