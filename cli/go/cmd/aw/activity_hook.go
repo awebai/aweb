@@ -24,9 +24,10 @@ import (
 )
 
 // The Codex activity emitter (docs/agent-activity.md, "Emitters"). Codex runs
-// one hook process per event, so what a resident emitter keeps in memory (the
-// open turn, its seq, the coalescing window and the rate-limit pause) lives in
-// a state file in the identity root, read and written under an exclusive lock.
+// one hook process per event, so what a resident emitter keeps in memory lives
+// in a state file in the identity root, read and written under an exclusive
+// lock: each Codex session's open turn, seq and pending state, and the agent's
+// coalescing window and rate-limit pause, which all its sessions share.
 // The hook never writes to stdout and never fails the Codex event.
 
 const (
@@ -38,6 +39,7 @@ const (
 	activityDefaultPause     = 5 * time.Second
 	activityRouteAbsentPause = time.Hour
 	activityEndedTurnsKept   = 256
+	activitySessionsKept     = 32
 	activityHookInputLimit   = 16 << 20
 	activityRequestTimeout   = 3 * time.Second
 )
@@ -56,6 +58,7 @@ var activityHookCmd = &cobra.Command{
 
 type codexHookInput struct {
 	HookEventName string          `json:"hook_event_name"`
+	SessionID     string          `json:"session_id"`
 	TurnID        string          `json:"turn_id"`
 	AgentID       string          `json:"agent_id"`
 	ToolName      string          `json:"tool_name"`
@@ -72,14 +75,23 @@ type activityItem struct {
 	Summary string `json:"summary,omitempty"`
 }
 
+// activityTurnState is one Codex session's turn state.
+type activityTurnState struct {
+	OpenTurn   string        `json:"open_turn,omitempty"`
+	Seq        int64         `json:"seq,omitempty"`
+	Ended      []string      `json:"ended,omitempty"`
+	Pending    *activityItem `json:"pending,omitempty"`
+	LastSeenMs int64         `json:"last_seen_ms,omitempty"`
+}
+
+// activityHookState holds the turn state of each Codex session, keyed by its
+// session_id, and the sending state that the agent's sessions share: the
+// server's rate limit is per agent.
 type activityHookState struct {
-	OpenTurn         string        `json:"open_turn,omitempty"`
-	Seq              int64         `json:"seq,omitempty"`
-	Ended            []string      `json:"ended,omitempty"`
-	LastSentMs       int64         `json:"last_sent_ms,omitempty"`
-	PauseUntilMs     int64         `json:"pause_until_ms,omitempty"`
-	RouteAbsentUntil int64         `json:"route_absent_until_ms,omitempty"`
-	Pending          *activityItem `json:"pending,omitempty"`
+	Sessions         map[string]*activityTurnState `json:"sessions,omitempty"`
+	LastSentMs       int64                         `json:"last_sent_ms,omitempty"`
+	PauseUntilMs     int64                         `json:"pause_until_ms,omitempty"`
+	RouteAbsentUntil int64                         `json:"route_absent_until_ms,omitempty"`
 }
 
 // activityPublisher signs events with the key that signs the runtime's
@@ -127,12 +139,19 @@ func runCodexActivityHook(stdin io.Reader, stderr io.Writer) {
 	if err != nil {
 		return
 	}
-	hook := &codexActivityHook{root: root, publisher: publisher, stderr: stderr, lock: lock}
+	// An event without a usable session_id shares the "" session.
+	session := in.SessionID
+	if !activityIdentifier.MatchString(session) {
+		session = ""
+	}
+	hook := &codexActivityHook{root: root, session: session, publisher: publisher, stderr: stderr, lock: lock}
 	defer func() { hook.lock.Close() }()
 	hook.state = loadActivityHookState(root)
 	if time.Now().UnixMilli() < hook.state.RouteAbsentUntil {
 		return
 	}
+	hook.turns().LastSeenMs = time.Now().UnixMilli()
+	pruneActivitySessions(&hook.state)
 	boundaries, state := hook.plan(in)
 	for _, item := range boundaries {
 		if !hook.sendBoundary(item) {
@@ -143,11 +162,42 @@ func runCodexActivityHook(stdin io.Reader, stderr io.Writer) {
 	if state != nil {
 		hook.sendState(*state)
 	}
+	if in.HookEventName == "SessionEnd" && !hook.unlocked {
+		delete(hook.state.Sessions, session)
+	}
 	hook.save()
+}
+
+// turns returns this event's session state, creating it on first use.
+func (h *codexActivityHook) turns() *activityTurnState {
+	if h.state.Sessions == nil {
+		h.state.Sessions = map[string]*activityTurnState{}
+	}
+	turns := h.state.Sessions[h.session]
+	if turns == nil {
+		turns = &activityTurnState{}
+		h.state.Sessions[h.session] = turns
+	}
+	return turns
+}
+
+// pruneActivitySessions keeps the most recently seen sessions, so sessions
+// that never sent SessionEnd do not accumulate.
+func pruneActivitySessions(state *activityHookState) {
+	for len(state.Sessions) > activitySessionsKept {
+		oldest, oldestSeen := "", int64(0)
+		for session, turns := range state.Sessions {
+			if oldest == "" || turns.LastSeenMs < oldestSeen || (turns.LastSeenMs == oldestSeen && session < oldest) {
+				oldest, oldestSeen = session, turns.LastSeenMs
+			}
+		}
+		delete(state.Sessions, oldest)
+	}
 }
 
 type codexActivityHook struct {
 	root      string
+	session   string
 	publisher *activityPublisher
 	stderr    io.Writer
 	lock      interface{ Close() error }
@@ -158,7 +208,7 @@ type codexActivityHook struct {
 // plan applies the event to the turn state and returns the boundaries to send
 // in order and the intermediate state, if any.
 func (h *codexActivityHook) plan(in codexHookInput) ([]activityItem, *activityItem) {
-	s := &h.state
+	s := h.turns()
 	var boundaries []activityItem
 	closeTurn := func(turn string) {
 		s.Seq++
@@ -240,9 +290,10 @@ func codexActivityState(in codexHookInput) *activityItem {
 }
 
 func (h *codexActivityHook) markEnded(turn string) {
-	h.state.Ended = append(h.state.Ended, turn)
-	if len(h.state.Ended) > activityEndedTurnsKept {
-		h.state.Ended = h.state.Ended[len(h.state.Ended)-activityEndedTurnsKept:]
+	turns := h.turns()
+	turns.Ended = append(turns.Ended, turn)
+	if len(turns.Ended) > activityEndedTurnsKept {
+		turns.Ended = turns.Ended[len(turns.Ended)-activityEndedTurnsKept:]
 	}
 }
 
@@ -273,16 +324,17 @@ func (h *codexActivityHook) sendState(item activityItem) {
 	item.Token = hex.EncodeToString(token)
 	for {
 		ready := max(h.state.LastSentMs+activityCoalesceWindow.Milliseconds(), h.state.PauseUntilMs)
+		turns := h.turns()
 		if time.Now().UnixMilli() >= ready {
-			h.state.Pending = nil
-			if item.Turn == h.state.OpenTurn {
-				h.state.Seq++
-				item.Seq = h.state.Seq
+			turns.Pending = nil
+			if item.Turn == turns.OpenTurn {
+				turns.Seq++
+				item.Seq = turns.Seq
 				h.send(item)
 			}
 			return
 		}
-		h.state.Pending = &item
+		turns.Pending = &item
 		h.save()
 		h.lock.Close()
 		time.Sleep(time.Until(time.UnixMilli(ready)))
@@ -293,7 +345,9 @@ func (h *codexActivityHook) sendState(item activityItem) {
 		}
 		h.lock = lock
 		h.state = loadActivityHookState(h.root)
-		if h.state.Pending == nil || h.state.Pending.Token != item.Token {
+		// Read without creating: the session may have ended meanwhile.
+		turns = h.state.Sessions[h.session]
+		if turns == nil || turns.Pending == nil || turns.Pending.Token != item.Token {
 			return
 		}
 	}

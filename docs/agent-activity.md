@@ -535,11 +535,15 @@ valid or unattributed event, and an absent route stops publishing.
     background hook when the session ends. A subagent's tool event (it carries
     `agent_id`) belongs to its parent's open turn. Codex has no event for the
     model composing its reply, so `writing` is never sent.
-  - Each hook is its own process. The open turn, its `seq`, the time of the
-    last send and any rate-limit pause are kept in
+  - Each hook is its own process. State is kept in
     `<identity root>/.activity-hook-state.json` (0600), read and written under
     an exclusive lock on `.activity-hook.lock`, so events are applied and sent
-    in order. The turn rules are Claude Code's: an event of an ended turn is
+    in order. Each Codex session, by its `session_id`, has its own open turn,
+    `seq`, ended turns and pending state, so two sessions of one identity never
+    end each other's turns; SessionEnd removes the session's state, and at most
+    32 sessions are kept, the least recently seen pruned first. The time of the
+    last send and any rate-limit pause are shared by the agent's sessions,
+    because the server limits the agent. The turn rules are Claude Code's: an event of an ended turn is
     dropped, a repeated submit is ignored, and a new turn first closes one
     whose stop never arrived. A state within 500 ms of the last send is left
     pending while its process waits; a later state replaces it and the turn's
