@@ -616,3 +616,38 @@ async def test_read_receipt_during_activity_setup_arrives(privacy_app, monkeypat
         receipt = await stream.next("read_receipt", timeout=10)
 
     assert receipt["reader_alias"] == "alice"
+
+
+@pytest.mark.asyncio
+async def test_wake_consumed_while_confirming_activity_polls_at_once(privacy_app, monkeypatch):
+    # The message's session wake is already queued when activity subscribes,
+    # so the subscription reads it while waiting for its confirmations. With
+    # the fallback poll out of reach, only that wake can deliver the message.
+    import aweb.routes.chat as chat_routes
+
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+    reached, resume = asyncio.Event(), asyncio.Event()
+    subscribe = SessionActivity.subscribe
+
+    async def subscribe_after_wake(self, pubsub):
+        reached.set()
+        await resume.wait()
+        pending = await subscribe(self, pubsub)
+        assert pending, "the session wake was expected while confirming"
+        return pending
+
+    monkeypatch.setattr(SessionActivity, "subscribe", subscribe_after_wake)
+    monkeypatch.setattr(chat_routes, "CHAT_STREAM_FALLBACK_POLL_SECONDS", 30.0)
+
+    async with _stream(env, "bob", session_id, include="agent_activity", seconds=4) as response:
+        stream = _Stream(response.aiter_lines())
+        async with asyncio.timeout(5):
+            await reached.wait()
+        sent = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/messages", {"body": "woken"})
+        assert sent.status_code == 200, sent.text
+        resume.set()
+
+        message = await stream.next("message", timeout=10)
+
+    assert message["body"] == "woken"
