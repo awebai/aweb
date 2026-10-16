@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 21
+`docs/vectors/*.json` is the only public protocol-vector authority for the 22
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -180,8 +180,34 @@ nested fields, missing fields, enums, a seq that is not a safe positive integer,
 the text caps, control characters, the validity window, clock skew, expiry, a
 stale seq, a publisher that is not the signer, a wrong signature, oversize and
 non-canonical bytes, and a mail payload offered as a status. A cross-type entry
-records that a status signature does not verify as a message. The server and
+is a producer construction check: message bytes built with `canonical_payload`
+never equal status bytes. Its description overstates this as message
+verification; ingress separation is the required `type` at every route. The server and
 the OATS publisher agreed these bytes at `1aadc0914` before either
+implemented them; changing them needs a new version.
+
+### `agent-activity-v1.json`
+
+The signed agent activity event an agent's host publishes during a turn
+(aweb-acah.2, `POST /v1/agents/me/activity`; contract in
+[`agent-activity.md`](../agent-activity.md)). It pins the canonical bytes, the
+base64url `signed_payload`, and the Ed25519 signature (raw standard base64
+without padding) for fixed agent, other and grant-session test keys. Each case
+carries its evaluation time and, where it differs from the default, the
+authenticated caller the event binds to. Positive cases cover each phase, an
+unattributed session, a tool without a summary, the byte caps measured after
+UTF-8 encoding, the 60-second validity edge, the clock-skew edge, a local
+identity without a stable id, and a grant session signer. Each negative has one
+expected refusal code and, apart from the structural oversize and wrong-type
+cases, exactly one fault: oversize and non-canonical
+bytes, a wrong signature, a chat message and a status offered as activity,
+unknown and missing fields, each shape rule, the server-only `busy_elsewhere`
+and `cleared` phases, signer, team and stable-id bindings, the validity window, clock skew and
+expiry. Two route refusals pin the shared 404 for an absent session and a
+session the caller is not in. A cross-type entry is a producer construction
+check: message bytes built with `canonical_payload` never equal activity bytes.
+Ingress separation is the required `type` at every route. Athena and the
+protocol reviewer ACKed these bytes at `4502edac0` before either side
 implemented them; changing them needs a new version.
 
 ## Experimental and compatibility A2A fixtures
