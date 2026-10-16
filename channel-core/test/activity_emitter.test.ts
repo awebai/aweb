@@ -242,6 +242,22 @@ describe("publish outcomes", () => {
     expect(sent.map(event => event.phase)).toEqual(["turn_started", "turn_ended"]);
   });
 
+  test("events taken together before a 429 keep their order after the pause", async () => {
+    optIn();
+    const e = emitter();
+    outcomes = [{ kind: "rate_limited", retryAfterSeconds: 2 }];
+    e.turnStarted();
+    e.turnEnded();
+    e.turnStarted();
+    e.turnEnded();
+    await settle();
+    expect(sent.map(event => event.phase)).toEqual(["turn_started"]);
+    await settle(2000);
+    expect(sent.map(event => [event.phase, event.seq])).toEqual([
+      ["turn_started", 1], ["turn_ended", 2], ["turn_started", 1], ["turn_ended", 2],
+    ]);
+  });
+
   test("a refused session drops that event only", async () => {
     optIn();
     const e = emitter();
