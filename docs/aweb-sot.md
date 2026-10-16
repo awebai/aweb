@@ -270,9 +270,12 @@ able to distinguish:
 When an authenticated caller cannot see a private resource, refusal must be
 indistinguishable from a missing ID at the same operation: status, response body
 and content type match. Mail conversation reads and continuation, chat history,
-read receipts and streams, installed-app team lookups, cross-team roles and
-instructions activation, and cross-team workspace heartbeats use the shared
-404 `{"detail":"Not found"}`. Conversation participation is checked before its
+read receipts and streams, installed-app team lookups, and cross-team roles and
+instructions activation use the shared 404 `{"detail":"Not found"}`. Workspace
+heartbeats give the same 404 recovery guidance for missing and cross-team rows,
+without echoing the workspace ID. Equality is required per operation; an
+operation may retain its own actionable recovery hint.
+Conversation participation is checked before its
 type or closed/expired state is disclosed. Participants still receive the
 existing wrong-type 422 and closed/expired 403 responses.
 

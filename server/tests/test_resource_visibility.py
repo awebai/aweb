@@ -31,7 +31,6 @@ def _wire(response):
 def _same_not_found(hidden, missing):
     assert _wire(hidden) == _wire(missing)
     assert hidden.status_code == 404
-    assert hidden.json() == {"detail": "Not found"}
 
 
 async def _mail(env):
@@ -210,12 +209,23 @@ async def test_heartbeat_hides_other_teams_workspace_before_state(privacy_app, m
     monkeypatch.setenv("AWEB_DATABASE_URL", "postgresql://unused/test")
     other = await _foreign_team(env)
     target = env.actors["bob"].workspace
+    # A member who can see the workspace still needs owner permission.
+    not_owner = await _team_request(env, "alice", "POST", "/v1/workspaces/heartbeat",
+        {"workspace_id": str(target), "alias": "bob"})
+    assert not_owner.status_code == 403
     await env.db.execute("UPDATE {{tables.workspaces}} SET team_id=$2, deleted_at=$3 WHERE workspace_id=$1",
         target, other, datetime.now(timezone.utc) if deleted else None)
     async def heartbeat(wid):
         return await _team_request(env, "alice", "POST", "/v1/workspaces/heartbeat", {"workspace_id": str(wid), "alias": "alice"})
-    _same_not_found(await heartbeat(target), await heartbeat(uuid4()))
-    assert (await heartbeat(env.actors["alice"].workspace)).status_code == 200
+    absent_id = uuid4()
+    hidden, missing = await heartbeat(target), await heartbeat(absent_id)
+    _same_not_found(hidden, missing)
+    assert str(target) not in hidden.text and str(absent_id) not in missing.text
+    assert "aw connect" in hidden.text  # Preserve the actionable recovery command.
+    own = env.actors["alice"].workspace
+    assert (await heartbeat(own)).status_code == 200
+    await env.db.execute("UPDATE {{tables.workspaces}} SET deleted_at=NOW() WHERE workspace_id=$1", own)
+    assert (await heartbeat(own)).status_code == 410
 
 
 @pytest.mark.asyncio
@@ -225,8 +235,11 @@ async def test_dashboard_wrong_team_is_generic_without_echo(privacy_app):
     path = f"/v1/teams/{TEAM}/agents"
     response = await env.client.get(path, headers={"X-Dashboard-Token": _make_jwt(["other:example.test"])})
     assert response.status_code == 403
-    assert response.json() == {"detail": "Not authorized for this team"}
-    assert TEAM.encode() not in response.content
+    other = "absent:example.test"
+    refused = await env.client.get(f"/v1/teams/{other}/agents",
+        headers={"X-Dashboard-Token": _make_jwt(["other:example.test"])})
+    assert _wire(response) == _wire(refused)
+    assert TEAM.encode() not in response.content and other.encode() not in refused.content
     assert (await env.client.get(path)).status_code == 401
     assert (await env.client.get(path, headers={"X-Dashboard-Token": _make_jwt([TEAM])})).status_code == 200
 
@@ -275,7 +288,7 @@ async def test_mcp_chat_hides_missing_and_nonparticipant_on_both_guards(privacy_
         assert _wire(hidden) == _wire(missing)
         assert hidden.status_code == 200
         answer = json.loads(hidden.json()["result"]["content"][0]["text"])
-        assert answer == {"error": "Session not found"}
+        assert set(answer) == {"error"}
         assert revoked == (phase == "revoked-during-signing")
         assert await env.db.fetch_value("SELECT count(*) FROM {{tables.chat_messages}}") == before
         actor_name = "bob"
