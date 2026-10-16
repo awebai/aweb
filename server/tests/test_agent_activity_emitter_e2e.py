@@ -9,6 +9,8 @@ the host owner's opt-in file are the only direct state.
 from __future__ import annotations
 
 import asyncio
+import base64
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import subprocess
@@ -16,7 +18,9 @@ import subprocess
 import pytest
 
 from test_agent_activity_http import _session
+from test_agent_status_host_http import _team_request
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
+from test_identity_grants import _session_keypair
 
 REPO = Path(__file__).resolve().parents[2]
 HOST = Path(__file__).with_name("activity_emitter_host.mjs")
@@ -142,3 +146,114 @@ async def test_the_servers_rate_limit_is_honoured_and_the_turn_still_ends(privac
     latest = json.loads(await env.redis.get(f"agent-activity:{env.actors['alice'].id}"))
     assert latest["event"]["phase"] == "turn_ended"
     assert latest["rev"] == 12
+
+
+# The emitter built as a runtime builds it: resolveConfig on a real identity
+# home, then createChannelClient and createActivityEmitter (channel-core).
+
+
+def _pem(path, kind, raw):
+    path.write_text(f"-----BEGIN {kind}-----\n{base64.b64encode(raw).decode()}\n-----END {kind}-----\n")
+    path.chmod(0o600)
+
+
+def _team_home(env, tmp_path, actor):
+    identity = env.actors[actor]
+    home = tmp_path / ".aw"
+    (home / "team-certs").mkdir(parents=True, mode=0o700)
+    cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
+    (home / cert_path).write_text(base64.b64decode(identity.certificate).decode())
+    (home / cert_path).chmod(0o600)
+    membership = {"team_id": TEAM, "alias": actor, "cert_path": cert_path}
+    (home / "teams.yaml").write_text(json.dumps({"active_team": TEAM, "memberships": [membership]}))
+    (home / "workspace.yaml").write_text(json.dumps({
+        "aweb_url": str(env.client.base_url).rstrip("/"),
+        "memberships": [{**membership, "workspace_id": str(identity.workspace)}],
+    }))
+    _pem(home / "signing.key", "ED25519 PRIVATE KEY", identity.sk)
+    (home / "activity.yaml").write_text("activity: status\n")
+    return home
+
+
+async def _grant_home(env, tmp_path, actor, scopes):
+    env.app.state.public_origin = str(env.client.base_url).rstrip("/")
+    session_key, session_did = _session_keypair()
+    minted = await _team_request(
+        env, actor, "POST", "/v1/identity-grants",
+        {"grant_did_key": session_did, "scopes": scopes, "ttl_seconds": 600},
+    )
+    assert minted.status_code == 200, minted.text
+    home = tmp_path / "grant.aw"
+    home.mkdir(mode=0o700)
+    (home / "grant.yaml").write_text(json.dumps({
+        "version": 1,
+        "grant_id": minted.json()["grant_id"],
+        "team_id": TEAM,
+        "subject": {"did_key": env.actors[actor].did, "alias": actor},
+        "scopes": scopes,
+        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "aweb_url": str(env.client.base_url).rstrip("/"),
+    }))
+    _pem(home / "grant-signing.key", "ED25519 PRIVATE KEY", session_key)
+    (home / "activity.yaml").write_text("activity: status\n")
+    return home, session_did
+
+
+async def _run_runtime_emitter(env, identity_home, steps):
+    spec = {"identity_home": str(identity_home), "team_id": TEAM, "work_root": str(identity_home.parent), "steps": steps}
+    process = await asyncio.create_subprocess_exec(
+        "node", str(HOST), stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(json.dumps(spec).encode()), timeout=30)
+    assert process.returncode == 0, stderr.decode()
+    return json.loads(stdout.decode().strip().splitlines()[-1])
+
+
+TURN = [{"op": "turn_started"}, {"op": "wait", "ms": 600},
+        {"op": "tool", "name": "Bash", "input": {"command": "make test"}}, {"op": "wait", "ms": 600},
+        {"op": "turn_ended"}]
+
+
+@pytest.mark.asyncio
+async def test_a_runtime_built_from_its_team_identity_home_publishes(privacy_app, channel_core_build, tmp_path):
+    env = privacy_app
+    home = _team_home(env, tmp_path, "alice")
+    async with env.redis.pubsub() as pubsub:
+        await pubsub.subscribe(f"agent-activity:{env.actors['alice'].id}")
+        await pubsub.get_message(timeout=1)
+
+        result = await _run_runtime_emitter(env, home, TURN)
+        relayed = await _relayed(pubsub, 3)
+
+    assert result["logs"] == []
+    assert [message["event"]["phase"] for message in relayed] == ["turn_started", "tool", "turn_ended"]
+    assert {message["event"]["from_did"] for message in relayed} == {env.actors["alice"].did}
+    assert relayed[1]["event"]["summary"] == "Running make"
+
+
+@pytest.mark.asyncio
+async def test_a_grant_seat_publishes_signed_by_its_session_key(privacy_app, channel_core_build, tmp_path):
+    env = privacy_app
+    home, session_did = await _grant_home(env, tmp_path, "alice", ["chat.send"])
+    async with env.redis.pubsub() as pubsub:
+        await pubsub.subscribe(f"agent-activity:{env.actors['alice'].id}")
+        await pubsub.get_message(timeout=1)
+
+        await _run_runtime_emitter(env, home, TURN)
+        relayed = await _relayed(pubsub, 3)
+
+    assert [message["event"]["phase"] for message in relayed] == ["turn_started", "tool", "turn_ended"]
+    assert {message["event"]["from_did"] for message in relayed} == {session_did}
+    assert {message["alias"] for message in relayed} == {"alice"}
+
+
+@pytest.mark.asyncio
+async def test_a_grant_seat_without_chat_send_publishes_nothing(privacy_app, channel_core_build, tmp_path):
+    env = privacy_app
+    home, _ = await _grant_home(env, tmp_path, "alice", ["mail.read"])
+
+    result = await _run_runtime_emitter(env, home, TURN)
+
+    assert result["logs"] == []
+    assert await env.redis.get(f"agent-activity:{env.actors['alice'].id}") is None
