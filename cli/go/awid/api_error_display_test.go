@@ -17,7 +17,7 @@ func TestAPIErrorResponseMetadataBound(t *testing.T) {
 			"X-Request-Id": []string{strings.Repeat("r", 300) + "\x1b\n\u202e"},
 			"Cf-Ray":       []string{"ray\x1b\t\u202e" + strings.Repeat("c", 300)},
 			"Cf-Mitigated": []string{"challenge\x1b\t\u202e" + strings.Repeat("m", 300)},
-		}, Body: io.NopCloser(strings.NewReader("<html>private-response-content</html>"))}, nil
+		}, Body: io.NopCloser(strings.NewReader("<html><title>Blocked</title>private-response-content</html>"))}, nil
 	})}
 	err := client.Get(context.Background(), "/v1/test", nil)
 	if err == nil {
@@ -64,5 +64,41 @@ func TestAPIErrorNonJSONTraceOmitsBody(t *testing.T) {
 	resp.Body.Close()
 	if err != nil || string(data) != body {
 		t.Fatal("trace changed body consumed by error handlers")
+	}
+}
+
+func TestAPIErrorBlockedFirewallGuidanceBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name                         string
+		status                       int
+		contentType, body, mitigated string
+		wantAdvice                   bool
+	}{
+		{"blocked", 403, "text/html", "<html><title>Blocked</title>secret-body</html>", "", true},
+		{"title-whitespace-case", 403, "text/html; charset=utf-8", "<html><TITLE>  bLoCkEd \n</TITLE>secret-body</html>", "", true},
+		{"sniffed-html", 403, "", "<!doctype html><title>Blocked</title>secret-body", "", true},
+		{"xhtml", 403, "application/xhtml+xml", "<title>Blocked</title>secret-body", "", true},
+		{"blocked-with-challenge-header", 403, "text/html", "<html><title>Blocked</title>secret-body</html>", "challenge", true},
+		{"other-html", 403, "text/html", "<html><title>Forbidden</title>secret-body</html>", "", false},
+		{"challenge", 403, "text/html", "<html><title>Just a moment...</title>secret-body</html>", "challenge", false},
+		{"json-detail", 403, "application/json", `{"detail":"Blocked"}`, "", false},
+		{"json-in-html-type", 403, "text/html", `{"detail":"<html><title>Blocked</title></html>"}`, "", false},
+		{"plain-text", 403, "text/plain", "Blocked secret-body", "", false},
+		{"wrong-status", 404, "text/html", "<html><title>Blocked</title>secret-body</html>", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := &http.Response{StatusCode: tc.status, Header: http.Header{"Content-Type": []string{tc.contentType}, "Cf-Mitigated": []string{tc.mitigated}, "X-Request-Id": []string{"request-fixture"}}}
+			err := newAPIError(response, tc.body)
+			out := err.Error()
+			if strings.Contains(out, "firewall") != tc.wantAdvice {
+				t.Fatalf("firewall guidance=%v, want %v: %s", strings.Contains(out, "firewall"), tc.wantAdvice, out)
+			}
+			if err.StatusCode != tc.status || err.Body != tc.body || !strings.Contains(out, "request-fixture") {
+				t.Fatal("display changed status, raw body, or response metadata")
+			}
+			if strings.Contains(out, "secret-body") || len(out) > 1024 {
+				t.Fatalf("non-JSON display leaked body or exceeded bound: %s", out)
+			}
+		})
 	}
 }

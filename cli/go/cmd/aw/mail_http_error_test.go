@@ -27,9 +27,10 @@ func TestAwMailSendConciseHTTPError(t *testing.T) {
 	for _, tc := range []struct {
 		name, contentType, body, mitigated, want string
 		ids                                      bool
+		advice                                   bool
 	}{
 		{name: "generic_html", contentType: "text/html", body: "<html><title>Unknown</title>" + strings.Repeat("private-response-content ", 4000) + "</html>", want: "HTML error response", ids: true},
-		{name: "blocked_title", contentType: "text/html", body: "<html><title>Blocked</title>" + strings.Repeat("private-response-content ", 4000) + "</html>", want: "HTML response titled Blocked", ids: true},
+		{name: "blocked_title", contentType: "text/html", body: "<html><title>Blocked</title>" + strings.Repeat("private-response-content ", 4000) + "</html>", want: "HTML response titled Blocked", ids: true, advice: true},
 		{name: "challenge", contentType: "text/html", body: "<html><title>Just a moment...</title>private-response-content</html>", mitigated: "challenge", want: "challenge response", ids: true},
 		{name: "no_metadata", contentType: "text/html", body: "<html>private-response-content</html>", want: "HTML error response"},
 		{name: "plain", contentType: "text/plain", body: "private-response-content", want: "non-JSON error response"},
@@ -87,6 +88,9 @@ func TestAwMailSendConciseHTTPError(t *testing.T) {
 				if !strings.Contains(string(out), want) {
 					t.Errorf("missing %q in %s", want, out)
 				}
+			}
+			if strings.Contains(string(out), "firewall") != tc.advice {
+				t.Errorf("firewall advice=%v, want %v: %s", strings.Contains(string(out), "firewall"), tc.advice, out)
 			}
 			if tc.ids {
 				for _, want := range []string{"x-request-id: req-fixture", "cf-ray: ray-fixture"} {
