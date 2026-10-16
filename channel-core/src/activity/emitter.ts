@@ -8,9 +8,10 @@
 // - Turn boundaries (turn_started, turn_ended) are always sent, in order.
 //   Intermediate phases coalesce: the latest wins, at most one per 500 ms, and
 //   a turn_ended replaces its turn's pending state.
-// - A 429 pauses publishing for Retry-After; the shared 404 drops one event; an
-//   absent route stops publishing for the process; any other failure drops
-//   the event.
+// - A 429 pauses publishing for Retry-After: a boundary that drew it is sent
+//   after the pause, a state that drew it is dropped. The shared 404 drops one
+//   event; an absent route stops publishing for the process; any other failure
+//   drops the event.
 import { randomBytes } from "node:crypto";
 import { signActivityEvent, type ActivityEvent, type ActivityPhase, type SignedActivity } from "./event.js";
 import { readActivitySetting } from "./setting.js";
@@ -135,8 +136,12 @@ export class ActivityEmitter {
     return this.turn;
   }
 
+  /** The current turn; a phase outside a turn opens one and announces it. */
   private currentTurn(): Turn {
-    return this.turn ?? this.beginTurn();
+    if (this.turn !== undefined) return this.turn;
+    const turn = this.beginTurn();
+    this.enqueue("turn_started");
+    return turn;
   }
 
   private enqueue(phase: ActivityPhase, tool?: string, summary?: string): void {
@@ -219,6 +224,8 @@ export class ActivityEmitter {
     }
     if (outcome.kind === "rate_limited") {
       this.pausedUntil = Date.now() + outcome.retryAfterSeconds * 1000;
+      // A boundary is always sent: it waits out the pause. A state is dropped.
+      if (BOUNDARIES.has(item.phase)) this.queue.splice(this.requeued++, 0, item);
     } else if (outcome.kind === "route_absent") {
       this.stopped = true;
       this.queue = [];

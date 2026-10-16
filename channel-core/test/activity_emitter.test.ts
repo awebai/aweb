@@ -214,7 +214,7 @@ describe("coalescing", () => {
 });
 
 describe("publish outcomes", () => {
-  test("429 pauses for Retry-After, drops intermediate states, then sends the latest", async () => {
+  test("429 pauses for Retry-After, drops intermediate states, then resends the boundary and the latest state", async () => {
     optIn();
     const e = emitter();
     outcomes = [{ kind: "rate_limited", retryAfterSeconds: 3 }];
@@ -226,7 +226,7 @@ describe("publish outcomes", () => {
     await settle(600);
     expect(sent.map(event => event.phase)).toEqual(["turn_started"]);
     await settle(2000);
-    expect(sent.map(event => [event.phase, event.seq])).toEqual([["turn_started", 1], ["tool", 2]]);
+    expect(sent.map(event => [event.phase, event.seq])).toEqual([["turn_started", 1], ["turn_started", 2], ["tool", 3]]);
   });
 
   test("turn_ended waits out a pause and is still sent", async () => {
@@ -239,7 +239,7 @@ describe("publish outcomes", () => {
     await settle(1000);
     expect(sent.map(event => event.phase)).toEqual(["turn_started"]);
     await settle(1000);
-    expect(sent.map(event => event.phase)).toEqual(["turn_started", "turn_ended"]);
+    expect(sent.map(event => event.phase)).toEqual(["turn_started", "turn_started", "turn_ended"]);
   });
 
   test("events taken together before a 429 keep their order after the pause", async () => {
@@ -254,7 +254,7 @@ describe("publish outcomes", () => {
     expect(sent.map(event => event.phase)).toEqual(["turn_started"]);
     await settle(2000);
     expect(sent.map(event => [event.phase, event.seq])).toEqual([
-      ["turn_started", 1], ["turn_ended", 2], ["turn_started", 1], ["turn_ended", 2],
+      ["turn_started", 1], ["turn_started", 2], ["turn_ended", 3], ["turn_started", 1], ["turn_ended", 2],
     ]);
   });
 

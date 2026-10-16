@@ -405,6 +405,10 @@ Agreed with oats-expert-juan on 2026-10-16.
   operations, so its ownership stays obvious. It holds no secret.
 - **Readers.** Every emitter reads the file at each turn start, so a change
   takes effect at the next turn without a restart.
+- **What `status` shows.** The session's other participants see each phase,
+  the tool name and the template summary. A file summary names the file's path
+  relative to the work tree ("Editing secrets/prod.env"), so the names of the
+  files the agent touches are visible to them, and to aweb's servers.
 - **Non-OATS hosts.** `aw activity enable` and `aw activity disable` write the
   file (mode 0644, atomic replace).
 - **OATS hosts.** The oats.aweb provider owns the file. The provider setting
@@ -424,10 +428,15 @@ Agreed with oats-expert-juan on 2026-10-16.
 
 ## Emitters
 
-Each emitter is off unless the opt-in file says `status`. Each coalesces
-locally: latest wins, at most one event per 500 ms, and `turn_ended` is always
-sent. On 429 the emitter honours `Retry-After` and drops intermediate states.
-Signing uses the key the runtime integration already loads.
+Each emitter is off unless the opt-in file says `status`. Turn boundaries,
+`turn_started` and `turn_ended`, are always sent and in order; a turn that a
+runtime opens with its first tool call is announced with `turn_started` too.
+Intermediate phases coalesce locally: the latest wins, at most one event per
+500 ms, and `turn_ended` replaces its turn's pending state. On 429 the emitter
+honours `Retry-After`: a boundary that drew the 429 is sent after the pause,
+a state that drew it is dropped, and states queued during the pause coalesce
+to the latest, which is sent after it. Signing uses the key that signs the
+runtime's requests: the agent's own, or the grant session key for a grant seat.
 
 The route answers 404 for two different reasons, and the emitter tells them
 apart by the body:

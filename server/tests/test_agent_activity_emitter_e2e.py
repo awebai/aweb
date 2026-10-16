@@ -136,9 +136,9 @@ async def test_the_servers_rate_limit_is_honoured_and_the_turn_still_ends(privac
 
     result = await _run_emitter(env, "alice", root, steps)
 
-    # Ten per 5-second window: the eleventh is refused and dropped, the twelfth
-    # waits out Retry-After and is then accepted.
-    assert result["outcomes"] == ["accepted"] * 10 + ["rate_limited", "accepted"]
+    # Ten per 5-second window. The eleventh, a turn boundary, draws the 429 and
+    # is resent after Retry-After; the twelfth follows it. Nothing is lost.
+    assert result["outcomes"] == ["accepted"] * 10 + ["rate_limited", "accepted", "accepted"]
     latest = json.loads(await env.redis.get(f"agent-activity:{env.actors['alice'].id}"))
     assert latest["event"]["phase"] == "turn_ended"
-    assert latest["rev"] == 11
+    assert latest["rev"] == 12
