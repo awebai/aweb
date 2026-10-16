@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: server 1.27.25, aw 1.36.40
+
+Server changes are since `server-v1.27.24`; CLI changes are since `aw-v1.36.39`.
+
 - **The server accepts gzip request bodies:** decoding precedes body hashing
   and authentication, so signatures still cover the original bytes. Every HTTP
   response advertises gzip support. Compressed and decoded bytes each have a
@@ -18,8 +24,6 @@
   installs team instructions without suggesting a session launcher. Codex gets
   mail and chat as they arrive through the OATS host wake broker; without OATS,
   it reads them when asked. Init continues to omit a Codex launch command.
-
-## Release preparations
 
 ### Release preparation: AWID 0.5.26
 
