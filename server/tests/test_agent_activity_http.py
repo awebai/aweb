@@ -25,7 +25,7 @@ from awid.signing import canonical_json_bytes, sign_message
 from test_agent_status_host_http import _team_request
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_identity_grants import _grant_headers, _session_keypair
-from test_messages_http import _encode_certificate, _make_certificate, _make_keypair
+from test_messages_http import _encode_certificate, _make_certificate, _make_keypair, _signed_identity_headers
 
 PATH = "/v1/agents/me/activity"
 
@@ -365,3 +365,149 @@ async def test_message_ingress_refuses_signed_activity_bytes(privacy_app):
     assert chat.json()["detail"] == "signed_payload type must be chat"
     assert mail.status_code == 422
     assert mail.json()["detail"] == "signed_payload type must be mail"
+
+
+# Delivery over the chat session stream.
+
+
+class _Stream:
+    """An open chat session stream, read frame by frame."""
+
+    def __init__(self, lines):
+        self._lines = lines
+
+    async def next(self, name, timeout=5):
+        async with asyncio.timeout(timeout):
+            event = None
+            async for line in self._lines:
+                if line.startswith("event: "):
+                    event = line[len("event: "):]
+                elif line.startswith("data: ") and event == name:
+                    return json.loads(line[len("data: "):])
+        raise AssertionError(f"stream ended before an {name} frame")
+
+    async def frames_until(self, name, timeout=5):
+        seen = []
+        async with asyncio.timeout(timeout):
+            event = None
+            async for line in self._lines:
+                if line.startswith("event: "):
+                    event = line[len("event: "):]
+                elif line.startswith("data: "):
+                    seen.append(event)
+                    if event == name:
+                        return seen
+        raise AssertionError(f"stream ended before an {name} frame")
+
+
+def _stream(env, viewer, session_id, *, include=None, seconds=8):
+    identity = env.actors[viewer]
+    deadline = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+    params = {"deadline": deadline}
+    if include is not None:
+        params["include"] = include
+    return env.client.stream(
+        "GET", f"/v1/chat/sessions/{session_id}/stream", params=params,
+        headers=_signed_identity_headers(identity.sk, identity.did, "", b""),
+    )
+
+
+async def _subscribed(env, actor):
+    channel = f"agent-activity:{env.actors[actor].id}"
+    async with asyncio.timeout(5):
+        while dict(await env.redis.pubsub_numsub(channel))[channel] < 1:
+            await asyncio.sleep(0.02)
+
+
+@pytest.mark.asyncio
+async def test_opted_in_participant_sees_the_signed_event_live(privacy_app):
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+    event = _event(env, "alice", session_id=session_id)
+    body = _body(env.actors["alice"].sk, event)
+
+    async with _stream(env, "bob", session_id, include="agent_activity") as response:
+        assert response.status_code == 200
+        stream = _Stream(response.aiter_lines())
+        await _subscribed(env, "alice")
+        published = await _team_request(env, "alice", "POST", PATH, body)
+        assert published.status_code == 202, published.text
+
+        frame = await stream.next("agent_activity")
+
+    assert frame == {
+        "agent": "alice",
+        "signed_payload": body["signed_payload"],
+        "signature": body["signature"],
+        "from_did": env.actors["alice"].did,
+        "phase": "tool",
+        "tool": "Bash",
+        "summary": "Running pytest",
+        "turn_id": "turn-1",
+        "seq": 1,
+        "expires_at": event["expires_at"],
+    }
+
+
+@pytest.mark.asyncio
+async def test_opening_mid_turn_shows_the_current_state(privacy_app):
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+    assert (await _publish(env, "alice", _event(env, "alice", session_id=session_id, seq=4))).status_code == 202
+
+    async with _stream(env, "bob", session_id, include="agent_activity") as response:
+        frame = await _Stream(response.aiter_lines()).next("agent_activity")
+
+    assert (frame["agent"], frame["seq"]) == ("alice", 4)
+
+
+@pytest.mark.asyncio
+async def test_work_in_another_session_shows_busy_then_cleared(privacy_app):
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+    elsewhere = await _session(env, "carol", "alice")
+
+    async with _stream(env, "bob", session_id, include="agent_activity") as response:
+        stream = _Stream(response.aiter_lines())
+        await _subscribed(env, "alice")
+        busy = _event(env, "alice", session_id=elsewhere)
+        assert (await _publish(env, "alice", busy)).status_code == 202
+        busy_frame = await stream.next("agent_activity")
+        end = _event(env, "alice", session_id=elsewhere, seq=2, phase="turn_ended")
+        del end["tool"], end["summary"]
+        assert (await _publish(env, "alice", end)).status_code == 202
+        cleared_frame = await stream.next("agent_activity")
+
+    assert busy_frame == {"agent": "alice", "phase": "busy_elsewhere", "expires_at": busy["expires_at"]}
+    assert cleared_frame == {"agent": "alice", "phase": "cleared"}
+
+
+@pytest.mark.asyncio
+async def test_stream_without_include_never_subscribes_to_activity(privacy_app):
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+    channel = f"agent-activity:{env.actors['alice'].id}"
+
+    async with _stream(env, "bob", session_id) as response:
+        stream = _Stream(response.aiter_lines())
+        assert (await _publish(env, "alice", _event(env, "alice", session_id=session_id))).status_code == 202
+        reply = await _request(env, "alice", "POST", f"/v1/chat/sessions/{session_id}/messages", {"body": "done"})
+        assert reply.status_code == 200, reply.text
+
+        seen = await stream.frames_until("message")
+        subscribers = dict(await env.redis.pubsub_numsub(channel))[channel]
+
+    assert "agent_activity" not in seen
+    assert subscribers == 0
+
+
+@pytest.mark.asyncio
+async def test_include_does_not_open_a_session_for_a_non_participant(privacy_app):
+    env = privacy_app
+    session_id = await _session(env, "bob", "alice")
+
+    async with _stream(env, "carol", session_id, include="agent_activity") as response:
+        await response.aread()
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not found"}
