@@ -86,7 +86,7 @@ func TestActivityHookInstallCodex(t *testing.T) {
 	t.Run("a fresh install writes every event and names the trust step", func(t *testing.T) {
 		dir := codexHome(t)
 		out, code := run(t, dir, nil, "activity", "hook", "install", "--codex")
-		if code != 0 || !strings.Contains(out, "/hooks") || !strings.Contains(out, "aw activity enable") {
+		if code != 0 || !strings.Contains(out, "with /hooks in Codex") || !strings.Contains(out, "aw activity enable") || !strings.Contains(out, "is installed") {
 			t.Fatalf("install exit %d: %s", code, out)
 		}
 		hooks := read(t, dir)
@@ -100,8 +100,8 @@ func TestActivityHookInstallCodex(t *testing.T) {
 			}
 		}
 		before, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
-		if _, code := run(t, dir, nil, "activity", "hook", "install", "--codex"); code != 0 {
-			t.Fatal("second install failed")
+		if out, code := run(t, dir, nil, "activity", "hook", "install", "--codex"); code != 0 || !strings.Contains(out, "is already installed") {
+			t.Fatalf("second install: %d %s", code, out)
 		}
 		after, _ := os.ReadFile(filepath.Join(dir, "hooks.json"))
 		if !bytes.Equal(before, after) {
