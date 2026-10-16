@@ -54,6 +54,10 @@ ROOT_CONSUMERS = {
         "agent-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"',
     ),
+    PurePosixPath("server/tests/test_agent_activity_vector.py"): _consumer(
+        "agent-activity-v1.json",
+        'Path(__file__).parents[2] / "docs" / "vectors" / "agent-activity-v1.json"',
+    ),
     PurePosixPath("awid/tests/test_certificate_status.py"): _consumer(
         "team-certificate-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "team-certificate-status-v1.json"',

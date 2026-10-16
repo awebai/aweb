@@ -625,6 +625,7 @@ router entry.
 <!-- BEGIN SOURCE INVENTORY: aweb-routers -->
 - `agents`
 - `agent_status`
+- `agent_activity`
 - `apps`
 - `connect`
 - `chat`
