@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   activitySocketDir,
   activitySocketPath,
-  applyHookEvent,
+  createHookEventHandler,
   ensureOwnerOnlyDir,
   forwardHookEvent,
   hookEventForSocket,
@@ -65,6 +65,11 @@ describe("hook events", () => {
     });
   });
 
+  test("the prompt id crosses the socket, so events can be put in their turn", () => {
+    expect(hookEventForSocket({ hook_event_name: "Stop", prompt_id: "p-1" })).toEqual({ hook_event_name: "Stop", prompt_id: "p-1" });
+    expect(hookEventForSocket({ hook_event_name: "Stop", prompt_id: "x".repeat(200) })).toEqual({ hook_event_name: "Stop" });
+  });
+
   test("a payload without an event name forwards nothing", () => {
     expect(hookEventForSocket({ tool_name: "Bash" })).toBeUndefined();
     expect(hookEventForSocket("not an object")).toBeUndefined();
@@ -89,7 +94,8 @@ describe("hook events", () => {
       { hook_event_name: "Stop" },
       { hook_event_name: "StopFailure" },
     ];
-    events.forEach(event => applyHookEvent(target, event));
+    const handle = createHookEventHandler(target);
+    events.forEach(handle);
     expect(calls).toEqual([
       ["turnStarted"],
       ["tool", "Bash", { command: "pytest" }],
@@ -208,6 +214,64 @@ describe("dead sockets", () => {
     expect(existsSync(activitySocketPath(dead, dir))).toBe(false);
     expect(existsSync(activitySocketPath(process.pid, dir))).toBe(true);
     expect(existsSync(join(dir, "notes.txt"))).toBe(true);
+  });
+});
+
+describe("hook events out of order", () => {
+  // Each hook is its own process, so their arrival is not ordered (fix-review
+  // 443a4345 A1). The prompt id puts each event in its turn.
+  function recorder() {
+    const calls: string[] = [];
+    const target = {
+      turnStarted: () => calls.push("turnStarted"),
+      thinking: () => calls.push("thinking"),
+      tool: (name: string) => calls.push(`tool:${name}`),
+      waitingPermission: () => calls.push("waitingPermission"),
+      turnEnded: () => calls.push("turnEnded"),
+    };
+    return { handle: createHookEventHandler(target), calls };
+  }
+
+  test("an event of a prompt that has stopped is dropped", () => {
+    const { handle, calls } = recorder();
+    handle({ hook_event_name: "UserPromptSubmit", prompt_id: "p1" });
+    handle({ hook_event_name: "Stop", prompt_id: "p1" });
+    handle({ hook_event_name: "PostToolUse", tool_name: "Bash", prompt_id: "p1" });
+    handle({ hook_event_name: "PreToolUse", tool_name: "Bash", prompt_id: "p1" });
+    expect(calls).toEqual(["turnStarted", "turnEnded"]);
+  });
+
+  test("a tool event before its own prompt's submit makes one turn, not two", () => {
+    const { handle, calls } = recorder();
+    handle({ hook_event_name: "PreToolUse", tool_name: "Read", prompt_id: "p1" });
+    handle({ hook_event_name: "UserPromptSubmit", prompt_id: "p1" });
+    handle({ hook_event_name: "Stop", prompt_id: "p1" });
+    expect(calls).toEqual(["tool:Read", "turnEnded"]);
+  });
+
+  test("a turn opened without a submit, as a chat wake may, still publishes", () => {
+    const { handle, calls } = recorder();
+    handle({ hook_event_name: "PreToolUse", tool_name: "Bash", prompt_id: "p1" });
+    handle({ hook_event_name: "PostToolUse", tool_name: "Bash", prompt_id: "p1" });
+    handle({ hook_event_name: "Stop", prompt_id: "p1" });
+    expect(calls).toEqual(["tool:Bash", "thinking", "turnEnded"]);
+  });
+
+  test("a new prompt closes a turn whose stop never arrived", () => {
+    const { handle, calls } = recorder();
+    handle({ hook_event_name: "UserPromptSubmit", prompt_id: "p1" });
+    handle({ hook_event_name: "PreToolUse", tool_name: "Bash", prompt_id: "p2" });
+    expect(calls).toEqual(["turnStarted", "turnEnded", "tool:Bash"]);
+  });
+
+  test("a straggler of an ended prompt is dropped while the next one runs", () => {
+    const { handle, calls } = recorder();
+    handle({ hook_event_name: "UserPromptSubmit", prompt_id: "p1" });
+    handle({ hook_event_name: "Stop", prompt_id: "p1" });
+    handle({ hook_event_name: "UserPromptSubmit", prompt_id: "p2" });
+    handle({ hook_event_name: "PostToolUse", tool_name: "Bash", prompt_id: "p1" });
+    handle({ hook_event_name: "Stop", prompt_id: "p2" });
+    expect(calls).toEqual(["turnStarted", "turnEnded", "turnStarted", "turnEnded"]);
   });
 });
 
