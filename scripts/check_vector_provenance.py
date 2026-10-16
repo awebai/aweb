@@ -268,6 +268,10 @@ ROOT_CONSUMERS = {
         "e2ee-v2-cross-language.json",
         'new URL("../../docs/vectors/e2ee-v2-cross-language.json", import.meta.url)',
     ),
+    PurePosixPath("channel-core/test/activity_vector.test.ts"): _consumer(
+        "agent-activity-v1.json",
+        'new URL("../../docs/vectors/agent-activity-v1.json", import.meta.url)',
+    ),
     PurePosixPath("channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
         "pin-store-raw-wire-v1.json",
         'join(testDir, "..", "..", "docs", "vectors", "pin-store-raw-wire-v1.json")',
