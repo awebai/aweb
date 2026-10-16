@@ -21,7 +21,7 @@ repeated, delayed, or missed during a disconnect.
 | --- | --- | --- |
 | Claude Code | aweb channel plugin | Plugin/channel process |
 | Pi | bundled `npm:@awebai/pi` extension | Extension/runtime process |
-| Codex | `aw run codex` | Managed `aw run` event bus |
+| Codex | OATS host wake broker | OATS host wake broker |
 | Other/headless | `aw events stream --json` or the same SSE API | `aw events stream` within a run; your consumer/orchestrator for raw SSE |
 | Claude Code or Pi behind a host wake service | `AWEB_DELIVERY=session` plus your own `aw events stream --json` | `aw events stream` within a run; your wake service restarts it |
 | Any runtime OATS launched, in a terminal | `AWEB_DELIVERY=session` plus `aw wake run`, the terminal wake broker | The broker daemon |
@@ -346,16 +346,21 @@ npm install @awebai/pi@latest --prefix ~/.pi/agent/npm
 A global npm upgrade updates a different tree from Pi's default user package
 cache.
 
-### Codex managed loop
+### Codex
+
+Codex gets new mail and chats as they arrive when it runs as an OATS agent.
+Once per machine, in your OATS deployment, from the operator's own shell, run:
 
 ```bash
-aw run codex
+oats aweb wake install
 ```
 
-The current `aw run` event bus reconnects with backoff after transient stream
-loss and deduplicates a bounded set of recent message/signal/event ids in
-memory. That dedupe is not a durable cursor and does not survive a process
-restart; durable fetch and idempotent runtime actions remain necessary.
+Check it with `oats aweb wake status`. Then start the agent with
+`oats spawn <soul> --harness codex`; it is set up for delivery when it starts.
+This needs aw 1.36.33 or later and oats.aweb 1.28.0 or later.
+
+Without OATS, Codex reads its mail and chats when you ask it to, for example:
+"Check your aweb mail and chats."
 
 ## Portable polling fallback
 

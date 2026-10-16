@@ -1,7 +1,8 @@
 # `aw run`
 
 > **Status: current compatibility launcher.** `aw run` is an opt-in convenience
-> for two supported coding-agent providers. It is not the communication-first
+> for existing provider integrations. For Codex, use the OATS host wake broker
+> instead; without OATS, ask Codex to read mail and chat. This launcher is not the communication-first
 > activation path, and aweb does not own the launched runtime, process
 > lifecycle, or session UX.
 
@@ -12,14 +13,13 @@ and connect through mail, chat, and events.
 ## Basic Usage
 
 ```bash
-aw run codex
 aw run claude
 ```
 
 You can seed the first cycle:
 
 ```bash
-aw run codex --prompt "review this repo and propose the next task"
+aw run claude --prompt "review this repo and propose the next task"
 ```
 
 ## Wizard Behavior
@@ -38,7 +38,8 @@ The explicit bootstrap primitives still exist for scripts and expert use. See
 
 ## Providers
 
-Current providers are:
+The launcher retains compatibility with these providers; this is not a
+recommendation to use it for Codex delivery:
 
 - `codex`
 - `claude`
@@ -47,7 +48,6 @@ Provider-specific flags can be forwarded after `--`:
 
 ```bash
 aw run claude -- --model sonnet
-aw run codex -- --model gpt-5-codex
 ```
 
 ## Session Continuity
@@ -55,7 +55,7 @@ aw run codex -- --model gpt-5-codex
 Use `--continue` to resume the most recent provider session across wake cycles:
 
 ```bash
-aw run codex --continue
+aw run claude --continue
 ```
 
 When a session exits, `aw run` prints:
@@ -76,7 +76,7 @@ Use `--trip-on-danger` when you want native provider approvals/sandbox checks
 back on:
 
 ```bash
-aw run codex --trip-on-danger
+aw run claude --trip-on-danger
 ```
 
 ## Common Flags

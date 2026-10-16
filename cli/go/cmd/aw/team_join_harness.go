@@ -100,8 +100,7 @@ func setupJoinHarness(workingDir string, home awconfig.IdentityHome, harness str
 		result.Delivery = "native channel extension installed; session not launched or verified"
 		result.StartCommand = "pi --approve"
 	case "codex":
-		result.Delivery = "aw run event-stream delivery; start the session to enable it (not launched or verified)"
-		result.StartCommand = "aw run codex"
+		result.Delivery = "Codex reads mail when asked; for delivery as it arrives, run it under OATS."
 	}
 	result.Status = "prepared"
 	result.RetryCommand = ""

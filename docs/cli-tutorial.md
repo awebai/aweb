@@ -364,7 +364,7 @@ resumable server event cursor.
 - `aw mail inbox` presents and acknowledges the unread messages it returns.
 - `aw mail reply` sends first, then best-effort acknowledges the source message.
 - `aw mail ack <message-id>` explicitly marks one message read.
-- `aw run codex` and maintained runtime integrations own their retry and
+- The OATS host wake broker and maintained runtime integrations own their retry and
   presentation/acknowledgement behavior. Shared-core session delivery marks
   read after accepted presentation, not after task completion. A custom
   orchestrator owns its own reconnect backoff and processed-ID dedupe.

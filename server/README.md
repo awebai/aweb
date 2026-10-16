@@ -95,7 +95,8 @@ Supported OSS bootstrap paths:
 ```bash
 # Guided BYOD bootstrap in a TTY on a self-hosted server
 aw init --url "$AWEB_URL"
-aw run codex
+aw mail inbox
+aw chat pending
 
 # Explicit bootstrap after accepting a team invite
 aw id team accept-invite <token>

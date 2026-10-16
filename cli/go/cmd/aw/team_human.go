@@ -146,7 +146,8 @@ var teamHumanJoinCmd = &cobra.Command{
 		".aw identity/key. Join installs the identity and membership, then connects this\n" +
 		"workspace to the aweb service carried by the invite. Use --no-connect only when\n" +
 		"you intentionally want identity state without a workspace binding.\n\n" +
-		"Use --harness claude|codex|pi to install team docs and prepare supported delivery.\n" +
+		"Use --harness claude|codex|pi to install team docs; Claude and Pi also prepare delivery.\n" +
+		"Codex reads mail when asked; for delivery as it arrives, run it under OATS.\n" +
 		"This does not launch a session or verify message delivery. After a setup failure,\n" +
 		"retry here with --setup-only --harness <harness>, without the invite token.",
 	Args: validateTeamJoinArgs,
@@ -305,7 +306,7 @@ func init() {
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptGlobal, "global", false, "Join by reusing the existing global identity in this workspace")
 	teamHumanJoinCmd.Flags().BoolVar(&teamAcceptNoAddress, "no-address", false, "For --global, join with did:aw continuity but no member address")
 	teamHumanJoinCmd.Flags().StringVar(&teamAcceptAddress, "address", "", "Advanced: existing owned address to place in the global member certificate")
-	teamHumanJoinCmd.Flags().StringVar(&teamHumanJoinHarness, "harness", "", "Prepare docs and delivery for claude, codex, or pi (omitted: no harness changes)")
+	teamHumanJoinCmd.Flags().StringVar(&teamHumanJoinHarness, "harness", "", "Install team docs; prepare delivery for claude/pi (omitted: no harness changes)")
 	teamHumanJoinCmd.Flags().BoolVar(&teamHumanJoinSetupOnly, "setup-only", false, "Retry harness setup for the connected identity without accepting an invite")
 	teamHumanJoinCmd.Flags().BoolVar(&teamHumanJoinNoConnect, "no-connect", false, "Install identity and membership without connecting this workspace")
 	teamHumanJoinCmd.GroupID = teamGroupMembership

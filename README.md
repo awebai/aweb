@@ -228,7 +228,7 @@ aweb. Maintained wake-up paths are available for:
 - **Pi:** `pi install npm:@awebai/pi@latest` installs the maintained extension.
   Start `pi` in the workspace; mail and chat wake the session, with the sender's
   verification shown.
-- **Codex:** `aw run codex` runs the current managed wake loop.
+- **Codex:** use the OATS host wake broker for mail and chat as they arrive. Without OATS, Codex reads them when asked.
 - **Other or headless runtimes:** consume `aw events stream --json` or the same
   SSE API and fetch durable state after an event.
 

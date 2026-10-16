@@ -128,7 +128,7 @@ Harness support differs:
 
 - **Pi**: install with `pi install npm:@awebai/pi@latest`; the aweb channel and these skills are bundled together. Existing installs on Pi 0.82+ update with `pi update npm:@awebai/pi`; pre-0.82 Pi falls back to `npm install @awebai/pi@latest --prefix ~/.pi/agent/npm`. Fully restart Pi afterward. A global npm upgrade does not update Pi's `~/.pi/agent/npm` package tree.
 - **Claude Code**: install the `aweb-channel` plugin from the `awebai/claude-plugins` marketplace. See <https://github.com/awebai/aweb/blob/main/docs/channel.md>.
-- **Codex**: use the OATS host wake broker where configured, regular coordination polling, or `aw run codex` for a session-bound runner. `aw init --setup-hooks` configures Claude Code only; Codex hook setup is not implemented.
+- **Codex**: use the OATS host wake broker for mail and chat as they arrive. Without OATS, Codex reads mail and chat when asked (`aw mail inbox`, `aw chat pending`). `aw init --setup-hooks` configures Claude Code only; Codex hook setup is not implemented.
 
 The channel is inbound only. Use `aw mail` or `aw chat` to respond.
 

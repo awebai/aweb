@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Codex guidance uses the OATS wake path:** joining with `--harness codex`
+  installs team instructions without suggesting a session launcher. Codex gets
+  mail and chat as they arrive through the OATS host wake broker; without OATS,
+  it reads them when asked. Init continues to omit a Codex launch command.
+
 ## Release preparations
 
 ### Release preparation: AWID 0.5.26

@@ -1278,14 +1278,15 @@ Run this in a clean target directory. It refuses to overwrite an existing
 workspace to the aweb service carried by the invite. Use --no-connect only when
 you intentionally want identity state without a workspace binding.
 
-Use --harness claude|codex|pi to install team docs and prepare supported delivery.
+Use --harness claude|codex|pi to install team docs; Claude and Pi also prepare delivery.
+Codex reads mail when asked; for delivery as it arrives, run it under OATS.
 This does not launch a session or verify message delivery. After a setup failure,
 retry here with --setup-only --harness <harness>, without the invite token.
 
 Flags:
 - `--address string Advanced: existing owned address to place in the global member certificate`
 - `--global Join by reusing the existing global identity in this workspace`
-- `--harness string Prepare docs and delivery for claude, codex, or pi (omitted: no harness changes)`
+- `--harness string Install team docs; prepare delivery for claude/pi (omitted: no harness changes)`
 - `-h, --help help for join`
 - `--local Join with a local workspace identity (default)`
 - `--name string Member name for the accepting agent (defaults to identity name)`

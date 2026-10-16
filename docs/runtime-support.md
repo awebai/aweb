@@ -20,7 +20,7 @@ support in all three.
 | --- | --- | --- | --- |
 | Claude Code | Yes | Yes | aweb channel plugin |
 | Pi | Yes | Yes | bundled aweb extension |
-| Codex | Yes | No; start manually | `aw run codex` or explicit polling |
+| Codex | Yes | No; start manually | OATS host wake broker; without OATS, read mail and chat when asked |
 | `local-shell` | Yes | No; start manually | explicit polling or runtime-specific integration |
 
 Supported materialization values are:
@@ -53,9 +53,10 @@ aw team join <invite-token> --harness pi
 
 Each command admits the member and connects the workspace before installing team
 instructions in that directory. Claude installs the native aweb channel plugin;
-Pi installs its aweb extension. Codex gets team instructions and the
-`aw run codex` launch command. None of these commands launches a session or
-verifies live message delivery. Omitting `--harness` preserves the existing join
+Pi installs its aweb extension. Codex gets team instructions only.
+Codex reads mail when asked; for delivery as it arrives, run it under OATS.
+See [the Codex wake path](receiving-events.md#codex). None of these commands
+launches a session or verifies live message delivery. Omitting `--harness` preserves the existing join
 behavior and makes no harness changes. `--harness` cannot accompany `--no-connect`.
 
 If setup fails after admission, the command exits nonzero and reports that

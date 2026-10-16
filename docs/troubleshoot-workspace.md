@@ -168,7 +168,7 @@ runtime it owns.
 | --- | --- |
 | Claude Code | Channel plugin installed and process started with both `--dangerously-skip-permissions` and `--dangerously-load-development-channels`. Without bypass-permissions mode the notification arrives and is silently not surfaced. |
 | Pi | `npm:@awebai/pi` installed in Pi's package tree and the process restarted after updates. |
-| Codex | Started through `aw run codex` when managed wake/reconnect is required. |
+| Codex | Under OATS, check the host wake broker with `oats aweb wake status`. Without OATS, ask Codex to check mail and chat. |
 | Custom/headless | Reconnect loop, backoff, processed-ID dedupe, durable fetch, and post-presentation acknowledgement. |
 
 Aweb does not own or restart an arbitrary agent process. Repair process launch

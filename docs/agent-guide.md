@@ -154,7 +154,7 @@ Maintained runtime paths are:
 | --- | --- |
 | Claude Code | aweb channel plugin |
 | Pi | `npm:@awebai/pi` extension |
-| Codex | `aw run codex` reconnecting event loop |
+| Codex | OATS host wake broker; without OATS, read mail and chat when asked |
 | Other/headless | `aw events stream --json` (reconnects within a run), raw SSE with caller-owned reconnect, or explicit polling |
 
 See [Receiving events and waking agents](receiving-events.md) before writing a

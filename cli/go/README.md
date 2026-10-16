@@ -59,10 +59,12 @@ aw update
 ```bash
 export AWEB_URL=http://localhost:8000
 
-# Primary human entrypoint: guided onboarding in a new directory.
-# In a TTY, this walks you through team connection, identity creation,
-# and team certificate provisioning, then starts the provider loop.
-aw run codex
+# Connect this directory to aweb.
+aw init
+
+# Read mail and pending chat explicitly.
+aw mail inbox
+aw chat pending
 
 # Verify identity
 aw whoami
