@@ -543,7 +543,9 @@ valid or unattributed event, and an absent route stops publishing.
     end each other's turns; SessionEnd removes the session's state, and at most
     32 sessions are kept, the least recently seen pruned first. The time of the
     last send and any rate-limit pause are shared by the agent's sessions,
-    because the server limits the agent. The turn rules are Claude Code's: an event of an ended turn is
+    because the server limits the agent. Concurrent sessions of one identity still
+    publish as one agent, and the server keeps one latest state per agent,
+    so a watcher sees whichever session published last. The turn rules are Claude Code's: an event of an ended turn is
     dropped, a repeated submit is ignored, and a new turn first closes one
     whose stop never arrived. A state within 500 ms of the last send is left
     pending while its process waits; a later state replaces it and the turn's
