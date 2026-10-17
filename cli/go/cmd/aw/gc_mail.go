@@ -13,6 +13,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -122,7 +123,7 @@ func gcMailError(format string, args ...any) error {
 // gcMailNotFound is the message-not-found failure, carrying gc's protocol
 // marker so gc maps it to mail.ErrNotFound.
 func gcMailNotFound(id string) error {
-	return gcMailError("%s: no aweb mail message %s", gcMailNotFoundMarker, sanitizeDelegateMailDisplay(id))
+	return gcMailError("%s: no aweb mail message %s", gcMailNotFoundMarker, termtext.Line(id))
 }
 
 // gcMailForceExitCode is the second half of the exit-2 guard: helpers shared
@@ -277,7 +278,7 @@ func gcMailEmit(v any) error {
 func gcMailIdentityLabel(address, did, alias string) string {
 	for _, candidate := range []string{address, did, alias} {
 		if value := strings.TrimSpace(candidate); value != "" {
-			return sanitizeDelegateMailDisplay(value)
+			return termtext.Line(value)
 		}
 	}
 	return ""
@@ -312,8 +313,8 @@ func gcMailWire(msg *awid.InboxMessage) gcMailWireMessage {
 		ID:        msg.MessageID,
 		From:      gcMailIdentityLabel(msg.FromAddress, msg.FromDID, msg.FromAlias),
 		To:        gcMailIdentityLabel(msg.ToAddress, msg.ToDID, msg.ToAlias),
-		Subject:   sanitizeDelegateMailDisplay(msg.Subject),
-		Body:      sanitizeDelegateMailBody(msg.Body),
+		Subject:   termtext.Line(msg.Subject),
+		Body:      termtext.Body(msg.Body),
 		CreatedAt: gcMailNormalizeTimestamp(msg.CreatedAt),
 		Read:      msg.ReadAt != nil,
 		ThreadID:  msg.ConversationID,

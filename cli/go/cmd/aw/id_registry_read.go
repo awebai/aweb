@@ -13,6 +13,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -429,5 +430,5 @@ func printRegistryRead(out registryReadEnvelope, formatter func(registryReadEnve
 		printJSON(out)
 		return
 	}
-	fmt.Print(formatter(out))
+	fmt.Print(termtext.Body(formatter(out)))
 }

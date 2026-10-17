@@ -17,6 +17,7 @@ import (
 	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -777,22 +778,22 @@ func credentialFromEntry(entry a2aCredentialEntry) a2a.Credential {
 
 func formatA2ACardOutput(out a2aCardOutput) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Name:       %s\n", out.Name))
-	sb.WriteString(fmt.Sprintf("Version:    %s\n", out.Version))
-	sb.WriteString(fmt.Sprintf("Digest:     %s\n", out.Digest))
+	sb.WriteString(fmt.Sprintf("Name:       %s\n", termtext.Line(out.Name)))
+	sb.WriteString(fmt.Sprintf("Version:    %s\n", termtext.Line(out.Version)))
+	sb.WriteString(fmt.Sprintf("Digest:     %s\n", termtext.Line(out.Digest)))
 	sb.WriteString(fmt.Sprintf("Verification: %s", out.Verification.Status))
 	if out.Verification.Code != "" {
 		sb.WriteString(" (" + out.Verification.Code + ")")
 	}
 	sb.WriteString("\n")
 	if out.Verification.Message != "" {
-		sb.WriteString(fmt.Sprintf("Note:       %s\n", out.Verification.Message))
+		sb.WriteString(fmt.Sprintf("Note:       %s\n", termtext.Line(out.Verification.Message)))
 	}
 	for _, iface := range out.Interfaces {
-		sb.WriteString(fmt.Sprintf("Interface:  %s %s %s\n", iface.ProtocolBinding, iface.ProtocolVersion, iface.URL))
+		sb.WriteString(fmt.Sprintf("Interface:  %s\n", termtext.Line(fmt.Sprintf("%s %s %s", iface.ProtocolBinding, iface.ProtocolVersion, iface.URL))))
 	}
 	for _, skill := range out.Skills {
-		sb.WriteString(fmt.Sprintf("Skill:      %s — %s\n", skill.ID, skill.Name))
+		sb.WriteString(fmt.Sprintf("Skill:      %s\n", termtext.Line(fmt.Sprintf("%s — %s", skill.ID, skill.Name))))
 	}
 	return sb.String()
 }
@@ -825,16 +826,16 @@ func formatA2APublishOutput(v any) string {
 
 func formatA2ATask(task a2a.Task) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Task:    %s\n", task.ID))
+	sb.WriteString(fmt.Sprintf("Task:    %s\n", termtext.Line(task.ID)))
 	if task.ContextID != "" {
-		sb.WriteString(fmt.Sprintf("Context: %s\n", task.ContextID))
+		sb.WriteString(fmt.Sprintf("Context: %s\n", termtext.Line(task.ContextID)))
 	}
-	sb.WriteString(fmt.Sprintf("State:   %s\n", task.Status.State))
+	sb.WriteString(fmt.Sprintf("State:   %s\n", termtext.Line(task.Status.State)))
 	if text := a2aTaskText(task); text != "" {
-		sb.WriteString(fmt.Sprintf("Text:    %s\n", text))
+		sb.WriteString(fmt.Sprintf("Text:    %s\n", termtext.Block(text)))
 	}
 	if token, _ := task.Metadata["task_bearer_token"].(string); token != "" {
-		sb.WriteString(fmt.Sprintf("Token:   %s\n", token))
+		sb.WriteString(fmt.Sprintf("Token:   %s\n", termtext.Line(token)))
 	}
 	return sb.String()
 }

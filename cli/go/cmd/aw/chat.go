@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/chat"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +21,11 @@ var chatCmd = &cobra.Command{
 }
 
 func chatStderrCallback(kind, message string) {
-	fmt.Fprintf(os.Stderr, "[chat:%s] %s\n", kind, message)
+	writeChatStatus(os.Stderr, kind, message)
+}
+
+func writeChatStatus(w io.Writer, kind, message string) {
+	termtext.Fprintln(w, "[chat:%s] %s", kind, message)
 }
 
 func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOptions) (*chat.SendResult, *awconfig.Selection, error) {

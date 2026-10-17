@@ -12,6 +12,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/chat"
+	"github.com/awebai/aw/internal/termtext"
 	awrun "github.com/awebai/aw/run"
 )
 
@@ -491,7 +492,7 @@ func formatFallbackCommsContext(evt awid.AgentEvent) string {
 }
 
 func formatIncomingChatContext(fromAlias string, body string) string {
-	alias := formatWakeAlias(fromAlias)
+	alias := termtext.Line(formatWakeAlias(fromAlias))
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return awrun.FormatCommLabel("from", alias, "chat")
@@ -500,8 +501,8 @@ func formatIncomingChatContext(fromAlias string, body string) string {
 }
 
 func formatIncomingMailContext(fromAlias string, subject string, body string) string {
-	alias := formatWakeAlias(fromAlias)
-	subject = strings.TrimSpace(subject)
+	alias := termtext.Line(formatWakeAlias(fromAlias))
+	subject = termtext.Line(strings.TrimSpace(subject))
 	body = strings.TrimSpace(body)
 	switch {
 	case subject != "" && body != "":

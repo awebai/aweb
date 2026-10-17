@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/awebai/aw/internal/termtext"
 	awrun "github.com/awebai/aw/run"
 )
 
@@ -163,7 +164,7 @@ func formatInteractionRecapStyled(entries []InteractionEntry, limit int, ansi bo
 	var sb strings.Builder
 	sb.WriteString("Recent interactions\n\n")
 	for _, entry := range entries {
-		line := strings.TrimSpace(formatInteractionEntry(entry))
+		line := termtext.Line(strings.TrimSpace(formatInteractionEntry(entry)))
 		if line == "" {
 			continue
 		}

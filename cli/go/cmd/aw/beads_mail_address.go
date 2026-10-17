@@ -43,11 +43,3 @@ func beadsMailDisplayName(m beadsMailAddressMap, value string) string {
 func beadsMailResolutionNote(t beadsMailTarget) string {
 	return delegateMailResolutionNote(t)
 }
-
-func sanitizeBeadsMailDisplay(s string) string {
-	return sanitizeDelegateMailDisplay(s)
-}
-
-func sanitizeBeadsMailBody(s string) string {
-	return sanitizeDelegateMailBody(s)
-}

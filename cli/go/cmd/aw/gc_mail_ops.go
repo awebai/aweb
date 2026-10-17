@@ -11,6 +11,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -105,7 +106,7 @@ where a mapped name actually delivered.`,
 		return gcMailEmit(gcMailWireMessage{
 			ID:        resp.MessageID,
 			From:      gcMailSelfLabel(sel),
-			To:        sanitizeDelegateMailDisplay(target.Value),
+			To:        termtext.Line(target.Value),
 			Subject:   subject,
 			Body:      input.Body,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -147,7 +148,7 @@ is no recipient argument to get wrong.`,
 		}
 		conversationID := strings.TrimSpace(source.ConversationID)
 		if conversationID == "" {
-			return gcMailError("message %s is legacy mail without a conversation; send a new message instead", sanitizeDelegateMailDisplay(messageID))
+			return gcMailError("message %s is legacy mail without a conversation; send a new message instead", termtext.Line(messageID))
 		}
 
 		subject := strings.TrimSpace(input.Subject)
@@ -176,7 +177,7 @@ is no recipient argument to get wrong.`,
 		// duplicate the reply. gc discards our stderr on success, so this
 		// note is for a human running the command directly.
 		if _, ackErr := c.AckMessage(ctx, messageID); ackErr != nil {
-			fmt.Fprintf(os.Stderr, "note: reply was sent, but the source message could not be marked read: %s\n", sanitizeDelegateMailDisplay(ackErr.Error()))
+			fmt.Fprintf(os.Stderr, "note: reply was sent, but the source message could not be marked read: %s\n", termtext.Line(ackErr.Error()))
 		}
 		// The label below is DISPLAY, not routing. Routing is done by the
 		// shared client, which resolves the conversation's live participant
@@ -191,7 +192,7 @@ is no recipient argument to get wrong.`,
 		return gcMailEmit(gcMailWireMessage{
 			ID:        resp.MessageID,
 			From:      gcMailSelfLabel(sel),
-			To:        sanitizeDelegateMailDisplay(counterparty),
+			To:        termtext.Line(counterparty),
 			Subject:   subject,
 			Body:      input.Body,
 			CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
@@ -291,7 +292,7 @@ func gcMailFetch(cmd *cobra.Command, ref string, markRead bool) error {
 	wire := gcMailWire(msg)
 	if markRead && msg.ReadAt == nil {
 		if _, ackErr := c.AckMessage(ctx, messageID); ackErr != nil {
-			return gcMailError("message %s was fetched, but it could not be marked read: %v", sanitizeDelegateMailDisplay(messageID), ackErr)
+			return gcMailError("message %s was fetched, but it could not be marked read: %v", termtext.Line(messageID), ackErr)
 		}
 		wire.Read = true
 		delegateMailLogReceived(sel, msg)
@@ -318,7 +319,7 @@ gc's protocol expects no output from this operation.`,
 			if code, ok := awid.HTTPStatusCode(err); ok && code == http.StatusNotFound {
 				return gcMailNotFound(messageID)
 			}
-			return gcMailError("mark %s read: %v", sanitizeDelegateMailDisplay(messageID), err)
+			return gcMailError("mark %s read: %v", termtext.Line(messageID), err)
 		}
 		return nil
 	},

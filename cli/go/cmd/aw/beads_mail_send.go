@@ -12,6 +12,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -217,7 +218,7 @@ cryptographically verified identity.`,
 			// address/stable-id) cannot be verified and proceeds — reply is
 			// always the recipient-free escape hatch either way.
 			if known, matches := beadsMailReplyToTargetMatches(source, sel, target.Value); known && !matches {
-				return usageError("--reply-to message %s is a conversation with %s, not with %s; drop --reply-to or name that correspondent", replyTo, sanitizeBeadsMailDisplay(beadsMailCounterpartyLabel(source, sel)), sanitizeBeadsMailDisplay(target.Value))
+				return usageError("--reply-to message %s is a conversation with %s, not with %s; drop --reply-to or name that correspondent", replyTo, termtext.Line(beadsMailCounterpartyLabel(source, sel)), termtext.Line(target.Value))
 			}
 			req.ConversationID = conversationID
 		} else {
@@ -316,7 +317,7 @@ var beadsMailReplyCmd = &cobra.Command{
 			return err
 		}
 		if _, ackErr := c.AckMessage(ctx, messageID); ackErr != nil {
-			fmt.Fprintf(os.Stderr, "note: reply was sent, but the source message could not be marked read: %s\n", sanitizeBeadsMailDisplay(ackErr.Error()))
+			fmt.Fprintf(os.Stderr, "note: reply was sent, but the source message could not be marked read: %s\n", termtext.Line(ackErr.Error()))
 		}
 		beadsMailAppendSendLogs(sel, resp, conversationID, subject, body)
 		fmt.Printf("replied (message_id=%s conversation_id=%s)\n", resp.MessageID, resp.ConversationID)
@@ -455,7 +456,7 @@ func beadsMailRetryAsContinuation(ctx context.Context, c *aweb.Client, target be
 	if err != nil || conversation.conversationID == "" {
 		return nil, sendErr
 	}
-	fmt.Fprintf(os.Stderr, "note: continuing the existing conversation with %s (the server keeps one active conversation per pair)\n", sanitizeBeadsMailDisplay(target.Value))
+	fmt.Fprintf(os.Stderr, "note: continuing the existing conversation with %s (the server keeps one active conversation per pair)\n", termtext.Line(target.Value))
 	continuation := &awid.SendMessageRequest{
 		ConversationID: conversation.conversationID,
 		Subject:        req.Subject,

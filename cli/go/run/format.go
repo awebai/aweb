@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/awebai/aw/internal/termtext"
 )
 
 type presenterState struct {
@@ -146,7 +148,7 @@ func SplitDisplayText(kind DisplayKind, text string) []DisplayLine {
 	parts := strings.Split(text, "\n")
 	lines := make([]DisplayLine, 0, len(parts))
 	for _, part := range parts {
-		lines = append(lines, DisplayLine{Kind: kind, Text: part})
+		lines = append(lines, DisplayLine{Kind: kind, Text: termtext.Line(part)})
 	}
 	return lines
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/identityutil"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/joho/godotenv"
 	"golang.org/x/term"
 )
@@ -1553,7 +1554,7 @@ func writeOutput(w io.Writer, v any, formatter func(v any) string) error {
 		_, err := fmt.Fprintln(w, formatJSONOutput(v))
 		return err
 	}
-	_, err := fmt.Fprint(w, formatter(v))
+	_, err := fmt.Fprint(w, termtext.Body(formatter(v)))
 	return err
 }
 

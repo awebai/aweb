@@ -15,6 +15,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -591,7 +592,7 @@ func runWorkspaceAddWorktree(cmd *cobra.Command, args []string) error {
 	if jsonFlag {
 		printJSON(output)
 	} else {
-		fmt.Print(formatWorkspaceAddWorktree(output))
+		printOutput(output, formatWorkspaceAddWorktree)
 	}
 	return nil
 }
@@ -902,7 +903,7 @@ func formatWorkspaceAddWorktree(v any) string {
 	sb.WriteString("\nTo use:\n")
 	sb.WriteString(fmt.Sprintf("  cd %s\n", abbreviateUserHome(out.WorktreePath)))
 	sb.WriteString("  Tell your agent: please read https://aweb.ai/docs/cli-tutorial.md\n")
-	return sb.String()
+	return termtext.Body(sb.String())
 }
 
 func formatWorkspaceDelete(v any) string {

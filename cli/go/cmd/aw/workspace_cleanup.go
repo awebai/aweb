@@ -8,6 +8,7 @@ import (
 
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 )
 
 type goneWorkspace struct {
@@ -131,5 +132,5 @@ func formatGoneWorkspaces(gone []goneWorkspace) string {
 		}
 		sb.WriteString(fmt.Sprintf("  %s (%s) — %s\n", g.Alias, abbreviateUserHome(g.WorkspacePath), strings.Join(details, ", ")))
 	}
-	return sb.String()
+	return termtext.Body(sb.String())
 }

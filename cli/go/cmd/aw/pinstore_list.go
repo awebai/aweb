@@ -8,6 +8,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -152,7 +153,7 @@ func newPinStoreListCmd() *cobra.Command {
 
 			if len(listing.Bindings) == 0 {
 				if strings.TrimSpace(address) != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "no pinned binding for %s in %s\n", address, path)
+					termtext.Fprintln(cmd.OutOrStdout(), "no pinned binding for %s in %s", address, path)
 					return nil
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "no pinned bindings in %s\n", path)
@@ -161,12 +162,12 @@ func newPinStoreListCmd() *cobra.Command {
 
 			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", path)
 			for _, b := range listing.Bindings {
-				fmt.Fprintf(cmd.OutOrStdout(), "  %-32s %-8s %s\n", b.Address, b.KeyKind, b.PinKey)
+				termtext.Fprintln(cmd.OutOrStdout(), "  %-32s %-8s %s", b.Address, b.KeyKind, b.PinKey)
 				if b.DIDKey != "" && b.DIDKey != b.PinKey {
-					fmt.Fprintf(cmd.OutOrStdout(), "  %-32s %-8s last did:key %s\n", "", "", b.DIDKey)
+					termtext.Fprintln(cmd.OutOrStdout(), "  %-32s %-8s last did:key %s", "", "", b.DIDKey)
 				}
 				if b.FirstSeen != "" || b.LastSeen != "" {
-					fmt.Fprintf(cmd.OutOrStdout(), "  %-32s %-8s first_seen %s  last_seen %s\n", "", "", b.FirstSeen, b.LastSeen)
+					termtext.Fprintln(cmd.OutOrStdout(), "  %-32s %-8s first_seen %s  last_seen %s", "", "", b.FirstSeen, b.LastSeen)
 				}
 			}
 			return nil

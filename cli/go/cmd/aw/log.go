@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
+	"github.com/awebai/aw/internal/termtext"
 )
 
 var (
@@ -132,10 +134,10 @@ func formatLogLine(e *CommLogEntry) string {
 
 	subj := ""
 	if e.Subject != "" {
-		subj = e.Subject + " — "
+		subj = termtext.Line(e.Subject) + " — "
 	}
 
-	return fmt.Sprintf("[%s] %s %s%s: %s%s\n", ts, arrow, peer, chTag, subj, e.Body)
+	return fmt.Sprintf("[%s] %s %s%s: %s%s\n", ts, arrow, termtext.Line(peer), chTag, subj, termtext.Block(e.Body))
 }
 
 func init() {
