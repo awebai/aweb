@@ -50,7 +50,15 @@ ROOT_CONSUMERS = {
         "agent-status-v1.json",
         '"../../../../docs/vectors/agent-status-v1.json"',
     ),
+    PurePosixPath("cli/go/cmd/aw/activity_hook_test.go"): _consumer(
+        "agent-activity-v1.json",
+        '"../../../../docs/vectors/agent-activity-v1.json"',
+    ),
     PurePosixPath("server/tests/test_agent_status_vector.py"): _consumer(
+        "agent-status-v1.json",
+        'Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"',
+    ),
+    PurePosixPath("server/tests/test_line_break_refusals.py"): _consumer(
         "agent-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"',
     ),
@@ -267,6 +275,10 @@ ROOT_CONSUMERS = {
     PurePosixPath("channel-core/test/encrypted_dispatch.test.ts"): _consumer(
         "e2ee-v2-cross-language.json",
         'new URL("../../docs/vectors/e2ee-v2-cross-language.json", import.meta.url)',
+    ),
+    PurePosixPath("channel-core/test/activity_vector.test.ts"): _consumer(
+        "agent-activity-v1.json",
+        'new URL("../../docs/vectors/agent-activity-v1.json", import.meta.url)',
     ),
     PurePosixPath("channel-core/test/pin_store_raw_wire.test.ts"): _consumer(
         "pin-store-raw-wire-v1.json",

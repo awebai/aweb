@@ -95,6 +95,9 @@ class RequestDecompressionMiddleware:
             logger.exception("Request processing failed at decompression boundary")
             if not started:
                 await refuse(500, "Internal server error")
+            # Preserve the ASGI server's exception handling after responding,
+            # just as Starlette's ServerErrorMiddleware does.
+            raise
 
     async def _decode(self, receive: Receive) -> bytes | None:
         decoder = zlib.decompressobj(wbits=31)

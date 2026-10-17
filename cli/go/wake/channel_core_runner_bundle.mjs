@@ -3445,7 +3445,15 @@ var APIClient = class {
   async post(path, body) {
     return this.request("POST", path, body);
   }
+  /** POST to a route that answers without a body, such as a 202. */
+  async postAccepted(path, body) {
+    const resp = await this.send("POST", path, body);
+    await resp.body?.cancel();
+  }
   async request(method, path, body, noCache = false) {
+    return readBoundedJSON(await this.send(method, path, body, noCache));
+  }
+  async send(method, path, body, noCache = false) {
     const url = this.baseURL + path;
     const bodyText = body === void 0 ? "" : JSON.stringify(body);
     const headers = {
@@ -3466,9 +3474,9 @@ var APIClient = class {
     const resp = await fetch(url, init);
     if (!resp.ok) {
       const text2 = await readSafeErrorExcerpt(resp).catch(() => "");
-      throw new APIError(resp.status, text2);
+      throw new APIError(resp.status, text2, retryAfterSeconds(resp.headers.get("Retry-After")));
     }
-    return readBoundedJSON(resp);
+    return resp;
   }
   /** Open an SSE stream. Returns the raw Response for streaming. */
   async openSSE(path, signal) {
@@ -3543,14 +3551,19 @@ var APIClient = class {
   }
 };
 var APIError = class extends Error {
-  constructor(statusCode, body) {
+  constructor(statusCode, body, retryAfterSeconds2) {
     super(body ? `aweb: http ${statusCode}: ${body}` : `aweb: http ${statusCode}`);
     this.statusCode = statusCode;
     this.body = body;
+    this.retryAfterSeconds = retryAfterSeconds2;
   }
   statusCode;
   body;
+  retryAfterSeconds;
 };
+function retryAfterSeconds(header) {
+  return header !== null && /^\d+$/.test(header.trim()) ? Number(header.trim()) : void 0;
+}
 
 // channel-core/src/receive.ts
 var import_proper_lockfile = __toESM(require_proper_lockfile(), 1);
@@ -9144,6 +9157,17 @@ function escapeJSON3(s) {
   return result;
 }
 
+// channel-core/src/identity/canonical.ts
+function canonicalJSONValue(value, unsupported) {
+  if (Array.isArray(value)) return `[${value.map((item) => canonicalJSONValue(item, unsupported)).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const obj = value;
+    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalJSONValue(obj[key], unsupported)}`).join(",")}}`;
+  }
+  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
+  throw new Error(unsupported);
+}
+
 // channel-core/src/channel.ts
 var import_proper_lockfile2 = __toESM(require_proper_lockfile(), 1);
 import { dirname as dirname2, join as join2 } from "node:path";
@@ -9162,13 +9186,7 @@ function text(value) {
   return value;
 }
 function canonicalEncryptedJSON(value) {
-  if (Array.isArray(value)) return `[${value.map(canonicalEncryptedJSON).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const obj = object(value);
-    return `{${Object.keys(obj).sort().map((key) => `${JSON.stringify(key)}:${canonicalEncryptedJSON(obj[key])}`).join(",")}}`;
-  }
-  if (typeof value === "string" || typeof value === "boolean" || value === null || typeof value === "number" && Number.isSafeInteger(value)) return JSON.stringify(value);
-  throw new Error("unsupported encrypted envelope value");
+  return canonicalJSONValue(value, "unsupported encrypted envelope value");
 }
 function optionalStrings(value, keys) {
   for (const key of keys) {
@@ -9909,10 +9927,12 @@ async function dispatchChatEvent(options, dispatched, event) {
       continue;
     }
     let from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const encrypted = isEncryptedMessage(msg);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
     if (!decrypt.ok) {
+      options.onChatPresented?.(event.session_id, { encrypted });
       await deliverAwakening(options, {
         kind: "chat",
         content: "",
@@ -9947,6 +9967,7 @@ async function dispatchChatEvent(options, dispatched, event) {
     if (event.sender_waiting) meta.sender_waiting = "true";
     if (msg.sender_leaving) meta.sender_leaving = "true";
     emitTrace(options, "notification_started", messageEvent, lane);
+    options.onChatPresented?.(event.session_id, { encrypted });
     await deliverAwakening(options, {
       kind: "chat",
       content: msg.body,

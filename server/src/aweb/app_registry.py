@@ -84,7 +84,7 @@ def reserved_app_ids() -> frozenset[str]:
         raise RuntimeError("reserved app ids artifact must contain a non-empty reserved_app_ids list")
     ids: set[str] = set()
     for value in values:
-        if not isinstance(value, str) or not APP_ID_RE.match(value):
+        if not isinstance(value, str) or not APP_ID_RE.fullmatch(value):
             raise RuntimeError(f"reserved app ids artifact contains invalid app id: {value!r}")
         ids.add(value)
     return frozenset(ids)

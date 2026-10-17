@@ -65,7 +65,7 @@ var rootCmd = &cobra.Command{
 			activeIdentityHome = home
 		}
 		restoreIdentityHomeAfterCommand(cmd, identityHomeEnv, hadIdentityHomeEnv, previousActiveIdentityHome)
-		if isAgentStatusCommand(cmd) {
+		if isAgentStatusCommand(cmd) || isActivityCommand(cmd) {
 			return nil // Producer commands never renew encryption keys or check updates.
 		}
 		if !isTeamInviteInspectCommand(cmd) && cmd.Name() != "help" {

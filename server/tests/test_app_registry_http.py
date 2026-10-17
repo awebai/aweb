@@ -204,7 +204,7 @@ def test_reserved_app_ids_are_loaded_from_cli_artifact():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("app_id", ["mail", "doctor", "introspect"])
+@pytest.mark.parametrize("app_id", ["mail", "doctor", "introspect", "activity"])
 async def test_install_rejects_reserved_app_id(aweb_cloud_db, monkeypatch, app_id):
     monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
     app = _build_apps_app(aweb_cloud_db.aweb_db)

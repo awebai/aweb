@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.8.0
+
+- Publish live agent activity for the session when the host owner opts in
+  with `activity: status` in the identity home's `activity.yaml` (off by
+  default; see docs/agent-activity.md). The plugin ships Claude Code hooks
+  (`hooks/hooks.json`) that forward each prompt, tool call, permission request
+  and stop to the plugin over a per-user, owner-only Unix socket; the plugin
+  signs short, templated status events (phase, tool name, a one-line summary,
+  never output or file content) and publishes them to the server, attributed
+  to the chat whose wake started the turn. Requires server 1.27.26 or later;
+  against an older server publishing stops quietly.
+
 ## 1.7.17
 
 - Record successful event-stream reads in the selected identity directory's

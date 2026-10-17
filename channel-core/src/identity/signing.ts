@@ -122,14 +122,17 @@ function b64Decode(s: string): Uint8Array {
   return decodeRawStdBase64(s);
 }
 
+/** Sign bytes with an Ed25519 seed. Returns raw standard base64 (no padding). */
+export function signBytes(seed: Uint8Array, bytes: Uint8Array): string {
+  return b64Encode(ed.sign(bytes, seed));
+}
+
 /** Sign a message envelope. Returns base64 signature (no padding). */
 export async function signMessage(
   seed: Uint8Array,
   env: MessageEnvelope,
 ): Promise<string> {
-  const payload = canonicalJSON(env);
-  const sig = ed.sign(new TextEncoder().encode(payload), seed);
-  return b64Encode(sig);
+  return signBytes(seed, new TextEncoder().encode(canonicalJSON(env)));
 }
 
 /**

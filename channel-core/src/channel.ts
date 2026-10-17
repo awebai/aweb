@@ -84,6 +84,12 @@ export interface ChannelLoopOptions {
   onStreamState?: (state: EventStreamState) => void;
   streamObserver?: EventStreamObserver;
   onTrace?: (entry: ChannelTraceEntry) => void;
+  /**
+   * A chat message of this session is about to be presented to the agent, so
+   * the agent's next turn serves it (docs/agent-activity.md, "Attribution").
+   * encrypted is whether the message arrived end-to-end encrypted.
+   */
+  onChatPresented?: (sessionID: string, options: { encrypted: boolean }) => void;
 }
 
 export async function loadPinStore(path: string = DEFAULT_PIN_STORE_PATH): Promise<PinStore> {
@@ -795,10 +801,12 @@ async function dispatchChatEvent(
     }
 
     let from = senderDisplayAddress(msg.from_agent, msg.from_address);
+    const encrypted = isEncryptedMessage(msg);
     emitTrace(options, "decrypt_started", messageEvent, lane);
     const decrypt = await resolveChatForDelivery(options, event.session_id, msg);
     emitTrace(options, "decrypt_completed", messageEvent, lane);
     if (!decrypt.ok) {
+      options.onChatPresented?.(event.session_id, { encrypted });
       await deliverAwakening(options, {
         kind: "chat",
         content: "",
@@ -835,6 +843,7 @@ async function dispatchChatEvent(
     if (msg.sender_leaving) meta.sender_leaving = "true";
 
     emitTrace(options, "notification_started", messageEvent, lane);
+    options.onChatPresented?.(event.session_id, { encrypted });
     await deliverAwakening(options, {
       kind: "chat",
       content: msg.body,

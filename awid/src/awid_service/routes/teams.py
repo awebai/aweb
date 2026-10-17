@@ -695,7 +695,7 @@ async def get_team(
 
 @router.delete(
     "/{name}",
-    dependencies=[Depends(rate_limit_dep("team_delete"))],
+    dependencies=[Depends(rate_limit_dep("team_delete", allow_trusted_service=True))],
 )
 async def delete_team(
     request: Request,
@@ -872,7 +872,7 @@ async def register_certificate(
 @router.post(
     "/{name}/visibility",
     response_model=TeamResponse,
-    dependencies=[Depends(rate_limit_dep("team_update"))],
+    dependencies=[Depends(rate_limit_dep("team_update", allow_trusted_service=True))],
 )
 async def set_team_visibility(
     request: Request,
@@ -1152,7 +1152,7 @@ async def fetch_certificate(
 @router.post(
     "/{name}/certificates/revoke",
     response_model=CertificateRevokeResponse,
-    dependencies=[Depends(rate_limit_dep("certificate_revoke"))],
+    dependencies=[Depends(rate_limit_dep("certificate_revoke", allow_trusted_service=True))],
 )
 async def revoke_certificate(
     request: Request,

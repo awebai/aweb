@@ -125,7 +125,7 @@ def _check_values(document: dict[str, Any]) -> tuple[datetime, datetime]:
         if (
             not isinstance(code, str)
             or len(code.encode("utf-8")) > REASON_CODE_MAX_BYTES
-            or not _REASON_CODE.match(code)
+            or not _REASON_CODE.fullmatch(code)
         ):
             raise _refuse("invalid_value", "reason.code must be a namespaced code of at most 64 bytes")
         if not isinstance(reason["text"], str):

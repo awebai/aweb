@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **Live agent activity from Codex, and an opt-in switch for every host:**
+  `aw activity enable`, `disable` and `show` manage the host owner's opt-in,
+  `<identity home>/activity.yaml`, which the Claude channel, Pi and Codex
+  emitters read at each turn. `aw activity hook` publishes Codex's turns as
+  signed, unattributed activity: phases, tool names and templated summaries,
+  never output or arguments. It is coalesced and rate-limited like the other
+  emitters, and it stops quietly against a server without the route (server
+  1.27.26 or later has it). `aw activity hook install --codex` adds the hook
+  to `$CODEX_HOME/hooks.json` for hosts that OATS does not manage; Codex runs
+  it only after you trust it with `/hooks`. See
+  [agent activity](docs/agent-activity.md).
+- **The app id `activity` is reserved** for the new command, a stated
+  narrowing: the server refuses it at app registration and in app event types.
+  Production had zero uses of `activity` in apps, registry entries, event
+  types, installs, emitted events and subscriptions when measured on
+  2026-10-16. `status` and `status-host`, reserved in server 1.27.24, were
+  measured at the same time and also had zero uses.
 - **aw negotiates gzip writes with the target server:** an unauthenticated health
   probe enables compression only after an explicit gzip advertisement, cached per
   server base for the process. Signatures cover the original bytes. Older servers
@@ -10,6 +27,75 @@
   to that base stay plain. Application 400s keep compression enabled.
 
 ## Release preparations
+
+### Release preparation: AWID 0.5.28
+
+Changes are since `awid-v0.5.26` / `awid-service-v0.5.27`.
+Publishes PyPI `awid-service` 0.5.28 and the `awid` image 0.5.28.
+
+- **AWID: team visibility, deletion and revocation no longer hit low per-IP
+  limits.** The aweb service, presenting its matching `AWID_SERVICE_TOKEN`, is
+  exempt from the `team_update`, `team_delete` and `certificate_revoke` per-IP
+  limits, as it already was for team creation and certificate registration, so
+  Cloud's visibility pushes and team retirement no longer fail partway. Every
+  caller's limits rise from 10/hour to 300/hour for visibility changes and team
+  deletion, and from 30/hour to 1000/hour for revocation: each write already
+  needs a controller signature, so the budget only stops a runaway client. The
+  controller signatures and the deletion refusal while certificates are active
+  are unchanged.
+
+### Release preparation: channel 1.8.0, pi 0.4.0
+
+Client changes are since `channel-v1.7.17` and `pi-v0.3.15`. Tag only after
+the hosted deployment that runs server 1.27.26 or later.
+
+- **Live agent activity from Claude Code and Pi:** when the host owner opts an
+  agent in (`activity: status` in `<identity home>/activity.yaml`; off by
+  default, read at each turn), the Claude channel **1.8.0** and Pi **0.4.0**
+  publish signed, ephemeral status events to `POST /v1/agents/me/activity`:
+  the phase, the tool name and a templated one-line summary, never output,
+  arguments or file content, and no summary after an encrypted chat wake.
+  Claude Code reports through plugin hooks forwarded over a per-user,
+  owner-only socket; Pi through its lifecycle events. A turn is attributed to
+  the chat whose wake started it. A grant seat signs with its grant session
+  key and needs `chat.send`. Events coalesce to at most one per 500 ms, honour
+  the server's rate limit, and stop quietly against a server without the
+  route. See [agent activity](docs/agent-activity.md).
+
+### Release preparation: awid-service 0.5.27
+
+Changes are since `awid-service-v0.5.26`.
+Publishes the Python `awid-service` package, including its `awid` client library.
+
+- **The Python registry client can change visibility and delete teams:**
+  `RegistryClient.set_team_visibility` uses the team controller's signature and
+  returns the updated team. `RegistryClient.delete_team` uses the namespace
+  controller's signature and returns the deletion acknowledgment; active
+  certificates must be revoked first. Both use the domain's registry, and the
+  cached client invalidates affected team metadata, certificates and revocations.
+
+### Release preparation: server 1.27.26
+
+Changes are since `server-v1.27.25`.
+
+- **Agents can publish live activity to the chats they serve:**
+  `POST /v1/agents/me/activity` accepts a signed, ephemeral `agent_activity`
+  event: the phase, the tool name and a short summary of a turn in progress.
+  The signer must be the calling agent (an identity with a team certificate, or
+  a grant seat whose grant carries `chat.send`). The server checks the frozen
+  vector rules, a 2048-byte body cap and a limit of 10 events per agent every
+  5 seconds (429 with `Retry-After`). A session the caller is not in gets the
+  same 404 as an absent one. Events go only through Redis, never Postgres, and
+  without Redis the route answers 503. A chat stream opened with
+  `include=agent_activity` carries the other participants' activity, including
+  the server-derived `busy_elsewhere` and `cleared` frames. Streams without the
+  parameter are unchanged byte for byte, so released clients are unaffected.
+  See [agent activity](docs/agent-activity.md).
+
+- **Request decoding preserves application failures:** after sending a bounded
+  500 when needed, the outer request-decompression wrapper re-raises unexpected
+  exceptions to the ASGI server. An already-started response is never sent twice;
+  gzip decoding refusals retain their existing 400, 413 and 415 responses.
 
 ### Release preparation: server 1.27.25, aw 1.36.40
 

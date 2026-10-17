@@ -1563,6 +1563,52 @@ assert_contains "alice sees bob's reply" "$alice_history" "Chat reply from bob"
 echo ""
 
 # ---------------------------------------------------------------------------
+# Phase 12a: Agent activity from the Codex hook
+# ---------------------------------------------------------------------------
+echo "=== Phase 12a: Agent activity from the Codex hook ==="
+
+codex_hook_event() {
+  local name="$1" turn="$2" extra="${3:-}"
+  printf '{"hook_event_name":"%s","session_id":"e2e-codex","turn_id":"%s","cwd":"%s","model":"gpt-5","permission_mode":"default","transcript_path":"/dev/null"%s}' \
+    "$name" "$turn" "$ALICE_DIR" "$extra" | run_aw_in "$ALICE_DIR" activity hook
+}
+activity_redis() {
+  (cd "$SERVER_DIR" && compose exec -T redis sh -lc "$1")
+}
+
+capture_success activity_show_out "activity show" run_aw_in "$ALICE_DIR" activity show --json
+assert_eq "activity is off by default" "off" "$(echo "$activity_show_out" | jq_field activity)"
+codex_hook_event UserPromptSubmit e2e-codex-off
+activity_revs_off="$(activity_redis "redis-cli --scan --pattern 'agent-activity-rev:*' | wc -l | tr -d ' '")"
+assert_eq "the hook publishes nothing while off" "0" "$activity_revs_off"
+
+capture_success activity_enable_out "activity enable" run_aw_in "$ALICE_DIR" activity enable --json
+assert_eq "activity enable" "status" "$(echo "$activity_enable_out" | jq_field activity)"
+codex_hook_event UserPromptSubmit e2e-codex-turn-1
+sleep 0.7
+codex_hook_event PreToolUse e2e-codex-turn-1 ',"tool_name":"Bash","tool_use_id":"call_1","tool_input":{"command":"pytest -x"}'
+sleep 0.7
+codex_hook_event Stop e2e-codex-turn-1 ',"stop_hook_active":false,"last_assistant_message":"done"'
+
+activity_rev_keys="$(activity_redis "redis-cli --scan --pattern 'agent-activity-rev:*'")"
+assert_eq "one agent published activity" "1" "$(printf '%s\n' "$activity_rev_keys" | grep -c .)"
+activity_agent_id="${activity_rev_keys#agent-activity-rev:}"
+activity_agent_id="$(printf '%s' "$activity_agent_id" | tr -d '\r\n')"
+assert_eq "the server relayed all three events" "3" \
+  "$(activity_redis "redis-cli GET agent-activity-rev:$activity_agent_id" | tr -d '\r\n')"
+activity_latest="$(activity_redis "redis-cli GET agent-activity:$activity_agent_id")"
+activity_latest_check="$(printf '%s' "$activity_latest" | python3 -c '
+import json, sys
+state = json.load(sys.stdin)
+event = state["event"]
+print(state["rev"], state["alias"], event["turn_id"], event["seq"], event["phase"], event["session_id"])
+')"
+assert_eq "the latest state is alice's turn end" "3 alice e2e-codex-turn-1 3 turn_ended None" "$activity_latest_check"
+capture_success activity_disable_out "activity disable" run_aw_in "$ALICE_DIR" activity disable --json
+assert_eq "activity disable" "off" "$(echo "$activity_disable_out" | jq_field activity)"
+echo ""
+
+# ---------------------------------------------------------------------------
 # Phase 12b: Cross-team tilde addressing
 # ---------------------------------------------------------------------------
 echo "=== Phase 12b: Cross-team tilde addressing ==="
@@ -1919,7 +1965,7 @@ capture_success bob_restored_pending "bob_restored_pending" run_aw_in "$BOB_DIR"
 bob_restored_chat_from_address="$(echo "$bob_restored_pending" | python3 -c "import sys,json; pending=json.load(sys.stdin).get('pending',[]); print(next((p.get('last_from_address','') for p in pending if p.get('last_message')=='Per-membership restored primary chat'), ''))" 2>/dev/null || echo "")"
 assert_eq "bob sees alice restored primary chat from_address" "test.local/alice" "$bob_restored_chat_from_address"
 
-if sse_initial_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
+if sse_initial_out="$(AWEB_HTTP_DIAGNOSTICS=1 run_aw_in "$BOB_DIR" mail send --plaintext \
   --to alice \
   --subject "SSE continuation initial" \
   --body "SSE continuation starts here" \
@@ -1927,6 +1973,7 @@ if sse_initial_out="$(run_aw_in "$BOB_DIR" mail send --plaintext \
   sse_initial_exit=0
 else
   sse_initial_exit=$?
+  printf '  SSE initial mail failure: %s\n' "$sse_initial_out" >&2
 fi
 assert_eq "sse continuation initial mail exit" "0" "$sse_initial_exit"
 sse_conversation_id="$(echo "$sse_initial_out" | jq_field conversation_id)"

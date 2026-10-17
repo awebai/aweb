@@ -176,14 +176,14 @@ _BUCKET_DEFAULTS: dict[str, tuple[int, int]] = {
     "team_list": (60, 60),
     "team_get": (60, 60),
     "team_member_get": (60, 60),
-    "team_delete": (10, 3600),
+    "team_delete": (300, 3600),
     "team_rotate": (10, 3600),
-    "team_update": (10, 3600),
+    "team_update": (300, 3600),
     "certificate_register": (30, 3600),
     "certificate_list": (60, 60),
     "certificate_fetch": (60, 60),
     "certificate_status": (60, 60),
-    "certificate_revoke": (30, 3600),
+    "certificate_revoke": (1000, 3600),
     "revocation_list": (60, 60),
 }
 

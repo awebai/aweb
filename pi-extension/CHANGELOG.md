@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- Publish live agent activity for the session when the host owner opts in
+  with `activity: status` in the identity home's `activity.yaml` (off by
+  default; see docs/agent-activity.md). An agent run is a turn; reasoning,
+  reply text and tool calls publish short, templated, signed status events,
+  attributed to the chat whose wake started the run, and a session ended
+  mid-run closes its turn. Requires server 1.27.26 or later; against an older
+  server publishing stops quietly.
+
 ## 0.3.15
 
 - Record successful event-stream reads in the selected identity directory's

@@ -1520,6 +1520,7 @@ describe("channel-core dispatchAgentEvent", () => {
 
   test("marks every presented chat ID read after channel delivery succeeds", async () => {
     const onAwakening = vi.fn();
+    const onChatPresented = vi.fn();
     const client = {
       get: vi.fn().mockResolvedValue({
         messages: [{
@@ -1550,6 +1551,7 @@ describe("channel-core dispatchAgentEvent", () => {
         trust,
         self,
         onAwakening,
+        onChatPresented,
       },
       new Set(),
       {
@@ -1569,10 +1571,15 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "follow-up",
     }));
     expect(client.post).toHaveBeenCalledWith("/v1/chat/sessions/sess-1/read", { message_ids: ["chat-1", "chat-2"] });
+    expect(onChatPresented.mock.calls).toEqual([
+      ["sess-1", { encrypted: false }],
+      ["sess-1", { encrypted: false }],
+    ]);
   });
 
   test("imports only decrypted chat content from local aw", async () => {
     const onAwakening = vi.fn();
+    const onChatPresented = vi.fn();
     const normalizeTrust = vi.fn(async (_store: PinStore, status: string) => ({ status, stored: false }));
     const localDecrypt = {
       chatMessage: vi.fn(async () => ({
@@ -1611,6 +1618,7 @@ describe("channel-core dispatchAgentEvent", () => {
         trust: { normalizeResolvedTrust: normalizeTrust } as unknown as SenderTrustManager,
         self,
         onAwakening,
+        onChatPresented,
         localDecrypt,
       },
       new Set(),
@@ -1640,6 +1648,7 @@ describe("channel-core dispatchAgentEvent", () => {
       content: "decrypted chat body",
       meta: expect.objectContaining({ from: "acme.com/alice", trust_status: "unverified" }),
     }));
+    expect(onChatPresented).toHaveBeenCalledWith("sess-e2ee-trust-boundary", { encrypted: true });
   });
 
   test("decrypts encrypted chat locally before channel delivery", async () => {
@@ -1696,6 +1705,7 @@ describe("channel-core dispatchAgentEvent", () => {
 
   test("does not mark encrypted chat read when local decrypt fails", async () => {
     const onAwakening = vi.fn();
+    const onChatPresented = vi.fn();
     const localDecrypt = {
       chatMessage: vi.fn(async () => null),
     };
@@ -1724,6 +1734,7 @@ describe("channel-core dispatchAgentEvent", () => {
         trust,
         self,
         onAwakening,
+        onChatPresented,
         localDecrypt,
       },
       new Set(),
@@ -1744,6 +1755,7 @@ describe("channel-core dispatchAgentEvent", () => {
       }),
     }));
     expect(client.post).not.toHaveBeenCalled();
+    expect(onChatPresented).toHaveBeenCalledWith("sess-e2ee-fail", { encrypted: true });
   });
 
   test("retries mail ack without re-delivering when previous ack failed after delivery", async () => {

@@ -377,11 +377,14 @@ The component that delivered the wake that started the turn knows which chat
 it delivered, so it attributes:
 
 - **Claude Code and Pi.** channel-core's dispatcher delivers chat wakes for
-  both (`channel/src/index.ts:246-272`; Pi runs the same loop in-process,
-  `pi-extension/src/index.ts:411`). It records "the current turn serves
-  session S" when it injects a chat wake for S, and clears it at the turn
-  boundary. A turn started by local input, mail or an app event is unattributed
-  (`session_id: null`), and other chats see only `busy_elsewhere`.
+  both (`channel/src/index.ts:246-272`; Pi runs the same loop in-process).
+  Just before it presents a chat message of session S, it calls the loop's
+  `onChatPresented(S, {encrypted})` (`channel-core/src/channel.ts`, the chat
+  dispatch), and the emitter attributes the next turn to S; the turn after it
+  is unattributed again. If any presented message of S was encrypted, that
+  turn sends no summaries. A turn started by local input, mail or an app event
+  is unattributed (`session_id: null`), and other chats see only
+  `busy_elsewhere`.
 - **Codex.** The terminal wake broker types input into the session
   (`docs/terminal-wake-broker.md`). Version 1 Codex emitters publish
   unattributed activity. Attribution through the broker is a later, additive
@@ -405,8 +408,14 @@ Agreed with oats-expert-juan on 2026-10-16.
   operations, so its ownership stays obvious. It holds no secret.
 - **Readers.** Every emitter reads the file at each turn start, so a change
   takes effect at the next turn without a restart.
+- **What `status` shows.** The session's other participants see each phase,
+  the tool name and the template summary. A file summary names the file's path
+  relative to the work tree ("Editing secrets/prod.env"), so the names of the
+  files the agent touches are visible to them, and to aweb's servers.
 - **Non-OATS hosts.** `aw activity enable` and `aw activity disable` write the
-  file (mode 0644, atomic replace).
+  file (mode 0644, atomic replace); `aw activity show` reports the value the
+  emitters apply. Each refuses a directory that holds neither a signing key nor
+  a grant.
 - **OATS hosts.** The oats.aweb provider owns the file. The provider setting
   `settings.oats.aweb.activity: off | status` (default `off`) resolves like the
   provider's other settings (manifest default, deployment, soul, instance). The
@@ -424,10 +433,15 @@ Agreed with oats-expert-juan on 2026-10-16.
 
 ## Emitters
 
-Each emitter is off unless the opt-in file says `status`. Each coalesces
-locally: latest wins, at most one event per 500 ms, and `turn_ended` is always
-sent. On 429 the emitter honours `Retry-After` and drops intermediate states.
-Signing uses the key the runtime integration already loads.
+Each emitter is off unless the opt-in file says `status`. Turn boundaries,
+`turn_started` and `turn_ended`, are always sent and in order; a turn that a
+runtime opens with its first tool call is announced with `turn_started` too.
+Intermediate phases coalesce locally: the latest wins, at most one event per
+500 ms, and `turn_ended` replaces its turn's pending state. On 429 the emitter
+honours `Retry-After`: a boundary that drew the 429 is sent after the pause,
+a state that drew it is dropped, and states queued during the pause coalesce
+to the latest, which is sent after it. Signing uses the key that signs the
+runtime's requests: the agent's own, or the grant session key for a grant seat.
 
 The route answers 404 for two different reasons, and the emitter tells them
 apart by the body:
@@ -444,52 +458,105 @@ apart by the body:
 Emitter tests cover both: a refused session does not suppress a following
 valid or unattributed event, and an absent route stops publishing.
 
-- **Claude Code: plugin hooks, not a transcript tail.** The Claude Code docs
-  state the transcript format "is internal to Claude Code and changes between
-  versions" (code.claude.com/docs/en/sessions.md). Hooks are the supported
-  interface. The aweb channel plugin is a stdio MCP server that already loads
-  the agent's signing key and team certificate
-  (`channel-core/src/config.ts:160-320`) and signs requests
-  (`channel-core/src/api/client.ts:18-34`). Its manifest declares no hooks
-  today (`channel/.claude-plugin/plugin.json`).
-  - The plugin ships `hooks/hooks.json` with `async: true` command hooks, so
-    the hooks never delay a tool call: `UserPromptSubmit` to `turn_started`,
-    `PreToolUse` to `tool`, `PostToolUse` and `PostToolUseFailure` to
-    `thinking`, `PermissionRequest` to `waiting_permission`, and `Stop` and
-    `StopFailure` to `turn_ended` (code.claude.com/docs/en/hooks.md).
-  - Each hook passes its stdin JSON to the running plugin process over a local
-    socket in the plugin's data directory. The plugin applies the templates,
-    redaction, coalescing, attribution and signing.
-  - Alternatively, a hook can call an MCP tool of the plugin
-    (`type: "mcp_tool"`). Whether that hook type runs asynchronously is not
-    documented, so the implementation verifies it before choosing.
+- **Claude Code: plugin hooks, not a transcript tail.** Hooks are Claude
+  Code's documented interface for observing a session; the transcript is
+  written asynchronously and may lag the conversation
+  (code.claude.com/docs/en/hooks). The aweb channel plugin is a stdio MCP
+  server that already loads the agent's identity and signs requests; it owns
+  the session's emitter (`channel/src/activity.ts`). Verified on Claude Code
+  2.1.300, headless, with the packaged plugin.
+  - The plugin ships `hooks/hooks.json`. `UserPromptSubmit` is
+    `turn_started`, `PreToolUse` is `tool`, `PostToolUse` and
+    `PostToolUseFailure` return to `thinking`, `PermissionRequest` is
+    `waiting_permission`, and `Stop` and `StopFailure` are `turn_ended`. The
+    hooks are command hooks with `async: true`, so they never delay a tool
+    call, except `Stop` and `StopFailure`, which run synchronously (5 s
+    timeout): an async hook still running at a headless session's end is
+    killed. Each runs `dist/activity-hook.js`, a 3 KiB script that never writes
+    to stdout and always exits 0.
+  - The hook reaches its own session's plugin over a Unix socket. Both are
+    children of the same Claude Code process, so the plugin listens on
+    `<dir>/<that pid>.sock` and the hook connects to its parent's socket (or
+    a nearer ancestor's). `<dir>` is `/private/tmp/aweb-activity-<uid>` on
+    macOS and `/tmp/aweb-activity-<uid>` elsewhere, created mode 0700 and
+    refused if it is a symlink, another user's, or open to others; the socket
+    file is 0600. The directory is what keeps other users out: Node has no
+    peer-credential check for Unix sockets.
+  - A hook forwards only the event name, Claude Code's `prompt_id`, the tool
+    name, and the tool-input fields the summary templates read (`file_path`,
+    `notebook_path`, `path`, `command`, `url`), each cut to 4 KiB; a file's
+    content never crosses the socket. The plugin caps a line at 64 KiB and
+    ignores malformed ones.
+  - Each hook is its own process, so their events can arrive out of order.
+    The plugin puts each in its prompt's turn: an event of a prompt that has
+    stopped is dropped, a submit for a prompt whose turn a tool event already
+    opened is ignored, and an event of a new prompt first closes a turn whose
+    stop never arrived. A turn need not start with `UserPromptSubmit`: a turn
+    woken by a channel event opens with its first tool event.
+  - The plugin replaces a stale socket file but never takes over a live one,
+    and at start removes sockets whose process no longer runs. When the
+    session ends (stdin closes, or a signal), it ends the open turn, flushes
+    for at most 2 s, and removes its socket.
   - The existing opt-in `aw notify` PostToolUse hook
     (`cli/go/cmd/aw/claude_hooks.go:14,129`) is unrelated and unchanged.
-- **Pi: the extension's existing lifecycle handlers.**
-  `pi-extension/src/index.ts` already subscribes to `tool_call` (:276) and
-  `turn_start`/`turn_end` (:284-288), and runs channel-core in-process with a
-  signed client (:411). The emitter maps them to `tool`, `turn_started` and
-  `turn_ended`. Finer phases (`thinking`, `writing`) depend on Pi exposing
-  message events, which the implementation verifies.
-- **Codex: hooks, with a transcript tail as the fallback.**
-  - Codex 0.162.1 reports `hooks` as a stable feature (`codex features list`).
-    The binary names `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`,
-    `SessionStart` and `PermissionRequest` events, and hooks require persisted
-    trust. The emitter is an `aw activity hook` command, signing with the
-    home's identity like any `aw` command. Codex has no aweb channel process
-    (`docs/runtime-support.md:23,56-57`), and its packaged plugin is skills
-    only (`packages/codex-plugin/.codex-plugin/plugin.json`).
-  - The exact hook config and stdin schema are verified on the installed
-    binary before implementation; they were observed from the CLI and binary,
-    not from documentation.
-  - If hooks prove unusable, the fallback tails
-    `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`, using the record
-    mappings in the OATS repository's `packages/record/lib/formats.mjs`
-    (`response_item` with `payload.type` of `reasoning` to `thinking`,
-    `function_call`/`custom_tool_call` to `tool`, assistant `message` to
-    `writing`) and its byte-offset, complete-line reading discipline
-    (`lib/capture-cc.mjs`), not its 2-second debounce. `packages/record` itself
-    is a batch capture tool, not a live tail, and is a reference only.
+- **Pi: the extension's lifecycle handlers** (`pi-extension/src/activity.ts`).
+  An agent run is the activity turn: `agent_start` is `turn_started` and
+  `agent_end` is `turn_ended`. Pi's `turn_start`/`turn_end` fire once per model
+  call inside a run, so they are not turn boundaries; the extension uses them
+  for wake delivery only. `message_update` with `thinking_start` is `thinking`
+  and with `text_start` is `writing`; `tool_execution_start` is `tool`, and
+  `tool_execution_end` returns to `thinking`. Pi has no permission-prompt
+  event, so `waiting_permission` is never sent. The extension builds the
+  session's emitter from its channel config at `session_start` and publishes
+  whichever way chat is delivered; it is attributed only when the extension
+  presents the chat wake itself. Verified against pi-coding-agent 0.74.1.
+- **Codex: hooks** (`cli/go/cmd/aw/activity_hook.go`). Verified on Codex
+  0.162.1 from the binary's embedded hook schemas and the Codex hooks
+  documentation; a headless run against a live account is still to do.
+  - `hooks` is a stable feature (`codex features list`) and `plugin_hooks` is
+    removed, so no Codex plugin can ship hooks: they live in
+    `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`), `config.toml`,
+    or a managed layer. Codex has no aweb channel process
+    (`docs/runtime-support.md:23,56-57`).
+  - Every hook runs `aw activity hook`, a fixed command line, so the hook's
+    trust hash changes only with its entries. Codex skips a new or changed
+    hook until it is trusted. On a host that OATS does not manage,
+    `aw activity hook install --codex` adds the entries to `hooks.json`,
+    keeping the rest of the file, refusing a shape it does not know, and
+    printing the `/hooks` trust step. On an OATS host the provider installs
+    the same hook as a managed hook, trusted by policy, only where the host
+    owner turned activity on.
+  - `UserPromptSubmit` is `turn_started`, `PreToolUse` is `tool`,
+    `PostToolUse` returns to `thinking`, `PermissionRequest` is
+    `waiting_permission`, and `Stop`, `Interrupt` and `SessionEnd` are
+    `turn_ended`. Codex's `turn_id` is the activity turn. The tool and prompt
+    hooks run `async`; `Stop` (10 s), `Interrupt` and `SessionEnd` (3 s, Codex's
+    maximum) run in the foreground, because Codex cancels an unfinished
+    background hook when the session ends. A subagent's tool event (it carries
+    `agent_id`) belongs to its parent's open turn. Codex has no event for the
+    model composing its reply, so `writing` is never sent.
+  - Each hook is its own process. State is kept in
+    `<identity root>/.activity-hook-state.json` (0600), read and written under
+    an exclusive lock on `.activity-hook.lock`, so events are applied and sent
+    in order. Each Codex session, by its `session_id`, has its own open turn,
+    `seq`, ended turns and pending state, so two sessions of one identity never
+    end each other's turns; SessionEnd removes the session's state, and at most
+    32 sessions are kept, the least recently seen pruned first. The time of the
+    last send and any rate-limit pause are shared by the agent's sessions,
+    because the server limits the agent. Concurrent sessions of one identity still
+    publish as one agent, and the server keeps one latest state per agent,
+    so a watcher sees whichever session published last. The turn rules are Claude Code's: an event of an ended turn is
+    dropped, a repeated submit is ignored, and a new turn first closes one
+    whose stop never arrived. A state within 500 ms of the last send is left
+    pending while its process waits; a later state replaces it and the turn's
+    end discards it. A boundary waits out a pause with the lock held.
+  - Without a resident process, an absent route stops publishing for an hour
+    rather than for the process lifetime; the first hook to see it writes one
+    line to stderr.
+  - Summaries use the templates above. A shell command names its program
+    (for `bash -c` or `-lc`, the script's), and `apply_patch` names the first
+    file in the patch's header lines; the patch body is never read.
+  - Version 1 Codex activity is unattributed (see "Attribution").
 
 ## Released-client compatibility
 
