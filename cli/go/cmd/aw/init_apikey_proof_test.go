@@ -53,10 +53,15 @@ func TestPostAPIKeyWorkspaceInitProvesTheDIDKeyHolder(t *testing.T) {
 	if got := gotHeader.Get("Authorization"); got != "Bearer aw_sk_test" {
 		t.Fatalf("Authorization = %q, want the Bearer team key unchanged", got)
 	}
-	timestamp := gotHeader.Get("X-AWEB-Timestamp")
+	timestamp := gotHeader.Get("X-AWEB-DIDKey-Timestamp")
 	when, err := time.Parse(time.RFC3339, timestamp)
 	if err != nil || time.Since(when).Abs() > time.Minute {
-		t.Fatalf("X-AWEB-Timestamp = %q", timestamp)
+		t.Fatalf("X-AWEB-DIDKey-Timestamp = %q", timestamp)
+	}
+	// X-AWEB-Timestamp would make Cloud's auth bridge treat the request as a
+	// malformed team-certificate call and refuse it before the init handler.
+	if values := gotHeader.Values("X-AWEB-Timestamp"); len(values) != 0 {
+		t.Fatalf("X-AWEB-Timestamp = %q, want none", values)
 	}
 	parts := strings.Fields(gotHeader.Get("X-AWEB-DIDKey-Signature"))
 	if len(parts) != 3 || parts[0] != "DIDKey" || parts[1] != didKey {
@@ -111,7 +116,7 @@ func TestWorkspaceInitProofCoversTheDecodedBodyWhenGzipped(t *testing.T) {
 			return
 		}
 		encoding = r.Header.Get("Content-Encoding")
-		timestamp = r.Header.Get("X-AWEB-Timestamp")
+		timestamp = r.Header.Get("X-AWEB-DIDKey-Timestamp")
 		proof = r.Header.Get("X-AWEB-DIDKey-Signature")
 		body := io.Reader(r.Body)
 		if encoding == "gzip" {
