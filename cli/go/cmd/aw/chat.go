@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -19,7 +20,11 @@ var chatCmd = &cobra.Command{
 }
 
 func chatStderrCallback(kind, message string) {
-	fmt.Fprintf(os.Stderr, "[chat:%s] %s\n", kind, message)
+	writeChatStatus(os.Stderr, kind, message)
+}
+
+func writeChatStatus(w io.Writer, kind, message string) {
+	fprintTerminalLine(w, "[chat:%s] %s", kind, message)
 }
 
 func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOptions) (*chat.SendResult, *awconfig.Selection, error) {

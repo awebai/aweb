@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"unicode"
 )
@@ -22,6 +23,12 @@ func terminalLine(s string) string {
 // escaped.
 func terminalBody(s string) string {
 	return escapeTerminalRunes(s, true)
+}
+
+// fprintTerminalLine prints one formatted line whose values may come from a
+// server or a sender, escaped as terminalLine escapes a field.
+func fprintTerminalLine(w io.Writer, format string, args ...any) {
+	fmt.Fprintln(w, terminalLine(fmt.Sprintf(format, args...)))
 }
 
 func escapeTerminalRunes(s string, keepLayout bool) string {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -268,7 +269,7 @@ func Execute() {
 	if err != nil {
 		finishHTTPDiagnostics(err)
 		err = normalizeStatusCommandError(os.Args[1:], err)
-		fmt.Fprintln(os.Stderr, err)
+		writeCLIError(os.Stderr, err.Error())
 		os.Exit(exitCode(err))
 	}
 	defer restorePluginIdentityHome()
@@ -289,7 +290,7 @@ func Execute() {
 		if hint := checkVerificationRequired(err); hint != "" {
 			msg = hint
 		}
-		fmt.Fprintln(os.Stderr, msg)
+		writeCLIError(os.Stderr, msg)
 		os.Exit(exitCode(err))
 	}
 }
@@ -402,4 +403,9 @@ func checkVersionFromHeader() {
 	if compareVersions(current, latest) < 0 {
 		fmt.Fprintf(os.Stderr, "Upgrade available: v%s → v%s (run `aw upgrade`)\n", current, latest)
 	}
+}
+
+// writeCLIError prints a command's error, which may carry a server's text.
+func writeCLIError(w io.Writer, msg string) {
+	fmt.Fprintln(w, terminalBody(msg))
 }
