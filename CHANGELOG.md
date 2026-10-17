@@ -19,6 +19,12 @@
   types, installs, emitted events and subscriptions when measured on
   2026-10-16. `status` and `status-host`, reserved in server 1.27.24, were
   measured at the same time and also had zero uses.
+- **`aw inbound-mode` works from an identity home:** a resident identity's
+  owner can read and set who may message it from the custody root that holds
+  its key, with `aw --identity-home <custody>/.aw inbound-mode [open|team-and-contacts]`.
+  It signs with that key, never with the key of the workspace in the current
+  directory. A grant session still cannot change the mode: the server refuses
+  grant principals on this route, and aw shows that refusal unchanged.
 
 ## Release preparations
 
