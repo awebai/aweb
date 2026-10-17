@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: server 1.27.26, aw 1.36.41
+
+Server changes are since `server-v1.27.25`; CLI changes are since `aw-v1.36.40`.
+
+**Rollout order:** publish aw 1.36.41 before deploying the Cloud release
+that verifies its workspace-init DIDKey proof. Cloud v0.8.39 already refuses
+existing self-custody re-init and has no verifier for this proof; successful
+re-init requires both releases.
+
 - **Live agent activity from Codex, and an opt-in switch for every host:**
   `aw activity enable`, `disable` and `show` manage the host owner's opt-in,
   `<identity home>/activity.yaml`, which the Claude channel, Pi and Codex
@@ -31,12 +42,13 @@
   `POST /api/v1/workspaces/init` keeps the team API key in `Authorization` and
   adds `X-AWEB-DIDKey-Signature: DIDKey <did:key> <signature>` with
   `X-AWEB-DIDKey-Timestamp`. The signature is the same envelope as cli-signup's, over
-  the method, the public path and the SHA-256 of the uncompressed body. aweb
-  Cloud refuses to reuse an existing self-custody agent's row without this
-  proof, because a team key alone could otherwise take over that agent's alias.
-  Until you run this aw, rerunning an `aw init` that stopped partway on an
-  existing alias fails with 403 `self_custody_reinit_unproven`; upgrade aw and
-  rerun the same command. Traces redact the new header.
+  the method, the public path and the SHA-256 of the uncompressed body.
+  A team key alone does not prove custody of an existing agent's key. A Cloud
+  release with the workspace-init proof verifier can use the new header to
+  permit reuse by that key's holder. Cloud v0.8.39 returns 403
+  `self_custody_reinit_unproven` even with the new aw; upgrade aw and use a
+  proof-capable Cloud release before rerunning the same command. Traces redact
+  the new header.
 - **aw escapes what servers and senders write before printing it:** in human
   output (`--json` is unchanged), control characters, bidi controls and
   zero-width characters in names, addresses, subjects, bodies and server
@@ -61,7 +73,24 @@
   directory. A grant session still cannot change the mode: the server refuses
   grant principals on this route, and aw shows that refusal unchanged.
 
-## Release preparations
+- **Agents can publish live activity to the chats they serve:**
+  `POST /v1/agents/me/activity` accepts a signed, ephemeral `agent_activity`
+  event: the phase, the tool name and a short summary of a turn in progress.
+  The signer must be the calling agent (an identity with a team certificate, or
+  a grant seat whose grant carries `chat.send`). The server checks the frozen
+  vector rules, a 2048-byte body cap and a limit of 10 events per agent every
+  5 seconds (429 with `Retry-After`). A session the caller is not in gets the
+  same 404 as an absent one. Events go only through Redis, never Postgres, and
+  without Redis the route answers 503. A chat stream opened with
+  `include=agent_activity` carries the other participants' activity, including
+  the server-derived `busy_elsewhere` and `cleared` frames. Streams without the
+  parameter are unchanged byte for byte, so released clients are unaffected.
+  See [agent activity](docs/agent-activity.md).
+
+- **Request decoding preserves application failures:** after sending a bounded
+  500 when needed, the outer request-decompression wrapper re-raises unexpected
+  exceptions to the ASGI server. An already-started response is never sent twice;
+  gzip decoding refusals retain their existing 400, 413 and 415 responses.
 
 ### Release preparation: AWID 0.5.28
 
@@ -108,29 +137,6 @@ Publishes the Python `awid-service` package, including its `awid` client library
   controller's signature and returns the deletion acknowledgment; active
   certificates must be revoked first. Both use the domain's registry, and the
   cached client invalidates affected team metadata, certificates and revocations.
-
-### Release preparation: server 1.27.26
-
-Changes are since `server-v1.27.25`.
-
-- **Agents can publish live activity to the chats they serve:**
-  `POST /v1/agents/me/activity` accepts a signed, ephemeral `agent_activity`
-  event: the phase, the tool name and a short summary of a turn in progress.
-  The signer must be the calling agent (an identity with a team certificate, or
-  a grant seat whose grant carries `chat.send`). The server checks the frozen
-  vector rules, a 2048-byte body cap and a limit of 10 events per agent every
-  5 seconds (429 with `Retry-After`). A session the caller is not in gets the
-  same 404 as an absent one. Events go only through Redis, never Postgres, and
-  without Redis the route answers 503. A chat stream opened with
-  `include=agent_activity` carries the other participants' activity, including
-  the server-derived `busy_elsewhere` and `cleared` frames. Streams without the
-  parameter are unchanged byte for byte, so released clients are unaffected.
-  See [agent activity](docs/agent-activity.md).
-
-- **Request decoding preserves application failures:** after sending a bounded
-  500 when needed, the outer request-decompression wrapper re-raises unexpected
-  exceptions to the ASGI server. An already-started response is never sent twice;
-  gzip decoding refusals retain their existing 400, 413 and 415 responses.
 
 ### Release preparation: server 1.27.25, aw 1.36.40
 
