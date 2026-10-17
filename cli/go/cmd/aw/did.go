@@ -9,6 +9,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -147,7 +148,7 @@ func unsupportedLocalIdentityLog(identity *awconfig.ResolvedIdentity) idLogOutpu
 
 func formatIDLog(out idLogOutput) string {
 	if out.Status == "unsupported_registry_history" {
-		return fmt.Sprintf("Status: unsupported_registry_history\nError:  %s\nRemedy: %s\n", out.Error, out.Remedy)
+		return termtext.Body(fmt.Sprintf("Status: unsupported_registry_history\nError:  %s\nRemedy: %s\n", out.Error, out.Remedy))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Status:      %s\n", out.Status)
@@ -176,5 +177,5 @@ func formatIDLog(out idLogOutput) string {
 		fmt.Fprintf(&b, "  authorized_by:    %s\n", e.AuthorizedBy)
 		fmt.Fprintf(&b, "  entry_hash:       %s\n", e.EntryHash)
 	}
-	return b.String()
+	return termtext.Body(b.String())
 }

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	awid "github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 )
 
 func ParseControlSubmission(text string) ControlEvent {
@@ -72,7 +73,7 @@ func ControlEventFromAgentEvent(evt awid.AgentEvent) (ControlEvent, bool) {
 	case awid.AgentEventControlInterrupt:
 		return ControlEvent{Type: ControlStop}, true
 	case awid.AgentEventError:
-		return ControlEvent{Type: ControlStreamError, Text: strings.TrimSpace(evt.Text)}, true
+		return ControlEvent{Type: ControlStreamError, Text: termtext.Line(strings.TrimSpace(evt.Text))}, true
 	default:
 		return ControlEvent{}, false
 	}
