@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Line makes a one-line field from a server or a sender safe to print
@@ -34,21 +35,38 @@ func Fprintln(w io.Writer, format string, args ...any) {
 }
 
 func escapeTerminalRunes(s string, keepLayout bool) string {
-	if !strings.ContainsFunc(s, func(r rune) bool { return terminalUnsafeRune(r, keepLayout) }) {
+	if !containsTerminalUnsafe(s, keepLayout) {
 		return s
 	}
 	var out strings.Builder
-	for _, r := range s {
+	for i := 0; i < len(s); {
+		r, width := utf8.DecodeRuneInString(s[i:])
 		switch {
+		case r == utf8.RuneError && width == 1:
+			// An invalid byte, such as a lone 0x9b (the 8-bit CSI), is
+			// written as the byte it was.
+			fmt.Fprintf(&out, `\x%02x`, s[i])
 		case !terminalUnsafeRune(r, keepLayout):
-			out.WriteRune(r)
+			out.WriteString(s[i : i+width])
 		case r < 0x80:
 			fmt.Fprintf(&out, `\x%02x`, r)
 		default:
 			fmt.Fprintf(&out, `\u%04x`, r)
 		}
+		i += width
 	}
 	return out.String()
+}
+
+func containsTerminalUnsafe(s string, keepLayout bool) bool {
+	for i := 0; i < len(s); {
+		r, width := utf8.DecodeRuneInString(s[i:])
+		if (r == utf8.RuneError && width == 1) || terminalUnsafeRune(r, keepLayout) {
+			return true
+		}
+		i += width
+	}
+	return false
 }
 
 func terminalUnsafeRune(r rune, keepLayout bool) bool {
