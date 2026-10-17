@@ -129,9 +129,9 @@ func beadsMailRecordBead(sel *awconfig.Selection, m beadsMailAddressMap, subject
 	}
 	beads[resp.MessageID] = beadID
 	saveBeadsMailBeadMap(sel, beads)
-	fmt.Printf("recorded as %s\n", sanitizeBeadsMailDisplay(beadID))
+	fmt.Printf("recorded as %s\n", terminalLine(beadID))
 }
 
 func beadsMailRecordGap(detail string) {
-	fmt.Fprintf(os.Stderr, "note: delivered via aweb, but recording the message bead failed: %s. The beads graph may be missing this message.\n", sanitizeBeadsMailDisplay(detail))
+	fmt.Fprintf(os.Stderr, "note: delivered via aweb, but recording the message bead failed: %s. The beads graph may be missing this message.\n", terminalLine(detail))
 }

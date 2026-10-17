@@ -145,12 +145,12 @@ func formatMailInbox(v any) string {
 			sb.WriteString(fmt.Sprintf("Conversation %s:\n", conversationID))
 			seenConversations[conversationID] = true
 		}
-		subj := strings.TrimSpace(msg.Subject)
+		subj := terminalLine(strings.TrimSpace(msg.Subject))
 		if subj != "" {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, ""), subj, tags, msg.Body))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", terminalLine(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, msg.Body))
 	}
 	if resp.HasMore {
 		sb.WriteString("\nMore messages are not shown on this page.\n")
@@ -239,12 +239,12 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 	}
 	sb.WriteString("\n")
 	for _, msg := range resp.Messages {
-		subj := strings.TrimSpace(msg.Subject)
+		subj := terminalLine(strings.TrimSpace(msg.Subject))
 		if subj != "" {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, ""), subj, tags, msg.Body))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", terminalLine(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, msg.Body))
 	}
 	return sb.String()
 }

@@ -330,8 +330,8 @@ func delegateMailDisplayName(m delegateMailAddressMap, value string) string {
 // disclosure line cannot be split or styled by a hostile recipient string even
 // if a future resolution path forgets to validate.
 func delegateMailResolutionNote(t delegateMailTarget) string {
-	input := sanitizeDelegateMailDisplay(t.Input)
-	value := sanitizeDelegateMailDisplay(t.Value)
+	input := terminalLine(t.Input)
+	value := terminalLine(t.Value)
 	if value == input {
 		return fmt.Sprintf("to %s", input)
 	}
@@ -340,29 +340,4 @@ func delegateMailResolutionNote(t delegateMailTarget) string {
 
 func containsDelegateMailControlRune(s string) bool {
 	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
-}
-
-func sanitizeDelegateMailDisplay(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r < 0x20 || r == 0x7f {
-			return '?'
-		}
-		return r
-	}, s)
-}
-
-// sanitizeDelegateMailBody neutralizes terminal-driving control characters in
-// an inbound body while keeping the text readable: newlines and tabs survive,
-// everything else in C0 plus DEL (notably ESC, which drives ANSI/OSC escape
-// sequences) becomes '?'. Senders are verified, not trusted.
-func sanitizeDelegateMailBody(s string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' {
-			return r
-		}
-		if r < 0x20 || r == 0x7f {
-			return '?'
-		}
-		return r
-	}, s)
 }

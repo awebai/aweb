@@ -115,10 +115,10 @@ func beadsMailSenderLabel(m beadsMailAddressMap, msg *awid.InboxMessage) string 
 			continue
 		}
 		if local := beadsMailDisplayName(m, key); local != "" {
-			return fmt.Sprintf("%s (%s)", local, sanitizeBeadsMailDisplay(identity))
+			return fmt.Sprintf("%s (%s)", local, terminalLine(identity))
 		}
 	}
-	return sanitizeBeadsMailDisplay(identity)
+	return terminalLine(identity)
 }
 
 func beadsMailReadClient(cmd *cobra.Command, ctx context.Context) (*aweb.Client, *awconfig.Selection, beadsMailAddressMap, error) {
@@ -144,7 +144,7 @@ func beadsMailReadClient(cmd *cobra.Command, ctx context.Context) (*aweb.Client,
 func beadsMailPrintMessage(m beadsMailAddressMap, msg *awid.InboxMessage) {
 	body, env := splitBeadsMailEnvelope(msg.Body)
 	fmt.Printf("From: %s\n", beadsMailSenderLabel(m, msg))
-	fmt.Printf("Subject: %s\n", sanitizeBeadsMailDisplay(msg.Subject))
+	fmt.Printf("Subject: %s\n", terminalLine(msg.Subject))
 	fmt.Printf("Date: %s\n", msg.CreatedAt)
 	priority := string(msg.Priority)
 	if env != nil && env.Priority != nil {
@@ -152,14 +152,14 @@ func beadsMailPrintMessage(m beadsMailAddressMap, msg *awid.InboxMessage) {
 	}
 	fmt.Printf("Priority: %s\n", priority)
 	if env != nil && env.Type != "" {
-		fmt.Printf("Type: %s\n", sanitizeBeadsMailDisplay(env.Type))
+		fmt.Printf("Type: %s\n", terminalLine(env.Type))
 	}
 	if env != nil && env.Pinned {
 		fmt.Println("Pinned: true")
 	}
 	fmt.Printf("Message-Id: %s\n", msg.MessageID)
 	fmt.Printf("Thread: %s\n", msg.ConversationID)
-	fmt.Printf("\n%s\n", sanitizeBeadsMailBody(body))
+	fmt.Printf("\n%s\n", terminalBody(body))
 }
 
 var (
@@ -203,7 +203,7 @@ var beadsMailInboxCmd = &cobra.Command{
 				if msg.ReadAt == nil {
 					state = "*"
 				}
-				fmt.Printf("%2d %s %s — %s (%s)\n", i+1, state, beadsMailSenderLabel(addressMap, &msg), sanitizeBeadsMailDisplay(msg.Subject), msg.MessageID)
+				fmt.Printf("%2d %s %s — %s (%s)\n", i+1, state, beadsMailSenderLabel(addressMap, &msg), terminalLine(msg.Subject), msg.MessageID)
 			}
 			if resp.HasMore {
 				fmt.Printf("More messages exist; continue with: bd mail inbox --cursor %s\n", resp.NextCursor)

@@ -58,9 +58,9 @@ func TestBeadsMailStatePathUsesWorktreeRoot(t *testing.T) {
 	}
 }
 
-func TestSanitizeBeadsMailBody(t *testing.T) {
+func TestBeadsMailBodyKeepsLayoutAndEscapesControls(t *testing.T) {
 	in := "line one\n\tindented\x1b[31mred\x07bell"
-	got := sanitizeBeadsMailBody(in)
+	got := terminalBody(in)
 	if !strings.Contains(got, "line one\n\tindented") || strings.ContainsAny(got, "\x1b\x07") {
 		t.Errorf("sanitized body %q", got)
 	}

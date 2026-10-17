@@ -1540,7 +1540,7 @@ func writeOutput(w io.Writer, v any, formatter func(v any) string) error {
 		_, err := fmt.Fprintln(w, formatJSONOutput(v))
 		return err
 	}
-	_, err := fmt.Fprint(w, formatter(v))
+	_, err := fmt.Fprint(w, terminalBody(formatter(v)))
 	return err
 }
 
