@@ -58,6 +58,10 @@ ROOT_CONSUMERS = {
         "agent-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"',
     ),
+    PurePosixPath("server/tests/test_line_break_refusals.py"): _consumer(
+        "agent-status-v1.json",
+        'Path(__file__).parents[2] / "docs" / "vectors" / "agent-status-v1.json"',
+    ),
     PurePosixPath("server/tests/test_agent_activity_vector.py"): _consumer(
         "agent-activity-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "agent-activity-v1.json"',
