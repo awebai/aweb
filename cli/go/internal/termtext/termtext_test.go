@@ -51,3 +51,20 @@ func TestBodyKeepsLineBreaksAndTabsAndEscapesTheRest(t *testing.T) {
 		t.Fatalf("Body(%q) = %q, want %q", in, got, want)
 	}
 }
+
+func TestInvalidUTF8BytesAreEscapedNotPassedThrough(t *testing.T) {
+	cases := map[string]string{
+		"a\x9b31mb":      `a\x9b31mb`,
+		"dcs\x90osc\x9d": `dcs\x90osc\x9d`,
+		"cut\xe2\x80":    `cut\xe2\x80`,
+		"ok\u00e9\xff":   "ok\u00e9\\xff",
+	}
+	for in, want := range cases {
+		if got := Line(in); got != want {
+			t.Errorf("Line(%q) = %q, want %q", in, got, want)
+		}
+		if got := Body(in); got != want {
+			t.Errorf("Body(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
