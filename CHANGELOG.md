@@ -30,7 +30,7 @@
 - **aw proves it holds the agent's key when it initialises a workspace:**
   `POST /api/v1/workspaces/init` keeps the team API key in `Authorization` and
   adds `X-AWEB-DIDKey-Signature: DIDKey <did:key> <signature>` with
-  `X-AWEB-Timestamp`. The signature is the same envelope as cli-signup's, over
+  `X-AWEB-DIDKey-Timestamp`. The signature is the same envelope as cli-signup's, over
   the method, the public path and the SHA-256 of the uncompressed body. aweb
   Cloud refuses to reuse an existing self-custody agent's row without this
   proof, because a team key alone could otherwise take over that agent's alias.
