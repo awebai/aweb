@@ -27,6 +27,16 @@
   to that base stay plain for the rest of the process. A new process probes again,
   so a server that advertises gzip and then refuses it fails each new process's
   first compressed write. Application 400s keep compression enabled.
+- **aw proves it holds the agent's key when it initialises a workspace:**
+  `POST /api/v1/workspaces/init` keeps the team API key in `Authorization` and
+  adds `X-AWEB-DIDKey-Signature: DIDKey <did:key> <signature>` with
+  `X-AWEB-Timestamp`. The signature is the same envelope as cli-signup's, over
+  the method, the public path and the SHA-256 of the uncompressed body. aweb
+  Cloud refuses to reuse an existing self-custody agent's row without this
+  proof, because a team key alone could otherwise take over that agent's alias.
+  Until you run this aw, rerunning an `aw init` that stopped partway on an
+  existing alias fails with 403 `self_custody_reinit_unproven`; upgrade aw and
+  rerun the same command. Traces redact the new header.
 
 ## Release preparations
 

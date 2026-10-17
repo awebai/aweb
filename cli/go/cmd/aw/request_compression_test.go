@@ -40,7 +40,7 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 			postTeamCleanupCloud(context.Background(), base, map[string]any{"controller_signature": "test"}, &map[string]any{})
 		}},
 		{"init", func(base string) {
-			postAPIKeyWorkspaceInit(context.Background(), base, "secret", apiKeyBootstrapRequest{})
+			postAPIKeyWorkspaceInit(context.Background(), base, "secret", apiKeyBootstrapRequest{}, testWorkspaceInitKey)
 		}},
 		{"removal_operation", func(base string) {
 			doHostedRemovalRequest(context.Background(), "POST", base, "secret", cert.Team, "/agents/removals", map[string]string{"alias": "alice"})

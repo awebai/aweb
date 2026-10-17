@@ -188,7 +188,7 @@ func runAPIKeyBootstrapInit(req apiKeyInitRequest) (out connectOutput, resultErr
 		AgentType:     strings.TrimSpace(req.AgentType),
 		IdentityScope: initIdentityScopeValue(req.Global),
 		InboundMode:   strings.TrimSpace(req.InboundMode),
-	})
+	}, signingKey)
 	if err != nil {
 		return connectOutput{}, err
 	}
@@ -784,7 +784,12 @@ func persistAPIKeyBootstrapState(
 	})
 }
 
-func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payload apiKeyBootstrapRequest) (*apiKeyBootstrapResponse, error) {
+// postAPIKeyWorkspaceInit admits the agent with the team API key and proves,
+// with signingKey, that the caller holds the agent's did:key.
+func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payload apiKeyBootstrapRequest, signingKey ed25519.PrivateKey) (*apiKeyBootstrapResponse, error) {
+	if len(signingKey) != ed25519.PrivateKeySize {
+		return nil, errors.New("workspace init needs the agent's signing key to prove its did:key")
+	}
 	var cancel context.CancelFunc
 	ctx, cancel = commandAPIContext(nil, ctx)
 	defer cancel()
@@ -799,6 +804,9 @@ func postAPIKeyWorkspaceInit(ctx context.Context, awebURL, apiKey string, payloa
 	}
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Content-Type", "application/json")
+	for name, value := range awid.DIDKeyProofHeaders(http.MethodPost, "/api/v1/workspaces/init", body, signingKey) {
+		req.Header.Set(name, value)
+	}
 
 	resp, err := awid.DoServerRequest(&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}, req, awebURL)
 	if err != nil {

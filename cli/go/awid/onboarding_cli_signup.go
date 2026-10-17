@@ -145,6 +145,21 @@ func onboardingDIDKeyHeaders(
 	}
 }
 
+// DIDKeyProofHeaders proves the caller holds signingKey on a request whose
+// Authorization header carries other authority, such as a team API key. The
+// signature is the onboarding DIDKey envelope over the exact body bytes,
+// carried in X-AWEB-DIDKey-Signature with the same "DIDKey <did> <sig>" form.
+func DIDKeyProofHeaders(method, path string, body []byte, signingKey ed25519.PrivateKey) map[string]string {
+	headers := onboardingDIDKeyHeaders(method, path, body, signingKey)
+	return map[string]string{
+		DIDKeyProofHeader:  headers["Authorization"],
+		"X-AWEB-Timestamp": headers["X-AWEB-Timestamp"],
+	}
+}
+
+// DIDKeyProofHeader carries a DIDKey proof beside other authorization.
+const DIDKeyProofHeader = "X-AWEB-DIDKey-Signature"
+
 // postJSONNoAuth sends a JSON POST with no authentication. Marshals once,
 // expects a JSON response body.
 func postJSONNoAuth(ctx context.Context, baseURL, path string, in, out any) error {

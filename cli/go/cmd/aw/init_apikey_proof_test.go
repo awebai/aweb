@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
@@ -16,6 +17,15 @@ import (
 
 	"github.com/awebai/aw/awid"
 )
+
+// testWorkspaceInitKey signs workspaces/init in tests that do not inspect the proof.
+var testWorkspaceInitKey = func() ed25519.PrivateKey {
+	_, key, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		panic(err)
+	}
+	return key
+}()
 
 // The workspaces/init request proves the caller holds the agent's did:key
 // with cli-signup's DIDKey envelope, carried beside the Bearer team key.
@@ -80,5 +90,63 @@ func TestPostAPIKeyWorkspaceInitRefusesWithoutASigningKey(t *testing.T) {
 	defer server.Close()
 	if _, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{}, nil); err == nil {
 		t.Fatal("expected a refusal without the agent's signing key")
+	}
+}
+
+// With gzip negotiated, the proof still covers the decoded body bytes, which
+// is what a server checks after decoding.
+func TestWorkspaceInitProofCoversTheDecodedBodyWhenGzipped(t *testing.T) {
+	t.Parallel()
+	_, signingKey, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	didKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	var encoding, timestamp, proof string
+	var decoded []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			w.Header().Set("Accept-Encoding", "gzip")
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		encoding = r.Header.Get("Content-Encoding")
+		timestamp = r.Header.Get("X-AWEB-Timestamp")
+		proof = r.Header.Get("X-AWEB-DIDKey-Signature")
+		body := io.Reader(r.Body)
+		if encoding == "gzip" {
+			zr, err := gzip.NewReader(r.Body)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			body = zr
+		}
+		decoded, _ = io.ReadAll(body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"server_url":"http://example.test","alias":"alice","did":"` + didKey + `"}`))
+	}))
+	defer server.Close()
+
+	if _, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{DID: didKey, Alias: "alice"}, signingKey); err != nil {
+		t.Fatal(err)
+	}
+	if encoding != "gzip" {
+		t.Fatalf("Content-Encoding = %q, want gzip after the server advertised it", encoding)
+	}
+	parts := strings.Fields(proof)
+	if len(parts) != 3 {
+		t.Fatalf("proof = %q", proof)
+	}
+	signature, _ := base64.RawStdEncoding.DecodeString(parts[2])
+	digest := sha256.Sum256(decoded)
+	envelope, _ := json.Marshal(map[string]string{
+		"body_sha256": hex.EncodeToString(digest[:]),
+		"method":      "POST",
+		"path":        "/api/v1/workspaces/init",
+		"timestamp":   timestamp,
+	})
+	if !ed25519.Verify(signingKey.Public().(ed25519.PublicKey), envelope, signature) {
+		t.Fatal("proof does not verify over the decoded body")
 	}
 }

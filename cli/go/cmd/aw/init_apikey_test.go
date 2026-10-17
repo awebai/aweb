@@ -27,7 +27,7 @@ func TestPostAPIKeyWorkspaceInitExplainsIdentityKeyMismatch(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{})
+	_, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{}, testWorkspaceInitKey)
 	if err == nil {
 		t.Fatal("expected identity mismatch")
 	}
@@ -51,7 +51,7 @@ func TestPostAPIKeyWorkspaceInitMalformedConflictKeepsGenericError(t *testing.T)
 	}))
 	defer server.Close()
 
-	_, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{})
+	_, err := postAPIKeyWorkspaceInit(context.Background(), server.URL, "aw_sk_test", apiKeyBootstrapRequest{}, testWorkspaceInitKey)
 	if err == nil || !strings.Contains(err.Error(), "POST /api/v1/workspaces/init returned 409") {
 		t.Fatalf("error=%v", err)
 	}
