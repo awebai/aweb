@@ -75,7 +75,7 @@ func listHostedRemovals(ctx context.Context, awebURL, apiKey, teamID string) ([]
 	if err != nil {
 		return nil, err
 	}
-	body, err := executeHostedRemovalRequest(req, apiKey, "list hosted removals", awebURL)
+	body, err := executeHostedRemovalRequest(req, apiKey, "list hosted removals", awebURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +108,7 @@ func doHostedRemovalRequest(ctx context.Context, method, awebURL, apiKey, teamID
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	responseBody, err := executeHostedRemovalRequest(req, apiKey, "hosted removal", awebURL)
+	responseBody, err := executeHostedRemovalRequest(req, apiKey, "hosted removal", awebURL, body)
 	if err != nil {
 		return nil, err
 	}
@@ -127,11 +127,16 @@ func hostedRemovalAPIPath(awebURL, teamID, suffix string) string {
 	return path
 }
 
-func executeHostedRemovalRequest(req *http.Request, apiKey, label, awebURL string) ([]byte, error) {
+func executeHostedRemovalRequest(req *http.Request, apiKey, label, awebURL string, requestBody []byte) ([]byte, error) {
 	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
 	req.Header.Set("Accept", "application/json")
+	awid.TraceHTTPRequest(req, requestBody)
 	resp, err := awid.DoServerRequest(&http.Client{Timeout: awid.APITimeout(), Transport: awid.NewAPITransport()}, req, awebURL)
 	if err != nil {
+		return nil, err
+	}
+	if err := awid.TraceHTTPResponse(resp); err != nil {
+		_ = resp.Body.Close()
 		return nil, err
 	}
 	defer resp.Body.Close()
