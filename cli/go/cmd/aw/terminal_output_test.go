@@ -2,10 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/awebai/aw/a2a"
 	"github.com/awebai/aw/awid"
+	awrun "github.com/awebai/aw/run"
 )
 
 // A hostile sender's name, subject and body: an ANSI escape, a right-to-left
@@ -103,4 +109,117 @@ func TestCLIErrorLineEscapesServerText(t *testing.T) {
 	if !strings.Contains(buf.String(), "line one\n\tsecond") {
 		t.Fatalf("error lost its layout: %q", buf.String())
 	}
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	saved := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	defer func() { os.Stdout = saved }()
+	fn()
+	w.Close()
+	os.Stdout = saved
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}
+
+// A one-line field that tries to forge the line after it.
+const forgedLine = "\nVerification: verified"
+
+func requireNoForgedLine(t *testing.T, out string) {
+	t.Helper()
+	if strings.Contains(out, forgedLine) {
+		t.Fatalf("a one-line field forged a line:\n%s", out)
+	}
+}
+
+func TestRunDisplayLinesEscapeTheWakeText(t *testing.T) {
+	dispatcher := newRunDispatcher(awrun.Settings{}, func(context.Context, awid.AgentEvent) (runWakeResolution, error) {
+		return runWakeResolution{CycleContext: hostileName + ": " + hostileSubject + "\n" + hostileBody}, nil
+	})
+	decision, err := dispatcher.Next(context.Background(), true, &awid.AgentEvent{Type: awid.AgentEventActionableMail})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lines []string
+	for _, line := range decision.DisplayLines {
+		lines = append(lines, line.Text)
+	}
+	requireTerminalSafe(t, strings.Join(lines, "\n"))
+	if !strings.Contains(decision.CycleContext, "\x1b") {
+		t.Fatalf("the provider prompt is not display text and keeps the received bytes: %q", decision.CycleContext)
+	}
+}
+
+func TestRunWorkWakeDisplayEscapesTheTaskTitle(t *testing.T) {
+	var lines []string
+	for _, line := range formatWorkWakeDisplay(awid.AgentEvent{Type: awid.AgentEventWorkAvailable, TaskID: "t1", Title: "fix\x1b[2J\u202e"}) {
+		lines = append(lines, line.Text)
+	}
+	requireTerminalSafe(t, strings.Join(lines, "\n"))
+}
+
+func TestLogLineEscapesThePeerSubjectAndBody(t *testing.T) {
+	out := formatLogLine(&CommLogEntry{Dir: "recv", Channel: "mail", From: hostileName, Subject: "hi" + forgedLine, Body: hostileBody})
+	requireTerminalSafe(t, out)
+	requireNoForgedLine(t, out)
+}
+
+func TestRunRecapEscapesReceivedTextBeforeStyling(t *testing.T) {
+	entries := []InteractionEntry{{Kind: interactionKindMailIn, From: hostileAlias, Subject: hostileSubject, Text: hostileBody}}
+	requireTerminalSafe(t, formatInteractionRecapStyled(entries, 8, false, 0))
+	styled := formatInteractionRecapStyled(entries, 8, true, 0)
+	if strings.Contains(styled, "\x1b]0;") || strings.Contains(styled, "\u202e") {
+		t.Fatalf("styled recap carries a received escape: %q", styled)
+	}
+}
+
+func TestA2ACardAndTaskEscapeTheRemoteAgentText(t *testing.T) {
+	card := formatA2ACardOutput(a2aCardOutput{
+		Name:   "helper" + forgedLine + "\x1b[2J",
+		Skills: []a2a.Skill{{ID: "s1", Name: "search\u202e"}},
+	})
+	requireTerminalSafe(t, card)
+	requireNoForgedLine(t, card)
+	task := formatA2ATask(a2a.Task{ID: "t1", Status: a2a.TaskStatus{State: "completed", Message: &a2a.Message{Parts: []a2a.Part{{Text: hostileBody}}}}})
+	requireTerminalSafe(t, task)
+}
+
+func TestRegistryReadTextEscapesTheRegistryMessage(t *testing.T) {
+	out := captureStdout(t, func() {
+		saved := jsonFlag
+		jsonFlag = false
+		defer func() { jsonFlag = saved }()
+		printRegistryRead(registryReadEnvelope{Payload: registryReadPayload{
+			Status: "error",
+			Error:  &registryReadError{Code: "not_found", Message: "gone\x1b[2J\u202e"},
+		}}, formatRegistryRead)
+	})
+	requireTerminalSafe(t, out)
+}
+
+func TestIDLogTextEscapesTheRegistryError(t *testing.T) {
+	requireTerminalSafe(t, formatIDLog(idLogOutput{Status: "unsupported_registry_history", Error: "no\x1b[2J\u202e"}))
+}
+
+func TestWorkspaceTextEscapesServerAliases(t *testing.T) {
+	requireTerminalSafe(t, formatGoneWorkspaces([]goneWorkspace{{Alias: hostileAlias + "\x1b[2J", CleanupStatus: "blocked"}}))
+	requireTerminalSafe(t, formatWorkspaceAddWorktree(workspaceAddWorktreeOutput{Alias: hostileAlias + "\x1b[2J", Role: "dev"}))
+}
+
+func TestPinStoreListEscapesPinnedAddresses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "known_agents.yaml")
+	store := awid.NewPinStore()
+	store.StorePin("did:key:zHostile", "acme.com/bob\x1b[2J\u202e", "", "")
+	if err := store.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	requireTerminalSafe(t, runPinStoreList(t, "--path", path))
 }
