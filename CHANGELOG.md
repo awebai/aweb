@@ -19,6 +19,23 @@
   types, installs, emitted events and subscriptions when measured on
   2026-10-16. `status` and `status-host`, reserved in server 1.27.24, were
   measured at the same time and also had zero uses.
+- **aw escapes what servers and senders write before printing it:** in human
+  output (`--json` is unchanged), control characters, bidi controls and
+  zero-width characters in names, addresses, subjects, bodies and server
+  error text print as visible escapes such as `\x1b` or `\u202e`, so a
+  received string can neither drive the terminal nor disguise what it says.
+  One-line fields also escape line breaks, so a subject cannot forge a row;
+  bodies keep their line feeds and tabs. This covers the text output of every
+  command, errors, the events stream, chat status lines, `aw run`'s display
+  and recap, `aw log`, and the beads and Gas City mail delegates, which
+  previously printed `?` for C0 control characters only.
+- **Server: the shared validators refuse a value that ends in a line break.**
+  Aliases, human names, branch names, repository origins, the trusted-proxy
+  team name, status reason codes, signed-document timestamps and the
+  signed-document payload were matched with a Python `$` that also accepts a
+  final `\n`. A signed payload whose length was a multiple of four was
+  accepted with a trailing line break, a second encoding of the same signed
+  document. Such values are now refused.
 
 ## Release preparations
 
