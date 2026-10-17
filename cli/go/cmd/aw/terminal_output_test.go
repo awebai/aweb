@@ -61,7 +61,7 @@ func TestMailInboxTextEscapesTheSenderNameSubjectAndBody(t *testing.T) {
 	if strings.Contains(out, "\n- acme.com/ceo") {
 		t.Fatalf("the subject forged a row:\n%s", out)
 	}
-	if !strings.Contains(out, "line one\n\tsecond") {
+	if !strings.Contains(out, "line one\n  \tsecond") {
 		t.Fatalf("the body lost its layout:\n%s", out)
 	}
 }
@@ -246,7 +246,8 @@ func TestRowShapedTextIndentsBodyContinuationLines(t *testing.T) {
 	requireNoForgedRow(t, formatMailShowResponse(inbox, ""))
 	requireNoForgedRow(t, formatChatEventLine(chat.Event{FromAgent: "bob", Body: forgedRowBody}))
 	requireNoForgedRow(t, formatChatSend(&chat.SendResult{Status: "replied", TargetAgent: "bob", Reply: forgedRowBody}))
-	requireNoForgedRow(t, formatChatSend(&chat.SendResult{Status: "pending", TargetAgent: "bob", Events: []chat.Event{{Type: "message", FromAgent: "bob", Body: forgedRowBody}}}))
+	requireNoForgedRow(t, formatChatSend(&chat.SendResult{Status: "pending", TargetAgent: "bob", Reply: forgedRowBody}))
+	requireNoForgedRow(t, formatChatSend(&chat.SendResult{Status: "history", Events: []chat.Event{{Type: "message", FromAgent: "bob", Body: forgedRowBody}}}))
 	requireNoForgedRow(t, formatChatExtendWait(&chat.ExtendWaitResult{TargetAgent: "bob", Message: forgedRowBody}))
 	requireNoForgedRow(t, formatLogLine(&CommLogEntry{Dir: "recv", From: "bob", Body: forgedRowBody}))
 	requireNoForgedRow(t, formatA2ATask(a2a.Task{ID: "t1", Status: a2a.TaskStatus{State: "completed", Message: &a2a.Message{Parts: []a2a.Part{{Text: forgedRowBody}}}}}))

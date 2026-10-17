@@ -832,7 +832,7 @@ func formatA2ATask(task a2a.Task) string {
 	}
 	sb.WriteString(fmt.Sprintf("State:   %s\n", termtext.Line(task.Status.State)))
 	if text := a2aTaskText(task); text != "" {
-		sb.WriteString(fmt.Sprintf("Text:    %s\n", termtext.Body(text)))
+		sb.WriteString(fmt.Sprintf("Text:    %s\n", termtext.Block(text)))
 	}
 	if token, _ := task.Metadata["task_bearer_token"].(string); token != "" {
 		sb.WriteString(fmt.Sprintf("Token:   %s\n", termtext.Line(token)))

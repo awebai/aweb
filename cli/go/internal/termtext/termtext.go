@@ -28,6 +28,12 @@ func Body(s string) string {
 	return escapeTerminalRunes(s, true)
 }
 
+// Block is Body for a multi-line field printed after a row prefix: every
+// continuation line is indented, so no line of the field can start a row.
+func Block(s string) string {
+	return strings.ReplaceAll(Body(s), "\n", "\n  ")
+}
+
 // Fprintln prints one formatted line whose values may come from a
 // server or a sender, escaped as Line escapes a field.
 func Fprintln(w io.Writer, format string, args ...any) {

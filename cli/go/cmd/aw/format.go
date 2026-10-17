@@ -52,9 +52,9 @@ func formatChatEventLine(m chat.Event) string {
 		}
 	}
 	if ts != "" {
-		return fmt.Sprintf("[%s] %s%s: %s\n", ts, from, tags, m.Body)
+		return fmt.Sprintf("[%s] %s%s: %s\n", ts, termtext.Line(from), tags, termtext.Block(m.Body))
 	}
-	return fmt.Sprintf("%s%s: %s\n", from, tags, m.Body)
+	return fmt.Sprintf("%s%s: %s\n", termtext.Line(from), tags, termtext.Block(m.Body))
 }
 
 func preferredIdentityDisplayLabel(alias string, address string, stableID string, did string, fallback string) string {
@@ -151,7 +151,7 @@ func formatMailInbox(v any) string {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, msg.Body))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, termtext.Block(msg.Body)))
 	}
 	if resp.HasMore {
 		sb.WriteString("\nMore messages are not shown on this page.\n")
@@ -245,7 +245,7 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, msg.Body))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, termtext.Block(msg.Body)))
 	}
 	return sb.String()
 }
@@ -262,9 +262,9 @@ func formatChatSend(v any) string {
 			timeAgo = formatTimeAgo(ts)
 		}
 		if timeAgo != "" {
-			sb.WriteString(fmt.Sprintf("%s: %s — %s\n", prefix, agent, timeAgo))
+			sb.WriteString(fmt.Sprintf("%s: %s — %s\n", prefix, termtext.Line(agent), timeAgo))
 		} else {
-			sb.WriteString(fmt.Sprintf("%s: %s\n", prefix, agent))
+			sb.WriteString(fmt.Sprintf("%s: %s\n", prefix, termtext.Line(agent)))
 		}
 	}
 
@@ -333,12 +333,12 @@ func formatChatSend(v any) string {
 	switch result.Status {
 	case "replied":
 		writeChatLine("Chat from", replyFrom+tags, timestamp)
-		sb.WriteString(fmt.Sprintf("Body: %s\n", result.Reply))
+		sb.WriteString(fmt.Sprintf("Body: %s\n", termtext.Block(result.Reply)))
 		return sb.String()
 
 	case "sender_left":
 		writeChatLine("Chat from", replyFrom+tags, timestamp)
-		sb.WriteString(fmt.Sprintf("Body: %s\n", result.Reply))
+		sb.WriteString(fmt.Sprintf("Body: %s\n", termtext.Block(result.Reply)))
 		sb.WriteString(fmt.Sprintf("Note: %s has left the exchange\n", result.TargetAgent))
 		return sb.String()
 
@@ -359,11 +359,11 @@ func formatChatSend(v any) string {
 			if result.SenderWaiting {
 				sb.WriteString("Status: WAITING for your reply\n")
 			}
-			sb.WriteString(fmt.Sprintf("Body: %s\n", result.Reply))
+			sb.WriteString(fmt.Sprintf("Body: %s\n", termtext.Block(result.Reply)))
 			sb.WriteString(fmt.Sprintf("Next: Run \"aw chat send-and-wait %s \\\"your reply\\\"\"\n", result.TargetAgent))
 		} else {
 			writeChatLine("Chat to", result.TargetAgent, timestamp)
-			sb.WriteString(fmt.Sprintf("Body: %s\n", result.Reply))
+			sb.WriteString(fmt.Sprintf("Body: %s\n", termtext.Block(result.Reply)))
 			sb.WriteString(fmt.Sprintf("Awaiting reply from %s.\n", result.TargetAgent))
 		}
 		return sb.String()
@@ -401,7 +401,7 @@ func formatChatSend(v any) string {
 		}
 		tags := formatVerificationTag(event.VerificationStatus) + formatContactTag(event.IsContact)
 		writeChatLine("Chat from", preferredIdentityDisplayLabel(event.FromAgent, event.FromAddress, event.FromStableID, event.FromDID, "")+tags, event.Timestamp)
-		sb.WriteString(fmt.Sprintf("Body: %s\n", event.Body))
+		sb.WriteString(fmt.Sprintf("Body: %s\n", termtext.Block(event.Body)))
 		messageIndex++
 	}
 
@@ -637,7 +637,7 @@ func formatChatExtendWait(v any) string {
 	result := v.(*chat.ExtendWaitResult)
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Sent extend-wait to %s\n", result.TargetAgent))
-	sb.WriteString(fmt.Sprintf("Message: %s\n", result.Message))
+	sb.WriteString(fmt.Sprintf("Message: %s\n", termtext.Block(result.Message)))
 	if result.ExtendsWaitSeconds > 0 {
 		minutes := result.ExtendsWaitSeconds / 60
 		sb.WriteString(fmt.Sprintf("%s's wait extended by %d min\n", result.TargetAgent, minutes))
