@@ -68,3 +68,10 @@ func TestInvalidUTF8BytesAreEscapedNotPassedThrough(t *testing.T) {
 		}
 	}
 }
+
+func TestValidReplacementCharacterIsKept(t *testing.T) {
+	in := "ok \ufffd fine"
+	if got := Line(in); got != in {
+		t.Fatalf("Line(%q) = %q, want it unchanged", in, got)
+	}
+}
