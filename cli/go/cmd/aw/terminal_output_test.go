@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/awebai/aw/awid"
-	"github.com/awebai/aw/chat"
 )
 
 // A hostile sender's name, subject and body: an ANSI escape, a right-to-left
@@ -60,11 +59,6 @@ func TestMailInboxTextEscapesTheSenderNameSubjectAndBody(t *testing.T) {
 	}
 }
 
-func TestChatEventLineEscapesTheSenderAndBody(t *testing.T) {
-	out := terminalBody(formatChatEventLine(chat.Event{FromAgent: hostileAlias, Body: hostileBody}))
-	requireTerminalSafe(t, out)
-}
-
 func TestWhoamiTextEscapesTheHumanName(t *testing.T) {
 	out := textOutput(t, introspectOutput{Alias: "bob", HumanName: "Bob\x1b[2J\u202e"}, formatIntrospect)
 	requireTerminalSafe(t, out)
@@ -80,5 +74,33 @@ func TestGCMailWireShowsHostileRunesVisibly(t *testing.T) {
 	requireTerminalSafe(t, wire.From+" "+wire.Subject+" "+wire.Body)
 	if strings.Contains(wire.Subject, "\n") {
 		t.Fatalf("subject keeps a line break: %q", wire.Subject)
+	}
+}
+
+func TestEventsStreamTextEscapesSenderAndServerText(t *testing.T) {
+	var out, errOut bytes.Buffer
+	writeEventText(&out, &errOut, &awid.AgentEvent{Type: awid.AgentEventActionableChat, FromAlias: hostileAlias, FromAddress: hostileName, MessageID: "m1"})
+	writeEventText(&out, &errOut, &awid.AgentEvent{Type: awid.AgentEventClaimUpdate, TaskID: "t1", Title: "x", Status: "open\x1b[2J\u202e"})
+	writeEventText(&out, &errOut, &awid.AgentEvent{Type: awid.AgentEventError, Text: "server says\x1b]0;t\a\u202e"})
+	requireTerminalSafe(t, out.String())
+	requireTerminalSafe(t, errOut.String())
+}
+
+func TestChatStatusLineEscapesTheSenderAndBody(t *testing.T) {
+	var buf bytes.Buffer
+	writeChatStatus(&buf, "extend_wait", hostileAlias+": "+hostileBody)
+	out := buf.String()
+	requireTerminalSafe(t, out)
+	if strings.Count(out, "\n") != 1 {
+		t.Fatalf("status is not one line: %q", out)
+	}
+}
+
+func TestCLIErrorLineEscapesServerText(t *testing.T) {
+	var buf bytes.Buffer
+	writeCLIError(&buf, "server error: "+hostileBody)
+	requireTerminalSafe(t, buf.String())
+	if !strings.Contains(buf.String(), "line one\n\tsecond") {
+		t.Fatalf("error lost its layout: %q", buf.String())
 	}
 }
