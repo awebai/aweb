@@ -55,7 +55,7 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 			postCLIAuthForm(context.Background(), base, "/oauth/token", url.Values{"grant_type": {"test"}}, "secret", &map[string]any{})
 		}},
 		{"account_json", func(base string) {
-			postCLIAuthJSON(context.Background(), base, "/api/v1/teams/ensure", "secret", map[string]string{"team": "test"}, &map[string]any{})
+			postCLIAuthJSON(context.Background(), base, workspaceTeamEnsurePath, "secret", map[string]string{"team": "test"}, &map[string]any{})
 		}},
 	}
 	for _, tc := range tests {
