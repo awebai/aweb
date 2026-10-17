@@ -7912,3 +7912,9 @@ func TestGrantClientE2EEInboxUsesCustodyUnwrap(t *testing.T) {
 		t.Fatalf("message not decrypted through custody: %#v", out.Messages)
 	}
 }
+
+func TestTraceRedactsTheDIDKeyProofSignature(t *testing.T) {
+	if !shouldRedactTraceHeader("X-AWEB-DIDKey-Signature") {
+		t.Fatal("the DIDKey proof signature is not redacted from traces")
+	}
+}
