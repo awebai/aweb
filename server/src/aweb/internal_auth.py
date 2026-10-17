@@ -25,7 +25,7 @@ def _is_valid_proxy_team_id(team_id: str) -> bool:
     name, domain = team_id.split(":", 1)
     if not name or not domain:
         return False
-    if not _TEAM_NAME_RE.match(name):
+    if not _TEAM_NAME_RE.fullmatch(name):
         return False
     if _DOMAIN_INVALID_RE.search(domain):
         return False

@@ -35,7 +35,7 @@ def decode_payload(signed_payload: str, *, max_bytes: int, error: type[SignedDoc
     # Longer than the encoded length of max_bytes is oversize before decoding.
     if len(signed_payload) > (max_bytes * 4 + 2) // 3:
         raise error("document_too_large", f"the document exceeds {max_bytes} bytes")
-    if not _B64URL.match(signed_payload):
+    if not _B64URL.fullmatch(signed_payload):
         raise error("malformed_payload", "signed_payload is not unpadded base64url")
     try:
         raw = base64.urlsafe_b64decode(signed_payload + "=" * (-len(signed_payload) % 4))
@@ -71,7 +71,7 @@ def is_safe_positive_integer(value: Any) -> bool:
 
 
 def parse_timestamp(name: str, value: Any, *, error: type[SignedDocumentError]) -> datetime:
-    if not isinstance(value, str) or not _TIMESTAMP.match(value):
+    if not isinstance(value, str) or not _TIMESTAMP.fullmatch(value):
         raise error("invalid_value", f"{name} must be YYYY-MM-DDTHH:MM:SSZ")
     try:
         return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
