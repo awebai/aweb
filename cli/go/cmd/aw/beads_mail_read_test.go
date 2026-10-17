@@ -14,6 +14,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 )
 
 func TestSplitBeadsMailEnvelope(t *testing.T) {
@@ -60,7 +61,7 @@ func TestBeadsMailStatePathUsesWorktreeRoot(t *testing.T) {
 
 func TestBeadsMailBodyKeepsLayoutAndEscapesControls(t *testing.T) {
 	in := "line one\n\tindented\x1b[31mred\x07bell"
-	got := terminalBody(in)
+	got := termtext.Body(in)
 	if !strings.Contains(got, "line one\n\tindented") || strings.ContainsAny(got, "\x1b\x07") {
 		t.Errorf("sanitized body %q", got)
 	}

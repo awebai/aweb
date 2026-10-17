@@ -1,4 +1,6 @@
-package main
+// Package termtext escapes text from a server or a sender before aw prints it
+// to a terminal.
+package termtext
 
 import (
 	"fmt"
@@ -7,28 +9,28 @@ import (
 	"unicode"
 )
 
-// terminalLine makes a one-line field from a server or a sender safe to print
+// Line makes a one-line field from a server or a sender safe to print
 // to a terminal: names, addresses, subjects. A verified sender is not a trusted
 // one. Every rune that can drive the terminal (C0, DEL and C1 controls) or
 // disguise text (line and paragraph separators, bidi controls, zero-width
 // characters) is written as a visible escape such as \x1b or \u202e, so the
 // reader sees what was sent. ZWNJ, ZWJ and the tag block are kept: names and
 // emoji need them.
-func terminalLine(s string) string {
+func Line(s string) string {
 	return escapeTerminalRunes(s, false)
 }
 
-// terminalBody is terminalLine for message bodies and other multi-line text:
-// line feeds and tabs are kept, every other rune terminalLine escapes is
+// Body is Line for message bodies and other multi-line text:
+// line feeds and tabs are kept, every other rune Line escapes is
 // escaped.
-func terminalBody(s string) string {
+func Body(s string) string {
 	return escapeTerminalRunes(s, true)
 }
 
-// fprintTerminalLine prints one formatted line whose values may come from a
-// server or a sender, escaped as terminalLine escapes a field.
-func fprintTerminalLine(w io.Writer, format string, args ...any) {
-	fmt.Fprintln(w, terminalLine(fmt.Sprintf(format, args...)))
+// Fprintln prints one formatted line whose values may come from a
+// server or a sender, escaped as Line escapes a field.
+func Fprintln(w io.Writer, format string, args ...any) {
+	fmt.Fprintln(w, Line(fmt.Sprintf(format, args...)))
 }
 
 func escapeTerminalRunes(s string, keepLayout bool) string {

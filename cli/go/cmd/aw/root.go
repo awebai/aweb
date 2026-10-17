@@ -8,6 +8,7 @@ import (
 
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -407,5 +408,5 @@ func checkVersionFromHeader() {
 
 // writeCLIError prints a command's error, which may carry a server's text.
 func writeCLIError(w io.Writer, msg string) {
-	fmt.Fprintln(w, terminalBody(msg))
+	fmt.Fprintln(w, termtext.Body(msg))
 }

@@ -8,6 +8,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/chat"
+	"github.com/awebai/aw/internal/termtext"
 )
 
 // formatVerificationTag returns a warning string for non-verified messages.
@@ -145,12 +146,12 @@ func formatMailInbox(v any) string {
 			sb.WriteString(fmt.Sprintf("Conversation %s:\n", conversationID))
 			seenConversations[conversationID] = true
 		}
-		subj := terminalLine(strings.TrimSpace(msg.Subject))
+		subj := termtext.Line(strings.TrimSpace(msg.Subject))
 		if subj != "" {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", terminalLine(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, msg.Body))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, msg.Body))
 	}
 	if resp.HasMore {
 		sb.WriteString("\nMore messages are not shown on this page.\n")
@@ -239,12 +240,12 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 	}
 	sb.WriteString("\n")
 	for _, msg := range resp.Messages {
-		subj := terminalLine(strings.TrimSpace(msg.Subject))
+		subj := termtext.Line(strings.TrimSpace(msg.Subject))
 		if subj != "" {
 			subj = " — " + subj
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
-		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", terminalLine(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, msg.Body))
+		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, msg.Body))
 	}
 	return sb.String()
 }

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 )
 
 // Shared address mapping for the aweb mail delegates: `aw beads-mail` (the bd
@@ -330,8 +331,8 @@ func delegateMailDisplayName(m delegateMailAddressMap, value string) string {
 // disclosure line cannot be split or styled by a hostile recipient string even
 // if a future resolution path forgets to validate.
 func delegateMailResolutionNote(t delegateMailTarget) string {
-	input := terminalLine(t.Input)
-	value := terminalLine(t.Value)
+	input := termtext.Line(t.Input)
+	value := termtext.Line(t.Value)
 	if value == input {
 		return fmt.Sprintf("to %s", input)
 	}

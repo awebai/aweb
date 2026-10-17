@@ -11,6 +11,7 @@ import (
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/chat"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +25,7 @@ func chatStderrCallback(kind, message string) {
 }
 
 func writeChatStatus(w io.Writer, kind, message string) {
-	fprintTerminalLine(w, "[chat:%s] %s", kind, message)
+	termtext.Fprintln(w, "[chat:%s] %s", kind, message)
 }
 
 func chatSend(ctx context.Context, toAlias, message string, opts chat.SendOptions) (*chat.SendResult, *awconfig.Selection, error) {

@@ -12,6 +12,7 @@ import (
 	aweb "github.com/awebai/aw"
 	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -115,10 +116,10 @@ func beadsMailSenderLabel(m beadsMailAddressMap, msg *awid.InboxMessage) string 
 			continue
 		}
 		if local := beadsMailDisplayName(m, key); local != "" {
-			return fmt.Sprintf("%s (%s)", local, terminalLine(identity))
+			return fmt.Sprintf("%s (%s)", local, termtext.Line(identity))
 		}
 	}
-	return terminalLine(identity)
+	return termtext.Line(identity)
 }
 
 func beadsMailReadClient(cmd *cobra.Command, ctx context.Context) (*aweb.Client, *awconfig.Selection, beadsMailAddressMap, error) {
@@ -144,7 +145,7 @@ func beadsMailReadClient(cmd *cobra.Command, ctx context.Context) (*aweb.Client,
 func beadsMailPrintMessage(m beadsMailAddressMap, msg *awid.InboxMessage) {
 	body, env := splitBeadsMailEnvelope(msg.Body)
 	fmt.Printf("From: %s\n", beadsMailSenderLabel(m, msg))
-	fmt.Printf("Subject: %s\n", terminalLine(msg.Subject))
+	fmt.Printf("Subject: %s\n", termtext.Line(msg.Subject))
 	fmt.Printf("Date: %s\n", msg.CreatedAt)
 	priority := string(msg.Priority)
 	if env != nil && env.Priority != nil {
@@ -152,14 +153,14 @@ func beadsMailPrintMessage(m beadsMailAddressMap, msg *awid.InboxMessage) {
 	}
 	fmt.Printf("Priority: %s\n", priority)
 	if env != nil && env.Type != "" {
-		fmt.Printf("Type: %s\n", terminalLine(env.Type))
+		fmt.Printf("Type: %s\n", termtext.Line(env.Type))
 	}
 	if env != nil && env.Pinned {
 		fmt.Println("Pinned: true")
 	}
 	fmt.Printf("Message-Id: %s\n", msg.MessageID)
 	fmt.Printf("Thread: %s\n", msg.ConversationID)
-	fmt.Printf("\n%s\n", terminalBody(body))
+	fmt.Printf("\n%s\n", termtext.Body(body))
 }
 
 var (
@@ -203,7 +204,7 @@ var beadsMailInboxCmd = &cobra.Command{
 				if msg.ReadAt == nil {
 					state = "*"
 				}
-				fmt.Printf("%2d %s %s — %s (%s)\n", i+1, state, beadsMailSenderLabel(addressMap, &msg), terminalLine(msg.Subject), msg.MessageID)
+				fmt.Printf("%2d %s %s — %s (%s)\n", i+1, state, beadsMailSenderLabel(addressMap, &msg), termtext.Line(msg.Subject), msg.MessageID)
 			}
 			if resp.HasMore {
 				fmt.Printf("More messages exist; continue with: bd mail inbox --cursor %s\n", resp.NextCursor)

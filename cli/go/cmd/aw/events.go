@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awid"
+	"github.com/awebai/aw/internal/termtext"
 	"github.com/spf13/cobra"
 )
 
@@ -306,13 +307,13 @@ func isFatalStreamOpenError(err error) bool {
 func writeEventText(out, errOut io.Writer, ev *awid.AgentEvent) {
 	switch ev.Type {
 	case awid.AgentEventConnected:
-		fprintTerminalLine(out, "[connected] agent_id=%s team_id=%s", ev.AgentID, ev.TeamID)
+		termtext.Fprintln(out, "[connected] agent_id=%s team_id=%s", ev.AgentID, ev.TeamID)
 	case awid.AgentEventActionableMail:
 		conversation := ""
 		if strings.TrimSpace(ev.ConversationID) != "" {
 			conversation = fmt.Sprintf(" conversation_id=%s", ev.ConversationID)
 		}
-		fprintTerminalLine(out,
+		termtext.Fprintln(out,
 			"[actionable_mail] from=%s wake_mode=%s unread=%d%s message_id=%s subject=%q",
 			preferredIdentityDisplayLabel(ev.FromAlias, ev.FromAddress, ev.FromStableID, ev.FromDID, ""),
 			eventTextValue(ev.WakeMode),
@@ -326,7 +327,7 @@ func writeEventText(out, errOut io.Writer, ev *awid.AgentEvent) {
 		if strings.TrimSpace(ev.ConversationID) != "" {
 			conversation = fmt.Sprintf(" conversation_id=%s", ev.ConversationID)
 		}
-		fprintTerminalLine(out,
+		termtext.Fprintln(out,
 			"[actionable_chat] from=%s wake_mode=%s unread=%d sender_waiting=%t%s session_id=%s message_id=%s",
 			preferredIdentityDisplayLabel(ev.FromAlias, ev.FromAddress, ev.FromStableID, ev.FromDID, ""),
 			eventTextValue(ev.WakeMode),
@@ -337,21 +338,21 @@ func writeEventText(out, errOut io.Writer, ev *awid.AgentEvent) {
 			ev.MessageID,
 		)
 	case awid.AgentEventWorkAvailable:
-		fprintTerminalLine(out, "[work_available] task_id=%s title=%q", ev.TaskID, ev.Title)
+		termtext.Fprintln(out, "[work_available] task_id=%s title=%q", ev.TaskID, ev.Title)
 	case awid.AgentEventClaimUpdate:
-		fprintTerminalLine(out, "[claim_update] task_id=%s title=%q status=%s", ev.TaskID, ev.Title, ev.Status)
+		termtext.Fprintln(out, "[claim_update] task_id=%s title=%q status=%s", ev.TaskID, ev.Title, ev.Status)
 	case awid.AgentEventClaimRemoved:
-		fprintTerminalLine(out, "[claim_removed] task_id=%s", ev.TaskID)
+		termtext.Fprintln(out, "[claim_removed] task_id=%s", ev.TaskID)
 	case awid.AgentEventControlPause:
-		fprintTerminalLine(out, "[control_pause] signal_id=%s", ev.SignalID)
+		termtext.Fprintln(out, "[control_pause] signal_id=%s", ev.SignalID)
 	case awid.AgentEventControlResume:
-		fprintTerminalLine(out, "[control_resume] signal_id=%s", ev.SignalID)
+		termtext.Fprintln(out, "[control_resume] signal_id=%s", ev.SignalID)
 	case awid.AgentEventControlInterrupt:
-		fprintTerminalLine(out, "[control_interrupt] signal_id=%s", ev.SignalID)
+		termtext.Fprintln(out, "[control_interrupt] signal_id=%s", ev.SignalID)
 	case awid.AgentEventError:
-		fprintTerminalLine(errOut, "[error] %s", ev.Text)
+		termtext.Fprintln(errOut, "[error] %s", ev.Text)
 	default:
-		fprintTerminalLine(out, "[%s] %s", ev.Type, string(ev.Raw))
+		termtext.Fprintln(out, "[%s] %s", ev.Type, string(ev.Raw))
 	}
 }
 

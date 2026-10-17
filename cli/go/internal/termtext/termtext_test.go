@@ -1,8 +1,8 @@
-package main
+package termtext
 
 import "testing"
 
-func TestTerminalLineEscapesEveryRuneThatCanDriveOrDisguiseATerminal(t *testing.T) {
+func TestLineEscapesEveryRuneThatCanDriveOrDisguiseATerminal(t *testing.T) {
 	cases := map[string]string{
 		"\x1b[31mred":       `\x1b[31mred`,
 		"bell\a":            `bell\x07`,
@@ -21,13 +21,13 @@ func TestTerminalLineEscapesEveryRuneThatCanDriveOrDisguiseATerminal(t *testing.
 		"bom\ufeff":         `bom\ufeff`,
 	}
 	for in, want := range cases {
-		if got := terminalLine(in); got != want {
-			t.Errorf("terminalLine(%q) = %q, want %q", in, got, want)
+		if got := Line(in); got != want {
+			t.Errorf("Line(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
 
-func TestTerminalLineKeepsTextNamesAndEmojiNeed(t *testing.T) {
+func TestLineKeepsTextNamesAndEmojiNeed(t *testing.T) {
 	for _, in := range []string{
 		"alice",
 		"Zo\u00eb O'Brien",
@@ -38,16 +38,16 @@ func TestTerminalLineKeepsTextNamesAndEmojiNeed(t *testing.T) {
 		"\U0001f3f4\U000e0067\U000e0062\U000e0065\U000e006e\U000e0067\U000e007f",
 		`already \x1b literal`,
 	} {
-		if got := terminalLine(in); got != in {
-			t.Errorf("terminalLine(%q) = %q, want it unchanged", in, got)
+		if got := Line(in); got != in {
+			t.Errorf("Line(%q) = %q, want it unchanged", in, got)
 		}
 	}
 }
 
-func TestTerminalBodyKeepsLineBreaksAndTabsAndEscapesTheRest(t *testing.T) {
+func TestBodyKeepsLineBreaksAndTabsAndEscapesTheRest(t *testing.T) {
 	in := "line one\n\tindented\x1b]0;title\a\r\u202eevil"
 	want := "line one\n\tindented\\x1b]0;title\\x07\\x0d\\u202eevil"
-	if got := terminalBody(in); got != want {
-		t.Fatalf("terminalBody(%q) = %q, want %q", in, got, want)
+	if got := Body(in); got != want {
+		t.Fatalf("Body(%q) = %q, want %q", in, got, want)
 	}
 }
