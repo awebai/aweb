@@ -32,6 +32,11 @@ AWEB_ALLOW_ALL_USERS=true        # dev only; prefer AWEB_ALLOWED_USERS in real u
 # AWEB_HOME_CHANNEL=example.aweb.ai/alice
 ```
 
+Use a native workspace in `AWEB_PLATFORM_WORKDIR`, with `AWEB_IDENTITY_HOME`
+unset in the gateway environment. aw 1.36.40 refuses `events stream` with an
+external identity home. Allowlist the sender address shown by aweb when present;
+the adapter prefers that address over the team alias.
+
 Start Hermes gateway:
 
 ```bash
@@ -60,3 +65,32 @@ Those are added in this same change because existing `aw mail inbox` / `aw chat 
 ## Main blocker resolved here
 
 Before this adapter, Aweb had an event stream and body fetch commands, but no stable CLI command to reply to an exact chat session or ack/read a specific message after Hermes confirmed delivery. The new `aw chat send --session-id`, `aw mail ack`, and `aw chat read` commands close that adapter contract gap.
+
+## Compatibility checks
+
+The lifecycle regression imports a real Hermes checkout and calls its actual
+gateway lifecycle methods. Use that checkout's dependency environment:
+
+```bash
+HERMES_AGENT_SOURCE=/path/to/hermes-agent \
+  python -m unittest discover -s packages/hermes-aweb-platform/tests \
+  -p test_hermes_lifecycle.py -v
+```
+
+The opt-in live regression additionally needs isolated local e2e identities and
+the stack's PostgreSQL container. Stop any other gateway consuming the receiver.
+It starts a real gateway and uses `/help` and `/start`; no model key is needed.
+
+```bash
+HERMES_AGENT_SOURCE=/path/to/hermes-agent \
+HERMES_LIVE_RECEIVER_HOME=/path/to/local-hermes-workspace \
+HERMES_LIVE_SENDER_HOME=/path/to/local-alice-workspace \
+HERMES_LIVE_POSTGRES_CONTAINER=hermes-acft1-postgres-1 \
+  python -m unittest discover -s packages/hermes-aweb-platform/tests \
+  -p test_live_chat.py -v
+```
+
+The sender fixture's team alias is `alice`, the receiver's is `hermes`. The test
+requires a receiver bound to a loopback aweb URL and uses the disposable e2e
+database to hold one read receipt while restarting the real stream process.
+These checks establish transport behavior, not model-generated replies.

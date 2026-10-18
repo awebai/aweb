@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from gateway.config import Platform, PlatformConfig
-from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
+from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, ProcessingOutcome, SendResult
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +113,7 @@ class AwebAdapter(BasePlatformAdapter):
         self._proc: Optional[asyncio.subprocess.Process] = None
         self._seen: Dict[str, float] = {}
         self._routes: Dict[str, dict] = {}
+        self._chat_tasks: Dict[str, asyncio.Task] = {}
 
     @property
     def name(self) -> str:
@@ -134,6 +135,11 @@ class AwebAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         self._running = False
         self._mark_disconnected()
+        for task in self._chat_tasks.values():
+            task.cancel()
+        if self._chat_tasks:
+            await asyncio.gather(*self._chat_tasks.values(), return_exceptions=True)
+        self._chat_tasks.clear()
         if self._proc and self._proc.returncode is None:
             self._proc.terminate()
             try:
@@ -263,16 +269,61 @@ class AwebAdapter(BasePlatformAdapter):
 
     async def _dispatch_chat_event(self, event: dict) -> None:
         session_id = str(event.get("session_id") or "").strip()
-        message_id = str(event.get("message_id") or "").strip()
-        if not session_id or not message_id or self._dedup("chat:" + session_id + ":" + message_id):
+        if not session_id:
             return
-        payload = await self._run_aw_json("chat", "history", "--session-id", session_id, "--message-id", message_id, "--limit", "1")
-        msg = _first_mapping_item(payload, "messages")
-        if not msg:
-            logger.warning("Aweb: chat %s/%s was actionable but could not be fetched", session_id, message_id)
-            return
+        task = self._chat_tasks.get(session_id)
+        if task is None or task.done():
+            self._chat_tasks[session_id] = asyncio.create_task(self._drain_chat_session(session_id))
+
+    async def _drain_chat_session(self, session_id: str) -> None:
+        """Session-summary events have no message id. Resolve unread history without
+        reading it, then finish each Hermes turn before admitting the next one.
+        Each session has its own lane, independent of mail and stream reconnects.
+        """
+        try:
+            # During startup Hermes parks input in a volatile replay queue and
+            # returns None, which is not a completed no-reply turn. Its current
+            # gateway exposes no readiness event; leave input on the server
+            # until the restore gate opens instead of acknowledging that queue.
+            while self._running and getattr(self.gateway_runner, "_startup_restore_in_progress", False):
+                await asyncio.sleep(0.1)
+            while self._running:
+                payload = await self._run_aw_json(
+                    "chat", "history", "--session-id", session_id,
+                    "--unread-only", "--limit", "2000",
+                )
+                messages = payload.get("messages") or []
+                if not messages:
+                    return
+                if len(messages) >= 2000:
+                    # History returns the newest bounded window with no cursor.
+                    # Refuse an ambiguous window rather than silently skip its
+                    # older unread prefix or claim oldest-first delivery.
+                    logger.error("Aweb: session %s reached the 2000-message history limit; cannot drain oldest first without pagination", session_id)
+                    return
+                for msg in messages:
+                    if not self._running:
+                        return
+                    message_id = str(msg.get("message_id") or "").strip()
+                    if not message_id:
+                        raise RuntimeError("Aweb unread chat history omitted message_id")
+                    key = "chat:" + session_id + ":" + message_id
+                    if key in self._seen:
+                        continue
+                    await self._deliver_chat_message(session_id, message_id, msg)
+                    if key not in self._seen:
+                        # No receipt: keep it unread/retryable, including fetch,
+                        # host-admission and failed processing/delivery cases.
+                        logger.warning("Aweb: chat %s/%s was not completed; leaving unread", session_id, message_id)
+                        return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Aweb: could not drain chat session %s; leaving unread", session_id)
+
+    async def _deliver_chat_message(self, session_id: str, message_id: str, msg: dict) -> None:
         chat_id = f"chat:{session_id}"
-        sender = str(msg.get("from_address") or event.get("from_address") or msg.get("from_agent") or event.get("from_alias") or "aweb")
+        sender = str(msg.get("from_address") or msg.get("from_agent") or "aweb")
         body = str(msg.get("body") or "")
         self._routes[chat_id] = {
             "kind": "chat",
@@ -281,21 +332,35 @@ class AwebAdapter(BasePlatformAdapter):
             "sender": sender,
         }
         source = self.build_source(
-            chat_id=chat_id,
-            chat_name=sender,
-            chat_type="dm",
-            user_id=sender,
-            user_name=sender,
-            message_id=message_id,
+            chat_id=chat_id, chat_name=sender, chat_type="dm",
+            user_id=sender, user_name=sender, message_id=message_id,
         )
-        await self.handle_message(MessageEvent(
-            text=body,
-            message_type=MessageType.TEXT,
-            source=source,
-            message_id=message_id,
-            raw_message=msg,
+        event = MessageEvent(
+            text=body, message_type=MessageType.TEXT, source=source,
+            message_id=message_id, raw_message=msg,
             timestamp=_event_timestamp(msg.get("timestamp")),
-        ))
+        )
+        logger.info("Aweb: delivering chat %s/%s to Hermes", session_id, message_id)
+        await self.handle_message(event)
+        # Hermes handle_message() schedules the turn and returns before its
+        # reply. Wait for that real lifecycle task, including cleanup, so a
+        # burst cannot overwrite this message's route or merge pending inputs.
+        task = self._session_tasks.get(self._event_session_key(event))
+        if task is not None:
+            await asyncio.shield(task)
+
+    async def on_processing_complete(self, event: MessageEvent, outcome: ProcessingOutcome) -> None:
+        await super().on_processing_complete(event, outcome)
+        chat_id = str(event.source.chat_id or "")
+        if not self._running or not chat_id.startswith("chat:") or outcome != ProcessingOutcome.SUCCESS:
+            return
+        session_id = chat_id.removeprefix("chat:")
+        key = "chat:" + session_id + ":" + str(event.message_id)
+        if key not in self._seen:
+            # A successful no-reply turn is a real host-processing receipt.
+            # Failed/cancelled turns never consume unread input.
+            await self._run_aw_json("chat", "read", "--session-id", session_id, "--message-id", str(event.message_id))
+            self._dedup(key)
 
     async def send(self, chat_id: str, content: str, reply_to: Optional[str] = None, metadata: Optional[Dict[str, Any]] = None) -> SendResult:
         if len(content) > self.MAX_MESSAGE_LENGTH:
@@ -333,6 +398,7 @@ class AwebAdapter(BasePlatformAdapter):
         if result.success:
             try:
                 await self._run_aw_json("chat", "read", "--session-id", session_id, "--message-id", str(route["message_id"]))
+                self._dedup("chat:" + session_id + ":" + str(route["message_id"]))
             except Exception as exc:
                 logger.warning("Aweb: reply sent but chat read mark failed: %s", exc)
         return result
