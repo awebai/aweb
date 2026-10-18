@@ -118,7 +118,7 @@ class AwebAdapter(BasePlatformAdapter):
     def name(self) -> str:
         return "Aweb"
 
-    async def connect(self) -> bool:
+    async def connect(self, *, is_reconnect: bool = False) -> bool:
         if not validate_config(self.config):
             self._set_fatal_error("aw_missing", "aw binary not found; set AWEB_PLATFORM_AW_BIN", retryable=False)
             return False
