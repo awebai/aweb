@@ -17,7 +17,7 @@ classifiers = [
 ]
 dependencies = [
   "aweb-naapp",
-  "awid-service",
+  "awid-service>=0.5.22",
   "bleach>=6.4.0",
   "fastapi>=0.116.1",
   "httpx>=0.28.1",
@@ -45,12 +45,14 @@ packages = ["src/library"]
 
 # awid-service is not on PyPI — it lives in the aweb repo's awid subdirectory, so
 # it is pinned by git commit for reproducible (and Docker-buildable) installs.
+# Tokenless certificate verification requires its status route (AWID >=0.5.22).
+# The exact pin below is the released awid-v0.5.28 commit.
 # aweb-naapp is the sibling toolkit repo, pinned the same way by git commit so the
 # Docker build fetches it without auth (the repo is public). pgdbm resolves from
 # PyPI. Local source overrides are explicit opt-ins through PYTHONPATH; tests use
 # the locked environment by default.
 [tool.uv.sources]
-awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "0de73deb73c133c7fb85ad3de3d5827616e19500" }
+awid-service = { git = "https://github.com/awebai/aweb.git", subdirectory = "awid", rev = "40f220773cd4ab96e0f4bd227494decb1666851b" }
 aweb-naapp = { git = "https://github.com/awebai/aweb-naapp.git", rev = "4dbeb4bc08e941f44d91971bb8cbe7448e28a4ed" }
 
 [dependency-groups]
