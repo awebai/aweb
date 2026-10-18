@@ -28,11 +28,11 @@ type EncryptionKeyRecord struct {
 }
 
 func DefaultWorktreeEncryptionStateRelativePath() string {
-	return filepath.Join(".aw", "encryption.yaml")
+	return filepath.ToSlash(filepath.Join(".aw", "encryption.yaml"))
 }
 
 func DefaultWorktreeEncryptionKeysRelativeDir() string {
-	return filepath.Join(".aw", "encryption-keys")
+	return filepath.ToSlash(filepath.Join(".aw", "encryption-keys"))
 }
 
 func WorktreeEncryptionStatePath(root string) string {
@@ -44,11 +44,11 @@ func WorktreeEncryptionKeysDir(root string) string {
 }
 
 func WorktreeEncryptionPrivateKeyRelativePath(keyID string) string {
-	return filepath.Join(DefaultWorktreeEncryptionKeysRelativeDir(), encryptionKeyFileBase(keyID)+".x25519.key")
+	return filepath.ToSlash(filepath.Join(DefaultWorktreeEncryptionKeysRelativeDir(), encryptionKeyFileBase(keyID)+".x25519.key"))
 }
 
 func WorktreeEncryptionAssertionRelativePath(keyID string) string {
-	return filepath.Join(DefaultWorktreeEncryptionKeysRelativeDir(), encryptionKeyFileBase(keyID)+".assertion.json")
+	return filepath.ToSlash(filepath.Join(DefaultWorktreeEncryptionKeysRelativeDir(), encryptionKeyFileBase(keyID)+".assertion.json"))
 }
 
 func LoadEncryptionKeyStateFrom(path string) (*EncryptionKeyState, error) {

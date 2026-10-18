@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Windows init:** `aw init --new-account` now accepts stored forward-slash
+  paths before converting them to native filesystem paths. Identity, certificate
+  and encryption path helpers keep forward slashes on every OS. Native Windows
+  CI covers configuration and local/global init against local HTTP fixtures.
+  Thanks to @okfineokfine for the two-layer diagnosis and proposed fix in #61.
+
 ## Release preparations
 
 ### Release preparation: server 1.27.27, aw 1.36.41

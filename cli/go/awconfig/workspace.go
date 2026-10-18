@@ -394,7 +394,7 @@ func (w WorktreeWorkspace) MarshalYAML() (any, error) {
 }
 
 func DefaultWorktreeWorkspaceRelativePath() string {
-	return filepath.Join(".aw", "workspace.yaml")
+	return filepath.ToSlash(filepath.Join(".aw", "workspace.yaml"))
 }
 
 func FindWorktreeWorkspacePath(startDir string) (string, error) {

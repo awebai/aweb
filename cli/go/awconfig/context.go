@@ -14,7 +14,7 @@ type WorktreeContext struct {
 }
 
 func DefaultWorktreeContextRelativePath() string {
-	return filepath.Join(".aw", "context")
+	return filepath.ToSlash(filepath.Join(".aw", "context"))
 }
 
 func FindWorktreeContextPath(startDir string) (string, error) {

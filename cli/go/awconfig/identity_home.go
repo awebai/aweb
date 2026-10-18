@@ -113,8 +113,13 @@ func IdentityHomeStoredPath(home IdentityHome, storedPath string) (string, error
 }
 
 func IdentityHomePath(home IdentityHome, relativePath string) (string, error) {
-	relativePath = filepath.FromSlash(strings.TrimSpace(relativePath))
-	if relativePath == "" || filepath.IsAbs(relativePath) || strings.Contains(relativePath, "\\") {
+	// Validate the stored slash form before converting it to a native path.
+	relativePath = strings.TrimSpace(relativePath)
+	if relativePath == "" || strings.HasPrefix(relativePath, "/") || strings.Contains(relativePath, "\\") {
+		return "", fmt.Errorf("identity path must be a relative forward-slash path: %q", relativePath)
+	}
+	relativePath = filepath.FromSlash(relativePath)
+	if filepath.IsAbs(relativePath) || filepath.VolumeName(relativePath) != "" {
 		return "", fmt.Errorf("identity path must be a relative forward-slash path: %q", relativePath)
 	}
 	clean := filepath.Clean(relativePath)
