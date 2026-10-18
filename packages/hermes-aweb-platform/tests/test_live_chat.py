@@ -155,7 +155,12 @@ class LiveChatTests(unittest.TestCase):
                                   "restarted_stream_pid": stream_pid, "replacement_stream_pid": next(iter(replacement))}))
             except BaseException:
                 log.flush()
-                print((temp / "logs/agent.log").read_text()[-12000:])
+                agent_log = temp / "logs/agent.log"
+                if agent_log.exists():
+                    print(agent_log.read_text()[-12000:])
+                else:
+                    log.seek(0)
+                    print(log.read()[-6000:])
                 raise
             finally:
                 if lock.poll() is None:

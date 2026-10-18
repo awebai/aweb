@@ -114,6 +114,7 @@ class AwebAdapter(BasePlatformAdapter):
         self._seen: Dict[str, float] = {}
         self._routes: Dict[str, dict] = {}
         self._chat_tasks: Dict[str, asyncio.Task] = {}
+        self._chat_dirty: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -140,6 +141,7 @@ class AwebAdapter(BasePlatformAdapter):
         if self._chat_tasks:
             await asyncio.gather(*self._chat_tasks.values(), return_exceptions=True)
         self._chat_tasks.clear()
+        self._chat_dirty.clear()
         if self._proc and self._proc.returncode is None:
             self._proc.terminate()
             try:
@@ -271,6 +273,7 @@ class AwebAdapter(BasePlatformAdapter):
         session_id = str(event.get("session_id") or "").strip()
         if not session_id:
             return
+        self._chat_dirty.add(session_id)
         task = self._chat_tasks.get(session_id)
         if task is None or task.done():
             self._chat_tasks[session_id] = asyncio.create_task(self._drain_chat_session(session_id))
@@ -288,12 +291,17 @@ class AwebAdapter(BasePlatformAdapter):
             while self._running and getattr(self.gateway_runner, "_startup_restore_in_progress", False):
                 await asyncio.sleep(0.1)
             while self._running:
+                self._chat_dirty.discard(session_id)
                 payload = await self._run_aw_json(
                     "chat", "history", "--session-id", session_id,
                     "--unread-only", "--limit", "2000",
                 )
                 messages = payload.get("messages") or []
                 if not messages:
+                    # A new hint can arrive after this query's DB snapshot but
+                    # before its response. Do not lose it when the lane exits.
+                    if session_id in self._chat_dirty:
+                        continue
                     return
                 if len(messages) >= 2000:
                     # History returns the newest bounded window with no cursor.
