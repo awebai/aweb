@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -124,12 +124,13 @@ source = { git = "https://github.com/awebai/aweb-naapp.git?rev=4dbeb4bc08e941f44
 
 [[package]]
 name = "awid-service"
-version = "0.5.12"
-source = { git = "https://github.com/awebai/aweb.git?subdirectory=awid&rev=0de73deb73c133c7fb85ad3de3d5827616e19500#0de73deb73c133c7fb85ad3de3d5827616e19500" }
+version = "0.5.28"
+source = { git = "https://github.com/awebai/aweb.git?subdirectory=awid&rev=40f220773cd4ab96e0f4bd227494decb1666851b#40f220773cd4ab96e0f4bd227494decb1666851b" }
 dependencies = [
     { name = "base58" },
     { name = "dnspython" },
     { name = "fastapi" },
+    { name = "httpcore" },
     { name = "httpx" },
     { name = "pgdbm" },
     { name = "publicsuffix2" },
@@ -425,7 +426,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aweb-naapp", git = "https://github.com/awebai/aweb-naapp.git?rev=4dbeb4bc08e941f44d91971bb8cbe7448e28a4ed" },
-    { name = "awid-service", git = "https://github.com/awebai/aweb.git?subdirectory=awid&rev=0de73deb73c133c7fb85ad3de3d5827616e19500" },
+    { name = "awid-service", git = "https://github.com/awebai/aweb.git?subdirectory=awid&rev=40f220773cd4ab96e0f4bd227494decb1666851b" },
     { name = "bleach", specifier = ">=6.4.0" },
     { name = "fastapi", specifier = ">=0.116.1" },
     { name = "httpx", specifier = ">=0.28.1" },
