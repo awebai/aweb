@@ -3,6 +3,7 @@ package awconfig
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -108,7 +109,8 @@ func TestSaveWorktreeWorkspaceToWrites0600(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat workspace: %v", err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	// Windows does not expose POSIX owner-only mode bits.
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("mode=%#o want %#o", got, 0o600)
 	}
 }

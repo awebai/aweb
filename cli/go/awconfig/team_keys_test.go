@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/awebai/aw/awid"
@@ -12,6 +13,7 @@ import (
 func TestSaveTeamKeyRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	_, key, err := awid.GenerateKeypair()
 	if err != nil {
@@ -33,6 +35,7 @@ func TestSaveTeamKeyRoundTrip(t *testing.T) {
 func TestSaveTeamKeyWrites0600(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	_, key, err := awid.GenerateKeypair()
 	if err != nil {
@@ -50,7 +53,8 @@ func TestSaveTeamKeyWrites0600(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	// Windows does not expose POSIX owner-only mode bits.
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("mode=%#o want %#o", got, 0o600)
 	}
 }
@@ -58,6 +62,7 @@ func TestSaveTeamKeyWrites0600(t *testing.T) {
 func TestTeamKeyExists(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	exists, err := TeamKeyExists("acme.com", "backend")
 	if err != nil {
@@ -87,6 +92,7 @@ func TestTeamKeyExists(t *testing.T) {
 func TestTeamKeyPathLayout(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	path, err := TeamKeyPath("Acme.com", "Backend")
 	if err != nil {
@@ -107,6 +113,7 @@ func TestTeamKeyPathLayout(t *testing.T) {
 func TestLoadTeamKeyFallsBackToLegacyConfigPath(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	_, key, err := awid.GenerateKeypair()
 	if err != nil {

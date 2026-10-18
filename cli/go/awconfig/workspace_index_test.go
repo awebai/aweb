@@ -68,6 +68,7 @@ func TestMachineWorkspaceIndexRetainsUnavailableEntries(t *testing.T) {
 	// Uses process environment (HOME); do not mark parallel.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	available := filepath.Join(t.TempDir(), "available")
 	if err := os.MkdirAll(available, 0o700); err != nil {
 		t.Fatal(err)
@@ -114,6 +115,7 @@ func TestMachineWorkspaceIndexRetainsMultipleTeamsForOneRoot(t *testing.T) {
 	// Uses process environment (HOME); do not mark parallel.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	root := filepath.Join(t.TempDir(), "workspace")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -148,6 +150,7 @@ func TestMachineWorkspaceIndexReportsUnreadableRootsUnavailable(t *testing.T) {
 	// Uses process environment (HOME); do not mark parallel.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	root := filepath.Join(t.TempDir(), "unreadable")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
@@ -201,6 +204,7 @@ func machineWorkspaceIndexHelperCommand(t *testing.T, home, start, path, team, a
 	cmd := exec.Command(os.Args[0], "-test.run=^TestMachineWorkspaceIndexHelperProcess$", "-test.v=false")
 	cmd.Env = append(os.Environ(),
 		"HOME="+home,
+		"USERPROFILE="+home,
 		"AWCONFIG_WORKSPACE_INDEX_HELPER=1",
 		"AWCONFIG_WORKSPACE_INDEX_START="+start,
 		"AWCONFIG_WORKSPACE_INDEX_PATH="+path,
@@ -226,6 +230,7 @@ func TestMachineWorkspaceIndexOrderingIsDeterministic(t *testing.T) {
 	// Uses process environment (HOME); do not mark parallel.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	paths := []string{filepath.Join(t.TempDir(), "c"), filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")}
 	for i, path := range paths {
 		if err := os.MkdirAll(path, 0o700); err != nil {

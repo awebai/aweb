@@ -61,6 +61,7 @@ func TestDecodeInviteTokenRejectsIncomplete(t *testing.T) {
 func TestSaveAndLoadTeamInvite(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	invite := &TeamInvite{
 		InviteID:      "inv-002",
@@ -109,6 +110,7 @@ func TestLoadTeamInviteNormalizesLegacyEphemeralScope(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			home := t.TempDir()
 			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
 			path, err := teamInvitePath("inv-legacy")
 			if err != nil {
 				t.Fatal(err)
@@ -134,6 +136,7 @@ func TestLoadTeamInviteNormalizesLegacyEphemeralScope(t *testing.T) {
 func TestLoadTeamInviteRejectsConflictingLegacyEphemeralScope(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	path, err := teamInvitePath("inv-conflict")
 	if err != nil {
 		t.Fatal(err)
@@ -153,6 +156,7 @@ func TestLoadTeamInviteRejectsConflictingLegacyEphemeralScope(t *testing.T) {
 func TestListTeamInvitesByOperation(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	for _, invite := range []*TeamInvite{
 		{InviteID: "inv-owned-a", Domain: "acme.com", TeamName: "backend", IdentityScope: "local", Secret: "secret-a", OperationID: "oas-AAAAAAAAAAAAAAAAAAAAAA", CreatedAt: "2026-04-06T00:00:00Z"},
@@ -189,6 +193,7 @@ func TestListTeamInvitesByOperationRejectsSymlinkedGrant(t *testing.T) {
 	}
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 	invite := &TeamInvite{InviteID: "inv-owned", Domain: "acme.com", TeamName: "backend", IdentityScope: "local", Secret: "secret", OperationID: "oas-AAAAAAAAAAAAAAAAAAAAAA", CreatedAt: "2026-04-06T00:00:00Z"}
 	if err := SaveTeamInvite(invite); err != nil {
 		t.Fatal(err)

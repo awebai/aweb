@@ -1,0 +1,39 @@
+name: Windows CLI
+
+on:
+  pull_request:
+    paths:
+      - "cli/go/**"
+      - ".github/workflows/cli-windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Native Windows config and init
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cli/go
+    env:
+      GOMAXPROCS: "2"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: cli/go/go.mod
+          cache-dependency-path: cli/go/go.sum
+      - name: Test awconfig on native Windows
+        run: go test -p 2 -parallel 2 -count=1 ./awconfig
+      - name: Smoke real aw init against local HTTP servers
+        if: ${{ !cancelled() }}
+        # Both scope choices create a signing key, team certificate and E2EE
+        # files. The global case also verifies the signup DIDKey signature.
+        run: go test -p 2 -parallel 2 -count=1 ./cmd/aw -run '^TestInit(GlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest|LocalCLIWorkspaceOmitsGlobalIdentityFile)$' -timeout 5m

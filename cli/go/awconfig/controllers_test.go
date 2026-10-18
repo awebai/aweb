@@ -5,6 +5,7 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/awebai/aw/awid"
@@ -20,6 +21,7 @@ func pemEncodeTestKey(key ed25519.PrivateKey) []byte {
 func TestSaveControllerKeyRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	_, key, err := awid.GenerateKeypair()
 	if err != nil {
@@ -41,6 +43,7 @@ func TestSaveControllerKeyRoundTrip(t *testing.T) {
 func TestSaveControllerKeyWrites0600(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	_, key, err := awid.GenerateKeypair()
 	if err != nil {
@@ -58,7 +61,8 @@ func TestSaveControllerKeyWrites0600(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := info.Mode().Perm(); got != 0o600 {
+	// Windows does not expose POSIX owner-only mode bits.
+	if got := info.Mode().Perm(); runtime.GOOS != "windows" && got != 0o600 {
 		t.Fatalf("mode=%#o want %#o", got, 0o600)
 	}
 }
@@ -66,6 +70,7 @@ func TestSaveControllerKeyWrites0600(t *testing.T) {
 func TestSaveControllerMetaRoundTrip(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	want := &ControllerMeta{
 		Domain:        "acme.com",
@@ -89,6 +94,7 @@ func TestSaveControllerMetaRoundTrip(t *testing.T) {
 func TestControllerKeyExists(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	exists, err := ControllerKeyExists("acme.com")
 	if err != nil {
@@ -118,6 +124,7 @@ func TestControllerKeyExists(t *testing.T) {
 func TestControllerPathsUseControllersDir(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	keyPath, err := ControllerKeyPath("Acme.com")
 	if err != nil {
@@ -145,6 +152,7 @@ func TestControllerPathsUseControllersDir(t *testing.T) {
 func TestLoadControllerKeyFallsBackToLegacyConfigPath(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
+	t.Setenv("USERPROFILE", tmp)
 
 	_, key, err := awid.GenerateKeypair()
 	if err != nil {
