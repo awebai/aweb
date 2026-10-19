@@ -59,6 +59,15 @@ class HostedMessageDecryptionResult:
     body: str = ""
     decryptable: bool = True
     content_notice: str | None = None
+    attachments: Any = None
+    attachments_available: bool = True
+
+    def __post_init__(self):
+        from aweb.attachments import readable_attachments
+        projection = readable_attachments(self.attachments)
+        available = self.decryptable and self.attachments_available and projection["attachments_available"]
+        object.__setattr__(self, "attachments", projection["attachments"] if available else [])
+        object.__setattr__(self, "attachments_available", bool(available))
 
 
 HostedMessageDecryptor = Callable[
@@ -195,6 +204,8 @@ async def decrypt_hosted_message_row(
         body=body if decryptable else "",
         decryptable=decryptable,
         content_notice=(str(notice) if notice else None),
+        attachments=(result.get("attachments") if isinstance(result, dict) else getattr(result, "attachments", None)) if decryptable else None,
+        attachments_available=bool(result.get("attachments_available", True) if isinstance(result, dict) else getattr(result, "attachments_available", True)),
     )
 
 

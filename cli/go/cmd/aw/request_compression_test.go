@@ -24,38 +24,47 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 	cert := &awid.TeamCertificate{Version: 1, Team: "default:example.test", MemberDIDKey: awid.ComputeDIDKey(pub), IdentityScope: awid.IdentityModeLocal}
 	tests := []struct {
 		name   string
-		invoke func(string)
+		invoke func(string) error
 	}{
-		{"connect", func(base string) { postConnect(context.Background(), base, key, cert, connectRequest{}) }},
-		{"replace_key", func(base string) {
-			postLocalIdentityKeyReplacementOnce(context.Background(), base, "alice", localIdentityKeyReplacementRequest{TeamID: cert.Team}, key)
+		{"connect", func(base string) error {
+			_, err := postConnect(context.Background(), base, key, cert, connectRequest{})
+			return err
 		}},
-		{"remove_member", func(base string) {
-			postHostedTeamRemoveMember(context.Background(), base, "secret", cert.Team, hostedTeamRemoveMemberRequest{})
+		{"replace_key", func(base string) error {
+			_, err := postLocalIdentityKeyReplacementOnce(context.Background(), base, "alice", localIdentityKeyReplacementRequest{TeamID: cert.Team}, key)
+			return err
 		}},
-		{"register", func(base string) {
-			postTeamRegister(context.Background(), base+"/v1/teams/service-register", map[string]any{"controller_signature": "test"}, &map[string]any{})
+		{"remove_member", func(base string) error {
+			_, err := postHostedTeamRemoveMember(context.Background(), base, "secret", cert.Team, hostedTeamRemoveMemberRequest{})
+			return err
 		}},
-		{"cleanup", func(base string) {
-			postTeamCleanupCloud(context.Background(), base, map[string]any{"controller_signature": "test"}, &map[string]any{})
+		{"register", func(base string) error {
+			return postTeamRegister(context.Background(), base+"/v1/teams/service-register", map[string]any{"controller_signature": "test"}, &map[string]any{})
 		}},
-		{"init", func(base string) {
-			postAPIKeyWorkspaceInit(context.Background(), base, "secret", apiKeyBootstrapRequest{}, testWorkspaceInitKey)
+		{"cleanup", func(base string) error {
+			return postTeamCleanupCloud(context.Background(), base, map[string]any{"controller_signature": "test"}, &map[string]any{})
 		}},
-		{"removal_operation", func(base string) {
-			doHostedRemovalRequest(context.Background(), "POST", base, "secret", cert.Team, "/agents/removals", map[string]string{"alias": "alice"})
+		{"init", func(base string) error {
+			_, err := postAPIKeyWorkspaceInit(context.Background(), base, "secret", apiKeyBootstrapRequest{}, testWorkspaceInitKey)
+			return err
 		}},
-		{"retire", func(base string) {
-			postSelfRetireWithAPIKey(context.Background(), selfRetirePlan{awebURL: base, teamID: cert.Team, apiKey: "secret", alias: "alice"})
+		{"removal_operation", func(base string) error {
+			_, err := doHostedRemovalRequest(context.Background(), "POST", base, "secret", cert.Team, "/agents/removals", map[string]string{"alias": "alice"})
+			return err
 		}},
-		{"invite_preview", func(base string) {
-			inspectHostedInvite(context.Background(), "token", hostedJoinTokenEnvelope{AwebURL: base, InnerToken: "token"})
+		{"retire", func(base string) error {
+			_, err := postSelfRetireWithAPIKey(context.Background(), selfRetirePlan{awebURL: base, teamID: cert.Team, apiKey: "secret", alias: "alice"})
+			return err
 		}},
-		{"account_form", func(base string) {
-			postCLIAuthForm(context.Background(), base, "/oauth/token", url.Values{"grant_type": {"test"}}, "secret", &map[string]any{})
+		{"invite_preview", func(base string) error {
+			_, err := inspectHostedInvite(context.Background(), "token", hostedJoinTokenEnvelope{AwebURL: base, InnerToken: "token"})
+			return err
 		}},
-		{"account_json", func(base string) {
-			postCLIAuthJSON(context.Background(), base, workspaceTeamEnsurePath, "secret", map[string]string{"team": "test"}, &map[string]any{})
+		{"account_form", func(base string) error {
+			return postCLIAuthForm(context.Background(), base, "/oauth/token", url.Values{"grant_type": {"test"}}, "secret", &map[string]any{})
+		}},
+		{"account_json", func(base string) error {
+			return postCLIAuthJSON(context.Background(), base, workspaceTeamEnsurePath, "secret", map[string]string{"team": "test"}, &map[string]any{})
 		}},
 	}
 	for _, tc := range tests {
@@ -66,8 +75,12 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				var probes, writes atomic.Int32
+				// Discovery is cached by complete base for the process. A unique
+				// mount keeps this fixture cold even if a closed listener's port
+				// is reused by another case or a repeated test run.
+				mount := "/" + base64.RawURLEncoding.EncodeToString([]byte(t.TempDir()))
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					if r.URL.Path == "/health" {
+					if r.URL.Path == mount+"/health" {
 						probes.Add(1)
 						if advertise {
 							w.Header().Set("Accept-Encoding", "gzip")
@@ -101,11 +114,18 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 				defer srv.Close()
 				// Endpoint-specific response validation is exercised by the existing
 				// tests; this matrix pins each real sender's negotiated wire boundary.
-				tc.invoke(srv.URL)
+				base := srv.URL + mount
+				err := tc.invoke(base)
 				wantProbes := int32(1)
 
 				if writes.Load() != 1 || probes.Load() != wantProbes {
-					t.Errorf("writes=%d probes=%d", writes.Load(), probes.Load())
+					t.Errorf("writes=%d probes=%d sender_error=%v", writes.Load(), probes.Load(), err)
+				}
+				// The same sender must reuse both positive and negative discovery
+				// without replaying a write or probing again.
+				err = tc.invoke(base)
+				if writes.Load() != 2 || probes.Load() != wantProbes {
+					t.Errorf("warm writes=%d probes=%d sender_error=%v", writes.Load(), probes.Load(), err)
 				}
 			})
 		}

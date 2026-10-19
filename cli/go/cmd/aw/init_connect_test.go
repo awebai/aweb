@@ -458,14 +458,14 @@ func TestWorkspaceConnectRejectsGrantIdentityHomeBeforeMutation(t *testing.T) {
 	if err := os.MkdirAll(grantHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(grantHome, "grant.yaml"), []byte("version: 1\ngrant_id: grant-1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+
 	called := false
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		t.Fatalf("workspace connect with grant home reached network: %s %s", r.Method, r.URL.Path)
 	}))
+
+	writeGrantHomeForTest(t, grantHome, server.URL)
 
 	for _, tc := range []struct {
 		name string

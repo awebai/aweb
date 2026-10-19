@@ -37,8 +37,11 @@ custody boundaries.
 - Federated group chat is not enabled in the current implementation. Federation
   v2 chat supports one-to-one remote delivery; mixed local/remote encrypted
   groups fail closed until a reviewed federation group model exists.
-- Encrypted attachments are not implemented. They must use this
-  same envelope and metadata model when added.
+- End-to-end encrypted file transfer is not implemented. The additive
+  [managed attachment contract](attachments.md) carries descriptors inside v2
+  content, while its managed file store/fetch remains server-readable. It must
+  never be labelled E2EE. Future self-custodial file transfer must use this same
+  envelope and metadata model without silently adopting managed storage.
 
 ## Threat Model
 

@@ -650,7 +650,11 @@ func loadA2APublishSigningKey(selection *awconfig.Selection) (ed25519.PrivateKey
 	}
 	signingKeyPath := strings.TrimSpace(selection.SigningKey)
 	if signingKeyPath == "" {
-		signingKeyPath = awconfig.WorktreeSigningKeyPath(selection.WorkingDir)
+		if strings.TrimSpace(selection.IdentityHome) != "" {
+			signingKeyPath = filepath.Join(selection.IdentityHome, "signing.key")
+		} else {
+			signingKeyPath = awconfig.WorktreeSigningKeyPath(selection.WorkingDir)
+		}
 	}
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
@@ -735,13 +739,13 @@ func loadA2ACredentialBestEffort(cardURL, rpcURL string) a2a.Credential {
 }
 
 func loadA2ACredentialBestEffortForDir(workingDir, cardURL, rpcURL string) a2a.Credential {
-	path := filepath.Join(workingDir, ".aw", "a2a-credentials.yaml")
-	if home, homeErr := identityHomeForDir(workingDir); homeErr == nil && home.External() {
-		if identityPath, pathErr := awconfig.IdentityHomePath(home, "a2a-credentials.yaml"); pathErr == nil {
-			path = identityPath
-		} else {
-			return a2a.Credential{}
-		}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return a2a.Credential{}
+	}
+	path, err := awconfig.IdentityHomePath(home, "a2a-credentials.yaml")
+	if err != nil {
+		return a2a.Credential{}
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

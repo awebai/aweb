@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.attachments import readable_attachments
+
 import json
 import uuid as uuid_mod
 from datetime import datetime, timezone
@@ -104,6 +106,12 @@ def mcp_mail_message_from_row(
         "encrypted": encrypted,
         "decryptable": decryptable,
     }
+    if encrypted and decryptable and include_bodies:
+        msg.update(readable_attachments(getattr(hosted_plaintext, "attachments", None)))
+        if not getattr(hosted_plaintext, "attachments_available", True):
+            msg.update({"attachments": [], "attachments_available": False})
+    else:
+        msg.update({"attachments": [], "attachments_available": not encrypted})
     if include_bodies:
         msg["body"] = (
             getattr(hosted_plaintext, "body", "")

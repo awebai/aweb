@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,7 +22,7 @@ func TestActivityHookInstallCodex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	run := func(t *testing.T, codexHome string, env []string, args ...string) (string, int) {
 		t.Helper()
@@ -164,14 +165,16 @@ func TestActivityHookInstallCodex(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		writeStandaloneSelectedIdentityForTest(t, principal)
+		before := snapshotJoinFiles(t, principal)
 		if out, code := run(t, dir, []string{"AWEB_IDENTITY_HOME=" + principal}, "activity", "hook", "install", "--codex"); code != 0 {
 			t.Fatalf("install with an external identity home: %s", out)
 		}
 		if _, err := os.Stat(filepath.Join(dir, "hooks.json")); err != nil {
 			t.Fatal(err)
 		}
-		if entries, _ := os.ReadDir(principal); len(entries) != 0 {
-			t.Fatalf("install wrote into the identity home: %v", entries)
+		if !reflect.DeepEqual(before, snapshotJoinFiles(t, principal)) {
+			t.Fatal("install changed the identity home")
 		}
 	})
 }

@@ -233,6 +233,11 @@ def _inner_payload_map(inner: dict[str, Any], *, include_content: bool) -> dict[
         if _non_empty(inner.get("kind")) == "mail":
             out["subject"] = str(inner.get("subject") or "")
         out["body"] = str(inner.get("body") or "")
+        if "attachments" in inner:
+            from aweb.attachments import descriptors
+            validated = descriptors(inner["attachments"])
+            if validated:
+                out["attachments"] = [item.model_dump() for item in validated]
     return out
 
 
@@ -465,6 +470,7 @@ def encrypt_e2ee_message(
     recipients: list[dict[str, Any]],
     body: str,
     subject: str = "",
+    attachments: list[dict] | None = None,
     message_id: str,
     conversation_id: str,
     reply_to_message_id: str = "",
@@ -540,6 +546,11 @@ def encrypt_e2ee_message(
         "subject": subject if kind == "mail" else "",
         "body": body,
     }
+    if attachments is not None:
+        from aweb.attachments import descriptors
+        validated = descriptors(attachments)
+        if validated:
+            inner["attachments"] = [item.model_dump() for item in validated]
     inner_header_hash = _inner_header_hash(inner)
     cek = os.urandom(32)
     content_nonce = os.urandom(12)

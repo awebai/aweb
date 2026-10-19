@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -44,11 +43,9 @@ var heartbeatCmd = &cobra.Command{
 }
 
 func repairHeartbeatRepoBinding(ctx context.Context, client *aweb.Client, workingDir string) (string, string, string, error) {
-	home, err := identityHomeForDir(workingDir)
-	if err != nil {
-		return "repair_failed", "", "", err
-	}
-	workspacePath := filepath.Join(home.Root, "workspace.yaml")
+	// Repository/presence metadata describes this checkout. The supplied client
+	// already carries the selected actor; never use its identity directory as a repo.
+	workspacePath := awconfig.WorktreeWorkspacePath(workingDir)
 	state, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath)
 	if err != nil {
 		return "repair_failed", "", "", err

@@ -79,11 +79,11 @@ story is the product; a plugin or second binary adds an install step and
 a version skew surface, and the delegate needs the same client, identity
 and E2EE plumbing the mail commands already link.
 
-Obligations that come with a new command
-(`cli/go/cmd/aw/identity_home_policy.go:24-83`, `root.go:20-26`):
+Obligations that come with a new command:
 
-- Every `aw beads-mail <verb>` path is added to the identity-home
-  allowlist with the required production-binary regression test.
+- Every `aw beads-mail <verb>` uses the shared identity resolver, with a
+  production-binary regression against a distinct selected and checkout identity.
+  There is no command allowlist.
 - The command gets a `GroupID` (Messaging & Network, registered at
   `root.go:110`).
 - `docs/cli-command-reference.md` is regenerated

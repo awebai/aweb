@@ -104,6 +104,7 @@ type E2EEMessageEnvelope struct {
 }
 
 type E2EEInnerPayload struct {
+	Attachments      json.RawMessage   `json:"attachments,omitempty"`
 	InnerVersion     int               `json:"inner_version"`
 	Kind             string            `json:"kind"`
 	MessageID        string            `json:"message_id"`
@@ -136,6 +137,7 @@ type E2EESenderKey struct {
 }
 
 type E2EEEncryptMessageParams struct {
+	Attachments         []AttachmentDescriptor
 	Kind                string
 	Sender              E2EESenderKey
 	Recipients          []E2EERecipientKey
@@ -184,7 +186,7 @@ func (c *Client) DecryptE2EEEnvelopeWithContext(ctx context.Context, envelope *E
 			if out == nil {
 				return nil, fmt.Errorf("custody returned no plaintext")
 			}
-			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, CreatedAt: out.CreatedAt, From: out.From, Recipients: out.Recipients, Subject: out.Subject, Body: out.Body}, nil
+			return &E2EEInnerPayload{InnerVersion: E2EEMessageVersion, Kind: out.Kind, MessageID: out.MessageID, ConversationID: out.ConversationID, CreatedAt: out.CreatedAt, From: out.From, Recipients: out.Recipients, Subject: out.Subject, Body: out.Body, Attachments: out.Attachments}, nil
 		}
 		return nil, fmt.Errorf("encrypted message requires local encryption private key; restore .aw/encryption-keys or run `aw id encryption-key setup` for future messages")
 	}
@@ -306,6 +308,17 @@ func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, 
 		Subject:          params.Subject,
 		Body:             params.Body,
 	}
+	if len(params.Attachments) > 0 {
+		encoded, err := json.Marshal(params.Attachments)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := DecodeAttachmentContent(encoded); !ok {
+			return nil, fmt.Errorf("invalid attachment descriptors")
+		}
+		inner.Attachments = encoded
+	}
+
 	innerHeaderHash, err := e2eeInnerHeaderHash(inner)
 	if err != nil {
 		return nil, err
@@ -703,6 +716,12 @@ func e2eeInnerPayloadMap(inner E2EEInnerPayload, includeContent bool) map[string
 			out["subject"] = inner.Subject
 		}
 		out["body"] = inner.Body
+		if len(inner.Attachments) > 0 {
+			var content any
+			if json.Unmarshal(inner.Attachments, &content) == nil {
+				out["attachments"] = content
+			}
+		}
 	}
 	return out
 }

@@ -2,13 +2,35 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: aw 1.36.43
+
+CLI changes are since `aw-v1.36.42`. No server change; server stays 1.27.28.
+
+- CLI identity selection now consistently uses `--identity-home`, then
+  `AWEB_IDENTITY_HOME`, then the checkout identity. Attached principals can use
+  team invite and other command groups without a command allowlist; invalid
+  selected homes fail without using checkout credentials. Identity creation
+  preserves inherited principals, and plugin helpers retain the selected home.
+  Peer-key pins remain in the unchanged user trust store.
+
+### Release preparation: server 1.27.28, aw 1.36.42
+
+Server changes are since `server-v1.27.27`; CLI changes are since `aw-v1.36.41`.
+
+**Rollout order:** publish server 1.27.28 and aw 1.36.42 before the Cloud release that pins them for dashboard chat attachments.
+
+- Managed mail/chat attachments: encrypted-v2 inner descriptors, a transactional
+  embedding storage boundary and participant-authenticated fetch APIs; `aw mail
+  show`/MCP expose validated descriptors and `aw mail attachment fetch` (and
+  `aw chat attachment fetch`) saves verified bytes to an explicit new file.
+  Managed files remain server-readable; there is no E2EE attachment claim.
 - **Windows init:** `aw init --new-account` now accepts stored forward-slash
   paths before converting them to native filesystem paths. Identity, certificate
   and encryption path helpers keep forward slashes on every OS. Native Windows
   CI covers configuration and local/global init against local HTTP fixtures.
   Thanks to @okfineokfine for the two-layer diagnosis and proposed fix in #61.
-
-## Release preparations
 
 ### Release preparation: server 1.27.27, aw 1.36.41
 

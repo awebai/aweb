@@ -39,8 +39,9 @@ var (
 	idCreateRegistryURL   string
 	idCreateSkipDNSVerify bool
 	idCreateCmd           = &cobra.Command{
-		Use:   "create",
-		Short: "Create a global identity by claiming a namespace address",
+		Annotations: map[string]string{identityCreationTargetAnnotation: "true"},
+		Use:         "create",
+		Short:       "Create a global identity by claiming a namespace address",
 		Long: "Create a self-custodial global identity in .aw/ by claiming DOMAIN/NAME\n" +
 			"in a namespace you control. This mints a did:aw, stores the local signing\n" +
 			"key material, and atomically claims the global address in AWID.",
@@ -109,6 +110,9 @@ func runIDCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if identityHome.Source == awconfig.IdentityHomeEnvVar {
+		return usageError("identity creation requires an explicit fresh --identity-home target; refusing to change inherited identity home %s", identityHome.Root)
+	}
 	out, err := executeIDCreate(workingDir, idCreateOptions{
 		IdentityHome:  &identityHome,
 		Name:          idCreateName,

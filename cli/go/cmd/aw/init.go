@@ -17,8 +17,9 @@ import (
 )
 
 var initCmd = &cobra.Command{
-	Use:   "init",
-	Short: "Initialize this directory as an aw workspace",
+	Annotations: map[string]string{identityCreationTargetAnnotation: "true"},
+	Use:         "init",
+	Short:       "Initialize this directory as an aw workspace",
 	Long: `Initialize the current directory using one of the supported
 team-architecture flows:
 
@@ -149,6 +150,9 @@ func validateInitOutcomeFlags() error {
 	}
 	if strings.TrimSpace(initJoinTeam) != "" && strings.TrimSpace(initJoinFrom) == "" {
 		return usageError("--join-team requires --join-from")
+	}
+	if activeIdentityHome.Source == awconfig.IdentityHomeEnvVar && initWorkspaceTeam {
+		return usageError("workspace-team creation requires an explicit --identity-home target; refusing to extend inherited identity home %s", activeIdentityHome.Root)
 	}
 	if strings.TrimSpace(activeIdentityHome.Root) != "" && activeIdentityHome.External() && !initWorkspaceTeam {
 		return usageError("aw init with --identity-home is only supported for --workspace-team; refusing to use an external identity home for account, team, or add-agent init")

@@ -607,6 +607,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `identity_grant_liveness`
 - `agent_status_hosts`
 - `agent_status`
+- `message_attachments`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
@@ -623,6 +624,7 @@ operation. `/mcp` is an ASGI mount and therefore is intentionally not a REST
 router entry.
 
 <!-- BEGIN SOURCE INVENTORY: aweb-routers -->
+- `attachment`
 - `agents`
 - `agent_status`
 - `agent_activity`

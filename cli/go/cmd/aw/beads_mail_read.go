@@ -52,6 +52,9 @@ func splitBeadsMailEnvelope(body string) (string, *beadsMailEnvelope) {
 // derive the worktree root from it; standalone identities (no workspace
 // binding) fall back to the working directory.
 func beadsMailStatePath(sel *awconfig.Selection) string {
+	if sel != nil && sel.ExternalIdentityHome && strings.TrimSpace(sel.IdentityHome) != "" {
+		return filepath.Join(sel.IdentityHome, "beads-mail", "state.json")
+	}
 	root := ""
 	if sel != nil && strings.TrimSpace(sel.WorkspacePath) != "" {
 		root = awconfig.WorktreeRootFromWorkspacePath(strings.TrimSpace(sel.WorkspacePath))

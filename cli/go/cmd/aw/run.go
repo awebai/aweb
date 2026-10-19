@@ -476,6 +476,13 @@ func resolveRunClientForDir(cmd *cobra.Command, workingDir string, interactive b
 		return nil, nil, nil, err
 	}
 	if state == runWorkspaceStateMissing {
+		home, err := identityHomeForDir(workingDir)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if home.External() {
+			return nil, nil, nil, usageError("selected identity home %s is not connected to a workspace; connect that identity before running a provider; refusing implicit identity creation in the checkout", home.Root)
+		}
 		if !interactive {
 			return nil, nil, nil, usageError("current directory is not initialized for aw; run `aw init`, or join an existing team with `aw id team request` then the printed `aw id team fetch-cert` command")
 		}
