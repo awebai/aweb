@@ -13,7 +13,8 @@ custody, team-controller authorization and the receiving client's verification
 retain their current meaning (`docs/identity-messaging-contract.md:21`, `:286`;
 `cli/go/awid/received_identity.go:48`). An external account link authorizes Cloud
 intake under its consent policy; it does not give aweb or Telegram authority to
-sign for a self-custodial/BYOT human. Phase 1 is hosted-authority human messaging.
+sign for a self-custodial/BYOT human. Phase 1 is hosted-authority human messaging
+through Telegram and MS Teams; Slack follows them.
 
 Cloud owns account links, authenticated platform intake, agent presences,
 conversation bindings, endpoints, defaults, consent, revocation and delivery
@@ -34,8 +35,9 @@ server-readable; generic encrypted-v2 support below does not make a channel E2EE
 ## Optional signed `via`
 
 `via` is an optional JSON string naming **only a platform kind**. Phase-1 producers
-emit `telegram` or `slack`. Future kinds such as `whatsapp` and `discord` use the
-same shape after their adapters are approved. Grammar: ASCII
+emit `telegram` or `msteams`, displayed as “Telegram” and “MS Teams” respectively.
+Slack follows phase 1 with the token `slack`; later kinds such as `whatsapp` and
+`discord` use the same shape after their adapters are approved. Grammar: ASCII
 `[a-z][a-z0-9_]{0,31}`; no whitespace, account suffix, locator or nested object.
 Absence is encoded by omission, never `null` or `""`. It means dashboard/native
 presentation, not proof of dashboard authentication or absence of a channel.
@@ -66,6 +68,9 @@ chat signing object (DIDs/UUIDs are placeholders, not a positive crypto vector):
 ```json
 {"body":"hello","conversation_id":"SESSION","from":"did:aw:HUMAN","from_did":"did:key:HUMAN","message_id":"MESSAGE","subject":"","timestamp":"2026-10-19T00:00:00Z","to":"alice","to_did":"did:key:ALICE","type":"chat","via":"telegram"}
 ```
+
+The MS Teams case uses `"via":"msteams"` in that same position and is signed
+over its own resulting bytes; the human display label is never the wire value.
 
 Mail uses its ordinary `type`, subject and priority rules. All existing identity,
 recipient, timestamp and conversation bindings remain; adding `via` is not a
@@ -100,7 +105,8 @@ there is no new requirement to retrofit them or synthesize signed metadata.
 
 New CLI JSON exposes `via` only from verified signed plaintext or successfully
 verified/decrypted v2 content; omit it if absent. Text output may say “Juan via
-Telegram”. Keep `verification_status`, `trust_status` and `verified` unchanged.
+Telegram” or “Juan via MS Teams”. Keep `verification_status`, `trust_status` and
+`verified` unchanged.
 Provenance is an authenticated content attribute, not a new authentication mode.
 Channel-core, Claude channel, pi and wake carry that same optional field into
 model-visible metadata after their normal verification. Encrypted SSE events
@@ -133,13 +139,14 @@ not required to send `via`.
 
 Add vectors, retaining old vectors byte-for-byte:
 
-- Mail/chat × plaintext/v2 × absent/telegram/slack; exact canonical bytes,
+- Mail/chat × plaintext/v2 × absent/telegram/msteams; exact canonical bytes,
   positive signature/decrypt, identical old fixed-header hash for added content.
 - Tamper/remove/replace `via` without re-signing/re-encrypting: fail. Unsigned
   outer injection cannot create the projection; valid newly signed omission is
   ordinary absence, never higher authority.
 - Null/empty/wrong-type/invalid token refused by new producers/receivers;
-  unfamiliar valid kind preserved safely; no external identifiers in fixtures.
+  unfamiliar valid kind preserved safely (including the later `slack` kind in a
+  phase-1 reader); no external identifiers in fixtures.
 - Native and addressless custodial dashboard neighbors retain verified behavior;
   failed signature/recipient/key proofs cannot be promoted by a provenance label.
 - Cross-language Go/Python/TS and old/new published clients, custody RPC and every
