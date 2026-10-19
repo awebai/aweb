@@ -800,7 +800,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 
 			m.Subject = plain.Subject
 			m.Body = plain.Body
-			m.Attachments, m.AttachmentsAvailable = decodeAttachmentContent(plain.Attachments)
+			m.Attachments, m.AttachmentsAvailable = DecodeAttachmentContent(plain.Attachments)
 			binding.TeamID = plain.From.TeamID
 			applyE2EEPlaintextMailMetadata(m, plain)
 			m.VerificationStatus = Verified

@@ -321,6 +321,10 @@ func parseSSEEvent(sseEvent *awid.SSEEvent) Event {
 }
 
 func decryptChatEvent(client *awid.Client, ev *Event) error {
+	if ev != nil {
+		ev.Attachments = nil
+		ev.AttachmentsAvailable = true
+	}
 	if ev == nil || (ev.ContentMode != awid.ContentModeEncryptedV2 && ev.MessageVersion != awid.E2EEMessageVersion && ev.Encrypted == nil) {
 		return nil
 	}
@@ -339,6 +343,7 @@ func decryptChatEvent(client *awid.Client, ev *Event) error {
 		ev.ToDID, ev.ToStableID = plain.Recipients[0].DID, plain.Recipients[0].StableID
 	}
 	ev.Body = plain.Body
+	ev.Attachments, ev.AttachmentsAvailable = awid.DecodeAttachmentContent(plain.Attachments)
 	// Verified means the encrypted-envelope signature is valid, not that the
 	// signer owns the claimed address. The inbound caller must immediately pass
 	// this result through Client.NormalizeSenderTrust.
@@ -951,6 +956,8 @@ func buildMessages(messages []awid.ChatMessage) []Event {
 			FromAddress:             m.FromAddress,
 			ToAddress:               m.ToAddress,
 			Body:                    m.Body,
+			Attachments:             m.Attachments,
+			AttachmentsAvailable:    m.AttachmentsAvailable,
 			ContentMode:             m.ContentMode,
 			MessageVersion:          m.MessageVersion,
 			Encrypted:               m.Encrypted,

@@ -72,7 +72,7 @@ func attachmentCommands(kind string) *cobra.Command {
 			if sessionID == "" {
 				return usageError("--session-id is required for chat attachment reads")
 			}
-			messages, err := client.ChatHistory(ctx, awid.ChatHistoryParams{SessionID: sessionID, Limit: 500})
+			messages, err := client.ChatHistory(ctx, awid.ChatHistoryParams{SessionID: sessionID, MessageID: messageID, Limit: 1})
 			if err != nil {
 				return err
 			}

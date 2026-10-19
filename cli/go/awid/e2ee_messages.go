@@ -313,7 +313,7 @@ func EncryptE2EEMessage(params E2EEEncryptMessageParams) (*E2EEMessageEnvelope, 
 		if err != nil {
 			return nil, err
 		}
-		if _, ok := decodeAttachmentContent(encoded); !ok {
+		if _, ok := DecodeAttachmentContent(encoded); !ok {
 			return nil, fmt.Errorf("invalid attachment descriptors")
 		}
 		inner.Attachments = encoded

@@ -782,7 +782,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 			}
 
 			m.Body = plain.Body
-			m.Attachments, m.AttachmentsAvailable = decodeAttachmentContent(plain.Attachments)
+			m.Attachments, m.AttachmentsAvailable = DecodeAttachmentContent(plain.Attachments)
 			binding.TeamID = plain.From.TeamID
 			applyE2EEPlaintextChatMetadata(m, plain)
 			m.VerificationStatus = Verified

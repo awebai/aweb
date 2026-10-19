@@ -41,7 +41,7 @@ func TestAttachmentContentSurvivesTypedInnerReadWithoutChangingHeader(t *testing
 
 func TestAttachmentDescriptorsFailAsAWhole(t *testing.T) {
 	raw := json.RawMessage(`[{"id":"11111111-1111-4111-8111-111111111111","filename":"good.txt","media_type":"text/plain","size":1,"sha256":"d49bbd36ab4ddaf89bb051dc31b4ad2bc85c836a58e068e3819b0b297372f671","expires_at":"2026-11-18T00:00:00Z"},{"filename":"../bad"}]`)
-	if items, ok := decodeAttachmentContent(raw); ok || len(items) != 0 {
+	if items, ok := DecodeAttachmentContent(raw); ok || len(items) != 0 {
 		t.Fatal("partially validated attachment list was exposed")
 	}
 }

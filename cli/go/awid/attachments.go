@@ -64,7 +64,9 @@ func (d AttachmentDescriptor) Validate() error {
 	return nil
 }
 
-func decodeAttachmentContent(raw json.RawMessage) ([]AttachmentDescriptor, bool) {
+// DecodeAttachmentContent validates authenticated inner content as an entire list.
+// Invalid metadata is withheld while independently decrypted text remains usable.
+func DecodeAttachmentContent(raw json.RawMessage) ([]AttachmentDescriptor, bool) {
 	if len(raw) == 0 {
 		return nil, true
 	}
