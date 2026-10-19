@@ -317,3 +317,44 @@ def test_custody_plaintext_result_keeps_old_positional_constructor():
     result=HostedMessageDecryptionResult('subject','body',True,None)
     assert result.subject=='subject' and result.body=='body' and result.decryptable
     assert result.attachments==[] and result.attachments_available
+
+
+@pytest.mark.parametrize('bad',[{},'',False,0])
+def test_present_malformed_attachment_content_is_not_silently_dropped(bad):
+    from aweb.attachments import AttachmentError
+    with pytest.raises(AttachmentError):
+        _inner_payload_map({'kind':'mail','attachments':bad},include_content=True)
+
+
+@pytest.mark.asyncio
+async def test_invalid_envelope_message_id_is_a_safe_refusal(privacy_app):
+    env=privacy_app
+    backend,d,wire,cid=await managed_fixture(env)
+    wire['encrypted_envelope']['message_id']='invalid'
+    refused=await _request(env,'alice','POST','/v1/messages',wire)
+    assert refused.status_code==422,refused.text
+    assert refused.json()['detail']=={'code':'request_invalid'}
+    assert await env.db.fetch_value('SELECT count(*) FROM {{tables.messages}}')==0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('filename',['../x','bad\u202ename','bad\nname'])
+async def test_hostile_authenticated_filename_is_refused_at_send(privacy_app,monkeypatch,filename):
+    import aweb.e2ee_messages as crypto
+    from awid.signing import canonical_json_bytes
+    # Produce a correctly authenticated ciphertext from a nonconforming sender.
+    # The normal public encrypt helper refuses these names before transport.
+    original=crypto._inner_payload_canonical
+    def hostile_content(inner):
+        inner['attachments'][0]['filename']=filename
+        return canonical_json_bytes(inner)
+    with monkeypatch.context() as patch:
+        patch.setattr(crypto,'_inner_payload_canonical',hostile_content)
+        backend,d,wire,cid=await managed_fixture(privacy_app)
+    assert crypto._inner_payload_canonical is original
+    refused=await _request(privacy_app,'alice','POST','/v1/messages',wire)
+    assert refused.status_code==422,refused.text
+    assert refused.json()['detail']=={'code':'request_invalid'}
+    assert filename not in refused.text
+    assert await privacy_app.db.fetch_value('SELECT count(*) FROM {{tables.messages}}')==0
+    assert await privacy_app.db.fetch_value('SELECT sum(binds) FROM {{tables.attachment_test_storage}}')==0

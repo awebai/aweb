@@ -241,8 +241,6 @@ class InboxMessage(BaseModel):
     to_address: Optional[str] = None
     signature: Optional[str] = None
     signed_payload: Optional[str] = None
-    attachments: object = None
-    attachment_refs: object = None
     verification_status: Optional[str] = None
 
     @model_serializer(mode="wrap")

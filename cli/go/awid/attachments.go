@@ -9,12 +9,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 	"unicode"
 	"unicode/utf8"
-
-	"regexp"
 )
 
 const MaxAttachmentBytes = 5 * 1024 * 1024

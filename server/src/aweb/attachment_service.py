@@ -253,8 +253,12 @@ async def attachment_retry(db, payload, kind):
     if not message_id:
         return None
     table = "messages" if kind == "mail" else "chat_messages"
+    try:
+        message_uuid = UUID(message_id)
+    except (ValueError, TypeError, AttributeError):
+        raise AttachmentError("request_invalid").http() from None
     exists = await db.get_manager("aweb").fetch_one(
-        f"SELECT message_id FROM {{{{tables.{table}}}}} WHERE message_id=$1", UUID(message_id))
+        f"SELECT message_id FROM {{{{tables.{table}}}}} WHERE message_id=$1", message_uuid)
     if not exists:
         return None
     # This verifies stored sender, content, ordered refs and commitment. It

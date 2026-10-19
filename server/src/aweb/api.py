@@ -445,9 +445,10 @@ def create_app(
     async def _request_validation_error_handler(
         request: Request, exc: RequestValidationError
     ):
-        if isinstance(exc.body, dict) and ({"attachments", "attachment_refs"} & exc.body.keys()):
-            return JSONResponse(status_code=422, content={"detail": {"code": "request_invalid"}})
         matched_route_path = getattr(request.scope.get("route"), "path", "")
+        if (matched_route_path in {"/v1/messages", "/v1/chat/sessions", "/v1/chat/sessions/{session_id}/messages"}
+                and isinstance(exc.body, dict) and ({"attachments", "attachment_refs"} & exc.body.keys())):
+            return JSONResponse(status_code=422, content={"detail": {"code": "request_invalid"}})
         if isinstance(matched_route_path, str) and matched_route_path.startswith(
             "/v1/federation/"
         ):
