@@ -466,7 +466,10 @@ confidentiality consequences visible before new-epoch content, including through
 platform projections; no external account IDs are disclosed. Server-only
 membership authority is permitted solely in an explicitly server-readable,
 labelled session mode; it cannot silently replace identity-signed membership in
-an encrypted session claiming E2EE.
+an encrypted session claiming E2EE. Export-only pause/revoke may instead be
+identity-signed by the admitted bridge or independently authorized revoke-bridge
+authority under the narrow-only rule below; it cannot add members, change keys,
+transfer ownership or activate/widen an export.
 
 Adding a native identity, including cross-team same-server or federated targets,
 must pass that identity's current inbound policy and applicable explicit consent
@@ -483,6 +486,8 @@ admitted identity by a valid owner-signed chain operation before the old owner
 leaves or is removed. No implicit successor or server-appointed owner exists.
 If the owner leaves/is removed without that transfer, or its authority is revoked
 or unavailable, freeze membership changes and new sends/wraps/exports visibly.
+The narrow-only export pause/revoke safety operation below remains available;
+freezing cannot require a departed/revoked owner to stop publication.
 Retain authorized history reads; turn completion does not trigger succession.
 An already frozen session cannot be rescued by a signature from the revoked
 owner or an unrelated team/admin key. Without a prior valid transfer, participants
@@ -606,13 +611,15 @@ migration, replay or inference.
 
 **Public operation.** Propose `POST /v1/chat/sessions/{session_id}/export-checkpoints`
 with `{signed_checkpoint, signature}`: the first value is the exact canonical
-JSON string, signed by the current owner or an identity-key delegate whose
-session policy explicitly permits export management. Its fields are `version`
+JSON string. Activation/widening is signed by the current owner or an identity-
+key delegate explicitly authorized by that owner for export management; narrow-
+only safety operations have the separate authority below. Its fields are `version`
 (`aweb-chat-export-checkpoint-v1`), `session_id`, `transition_id` (UUID), `export_id`
 (opaque UUID), `bridge` (admitted bridge principal), `operation`
 (`activate|pause|revoke`), `expected_membership_epoch`, `expected_membership_hash`,
 `expected_export_generation`, `generation` (previous + 1), `policy_digest`, service
-`audience`, `signer` (identity DID), `signing_key_id` (current `did:key`),
+`audience`, `authorization` (`owner|bridge_attenuation|revoke_authority`),
+`signer` (identity DID), `signing_key_id` (current `did:key`),
 `issued_at` and `expires_at`. Hashes use `sha256:` plus 64 lowercase hex digits;
 `policy_digest` is `commitment:` plus 64 lowercase hex digits for a 32-byte
 keyed/blinded value. Epochs/generations/sequences are nonnegative JSON integers
@@ -625,6 +632,30 @@ its lifetime or create a later boundary. A new stream starts at expected
 generation 0; a revoked `export_id` is terminal. Fresh admission after revocation
 uses a new export ID and current authority, not reactivation of a tombstone.
 
+For `authorization=owner`, the expected-head/generation and digest fields above
+are mandatory and checked by compare-and-swap. For `bridge_attenuation`, the
+signer must be the currently authenticated admitted bridge named by that exact
+`export_id`. For `revoke_authority`, independently verify the signer's configured
+revocation authority for that bridge, never authority asserted by the possibly
+compromised bridge key. Both narrowing forms permit only `pause` or `revoke` of
+that bridge's own stream; they omit the expected-head/generation/digest fields
+and operate on its current committed state under the session lock. In particular,
+`expected_membership_epoch`, `expected_membership_hash`,
+`expected_export_generation`, `generation` and `policy_digest` are omitted in
+these two narrow-only requests. The service
+assigns the next generation/head in the receipt. Thus stopping publication does
+not require the absent owner's signature or a history read to discover its head.
+
+Narrowing preserves the bridge, policy commitment, audience, presence and all
+recipient/key bindings. It changes only active -> paused/revoked or paused ->
+revoked; revoked remains terminal. It cannot pause another bridge's stream,
+reactivate, resume, rebind, widen scope or create a new stream. Valid narrowing
+works even when the owner is unavailable or its management authority is revoked;
+independent narrower authentication and scope proof are still required. It
+cancels/fences that stream's unsent exports and leaves other streams unchanged.
+A later resume requires a fresh owner-authorized activation at the new head;
+an old activation retry only returns its historical receipt, never resumes it.
+
 `export_id` identifies one logical delivery stream, not an endpoint. The private
 producer associates its `policy_digest` with the exact approved audience,
 binding/presence generations and native input/output ownership. Use a keyed or
@@ -635,10 +666,12 @@ Cloud additionally checks that its private mapping matches that digest. An opaqu
 digest does not prove private endpoint ownership to the service or grant a wider
 audience, a decryption key or permission to bypass the human's consent.
 
-The operation appends to the same owner-authorized session policy chain and
-advances its membership/policy epoch. Encrypted sessions require the signed
-owner/delegate chain from creation, including the new checkpoint; senders verify
-it before wrapping. Server-only authority remains confined to labelled
+The operation appends to the same signed session policy chain and advances its
+membership/policy epoch. Encrypted senders verify the owner/delegate chain from
+creation, including a checkpoint's explicit authorization basis; a bridge/revoker
+signature is valid solely for the monotonic narrowing exception, never as a
+substitute owner signature for activation or widening. Senders check before
+wrapping. Server-only authority remains confined to labelled
 server-readable mode. Owner succession, recipient consent and bridge-readable
 notice rules still apply. No service receipt can introduce an undeclared bridge.
 
@@ -663,15 +696,20 @@ boundary on delayed delivery. Existing pair federation remains unchanged.
 
 A successful checkpoint returns a durable receipt containing `version`
 (`aweb-chat-export-receipt-v1`), `session_id`, `transition_id`, `export_id`,
-`bridge`, `generation`, `operation`, `policy_digest`, `intent_hash`, resulting
+`bridge`, `generation`, `operation`, `authorization`, `policy_digest`,
+`intent_hash`, resulting
 `membership_epoch`/`membership_hash`, `acceptance_seq` and `effective_after_seq`
 (both `s`). `intent_hash` commits to the exact canonical signed intent bytes.
 The receipt includes service `signer` and `signing_key_id`. The session service
 signs its canonical receipt, excluding only `signature`, with that identity/key
 authenticated through the session's creation/route binding; a requester-selected
 verifier URL/key is refused. This
-attests acceptance/order, not native authorship or export consent. The owner
-intent and identity-chain proof remain available with the receipt.
+attests acceptance/order, not native authorship or export consent. The signed
+operation intent and identity-chain proof remain available with the receipt within the
+viewer's authorized intervals. A narrow-only writer with no corresponding history
+access receives only an acknowledgement of its own transition ID/target/result,
+not session sequences, hashes or historical export state; write authority does
+not grant receipt/history-read authority.
 
 Return 201 for a new commit, 200 for an authorized exact retry of the same
 `transition_id`/bytes and original receipt. Reusing the transition ID with other
@@ -710,13 +748,29 @@ under the same bound identity, excluding only `signature`.
 `GET /v1/chat/sessions/{session_id}/messages/{message_id}/acceptance`, plus
 `GET /v1/chat/sessions/{session_id}/acceptances?cursor=...&limit=...` for bounded
 reconciliation (`limit` 1–200, default 100). The first page pins a committed upper
-acceptance sequence; opaque cursors bind session, viewer and that upper bound. Pages follow committed
-acceptance order through it, return a next cursor, and cannot skip a late commit
-because its source timestamp was old. Checkpoints/capture metadata contain no
-private locator; message/body/attachment access still requires the viewer's
-current authorized history interval and original encryption/key access. Removed
-or out-of-scope subjects cannot use receipts, cursors or known message IDs to
-recover denied content. Reads do not mark messages read or emit wakes. Existing
+acceptance sequence internally; encrypted/server-stored opaque cursors bind
+session, viewer, authorization
+revision and that upper bound without exposing excluded boundaries. Before
+pagination, filter every checkpoint/acceptance row and every metadata field by
+the viewer's current authorized admission/history intervals. This includes
+message IDs, envelope/intent hashes, sequences, checkpoint/export state and counts,
+not only body/attachments. Pre-join and removal-gap rows produce no entries,
+redacted stubs, excluded-range totals or cursor fields. Explicit older-history
+grants authorize only their named interval; rejoin alone exposes no gap.
+
+Apply the same checks to checkpoint-by-transition and acceptance-by-message reads,
+to POST replay/receipt recovery and to cached results: a known identifier or
+management role is no history grant. A denied direct lookup is indistinguishable
+from missing under ordinary non-disclosing resource errors. Recheck authorization
+on every page/read, reject a cursor whose authorization revision changed, and
+resume with a newly authorized view rather than reusing stale grants. Pages
+follow committed order through their internal bound and cannot skip a late
+commit because its source timestamp was old. Checkpoints/capture contain no
+private locator, and original encryption/key access still bounds content reads.
+Removed or out-of-scope subjects cannot use receipts/cursors to recover denied
+metadata or content. Membership-authority proof verification does not authorize
+fetching excluded message/export receipt history. Reads do not mark messages read
+or emit wakes. Existing
 history/native JSON stays compatible; negotiated consumers request these additive
 receipts explicitly. SSE is an at-least-once hint, not the capture authority.
 
@@ -739,7 +793,13 @@ Required vectors/probes pair sends on each side of the checkpoint, a transaction
 started before it but committed after, rollback, identical/conflicting retries,
 missing/forked signed policy, unauthorized management, owner/key revocation,
 crash after public commit before private activation, paused/unknown capture,
-late federated delivery, and cursor reconciliation after lost hints. Neighbouring
+late federated delivery, and cursor reconciliation after lost hints. Cover late
+join/remove/rejoin and expired grants on all three GET forms and replay recovery:
+no excluded message ID/hash/sequence/export metadata or count leaks, including
+through cached responses/cursors. Owner-unavailable bridge/revoker pause/revoke
+succeeds for its own stream while another-stream pause, activation, changed
+digest/audience/key or implicit resume refuses. Existing owner activation still
+works with consent and a fresh matching head. Neighbouring
 legacy/native sessions still send/read; no private hook or mock-only proof can
 satisfy the public integration acceptance.
 
