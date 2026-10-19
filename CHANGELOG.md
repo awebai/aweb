@@ -2,14 +2,18 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: aw 1.36.43
+
+CLI changes are since `aw-v1.36.42`. No server change; server stays 1.27.28.
+
 - CLI identity selection now consistently uses `--identity-home`, then
   `AWEB_IDENTITY_HOME`, then the checkout identity. Attached principals can use
   team invite and other command groups without a command allowlist; invalid
   selected homes fail without using checkout credentials. Identity creation
   preserves inherited principals, and plugin helpers retain the selected home.
   Peer-key pins remain in the unchanged user trust store.
-
-## Release preparations
 
 ### Release preparation: server 1.27.28, aw 1.36.42
 
