@@ -1,6 +1,6 @@
 # Hermes live evidence, 2026-10-18
 
-See [findings and scope](../hermes-aweb-live-findings.md). All messages below are synthetic traffic on the disposable local e2e stack. Times are UTC. No model key, Telegram token or mock transport was used. These are historical runs through `dfdd0822`; they do not establish coverage of blocked-turn controls/clarification or the exact empty-history/fresh-hint race. The adapter retained-hint change was subsequently reverted without a new live rerun. The fallback must not land as-is, and nothing on the branch merges in phase 1 pending Juan’s build decision.
+See [findings and scope](../hermes-aweb-live-findings.md). All messages below are synthetic traffic on the disposable local e2e stack. Times are UTC. No model key, Telegram token or mock transport was used. These are historical runs through `dfdd0822`; they do not establish coverage of blocked-turn controls/clarification or the exact empty-history/fresh-hint race. The adapter retained-hint change was subsequently reverted without a new live rerun. That investigation fallback was not approved to land as-is. Juan subsequently approved aweb-acft.3; [its separate build record](hermes-plugin-build-2026-10-18.md) documents the replacement design and new deterministic tests. The historical logs below are unchanged.
 
 ## Baseline startup and TDD
 

@@ -55,3 +55,7 @@ class LiveDeliveryTests(unittest.TestCase):
 
     def test_stop_unblocks_session(self):
         self.probe("stop")
+
+    @unittest.skipUnless(os.environ.get("HERMES_LIVE_UNAUTHORIZED_HOME"), "requires unauthorized sender fixture")
+    def test_unauthorized_mail_stays_unread(self):
+        self.probe("unauthorized")

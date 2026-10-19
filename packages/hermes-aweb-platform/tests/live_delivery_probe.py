@@ -20,6 +20,7 @@ SOURCE = Path(os.environ["HERMES_AGENT_SOURCE"]).resolve()
 RECEIVER = Path(os.environ["HERMES_LIVE_RECEIVER_HOME"]).resolve()
 SENDER = Path(os.environ["HERMES_LIVE_SENDER_HOME"]).resolve()
 POSTGRES = os.environ["HERMES_LIVE_POSTGRES_CONTAINER"]
+UNAUTHORIZED = os.environ.get("HERMES_LIVE_UNAUTHORIZED_HOME")
 PLUGIN = Path(os.environ.get("HERMES_LIVE_PLUGIN_SOURCE", Path(__file__).resolve().parents[1])).resolve()
 sys.path.insert(0, str(SOURCE))
 
@@ -125,7 +126,7 @@ async def send(text, session=None):
     return await aw(SENDER, "chat", "send-and-leave", "hermes", "--plaintext", "--start-conversation", "--body-file", str(path))
 
 
-async def mail(text, conversation=None):
+async def mail(text, conversation=None, sender=SENDER):
     path = HOME / "body"
     path.write_text(text)
     args = ["mail", "send", "--plaintext", "--body-file", str(path)]
@@ -133,7 +134,7 @@ async def mail(text, conversation=None):
         args += ["--conversation-id", conversation]
     else:
         args += ["--to", "hermes", "--new-conversation"]
-    return await aw(SENDER, *args)
+    return await aw(sender, *args)
 
 
 async def history(session):
@@ -151,14 +152,17 @@ async def main():
     cls = type(adapter)
     original_io = cls._run_aw_json
     original_event = cls._handle_aw_event
+    original_complete = cls.on_processing_complete
     empty = asyncio.Event()
     release = asyncio.Event()
     hint = asyncio.Event()
     connected = asyncio.Event()
     fault = asyncio.Event()
+    handled = asyncio.Event()
     target = None
     replies = []
     dropped = False
+    connections = 0
 
     def runtime_state():
         status = HOME / "gateway_state.json"
@@ -183,6 +187,9 @@ async def main():
         return result
 
     async def event(self, value):
+        nonlocal connections
+        if value.get("type") == "connected":
+            connections += 1
         if CASE == "health" and not connected.is_set():
             connected.set()
             await release.wait()  # hold the first actual parsed server frame
@@ -190,8 +197,14 @@ async def main():
             hint.set()
         return await original_event(self, value)
 
+    async def complete(self, value, outcome):
+        await original_complete(self, value, outcome)
+        if CASE == "unauthorized" and str(value.message_id) == target:
+            handled.set()
+
     cls._run_aw_json = io
     cls._handle_aw_event = event
+    cls.on_processing_complete = complete
     try:
         assert await runner.start(), "real gateway failed startup"
         adapter = runner.adapters[Platform("aweb")]
@@ -268,6 +281,7 @@ async def main():
             first = await send("/fixtureecho first")
             target = first["session_id"]
             await until(empty.is_set, "no empty real history snapshot to hold")
+            stream_pid, stream_connections = adapter._proc.pid, connections
             second = await send("/fixtureecho second", target)
             await until(hint.is_set, "fresh real server summary did not arrive while response held")
             release.set()
@@ -275,7 +289,18 @@ async def main():
                 rows = await history(target)
                 return rows if any(r["body"] == "fixture-echo:second" for r in rows) else None
             rows = await until(finished, "fresh hint lost at empty-history boundary", 3)
-            print(json.dumps({"case": CASE, "session": target, "input": second, "rows": rows}))
+            assert adapter._proc.pid == stream_pid and connections == stream_connections, "race test recovered through reconnect"
+            print(json.dumps({"case": CASE, "session": target, "input": second, "rows": rows,
+                              "stream_pid": stream_pid, "connected_frames": connections}))
+        elif CASE == "unauthorized":
+            first = await mail("/fixtureecho unauthorized", sender=Path(UNAUTHORIZED))
+            target = first["message_id"]
+            await until(handled.is_set, "unauthorized input never reached the real Hermes refusal boundary")
+            read = await sql(f"SELECT read_at IS NULL FROM aweb.messages WHERE message_id='{target}'")
+            replies_count = await sql(f"SELECT count(*) FROM aweb.messages WHERE conversation_id='{first['conversation_id']}' AND from_alias='hermes'")
+            assert read.strip() == "t", "unauthorized input was marked read"
+            assert replies_count.strip() == "0", "unauthorized input received a reply"
+            print(json.dumps({"case": CASE, "input": target, "unread": True, "reply_count": 0}))
         elif CASE == "mail_retry":
             first = await mail("/fixtureecho retry")
             target = first["message_id"]
@@ -310,6 +335,7 @@ async def main():
         await runner.stop()
         cls._run_aw_json = original_io
         cls._handle_aw_event = original_event
+        cls.on_processing_complete = original_complete
 
 
 try:
