@@ -4,6 +4,8 @@ Status: design proposal for Juan, task **aweb-acft.11**. No implementation appro
 Builds on `d1d2dcd4`; the full-scope direction supersedes its private-pair release
 boundary and the old model's exclusion of unlinked room speakers. Nothing in
 shared, dedicated, native presences or rooms is removed by this proposal.
+Juan's decision (2026-10-19): platform rooms are aweb group chat sessions.
+This revision replaces the earlier separate room protocol with group-chat work.
 
 Existing provenance/alias source anchors retain baseline `786b67f79977` unless
 marked otherwise. New full-scope gap anchors use `c6235708808b` (2026-10-19).
@@ -22,16 +24,17 @@ The bot account is her transport/presence, not a new agent created for her.
 A person with a linked Cloud account speaks through their existing human actor
 in the relevant team when Cloud has custody authority for it. In a room, its
 explicit identity context selects one author for the human, even if agents from
-several teams participate. Someone else in the room still gets a real participant record and replies: they are a **bridged
-guest**. Recommend identifying that guest by a stable opaque reference under the
+several teams participate. Someone else in the room still gets a real participant
+record and replies: they are a **bridged guest**. Recommend identifying that guest by a stable opaque reference under the
 bridge's identity, with the bridge signing its platform observation. The agent
 sees “Sam via Telegram — platform-attested, not a verified aweb author”. The
 bridge's valid signature authenticates that assertion; it is not Sam's signature.
 No external account ID is shown to agents. Joining a room never joins the team.
 
-A room has one aweb room ID, membership authority and history, plus explicit
-external bindings. Telegram groups/topics, Teams chats/channels and Slack
-channels/threads are audience endpoints for that room. Each event resolves its
+A platform room is an aweb group chat session, using its existing session ID,
+participants and messages. We finish group chat with explicit membership
+management, history rules and stable bindings. Telegram groups/topics, Teams
+chats/channels and Slack channels/threads are audience endpoints for that session. Each event resolves its
 speaker independently. A room owner authorizes the bridge to admit observed
 external speakers as guests; nobody must create a Cloud account simply to talk
 in that approved room. The owner also accepts the entire external audience,
@@ -43,8 +46,7 @@ All agents consume ordinary platform-independent aweb events through upgraded
 and aweb share durable input ownership and reply records to deduplicate input
 dispatch and committed replies. An uncertain crash outcome is reconciled before
 retry; exactly-once model/tool execution is not promised. Native output carries
-the agent's own aweb signature; merely
-seeing its bot post is not enough. This interoperation, rooms and unlinked
+the agent's own aweb signature; merely seeing its bot post is not enough. This interoperation, rooms and unlinked
 participants are required build work, not features assumed to exist already.
 
 Telegram and MS Teams must both support the complete agreed functionality.
@@ -58,11 +60,11 @@ promise crosses that boundary.
 | Concept | Proposed authority and boundary |
 | --- | --- |
 | Native principal | Existing local `did:key` or global `did:aw`/current key; ordinary identity and membership verification. Linked human actors remain this class. |
-| Bridged guest | `(bridge did:aw, opaque subject)`; bridge-signed observation, room/paired-conversation ACL and stored reply route. No personal signing-key proof and no ordinary team membership. |
+| Bridged guest | `(bridge did:aw, opaque subject)`; bridge-signed observation, chat-session ACL and stored reply route. No personal signing-key proof and no ordinary team membership. |
 | Presence | An explicitly authorized mapping from a principal to shared, dedicated or native platform transport. Bot credentials remain with that transport operator. |
-| Room | Opaque room ID plus a signed authority/route and membership/history epochs. Room grants authorize participation; team certificates retain their own separate meaning. |
+| Platform room | Existing aweb group chat session, with session membership/history management and explicit external bindings. Session membership is separate from team membership. |
 | External binding | Private platform/container/thread locator plus approved audience and presence generations. It is not public identity or a new global address. |
-| Event | Canonical author/content/room/epoch/message ID, verified once and fanned out under the authoritative room policy; durable receipt and export identity. |
+| Chat message | Existing session/message IDs, preserved author/content proof and group membership context; fanout, durable receipt and export identity. No separate room event type. |
 
 Current authority remains binding: servers do not acquire member keys, namespace
 address authority or global delivery authority from a credential/domain string
@@ -104,10 +106,10 @@ refused at intake, never attributed to a guessed human or admitted as a guest
 bypass. Telegram describes those non-person sender cases in the
 [Message contract](https://core.telegram.org/bots/api#message).
 
-The room authority authorizes specific bridge DIDs/platforms and a bounded
+The session membership authority authorizes specific bridge DIDs/platforms and a bounded
 admission policy. After authenticated platform intake, a permitted new external
-speaker can acquire a guest reference and room grant, without a Cloud account or
-team certificate. Missing room delegation, invalid sender evidence or uncertain
+speaker can acquire a guest reference and session membership grant, without a Cloud account or
+team certificate. Missing session delegation, invalid sender evidence or uncertain
 room state quarantines the event with a visible reason; observation alone grants
 no team/admin access. Reuse exact mappings; never key identity by display name.
 Bridge private state loss must not silently assign old subjects to new accounts.
@@ -116,7 +118,7 @@ identity; retain the opt-out tombstone so the next observed post does not
 automatically recreate authorization. Subject read/send operations are signed
 by the bridge for that exact authorized subject/context, not exposed as a
 general impersonation API. Bot-token revocation does not revoke the bridge
-signing key. On bridge compromise, room authorities revoke its admission/send
+signing key. On bridge compromise, session membership authorities revoke its admission/send
 delegations and the bridge identity follows its authorized key-recovery path;
 team controllers alone revoke any separately issued team certificates.
 
@@ -137,11 +139,11 @@ Cloud's room ingress must state and test these checks explicitly.
 For a multi-team room, choose one explicit native actor or guest binding per
 human in that room, not one author per destination agent. The same canonical
 statement has the same author for every recipient. Existing per-(team,user)
-selection remains correct for private pairs; room grants permit cross-team
+selection remains correct for private pairs; session membership grants permit cross-team
 participation without silently enrolling people in those teams. Native author
 proof still requires actual identity authority: retain a verified registry/current-
 key or local-context binding learned at admission, not a sender-chosen registry.
-Room-controller signatures cannot replace that independent identity proof.
+Session-authority signatures cannot replace that independent identity proof.
 
 Linking a guest later creates an explicit future association under both account
 and native-identity authority. It does not rewrite old signatures, combine two
@@ -152,49 +154,56 @@ without deleting the guest's already delivered room statements.
 
 ### Required verification surface
 
-Use a new negotiated `rooms-v1` / bridged-participant event surface; do not stuff
-a guest into old native mail/chat with an adjusted display name. Proposed author
-references are a tagged union: `native` with its DID, or `bridged` with the bridge
-DID and opaque subject. The event requires an author reference; no omitted author
-is inferred from a display name. Native posts require that author's preserved
-signature. Bridged posts require the authorized bridge's signature over the
-exact subject, room/direct context, recipient scope, content, `via`, membership
-epoch and message ID. A random valid bridge key is not room authority.
+Extend existing chat sessions with negotiated typed-participant support
+(`bridged-participants-v1`, proposed capability), not a new room transport.
+A participant reference is a tagged union: `native` with its DID, or `bridged`
+with bridge DID and opaque subject. Native chat author verification stays intact.
+Guest chat messages require a protected author reference plus the authorized
+bridge's signature over the exact subject, session, recipient scope, content,
+`via`, membership epoch and message ID. A random valid bridge key is not session
+membership authority. An omitted author never comes from a display name.
 
 | Received proof | Model-visible result |
 | --- | --- |
-| Native author signature plus current identity, recipient and room checks | Existing native `verified` semantics, with optional `via`; no downgrade for linked dashboard humans. |
-| Authorized bridge signature plus matching guest/room binding | `author_assurance=platform_attested`, `trust_status=external_untrusted`, external-author `verified=false`; separate `signer_verified=true` identifies the bridge's actual proof. |
-| Missing/changed guest subject, wrong bridge, unsigned wrapper, revoked grant or wrong room/epoch | Refuse delivery with the real reason; do not promote into native assurance. |
+| Native author signature plus current identity, recipient and session checks | Existing native `verified` semantics, with optional `via`; no downgrade for linked dashboard humans. |
+| Authorized bridge signature plus matching guest/session membership | `author_assurance=platform_attested`, `trust_status=external_untrusted`, external-author `verified=false`; separate `signer_verified=true` identifies the bridge's actual proof. |
+| Missing/changed guest subject, wrong bridge, unsigned wrapper, revoked membership or wrong session/epoch | Refuse delivery with the real reason; do not promote into native assurance. |
 | Required authority/capability unavailable | Pause/refuse visibly; no native-shape or plaintext fallback. |
 
-A bridge can sign a native message **as itself**, but that is the bridge speaking,
-not a fresh verified statement by the guest. Omitting guest attribution cannot
-promote Sam into a native person. A native-author reference naming Alice signed
-only by the bridge fails. Display names/registration do not replace a content
-signature. These properties remove A's need for a permanent per-guest native-DID
-custody classification; B is still a new protocol, not an unsigned sidecar.
+A bridge can send a native message as itself; that does not authenticate a guest.
+A guest-author reference cannot be omitted to promote that guest, and a native
+Alice reference signed only by the bridge fails. Display names/presence bindings
+do not replace content signatures. B requires a protected typed-chat extension,
+not unsigned sidecar attribution or bridge custody of a fake native guest key.
 
-Servers publish bridged events only through the new endpoints/event kind to
-capable consumers, not legacy native inbox/history projections. Upgraded `aw`
-front ends resolve a guest reply/contact through its typed stored route and use
-that surface; callers need not know Telegram/Teams. A guest paired DM is the same
-narrow participant protocol with two members, not a global bare-DID first-contact
-exception. Unsolicited contact to arbitrary external accounts is not implied.
-An old client cannot join/read the new surface as native mail; all its existing
-native messages remain accepted. CLI/channel/pi/wake/Hermes need generic room and
-typed-author support, including local readback after restart. This is full-scope
-compatibility work, not permission to weaken the existing verified path.
-Channel-core, Claude channel, pi, wake and Hermes must expose the distinct guest
-`trust_status` and author assurance in model-visible metadata and readback;
-verifying the bridge signer must never yield the native verified-team-member
-status. Display text alone or a field buried in raw transport data is insufficient.
+New group capabilities attach to existing chat/session APIs and message storage.
+Only explicit creation/upgrade enables typed participants; existing native
+sessions, native accepted messages and reads retain their contract. An in-place
+upgrade must establish compatibility of every affected CLI/library/channel/pi/
+wake/Hermes consumer; otherwise create a new chat session and keep the old one
+readable. Owner consent alone does not establish released-client compatibility. Capability
+negotiation and read/wake projection must prevent an incapable client receiving
+a guest post as an ordinary verified native message. Enabling guests cannot
+silently reinterpret a legacy session or its signed bytes; clients lacking the
+required capability get a visible unsupported-session result for newly enabled
+functionality. Publish compatible CLI/channel/pi/wake/Hermes artifacts before
+enabling it, and test old/native neighboring sessions unchanged. These are
+chat compatibility requirements, not a separate room protocol.
+
+Typed guest replies use stored session/participant routes. A guest private
+exchange is a two-participant chat session with the same narrow membership,
+not group mail or arbitrary bare-DID first contact. Mail remains two-party with
+its existing native-recipient contract. Unsolicited contact with arbitrary
+external accounts is not implied. Channel-core, Claude channel, pi, wake and
+Hermes expose guest `trust_status` and assurance in model-visible metadata and
+readback; a verified bridge signer never becomes a verified team-member author.
+Raw transport fields or display text alone are insufficient.
 
 ## Optional signed `via`
 
-This retained wire placement covers native mail/chat. Bridged room events carry
-the same platform-kind attribute under their mandatory typed-author proof; they
-are not converted into legacy native mail/chat.
+This retained wire placement covers native mail/chat, including native group
+chat messages. Guest chat messages carry the same platform-kind attribute under
+the negotiated typed-author proof; never project them as legacy native authors.
 
 `via` is an optional JSON string naming **only a platform kind**. Defined producer tokens
 are `telegram`, `msteams` (display “MS Teams”), `slack`, `whatsapp` and `discord`.
@@ -378,89 +387,147 @@ replies. No cross-team actor or global route is inferred. Tests assert delivery
 and refusal behavior, not wording; no fake `aw` or mocked server in E2E.
 
 
-## Rooms, history and routing: a public contract is required
+## Platform rooms are aweb group chat sessions
 
-Current local chat has multiple participant rows and checks the sending
-participant (`server/src/aweb/messaging/chat.py:271`, `:413`, full-scope baseline).
-It is not an external-room membership/history contract. Federation still permits
-exactly one remote recipient (`server/src/aweb/routes/chat.py:1442`, `:2694`,
-full-scope baseline); `left_at` is explicitly not an unread authorization filter
-(`server/src/aweb/messaging/chat.py:506`). A conversation ID alone is not authority.
+Juan's decision is to finish existing group chat. Reuse `chat_sessions`,
+`chat_participants`, `session_id`, chat message IDs and chat read/history/events;
+Cloud binds an external platform/container/thread to that session. There is no
+additional room ID, room message log or parallel event/federation protocol.
+Mail stays pairwise; multiple mail recipients/threads are not the room solution.
 
-Recommend one authoritative room service, rather than independent copies of a
-platform roster in every agent/server. A signed room invitation/manifest supplies
-room ID, authority DID/current key, delivery origin, participating principals and
-bridges, membership epoch, history policy and audience-policy digest. Its route
-is learned from authenticated creation/invitation, not a sender-provided URL.
-The authority can delegate bounded platform admission to a bridge without giving
-it namespace/team-controller power. Native local identities can join through
-explicit room grants without becoming global or registering a public address.
+### Existing support and specific gaps
 
-The platform/container/thread mapping stays private. A Telegram topic, Teams
-chat/channel thread or Slack thread binds to an explicit room/thread. Multiple
-external bindings form one declared union audience only after owner approval;
-matching titles, users or a bot appearing in both places never creates a bridge.
-Replies use room/thread authority, never a guessed DM. Mail and chat IDs remain
-distinct from new room event IDs; legacy private pair conversations do not become
-rooms just because they have multiple destinations.
+These anchors use `c6235708808b`; coordinator source locations at another main
+revision may differ.
 
-Proposed signed room event, shown structurally rather than as frozen vector bytes:
+- Local chat already accepts multiple participants (`server/src/aweb/messaging/chat.py:271`,
+  `:351`; `server/src/aweb/routes/chat.py:1152`). Same-server cross-team alias
+  resolution exists (`server/src/aweb/routes/chat.py:944`), and sends target the
+  non-left participant set (`server/src/aweb/routes/chat.py:1096`). Reuse these.
+- Membership removal storage exists in migration 006
+  (`server/src/aweb/migrations/aweb/006_chat_participants_left_at.sql:6`), but
+  public add/remove management is missing. `sender_leaving` ends a wait/turn,
+  not membership (`docs/e2e-messaging-contract.md:715`). Pending/read authorization
+  is not a membership fence (`server/src/aweb/messaging/chat.py:506`).
+- History currently checks participation without admission-time visibility
+  (`server/src/aweb/messaging/chat.py:631`; `server/src/aweb/routes/chat.py:1882`).
+  Group E2EE already uses one ciphertext and per-recipient key wraps; historical
+  re-share is explicitly separate and unimplemented
+  (`docs/e2e-messaging-contract.md:701`).
+- The CLI passes a singleton target (`cli/go/cmd/aw/chat.go:57`), although the
+  library accepts a target list (`cli/go/chat/chat.go:1232`). Group creation and
+  explicit membership operations need CLI/library/runtime support.
+- A session UUID already exists and can be supplied to creation/continuation
+  (`server/src/aweb/messaging/chat.py:306`). Pair lookup can reuse a session
+  (`:322`): a binding must retain an explicit session handle, never rediscover a
+  platform room from its current participant list or a private pair lookup.
+- Federation currently refuses multiple/mixed remote targets
+  (`server/src/aweb/routes/chat.py:1442`, `:2694`;
+  `docs/e2e-messaging-contract.md:722`). Complete group federation in chat;
+  do not weaken the pairwise checks or pretend same-server support proves it.
+
+### Membership, stable handle and history
+
+The session ID is the stable handle across membership changes, native/shared/
+dedicated transports and delivery restarts. Cloud stores it with its exact
+private external locator and conversation kind `chat`. Adding a bot or matching
+titles/participants never merges sessions or imports a private pair's history.
+Multiple external bindings form a union audience only after explicit approval.
+`aw chat` gains additive group-create/recipient-list, membership add/remove/list,
+and existing-session send/history selectors; old single-recipient forms keep
+their accepted behavior. Group replies target the session, not an arbitrary peer.
+
+Session creation records a membership-management authority/owner and initial
+policy through authenticated participant consent. It can delegate bounded guest
+admission to a bridge; it cannot issue team certificates or forge native authors.
+Native participants use current identity proof; bridged participants use their
+typed subject and bridge authorization. Guest admission creates chat membership,
+not an agent row, global human address or team/task/console permission. Current
+DID-only participant stores/resolvers need explicit typed-reference support.
+
+Add authenticated participant add/remove/leave operations and membership listing
+on chat sessions. Owner/delegated admission is checked separately from sender
+membership; only that subject may voluntarily leave itself. Serialize changes
+with a monotonically increasing membership epoch and durable admission/removal
+boundaries. Send/recipient-wrap validation, continuation lookup, pending/unread,
+history-by-message-ID, SSE/wake, attachment reads and external export all check
+those boundaries; do not rely on `sender_leaving` or one filtered list endpoint.
+Concurrent send/removal commits against one epoch; stale epochs retry/refuse
+before fanout. Removed participants receive no future messages or pending
+exports. Rejoin creates a new admission interval and does not expose the gap.
+
+For newly managed groups, history defaults to join-forward. An explicit older-
+history grant names its authorized range and subject; ordinary join does not
+rewrap old ciphertext. Removal cannot erase plaintext or keys already received.
+Re-share requires a currently authorized holder of the old content/key, an
+explicit audience grant and separately signed re-share record; a server without
+keys cannot rewrap, rewrite the old sender's signed envelope or pretend the new
+member was an original recipient. Future encrypted messages use fresh per-message
+keys and current-recipient wraps, preserving the sender self-copy. Existing
+native groups retain their accepted history contract until explicitly adopting
+the new membership/history mode; no retroactive narrowing of released clients.
+
+External audience includes silent and unlinked observers; owner approval covers
+the whole audience and affected org export policies. Do not claim an incomplete
+platform roster proves everyone linked. External platforms may retain or expose
+copies independently of aweb admission/history controls. Loss of observation or
+uncertain membership freezes unsafe exports visibly. Linked group intake still
+applies the activation/link/org/access/custody and anonymous-sender checks above.
+
+### Protected group context and group federation
+
+Native chat keeps existing signed plaintext and encrypted-v2 contracts. The
+negotiated group/typed-participant extension protects, structurally:
 
 ```json
-{"version":"aweb-room-event-v1","room_id":"ROOM","epoch":4,"manifest_hash":"sha256:...","message_id":"UUID","author":{"kind":"bridged","bridge":"did:aw:BRIDGE","subject":"p7m2"},"via":"telegram","body":"hello","reply_to":"EVENT"}
+{"session_id":"EXISTING-CHAT-UUID","membership_epoch":4,"membership_hash":"sha256:...","author_ref":{"kind":"bridged","bridge":"did:aw:BRIDGE","subject":"p7m2"},"message_id":"UUID"}
 ```
 
-Canonical JSON/signature rules are the existing ones. `via` remains platform-kind
-only; guest references, room ID and epoch are distinct public participant/context
-fields, never raw platform identifiers smuggled into `via`. The signature/proof
-wrapper binds the actual signing DID/key. Native events use their author's key;
-guest events use the declared bridge key. The room authority countersigns/records
-accepted membership epoch and sequence; it does not forge author signatures.
+This is chat message context, not a new event kind. Content, `via`, reply linkage
+and full recipient scope remain signature-bound. Canonical JSON follows existing
+rules. Plaintext includes this context inside signed chat bytes. For encryption,
+the negotiated profile binds group context in the sender-signed outer envelope
+and mirrors it in protected inner headers, including the header hash; typed
+recipient-to-bridge-key bindings are protected, not unsigned routing hints.
+Existing v2 validators do not automatically accept such new header semantics:
+freeze an explicitly negotiated/versioned extension and old/new vectors before
+implementation, preserving current native-v2 bytes. Do not retrofit it as the
+content-only optional `via` change or silently permit an unknown version.
 
-Required semantics, common to same-server and federated rooms:
+Native recipients retain their identity-signed encryption-key assertions. Guest
+recipients use the authorized bridge's encryption key and explicit subject scope;
+that bridge can read and export their content. Multiple subjects sharing a bridge
+key do not share authorization. Guest-signed-as-bridge inputs retain guest author
+assurance; no E2EE-to-the-human or platform claim follows. No missing capability,
+key or authority triggers plaintext fallback.
 
-- Separate external-room observation, aweb room grants and team membership.
-  Validate each incoming speaker/event; a linked creator never speaks for later
-  users. Room guests can send/read only as their narrow grant permits; they do
-  not gain roster, task, console, identity or grant APIs.
-- Membership changes advance a serialized epoch. Send, read and export check
-  active grants under that epoch and the current revocation state. Removed
-  participants cannot receive later pending exports or fetch future history.
-  Rejoin gets a new grant; it does not automatically expose the absence interval.
-- Default native-service history starts at admission; explicit older-history
-  access is a separate room-owner grant. External platforms can retain or expose
-  copies under their own history/retention rules; aweb cannot erase them by
-  revoking a grant. Capture audience changes and freeze unsafe exports visibly.
-- External-room audience includes non-speaking/unlinked observers. Require an
-  explicit owner-approved audience policy and each affected org's export policy;
-  do not claim an incomplete API roster is a complete ACL. If an operator wants
-  an all-linked-only room, prove that policy's evidence or refuse it explicitly;
-  do not silently cut the general unlinked-guest room model.
-- One canonical event is stored once. A room-authorized receiving server fans it
-  to its eligible local participants once; per-peer and per-participant receipts
-  are distinct. Preserve the canonical event/manifest hash across retries;
-  changed bytes under the same event ID conflict. Do not emulate group fanout by
-  generating different pairwise envelopes with one native message UUID.
-- A new room-federation delivery carries the original event signature and
-  authority/epoch proof. Each peer validates room route, author/bridge authority,
-  its exact local participation, current removal policy and replay before effects.
-  This extends room delivery rather than relaxing today's pairwise federation.
-  Offline/unavailable authority fails closed with retry; it is not a stale
-  membership bypass. Replica migration/recovery needs an owner-authorized
-  transition/checkpoint; a new host cannot claim the room ID by assertion.
-- Outbox intent is per canonical room event, approved external binding and chosen
-  sender presence, not per guest. Multiple linked humans in a group must not
-  duplicate one post. Capture routing/audience/presence epochs at source commit;
-  later settings changes cannot export old unclassified room content. API
-  acceptance is distinct from aweb read state; ambiguous send outcome remains
-  visible and may require reconciliation.
+Extend existing chat federation with a negotiated group profile. A session's
+membership authority serializes changes and authenticates its route and epoch;
+its attestation never replaces the original native/bridge message signature.
+Creation/invitation binds the existing session ID to that authority and peer
+participation, not a sender-chosen delivery URL. Each authorized peer receives
+the same canonical chat message once and fans out only to its eligible local
+participants. Record per-peer/participant receipts and full recipient scope;
+changed bytes under one message ID conflict. Do not generate distinct pairwise
+signed messages under a reused UUID or hide other group participants from the
+signed recipient set. Preserve existing receiver-wide replay protection.
 
-Cloud-private arrival/epoch capture, consent UI and storage remain Cloud work;
-room grants, room event bytes, participant-authorized reads, history semantics,
-federated fanout and typed awakening projections are OSS work. Both kinds of
-work are required. Existing list/history/read APIs must prove complete eligible
-participant enumeration; a concrete gap becomes public interface work, never a
-hidden write or a promise that the pair dashboard already covers room history.
+Group creation/join, membership updates and message acceptance require current
+identity, session-authority and local recipient authorization. Failed/unknown
+remote membership changes remain pending; do not report a member removed while
+continuing delivery on an unconfirmed replica. Unavailable authority fails closed
+with retry. Recovery/migration needs an authorized checkpoint, not a new host
+asserting ownership of a session. Existing pair federation remains accepted and
+retains its own capability/refusal boundary. Group federation remains designed
+in full scope; Juan decides delivery order.
+
+External outbox intent is per chat message, approved binding and chosen sender
+presence, not per guest. Capture routing/audience/presence epochs at source
+commit so later settings cannot export old unclassified content. API acceptance,
+aweb read state and runtime completion are separate receipts; unknown effects
+follow the recovery section below. Cloud owns endpoint maps and arrival metadata;
+OSS owns these group-chat extensions and complete participant-authorized public
+reads. Dashboard/session UI support is Cloud work, not a second hidden protocol.
 
 Platform capability is a real constraint: Telegram bot-to-bot visibility is
 conditional on mode/admin/privacy settings
@@ -542,13 +609,13 @@ authorized ownership change can select a different transport.
 
 ### Native room interoperation and loops
 
-Registration alone is not enough. Required generic `native-room-receipts-v1`
-interoperation allocates one input-processing owner per `(agent,room)` and
+Registration alone is not enough. Required generic `native-chat-receipts-v1`
+interoperation allocates one input-processing owner per `(agent,session_id)` and
 canonical source/event identity. Native and aweb adapters exchange private
 transport correlation/acknowledgments with the gateway. If the native adapter
-owns the human input, aweb retains the room event for history/other participants
+owns the human input, aweb retains the chat message for history/other participants
 but does not wake that same agent again. Other agents still receive it normally.
-Native output submits that agent's own signed aweb event, then its native
+Native output submits that agent's own signed aweb chat message, then its native
 transport publishes/records the correlated external result; bridge export is
 suppressed for that owner. Merely importing observed text under the agent DID
 would forge authorship and is forbidden.
@@ -573,7 +640,7 @@ Never use `update_id` as cross-bot identity. See Telegram's
 [Update contract](https://core.telegram.org/bots/api#update). Other registrations'
 observations cannot trigger a second import or runtime execution; no text/time
 heuristic deduplication. Intake ownership remains bot-wide, not two consumers of
-one bot's queue split by room. Persist inbound event -> canonical room event
+one bot's queue split by room. Persist inbound event -> canonical chat message
 and outbound event/part -> transport result; discard owned-bot echoes and known
 native exports before subject creation. Stable IDs do not stop novel bot loops:
 retain per-room/pair rate budgets, interaction depth/timeouts and circuit breakers.
@@ -659,7 +726,7 @@ adapters/consent evidence must be completed accordingly.
 | Guest correlation scope | Recommend bridge/platform-scope stable subjects for continuity across rooms and paired DMs, with explicit correlation disclosure; Juan may choose per-room pairwise subjects | Stable refs reveal cross-room participation; pairwise derivation includes room context and needs explicit association for cross-room contact/history, never an automatic merge. |
 | Compromised bridge key | One tested, independently authorized “revoke bridge” operation orchestrates disabling ingress/dispatch, canceling pending work, revoking all bridge admission/send delegations and starting authorized key recovery | Bot-token rotation alone is insufficient. Report incomplete revocation scopes and keep them blocked; remote consumers apply authoritative revocation/freshness checks, with no claim of instantaneous global propagation. Test a freshly signed old-key guest event after revocation. |
 | Native scope | Support explicit room scope plus the platform-wide wildcard, native winning on overlap | Enables mixed native/dedicated rooms with explicit ownership; a global-only policy is simpler but suppresses every room on that platform. |
-| Identity linkage | Future association by account/key/room authority, no historical rewrite or silent contact transfer | Prior guest posts stay platform-attested; native identity requires its actual key authority. |
+| Identity linkage | Future association by account/key/session authority, no historical rewrite or silent contact transfer | Prior guest posts stay platform-attested; native identity requires its actual key authority. |
 | Delivery order | Complete common core plus full Teams/Telegram, sequence remaining adapters/chasing by explicit decision | No feature is silently cut. Platform impossibilities/permission denials are raised as decisions, not hidden behind “v1”. |
 
 Required behavior coverage for the full implementation:
@@ -667,8 +734,8 @@ Required behavior coverage for the full implementation:
 1. Native linked author remains verified; guest shows platform-attested and
    unverified author with verified bridge signer and distinct external/untrusted
    model-visible trust status in channel/pi/Hermes and readback. Forged
-   subject/bridge/epoch,
-   fresh omitted guest author, wrong signature and unavailable authority refuse.
+   subject/bridge/epoch, fresh omitted guest author, wrong signature and
+   unavailable authority refuse.
    Old native messages still work; incapable consumers cannot receive guest
    events as native messages. Local/global/self-custodial/grant cases distinguish
    identity proof from room and presence authority.
@@ -680,8 +747,14 @@ Required behavior coverage for the full implementation:
    anonymous-admin/`sender_chat` posts refuse without actor or guest fallback.
 3. Join/remove/rejoin, concurrent send/removal, audience/room-binding change,
    history boundaries and loss of observation all enforce current grants. Native
-   and multi-platform peers see one canonical room event; replay/conflict and
-   offline authority preserve signatures and recipient scope.
+   and multi-platform peers see one canonical chat message; replay/conflict and
+   offline authority preserve signatures and recipient scope. Exercise three-plus
+   participants through CLI/session APIs, cross-team same-server membership,
+   direct history/message/attachment reads before and after join/remove/rejoin,
+   and explicit encrypted re-share with no fabricated original-sender signature.
+   Group federation covers mixed local/remote participants, receipt replay and
+   stale membership epochs; existing pair mail/chat and native-group reads remain
+   valid. A stable session handle survives roster changes without pair lookup.
 4. Dedicated bot for hosted, self-custodial and local identities exports only
    messages authorized by that identity; wrong owner/token/alias binding refuses.
    Native registration is subject/owner authorized, replay-fenced and scoped;
