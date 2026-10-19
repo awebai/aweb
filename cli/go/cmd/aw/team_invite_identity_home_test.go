@@ -43,7 +43,7 @@ func TestTeamInviteActsFromExternalIdentityHome(t *testing.T) {
 		case "/api/v1/spawn/create-invite":
 			body, _ := io.ReadAll(r.Body)
 			cert := requireCertificateAuthForTest(t, r)
-			payload, _ := base64.RawURLEncoding.DecodeString(r.Header.Get("X-AWEB-Signed-Payload"))
+			payload := requestSigningPayloadForTest(t, r, body)
 			var envelope map[string]any
 			json.Unmarshal(payload, &envelope)
 			auth := strings.Fields(r.Header.Get("Authorization"))
@@ -52,7 +52,8 @@ func TestTeamInviteActsFromExternalIdentityHome(t *testing.T) {
 				sig, _ = base64.RawStdEncoding.DecodeString(auth[2])
 			}
 			hash := sha256.Sum256(body)
-			if len(auth) != 3 || auth[1] != did || cert.MemberDIDKey != did || cert.Team != team || !ed25519.Verify(pub, payload, sig) || envelope["method"] != r.Method || envelope["path"] != r.URL.RequestURI() || envelope["team_id"] != team || envelope["body_sha256"] != hex.EncodeToString(hash[:]) {
+			boundRequestMismatch := envelope["v"] != nil && (envelope["method"] != r.Method || envelope["path"] != r.URL.RequestURI())
+			if len(auth) != 3 || auth[1] != did || cert.MemberDIDKey != did || cert.Team != team || !ed25519.Verify(pub, payload, sig) || boundRequestMismatch || envelope["team_id"] != team || envelope["body_sha256"] != hex.EncodeToString(hash[:]) {
 				t.Error("invite did not use the selected principal's signed team request")
 				w.WriteHeader(http.StatusForbidden)
 				return
