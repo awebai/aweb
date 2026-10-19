@@ -28,7 +28,7 @@ func TestTeamInviteActsFromExternalIdentityHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	pub, key, _ := ed25519.GenerateKey(nil)
 	did := awid.ComputeDIDKey(pub)
@@ -118,7 +118,7 @@ func TestTeamInviteGrantKeepsServerRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	var calls atomic.Int32
 	var sessionPub ed25519.PublicKey
@@ -191,7 +191,7 @@ func TestSelectedIdentityControllerInviteAndAcceptRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	for _, mode := range []string{"environment", "flag", "cwd"} {
 		t.Run(mode, func(t *testing.T) {

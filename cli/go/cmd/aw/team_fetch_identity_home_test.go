@@ -25,7 +25,7 @@ func TestFetchCertificateUsesSelectedKeyAndStoresOnlyAtSelectedRoot(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	for _, source := range []string{"flag", "environment"} {
 		t.Run(source, func(t *testing.T) {

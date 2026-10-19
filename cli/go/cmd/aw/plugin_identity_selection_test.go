@@ -29,7 +29,7 @@ func TestExternalPluginHelperKeepsSelectedPrincipal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	pub, key, _ := awid.GenerateKeypair()
 	_, decoy, _ := awid.GenerateKeypair()

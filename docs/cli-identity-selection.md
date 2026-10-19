@@ -7,8 +7,9 @@ Every command selects its acting principal by the same precedence:
 3. otherwise the current directory's `.aw`, using the existing worktree behavior.
 
 The selected folder supplies the principal's own authority. A selected folder
-that is missing, unreadable, owned by another user, corrupt or incomplete returns
-an error naming that folder. Credentials, keys and memberships never fall back
+that is missing, unreadable, corrupt or incomplete returns an error naming that
+folder. Unix also checks the owner UID and read/search mode; Windows relies on
+profile ACLs and the directory readability check. Credentials, keys and memberships never fall back
 to another identity in the checkout. Selecting a principal does not grant server
 permissions, expand a session grant or provide namespace/controller authority.
 

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -28,7 +29,7 @@ func TestIdentitySelectionAcrossCommandGroups(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	keys := map[string]ed25519.PublicKey{}
 	dids := map[string]string{}
@@ -126,7 +127,7 @@ func TestSelectedIdentityNeverFallsBackAndInitPreservesInheritedIdentity(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	_, key, _ := ed25519.GenerateKey(nil)
 	cwd := filepath.Join(root, "cwd")
@@ -212,4 +213,11 @@ func writeStandaloneSelectedIdentityForTest(t *testing.T, root string) {
 	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, "identity.yaml"), &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func awBinaryNameForTest() string {
+	if runtime.GOOS == "windows" {
+		return "aw.exe"
+	}
+	return "aw"
 }
