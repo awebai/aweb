@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from aweb.attachments import readable_attachments
+
 import asyncio
 import json
 import time
@@ -194,6 +196,7 @@ async def _decrypt_chat_row_for_hosted(
             ),
         }
     return {
+        **(readable_attachments(decrypted.attachments) if decrypted.attachments_available else {"attachments": [], "attachments_available": False}),
         "body": decrypted.body,
         "decryptable": bool(decrypted.decryptable),
         "content_notice": decrypted.content_notice,
@@ -319,6 +322,8 @@ async def _wait_for_replies(
                             "from_address": row["from_address"],
                             "from_did": row["from_did"],
                             "body": content["body"],
+                            "attachments": content.get("attachments", []),
+                            "attachments_available": content.get("attachments_available", False),
                             "decryptable": content["decryptable"],
                             "content_notice": content["content_notice"],
                             "hang_on": is_hang_on,
@@ -988,6 +993,8 @@ async def chat_history(
                 "from_address": msg.get("from_address"),
                 "from_did": msg.get("from_did"),
                 "body": content["body"],
+                "attachments": content.get("attachments", []),
+                "attachments_available": content.get("attachments_available", False),
                 "decryptable": content["decryptable"],
                 "content_notice": content["content_notice"],
                 "sender_leaving": msg["sender_leaving"],

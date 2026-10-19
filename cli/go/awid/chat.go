@@ -697,6 +697,8 @@ type ChatHistoryResponse struct {
 }
 
 type ChatMessage struct {
+	Attachments             []AttachmentDescriptor   `json:"attachments,omitempty"`
+	AttachmentsAvailable    bool                     `json:"attachments_available"`
 	SenderMembership        *SenderMembership        `json:"sender_membership,omitempty"`
 	MessageID               string                   `json:"message_id"`
 	ConversationID          string                   `json:"conversation_id,omitempty"`
@@ -750,6 +752,8 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		m.Attachments = nil
+		m.AttachmentsAvailable = true
 		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
 		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !signedDisplayMatches(m.SignedPayload, map[string]string{
 			"type": "chat", "body": m.Body,
@@ -778,6 +782,7 @@ func (c *Client) ChatHistory(ctx context.Context, p ChatHistoryParams) (*ChatHis
 			}
 
 			m.Body = plain.Body
+			m.Attachments, m.AttachmentsAvailable = DecodeAttachmentContent(plain.Attachments)
 			binding.TeamID = plain.From.TeamID
 			applyE2EEPlaintextChatMetadata(m, plain)
 			m.VerificationStatus = Verified

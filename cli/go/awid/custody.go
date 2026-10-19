@@ -325,6 +325,7 @@ type E2EEUnwrapRequest struct {
 }
 
 type E2EEUnwrapResponse struct {
+	Attachments    json.RawMessage   `json:"attachments,omitempty"`
 	Kind           string            `json:"kind"`
 	MessageID      string            `json:"message_id"`
 	ConversationID string            `json:"conversation_id"`

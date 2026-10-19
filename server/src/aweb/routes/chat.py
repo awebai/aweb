@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
+
 from aweb.messaging.sender_membership import sender_memberships
 
 import asyncio
@@ -693,6 +695,7 @@ async def _deliver_federated_chat(
     route: dict[str, Any],
     session_id: str,
 ) -> dict[str, Any]:
+    refuse_remote_attachments()
     if not _payload_is_encrypted(payload):
         _require_remote_chat_signature(payload, session_id=session_id)
     sender_routing_did = (auth.did_aw or auth.did_key or "").strip()
@@ -1161,6 +1164,8 @@ class CreateSessionRequest(BaseModel):
     from_did: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
     signed_payload: str | None = None
+    attachments: object = None
+    attachment_refs: object = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1265,6 +1270,53 @@ class CreateSessionResponse(BaseModel):
     targets_left: list[str]
 
 
+async def _create_session_response(db, redis, *, session_id: UUID, message_id: str, target_dids: list[str]) -> CreateSessionResponse:
+    """Project the sent message and current session without repeating effects."""
+    aweb_db = db.get_manager("aweb")
+    participants_rows = await aweb_db.fetch_all(
+        """
+        SELECT did, alias, address
+        FROM {{tables.chat_participants}}
+        WHERE session_id = $1
+        ORDER BY alias ASC
+        """,
+        session_id,
+    )
+    participant_address_map = await _lookup_addresses_by_did(
+        db,
+        [(row.get("did") or "").strip() for row in participants_rows],
+    )
+
+    targets_left = await _targets_left(db, session_id=session_id, target_dids=target_dids)
+    waiting_dids = await get_waiting_agents(redis, str(session_id), target_dids)
+    waiting_set = set(waiting_dids)
+    targets_connected = [
+        row["alias"]
+        for row in participants_rows
+        if (row.get("did") or "").strip() in waiting_set and (row.get("did") or "").strip() in set(target_dids)
+    ]
+
+    return CreateSessionResponse(
+        session_id=str(session_id),
+        conversation_id=str(session_id),
+        message_id=message_id,
+        participants=[
+            {
+                "did": str(row["did"]),
+                "alias": row["alias"],
+                "address": participant_address_map.get((row.get("did") or "").strip())
+                or (row.get("address") or "").strip()
+                or _address_from_alias(row.get("alias"))
+                or None,
+            }
+            for row in participants_rows
+        ],
+        sse_url=f"/v1/chat/sessions/{session_id}/stream",
+        targets_connected=targets_connected,
+        targets_left=targets_left,
+    )
+
+
 @router.post("/sessions", response_model=CreateSessionResponse)
 async def create_or_send(
     request: Request,
@@ -1273,6 +1325,10 @@ async def create_or_send(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
+    attachment_context = prepare_attachment_send(request, payload, auth)
+    if attachment_context is not None:
+        with attachment_context:
+            return await create_or_send(request, payload, db=db, redis=redis, auth=auth)
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
@@ -1295,6 +1351,20 @@ async def create_or_send(
         signature=payload.signature,
     )
     target_dids = sorted({_target_did(row) for row in target_rows if _target_did(row)})
+
+    existing_attachment = await attachment_retry(db, payload, "chat")
+    if existing_attachment:
+        binding, row = existing_attachment
+        expected_targets = set(binding.participant_dids) - set(actor_dids)
+        if (set(target_dids) != expected_targets
+                or (payload.session_id and payload.session_id != binding.conversation_id)
+                or payload.message or payload.signature or payload.signed_payload
+                or bool(payload.leaving) != bool(row.get("sender_leaving"))
+                or (payload.reply_to or "") != str(row.get("reply_to") or "")):
+            raise HTTPException(409, detail={"code": "attachment_conflict"})
+        return await _create_session_response(
+            db, redis, session_id=UUID(binding.conversation_id), message_id=binding.message_id, target_dids=target_dids,
+        )
 
     participant_rows = [
         {
@@ -1632,28 +1702,9 @@ async def create_or_send(
             UUID(actor_agent_id) if actor_agent_id else None,
         )
 
-    participants_rows = await aweb_db.fetch_all(
-        """
-        SELECT did, alias, address
-        FROM {{tables.chat_participants}}
-        WHERE session_id = $1
-        ORDER BY alias ASC
-        """,
-        session_id,
+    response = await _create_session_response(
+        db, redis, session_id=session_id, message_id=str(msg_row["message_id"]), target_dids=target_dids,
     )
-    participant_address_map = await _lookup_addresses_by_did(
-        db,
-        [(row.get("did") or "").strip() for row in participants_rows],
-    )
-
-    targets_left = await _targets_left(db, session_id=session_id, target_dids=target_dids)
-    waiting_dids = await get_waiting_agents(redis, str(session_id), target_dids)
-    waiting_set = set(waiting_dids)
-    targets_connected = [
-        row["alias"]
-        for row in participants_rows
-        if (row.get("did") or "").strip() in waiting_set and (row.get("did") or "").strip() in set(target_dids)
-    ]
 
     await fire_mutation_hook(
         request,
@@ -1668,34 +1719,16 @@ async def create_or_send(
             "from_did": actor_did,
             "from_did_aw": (auth.did_aw or "").strip() or None,
             "to_aliases": [
-                row["alias"]
-                for row in participants_rows
-                if (row.get("did") or "").strip() != actor_did
+                participant.alias
+                for participant in response.participants
+                if participant.did != actor_did
             ],
             "preview": "" if encrypted_metadata is not None else payload.message[:80],
             "content_mode": payload.content_mode,
         },
     )
 
-    return CreateSessionResponse(
-        session_id=str(session_id),
-        conversation_id=str(session_id),
-        message_id=str(msg_row["message_id"]),
-        participants=[
-            {
-                "did": str(row["did"]),
-                "alias": row["alias"],
-                "address": participant_address_map.get((row.get("did") or "").strip())
-                or (row.get("address") or "").strip()
-                or _address_from_alias(row.get("alias"))
-                or None,
-            }
-            for row in participants_rows
-        ],
-        sse_url=f"/v1/chat/sessions/{session_id}/stream",
-        targets_connected=targets_connected,
-        targets_left=targets_left,
-    )
+    return response
 
 
 class PendingResponse(BaseModel):
@@ -1910,6 +1943,7 @@ async def history(
         )
         history_items.append(
             {
+                "attachment_refs": await attachment_references(db, "chat", msg["message_id"]),
                 "sender_membership": memberships[(str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))],
                 "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
@@ -2488,6 +2522,8 @@ class SendMessageRequest(BaseModel):
     from_did: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
     signed_payload: str | None = None
+    attachments: object = None
+    attachment_refs: object = None
 
     @model_validator(mode="after")
     def _validate_content_mode(self) -> "SendMessageRequest":
@@ -2533,6 +2569,16 @@ async def send_message(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
+    attachment_context = prepare_attachment_send(request, payload, auth)
+    if attachment_context is not None:
+        with attachment_context:
+            existing = await attachment_retry(db, payload, "chat")
+            if existing:
+                binding, row = existing
+                if binding.conversation_id != session_id:
+                    raise HTTPException(409, detail={"code": "attachment_conflict"})
+                return SendMessageResponse(message_id=binding.message_id, conversation_id=binding.conversation_id, delivered=True)
+            return await send_message(request, session_id, payload, db=db, auth=auth)
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
