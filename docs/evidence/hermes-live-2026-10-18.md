@@ -1,6 +1,6 @@
 # Hermes live evidence, 2026-10-18
 
-See [findings and scope](../hermes-aweb-live-findings.md). All messages below are synthetic traffic on the disposable local e2e stack. Times are UTC. No model key, Telegram token or mock transport was used.
+See [findings and scope](../hermes-aweb-live-findings.md). All messages below are synthetic traffic on the disposable local e2e stack. Times are UTC. No model key, Telegram token or mock transport was used. These are historical runs through `dfdd0822`; they do not establish coverage of blocked-turn controls/clarification or the exact empty-history/fresh-hint race. The adapter retained-hint change was subsequently reverted without a new live rerun. The fallback must not land as-is, and nothing on the branch merges in phase 1 pending Juan’s build decision.
 
 ## Baseline startup and TDD
 
@@ -25,7 +25,7 @@ Selected fields from the real stream capture (the full capture also contains a `
 
 There is no message id. The corresponding real history fetch returned message `5c4e42e1-b2b3-4b39-8392-994286700019`, with `verification_status=verified`.
 
-## Final real-stack chat test
+## Recorded real-stack chat test at dfdd0822
 
 `test_live_chat.py`: PASS, 7.931 seconds. It starts an actual Hermes gateway, symlinks the actual plugin, sends through the real aw CLI, and queries the real PostgreSQL receipt tables. A row lock on the second incoming message holds its read receipt while the stream child is terminated. Old child PID `52410`; replacement PID `52495`. A later new message proves the replacement subscription actually delivers input.
 
@@ -102,8 +102,8 @@ Original operator-local logs are retained in the investigation instance's `tmp/`
 | chat-live-green.log | `812f91035d03751e3cb7d2cfb6baea560608050f6f5123b7664ce20929da705a` |
 | hermes-gateway-startup.log | `fa1effa9f3561cf6a3874aaa359bb1cd708a410db735bfb92a009f8f9d7d32e6` |
 
-The final retained-hint correction was also exercised by this run. One intervening attempted rerun was discarded because an earlier mail-test gateway still owned the receiver; it was stopped before the final, exclusively owned run.
+This green run occurred after the retained-hint adapter change, but it did not deterministically hold an empty history response after its database snapshot and inject a fresh server hint before release. There is no isolated red/green for that race; it remains unresolved, and the adapter change was reverted in `a5cb6e23`. The run proves only the ordinary transport behaviors described above. One intervening attempted rerun was discarded because an earlier mail-test gateway still owned the receiver; it was stopped before the final, exclusively owned run.
 
-| Final-code artifact | SHA-256 |
+| Historical dfdd0822 artifact | SHA-256 |
 | --- | --- |
 | chat-live-final.log | `dc675983b10606facfe38e0f2d7844bbf5c989b714a1c69ad2119ae8ef043fa3` |

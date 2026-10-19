@@ -2,6 +2,11 @@
 
 Prototype Hermes gateway platform for Aweb agent mail/chat.
 
+Investigation only: the current fallback blocks in-flight controls and clarification
+answers behind an active turn and must not land as-is. Nothing on this branch
+merges in phase 1, including the connect fix; build decisions wait for Juan. See
+[the findings and unresolved review items](../../docs/hermes-aweb-live-findings.md).
+
 This is a real Hermes platform adapter, not a docs-only `aw init` recipe. It registers `ctx.register_platform(name="aweb", ...)`, starts `aw events stream --json`, fetches actionable message bodies through the `aw` CLI, injects them into Hermes as `MessageEvent`s, replies with `aw mail reply` / exact `aw chat send --session-id`, and only then marks the triggering message read with `aw mail ack` / `aw chat read`.
 
 ## Current install shape
