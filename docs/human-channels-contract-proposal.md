@@ -594,6 +594,155 @@ follow the recovery section below. Cloud owns endpoint maps and arrival metadata
 OSS owns these group-chat extensions and complete participant-authorized public
 reads. Dashboard/session UI support is Cloud work, not a second hidden protocol.
 
+### Public export checkpoint, acceptance capture and read contract
+
+This specifies the previously unsupplied source-checkpoint seam. It is a proposed
+additive `chat-export-checkpoints-v1` capability on existing chat sessions, not a
+Cloud insert hook or another room protocol. The existing source sets message
+ordering time at receipt (`server/src/aweb/messaging/chat.py:426`, baseline
+`c6235708808b`); timestamps alone do not establish commit order. Old sessions and
+messages keep their accepted behavior; no old row acquires export eligibility by
+migration, replay or inference.
+
+**Public operation.** Propose `POST /v1/chat/sessions/{session_id}/export-checkpoints`
+with `{signed_checkpoint, signature}`: the first value is the exact canonical
+JSON string, signed by the current owner or an identity-key delegate whose
+session policy explicitly permits export management. Its fields are `version`
+(`aweb-chat-export-checkpoint-v1`), `session_id`, `transition_id` (UUID), `export_id`
+(opaque UUID), `bridge` (admitted bridge principal), `operation`
+(`activate|pause|revoke`), `expected_membership_epoch`, `expected_membership_hash`,
+`expected_export_generation`, `generation` (previous + 1), `policy_digest`, service
+`audience`, `signer` (identity DID), `signing_key_id` (current `did:key`),
+`issued_at` and `expires_at`. Hashes use `sha256:` plus 64 lowercase hex digits;
+`policy_digest` is `commitment:` plus 64 lowercase hex digits for a 32-byte
+keyed/blinded value. Epochs/generations/sequences are nonnegative JSON integers
+in the exact interoperable range 0..9007199254740991; never wrap a counter.
+Canonical UTF-8/sorted-key rules are those above. Request
+path/session and authenticated signer must agree with the signed intent. Creation
+policy advertises bounded operation TTL/clock skew; absent or expired freshness
+policy cannot authorize a fresh operation. Exact committed retries do not extend
+its lifetime or create a later boundary. A new stream starts at expected
+generation 0; a revoked `export_id` is terminal. Fresh admission after revocation
+uses a new export ID and current authority, not reactivation of a tombstone.
+
+`export_id` identifies one logical delivery stream, not an endpoint. The private
+producer associates its `policy_digest` with the exact approved audience,
+binding/presence generations and native input/output ownership. Use a keyed or
+blinded commitment, never a guessable unkeyed external-account hash. No platform
+account/container/thread, bot token or private endpoint ID enters this record.
+The service checks the public grant, bridge admission and confidentiality mode;
+Cloud additionally checks that its private mapping matches that digest. An opaque
+digest does not prove private endpoint ownership to the service or grant a wider
+audience, a decryption key or permission to bypass the human's consent.
+
+The operation appends to the same owner-authorized session policy chain and
+advances its membership/policy epoch. Encrypted sessions require the signed
+owner/delegate chain from creation, including the new checkpoint; senders verify
+it before wrapping. Server-only authority remains confined to labelled
+server-readable mode. Owner succession, recipient consent and bridge-readable
+notice rules still apply. No service receipt can introduce an undeclared bridge.
+
+**Ordering and atomicity.** The authoritative session service maintains one
+durable acceptance order for policy transitions and messages. Every new managed-
+session message path (HTTP/MCP/native/federated, plaintext/encrypted) and each
+checkpoint locks the same session control state until transaction commit, assigns
+its next `acceptance_seq` there and commits its state/receipt atomically. An
+equivalent transactional serialization is valid only with the same commit-order
+guarantee. A
+sequence allocated independently of that transaction, a timestamp, or a later
+SSE read is insufficient. A checkpoint committed at sequence `s` applies only
+to messages ordered after `s`; a previously started message that commits after
+the checkpoint must revalidate/capture that new state under the shared fence.
+If its signed group context no longer matches, reject the stale send for explicit
+recomposition; never rewrite its signature or assign new recipients/policy to
+old signed bytes. Failure rolls back both order and effects. Verification preparation may happen
+outside the transaction, but authority/head are checked again under the lock.
+Group peers obtain the session authority's original acceptance receipt before
+fanout; replicas preserve that order/capture rather than allocating a new export
+boundary on delayed delivery. Existing pair federation remains unchanged.
+
+A successful checkpoint returns a durable receipt containing `version`
+(`aweb-chat-export-receipt-v1`), `session_id`, `transition_id`, `export_id`,
+`bridge`, `generation`, `operation`, `policy_digest`, `intent_hash`, resulting
+`membership_epoch`/`membership_hash`, `acceptance_seq` and `effective_after_seq`
+(both `s`). `intent_hash` commits to the exact canonical signed intent bytes.
+The receipt includes service `signer` and `signing_key_id`. The session service
+signs its canonical receipt, excluding only `signature`, with that identity/key
+authenticated through the session's creation/route binding; a requester-selected
+verifier URL/key is refused. This
+attests acceptance/order, not native authorship or export consent. The owner
+intent and identity-chain proof remain available with the receipt.
+
+Return 201 for a new commit, 200 for an authorized exact retry of the same
+`transition_id`/bytes and original receipt. Reusing the transition ID with other
+bytes returns 409 `chat_checkpoint_replay_conflict`; an unexpected head/generation
+returns 409 `chat_checkpoint_stale`. Wrong signer/delegation/bridge/consent refuses
+with 403, malformed intents with 422, and neither produces any transition,
+message, wake or usage effect; required unavailable authority returns retryable
+503. Current public read authorization still applies to receipt recovery. Retain transition tombstones and original receipts across
+ordinary message deletion so retry cannot reactivate or reuse an old boundary.
+
+Acceptance receipts/capture are service attestations alongside the preserved
+author envelope. They never modify author-signed plaintext/ciphertext, the
+optional `via` placement or existing native-v2 AAD/header bytes. Verify the
+service signer/key against the bound session route independently of the original
+author signature and membership chain; a service receipt is not author proof.
+
+**Message capture.** In the same transaction as message acceptance, ingress
+receipt, chat row and event/outbox intent, persist an immutable capture:
+`version=aweb-chat-acceptance-v1`, `session_id`, `message_id`,
+`message_envelope_hash` (the exact verified envelope retained by ingress),
+`acceptance_seq`, accepted `membership_epoch`/`membership_hash`,
+`capture_status=recorded`, and `exports`. Each export entry contains its `export_id`, `bridge`, `generation`, `policy_digest`,
+`transition_id`, `checkpoint_seq` and committed `activate|pause|revoke` state.
+An empty list explicitly means no approved export stream. Record paused/revoked
+streams as ineligible; never synthesize an active entry from the latest settings.
+Replay of the same accepted envelope returns its original capture, with no
+second sequence, checkpoint, wake or charge. Changed message bytes still conflict
+under existing receiver-wide replay rules. Legacy rows expose
+`capture_status=legacy_unknown` with no invented sequence/export list, not a
+manufactured eligible boundary. The
+service includes its `signer`/`signing_key_id` and signs this acceptance receipt
+under the same bound identity, excluding only `signature`.
+
+**Public reads and recovery.** Propose participant-authorized
+`GET /v1/chat/sessions/{session_id}/export-checkpoints/{transition_id}` and
+`GET /v1/chat/sessions/{session_id}/messages/{message_id}/acceptance`, plus
+`GET /v1/chat/sessions/{session_id}/acceptances?cursor=...&limit=...` for bounded
+reconciliation (`limit` 1–200, default 100). The first page pins a committed upper
+acceptance sequence; opaque cursors bind session, viewer and that upper bound. Pages follow committed
+acceptance order through it, return a next cursor, and cannot skip a late commit
+because its source timestamp was old. Checkpoints/capture metadata contain no
+private locator; message/body/attachment access still requires the viewer's
+current authorized history interval and original encryption/key access. Removed
+or out-of-scope subjects cannot use receipts, cursors or known message IDs to
+recover denied content. Reads do not mark messages read or emit wakes. Existing
+history/native JSON stays compatible; negotiated consumers request these additive
+receipts explicitly. SSE is an at-least-once hint, not the capture authority.
+
+**Binding activation and dispatch.** Cloud first durably pauses the private
+transition, submits the signed intent, then activates only its matching
+`export_id`/generation/digest after verifying the committed receipt. If a crash
+hides the response, read/retry the same transition; do not create a new one or
+infer success. Messages during the gap retain the state they actually captured.
+An active captured generation may be delivered later once that exact private
+binding/receipt is established, but a message capturing pause/revoke, no stream,
+a legacy/unknown result or a mismatch stays dashboard-only. A later activation
+never reclassifies those messages. No public/private shared database transaction
+is required. Before dispatch also enforce current consent, org policy, membership,
+revocation and presence ownership; old eligibility never overrides a later revoke.
+Rebind, wider audience and native handover require a new transition/generation,
+cancel old unsent work and never retarget an old receipt to the new binding.
+Accepted/in-flight platform effects retain their separately stated limits.
+
+Required vectors/probes pair sends on each side of the checkpoint, a transaction
+started before it but committed after, rollback, identical/conflicting retries,
+missing/forked signed policy, unauthorized management, owner/key revocation,
+crash after public commit before private activation, paused/unknown capture,
+late federated delivery, and cursor reconciliation after lost hints. Neighbouring
+legacy/native sessions still send/read; no private hook or mock-only proof can
+satisfy the public integration acceptance.
+
 Platform capability is a real constraint: Telegram bot-to-bot visibility is
 conditional on mode/admin/privacy settings
 ([official features](https://core.telegram.org/bots/features#bot-to-bot-communication));
@@ -788,10 +937,10 @@ adapters/consent evidence must be completed accordingly.
 | --- | --- | --- |
 | Unlinked room identity | Bridge-signed first-class guest subjects (B with stable participant refs) | Honest assurance without per-guest native keys; requires typed ACL/reply/runtime support. A remains an alternative with key/log/custody-classification cost. |
 | External room admission and history | Owner-approved guest admission, join-forward aweb history, explicit whole external audience acceptance | No mandatory Cloud signup, no team membership, and no claim that platform copies can be revoked. Stricter all-linked rooms require proved evidence. |
-| Guest correlation scope (Cloud J1) | Recommend pairwise/session-scoped guest subjects; cross-room correlation requires Juan's explicit choice | Stable within a session and across its intake bots, with session context in derivation; cross-session association/history requires explicit authority, never an automatic merge. Bridge/platform-wide subjects remain a designed alternative. |
+| Guest correlation scope (Cloud J1) | Recommend pairwise/session-scoped guest subjects. Cross-room correlation requires an explicit choice; pairwise scope reduces automatic correlation but needs explicit association for cross-room continuity/contact/history. | Stable within a session and across its intake bots, with session context in derivation; cross-session association/history requires explicit authority, never an automatic merge. Bridge/platform-wide subjects remain a designed alternative. |
 | Compromised bridge key | One tested, independently authorized “revoke bridge” operation orchestrates disabling ingress/dispatch, canceling pending work, revoking all bridge admission/send delegations and starting authorized key recovery | Bot-token rotation alone is insufficient. Report incomplete revocation scopes and keep them blocked; remote consumers apply authoritative revocation/freshness checks, with no claim of instantaneous global propagation. Test a freshly signed old-key guest event after revocation. |
 | Membership-owner succession | Explicit signed transfer to an admitted consenting successor before departure; otherwise freeze | Owner removal/revocation cannot appoint the server or last participant as successor; frozen sessions retain permitted history, with fresh-session consent as the safe restart. |
-| Native scope (Cloud J4) | Recommend explicit platform-wide suppression per identity initially; per-session mixed transport requires Juan's explicit approval and the same fenced input ownership/native-signature interop | Never infer an exception from activity or health. Both modes remain designed in; choosing scoped operation adds ownership/configuration complexity, with native suppression winning on overlap. |
+| Native scope (Cloud J4) | Recommend platform-wide native suppression initially. Per-session mixed native/dedicated transport requires explicit approval and the same fenced input ownership/native-signature interop; it permits mixed operation at the cost of more configuration. Both scopes remain designed in for Juan. | Never infer an exception from activity or health. Both modes remain designed in; choosing scoped operation adds ownership/configuration complexity, with native suppression winning on overlap. |
 | Identity linkage | Future association by account/key/session authority, no historical rewrite or silent contact transfer | Prior guest posts stay platform-attested; native identity requires its actual key authority. |
 | Delivery order | Complete common core plus full Teams/Telegram, sequence remaining adapters/chasing by explicit decision | No feature is silently cut. Platform impossibilities/permission denials are raised as decisions, not hidden behind “v1”. |
 
