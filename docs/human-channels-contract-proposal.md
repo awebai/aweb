@@ -40,8 +40,10 @@ history because an agent or bot was added.
 
 All agents consume ordinary platform-independent aweb events through upgraded
 `aw`/channel integrations. In native mode, the agent's existing platform adapter
-and aweb share event IDs and delivery ownership so one human turn does not run
-the agent twice. Native output carries the agent's own aweb signature; merely
+and aweb share durable input ownership and reply records to deduplicate input
+dispatch and committed replies. An uncertain crash outcome is reconciled before
+retry; exactly-once model/tool execution is not promised. Native output carries
+the agent's own aweb signature; merely
 seeing its bot post is not enough. This interoperation, rooms and unlinked
 participants are required build work, not features assumed to exist already.
 
@@ -83,10 +85,24 @@ A public protocol cannot depend on a hosted schema or runbook
 A guest reference is public protocol identity, for example
 `{"kind":"bridged","bridge":"did:aw:BRIDGE","subject":"p7m2"}`. It contains
 no Telegram user ID, Entra object/tenant ID, Slack workspace ID or account handle.
-The bridge's private account map makes that reference stable across its bots,
-rooms and paired DMs. Two accounts or independent bridges are not automatically
-one person. A bot, collective/anonymous-chat sender and human are distinct
-observed subject kinds; none is silently interpreted as another person.
+The bridge derives the subject deterministically as base64url of an HMAC-SHA256
+keyed digest over a domain-separated, versioned canonical tuple of platform,
+platform account scope and account ID (plus room context if Juan chooses pairwise
+subjects). This private derivation uses an independent bridge-held subject key;
+no raw ID or unkeyed account hash is public. Scope and account components use
+adapter-defined exact identifiers, never display names. The private map retains
+the derivation generation and observed subject kind. The reference is stable
+across bots in the chosen scope; cross-room correlation versus pairwise subjects
+is an explicit decision below, not a silent remapping.
+
+Subject-key loss starts a fresh generation with new subjects; never guess,
+reassign or reuse old subjects, merge their history, or reconstruct identity from
+names. Key rotation needs the retained authorized mappings or likewise starts new
+subjects. Two accounts or independent bridges are not automatically one person.
+Bot and human subjects are distinct. Anonymous-admin/`sender_chat` posts are
+refused at intake, never attributed to a guessed human or admitted as a guest
+bypass. Telegram describes those non-person sender cases in the
+[Message contract](https://core.telegram.org/bots/api#message).
 
 The room authority authorizes specific bridge DIDs/platforms and a bounded
 admission policy. After authenticated platform intake, a permitted new external
@@ -110,6 +126,13 @@ BYOT human whose key Cloud does not hold, use the bridged-subject path unless
 they explicitly supply their own signed aweb content. A Cloud login/domain string
 never authorizes signing as that native identity. Private linked DMs keep their
 existing owner checks; unlinked room participation is not a DM account link.
+For every linked-human room post, before signing as that actor, enforce the same
+activation fence/current binding generation, current unrevoked account link,
+agent-hosting org channel switch, current team/room access and custody checks as
+private intake. Resolve the actual speaker per message, not the room creator.
+Delayed/replayed updates cannot revive pre-activation or revoked links. Missing
+or anonymous speaker proof refuses visibly; it cannot select the creator's actor.
+Cloud's room ingress must state and test these checks explicitly.
 
 For a multi-team room, choose one explicit native actor or guest binding per
 human in that room, not one author per destination agent. The same canonical
@@ -141,7 +164,7 @@ epoch and message ID. A random valid bridge key is not room authority.
 | Received proof | Model-visible result |
 | --- | --- |
 | Native author signature plus current identity, recipient and room checks | Existing native `verified` semantics, with optional `via`; no downgrade for linked dashboard humans. |
-| Authorized bridge signature plus matching guest/room binding | `author_assurance=platform_attested`, external-author `verified=false`; separate `signer_verified=true` identifies the bridge's actual proof. |
+| Authorized bridge signature plus matching guest/room binding | `author_assurance=platform_attested`, `trust_status=external_untrusted`, external-author `verified=false`; separate `signer_verified=true` identifies the bridge's actual proof. |
 | Missing/changed guest subject, wrong bridge, unsigned wrapper, revoked grant or wrong room/epoch | Refuse delivery with the real reason; do not promote into native assurance. |
 | Required authority/capability unavailable | Pause/refuse visibly; no native-shape or plaintext fallback. |
 
@@ -162,6 +185,10 @@ An old client cannot join/read the new surface as native mail; all its existing
 native messages remain accepted. CLI/channel/pi/wake/Hermes need generic room and
 typed-author support, including local readback after restart. This is full-scope
 compatibility work, not permission to weaken the existing verified path.
+Channel-core, Claude channel, pi, wake and Hermes must expose the distinct guest
+`trust_status` and author assurance in model-visible metadata and readback;
+verifying the bridge signer must never yield the native verified-team-member
+status. Display text alone or a field buried in raw transport data is insufficient.
 
 ## Optional signed `via`
 
@@ -507,6 +534,11 @@ overlap deterministically with native suppression winning; do not reenable
 relay because native health/lease information becomes stale. Removal/replacement
 requires authorized generation change and cancels old pending work. Bound bots
 still require explicit owner rebind; old replies cannot select the new bot.
+If the native adapter is down or cannot acknowledge delivery, expose pending or
+failed native delivery to the sender (proposed reason `native_unavailable`),
+with retry/recovery state. Retaining the aweb message does not mean it reached
+the native runtime. Never silently drop it or enable bridge fallback; only an
+authorized ownership change can select a different transport.
 
 ### Native room interoperation and loops
 
@@ -532,15 +564,69 @@ old isolated behavior; the full build must supply the adapter work before
 claiming interoperable native rooms. It is not accomplished by registration UI.
 
 One gateway ingestion owner consolidates all bot deliveries for a bound room.
-Use authenticated platform logical message IDs across bots when the platform
-supplies a stable shared identity; otherwise select a single content intake
-owner and forward other registrations' transport observations to it without
-text/time heuristic deduplication. Telegram intake ownership remains bot-wide,
-not separate consumers per room. Persist inbound event -> canonical room event
+Use authenticated platform logical message IDs across bots only when the
+platform supplies a stable shared identity. For Telegram supergroups, use the
+chat-wide `message_id` with the chat binding; for basic groups and private chats,
+message IDs are account-relative, so select one content intake owner instead.
+Never use `update_id` as cross-bot identity. See Telegram's
+[message ID sequences](https://core.telegram.org/api/updates) and
+[Update contract](https://core.telegram.org/bots/api#update). Other registrations'
+observations cannot trigger a second import or runtime execution; no text/time
+heuristic deduplication. Intake ownership remains bot-wide, not two consumers of
+one bot's queue split by room. Persist inbound event -> canonical room event
 and outbound event/part -> transport result; discard owned-bot echoes and known
 native exports before subject creation. Stable IDs do not stop novel bot loops:
 retain per-room/pair rate budgets, interaction depth/timeouts and circuit breakers.
 Native/bot transitions preserve tombstones; restart never resets loop protection.
+
+### Durable ownership and unknown outcomes
+
+The guarantee is one authorized input owner and deduplicated committed logical
+replies, **not exactly-once model/tool execution**. Existing read state is not an
+action transaction (`docs/receiving-events.md:293`, baseline `c6235708808b`);
+message acceptance receipts cover messaging effects, not arbitrary runtime tools
+(`docs/identity-messaging-contract.md:169`, same baseline).
+
+Before dispatch, persist one operation keyed by `(agent, context, canonical input
+ID)`, its immutable input digest, selected native/aweb owner and generation.
+Acquire it with compare-and-swap, an increasing fencing token and a renewable
+lease. Both adapters must consult this same durable authority; local seen caches
+are insufficient. Record `claimed`, then durably `started` before model/tool
+work; commit reply records and their outbox intents durably before acknowledging
+completion. A claimed operation known not to have started can be reassigned by
+advancing its fence. Replays with another digest conflict.
+
+All reply commits, completion updates and adapter-owned exports check the current
+fence; a stale owner cannot publish a late reply. Before each external tool call,
+check the fence and journal its immutable intent and stable effect ID durably;
+record the result before advancing the checkpoint. Each logical reply has a stable
+operation/reply-slot ID and fixed signed message bytes, atomically recorded with
+its outbox intent. Retries reuse that record, not a fresh model response or new
+message UUID; conflicting bytes for an occupied slot refuse. Transport receipts
+are separate from runtime completion. Durable native output records carry the
+original author's signature, not a signature fabricated by the bridge.
+
+A lease expiring after `started`, or a crash after a tool acts but before its
+receipt is stored, yields **`outcome_unknown`**, never automatic fresh execution.
+Quarantine the operation and show the sender that processing is unresolved.
+Fence the old worker's writes; also stop/quiesce it or establish external effect
+fencing before resuming work. Lease expiry alone cannot stop a tool already in
+flight. Recovery first reads durable runtime checkpoints, reply/outbox records
+and tool/provider receipts using stable effect IDs derived from the operation.
+Reuse a committed reply; reconcile a known effect or resume after a proved safe
+checkpoint. An external operation with a genuine idempotency/query contract can
+be retried/reconciled with the same effect ID. Absence of a local receipt is not
+proof that the effect did not happen.
+
+If an effect or platform send cannot be reconciled or safely retried, keep it
+blocked for explicit owner/operator resolution, recording evidence and the
+chosen outcome. A deliberate retry with duplicate-effect risk requires an
+explicit decision and an auditable new attempt; do not describe it as exactly
+once. A platform send with unknown acceptance is not blindly resent just because
+its outbox lacks a completion mark. Native/aweb ownership transfer cannot bypass
+these unresolved operations. Runtime execution can repeat only where recovery
+establishes safety or an authorized decision accepts that risk; committed reply
+deduplication does not claim to deduplicate every model call or external effect.
 
 ## Chasing and delivery sequence: designed into the full architecture
 
@@ -570,6 +656,8 @@ adapters/consent evidence must be completed accordingly.
 | --- | --- | --- |
 | Unlinked room identity | Bridge-signed first-class guest subjects (B with stable participant refs) | Honest assurance without per-guest native keys; requires typed ACL/reply/runtime support. A remains an alternative with key/log/custody-classification cost. |
 | External room admission and history | Owner-approved guest admission, join-forward aweb history, explicit whole external audience acceptance | No mandatory Cloud signup, no team membership, and no claim that platform copies can be revoked. Stricter all-linked rooms require proved evidence. |
+| Guest correlation scope | Recommend bridge/platform-scope stable subjects for continuity across rooms and paired DMs, with explicit correlation disclosure; Juan may choose per-room pairwise subjects | Stable refs reveal cross-room participation; pairwise derivation includes room context and needs explicit association for cross-room contact/history, never an automatic merge. |
+| Compromised bridge key | One tested, independently authorized “revoke bridge” operation orchestrates disabling ingress/dispatch, canceling pending work, revoking all bridge admission/send delegations and starting authorized key recovery | Bot-token rotation alone is insufficient. Report incomplete revocation scopes and keep them blocked; remote consumers apply authoritative revocation/freshness checks, with no claim of instantaneous global propagation. Test a freshly signed old-key guest event after revocation. |
 | Native scope | Support explicit room scope plus the platform-wide wildcard, native winning on overlap | Enables mixed native/dedicated rooms with explicit ownership; a global-only policy is simpler but suppresses every room on that platform. |
 | Identity linkage | Future association by account/key/room authority, no historical rewrite or silent contact transfer | Prior guest posts stay platform-attested; native identity requires its actual key authority. |
 | Delivery order | Complete common core plus full Teams/Telegram, sequence remaining adapters/chasing by explicit decision | No feature is silently cut. Platform impossibilities/permission denials are raised as decisions, not hidden behind “v1”. |
@@ -577,14 +665,19 @@ adapters/consent evidence must be completed accordingly.
 Required behavior coverage for the full implementation:
 
 1. Native linked author remains verified; guest shows platform-attested and
-   unverified author with verified bridge signer. Forged subject/bridge/epoch,
+   unverified author with verified bridge signer and distinct external/untrusted
+   model-visible trust status in channel/pi/Hermes and readback. Forged
+   subject/bridge/epoch,
    fresh omitted guest author, wrong signature and unavailable authority refuse.
    Old native messages still work; incapable consumers cannot receive guest
    events as native messages. Local/global/self-custodial/grant cases distinguish
    identity proof from room and presence authority.
 2. Unlinked human and external-only agent enter only their authorized room as
    guests; no team/task access. Two same-name people stay separate, one subject
-   across bots is stable, later account linking cannot seize history/contacts.
+   across bots is deterministic within the chosen scope; subject-key loss yields
+   new subjects without reassignment, and later linking cannot seize history/contacts.
+   Linked room posts recheck activation, link, org switch, access and custody;
+   anonymous-admin/`sender_chat` posts refuse without actor or guest fallback.
 3. Join/remove/rejoin, concurrent send/removal, audience/room-binding change,
    history boundaries and loss of observation all enforce current grants. Native
    and multi-platform peers see one canonical room event; replay/conflict and
@@ -593,10 +686,18 @@ Required behavior coverage for the full implementation:
    messages authorized by that identity; wrong owner/token/alias binding refuses.
    Native registration is subject/owner authorized, replay-fenced and scoped;
    unauthorized registration cannot deny delivery. Health expiry never enables
-   an unintended fallback; bot changes require rebind.
-5. Two bots observe one room, mixed native Hermes/aweb input, restart, partial
-   export, unknown send outcome and immediate fresh-ID bot replies: one agent
-   execution and bounded interaction, no guest echo, no duplicate aweb message.
+   an unintended fallback; native downtime is visible non-delivery, never a
+   silent drop; bot changes require rebind. The single compromised-bridge
+   revocation operation rejects fresh old-key posts in every affected scope and
+   exposes incomplete/unavailable revocation rather than reporting success.
+5. Two bots observe one room: Telegram supergroup IDs deduplicate across bots;
+   basic groups/private chats use one intake owner, never cross-bot `update_id`.
+   Mixed native Hermes/aweb input and immediate fresh-ID bot replies preserve
+   one input owner, bounded interaction, no guest echo and deduplicated committed
+   replies. Crash probes cover before start, after a tool effect but before its
+   receipt, after reply/outbox commit and during unknown platform acceptance.
+   Expired owners cannot commit; unresolved effects stay visibly blocked until
+   reconciled or explicitly resolved. No exactly-once execution claim.
 6. Same-team human first contact and typed guest replies work through real `aw`
    and real servers; unknown external bare DIDs still refuse. Complete public
    list/history/receipt and dashboard fallback covers native pair, guest direct
