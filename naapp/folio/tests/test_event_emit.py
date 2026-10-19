@@ -13,7 +13,12 @@ from fastapi.testclient import TestClient
 
 import folio.api as folio_api
 from folio.config import Settings
-from folio.event_emit import build_emit_request, doc_changed_event_body, emit_doc_changed
+from folio.event_emit import (
+    UninstalledTeams,
+    build_emit_request,
+    doc_changed_event_body,
+    emit_doc_changed,
+)
 
 # A TEST emit key (NOT a real provisioned key) — 32-byte ed25519 seed.
 _TEST_SEED_HEX = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
@@ -153,7 +158,9 @@ async def test_emit_doc_changed_noop_when_unconfigured(monkeypatch) -> None:
         raise AssertionError("emit must not POST when unconfigured")
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
-    await emit_doc_changed(settings=Settings(), team_id=_TEAM, slug="pitch", version=1, source="api")
+    await emit_doc_changed(
+        settings=Settings(), uninstalled=_uninstalled(), team_id=_TEAM, slug="pitch", version=1, source="api"
+    )
     assert posted is False
 
 
@@ -164,7 +171,7 @@ async def test_emit_doc_changed_swallows_transport_errors(monkeypatch) -> None:
     monkeypatch.setattr(httpx.AsyncClient, "post", boom)
     # A doc write must succeed even if the channel is unreachable — no exception escapes.
     await emit_doc_changed(
-        settings=_emit_settings(), team_id=_TEAM, slug="pitch", version=1, source="api"
+        settings=_emit_settings(), uninstalled=_uninstalled(), team_id=_TEAM, slug="pitch", version=1, source="api"
     )
 
 
@@ -232,16 +239,118 @@ def test_append_route_swallows_misconfigured_emit(monkeypatch, caplog, overrides
         assert all(overrides["app_emit_key_seed_hex"] not in record.getMessage() for record in caplog.records)
 
 
-async def test_emit_doc_changed_logs_rejection_without_raising(monkeypatch, caplog) -> None:
-    class _Resp:
-        status_code = 403
-        text = "App emit key is not registered"
+_NOT_REGISTERED = {"detail": "App emit key is not registered"}
 
-    async def fake_post(*args, **kwargs):
-        return _Resp()
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _uninstalled(clock: _Clock | None = None) -> UninstalledTeams:
+    return UninstalledTeams(ttl_seconds=600, clock=clock or _Clock())
+
+
+def _record_posts(monkeypatch, response_for_team) -> list[str]:
+    """Patch the emit transport; each POST returns response_for_team(team_id)."""
+    posted_teams: list[str] = []
+
+    async def fake_post(self, url, content=None, headers=None, **kwargs):
+        team_id = (headers or {})["X-AWEB-Team-ID"]
+        posted_teams.append(team_id)
+        return response_for_team(team_id)
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    return posted_teams
+
+
+async def _emit(team_id: str, uninstalled: UninstalledTeams, version: int = 1) -> None:
     await emit_doc_changed(
-        settings=_emit_settings(), team_id=_TEAM, slug="pitch", version=2, source="api"
+        settings=_emit_settings(),
+        uninstalled=uninstalled,
+        team_id=team_id,
+        slug="pitch",
+        version=version,
+        source="api",
     )
-    assert any("emit rejected" in record.message for record in caplog.records)
+
+
+async def test_emit_doc_changed_logs_rejection_without_raising(monkeypatch, caplog) -> None:
+    posted = _record_posts(
+        monkeypatch, lambda _team: httpx.Response(401, json={"detail": "Invalid app event signature"})
+    )
+    uninstalled = _uninstalled()
+    with caplog.at_level(logging.INFO):
+        await _emit(_TEAM, uninstalled, version=2)
+        await _emit(_TEAM, uninstalled, version=3)
+    # Any failure other than "not installed" keeps today's warning on every write.
+    assert posted == [_TEAM, _TEAM]
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "emit rejected" in r.getMessage()]
+    assert len(warnings) == 2
+
+
+async def test_uninstalled_team_emits_once_then_skips_within_ttl(monkeypatch, caplog) -> None:
+    posted = _record_posts(monkeypatch, lambda _team: httpx.Response(403, json=_NOT_REGISTERED))
+    uninstalled = _uninstalled()
+    with caplog.at_level(logging.INFO):
+        for version in (1, 2, 3):
+            await _emit(_TEAM, uninstalled, version=version)
+    assert posted == [_TEAM]
+    messages = [r.getMessage() for r in caplog.records if r.name == "folio.event_emit"]
+    assert len(messages) == 1
+    assert caplog.records[-1].levelno == logging.INFO
+    assert _TEAM in messages[0] and "not installed" in messages[0]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+async def test_uninstalled_team_is_retried_once_after_ttl(monkeypatch, caplog) -> None:
+    posted = _record_posts(monkeypatch, lambda _team: httpx.Response(403, json=_NOT_REGISTERED))
+    clock = _Clock()
+    uninstalled = _uninstalled(clock)
+    with caplog.at_level(logging.INFO):
+        await _emit(_TEAM, uninstalled)
+        clock.now += 599
+        await _emit(_TEAM, uninstalled)
+        clock.now += 2
+        await _emit(_TEAM, uninstalled)
+        await _emit(_TEAM, uninstalled)
+    assert posted == [_TEAM, _TEAM]
+    assert len([r for r in caplog.records if r.name == "folio.event_emit"]) == 2
+
+
+async def test_installed_team_still_emits_every_write(monkeypatch) -> None:
+    posted = _record_posts(monkeypatch, lambda _team: httpx.Response(202, json={"event_id": "e"}))
+    uninstalled = _uninstalled()
+    for version in (1, 2, 3):
+        await _emit(_TEAM, uninstalled, version=version)
+    assert posted == [_TEAM, _TEAM, _TEAM]
+
+
+async def test_uninstalled_team_does_not_silence_other_teams(monkeypatch) -> None:
+    installed = "backend:acme.example"
+    posted = _record_posts(
+        monkeypatch,
+        lambda team: httpx.Response(403, json=_NOT_REGISTERED)
+        if team == _TEAM
+        else httpx.Response(202, json={"event_id": "e"}),
+    )
+    uninstalled = _uninstalled()
+    for version in (1, 2):
+        await _emit(_TEAM, uninstalled, version=version)
+        await _emit(installed, uninstalled, version=version)
+    assert posted == [_TEAM, installed, installed]
+
+
+def test_append_route_shares_one_uninstalled_cache_across_writes(monkeypatch) -> None:
+    posted = _record_posts(monkeypatch, lambda _team: httpx.Response(403, json=_NOT_REGISTERED))
+    client = TestClient(_template_route_app(_emit_settings(), monkeypatch, version=5))
+    for _ in range(3):
+        response = client.post(
+            "/v1/documents/pitch/versions/template",
+            json={"name": "pitch", "slots": {"cover": {"title": "Q3"}}},
+        )
+        assert response.status_code == 200, response.text
+    assert posted == [_TEAM]
