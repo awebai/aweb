@@ -25,7 +25,7 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 	setGrantTestEnv(t, root)
 	t.Setenv("AW_HOME", filepath.Join(root, "host"))
@@ -34,18 +34,29 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { gets.Add(1); w.Write(body.Load().([]byte)) }))
 	defer server.Close()
 	body.Store([]byte(appTestManifest(server.URL, "/v1/things/{thing_id}")))
+	writeResident := func(parent, scope string) string {
+		t.Helper()
+		pub, key, err := awid.GenerateKeypair()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := awid.SaveSigningKey(awconfig.WorktreeSigningKeyPath(parent), key); err != nil {
+			t.Fatal(err)
+		}
+		writeIdentityForTest(t, parent, awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), StableID: awid.ComputeStableID(pub), Custody: awid.CustodySelf, IdentityScope: scope})
+		return filepath.Join(parent, ".aw")
+	}
 	homes := []string{}
 	for _, scope := range []string{awid.IdentityModeLocal, awid.IdentityModeGlobal} {
 		parent := filepath.Join(root, scope)
-		writeIdentityForTest(t, parent, awconfig.WorktreeIdentity{DID: "did:key:zSynthetic", StableID: "did:aw:synthetic", Custody: awid.CustodySelf, IdentityScope: scope})
-		homes = append(homes, filepath.Join(parent, ".aw"))
+		homes = append(homes, writeResident(parent, scope))
 	}
 	empty := filepath.Join(root, "empty")
 	if err := os.MkdirAll(empty, 0700); err != nil {
 		t.Fatal(err)
 	}
 	decoy := filepath.Join(root, "decoy")
-	writeIdentityForTest(t, decoy, awconfig.WorktreeIdentity{DID: "did:key:zDecoy", Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal})
+	writeResident(decoy, awid.IdentityModeLocal)
 	if err := changeAppApproval(filepath.Join(decoy, ".aw"), "decoyapp", "https://decoy.invalid"); err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +148,11 @@ func TestAppApprovalManagementBinarySelectedHome(t *testing.T) {
 	}
 	invoke(empty, grantHome, "", "plugin", "list") // read-only discovery, not delegated authority
 	missing := filepath.Join(root, "missing")
-	invoke(decoy, missing, "app_resident_required", "plugin", "install", server.URL)
+	beforeGets = gets.Load()
+	invoke(decoy, missing, missing, "plugin", "install", server.URL)
+	if gets.Load() != beforeGets {
+		t.Fatal("missing selected identity fetched a manifest")
+	}
 	decoyAfter, _ := os.ReadFile(appApprovalsPath(filepath.Join(decoy, ".aw")))
 	if !bytes.Equal(decoyBefore, decoyAfter) {
 		t.Fatal("selected operation touched cwd catalog")

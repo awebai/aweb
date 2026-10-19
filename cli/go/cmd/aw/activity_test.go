@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -20,7 +21,7 @@ func TestActivityOptInCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(root, "aw")
+	bin := filepath.Join(root, awBinaryNameForTest())
 	buildAwBinary(t, ctx, bin)
 
 	run := func(t *testing.T, home string, args ...string) (map[string]any, string, int) {
@@ -53,10 +54,11 @@ func TestActivityOptInCommands(t *testing.T) {
 		if err := os.MkdirAll(home, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if marker != "" {
-			if err := os.WriteFile(filepath.Join(home, marker), []byte("x"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+		switch marker {
+		case "signing.key":
+			writeStandaloneSelectedIdentityForTest(t, home)
+		case "grant.yaml":
+			writeGrantHomeForTest(t, home, "http://127.0.0.1:1")
 		}
 		return home
 	}
@@ -75,6 +77,7 @@ func TestActivityOptInCommands(t *testing.T) {
 
 	t.Run("enable and disable write the file, show reports it", func(t *testing.T) {
 		home := identityHome(t, "signing.key")
+		before := snapshotJoinFiles(t, home)
 		if out, all, code := run(t, home, "activity", "show", "--json"); code != 0 || out["activity"] != "off" {
 			t.Fatalf("show before enable = %v (%d) %s", out, code, all)
 		}
@@ -104,11 +107,10 @@ func TestActivityOptInCommands(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(root, "activity.yaml")); !os.IsNotExist(err) {
 			t.Fatalf("the instance directory gained activity.yaml: %v", err)
 		}
-		entries, _ := os.ReadDir(home)
-		for _, entry := range entries {
-			if entry.Name() != "signing.key" && entry.Name() != "activity.yaml" {
-				t.Fatalf("left behind %s", entry.Name())
-			}
+		after := snapshotJoinFiles(t, home)
+		delete(after, "activity.yaml")
+		if !reflect.DeepEqual(before, after) {
+			t.Fatal("activity settings changed identity material or left other files")
 		}
 	})
 

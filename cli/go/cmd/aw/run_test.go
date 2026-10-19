@@ -1509,6 +1509,7 @@ func TestRunContinuePrintsRecentInteractionRecap(t *testing.T) {
 	oldExecuteLoop := runExecuteLoop
 	oldNewEventBus := runNewEventBus
 	oldNewScreen := runNewScreenController
+	oldWorkspaceState := runWorkspaceStateForDir
 	t.Cleanup(func() {
 		runLoadUserConfig = oldLoad
 		runResolveSettings = oldResolveSettings
@@ -1518,6 +1519,7 @@ func TestRunContinuePrintsRecentInteractionRecap(t *testing.T) {
 		runExecuteLoop = oldExecuteLoop
 		runNewEventBus = oldNewEventBus
 		runNewScreenController = oldNewScreen
+		runWorkspaceStateForDir = oldWorkspaceState
 		initRunCommandVars()
 	})
 
