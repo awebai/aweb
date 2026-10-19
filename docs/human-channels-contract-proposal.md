@@ -38,8 +38,10 @@ chats/channels and Slack channels/threads are audience endpoints for that sessio
 speaker independently. A room owner authorizes the bridge to admit observed
 external speakers as guests; nobody must create a Cloud account simply to talk
 in that approved room. The owner also accepts the entire external audience,
-including observers who never speak. Private messages never turn into room
-history because an agent or bot was added.
+including observers who never speak. Adding an agent still requires its inbound
+policy/consent; membership ownership cannot override a refusal. Adding a bridge
+makes the entire session not E2EE from that membership epoch, visibly for every
+participant. Private messages never turn into room history because a bot was added.
 
 All agents consume ordinary platform-independent aweb events through upgraded
 `aw`/channel integrations. In native mode, the agent's existing platform adapter
@@ -445,6 +447,49 @@ typed subject and bridge authorization. Guest admission creates chat membership,
 not an agent row, global human address or team/task/console permission. Current
 DID-only participant stores/resolvers need explicit typed-reference support.
 
+For an encrypted group, creation and every add/remove/delegation/ownership or
+epoch change are canonical records signed by the owner's identity key or an
+explicitly delegated participant identity key. Bind session ID, epoch, previous
+record hash, exact operation/subjects, resulting membership/history policy and
+signer/delegation to the signature. Anchor creation in the independently verified
+creator identity and participant consent; a server-supplied root key is not
+sufficient. Verify operation-time signing authority, identity-key continuity and
+current management-authority revocation/freshness before new effects. A valid
+prior transfer remains historical proof after the former owner retires; it does
+not authorize new operations by that former owner. Every sender verifies
+the complete signed chain from creation (or its already verified prefix plus
+all subsequent records), pins its head and derives recipients before wrapping;
+a server's current member list alone cannot authorize a new encryption recipient.
+Missing records, forks, invalid delegation or stale/revoked authority block send.
+All members receive every membership addition/change, with guest refs and
+confidentiality consequences visible before new-epoch content, including through
+platform projections; no external account IDs are disclosed. Server-only
+membership authority is permitted solely in an explicitly server-readable,
+labelled session mode; it cannot silently replace identity-signed membership in
+an encrypted session claiming E2EE.
+
+Adding a native identity, including cross-team same-server or federated targets,
+must pass that identity's current inbound policy and applicable explicit consent
+just as first contact does. A pending invitation confers no message delivery,
+key wrap, unread item or runtime wake. Only policy-authorized acceptance admits
+the participant; refusal has no membership/delivery side effects. A team
+certificate, owner signature or bridge delegation never overrides a recipient's
+refused inbound policy. Guest admission likewise checks the exact subject's
+current scoped consent/admission policy and opt-out tombstone; it does not create
+a new account-link requirement for approved external-room speakers.
+
+Membership-owner succession is explicit: transfer to a consenting, currently
+admitted identity by a valid owner-signed chain operation before the old owner
+leaves or is removed. No implicit successor or server-appointed owner exists.
+If the owner leaves/is removed without that transfer, or its authority is revoked
+or unavailable, freeze membership changes and new sends/wraps/exports visibly.
+Retain authorized history reads; turn completion does not trigger succession.
+An already frozen session cannot be rescued by a signature from the revoked
+owner or an unrelated team/admin key. Without a prior valid transfer, participants
+may explicitly create a new session under fresh consent; old history and grants
+are not silently transferred. This chooses freeze as the safe default rather
+than inventing authority for the last remaining participant.
+
 Add authenticated participant add/remove/leave operations and membership listing
 on chat sessions. Owner/delegated admission is checked separately from sender
 membership; only that subject may voluntarily leave itself. Serialize changes
@@ -500,6 +545,26 @@ that bridge can read and export their content. Multiple subjects sharing a bridg
 key do not share authorization. Guest-signed-as-bridge inputs retain guest author
 assurance; no E2EE-to-the-human or platform claim follows. No missing capability,
 key or authority triggers plaintext fallback.
+
+Bridge admission changes confidentiality for the **whole session from that
+epoch**, not just for guest messages. Enabling external relay requires explicit
+bridge admission, never an undeclared exporter. While that bridge membership is
+active, every group message includes a wrap for its authorized key (or its sender
+self-copy when the bridge sends),
+even when native participants are addressing one another. A sender cannot omit
+the bridge to create a hidden private sub-audience in that session. Every
+participant's CLI, channel/pi/wake/Hermes context, session readback and Cloud/
+platform display identifies that epoch as **not E2EE / bridge-readable** before
+sending or displaying new-epoch content. Derive that status from verified
+membership/confidentiality policy, never from presence or absence of `via`.
+Encrypted wire format is then managed
+transport encryption, not an E2EE claim. This applies the existing mixed-custody
+confidentiality floor (`docs/e2e-messaging-contract.md:268`, `:288`, baseline
+`c6235708808b`) to the whole bridge-bound session. A legacy consumer unable to
+show/enforce this mode cannot silently participate in that transition. Removing
+the bridge cannot restore confidentiality of earlier messages; any later
+confidentiality transition requires explicit policy/consent and fresh wraps,
+never retrospective relabelling of bridge-readable epochs.
 
 Extend existing chat federation with a negotiated group profile. A session's
 membership authority serializes changes and authenticates its route and epoch;
@@ -725,6 +790,7 @@ adapters/consent evidence must be completed accordingly.
 | External room admission and history | Owner-approved guest admission, join-forward aweb history, explicit whole external audience acceptance | No mandatory Cloud signup, no team membership, and no claim that platform copies can be revoked. Stricter all-linked rooms require proved evidence. |
 | Guest correlation scope | Recommend bridge/platform-scope stable subjects for continuity across rooms and paired DMs, with explicit correlation disclosure; Juan may choose per-room pairwise subjects | Stable refs reveal cross-room participation; pairwise derivation includes room context and needs explicit association for cross-room contact/history, never an automatic merge. |
 | Compromised bridge key | One tested, independently authorized “revoke bridge” operation orchestrates disabling ingress/dispatch, canceling pending work, revoking all bridge admission/send delegations and starting authorized key recovery | Bot-token rotation alone is insufficient. Report incomplete revocation scopes and keep them blocked; remote consumers apply authoritative revocation/freshness checks, with no claim of instantaneous global propagation. Test a freshly signed old-key guest event after revocation. |
+| Membership-owner succession | Explicit signed transfer to an admitted consenting successor before departure; otherwise freeze | Owner removal/revocation cannot appoint the server or last participant as successor; frozen sessions retain permitted history, with fresh-session consent as the safe restart. |
 | Native scope | Support explicit room scope plus the platform-wide wildcard, native winning on overlap | Enables mixed native/dedicated rooms with explicit ownership; a global-only policy is simpler but suppresses every room on that platform. |
 | Identity linkage | Future association by account/key/session authority, no historical rewrite or silent contact transfer | Prior guest posts stay platform-attested; native identity requires its actual key authority. |
 | Delivery order | Complete common core plus full Teams/Telegram, sequence remaining adapters/chasing by explicit decision | No feature is silently cut. Platform impossibilities/permission denials are raised as decisions, not hidden behind “v1”. |
@@ -755,6 +821,13 @@ Required behavior coverage for the full implementation:
    Group federation covers mixed local/remote participants, receipt replay and
    stale membership epochs; existing pair mail/chat and native-group reads remain
    valid. A stable session handle survives roster changes without pair lookup.
+   Forged server-only adds, truncated/forked membership chains and stale owner
+   keys cannot induce wraps; every sender checks signed membership from creation
+   and every member sees additions. Refused same-team/cross-team/federated adds
+   produce no messages, unread state or wakes. Valid owner transfer continues;
+   departure/removal/revocation without transfer freezes visibly. Bridge admission
+   includes its wrap on every later message and marks the whole session not E2EE
+   for all consumers; removal never relabels earlier bridge-readable history.
 4. Dedicated bot for hosted, self-custodial and local identities exports only
    messages authorized by that identity; wrong owner/token/alias binding refuses.
    Native registration is subject/owner authorized, replay-fenced and scoped;
