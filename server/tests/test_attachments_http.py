@@ -372,3 +372,42 @@ async def test_hostile_authenticated_filename_is_refused_at_send(privacy_app,mon
     assert filename not in refused.text
     assert await privacy_app.db.fetch_value('SELECT count(*) FROM {{tables.messages}}')==0
     assert await privacy_app.db.fetch_value('SELECT sum(binds) FROM {{tables.attachment_test_storage}}')==0
+
+
+@pytest.mark.asyncio
+async def test_attached_create_or_send_retry_reuses_result_without_mutations(privacy_app):
+    from copy import deepcopy
+    env=privacy_app
+    backend,d,wire,cid=await managed_fixture(env,'chat')
+    wire['message']=wire.pop('body')
+    wire.update(session_id=cid,to_dids=[env.actors['bob'].did])
+    first=await _request(env,'alice','POST','/v1/chat/sessions',wire)
+    assert first.status_code==200,first.text
+    async def snapshot():
+        return [await env.db.fetch_value('SELECT jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text) '
+            f'FROM {{{{tables.{table}}}}} t') for table in
+            ['messages','chat_messages','conversations','conversation_participants','chat_sessions',
+             'chat_participants','message_attachments','attachment_test_storage']]
+    unchanged=await snapshot()
+    event_count=len(env.dispatched)
+    retried=await _request(env,'alice','POST','/v1/chat/sessions',wire)
+    assert retried.status_code==200,retried.text
+    assert retried.json()==first.json()
+    assert await snapshot()==unchanged
+    for changed in ['envelope','ref','recipient','session','plaintext']:
+        altered=deepcopy(wire)
+        if changed=='envelope':
+            altered['encrypted_envelope']['signature']='changed'
+        elif changed=='ref':
+            altered['attachment_refs'][0]['descriptor_sha256']='0'*64
+        elif changed=='recipient':
+            altered['to_dids']=[env.actors['carol'].did]
+        elif changed=='session':
+            altered['session_id']=str(uuid4())
+        else:
+            altered['message']='changed text'
+        refused=await _request(env,'alice','POST','/v1/chat/sessions',altered)
+        assert refused.status_code==409,(changed,refused.text)
+        assert await snapshot()==unchanged
+    assert len(env.dispatched)==event_count
+    assert await env.db.fetch_value('SELECT sum(binds) FROM {{tables.attachment_test_storage}}')==1
