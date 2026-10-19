@@ -170,7 +170,8 @@ def test_bad_filename_refused_without_normalization(name):
 
 
 @pytest.mark.asyncio
-async def test_actual_aw_fetches_exact_bytes_from_participant_endpoint(privacy_app, tmp_path):
+@pytest.mark.parametrize('kind',['mail','chat'])
+async def test_actual_aw_fetches_exact_bytes_from_participant_endpoint(privacy_app, tmp_path, kind):
     import asyncio
     import base64
     import json
@@ -180,10 +181,19 @@ async def test_actual_aw_fetches_exact_bytes_from_participant_endpoint(privacy_a
     from test_messages_http import _make_certificate
     from test_dashboard_privacy import TEAM
     env = privacy_app
-    backend, d, wire, cid = await managed_fixture(env)
-    sent = await _request(env, 'alice', 'POST', '/v1/messages', wire)
+    backend, d, wire, cid = await managed_fixture(env, kind)
+    send_path='/v1/messages' if kind=='mail' else f'/v1/chat/sessions/{cid}/messages'
+    sent = await _request(env, 'alice', 'POST', send_path, wire)
     assert sent.status_code == 200, sent.text
     mid = sent.json()['message_id']
+    if kind=='chat':
+        from uuid import UUID
+        # The attachment must remain fetchable after it falls outside history's
+        # default window. These are ordinary persisted later text messages.
+        await env.db.execute("INSERT INTO {{tables.chat_messages}} "
+            "(session_id,from_did,from_alias,body,created_at) "
+            "SELECT $1,$2,'alice','later text',now()+interval '1 second' FROM generate_series(1,501)",
+            UUID(cid),env.actors['alice'].did)
     binary = Path(os.environ.get('AW_TEST_CLI_BINARY', str(tmp_path / 'aw')))
     if 'AW_TEST_CLI_BINARY' not in os.environ:
         repo = Path(__file__).resolve().parents[2]
@@ -230,13 +240,17 @@ async def test_actual_aw_fetches_exact_bytes_from_participant_endpoint(privacy_a
             if process.returncode is None:
                 process.kill()
                 await process.wait()
-    code,output=await run('mail','show','--message-id',mid,'--json')
+    show=('mail','show','--message-id',mid,'--json') if kind=='mail' else ('chat','history','--session-id',cid,'--message-id',mid,'--json')
+    code,output=await run(*show)
     assert code==0,output
     assert d['filename'] in output and d['id'] in output
-    code,output=await run('mail','attachment','fetch',d['id'],'--message-id',mid,'--output',str(target))
+    fetch=(kind,'attachment','fetch',d['id'],'--message-id',mid,'--output',str(target))
+    if kind=='chat':
+        fetch+=('--session-id',cid)
+    code,output=await run(*fetch)
     assert code==0,output
     assert target.read_bytes()==b'filebytes'
-    code,output=await run('mail','attachment','fetch',d['id'],'--message-id',mid,'--output',str(target))
+    code,output=await run(*fetch)
     assert code!=0 and target.read_bytes()==b'filebytes'
 
 
