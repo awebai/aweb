@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -157,11 +158,15 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
+	binaryName := "aw"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	bin := filepath.Join(tmp, binaryName)
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(
@@ -175,7 +180,7 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 		"--name", "laptop",
 		"--url", server.URL,
 	)
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "USERPROFILE="+tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -204,6 +209,8 @@ func TestInitGlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest(t *
 	if !verifyCloudDIDPayload(t, mustExtractPublicKey(t, didKey), http.MethodPost, "/api/v1/onboarding/cli-signup", signupTimestamp, signupBodyBytes, parts[2]) {
 		t.Fatal("cli-signup signed payload did not verify")
 	}
+
+	requireWorktreeEncryptionKeyForTest(t, tmp)
 
 	var got map[string]any
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {
@@ -752,11 +759,15 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
 	tmp := t.TempDir()
-	bin := filepath.Join(tmp, "aw")
+	binaryName := "aw"
+	if runtime.GOOS == "windows" {
+		binaryName += ".exe"
+	}
+	bin := filepath.Join(tmp, binaryName)
 	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(
@@ -769,7 +780,7 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 		"--local-name", "laptop",
 		"--url", server.URL,
 	)
-	run.Env = testCommandEnv(tmp)
+	run.Env = append(testCommandEnv(tmp), "USERPROFILE="+tmp)
 	run.Dir = tmp
 	out, err := run.CombinedOutput()
 	if err != nil {
@@ -802,6 +813,8 @@ func TestInitLocalCLIWorkspaceOmitsGlobalIdentityFile(t *testing.T) {
 	if cert.IdentityScope != wantScope {
 		t.Fatalf("cert identity_scope=%q want %q", cert.IdentityScope, wantScope)
 	}
+
+	requireWorktreeEncryptionKeyForTest(t, tmp)
 
 	var got map[string]any
 	if err := json.Unmarshal(extractJSON(t, out), &got); err != nil {

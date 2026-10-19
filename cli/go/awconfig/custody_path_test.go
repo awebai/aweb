@@ -18,7 +18,7 @@ func TestCustodyDefaultSocketLongRoot(t *testing.T) {
 	if socket == CustodySocketPath(root+"other") {
 		t.Fatal("distinct roots share socket")
 	}
-	short := filepath.Join(string(filepath.Separator), "short", ".aw")
+	short := filepath.Join(filepath.VolumeName(root)+string(filepath.Separator), "short", ".aw")
 	if got := CustodySocketPath(short); got != filepath.Join(short, "run", "custody.sock") {
 		t.Fatalf("short path changed: %s", got)
 	}

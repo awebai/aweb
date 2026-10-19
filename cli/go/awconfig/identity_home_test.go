@@ -103,7 +103,7 @@ func TestIdentityHomePathRejectsUpwardTraversalThatRejoinsInsideRoot(t *testing.
 		t.Fatal(err)
 	}
 	home := IdentityHome{Root: root, Source: IdentityHomeFlag}
-	traversing := filepath.Join("a", "..", "..", filepath.Base(root), "inner.key")
+	traversing := "a/../../" + filepath.Base(root) + "/inner.key"
 
 	// The fixture reaches the traversal check rather than being turned away
 	// earlier: the same target named without traversal is accepted.

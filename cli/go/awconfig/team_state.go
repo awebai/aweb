@@ -247,7 +247,7 @@ func (s TeamState) MarshalYAML() (any, error) {
 }
 
 func DefaultTeamStateRelativePath() string {
-	return filepath.Join(".aw", "teams.yaml")
+	return filepath.ToSlash(filepath.Join(".aw", "teams.yaml"))
 }
 
 func TeamStatePath(root string) string {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -65,7 +66,8 @@ func TestSaveAndLoadTeamStateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat teams.yaml: %v", err)
 	}
-	if gotMode := info.Mode().Perm(); gotMode != 0o600 {
+	// Windows does not expose POSIX owner-only mode bits.
+	if gotMode := info.Mode().Perm(); runtime.GOOS != "windows" && gotMode != 0o600 {
 		t.Fatalf("mode=%#o want %#o", gotMode, 0o600)
 	}
 }

@@ -7,6 +7,11 @@
   show`/MCP expose validated descriptors and `aw mail attachment fetch` (and
   `aw chat attachment fetch`) saves verified bytes to an explicit new file.
   Managed files remain server-readable; there is no E2EE attachment claim.
+- **Windows init:** `aw init --new-account` now accepts stored forward-slash
+  paths before converting them to native filesystem paths. Identity, certificate
+  and encryption path helpers keep forward slashes on every OS. Native Windows
+  CI covers configuration and local/global init against local HTTP fixtures.
+  Thanks to @okfineokfine for the two-layer diagnosis and proposed fix in #61.
 
 ## Release preparations
 

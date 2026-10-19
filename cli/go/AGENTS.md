@@ -32,31 +32,40 @@ following it.
 
 - Use `aw` for coordination work
 - Treat `.aw/workspace.yaml` as the repo-local coordination identity for this worktree
-- Default to mail for non-blocking coordination: `aw mail send --to <agent> --body "..."`
-- Use chat when you need a synchronous answer: `aw chat pending`, `aw chat send-and-wait <agent> "..."`
+- Default to mail for non-blocking coordination: `aw mail send --to <agent> --body-file <body-path>`
+- Use chat when you need a synchronous answer: `aw chat pending`, `aw chat send-and-wait <agent> --body-file <body-path>`
 - Respond promptly to WAITING conversations
 - Check `aw workspace status` before doing coordination work
 - Prefer shared coordination state over local TODO notes: `aw work ready` and `aw work active`
 - Wake-ups arrive by the deployment's mechanism: the native channel (the Claude Code `aweb-channel` plugin or the Pi extension), the PostToolUse hook (`aw notify`) where configured, or the host wake broker (`aw wake`, session delivery). Current shared-core session delivery presents message content with its sender trust status and records delivery before acknowledging mail/chat where its capabilities permit. This acknowledges presentation, not completion of the requested work. Read injected metadata and continue the existing thread; for hint-only delivery, fetch the durable message by ID. After uncertain crash/compaction, recover known IDs with `aw mail show --message-id <id> --json`, or paginate `aw mail inbox --show-all --json` using `next_cursor`/`--cursor` through the uncertain interval. For chat, use `aw chat history --session-id <session-id> --json`, adding `--message-id <message-id>` for an exact message. Without an exact ID, history is bounded (default 1000), includes read and unread messages, and does not establish completeness beyond its limit. Reconcile with durable task/state and side-effect receipts before retrying actions. Unread inbox and pending chat remain the normal checks for newly waiting comms; empty results do not establish that previously delivered work is complete. Respond promptly when woken.
 
+## Shell-safe message bodies
+
+Write message bodies to a file using a quoted heredoc (`<<'EOF'`), read the
+file back, then pass it with `--body-file` in a separate command. Quoting the
+heredoc preserves backticks and `$(...)` literally; `--body-file` cannot repair
+text already expanded by the shell. Continue received mail with
+`aw mail reply <message-id>` to preserve its thread.
+
 ## Mail
 
 ```bash
-aw mail send --to <alias> --body "message"
-aw mail send --to <alias> --subject "API design" --body "message"
+aw mail send --to <alias> --body-file <body-path>
+aw mail send --to <alias> --subject "API design" --body-file <body-path>
+aw mail reply <message-id> --body-file <body-path>
 aw mail inbox
 ```
 
 ## Chat
 
 ```bash
-aw chat send-and-wait <alias> "question" --start-conversation
-aw chat send-and-wait <alias> "response"
-aw chat send-and-leave <alias> "thanks, got it"
+aw chat send-and-wait <alias> --body-file <body-path> --start-conversation
+aw chat send-and-wait <alias> --body-file <body-path>
+aw chat send-and-leave <alias> --body-file <body-path>
 aw chat pending
 aw chat open <alias>
 aw chat history <alias>
-aw chat extend-wait <alias> "need more time"
+aw chat extend-wait <alias> --body-file <body-path>
 ```
 
 ## Identity
