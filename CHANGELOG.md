@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: server 1.27.28, aw 1.36.42
+
+Server changes are since `server-v1.27.27`; CLI changes are since `aw-v1.36.41`.
+
+**Rollout order:** publish server 1.27.28 and aw 1.36.42 before the Cloud release that pins them for dashboard chat attachments.
+
 - Managed mail/chat attachments: encrypted-v2 inner descriptors, a transactional
   embedding storage boundary and participant-authenticated fetch APIs; `aw mail
   show`/MCP expose validated descriptors and `aw mail attachment fetch` (and
@@ -12,8 +20,6 @@
   and encryption path helpers keep forward slashes on every OS. Native Windows
   CI covers configuration and local/global init against local HTTP fixtures.
   Thanks to @okfineokfine for the two-layer diagnosis and proposed fix in #61.
-
-## Release preparations
 
 ### Release preparation: server 1.27.27, aw 1.36.41
 
