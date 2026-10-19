@@ -152,6 +152,13 @@ func formatMailInbox(v any) string {
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
 		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, termtext.Block(msg.Body)))
+		for _, attachment := range msg.Attachments {
+			sb.WriteString(fmt.Sprintf("  Attachment %s: %s (%s, %d bytes, expires %s)\n", termtext.Line(attachment.ID), termtext.Line(attachment.Filename), termtext.Line(attachment.MediaType), attachment.Size, termtext.Line(attachment.ExpiresAt)))
+		}
+		if msg.ContentMode == awid.ContentModeEncryptedV2 && !msg.AttachmentsAvailable {
+			sb.WriteString("  Attachments unavailable.\n")
+		}
+
 	}
 	if resp.HasMore {
 		sb.WriteString("\nMore messages are not shown on this page.\n")
@@ -246,6 +253,13 @@ func formatMailShowResponse(resp *awid.InboxResponse, notice string) string {
 		}
 		tags := formatVerificationTag(msg.VerificationStatus) + formatContactTag(msg.IsContact)
 		sb.WriteString(fmt.Sprintf("- %s%s%s: %s\n", termtext.Line(preferredIdentityDisplayLabel(msg.FromAlias, msg.FromAddress, msg.FromStableID, msg.FromDID, "")), subj, tags, termtext.Block(msg.Body)))
+		for _, attachment := range msg.Attachments {
+			sb.WriteString(fmt.Sprintf("  Attachment %s: %s (%s, %d bytes, expires %s)\n", termtext.Line(attachment.ID), termtext.Line(attachment.Filename), termtext.Line(attachment.MediaType), attachment.Size, termtext.Line(attachment.ExpiresAt)))
+		}
+		if msg.ContentMode == awid.ContentModeEncryptedV2 && !msg.AttachmentsAvailable {
+			sb.WriteString("  Attachments unavailable.\n")
+		}
+
 	}
 	return sb.String()
 }

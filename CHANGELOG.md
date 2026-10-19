@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Managed mail/chat attachments: encrypted-v2 inner descriptors, a transactional
+  embedding storage boundary and participant-authenticated fetch APIs; `aw mail
+  show`/MCP expose validated descriptors and `aw mail attachment fetch` (and
+  `aw chat attachment fetch`) saves verified bytes to an explicit new file.
+  Managed files remain server-readable; there is no E2EE attachment claim.
+
 ## Release preparations
 
 ### Release preparation: server 1.27.27, aw 1.36.41

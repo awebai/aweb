@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.attachment_service import attachment_transaction
+
 import logging
 import uuid as uuid_mod
 from datetime import datetime, timezone
@@ -387,6 +389,7 @@ async def ensure_session(
     return UUID(str(session_id))
 
 
+@attachment_transaction("chat")
 async def send_in_session(
     db,
     *,

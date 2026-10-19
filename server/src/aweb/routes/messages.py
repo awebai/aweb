@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
+
 import json
 from datetime import datetime, timezone
 from typing import Annotated, Literal, Optional
@@ -118,6 +120,8 @@ class SendMessageRequest(BaseModel):
     from_did: Optional[str] = Field(default=None, max_length=256)
     signature: Optional[str] = Field(default=None, max_length=512)
     signed_payload: Optional[str] = None
+    attachments: object = None
+    attachment_refs: object = None
 
     @model_validator(mode="after")
     def _validate_content_mode(self):
@@ -214,6 +218,7 @@ class SendMessageResponse(BaseModel):
 
 
 class InboxMessage(BaseModel):
+    attachment_refs: list[dict] = Field(default_factory=list)
     sender_membership: SenderMembership | None = None
     message_id: str
     conversation_id: Optional[str] = None
@@ -236,6 +241,8 @@ class InboxMessage(BaseModel):
     to_address: Optional[str] = None
     signature: Optional[str] = None
     signed_payload: Optional[str] = None
+    attachments: object = None
+    attachment_refs: object = None
     verification_status: Optional[str] = None
 
     @model_serializer(mode="wrap")
@@ -291,6 +298,7 @@ async def _inbox_response_from_rows(
             encrypted_envelope = json.loads(encrypted_envelope)
         messages.append(
             InboxMessage(
+                attachment_refs=await attachment_references(db, "mail", r["message_id"]) if content_mode == "encrypted_v2" else [],
                 sender_membership=memberships[(str(r.get("team_id") or ""), str(r.get("from_agent_id") or ""))],
                 message_id=str(r["message_id"]),
                 conversation_id=(str(r["conversation_id"]) if r.get("conversation_id") else None),
@@ -840,6 +848,7 @@ async def _deliver_remote_mail_and_project_locally(
     to_alias: str | None,
     msg_uuid: UUID | None,
 ) -> SendMessageResponse:
+    refuse_remote_attachments()
     delivery_origin = _remote_delivery_origin(recipient)
     if not delivery_origin:
         raise HTTPException(
@@ -1260,6 +1269,7 @@ async def _send_federated_mail_conversation_continuation(
     sender_did: str,
     continuation: MailContinuationContext,
 ) -> SendMessageResponse:
+    refuse_remote_attachments()
     recipient_participant = continuation.recipient_participant
     try:
         recipient = await remote_recipient_from_participant(registry_client, recipient_participant)
@@ -1358,6 +1368,15 @@ async def send_message(
     request: Request, payload: SendMessageRequest, db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
+    attachment_context = prepare_attachment_send(request, payload, auth)
+    if attachment_context is not None:
+        with attachment_context:
+            existing = await attachment_retry(db, payload, "mail")
+            if existing:
+                binding, row = existing
+                return SendMessageResponse(message_id=binding.message_id, conversation_id=binding.conversation_id,
+                                           status="delivered", delivered_at=row["created_at"].isoformat())
+            return await send_message(request, payload, db=db, auth=auth)
     registry_client = getattr(request.app.state, "awid_registry_client", None)
     sender_address = _sender_address(auth)
     sender_did = (auth.did_aw or auth.did_key or "").strip()

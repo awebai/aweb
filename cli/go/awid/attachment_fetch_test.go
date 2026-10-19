@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -63,5 +64,24 @@ func TestAttachmentFetchUsesParticipantAuthAndChecksBytes(t *testing.T) {
 	descriptor.Filename = "../x"
 	if _, err := client.FetchAttachment(context.Background(), "mail", "22222222-2222-4222-8222-222222222222", descriptor); err == nil || calls != before {
 		t.Fatal("invalid descriptor reached transport")
+	}
+}
+
+func TestAttachmentTraceKeepsNamesAndBytesOutOfLogs(t *testing.T) {
+	t.Setenv("AW_TRACE", "1")
+	request, _ := http.NewRequest(http.MethodGet, "https://example.test/api/v1/messages/22222222-2222-4222-8222-222222222222/attachments/11111111-1111-4111-8111-111111111111", nil)
+	response := &http.Response{Request: request, StatusCode: 200, Header: http.Header{"Content-Disposition": []string{"attachment; filename=PRIVATE_NAME"}}, Body: io.NopCloser(strings.NewReader("PRIVATE_BYTES"))}
+	trace := captureStderrForTest(t, func() {
+		TraceHTTPRequest(request, nil)
+		if err := TraceHTTPResponse(response); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if strings.Contains(trace, "PRIVATE_NAME") || strings.Contains(trace, "PRIVATE_BYTES") {
+		t.Fatal("attachment content entered trace logs")
+	}
+	remaining, err := io.ReadAll(response.Body)
+	if err != nil || string(remaining) != "PRIVATE_BYTES" {
+		t.Fatal("redaction consumed the download")
 	}
 }

@@ -1949,6 +1949,7 @@ Flags:
 Real-time chat
 
 Subcommands:
+- `attachment` Fetch managed message attachments as the authenticated participant
 - `extend-wait` Ask the other party to wait longer
 - `history` Show chat history with a recipient name or address
 - `listen` Wait for a message without sending
@@ -1963,6 +1964,30 @@ Subcommands:
 Flags:
 - `-h, --help help for chat`
 - `--team string Override the selected team_id for this command`
+
+## `chat attachment`
+
+### `chat attachment`
+
+Fetch managed message attachments as the authenticated participant
+
+Subcommands:
+- `fetch` Fetch exact file bytes to an explicit new output path
+
+Flags:
+- `-h, --help help for attachment`
+
+## `chat attachment fetch`
+
+### `chat attachment fetch`
+
+Fetch exact file bytes to an explicit new output path
+
+Flags:
+- `-h, --help help for fetch`
+- `--message-id string Message containing the attachment`
+- `--output string Explicit new file path (existing files and symlinks are refused)`
+- `--session-id string Chat session containing the message`
 
 ## `chat extend-wait`
 
@@ -2483,6 +2508,7 @@ Agent messaging
 
 Subcommands:
 - `ack` Acknowledge one mail message as read
+- `attachment` Fetch managed message attachments as the authenticated participant
 - `inbox` List inbox messages (unread only by default)
 - `reply` Reply to an existing mail conversation
 - `send` Send a message to another agent
@@ -2500,6 +2526,29 @@ Acknowledge one mail message as read
 
 Flags:
 - `-h, --help help for ack`
+
+## `mail attachment`
+
+### `mail attachment`
+
+Fetch managed message attachments as the authenticated participant
+
+Subcommands:
+- `fetch` Fetch exact file bytes to an explicit new output path
+
+Flags:
+- `-h, --help help for attachment`
+
+## `mail attachment fetch`
+
+### `mail attachment fetch`
+
+Fetch exact file bytes to an explicit new output path
+
+Flags:
+- `-h, --help help for fetch`
+- `--message-id string Message containing the attachment`
+- `--output string Explicit new file path (existing files and symlinks are refused)`
 
 ## `mail inbox`
 

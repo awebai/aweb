@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.attachment_service import prepare_attachment_send, refuse_remote_attachments, attachment_retry, attachment_references
+
 from aweb.messaging.sender_membership import sender_memberships
 
 import asyncio
@@ -693,6 +695,7 @@ async def _deliver_federated_chat(
     route: dict[str, Any],
     session_id: str,
 ) -> dict[str, Any]:
+    refuse_remote_attachments()
     if not _payload_is_encrypted(payload):
         _require_remote_chat_signature(payload, session_id=session_id)
     sender_routing_did = (auth.did_aw or auth.did_key or "").strip()
@@ -1161,6 +1164,8 @@ class CreateSessionRequest(BaseModel):
     from_did: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
     signed_payload: str | None = None
+    attachments: object = None
+    attachment_refs: object = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1273,6 +1278,10 @@ async def create_or_send(
     redis=Depends(get_redis),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ):
+    attachment_context = prepare_attachment_send(request, payload, auth)
+    if attachment_context is not None:
+        with attachment_context:
+            return await create_or_send(request, payload, db=db, redis=redis, auth=auth)
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:
@@ -1910,6 +1919,7 @@ async def history(
         )
         history_items.append(
             {
+                "attachment_refs": await attachment_references(db, "chat", msg["message_id"]),
                 "sender_membership": memberships[(str(sess["team_id"] or ""), str(msg.get("from_agent_id") or ""))],
                 "conversation_id": str(session_uuid),
                 "message_id": msg["message_id"],
@@ -2488,6 +2498,8 @@ class SendMessageRequest(BaseModel):
     from_did: str | None = Field(default=None, max_length=256)
     signature: str | None = Field(default=None, max_length=512)
     signed_payload: str | None = None
+    attachments: object = None
+    attachment_refs: object = None
 
     @model_validator(mode="after")
     def _validate_content_mode(self) -> "SendMessageRequest":
@@ -2533,6 +2545,16 @@ async def send_message(
     db=Depends(get_db),
     auth: MessagingAuth = Depends(get_messaging_auth),
 ) -> SendMessageResponse:
+    attachment_context = prepare_attachment_send(request, payload, auth)
+    if attachment_context is not None:
+        with attachment_context:
+            existing = await attachment_retry(db, payload, "chat")
+            if existing:
+                binding, row = existing
+                if binding.conversation_id != session_id:
+                    raise HTTPException(409, detail={"code": "attachment_conflict"})
+                return SendMessageResponse(message_id=binding.message_id, conversation_id=binding.conversation_id, delivered=True)
+            return await send_message(request, session_id, payload, db=db, auth=auth)
     actor_dids = _actor_dids(auth)
     actor_did = actor_dids[0] if actor_dids else ""
     if not actor_did:

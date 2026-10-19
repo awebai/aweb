@@ -556,6 +556,8 @@ func (c *Client) mailInboxAliasTarget(msg InboxMessage) string {
 }
 
 type InboxMessage struct {
+	Attachments             []AttachmentDescriptor   `json:"attachments,omitempty"`
+	AttachmentsAvailable    bool                     `json:"attachments_available"`
 	SenderMembership        *SenderMembership        `json:"sender_membership,omitempty"`
 	MessageID               string                   `json:"message_id"`
 	ConversationID          string                   `json:"conversation_id,omitempty"`
@@ -767,6 +769,8 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 	}
 	for i := range out.Messages {
 		m := &out.Messages[i]
+		m.Attachments = nil
+		m.AttachmentsAvailable = true
 		binding := ReceivedSenderBinding{ProjectedDID: m.FromDID}
 		if m.ContentMode != ContentModeEncryptedV2 && m.MessageVersion != E2EEMessageVersion && m.Encrypted == nil && m.SignedPayload != "" && !c.signedMailDisplayMatches(m.SignedPayload, map[string]string{
 			"type": "mail", "body": m.Body, "subject": m.Subject,
@@ -796,6 +800,7 @@ func (c *Client) normalizeInboxResponse(ctx context.Context, out *InboxResponse)
 
 			m.Subject = plain.Subject
 			m.Body = plain.Body
+			m.Attachments, m.AttachmentsAvailable = decodeAttachmentContent(plain.Attachments)
 			binding.TeamID = plain.From.TeamID
 			applyE2EEPlaintextMailMetadata(m, plain)
 			m.VerificationStatus = Verified

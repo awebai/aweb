@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from aweb.attachment_service import attachment_transaction
+
 import json
 import uuid as uuid_mod
 from datetime import datetime, timezone
@@ -247,6 +249,7 @@ async def authorize_message_delivery(
     )
 
 
+@attachment_transaction("mail")
 async def deliver_message(
     db,
     *,

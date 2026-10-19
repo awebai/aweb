@@ -1464,6 +1464,9 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 			}
 			return nil, decorated
 		}
+		if resp.Request == nil && isAttachmentFetchPath(req.URL.Path) {
+			resp.Request = req
+		}
 		if err := TraceHTTPResponse(resp); err != nil {
 			_ = resp.Body.Close()
 			return nil, err
@@ -1594,6 +1597,10 @@ func TraceHTTPRequest(req *http.Request, body []byte) {
 	if !traceEnabled() || req == nil {
 		return
 	}
+	if isAttachmentFetchPath(req.URL.Path) {
+		fmt.Fprintln(os.Stderr, "AW TRACE attachment request: GET <participant-scoped attachment>")
+		return
+	}
 	fmt.Fprintf(os.Stderr, "AW TRACE request: %s %s\n", req.Method, req.URL.String())
 	traceHeaders("AW TRACE request header", req.Header, true)
 	if req.URL != nil && strings.HasSuffix(req.URL.Path, "/v1/spawn/accept-invite") {
@@ -1606,6 +1613,10 @@ func TraceHTTPRequest(req *http.Request, body []byte) {
 // TraceHTTPResponse writes redacted response detail when AW_TRACE is enabled.
 func TraceHTTPResponse(resp *http.Response) error {
 	if !traceEnabled() || resp == nil {
+		return nil
+	}
+	if resp.Request != nil && resp.Request.URL != nil && isAttachmentFetchPath(resp.Request.URL.Path) {
+		fmt.Fprintf(os.Stderr, "AW TRACE attachment response: HTTP %d, bytes %d <content redacted>\n", resp.StatusCode, resp.ContentLength)
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "AW TRACE response: HTTP %d\n", resp.StatusCode)

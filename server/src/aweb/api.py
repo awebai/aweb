@@ -351,6 +351,7 @@ def create_app(
     *,
     db_infra: Optional[DatabaseInfra] = None,
     redis: Optional[Redis] = None,
+    attachment_backend=None,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
 
@@ -407,7 +408,11 @@ def create_app(
     else:
         lifespan = _make_standalone_lifespan()
 
+    from aweb.attachment_service import router as attachment_router
+
     app = RequestDecompressionFastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
+    app.state.attachment_backend = attachment_backend
+    app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 
     @app.middleware("http")
@@ -440,6 +445,8 @@ def create_app(
     async def _request_validation_error_handler(
         request: Request, exc: RequestValidationError
     ):
+        if isinstance(exc.body, dict) and ({"attachments", "attachment_refs"} & exc.body.keys()):
+            return JSONResponse(status_code=422, content={"detail": {"code": "request_invalid"}})
         matched_route_path = getattr(request.scope.get("route"), "path", "")
         if isinstance(matched_route_path, str) and matched_route_path.startswith(
             "/v1/federation/"
