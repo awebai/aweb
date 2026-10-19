@@ -51,8 +51,16 @@ var rootCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := requireIdentityHomeAwareCommand(cmd, home.External()); err != nil {
-			return err
+		if home.External() {
+			// A fresh destination is meaningful only when explicitly named for an
+			// operation which creates identity state. An inherited selector is
+			// always an acting principal, never an implicit creation destination.
+			freshTarget := home.Source == awconfig.IdentityHomeFlag && cmd.Annotations[identityCreationTargetAnnotation] == "true"
+			if !freshTarget {
+				if err := validateSelectedIdentityHome(home); err != nil {
+					return err
+				}
+			}
 		}
 		loadDotenvBestEffort()
 		if home.External() {
@@ -115,7 +123,7 @@ func versionReport() string {
 
 func init() {
 	// Cobra normally runs only the nearest persistent hook. Traversal makes the
-	// root identity-home policy unshadowable by commands with their own hooks.
+	// root identity selection run before commands with their own hooks.
 	cobra.EnableTraverseRunHooks = true
 	rootCmd.AddGroup(
 		&cobra.Group{ID: groupWorkspace, Title: "Workspace Setup"},

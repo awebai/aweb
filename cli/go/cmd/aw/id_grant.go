@@ -144,11 +144,15 @@ func requireGrantAuthorityHome() error {
 // resolveGrantClientSelection builds a grant-authenticated client from a grant
 // home so mail and chat commands work unchanged for the grant's subject.
 func resolveGrantClientSelection(workingDir string, home awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
+	return resolveGrantClientSelectionForTeam(workingDir, home, teamFlag)
+}
+
+func resolveGrantClientSelectionForTeam(workingDir string, home awconfig.IdentityHome, requestedTeam string) (*aweb.Client, *awconfig.Selection, error) {
 	grant, err := awconfig.LoadGrantHome(home.Root)
 	if err != nil {
 		return nil, nil, err
 	}
-	if requestedTeam := strings.TrimSpace(teamFlag); requestedTeam != "" && requestedTeam != strings.TrimSpace(grant.TeamID) {
+	if requestedTeam := strings.TrimSpace(requestedTeam); requestedTeam != "" && requestedTeam != strings.TrimSpace(grant.TeamID) {
 		return nil, nil, usageError("grant home is bound to team %s; --team %s conflicts", strings.TrimSpace(grant.TeamID), requestedTeam)
 	}
 	if err := checkGrantExpiry(grant.ExpiresAt, time.Now()); err != nil {

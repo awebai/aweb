@@ -2,6 +2,7 @@ package awconfig
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,22 @@ func ResolveIdentityHome(workingDir, explicit string) (IdentityHome, error) {
 	if source != IdentityHomeDefault {
 		if err := pathpreflight.PreflightDir(root, "identity home", pathpreflight.Options{}); err != nil {
 			return IdentityHome{}, err
+		}
+		if info, statErr := os.Stat(root); statErr == nil {
+			if err := checkIdentityHomeOwner(root, info); err != nil {
+				return IdentityHome{}, err
+			}
+			dir, err := os.Open(root)
+			if err != nil {
+				return IdentityHome{}, fmt.Errorf("read identity home %s: %w", root, err)
+			}
+			_, readErr := dir.Readdirnames(1)
+			_ = dir.Close()
+			if readErr != nil && readErr != io.EOF {
+				return IdentityHome{}, fmt.Errorf("read identity home %s: %w", root, readErr)
+			}
+		} else if !os.IsNotExist(statErr) {
+			return IdentityHome{}, fmt.Errorf("read identity home %s: %w", root, statErr)
 		}
 	}
 	return IdentityHome{Root: root, Source: source}, nil

@@ -85,9 +85,9 @@ CLI. Response fields and values are validated before output. Bodies, headers,
 token-derived URLs and underlying errors are never copied into diagnostics;
 `--trace` prints only a fixed request description and HTTP status.
 
-The existing identity-home policy remains unchanged: explicit `--identity-home`
-and ambient `AWEB_IDENTITY_HOME` selecting an external home refuse this command
-with the existing usage diagnostic before inspection. This policy diagnostic is
-not an inspection JSON result. Do not clear a selected identity to force fallback.
-OATS uses its isolated deployment-directory subprocess context for inspection;
-its later acceptance step separately uses the already-supported identity home.
+Inspection follows the shared identity selector (`--identity-home`, then
+`AWEB_IDENTITY_HOME`, then the current directory). A selected folder that is
+missing or invalid fails before inspection; it never uses another directory's
+identity. Inspection itself creates no identity or membership. Acceptance is a
+separate operation; creating a local identity requires an explicit fresh target
+when an identity is inherited from the environment.

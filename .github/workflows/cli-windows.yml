@@ -37,3 +37,6 @@ jobs:
         # Both scope choices create a signing key, team certificate and E2EE
         # files. The global case also verifies the signup DIDKey signature.
         run: go test -p 2 -parallel 2 -count=1 ./cmd/aw -run '^TestInit(GlobalCreatesSelfCustodialGlobalCLIIdentityAndSignsCloudRequest|LocalCLIWorkspaceOmitsGlobalIdentityFile)$' -timeout 5m
+      - name: Verify selected identity precedence with real aw binaries
+        if: ${{ !cancelled() }}
+        run: go test -p 2 -parallel 2 -count=1 ./cmd/aw -run '^Test(IdentitySelectionAcrossCommandGroups|SelectedIdentityNeverFallsBackAndInitPreservesInheritedIdentity|TeamInviteActsFromExternalIdentityHome|TeamInviteGrantKeepsServerRefusal|SelectedIdentityControllerInviteAndAcceptRoundTrip)$' -timeout 5m

@@ -45,7 +45,7 @@ var teamInviteInspectCmd = &cobra.Command{
 		"Controller tokens are decoded locally without network or controller-store reads:\n" +
 		"scope is unknown, status is unverified, and expiry/validity are not established.\n" +
 		"Inspection creates no identity, membership or workspace. External identity homes\n" +
-		"remain unsupported. Cloud must support /api/v1/spawn/invite-preview.",
+		"follow the shared identity selector. Cloud must support /api/v1/spawn/invite-preview.",
 	Args: func(cmd *cobra.Command, args []string) error {
 		if len(args) != 0 {
 			return reportInviteInspectError(cmd, nil, &inviteInspectError{"malformed_token", "Pass the invite token on stdin, not as an argument.", 2})

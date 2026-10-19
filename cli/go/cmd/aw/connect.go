@@ -45,6 +45,13 @@ func runConnect(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	if home.External() {
+		return usageError("bootstrap connect creates a new identity in the current directory; refusing to change selected identity home %s", home.Root)
+	}
 	address := strings.TrimSpace(connectAddress)
 	if err := ensureConnectTargetClean(workingDir); err != nil {
 		return err

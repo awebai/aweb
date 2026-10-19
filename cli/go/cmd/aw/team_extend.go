@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/spf13/cobra"
 )
@@ -113,6 +112,13 @@ func resolveTeamExtendAuthority(wd string) (teamExtendAuthority, error) {
 		return teamExtendAuthority{}, err
 	} else if ok {
 		return teamExtendAuthority{Tier: teamExtendAuthorityTierCurrentWorkspace, AnchorDir: candidate.HomeDir, AgentsRoot: agentsRoot, TeamID: candidate.TeamID}, nil
+	}
+	home, homeErr := identityHomeForDir(wd)
+	if homeErr != nil {
+		return teamExtendAuthority{}, homeErr
+	}
+	if home.External() {
+		return teamExtendAuthority{}, usageError("selected identity home %s has no invite authority for the requested team", home.Root)
 	}
 	candidates, checked, err := scanTeamExtendCandidates(agentsRoot, teamID)
 	if err != nil {
@@ -256,7 +262,11 @@ func printTeamCreateExtendNotice(wd string) {
 	if teamHumanCreateBYOT || jsonFlag {
 		return
 	}
-	_, teamState, _, err := awconfig.LoadWorkspaceAndTeamState(wd)
+	home, err := identityHomeForDir(wd)
+	if err != nil {
+		return
+	}
+	_, teamState, _, err := loadCurrentWorkspaceAndTeamState(wd, externalIdentityHomeRoot(home))
 	if err != nil || teamState == nil || strings.TrimSpace(teamState.ActiveTeam) == "" {
 		return
 	}

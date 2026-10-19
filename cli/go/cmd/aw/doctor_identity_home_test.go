@@ -539,47 +539,36 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 	}
 }
 
-func TestExternalIdentityHomeUnadmittedDoctorCategoriesRemainRefused(t *testing.T) {
+func TestExternalIdentityHomeAllDoctorCategoriesSelectPrincipal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	bin := filepath.Join(tmp, "aw")
-	instance := filepath.Join(tmp, "instance")
-	identityHome := filepath.Join(tmp, "principal")
-	if err := os.MkdirAll(instance, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(identityHome, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
-
-	commands := [][]string{
-		{"doctor", "local", "--offline", "--json"},
-		{"doctor", "workspace", "--offline", "--json"},
-		{"doctor", "team", "--offline", "--json"},
-		{"doctor", "messaging", "--offline", "--json"},
-	}
-	for _, args := range commands {
-		command := exec.CommandContext(ctx, bin, append([]string{"--identity-home", identityHome}, args...)...)
-		command.Env = testCommandEnv(tmp)
-		command.Dir = instance
-		out, err := command.CombinedOutput()
-		text := string(out)
-		if err == nil || !strings.Contains(text, "not yet identity-home-aware") {
-			t.Fatalf("unsafe aw %s did not remain default-denied: err=%v\n%s", strings.Join(args, " "), err, out)
+	principal := filepath.Join(root, "principal")
+	instance := filepath.Join(root, "instance")
+	pub, key, _ := awid.GenerateKeypair()
+	writeSelectionFixtureForTest(t, principal, testSelectionFixture{AwebURL: "http://127.0.0.1:1", TeamID: "selected:example.test", Alias: "selected", DID: awid.ComputeDIDKey(pub), SigningKey: key, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal})
+	decoyPub, decoyKey, _ := awid.GenerateKeypair()
+	writeSelectionFixtureForTest(t, instance, testSelectionFixture{AwebURL: "http://127.0.0.1:2", TeamID: "decoy:example.test", Alias: "decoy", DID: awid.ComputeDIDKey(decoyPub), SigningKey: decoyKey, Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal})
+	before := fileDigestsForTest(t, filepath.Join(instance, ".aw"))
+	for _, category := range []string{"local", "workspace", "team", "messaging"} {
+		command := exec.CommandContext(ctx, bin, "--identity-home", filepath.Join(principal, ".aw"), "doctor", category, "--offline", "--json")
+		command.Env, command.Dir = testCommandEnv(root), instance
+		out, _ := command.CombinedOutput() // Diagnostics may report unresolved checks.
+		var result map[string]any
+		if err := json.Unmarshal(extractJSON(t, out), &result); err != nil {
+			t.Fatalf("%s: %v: %s", category, err, out)
 		}
-		for _, alternative := range []string{"aw doctor", "aw doctor identity", "aw doctor registry", "aw doctor support-bundle"} {
-			if !strings.Contains(text, alternative) {
-				t.Fatalf("doctor refusal omitted derived safe alternative %q:\n%s", alternative, text)
-			}
+		subject, _ := result["subject"].(map[string]any)
+		if subject["team_id"] != "selected:example.test" || subject["alias"] != "selected" {
+			t.Fatalf("%s selected wrong principal: %v", category, result)
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(instance, ".aw")); !os.IsNotExist(err) {
-		t.Fatalf("refused diagnostics mutated instance: %v", err)
+	if !reflect.DeepEqual(before, fileDigestsForTest(t, filepath.Join(instance, ".aw"))) {
+		t.Fatal("doctor changed decoy identity")
 	}
 }

@@ -698,7 +698,14 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	workspacePath, err := awconfig.FindWorktreeWorkspacePath(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	workspacePath := filepath.Join(home.Root, "workspace.yaml")
+	if !home.External() {
+		workspacePath, err = awconfig.FindWorktreeWorkspacePath(workingDir)
+	}
 	if err != nil {
 		if os.IsNotExist(err) {
 			return usageError("current worktree is missing .aw/workspace.yaml")
@@ -707,7 +714,7 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 	}
 
 	if workspace, err := awconfig.LoadWorktreeWorkspaceFrom(workspacePath); err == nil && workspace != nil {
-		teamState, teamStateErr := awconfig.LoadTeamState(workingDir)
+		teamState, teamStateErr := loadSelectedTeamState(workingDir, home)
 		if teamStateErr != nil {
 			return teamStateErr
 		}
@@ -726,7 +733,7 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	output, err := migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath)
+	output, err := migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath, home)
 	if err != nil {
 		return err
 	}
@@ -735,11 +742,15 @@ func runWorkspaceMigrateMultiTeam(cmd *cobra.Command, args []string) error {
 }
 
 func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (workspaceMigrateMultiTeamOutput, error) {
+	return migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath, awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir), Source: awconfig.IdentityHomeDefault})
+}
+
+func migrateLegacyWorkspaceToMultiTeamAt(workingDir, workspacePath string, home awconfig.IdentityHome) (workspaceMigrateMultiTeamOutput, error) {
 	legacy, err := awconfig.LoadLegacySingleTeamWorkspaceFrom(workspacePath)
 	if err != nil {
 		return workspaceMigrateMultiTeamOutput{}, err
 	}
-	legacyCertPath := filepath.Join(awconfig.WorktreeIdentityHome(workingDir), "team-cert.pem")
+	legacyCertPath := filepath.Join(home.Root, "team-cert.pem")
 	cert, err := awid.LoadTeamCertificate(legacyCertPath)
 	if err != nil {
 		return workspaceMigrateMultiTeamOutput{}, fmt.Errorf("load legacy team certificate %s: %w", legacyCertPath, err)
@@ -747,7 +758,7 @@ func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (worksp
 	if strings.TrimSpace(cert.Team) != strings.TrimSpace(legacy.TeamID) {
 		return workspaceMigrateMultiTeamOutput{}, fmt.Errorf("legacy team certificate team_id %q does not match workspace.yaml team_id %q", cert.Team, legacy.TeamID)
 	}
-	certPath, err := awconfig.SaveTeamCertificateForTeam(workingDir, legacy.TeamID, cert)
+	certPath, err := saveAcceptedTeamCertificate(workingDir, externalIdentityHomeRoot(home), legacy.TeamID, cert)
 	if err != nil {
 		return workspaceMigrateMultiTeamOutput{}, err
 	}
@@ -781,7 +792,7 @@ func migrateLegacyWorkspaceToMultiTeam(workingDir, workspacePath string) (worksp
 			JoinedAt: firstNonEmpty(strings.TrimSpace(cert.IssuedAt), strings.TrimSpace(legacy.UpdatedAt)),
 		}},
 	}
-	if err := awconfig.SaveTeamState(workingDir, teamState); err != nil {
+	if err := saveCurrentTeamState(workingDir, externalIdentityHomeRoot(home), teamState); err != nil {
 		return workspaceMigrateMultiTeamOutput{}, err
 	}
 	if err := os.Remove(legacyCertPath); err != nil && !os.IsNotExist(err) {

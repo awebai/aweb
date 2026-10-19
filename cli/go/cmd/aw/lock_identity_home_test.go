@@ -209,15 +209,15 @@ func TestLockCommandsUseExternalIdentityHome(t *testing.T) {
 							t.Error("refusal retried with other authority")
 						}
 					}
-					// Administrative revoke remains outside the holder workflow.
+					// Administrative revoke reaches the server under the same selected actor.
 					for _, args := range [][]string{{"lock", "revoke", "--prefix", "integration/"}} {
 						beforeCalls := calls.Load()
 						out, err := run(args...)
-						if err == nil || !strings.Contains(out, "not yet identity-home-aware") {
-							t.Errorf("unapproved command admitted: %v %s", err, out)
+						if err == nil || !strings.Contains(out, "lock authority refused") {
+							t.Errorf("server refusal lost: %v %s", err, out)
 						}
-						if calls.Load() != beforeCalls {
-							t.Error("unapproved command reached network")
+						if calls.Load() != beforeCalls+1 {
+							t.Error("revoke did not use exactly one selected-authority request")
 						}
 					}
 					if !reflect.DeepEqual(before, fileDigestsForTest(t, home)) {

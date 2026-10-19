@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 )
 
@@ -138,11 +139,18 @@ func TestSelectedIdentityNeverFallsBackAndInitPreservesInheritedIdentity(t *test
 				t.Fatal(err)
 			}
 		}
-		cmd := exec.CommandContext(ctx, bin, "id", "show", "--json")
-		cmd.Dir, cmd.Env = cwd, append(testCommandEnv(filepath.Join(root, "user-home")), "AWEB_IDENTITY_HOME="+selected, "AW_NO_UPDATE_CHECK=1")
-		out, err := cmd.CombinedOutput()
-		if err == nil || !strings.Contains(string(out), selected) {
-			t.Errorf("selected %s must fail with folder named: %v\n%s", name, err, out)
+		for _, args := range [][]string{
+			{"id", "show", "--json"},
+			{"team", "invite", "--team-id", "backend:acme.com", "--json"},
+			{"id", "team", "create", "--team", "new", "--namespace", "acme.com", "--json"},
+			{"id", "create", "--name", "new", "--domain", "acme.com", "--skip-dns-verify", "--json"},
+		} {
+			cmd := exec.CommandContext(ctx, bin, args...)
+			cmd.Dir, cmd.Env = cwd, append(testCommandEnv(filepath.Join(root, "user-home")), "AWEB_IDENTITY_HOME="+selected, "AW_NO_UPDATE_CHECK=1")
+			out, err := cmd.CombinedOutput()
+			if err == nil || !strings.Contains(string(out), selected) {
+				t.Errorf("selected %s must fail with folder named for %v: %v\n%s", name, args, err, out)
+			}
 		}
 	}
 	fresh := filepath.Join(root, "new-subfolder")
@@ -190,4 +198,18 @@ func requestSigningPayloadForTest(t *testing.T, r *http.Request, body []byte) []
 		t.Errorf("canonical request: %v", err)
 	}
 	return []byte(canonical)
+}
+
+func writeStandaloneSelectedIdentityForTest(t *testing.T, root string) {
+	t.Helper()
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(root, "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(root, "identity.yaml"), &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal}); err != nil {
+		t.Fatal(err)
+	}
 }

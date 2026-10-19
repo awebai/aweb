@@ -181,3 +181,116 @@ func TestTeamInviteGrantKeepsServerRefusal(t *testing.T) {
 		t.Fatalf("grant minted a local-controller invite: %v", err)
 	}
 }
+
+// A controller invite uses the selected team's controller, while global
+// acceptance preserves the selected member key and publishes its own assertion.
+func TestSelectedIdentityControllerInviteAndAcceptRoundTrip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "aw")
+	buildAwBinary(t, ctx, bin)
+	for _, mode := range []string{"environment", "flag", "cwd"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := filepath.Join(root, mode)
+			userHome := filepath.Join(dir, "user")
+			pubs := map[string]ed25519.PublicKey{}
+			keys := map[string]ed25519.PrivateKey{}
+			for _, name := range []string{"cwd", "environment", "flag"} {
+				pubs[name], keys[name], _ = ed25519.GenerateKey(nil)
+			}
+			selectedPub, selectedKey := pubs[mode], keys[mode]
+			did, stable := awid.ComputeDIDKey(selectedPub), awid.ComputeStableID(selectedPub)
+			const team = "backend:acme.com"
+			_, controller, _ := ed25519.GenerateKey(nil)
+			writeTeamKeyForTest(t, userHome, "acme.com", "backend", controller)
+			var registrations, assertions atomic.Int32
+			server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/certificates"):
+					var payload struct {
+						Certificate string `json:"certificate"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return
+					}
+					cert, err := awid.DecodeTeamCertificateHeader(payload.Certificate)
+					if err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return
+					}
+					if cert.MemberDIDKey != did || cert.MemberDIDAW != stable || cert.Team != team || awid.VerifyTeamCertificate(cert, controller.Public().(ed25519.PublicKey)) != nil {
+						t.Error("accepted certificate did not bind the selected principal to the selected controller team")
+						w.WriteHeader(400)
+						return
+					}
+					registrations.Add(1)
+					w.WriteHeader(http.StatusCreated)
+				case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/encryption-key"):
+					var assertion awid.EncryptionKeyAssertion
+					if err := json.NewDecoder(r.Body).Decode(&assertion); err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return
+					}
+					if err := awid.VerifyEncryptionKeyAssertion(&assertion, did, stable, time.Now()); err != nil {
+						t.Error(err)
+						w.WriteHeader(400)
+						return
+					}
+					assertions.Add(1)
+					w.WriteHeader(http.StatusCreated)
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			for _, name := range []string{"cwd", "environment", "flag"} {
+				teamID := "decoy:decoy.test"
+				if name == mode {
+					teamID = team
+				}
+				writeSelectionFixtureForTest(t, filepath.Join(dir, name), testSelectionFixture{AwebURL: server.URL, RegistryURL: server.URL, TeamID: teamID, Alias: "alice", DID: awid.ComputeDIDKey(pubs[name]), StableID: awid.ComputeStableID(pubs[name]), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeGlobal, SigningKey: keys[name]})
+			}
+			cwd := filepath.Join(dir, "cwd")
+			before := snapshotJoinFiles(t, cwd)
+			selectedRoot := filepath.Join(dir, mode, ".aw")
+			run := func(args ...string) []byte {
+				env := append(testCommandEnv(userHome), "USERPROFILE="+userHome, "AWEB_IDENTITY_HOME=", "AWEB_URL=", "AWID_REGISTRY_URL="+server.URL, "AW_NO_UPDATE_CHECK=1")
+				if mode != "cwd" {
+					env = append(env, "AWEB_IDENTITY_HOME="+filepath.Join(dir, "environment", ".aw"))
+				}
+				if mode == "flag" {
+					args = append([]string{"--identity-home", selectedRoot}, args...)
+				}
+				cmd := exec.CommandContext(ctx, bin, args...)
+				cmd.Dir, cmd.Env = cwd, env
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("%v: %v\n%s", args, err, out)
+				}
+				return out
+			}
+			var invite teamInviteOutput
+			if err := json.Unmarshal(extractJSON(t, run("team", "invite", "--member-global", "--json")), &invite); err != nil || invite.Token == "" {
+				t.Fatalf("invite: %v %+v", err, invite)
+			}
+			run("id", "team", "accept-invite", invite.Token, "--name", "alice", "--global", "--no-address", "--json")
+			if registrations.Load() != 1 || assertions.Load() != 1 {
+				t.Fatalf("registrations=%d assertions=%d", registrations.Load(), assertions.Load())
+			}
+			keyAfter, err := awid.LoadSigningKey(filepath.Join(selectedRoot, "signing.key"))
+			if err != nil || !reflect.DeepEqual(keyAfter, selectedKey) {
+				t.Fatal("accept replaced selected member key")
+			}
+			if mode != "cwd" && !reflect.DeepEqual(before, snapshotJoinFiles(t, cwd)) {
+				t.Fatal("controller invite/accept mutated decoy identity")
+			}
+		})
+	}
+}

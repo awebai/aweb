@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1735,4 +1736,38 @@ func (c *cobraCommandClone) ResetFlagsForTest() {
 	c.Command.Flags().BoolVar(&runProviderPTY, "provider-pty", false, "")
 	c.Command.Flags().BoolVar(&runAutofeedWork, "autofeed-work", false, "")
 	c.Command.Flags().BoolVar(&runInitConfig, "init", false, "")
+}
+
+func TestRunNeverBootstrapsInheritedIdentity(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := filepath.Join(root, "principal")
+	writeStandaloneSelectedIdentityForTest(t, selected)
+	t.Setenv(awconfig.IdentityHomeEnv, selected)
+	cwd := filepath.Join(root, "checkout")
+	if err := os.Mkdir(cwd, 0700); err != nil {
+		t.Fatal(err)
+	}
+	old := guidedOnboardingWizard
+	called := false
+	guidedOnboardingWizard = func(guidedOnboardingRequest) (*guidedOnboardingResult, error) {
+		called = true
+		return nil, errors.New("fixture onboarding must not run")
+	}
+	t.Cleanup(func() { guidedOnboardingWizard = old })
+	before := fileDigestsForTest(t, selected)
+	command := &cobra.Command{}
+	command.SetErr(io.Discard)
+	_, _, _, err = resolveRunClientForDir(command, cwd, true, strings.NewReader("yes\n"))
+	if err == nil || called || !strings.Contains(err.Error(), selected) {
+		t.Fatalf("run tried to bootstrap under inherited selection: called=%v err=%v", called, err)
+	}
+	if !reflect.DeepEqual(before, fileDigestsForTest(t, selected)) {
+		t.Fatal("run changed inherited principal")
+	}
+	if _, err := os.Stat(filepath.Join(cwd, ".aw")); !os.IsNotExist(err) {
+		t.Fatal("run created checkout identity")
+	}
 }

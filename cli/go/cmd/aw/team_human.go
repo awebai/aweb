@@ -139,8 +139,9 @@ var teamHumanInviteCmd = &cobra.Command{
 }
 
 var teamHumanJoinCmd = &cobra.Command{
-	Use:   "join [invite-token]",
-	Short: "Join a team from an invite token",
+	Annotations: map[string]string{identityCreationTargetAnnotation: "true"},
+	Use:         "join [invite-token]",
+	Short:       "Join a team from an invite token",
 	Long: "Join a team from an invite token.\n\n" +
 		"Run this in a clean target directory. It refuses to overwrite an existing\n" +
 		".aw identity/key. Join installs the identity and membership, then connects this\n" +
@@ -516,6 +517,13 @@ func runTeamHumanCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	wd, _ := os.Getwd()
+	home, err := identityHomeForDir(wd)
+	if err != nil {
+		return err
+	}
+	if home.External() {
+		return usageError("team admin create creates a first-agent identity; refusing to change selected identity home %s; use id team create for a sibling team", home.Root)
+	}
 	printTeamCreateExtendNotice(wd)
 	createHomeOverride := ""
 	if strings.TrimSpace(teamHumanCreateHome) != "" {
@@ -1327,7 +1335,8 @@ func preflightTeamHumanAddRosterAliases(wd, agentsRoot string, specs []teamAgent
 	}
 	freshSpecs := make([]teamAgentSpec, 0, len(specs))
 	for _, spec := range specs {
-		homeSelection, homeErr := resolveSelectionForDir(filepath.Join(agentsRoot, strings.TrimSpace(spec.Name)))
+		targetDir := filepath.Join(agentsRoot, strings.TrimSpace(spec.Name))
+		homeSelection, homeErr := resolveSelectionAtIdentityHome(targetDir, "", awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(targetDir), Source: awconfig.IdentityHomeDefault})
 		if homeErr == nil && strings.EqualFold(strings.TrimSpace(homeSelection.TeamID), strings.TrimSpace(selection.TeamID)) && strings.EqualFold(strings.TrimSpace(homeSelection.Alias), strings.TrimSpace(spec.Name)) {
 			continue
 		}
@@ -2334,9 +2343,16 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 		}
 	}
 	localInvite := !global
-	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
+	actorHome, err := identityHomeForDir(anchorDir)
 	if err != nil {
 		return nil, err
+	}
+	hasTeamKey := false
+	if !awconfig.IsGrantHome(actorHome.Root) {
+		hasTeamKey, err = awconfig.TeamKeyExists(domain, team)
+		if err != nil {
+			return nil, err
+		}
 	}
 	var token string
 	if hasTeamKey {
@@ -2349,7 +2365,7 @@ func createAndAcceptTeamInviteForEmptyAgent(anchorDir, homeDir, alias string, gl
 	if err != nil {
 		return nil, err
 	}
-	accepted, err := acceptTeamInviteWithDetails(homeDir, token, teamAcceptInviteOptions{Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress})
+	accepted, err := acceptTeamInviteWithDetails(homeDir, token, teamAcceptInviteOptions{IdentityHome: awconfig.WorktreeIdentityHome(homeDir), Name: alias, Scope: teamAcceptScopeFromGlobal(global), Address: memberAddress})
 	if err != nil {
 		return nil, err
 	}
@@ -2680,7 +2696,18 @@ func activeTeamIDForHumanTeamCommand() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil && strings.TrimSpace(teamState.ActiveTeam) != "" {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return "", err
+	}
+	if awconfig.IsGrantHome(home.Root) {
+		grant, err := awconfig.LoadGrantHome(home.Root)
+		if err != nil {
+			return "", err
+		}
+		return grant.TeamID, nil
+	}
+	if teamState, err := loadSelectedTeamState(workingDir, home); err == nil && teamState != nil && strings.TrimSpace(teamState.ActiveTeam) != "" {
 		return strings.TrimSpace(teamState.ActiveTeam), nil
 	}
 	if sel, err := resolveSelectionForDir(workingDir); err == nil && strings.TrimSpace(sel.TeamID) != "" {

@@ -294,8 +294,8 @@ func TestEncryptionRenewalFailureBackoffAcrossCommands(t *testing.T) {
 	refused := exec.CommandContext(ctx, bin, "--identity-home", home, "team", "invite", "inspect", "--json")
 	refused.Dir, refused.Env = root, testCommandEnv(root)
 	refused.Stdin = strings.NewReader(token)
-	if out, err := refused.CombinedOutput(); err == nil {
-		t.Fatalf("external inspect should remain refused: %s", out)
+	if out, err := refused.CombinedOutput(); err != nil || !strings.Contains(string(out), `"controller"`) {
+		t.Fatalf("selected-principal local inspection: %v %s", err, out)
 	}
 	if attempts.Load() != 0 || !reflect.DeepEqual(fileDigestsForTest(t, home), before) {
 		t.Fatal("neutral command or controller inspection performed renewal network/state activity")

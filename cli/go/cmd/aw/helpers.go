@@ -161,7 +161,68 @@ func resolveIdentityForDir(workingDir string) (*awconfig.ResolvedIdentity, error
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	if identityHome.External() {
+		local, localErr := resolveCertificateIdentityAtHome(workingDir, identityHome.Root)
+		if localErr != nil {
+			return nil, fmt.Errorf("load selected identity home %s: %w", identityHome.Root, localErr)
+		}
+		local.ExternalIdentityHome = true
+		return local, nil
+	}
 	return resolveLocalIdentityWithoutState(workingDir)
+}
+
+func resolveCertificateIdentityAtHome(workingDir, identityHome string) (*awconfig.ResolvedIdentity, error) {
+	teamState, err := awconfig.LoadTeamStateFromIdentityHome(identityHome)
+	if err != nil {
+		return nil, err
+	}
+	membership := teamState.ActiveMembership()
+	if membership == nil {
+		return nil, fmt.Errorf("teams state is missing active_team membership")
+	}
+	cert, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(identityHome, membership.TeamID)
+	if err != nil {
+		return nil, err
+	}
+	signingKeyPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "signing.key")
+	if err != nil {
+		return nil, err
+	}
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
+	if err != nil {
+		return nil, fmt.Errorf("load external identity signing key: %w", err)
+	}
+	didKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
+	if certDID := strings.TrimSpace(cert.MemberDIDKey); certDID == "" || certDID != didKey {
+		return nil, fmt.Errorf("external signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
+	}
+	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)
+	if identityScope != awid.IdentityModeGlobal && identityScope != awid.IdentityModeLocal {
+		return nil, fmt.Errorf("active team certificate has unsupported identity_scope %q", cert.IdentityScope)
+	}
+	canonicalWorkingDir := filepath.Clean(strings.TrimSpace(workingDir))
+	canonicalIdentityHome := filepath.Clean(strings.TrimSpace(identityHome))
+	externalIdentityHome := canonicalIdentityHome != filepath.Join(canonicalWorkingDir, ".aw")
+	resolved := &awconfig.ResolvedIdentity{
+		WorkingDir:           canonicalWorkingDir,
+		IdentityHome:         canonicalIdentityHome,
+		ExternalIdentityHome: externalIdentityHome,
+		SigningKeyPath:       signingKeyPath,
+		DID:                  didKey,
+		StableID:             strings.TrimSpace(cert.MemberDIDAW),
+		Address:              strings.TrimSpace(cert.MemberAddress),
+		Custody:              awid.CustodySelf,
+		IdentityScope:        identityScope,
+		RegistryURL:          strings.TrimSpace(membership.RegistryURL),
+	}
+	if domain, handle, ok := awconfig.CutIdentityAddress(resolved.Address); ok {
+		resolved.Domain = domain
+		resolved.Handle = handle
+	} else if resolved.Address != "" {
+		resolved.Handle = resolved.Address
+	}
+	return resolved, nil
 }
 
 func resolveLocalIdentityWithoutState(workingDir string) (*awconfig.ResolvedIdentity, error) {
@@ -296,6 +357,9 @@ func resolveClientSelectionAtIdentityHome(workingDir string, identityHome awconf
 }
 
 func resolveClientSelectionAtIdentityHomeWithTeamOverride(workingDir, teamIDOverride string, identityHome awconfig.IdentityHome) (*aweb.Client, *awconfig.Selection, error) {
+	if awconfig.IsGrantHome(identityHome.Root) {
+		return resolveGrantClientSelectionForTeam(workingDir, identityHome, teamIDOverride)
+	}
 	sel, err := resolveSelectionAtIdentityHome(workingDir, teamIDOverride, identityHome)
 	if err != nil {
 		return nil, nil, err
@@ -388,7 +452,10 @@ func resolveIdentityMessagingClientSelectionForDir(workingDir string) (*aweb.Cli
 		return nil, nil, err
 	}
 
-	signingKeyPath := awconfig.WorktreeSigningKeyPath(workingDir)
+	signingKeyPath, err := awconfig.IdentityHomePath(home, "signing.key")
+	if err != nil {
+		return nil, nil, err
+	}
 	didKey := ""
 	if !identityMissing {
 		signingKeyPath = identity.SigningKeyPath
@@ -1049,7 +1116,7 @@ func loadOptionalWorktreeSigningKey(workingDir string) (ed25519.PrivateKey, erro
 	}
 	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) && !home.External() {
 			return nil, nil
 		}
 		return nil, err
@@ -1810,9 +1877,54 @@ func workspaceMembershipForSelection(ws *awconfig.WorktreeWorkspace, sel *awconf
 	if workingDir == "" {
 		return nil, nil
 	}
-	teamState, err := awconfig.LoadTeamState(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, err
+	}
+	teamState, err := loadSelectedTeamState(workingDir, home)
 	if err != nil {
 		return nil, err
 	}
 	return awconfig.ActiveMembershipFor(ws, teamState), nil
+}
+
+func loadSelectedTeamState(workingDir string, home awconfig.IdentityHome) (*awconfig.TeamState, error) {
+	if home.External() {
+		return awconfig.LoadTeamStateFromIdentityHome(home.Root)
+	}
+	return awconfig.LoadTeamState(workingDir)
+}
+
+// Validate only the selected principal. Team/workspace commands resolve any
+// additional membership state they need from this same home.
+func validateSelectedIdentityHome(home awconfig.IdentityHome) error {
+	fail := func(err error) error { return fmt.Errorf("selected identity home %s: %w", home.Root, err) }
+	if awconfig.IsGrantHome(home.Root) {
+		if _, err := awconfig.LoadGrantHome(home.Root); err != nil {
+			return fail(err)
+		}
+		_, err := awid.LoadSigningKey(awconfig.GrantHomeSigningKeyPath(home.Root))
+		if err != nil {
+			return fail(err)
+		}
+		return nil
+	}
+	identity, err := awconfig.ResolveIdentityFromHome(mustGetwd(), home.Root)
+	if err == nil {
+		returnError := validateResolvedIdentity(identity)
+		if returnError != nil {
+			return fail(returnError)
+		}
+		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fail(err)
+	}
+	// A certificate-only home is also a complete principal for team operations.
+	// It must still carry its own matching key and membership.
+	_, err = resolveCertificateIdentityAtHome(mustGetwd(), home.Root)
+	if err != nil {
+		return fail(err)
+	}
+	return nil
 }

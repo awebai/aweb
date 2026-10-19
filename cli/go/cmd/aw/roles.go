@@ -418,7 +418,11 @@ func resolveRequestedRoleName(sel *awconfig.Selection, explicit string) string {
 		return roleName
 	}
 	wd, _ := os.Getwd()
-	if state, _, err := awconfig.LoadWorktreeWorkspaceFromDir(wd); err == nil {
+	home, homeErr := identityHomeForDir(wd)
+	if homeErr != nil {
+		return ""
+	}
+	if state, _, _, err := loadCurrentWorkspaceAndTeamState(wd, externalIdentityHomeRoot(home)); err == nil {
 		if membership, err := workspaceMembershipForSelection(state, sel); err == nil && membership != nil {
 			if roleName := strings.TrimSpace(membership.RoleName); roleName != "" {
 				return roleName

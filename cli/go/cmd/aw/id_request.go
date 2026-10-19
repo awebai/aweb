@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -261,7 +262,10 @@ func resolveLocalSigningIdentity() (*localSigningIdentity, error) {
 	}
 	signingKeyPath := strings.TrimSpace(sel.SigningKey)
 	if signingKeyPath == "" && strings.TrimSpace(sel.WorkingDir) != "" {
-		candidate := awconfig.WorktreeSigningKeyPath(strings.TrimSpace(sel.WorkingDir))
+		candidate := filepath.Join(sel.IdentityHome, "signing.key")
+		if strings.TrimSpace(sel.IdentityHome) == "" {
+			candidate = awconfig.WorktreeSigningKeyPath(strings.TrimSpace(sel.WorkingDir))
+		}
 		if _, err := os.Stat(candidate); err == nil {
 			signingKeyPath = candidate
 		}

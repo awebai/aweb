@@ -200,8 +200,7 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 	if _, _, code := run("", nil, token); code != 2 {
 		t.Fatal("argv token was not refused")
 	}
-	// Both policy paths refuse before token parsing or HTTP dispatch, preserving
-	// principal files and the ordinary directory. No exception is added.
+	// A corrupt selected identity fails before HTTP dispatch and preserves files.
 	external, _ := filepath.EvalSymlinks(t.TempDir())
 	if err := os.WriteFile(filepath.Join(external, "identity.yaml"), []byte("invalid-principal-fixture"), 0600); err != nil {
 		t.Fatal(err)
@@ -215,8 +214,8 @@ func TestTeamInviteInspectCommand(t *testing.T) {
 			args = []string{"--identity-home", external}
 		}
 		_, diagnostic, code := run(token, env, args...)
-		if code != 2 || !strings.Contains(diagnostic, "not yet identity-home-aware") {
-			t.Fatalf("external identity policy not enforced: exit=%d diagnostic=%s", code, diagnostic)
+		if code == 0 || !strings.Contains(diagnostic, external) {
+			t.Fatalf("corrupt selected identity accepted: exit=%d diagnostic=%s", code, diagnostic)
 		}
 	}
 	if calls.Load() != before || !reflect.DeepEqual(externalBefore, snapshotJoinFiles(t, external)) || !reflect.DeepEqual(beforeHome, snapshotJoinFiles(t, home)) || !reflect.DeepEqual(beforeWD, snapshotJoinFiles(t, wd)) {

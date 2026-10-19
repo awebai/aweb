@@ -492,3 +492,6 @@ and high-impact handoff behavior.
 - [aweb-sot.md](aweb-sot.md): coordination server contract.
 - [global-local-identity-routing.md](global-local-identity-routing.md): route-level messaging model that supports this identity model.
 - [identity-key-verification.md](identity-key-verification.md): key verification details.
+
+For CLI folder precedence and the identity/workspace/user trust-store boundary,
+see [CLI identity selection](cli-identity-selection.md).

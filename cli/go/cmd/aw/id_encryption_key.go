@@ -495,56 +495,7 @@ func resolveIdentityForEncryptionKeyForDir(workingDir string, identityHome encry
 }
 
 func resolveActiveCertificateIdentityAtHomeForEncryptionKey(workingDir, identityHome string) (*awconfig.ResolvedIdentity, error) {
-	teamState, err := awconfig.LoadTeamStateFromIdentityHome(identityHome)
-	if err != nil {
-		return nil, err
-	}
-	membership := teamState.ActiveMembership()
-	if membership == nil {
-		return nil, fmt.Errorf("teams state is missing active_team membership")
-	}
-	cert, err := awconfig.LoadTeamCertificateForTeamFromIdentityHome(identityHome, membership.TeamID)
-	if err != nil {
-		return nil, err
-	}
-	signingKeyPath, err := awconfig.IdentityHomePath(awconfig.IdentityHome{Root: identityHome}, "signing.key")
-	if err != nil {
-		return nil, err
-	}
-	signingKey, err := awid.LoadSigningKey(signingKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("load external identity signing key: %w", err)
-	}
-	didKey := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	if certDID := strings.TrimSpace(cert.MemberDIDKey); certDID == "" || certDID != didKey {
-		return nil, fmt.Errorf("external signing key did:key %q does not match active team certificate member_did_key %q", didKey, certDID)
-	}
-	identityScope := awid.NormalizeIdentityScope(cert.IdentityScope)
-	if identityScope != awid.IdentityModeGlobal && identityScope != awid.IdentityModeLocal {
-		return nil, fmt.Errorf("active team certificate has unsupported identity_scope %q", cert.IdentityScope)
-	}
-	canonicalWorkingDir := filepath.Clean(strings.TrimSpace(workingDir))
-	canonicalIdentityHome := filepath.Clean(strings.TrimSpace(identityHome))
-	externalIdentityHome := canonicalIdentityHome != filepath.Join(canonicalWorkingDir, ".aw")
-	resolved := &awconfig.ResolvedIdentity{
-		WorkingDir:           canonicalWorkingDir,
-		IdentityHome:         canonicalIdentityHome,
-		ExternalIdentityHome: externalIdentityHome,
-		SigningKeyPath:       signingKeyPath,
-		DID:                  didKey,
-		StableID:             strings.TrimSpace(cert.MemberDIDAW),
-		Address:              strings.TrimSpace(cert.MemberAddress),
-		Custody:              awid.CustodySelf,
-		IdentityScope:        identityScope,
-		RegistryURL:          strings.TrimSpace(membership.RegistryURL),
-	}
-	if domain, handle, ok := awconfig.CutIdentityAddress(resolved.Address); ok {
-		resolved.Domain = domain
-		resolved.Handle = handle
-	} else if resolved.Address != "" {
-		resolved.Handle = resolved.Address
-	}
-	return resolved, nil
+	return resolveCertificateIdentityAtHome(workingDir, identityHome)
 }
 
 func resolveActiveCertificateIdentityForEncryptionKey(workingDir string) (*awconfig.ResolvedIdentity, error) {
