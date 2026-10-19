@@ -42,6 +42,10 @@ including observers who never speak. Adding an agent still requires its inbound
 policy/consent; membership ownership cannot override a refusal. Adding a bridge
 makes the entire session not E2EE from that membership epoch, visibly for every
 participant. Private messages never turn into room history because a bot was added.
+Join-forward protects message history, not all metadata: members explicitly
+consent to see the full signed membership/export-control history and global
+acceptance counters, including activity before join or during a removal gap.
+They do not thereby receive excluded messages, message IDs or envelope hashes.
 
 All agents consume ordinary platform-independent aweb events through upgraded
 `aw`/channel integrations. In native mode, the agent's existing platform adapter
@@ -471,6 +475,13 @@ identity-signed by the admitted bridge or independently authorized revoke-bridge
 authority under the narrow-only rule below; it cannot add members, change keys,
 transfer ownership or activate/widen an export.
 
+This full-chain verification uses the **explicit shared-control-history
+disclosure boundary** below. It deliberately discloses historical membership/
+export-policy records and global acceptance counters to consenting members;
+it does not claim to hide pre-join or removal-gap control activity. The service
+returns complete signed records, not unverifiable redactions or a substitute
+server assertion of the membership root.
+
 Adding a native identity, including cross-team same-server or federated targets,
 must pass that identity's current inbound policy and applicable explicit consent
 just as first contact does. A pending invitation confers no message delivery,
@@ -705,11 +716,11 @@ signs its canonical receipt, excluding only `signature`, with that identity/key
 authenticated through the session's creation/route binding; a requester-selected
 verifier URL/key is refused. This
 attests acceptance/order, not native authorship or export consent. The signed
-operation intent and identity-chain proof remain available with the receipt within the
-viewer's authorized intervals. A narrow-only writer with no corresponding history
-access receives only an acknowledgement of its own transition ID/target/result,
-not session sequences, hashes or historical export state; write authority does
-not grant receipt/history-read authority.
+operation intent and identity-chain proof remain available under the explicit
+control-history grant below. A narrow-only writer with no such read grant
+receives only an acknowledgement of its own transition ID/target/result, not
+session sequences, hashes or historical export state; write authority does not
+grant control-history or message-history access.
 
 Return 201 for a new commit, 200 for an authorized exact retry of the same
 `transition_id`/bytes and original receipt. Reusing the transition ID with other
@@ -743,36 +754,79 @@ manufactured eligible boundary. The
 service includes its `signer`/`signing_key_id` and signs this acceptance receipt
 under the same bound identity, excluding only `signature`.
 
-**Public reads and recovery.** Propose participant-authorized
-`GET /v1/chat/sessions/{session_id}/export-checkpoints/{transition_id}` and
-`GET /v1/chat/sessions/{session_id}/messages/{message_id}/acceptance`, plus
-`GET /v1/chat/sessions/{session_id}/acceptances?cursor=...&limit=...` for bounded
-reconciliation (`limit` 1–200, default 100). The first page pins a committed upper
-acceptance sequence internally; encrypted/server-stored opaque cursors bind
-session, viewer, authorization
-revision and that upper bound without exposing excluded boundaries. Before
-pagination, filter every checkpoint/acceptance row and every metadata field by
-the viewer's current authorized admission/history intervals. This includes
-message IDs, envelope/intent hashes, sequences, checkpoint/export state and counts,
-not only body/attachments. Pre-join and removal-gap rows produce no entries,
-redacted stubs, excluded-range totals or cursor fields. Explicit older-history
-grants authorize only their named interval; rejoin alone exposes no gap.
+**Control-history disclosure boundary.** This proposal chooses explicit
+control-metadata disclosure, not a new selective-disclosure or per-interval
+sequence cryptosystem. Creation policy signs
+`control_history_disclosure=shared_control_history_v1`. Every native/guest
+admission and rejoin requires informed consent to that mode (including explicit
+preauthorized recipient policy where applicable). The notice says:
+“Members can see earlier membership and export-policy changes, opaque export
+IDs/digests and global activity counters, even from before they joined or while
+they were removed. Join-forward and removal gaps protect message content and
+message identifiers, not this control history.” Cloud/platform notices and
+CLI/channel/pi/wake/Hermes session context preserve this distinction. An old
+consumer unable to show/enforce it cannot adopt the new mode. Do not silently
+upgrade an existing session or describe it as hiding all historical metadata.
+The control grant and admission commit together after consent; invitations do
+not disclose the historical records first. Compatible adoption by an existing
+session requires every affected current member to accept this disclosure.
 
-Apply the same checks to checkpoint-by-transition and acceptance-by-message reads,
-to POST replay/receipt recovery and to cached results: a known identifier or
-management role is no history grant. A denied direct lookup is indistinguishable
-from missing under ordinary non-disclosing resource errors. Recheck authorization
-on every page/read, reject a cursor whose authorization revision changed, and
-resume with a newly authorized view rather than reusing stale grants. Pages
-follow committed order through their internal bound and cannot skip a late
-commit because its source timestamp was old. Checkpoints/capture contain no
-private locator, and original encryption/key access still bounds content reads.
-Removed or out-of-scope subjects cannot use receipts/cursors to recover denied
-metadata or content. Membership-authority proof verification does not authorize
-fetching excluded message/export receipt history. Reads do not mark messages read
-or emit wakes. Existing
-history/native JSON stays compatible; negotiated consumers request these additive
-receipts explicitly. SSE is an at-least-once hint, not the capture authority.
+That consent authorizes current members to read the complete signed control
+chain from creation through the current policy head: membership identities/
+roles, signer/delegation/ownership changes, checkpoint intents and receipts,
+opaque export/transition IDs, states, commitments, hashes, operation timestamps,
+and their global acceptance positions. These are control identifiers/hashes,
+not historical **message** IDs or message-envelope hashes. Global positions
+reveal prior activity counts; for example, a first permitted message at
+`acceptance_seq=101` reveals 100 earlier managed message/control acceptances.
+That disclosure is intentional and consented, not concealed by a cursor.
+Raw platform identifiers/secrets remain prohibited. A receipt does not reveal
+excluded message authors, payloads, ciphertext, attachments or envelope hashes.
+
+Removed readers gain no new control records/counters after removal. A retained
+historical-read grant permits the control proof from creation only through that
+grant's authorized end, to verify its permitted messages. Rejoin with renewed
+consent discloses intervening control history, but grants no message history from
+the gap. A standalone historical reader also needs that explicit bounded control-
+history consent/grant; a message grant alone is not a control-history grant.
+Without the control grant, deny new-mode participation/read requiring that proof
+rather than send an unverifiable chain. If this disclosure is unacceptable,
+choose a different privacy-preserving proof design before build; do not claim
+that this chosen contract already hides those counters or control identifiers.
+
+**Public reads and recovery.** Propose
+`GET /v1/chat/sessions/{session_id}/policy-chain?cursor=...&limit=...` for complete
+canonical signed control records and their original service receipts. It checks
+the explicit control-history grant and its end boundary, and pins an authorized
+head for paginated verification from the independently authenticated creation.
+`GET /v1/chat/sessions/{session_id}/export-checkpoints/{transition_id}` uses that
+same control grant, including for pre-join checkpoints; it never embeds message
+acceptance records merely because their control epoch matches. Full signed
+checkpoint records remain verifiable without omitting signed fields.
+
+`GET /v1/chat/sessions/{session_id}/messages/{message_id}/acceptance` and
+`GET /v1/chat/sessions/{session_id}/acceptances?cursor=...&limit=...` instead return
+only original message-acceptance receipts in authorized message-history intervals.
+They include their signed global `acceptance_seq` unchanged: ordering and
+signatures verify against the disclosed control chain, with no claim that ordinal
+gaps hide activity counts. Excluded message IDs, envelope hashes, receipts,
+authors and content are never returned, even as redacted stubs. Only the separate
+control API exposes historical control records under the explicit grant.
+
+All list limits are 1–200, default 100. Pin a committed upper sequence/head within
+the applicable grant; encrypted/server-stored opaque cursors bind session,
+viewer, authorization revision and that bound. Apply the appropriate control-
+versus message-history authorization **before pagination**, on direct lookup,
+POST receipt/replay recovery and cache reads. Known IDs and management roles
+are no read grant. A denied direct lookup is indistinguishable from missing
+under ordinary non-disclosing resource errors. Recheck authorization on every
+page/read, reject cursors after its revision changes, and restart with a newly
+authorized view. Removed readers' responses/cursors reveal no post-removal state.
+Pages follow committed acceptance order, so late source timestamps cannot cause
+skips. Reads neither mark messages read nor emit wakes. Original encryption/key
+access still bounds content reads. Existing native JSON remains compatible;
+new consumers negotiate these receipts/proofs explicitly. SSE is an at-least-once
+hint, not the capture authority.
 
 **Binding activation and dispatch.** Cloud first durably pauses the private
 transition, submits the signed intent, then activates only its matching
@@ -794,9 +848,14 @@ started before it but committed after, rollback, identical/conflicting retries,
 missing/forked signed policy, unauthorized management, owner/key revocation,
 crash after public commit before private activation, paused/unknown capture,
 late federated delivery, and cursor reconciliation after lost hints. Cover late
-join/remove/rejoin and expired grants on all three GET forms and replay recovery:
-no excluded message ID/hash/sequence/export metadata or count leaks, including
-through cached responses/cursors. Owner-unavailable bridge/revoker pause/revoke
+join/remove/rejoin and expired grants on control versus message GETs and replay
+recovery: full signed control proof remains verifiable under explicit consent,
+including pre-join/gap checkpoint identifiers and global counter 101; the same
+reader receives no excluded message ID/envelope hash/receipt/content. Removal
+denies future control state; rejoin exposes control gaps only after renewed
+consent, never their message receipts. Refusal of the disclosure mode never
+silently grants it. Exercise caches/cursors and historical bounded grants.
+Owner-unavailable bridge/revoker pause/revoke
 succeeds for its own stream while another-stream pause, activation, changed
 digest/audience/key or implicit resume refuses. Existing owner activation still
 works with consent and a fresh matching head. Neighbouring
@@ -999,6 +1058,7 @@ adapters/consent evidence must be completed accordingly.
 | External room admission and history | Owner-approved guest admission, join-forward aweb history, explicit whole external audience acceptance | No mandatory Cloud signup, no team membership, and no claim that platform copies can be revoked. Stricter all-linked rooms require proved evidence. |
 | Guest correlation scope (Cloud J1) | Recommend pairwise/session-scoped guest subjects. Cross-room correlation requires an explicit choice; pairwise scope reduces automatic correlation but needs explicit association for cross-room continuity/contact/history. | Stable within a session and across its intake bots, with session context in derivation; cross-session association/history requires explicit authority, never an automatic merge. Bridge/platform-wide subjects remain a designed alternative. |
 | Compromised bridge key | One tested, independently authorized “revoke bridge” operation orchestrates disabling ingress/dispatch, canceling pending work, revoking all bridge admission/send delegations and starting authorized key recovery | Bot-token rotation alone is insufficient. Report incomplete revocation scopes and keep them blocked; remote consumers apply authoritative revocation/freshness checks, with no claim of instantaneous global propagation. Test a freshly signed old-key guest event after revocation. |
+| Control-history disclosure | Explicit shared-control-history consent for the full signed policy chain and global activity counters; message history remains interval-bound | Late join/rejoin exposes earlier control IDs/state/digests and counts, not excluded message IDs/envelope hashes/content. If this disclosure is unacceptable, a different proof design is required before build. |
 | Membership-owner succession | Explicit signed transfer to an admitted consenting successor before departure; otherwise freeze | Owner removal/revocation cannot appoint the server or last participant as successor; frozen sessions retain permitted history, with fresh-session consent as the safe restart. |
 | Native scope (Cloud J4) | Recommend platform-wide native suppression initially. Per-session mixed native/dedicated transport requires explicit approval and the same fenced input ownership/native-signature interop; it permits mixed operation at the cost of more configuration. Both scopes remain designed in for Juan. | Never infer an exception from activity or health. Both modes remain designed in; choosing scoped operation adds ownership/configuration complexity, with native suppression winning on overlap. |
 | Identity linkage | Future association by account/key/session authority, no historical rewrite or silent contact transfer | Prior guest posts stay platform-attested; native identity requires its actual key authority. |
