@@ -131,10 +131,17 @@ func TestAwIDRequestSignsAndSendsHTTP(t *testing.T) {
 		if parts[1] != did {
 			t.Fatalf("did=%q want %q", parts[1], did)
 		}
-		verifySignedPayload(t, pub, map[string]any{
-			"did_aw":      stableID,
+		expected := map[string]any{
+			"v": 2, "aud": "http://" + r.Host, "method": r.Method,
+			"path": r.URL.RequestURI(), "did_aw": stableID,
 			"body_sha256": fmt.Sprintf("%x", sha256.Sum256(data)),
-		}, timestamp, parts[2])
+		}
+		verifySignedPayload(t, pub, expected, timestamp, parts[2])
+		expected["timestamp"] = timestamp
+		canonical, err := awid.CanonicalJSONValue(expected)
+		if err != nil || decodeSignedPayloadHeaderForTest(t, r.Header.Get("X-AWEB-Signed-Payload")) != canonical {
+			t.Fatalf("v2 payload mismatch: %v", err)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("X-Upstream", "ok")
@@ -402,6 +409,11 @@ func TestAwIDRequestTeamAuthRejectsReservedSignedFields(t *testing.T) {
 	}
 	did := awid.ComputeDIDKey(pub)
 
+	received := make(chan struct{}, 1)
+	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- struct{}{}
+		w.WriteHeader(http.StatusNoContent)
+	}))
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -410,7 +422,7 @@ func TestAwIDRequestTeamAuthRejectsReservedSignedFields(t *testing.T) {
 	buildAwBinary(t, ctx, bin)
 	writeLocalTeamSignedRequestWorkspaceForTest(t, tmp, "https://app.aweb.ai", "backend:acme.com", "athena", did, priv)
 
-	run := exec.CommandContext(ctx, bin, "id", "request", "GET", "https://service.example.test/v1/awco/tasks",
+	run := exec.CommandContext(ctx, bin, "id", "request", "GET", server.URL+"/v1/awco/tasks",
 		"--team-auth",
 		"--sign", `{"team_id":"other"}`,
 	)
@@ -420,8 +432,8 @@ func TestAwIDRequestTeamAuthRejectsReservedSignedFields(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected reserved field error, got success:\n%s", string(out))
 	}
-	if !strings.Contains(string(out), `--sign field "team_id" is reserved by --team-auth`) {
-		t.Fatalf("unexpected output:\n%s", string(out))
+	if len(received) != 0 {
+		t.Fatal("reserved claims reached the server")
 	}
 }
 
@@ -928,7 +940,7 @@ func verifyTeamAuthRequestFixtureForTest(req *http.Request, body []byte, now tim
 	if got, want := stringFieldForTest(payload, "method"), strings.ToUpper(req.Method); got != want {
 		return fmt.Errorf("method mismatch: got %q want %q", got, want)
 	}
-	if got, want := stringFieldForTest(payload, "path"), requestTargetPath(req.URL); got != want {
+	if got, want := stringFieldForTest(payload, "path"), req.URL.RequestURI(); got != want {
 		return fmt.Errorf("path mismatch: got %q want %q", got, want)
 	}
 	if got, want := stringFieldForTest(payload, "body_sha256"), fmt.Sprintf("%x", sha256.Sum256(body)); got != want {

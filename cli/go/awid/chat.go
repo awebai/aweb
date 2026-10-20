@@ -2,8 +2,6 @@ package awid
 
 import (
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -955,32 +953,8 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 	setUserAgent(req, c.userAgent)
-	if c.grantID != "" && c.signingKey != nil {
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		credential, err := SignIdentityGrantCredential(c.signingKey, http.MethodGet, req.URL, c.grantID, nil, timestamp)
-		if err != nil {
-			return nil, err
-		}
-		for key := range credential.Headers {
-			req.Header.Set(key, credential.Headers.Get(key))
-		}
-	} else if c.teamCertHeader != "" && c.signingKey != nil {
-		// Certificate auth: same DIDKey + cert headers as regular requests.
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := certAuthSignPayload(c.teamID, timestamp, nil)
-		sig := ed25519.Sign(c.signingKey, signPayload)
-		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
-		req.Header.Set("X-AWEB-Timestamp", timestamp)
-		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
-	} else if c.signingKey != nil {
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := identityAuthSignPayload(c.stableID, timestamp, nil)
-		sig := ed25519.Sign(c.signingKey, signPayload)
-		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
-		req.Header.Set("X-AWEB-Timestamp", timestamp)
-		if c.stableID != "" {
-			req.Header.Set("X-AWEB-DID-AW", c.stableID)
-		}
+	if err := c.signRequest(req, nil); err != nil {
+		return nil, err
 	}
 
 	resp, err := DoNoRedirect(c.sseClient, req)
