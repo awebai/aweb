@@ -616,7 +616,9 @@ class RegistryClient:
 
         Expired artifacts remain readable; they are signing input for the
         controller, never authorization for an expired member. Roster fields
-        are not trusted as membership assertions.
+        are not trusted as membership assertions. After team-key rotation, old
+        artifacts fail the local-key binding: rotation reissues membership; this
+        operation renews only artifacts signed by the current controller.
         """
         import base64
         from awid.certificates import validate_certificate_lifetime
@@ -625,7 +627,13 @@ class RegistryClient:
         origin = await self._registry_url_for_domain(domain)
         path = f'/v1/namespaces/{domain}/teams/{name}/certificates/{quote(certificate_id, safe="")}'
         data = await self._request_json('GET', path, headers=self._signed_path_headers('GET', path, controller_signing_key), registry_url=origin)
-        cert = json_loads(base64.b64decode(data['certificate'], validate=True))
+        try:
+            encoded = data.get('certificate') if isinstance(data, dict) else None
+            if not isinstance(encoded, str):
+                raise ValueError('Certificate blob missing')
+            cert = json_loads(base64.b64decode(encoded, validate=True))
+        except (ValueError, TypeError) as exc:
+            raise ValueError('Malformed old certificate artifact') from exc
         controller_did = _did_key_from_signing_key(controller_signing_key)
         if not isinstance(cert, dict) or cert.get('certificate_id') != certificate_id or cert.get('team_id') != f'{name}:{domain}' or cert.get('team_did_key') != controller_did:
             raise ValueError('Old certificate controller binding mismatch')
