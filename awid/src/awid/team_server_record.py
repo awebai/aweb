@@ -25,7 +25,9 @@ MAX_FUTURE_SECONDS = 300
 MAX_SERVER_URL_BYTES = 2048
 _ISSUED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 # An Ed25519 signature in unpadded standard base64: 64 bytes, 86 characters.
-_SIGNATURE_RE = re.compile(r"^[A-Za-z0-9+/]{86}$")
+# The last character carries four spare bits, which must be zero (A, Q, g or w),
+# so every signature has exactly one accepted encoding.
+_SIGNATURE_RE = re.compile(r"[A-Za-z0-9+/]{85}[AQgw]")
 
 
 class TeamServerRecordError(ValueError):
