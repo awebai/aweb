@@ -241,6 +241,7 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 		{name: "leading_zero", err: "invalid_json", key: core, signing: replace(`"seq":812`, `"seq":0812`)},
 		{name: "plus_sign", err: "invalid_json", key: core, signing: replace(`"seq":812`, `"seq":+812`)},
 		{name: "integer_out_of_range", err: "invalid_value", key: core, signing: replace(`"seq":812`, `"seq":9007199254740992`)},
+		{name: "integer_with_too_many_digits", err: "invalid_value", key: core, signing: replace(`"seq":812`, `"seq":`+strings.Repeat("1", 5000))},
 		{name: "nesting_too_deep", err: "too_deep", key: core, signing: env(with(coreEnvelope(), "payload.changes", nested))},
 		{name: "impossible_month", err: "invalid_value", key: core, signing: env(with(coreEnvelope(), "occurred_at", "2026-13-20T12:00:00.412Z"))},
 		{name: "time_without_milliseconds", err: "invalid_value", key: core, signing: env(with(coreEnvelope(), "fired_at", "2026-10-20T12:00:01Z"))},

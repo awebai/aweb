@@ -163,6 +163,10 @@ egress = [
     { name = "idna" },
     { name = "publicsuffixlist" },
 ]
+hooks = [
+    { name = "awid-service" },
+    { name = "pynacl" },
+]
 idempotency = [
     { name = "pgdbm" },
 ]
@@ -201,6 +205,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "awid-service", marker = "extra == 'hooks'", directory = "../awid" },
     { name = "awid-service", marker = "extra == 'runtime'", directory = "../awid" },
     { name = "dnspython", marker = "extra == 'egress'", specifier = ">=2.7.0" },
     { name = "fastapi", marker = "extra == 'runtime'", specifier = ">=0.116.1" },
@@ -215,11 +220,12 @@ requires-dist = [
     { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
     { name = "publicsuffixlist", marker = "extra == 'egress'", specifier = "==1.1.0.20261018" },
     { name = "pydantic-settings", marker = "extra == 'runtime'", specifier = ">=2.10.1" },
+    { name = "pynacl", marker = "extra == 'hooks'", specifier = ">=1.6.2" },
     { name = "pynacl", marker = "extra == 'runtime'", specifier = ">=1.6.2" },
     { name = "pynacl", marker = "extra == 'signing-key'", specifier = ">=1.6.2" },
     { name = "webauthn", marker = "extra == 'runtime'", specifier = ">=3.0.1" },
 ]
-provides-extras = ["runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "pages", "egress"]
+provides-extras = ["runtime", "outbox", "signing-key", "dispatch", "idempotency", "roles", "pages", "egress", "hooks"]
 
 [package.metadata.requires-dev]
 dev = [

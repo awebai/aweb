@@ -325,7 +325,8 @@ actor, an app secret use by an identity-grant actor, and a client command
 signed by its own actor. Each negative carries its signing bytes and signature
 and one expected refusal. The `envelope` layer covers a wrong prefix,
 non-canonical bytes (including `-0`), a float, a duplicate key (plain or
-escaped), a leading zero or plus sign, an out-of-range integer, nesting deeper
+escaped), a leading zero or plus sign, an out-of-range integer, an integer
+too long to parse, nesting deeper
 than eight, a non-ASCII string, null, unknown and missing fields, an impossible
 or imprecise time, more than four or non-strict attestations, a client
 producer with a `seq`, a non-Ed25519 `did:key`, three respellings of the
