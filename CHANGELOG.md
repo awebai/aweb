@@ -4,6 +4,19 @@
 
 ## Release preparations
 
+### Release preparation: server 1.27.29
+
+Server changes are since `server-v1.27.28`. No CLI change; aw stays 1.36.43.
+
+- Add an operator audit trail for role publication and repo deletion: verified
+  actor, principal, authentication mode, target, outcome and request ID, without
+  message or playbook content. Successful writes and audit records commit
+  together; authenticated refusals are recorded after rollback.
+- Supply the shared verified-context audit interface for Cloud's owner/admin
+  human-only role/repo writes. Cloud applies that admin policy before mounted
+  OSS routes, including certificate and API-key callers; standalone OSS keeps
+  its own publication policy. Publish this server package before the Cloud pin.
+
 ### Release preparation: aw 1.36.43
 
 CLI changes are since `aw-v1.36.42`. No server change; server stays 1.27.28.
