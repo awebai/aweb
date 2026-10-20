@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.hooks.owner_act import Refused, verify_owner_act
+from aweb_naapp.hooks.owner_act import Refused
+from aweb_naapp.hooks.owner_act import _verify_owner_act as verify_owner_act
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 VECTOR = json.loads((AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json").read_bytes())
@@ -107,3 +108,18 @@ def test_a_naive_clock_is_refused() -> None:
             nonce_used=lambda nonce: False,
         )
     assert refused.value.code == "verifier_misconfigured"
+
+
+def test_only_the_verified_type_and_constants_are_public() -> None:
+    import aweb_naapp.hooks.owner_act as owner_act
+
+    assert set(owner_act.__all__) == {
+        "APP_ACTS",
+        "CORE_ACTS",
+        "LOGS_ACTS",
+        "PREFIX",
+        "Refused",
+        "VerifiedOwnerAct",
+    }
+    for private in ("check_owner_act", "require_subject", "verify_owner_act", "OwnerAct"):
+        assert not hasattr(owner_act, private)

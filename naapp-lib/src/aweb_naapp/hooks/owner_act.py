@@ -8,8 +8,12 @@ lifetime, naming the expected subject. It cannot tell who held the key: that
 only the organization owner signs, after a fresh step-up, is the signing
 deployment's obligation.
 
-``verify_owner_act`` is the pure check. ``aweb_naapp.hooks.owner_act_nonces``
-adds the nonce table that makes an act single-use under concurrency.
+The public way to verify an act is ``aweb_naapp.hooks.owner_act_nonces``:
+``OwnerActVerifier.prepare`` outside any transaction, then ``consume_in`` in
+the transaction that applies the act's effect, which alone returns a
+``VerifiedOwnerAct``. This module holds the checks those two call; they are
+private so that no caller can act on an owner act without its single-use
+nonce and its exact subject.
 """
 
 from __future__ import annotations
@@ -32,16 +36,7 @@ from aweb_naapp.hooks.strictjson import (
     parse_canonical_object,
 )
 
-__all__ = [
-    "APP_ACTS",
-    "CORE_ACTS",
-    "LOGS_ACTS",
-    "PREFIX",
-    "OwnerAct",
-    "Refused",
-    "check_owner_act",
-    "verify_owner_act",
-]
+__all__ = ["APP_ACTS", "CORE_ACTS", "LOGS_ACTS", "PREFIX", "Refused", "VerifiedOwnerAct"]
 
 PREFIX = b"aweb.owner-act/1\n"
 MAX_LIFETIME = timedelta(minutes=10)
@@ -234,9 +229,9 @@ _FIELDS = (
 
 
 @dataclass(frozen=True)
-class OwnerAct:
-    """An owner act that passed every check up to the nonce and the subject,
-    or all of them once ``verify_owner_act`` returns it."""
+class _CheckedAct:
+    """An act that passed every check up to its signature. It is not
+    authority: its nonce and subject are not checked yet."""
 
     fields: dict[str, Any]
     act: str
@@ -248,7 +243,24 @@ class OwnerAct:
     expires_at: datetime
 
 
-def check_owner_act(
+@dataclass(frozen=True)
+class VerifiedOwnerAct:
+    """A fully verified owner act: signed by the team's current controller key
+    for this verifier, within its lifetime, naming exactly the expected
+    subject, and with its nonce consumed in the effect's transaction. Only
+    ``OwnerActVerifier.consume_in`` returns one."""
+
+    fields: dict[str, Any]
+    act: str
+    team_id: str
+    audience: str
+    subject: dict[str, Any]
+    nonce: str
+    issued_at: datetime
+    expires_at: datetime
+
+
+def _check_owner_act(
     signing: bytes,
     signature: str,
     *,
@@ -257,7 +269,7 @@ def check_owner_act(
     audience: str,
     acts: Sequence[str],
     now: datetime,
-) -> OwnerAct:
+) -> _CheckedAct:
     """Every check up to and including the signature (steps 1 to 9 of the
     contract). The caller then checks the nonce and the expected subject."""
     if not team_id or not current_team_key_did or not audience or not acts or now is None:
@@ -292,7 +304,7 @@ def check_owner_act(
     return act
 
 
-def verify_owner_act(
+def _verify_owner_act(
     signing: bytes,
     signature: str,
     *,
@@ -303,12 +315,13 @@ def verify_owner_act(
     now: datetime,
     expected_subject: Mapping[str, Any],
     nonce_used: Callable[[str], bool],
-) -> OwnerAct:
-    """Check an owner act in the contract's order and return it, or raise the
-    first refusal. Every option is required."""
+) -> VerifiedOwnerAct:
+    """Every check in the contract's order, with the nonce read through
+    ``nonce_used``: the conformance reading of the vector. It does not make an
+    act single-use under concurrency; ``OwnerActVerifier`` does."""
     if expected_subject is None or nonce_used is None:
         raise Refused("verifier_misconfigured", "every verifier option is required")
-    act = check_owner_act(
+    act = _check_owner_act(
         signing,
         signature,
         team_id=team_id,
@@ -319,17 +332,30 @@ def verify_owner_act(
     )
     if nonce_used(act.nonce):
         raise Refused("nonce_reused", act.nonce)
-    require_subject(act, expected_subject)
-    return act
+    _require_subject(act, expected_subject)
+    return _verified(act)
 
 
-def require_subject(act: OwnerAct, expected_subject: Mapping[str, Any]) -> None:
+def _require_subject(act: _CheckedAct, expected_subject: Mapping[str, Any]) -> None:
     """The act's subject must be exactly the stored row, compared as canonical bytes."""
     if canonical(dict(expected_subject)) != canonical(act.subject):
         raise Refused("subject_mismatch", "the act names a different subject")
 
 
-def _check_fields(f: dict[str, Any]) -> OwnerAct:
+def _verified(act: _CheckedAct) -> VerifiedOwnerAct:
+    return VerifiedOwnerAct(
+        fields=act.fields,
+        act=act.act,
+        team_id=act.team_id,
+        audience=act.audience,
+        subject=act.subject,
+        nonce=act.nonce,
+        issued_at=act.issued_at,
+        expires_at=act.expires_at,
+    )
+
+
+def _check_fields(f: dict[str, Any]) -> _CheckedAct:
     for name in sorted(f):
         if name not in _FIELDS:
             raise Refused("unknown_field", name)
@@ -368,7 +394,7 @@ def _check_fields(f: dict[str, Any]) -> OwnerAct:
     first = subject.get("team_seq_first")
     if isinstance(first, int) and first > subject["team_seq_last"]:
         raise Refused("invalid_value", "subject.team_seq_last precedes team_seq_first")
-    return OwnerAct(
+    return _CheckedAct(
         fields=f,
         act=f["act"],
         team_id=f["team_id"],

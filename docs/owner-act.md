@@ -5,9 +5,14 @@ aweb OSS hooks lane (aweb-acgh.16). This document is the source of truth for the
 signed artifact by which a team's owner authorizes a governance act that no
 admin, member or agent can perform. Its vector is
 `docs/vectors/owner-act-v1.json`, and its Go authority is `cli/go/awid/owneract.go`,
-which regenerates the vector byte for byte. The Python verifier is
-`aweb_naapp.hooks.owner_act`, and `aweb_naapp.hooks.owner_act_nonces` adds the
-nonce table that makes an act single-use (see [Single use](#verification)). The design and its rationale are
+which regenerates the vector byte for byte. In Python, a verifier uses
+`aweb_naapp.hooks.owner_act_nonces.OwnerActVerifier` in two steps. `prepare`
+runs outside any transaction: it reads the team's current key and checks the
+act up to its signature, returning a `PreparedOwnerAct`, which is not authority.
+`consume_in` runs inside the transaction that applies the act's effect: it
+requires the exact subject and consumes the nonce (see
+[Single use](#verification)), with no network call, and returns the only
+verified type, `VerifiedOwnerAct`. The design and its rationale are
 in [the audit substrate design](design/audit-substrate.md), §2 and §A3.
 
 This is an identity-path change. Juan approved `aweb.owner-act/1` explicitly,

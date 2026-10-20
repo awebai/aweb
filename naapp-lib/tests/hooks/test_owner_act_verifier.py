@@ -20,9 +20,10 @@ import pytest_asyncio
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 
-from aweb_naapp.hooks.owner_act import CORE_ACTS, PREFIX, Refused
+from aweb_naapp.hooks.owner_act import CORE_ACTS, PREFIX, Refused, VerifiedOwnerAct
 from aweb_naapp.hooks.owner_act_nonces import (
     OwnerActVerifier,
+    PreparedOwnerAct,
     apply_owner_act_migrations,
     prune_owner_act_nonces,
 )
@@ -94,22 +95,29 @@ def verifier(registry, *, clock=None) -> OwnerActVerifier:
     async def current_team_key(team_id: str) -> str:
         return (await cache.get(team_id)).team_did_key
 
-    return OwnerActVerifier(
+    verify = OwnerActVerifier(
         scope="core",
         audience=AUDIENCE,
         acts=CORE_ACTS,
         team_key_for=current_team_key,
         clock=clock or (lambda: datetime.now(UTC)),
     )
+    verify.key_reads = 0  # type: ignore[attr-defined]
+
+    async def counted(team_id: str) -> str:
+        verify.key_reads += 1  # type: ignore[attr-defined]
+        return await current_team_key(team_id)
+
+    verify._team_key_for = counted
+    return verify
 
 
 async def apply_effect(
     db, verify: OwnerActVerifier, signing: bytes, signature: str, *, fail: bool = False
 ):
+    prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
     async with db.transaction() as tx:
-        act = await verify.verify_in(
-            tx, signing, signature, team_id=TEAM_ID, expected_subject=SUBJECT
-        )
+        act = await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
         await tx.execute("INSERT INTO effects (nonce) VALUES ($1)", act.nonce)
         if fail:
             raise RuntimeError("the effect failed")
@@ -139,10 +147,9 @@ async def test_concurrent_uses_of_one_act_produce_exactly_one_effect(
     release_first = asyncio.Event()
 
     async def first() -> None:
+        prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
         async with db.transaction() as tx:
-            act = await verify.verify_in(
-                tx, signing, signature, team_id=TEAM_ID, expected_subject=SUBJECT
-            )
+            act = await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
             await tx.execute("INSERT INTO effects (nonce) VALUES ($1)", act.nonce)
             first_inserted.set()
             await release_first.wait()
@@ -194,3 +201,34 @@ async def test_nonce_rows_outlive_the_act_and_are_then_pruned(db, registry, team
     expires = issued.replace(microsecond=0) + timedelta(minutes=5)
     assert await prune_owner_act_nonces(db, now=expires + timedelta(seconds=60)) == 0
     assert await prune_owner_act_nonces(db, now=expires + timedelta(seconds=61)) == 1
+
+
+async def test_consuming_reads_no_team_key(db, registry, team_key) -> None:
+    verify = verifier(registry)
+    signing, signature = owner_act(team_key, issued=datetime.now(UTC))
+    prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
+    assert verify.key_reads == 1
+    async with db.transaction() as tx:
+        act = await verify.consume_in(tx, prepared, expected_subject=SUBJECT)
+    assert verify.key_reads == 1
+    assert isinstance(act, VerifiedOwnerAct)
+
+
+async def test_a_prepared_act_is_not_authority(registry, team_key) -> None:
+    verify = verifier(registry)
+    signing, signature = owner_act(team_key, issued=datetime.now(UTC))
+    prepared = await verify.prepare(signing, signature, team_id=TEAM_ID)
+    assert isinstance(prepared, PreparedOwnerAct)
+    assert not isinstance(prepared, VerifiedOwnerAct)
+    assert prepared.act_name == "hook-binding.activate"
+    for name in ("subject", "nonce", "team_id", "fields", "audience"):
+        assert not hasattr(prepared, name)
+
+
+async def test_an_act_prepared_by_another_verifier_is_refused(db, registry, team_key) -> None:
+    signing, signature = owner_act(team_key, issued=datetime.now(UTC))
+    prepared = await verifier(registry).prepare(signing, signature, team_id=TEAM_ID)
+    async with db.transaction() as tx:
+        with pytest.raises(Refused) as refused:
+            await verifier(registry).consume_in(tx, prepared, expected_subject=SUBJECT)
+    assert refused.value.code == "verifier_misconfigured"
