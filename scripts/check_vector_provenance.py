@@ -171,6 +171,10 @@ ROOT_CONSUMERS = {
         },
         "body = _read(root, path, overrides)",
     ),
+    PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
+        "team-auth-envelope-v2.json",
+        'Path(__file__).resolve().parents[3] / "docs" / "vectors" / "team-auth-envelope-v2.json"',
+    ),
     PurePosixPath("server/tests/test_team_auth_envelope.py"): _consumer(
         "team-auth-envelope-v2.json",
         'root / "docs" / "vectors" / "team-auth-envelope-v2.json"',
