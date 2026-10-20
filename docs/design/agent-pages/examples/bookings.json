@@ -1,0 +1,228 @@
+{
+  "page_format": "aweb.page/1",
+  "page_id": "bookings-fixture",
+  "locale": "ca",
+  "title": "Reserves — dades fictícies",
+  "rev": 1,
+  "layout_version": 1,
+  "owner": "agent-fixture",
+  "policy_ref": "staff-read",
+  "layout": [
+    {
+      "id": "title",
+      "type": "heading",
+      "props": {
+        "text": "Reserves",
+        "level": 1
+      }
+    },
+    {
+      "id": "bookings-table",
+      "type": "table",
+      "props": {
+        "columns": [
+          {
+            "field": "arrival",
+            "label": "Entrada",
+            "format": "date"
+          },
+          {
+            "field": "departure",
+            "label": "Sortida",
+            "format": "date"
+          },
+          {
+            "field": "status",
+            "label": "Estat",
+            "format": "status"
+          }
+        ],
+        "row_actions": [
+          "propose-accept",
+          "propose-decline"
+        ]
+      },
+      "bind": {
+        "collection": "bookings",
+        "sort": [
+          {
+            "field": "arrival",
+            "direction": "asc"
+          }
+        ],
+        "limit": 50
+      }
+    },
+    {
+      "id": "local-note",
+      "type": "form",
+      "props": {
+        "fields": [
+          {
+            "id": "note",
+            "kind": "text",
+            "label": "Nota interna",
+            "required": true
+          }
+        ],
+        "submit_action": "edit-note"
+      }
+    }
+  ],
+  "collections": [
+    {
+      "id": "bookings",
+      "schema_version": 1,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "arrival": {
+            "type": "string",
+            "format": "date"
+          },
+          "departure": {
+            "type": "string",
+            "format": "date"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "accepted",
+              "declined"
+            ]
+          },
+          "guest_ref": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "arrival",
+          "departure",
+          "status",
+          "guest_ref"
+        ],
+        "additionalProperties": false
+      },
+      "mode": "synced",
+      "records": [
+        {
+          "id": "booking-1",
+          "rev": 1,
+          "value": {
+            "arrival": "2026-11-02",
+            "departure": "2026-11-05",
+            "status": "pending",
+            "guest_ref": "guest-fixture"
+          },
+          "source": {
+            "system": "pms-fixture",
+            "external_id": "booking-synthetic-1",
+            "version": "booking-v9",
+            "synced_at": "2026-10-19T10:00:00Z"
+          }
+        }
+      ]
+    },
+    {
+      "id": "annotations",
+      "schema_version": 1,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "booking_id": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "booking_id",
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "mode": "owned",
+      "records": [
+        {
+          "id": "note-1",
+          "rev": 1,
+          "value": {
+            "booking_id": "booking-1",
+            "note": "Cal revisar la petició."
+          }
+        }
+      ]
+    }
+  ],
+  "widget_state": {},
+  "actions": [
+    {
+      "id": "propose-accept",
+      "kind": "intent",
+      "label": "Demanar acceptació",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "manager-request",
+      "target": "agent-fixture",
+      "operation": "pms.booking.accept",
+      "requires_approval": true
+    },
+    {
+      "id": "propose-decline",
+      "kind": "intent",
+      "label": "Demanar rebuig",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "manager-request",
+      "target": "agent-fixture",
+      "operation": "pms.booking.decline",
+      "requires_approval": true
+    },
+    {
+      "id": "edit-note",
+      "kind": "edit",
+      "label": "Desar nota local",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "note"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "staff-edit",
+      "operation": "annotation.replace"
+    }
+  ]
+}

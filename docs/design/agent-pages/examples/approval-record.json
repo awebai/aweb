@@ -1,0 +1,28 @@
+{
+  "draft": true,
+  "approval_id": "approval-fixture-1",
+  "request_sha256": "<frozen canonical operation/destination/constraints/source/executor/policy digest>",
+  "immutable_request_ref": "request-fixture-1",
+  "policy_ref": "owner-policy-1",
+  "policy_version": 1,
+  "requested_by": "agent-fixture",
+  "approver_subject": "app-local-designated-human",
+  "approver_subject_type": "app_local",
+  "authenticator": "passkey",
+  "auth_evidence_ref": "restricted-evidence-1",
+  "presentation": {
+    "kind": "link",
+    "ref": "link-fixture-approval-1"
+  },
+  "task_answer_ref": null,
+  "state": "approved",
+  "expires_at": "2026-10-19T10:10:00Z",
+  "revoked_at": null,
+  "consumed_operation_id": null,
+  "requester_projection": {
+    "request_id": "request-fixture-1",
+    "delivery_status": "delivered",
+    "approval_state": "approved"
+  },
+  "note": "Synthetic app-owned record, not a token/capability or real assertion. Runtime derives authenticator/approver from verified carrier proof; client strings cannot establish them. Same primitive serves pages with task presentation/answer reference. Proposed passkey assurance policy awaits Juan."
+}

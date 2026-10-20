@@ -1,0 +1,1371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aweb.ai/drafts/agent-pages/page.schema.json",
+  "title": "D1 draft page snapshot, not frozen contract",
+  "type": "object",
+  "properties": {
+    "page_format": {
+      "const": "aweb.page/1"
+    },
+    "page_id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "locale": {
+      "type": "string",
+      "maxLength": 64
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 4096
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "layout_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "owner": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "policy_ref": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "layout": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/widget"
+      },
+      "maxItems": 100
+    },
+    "collections": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/collection"
+      },
+      "maxItems": 32
+    },
+    "widget_state": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/state"
+      },
+      "maxProperties": 200
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/action"
+      },
+      "maxItems": 64
+    }
+  },
+  "required": [
+    "page_format",
+    "page_id",
+    "locale",
+    "title",
+    "rev",
+    "layout_version",
+    "owner",
+    "policy_ref",
+    "layout",
+    "collections",
+    "widget_state",
+    "actions"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+    },
+    "rev": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "collection": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "all": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "op": {
+                "enum": [
+                  "eq",
+                  "ne",
+                  "lt",
+                  "lte",
+                  "gt",
+                  "gte",
+                  "in"
+                ]
+              },
+              "value": {}
+            },
+            "required": [
+              "field",
+              "op",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 20
+        },
+        "sort": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              "direction": {
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "direction"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 8
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "cursor": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "collection"
+      ],
+      "additionalProperties": false
+    },
+    "record": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "rev": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "value": {
+          "type": "object"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "system": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "external_id": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "version": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "synced_at": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "system",
+            "external_id",
+            "version",
+            "synced_at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "rev",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "collection": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "schema_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "schema": {
+          "type": "object"
+        },
+        "mode": {
+          "enum": [
+            "owned",
+            "synced"
+          ]
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/record"
+          },
+          "maxItems": 200
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "schema",
+        "mode",
+        "records"
+      ],
+      "additionalProperties": false
+    },
+    "action": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "kind": {
+          "enum": [
+            "edit",
+            "intent",
+            "answer"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "input_schema": {
+          "type": "object"
+        },
+        "policy_ref": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "operation": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "requires_approval": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "input_schema",
+        "policy_ref"
+      ],
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+        },
+        "kind": {
+          "enum": [
+            "text",
+            "number",
+            "date",
+            "select",
+            "checkbox",
+            "file"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "value",
+              "label"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 100
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10485760
+        },
+        "accept": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "state": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "progress": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "busy": {
+          "type": "boolean"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "widget": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "text"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "markdown": {
+                  "type": "string",
+                  "maxLength": 1048576
+                }
+              },
+              "required": [
+                "markdown"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "heading"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "level": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 6
+                }
+              },
+              "required": [
+                "text",
+                "level"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "stat"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "field": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "minLength": 1
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "number",
+                    "integer",
+                    "boolean",
+                    "null"
+                  ]
+                },
+                "unit": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "label"
+              ],
+              "additionalProperties": false
+            },
+            "bind": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "status_badge"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "field": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "minLength": 1
+                },
+                "tone": {
+                  "enum": [
+                    "neutral",
+                    "info",
+                    "success",
+                    "warning",
+                    "danger"
+                  ]
+                }
+              },
+              "required": [
+                "label",
+                "tone"
+              ],
+              "additionalProperties": false
+            },
+            "bind": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "table"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "field": {
+                        "type": "string",
+                        "maxLength": 128,
+                        "minLength": 1
+                      },
+                      "label": {
+                        "type": "string",
+                        "maxLength": 4096
+                      },
+                      "format": {
+                        "enum": [
+                          "text",
+                          "date",
+                          "number",
+                          "money_minor",
+                          "status"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "field",
+                      "label",
+                      "format"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "maxItems": 32
+                },
+                "row_actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                  },
+                  "maxItems": 20
+                }
+              },
+              "required": [
+                "columns"
+              ],
+              "additionalProperties": false
+            },
+            "bind": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props",
+            "bind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "cards"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                  },
+                  "maxProperties": 32
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                  },
+                  "maxItems": 20
+                }
+              },
+              "required": [
+                "fields"
+              ],
+              "additionalProperties": false
+            },
+            "bind": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props",
+            "bind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "list"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                  },
+                  "maxProperties": 32
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                  },
+                  "maxItems": 20
+                }
+              },
+              "required": [
+                "fields"
+              ],
+              "additionalProperties": false
+            },
+            "bind": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props",
+            "bind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "form"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/input"
+                  },
+                  "maxItems": 50
+                },
+                "submit_action": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                }
+              },
+              "required": [
+                "fields",
+                "submit_action"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "button"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "action": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "confirmation": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "label",
+                "action"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "decision_card"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "task_id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "task_rev": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "collection": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "record_id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "record_rev": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                      },
+                      "label": {
+                        "type": "string",
+                        "maxLength": 4096
+                      }
+                    },
+                    "required": [
+                      "value",
+                      "label"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "maxItems": 10
+                },
+                "recommendation": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "answer_action": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                }
+              },
+              "required": [
+                "task_id",
+                "task_rev",
+                "collection",
+                "record_id",
+                "record_rev",
+                "options",
+                "recommendation",
+                "answer_action"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "chart"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "bar",
+                    "line",
+                    "pie"
+                  ]
+                },
+                "x": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "minLength": 1
+                },
+                "series": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                  },
+                  "maxItems": 8
+                },
+                "alternative": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "kind",
+                "x",
+                "series",
+                "alternative"
+              ],
+              "additionalProperties": false
+            },
+            "bind": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props",
+            "bind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "file_drop"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "action": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "accept": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "maxItems": 20
+                },
+                "max_bytes": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10485760
+                }
+              },
+              "required": [
+                "label",
+                "action",
+                "accept",
+                "max_bytes"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "image"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "asset_id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "alt": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "caption": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "asset_id",
+                "alt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "video"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "asset_id": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                },
+                "alt": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "caption": {
+                  "type": "string",
+                  "maxLength": 4096
+                }
+              },
+              "required": [
+                "asset_id",
+                "alt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "activity_timeline"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "fields": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 1
+                  },
+                  "maxProperties": 32
+                }
+              },
+              "required": [
+                "fields"
+              ],
+              "additionalProperties": false
+            },
+            "bind": {
+              "$ref": "#/$defs/binding"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props",
+            "bind"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "agent_presence"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "subject": {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                }
+              },
+              "required": [
+                "subject"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "stack"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "gap": {
+                  "enum": [
+                    "small",
+                    "medium",
+                    "large"
+                  ]
+                }
+              },
+              "required": [],
+              "additionalProperties": false
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/widget"
+              },
+              "maxItems": 100
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props",
+            "children"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "const": "grid"
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 4
+                },
+                "gap": {
+                  "enum": [
+                    "small",
+                    "medium",
+                    "large"
+                  ]
+                }
+              },
+              "required": [
+                "columns"
+              ],
+              "additionalProperties": false
+            },
+            "children": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/widget"
+              },
+              "maxItems": 100
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "props",
+            "children"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            },
+            "type": {
+              "type": "string",
+              "maxLength": 128,
+              "not": {
+                "enum": [
+                  "text",
+                  "heading",
+                  "stat",
+                  "status_badge",
+                  "table",
+                  "cards",
+                  "list",
+                  "form",
+                  "button",
+                  "decision_card",
+                  "chart",
+                  "file_drop",
+                  "image",
+                  "video",
+                  "activity_timeline",
+                  "agent_presence",
+                  "stack",
+                  "grid"
+                ]
+              }
+            },
+            "fallback": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "props": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "fallback"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}
