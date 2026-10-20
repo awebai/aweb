@@ -744,8 +744,10 @@ declare `token_issuing: true` and one `result_handling`:
 | `return` | **Recommended: does not exist (Q8).** Returning the credential is a value release, like `--unsafe-inject`, and `store_as_secret` plus runner `short_lived` delivery covers the use cases. If Juan keeps it, it needs a separate owner passkey confirmation and is labelled everywhere as **outside the confidentiality guarantee**. It also refuses unless a verified attestation (§4.6) shows `channel != mcp_l2`. Even then it cannot claim that the agent is not backed by L2. |
 
 When detection (§7.6) finds credential-shaped content in an operation that did not
-declare `token_issuing`, the result is withheld. A `secret.undeclared_credential`
-event is also raised so the owner can fix the template.
+declare `token_issuing`, the result is withheld. The `completed` event then
+carries `undeclared_credential: true` with disposition `withheld`, and no
+separate event is raised (one effect, one event, §11.5). The console reads that
+flag to tell the owner to fix the template.
 
 ## 9. The runner
 
@@ -1178,7 +1180,7 @@ which action, with the fields it fills:
 | approval decided (approve, deny, expire, revoke) | `approval_decided`, with `approval_evidence_sha256` when a passkey decided |
 | `admitted` | `admitted` |
 | `dispatching`, enqueued in the fence transaction before any byte is sent | `dispatching` |
-| `completed`, including a withheld result or an undeclared credential | `completed`, with `disposition`, `returned_hmac` and the boolean `undeclared_credential` |
+| `completed`, including a withheld result or an undeclared credential | `completed`, with `disposition`, `returned_hmac`, and `undeclared_credential: true` (with disposition `withheld`) when §8.3 detects an undeclared credential |
 | `not_sent` | `not_sent` |
 | `outcome_unknown` | `outcome_unknown` |
 | `reconciled_*` | `reconciled` |
