@@ -299,7 +299,7 @@ func sendStatusRequest(cmd *cobra.Command, identity *localSigningIdentity, baseU
 	// Reuse aw id request's team-auth v2 envelope (aud/method/path/body hash),
 	// redirect refusal and response bounds. No message timestamps are injected
 	// into the independently signed status document.
-	if _, _, err := teamSignedRequestPayload(identity, target, method, raw, nil); err != nil {
+	if _, err := teamRequestCertificate(identity); err != nil {
 		return err
 	}
 	response, err := executeSignedIDRequest(method, target, identity, raw, http.Header{}, nil, true)

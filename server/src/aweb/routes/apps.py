@@ -2,16 +2,36 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+import base64
+import binascii
 
-from aweb.app_registry import AppEmitKey, AppEventType, AppInstall, install_app, list_installed_apps, validate_team_id
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ValidationError as PydanticValidationError
+
+from aweb.app_registry import (
+    APP_ID_RE,
+    AppEmitKey,
+    AppEventType,
+    AppInstall,
+    install_app,
+    list_installed_apps,
+    validate_team_id,
+)
+from aweb.audit import OperatorAuditRoute, audit_success
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.internal_auth import parse_internal_auth_context
 from aweb.service_errors import RESOURCE_NOT_FOUND_DETAIL, ServiceError
 from aweb.team_auth_deps import get_team_identity
 
-router = APIRouter(prefix="/v1/apps", tags=["apps"])
+router = APIRouter(prefix="/v1/apps", tags=["apps"], route_class=OperatorAuditRoute)
+
+MAX_MANIFEST_BYTES = 10 << 20
+# Standard base64 of MAX_MANIFEST_BYTES bytes, padded.
+MAX_MANIFEST_BASE64_CHARS = 4 * -(-MAX_MANIFEST_BYTES // 3)
+# The install body: the encoded manifest plus the rest of the request.
+MAX_INSTALL_BODY_BYTES = MAX_MANIFEST_BASE64_CHARS + (1 << 20)
 
 
 class AppEventTypeRequest(BaseModel):
@@ -40,6 +60,8 @@ class AppInstallRequest(BaseModel):
     granted_scopes: list[str] = Field(default_factory=list)
     events: list[AppEventTypeRequest] = Field(default_factory=list)
     event_emitters: list[AppEmitKeyRequest] = Field(default_factory=list)
+    # Standard base64 of the exact manifest bytes that hash to ``digest``.
+    manifest: str | None = None
 
 
 class InstalledAppResponse(BaseModel):
@@ -101,15 +123,48 @@ async def list_installed_apps_route(
     )
 
 
+def _decode_manifest(value: str | None) -> bytes | None:
+    if value is None:
+        return None
+    if len(value) > MAX_MANIFEST_BASE64_CHARS:
+        raise HTTPException(status_code=413, detail="manifest exceeds the size bound")
+    try:
+        manifest = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="manifest must be standard base64") from exc
+    if len(manifest) > MAX_MANIFEST_BYTES:
+        raise HTTPException(status_code=413, detail="manifest exceeds the size bound")
+    return manifest
+
+
+async def _install_request(request: Request) -> AppInstallRequest:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_INSTALL_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="install request exceeds the size bound")
+    try:
+        return AppInstallRequest.model_validate_json(bytes(body))
+    except PydanticValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+
 @router.post("/install", response_model=InstalledAppResponse)
 async def install_app_route(
     request: Request,
-    payload: AppInstallRequest,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> InstalledAppResponse:
+    payload = await _install_request(request)
+    app_id = payload.app_id.strip().lower()
+    request.state.operator_audit_target = f"app:{app_id}" if APP_ID_RE.fullmatch(app_id) else "app:invalid"
     try:
         identity = await get_team_identity(request, db_infra)
+        manifest = _decode_manifest(payload.manifest)
         db = db_infra.get_manager("aweb")
+
+        async def audit(tx) -> None:
+            await audit_success(tx, request, identity.team_id)
+
         app = await install_app(
             db,
             team_id=identity.team_id,
@@ -129,6 +184,8 @@ async def install_app_route(
                 for item in payload.events
             ],
             emit_keys=[AppEmitKey(kid=item.kid, did_key=item.did_key) for item in payload.event_emitters],
+            manifest=manifest,
+            audit=audit,
         )
     except ServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import hashlib
 import time
-from urllib.parse import quote
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol, TypedDict
+from urllib.parse import quote
 
 import httpx
 from awid.attestation_records import (
