@@ -343,6 +343,15 @@ aw chat send-and-leave <teammate> --body-file final.md
 Continue the existing chat/session named by event metadata. Do not start a new
 thread merely because a process restarted.
 
+`POST /v1/chat/sessions` may accept a caller-chosen fresh `session_id`, including
+one bound into a signed first message. Creation reserves that UUID across mail
+and chat atomically; a concurrent collision returns HTTP 409. An existing mail
+conversation UUID is always refused. An existing chat UUID may be reused only
+by an authenticated active participant of that session; otherwise the request
+returns HTTP 409 without changing the thread. Reuse preserves the stored
+participants and routes: create-request targets cannot add or update members.
+Membership changes use the membership operations, not session creation.
+
 ## Addressing and authority
 
 Inside one team, use the member name such as `reviewer`. For first contact
