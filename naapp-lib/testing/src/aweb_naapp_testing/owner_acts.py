@@ -1,4 +1,4 @@
-"""Real team owner acts for the passkey tests.
+"""Real team owner acts for tests.
 
 The team key is registered in the tests' AWID registry, and every act is a
 signed ``aweb.owner-act/1`` verified by the real K2 verifier, its nonce
@@ -21,7 +21,7 @@ from aweb_naapp.hooks.owner_act_nonces import OwnerActVerifier, PreparedOwnerAct
 from aweb_naapp.hooks.strictjson import canonical
 from aweb_naapp.runtime.passkeys import contact_sha256
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
-from tests.runtime.conftest import REGISTRY_URL, SERVICE_TOKEN, did_key
+from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, did_key
 
 TEAM_ID = "demo:example.com"
 AUDIENCE = "https://app.example.com"
