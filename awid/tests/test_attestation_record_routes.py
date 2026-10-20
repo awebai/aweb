@@ -447,6 +447,28 @@ async def test_a_stored_team_server_record_must_be_re_signed_unchanged(controlle
 
 
 @pytest.mark.asyncio
+async def test_a_re_signed_team_server_record_must_be_newer_than_the_stored_one(controller_app):
+    env = controller_app
+    await _publish_team_server(env, _team_server(env.team, issued_at=_now(-30)))
+    new = keypair()
+    same_time = await _rotate(env, new[1], {"team_server": _team_server(new, issued_at=_now(-30))})
+    assert same_time.status_code == 409, same_time.text
+    assert same_time.json()["detail"]["changed"]["team_server"] is True
+    assert await _team_key(env) == env.team[1]
+
+
+@pytest.mark.asyncio
+async def test_a_team_server_record_signed_with_the_old_key_is_refused(controller_app):
+    env = controller_app
+    await _publish_team_server(env, _team_server(env.team, issued_at=_now(-30)))
+    new = keypair()
+    old_key = await _rotate(env, new[1], {"team_server": _team_server(env.team, issued_at=_now())})
+    assert old_key.status_code == 422, old_key.text
+    assert old_key.json()["detail"]["message"].startswith("team_server: ")
+    assert await _team_key(env) == env.team[1]
+
+
+@pytest.mark.asyncio
 async def test_a_team_server_record_without_a_stored_one_is_extra(controller_app):
     env = controller_app
     new = keypair()
