@@ -674,6 +674,35 @@ async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
     ]
 
 
+async def get_installed_app(db, *, team_id: str, app_id: str, digest: str) -> AppInstall | None:
+    """The team's installation of ``app_id``, only while it is pinned to ``digest``."""
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    digest = normalize_digest(digest)
+    row = await db.fetch_one(
+        """
+        SELECT app_id, origin, app_version, manifest_version, digest, granted_scopes
+        FROM {{tables.team_app_installs}}
+        WHERE team_id = $1
+          AND app_id = $2
+          AND digest = $3
+        """,
+        team_id,
+        app_id,
+        digest,
+    )
+    if row is None:
+        return None
+    return AppInstall(
+        app_id=row["app_id"],
+        origin=row["origin"],
+        app_version=row["app_version"],
+        manifest_version=row["manifest_version"],
+        digest=row["digest"],
+        granted_scopes=list(row["granted_scopes"] or []),
+    )
+
+
 async def get_installed_app_event_type(
     db,
     *,

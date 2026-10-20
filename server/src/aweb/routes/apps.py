@@ -4,21 +4,25 @@ from __future__ import annotations
 
 import base64
 import binascii
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError as PydanticValidationError
 
+from aweb.app_credentials import APP_GRANT_READ, PURPOSES, verify_app_credential
 from aweb.app_registry import (
     APP_ID_RE,
     AppEmitKey,
     AppEventType,
     AppInstall,
+    get_installed_app,
     install_app,
     list_installed_apps,
     validate_team_id,
 )
+from aweb.config import get_app_grant_max_age_seconds
 from aweb.audit import OperatorAuditRoute, audit_success
 from aweb.db import DatabaseInfra, get_db_infra
 from aweb.internal_auth import parse_internal_auth_context
@@ -76,6 +80,23 @@ class InstalledAppResponse(BaseModel):
 class InstalledAppsResponse(BaseModel):
     team_id: str
     apps: list[InstalledAppResponse]
+
+
+class AppGrantStatusResponse(BaseModel):
+    team_id: str
+    app_id: str
+    state: str
+    origin: str
+    app_version: str
+    manifest_version: int
+    digest: str
+    granted_scopes: list[str]
+    # Present from the start and null until installations carry an identity
+    # and generation; consumers that bind them refuse null.
+    installation_id: str | None
+    generation: int | None
+    as_of: str
+    max_age_seconds: int
 
 
 def _as_response(app: AppInstall) -> InstalledAppResponse:
@@ -191,3 +212,36 @@ async def install_app_route(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
     return _as_response(app)
+
+
+@router.get("/self/grant", response_model=AppGrantStatusResponse)
+async def app_grant_status_route(
+    request: Request,
+    db_infra: DatabaseInfra = Depends(get_db_infra),
+) -> AppGrantStatusResponse:
+    """The calling app's grant in the calling team; both come from the credential."""
+    db = db_infra.get_manager("aweb")
+    try:
+        credential = await verify_app_credential(request, db, APP_GRANT_READ)
+        app = await get_installed_app(db, team_id=credential.team_id, app_id=credential.app_id, digest=credential.digest)
+    except ServiceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    if app is None:
+        # The installation moved to another digest, or went away, after the key
+        # was checked: the key no longer belongs to an installed digest.
+        raise HTTPException(status_code=403, detail=PURPOSES[APP_GRANT_READ].key_not_registered)
+
+    return AppGrantStatusResponse(
+        team_id=credential.team_id,
+        app_id=app.app_id,
+        state="active",
+        origin=app.origin,
+        app_version=app.app_version,
+        manifest_version=app.manifest_version,
+        digest=app.digest,
+        granted_scopes=app.granted_scopes,
+        installation_id=None,
+        generation=None,
+        as_of=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        max_age_seconds=get_app_grant_max_age_seconds(),
+    )

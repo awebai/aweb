@@ -1,4 +1,5 @@
 import os
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -41,6 +42,7 @@ class Settings:
     public_origin: str
     dashboard_jwt_secret: str
     require_registered_certificates: bool
+    app_grant_max_age_seconds: int
 
 
 def get_awid_registry_url() -> str:
@@ -90,6 +92,26 @@ def require_registered_certificates() -> bool:
     so the OFF path costs nothing and tests can toggle it per-case.
     """
     return _env_bool("AWEB_REQUIRE_REGISTERED_CERTIFICATES")
+
+
+APP_GRANT_MAX_AGE_CEILING_SECONDS = 60
+_POSITIVE_DECIMAL = re.compile(r"[1-9][0-9]*")
+
+
+def get_app_grant_max_age_seconds() -> int:
+    """How long an app may reuse a grant answer, from ``AWEB_APP_GRANT_MAX_AGE_SECONDS``.
+
+    Default and ceiling are 60 seconds. It is also the staleness bound that
+    hook activation pads with, so a value outside 1..60 is refused rather
+    than clamped.
+    """
+    value = os.getenv("AWEB_APP_GRANT_MAX_AGE_SECONDS", str(APP_GRANT_MAX_AGE_CEILING_SECONDS))
+    if not _POSITIVE_DECIMAL.fullmatch(value) or int(value) > APP_GRANT_MAX_AGE_CEILING_SECONDS:
+        raise ValueError(
+            f"AWEB_APP_GRANT_MAX_AGE_SECONDS must be a whole number of seconds from 1 to "
+            f"{APP_GRANT_MAX_AGE_CEILING_SECONDS}, got {value!r}"
+        )
+    return int(value)
 
 
 def get_settings() -> Settings:
@@ -153,4 +175,5 @@ def get_settings() -> Settings:
         ),
         dashboard_jwt_secret=os.getenv("AWEB_DASHBOARD_JWT_SECRET", ""),
         require_registered_certificates=require_registered_certificates(),
+        app_grant_max_age_seconds=get_app_grant_max_age_seconds(),
     )
