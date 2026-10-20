@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -224,3 +225,46 @@ def test_a_check_that_does_not_answer_in_time_fails(monkeypatch) -> None:
     response = _checked({"database": hangs}).get("/ready")
     assert response.status_code == 503
     assert response.json()["checks"]["database"] == {"ok": False}
+
+
+async def test_concurrent_requests_share_one_run_of_each_check() -> None:
+    calls: list[str] = []
+
+    async def slow() -> CheckResult:
+        calls.append("run")
+        await asyncio.sleep(0.05)
+        return CheckResult(ok=True)
+
+    app = FastAPI()
+    mount_health(app, ExampleSettings(_env_file=None), checks={"kms": slow})
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="https://example.test"
+    ) as client:
+        responses = await asyncio.gather(
+            *(client.get(path) for path in ("/health", "/ready") * 10)
+        )
+        assert all(response.json()["checks"]["kms"] == {"ok": True} for response in responses)
+        assert calls == ["run"]
+        await client.get("/ready")
+        assert calls == ["run"]
+
+
+def test_a_result_is_served_only_for_the_cache_interval(monkeypatch) -> None:
+    import aweb_naapp.runtime.health as health
+
+    calls: list[str] = []
+
+    async def counted() -> CheckResult:
+        calls.append("run")
+        return CheckResult(ok=True)
+
+    clock = [1000.0]
+    monkeypatch.setattr(health, "_monotonic", lambda: clock[0])
+    client = _checked({"kms": counted})
+    client.get("/ready")
+    clock[0] += health.HEALTH_CHECK_CACHE_SECONDS - 0.1
+    client.get("/ready")
+    assert calls == ["run"]
+    clock[0] += 0.2
+    client.get("/ready")
+    assert calls == ["run", "run"]
