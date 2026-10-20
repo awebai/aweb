@@ -2,7 +2,8 @@
 
 Contracts: docs/principal-attestation.md (team custodian, member custody) and
 docs/member-person.md. Writes need team-controller authority in the covering
-(v2) controller envelope; reads are anonymous and return the stored bytes.
+(v2) controller envelope; reads by exact key are anonymous and return the stored
+bytes. The paginated read of all of a team's signed records is same-team only.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
 
 from awid.attestation_records import (
     MEMBER_CUSTODY,
@@ -21,12 +22,17 @@ from awid.attestation_records import (
     verify_record,
 )
 from awid.controller_request import ControllerAuthRoute
+from awid.pagination import encode_cursor, validate_pagination_params
 from awid.ratelimit import enforce_rate_limit, rate_limit_dep
 from awid.signing import canonical_json_bytes
 from awid.team_ids import build_team_id
 from awid_service.attestation_rotation import MAX_FUTURE_ISSUED_AT, SignedRecord, issued_at_of
 from awid_service.deps import get_db
-from awid_service.routes.teams import _presents_trusted_service_token, _require_team_controller
+from awid_service.routes.teams import (
+    _presents_trusted_service_token,
+    _require_team_controller,
+    _verify_path_signature,
+)
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["attestation-records"], route_class=ControllerAuthRoute)
 
@@ -342,3 +348,95 @@ async def get_member_custody(domain: str, name: str, certificate_id: str, db_inf
 )
 async def get_member_person(domain: str, name: str, certificate_id: str, db_infra=Depends(get_db)) -> dict:
     return await _get_member_record(db_infra.get_manager("aweb"), "member_person", domain, name, certificate_id)
+
+
+# Every team-key-signed record a team can store, in the order the paginated
+# read returns them: (rank, kind, table, key column). team_server has no key.
+_SIGNED_RECORD_KINDS = (
+    (0, "team_server", "team_server_records", None),
+    (1, "team_custodians", "team_custodians", "custodian_id"),
+    (2, "member_custody", "member_custody", "certificate_id"),
+    (3, "member_person", "member_person", "certificate_id"),
+)
+_TEAM_NOT_FOUND = "Team not found"
+
+
+async def _same_team_reader(request: Request, db, team, authorization: str | None) -> bool:
+    """The team controller, an unrevoked member, or the trusted service token."""
+    if _presents_trusted_service_token(request):
+        return True
+    if not authorization:
+        return False
+    try:
+        caller_did = _verify_path_signature(request, authorization)
+    except HTTPException:
+        return False
+    if caller_did == team["team_did_key"]:
+        return True
+    member = await db.fetch_one(
+        """
+        SELECT 1 FROM {{tables.team_certificates}}
+        WHERE team_uuid = $1 AND member_did_key = $2 AND revoked_at IS NULL
+        LIMIT 1
+        """,
+        team["team_uuid"], caller_did,
+    )
+    return member is not None
+
+
+@router.get(
+    "/{name}/signed-records",
+    dependencies=[Depends(rate_limit_dep("attestation_record_list", allow_trusted_service=True))],
+)
+async def list_signed_records(
+    request: Request,
+    domain: str,
+    name: str,
+    limit: int | None = Query(default=None),
+    cursor: str | None = Query(default=None),
+    authorization: str | None = Header(default=None),
+    db_infra=Depends(get_db),
+) -> dict:
+    """Every record the team key has signed and AWID stores, in stable pages.
+
+    For a team-key rotation, which must re-sign all of them. Same-team only,
+    whatever the team's visibility; every refusal, including an unknown team,
+    is the same 404, so the read discloses nothing to anyone else.
+    """
+    db = db_infra.get_manager("aweb")
+    team = await db.fetch_one(
+        "SELECT team_uuid, team_did_key FROM {{tables.teams}} WHERE domain = $1 AND name = $2 AND deleted_at IS NULL",
+        domain, name,
+    )
+    if team is None or not await _same_team_reader(request, db, team, authorization):
+        raise HTTPException(status_code=404, detail=_TEAM_NOT_FOUND)
+    try:
+        page_size, after = validate_pagination_params(limit, cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    after_rank, after_key = -1, ""
+    if after is not None:
+        after_rank, after_key = after.get("rank"), after.get("key")
+        if type(after_rank) is not int or not isinstance(after_key, str):
+            raise HTTPException(status_code=400, detail="Invalid cursor")
+
+    selects = []
+    for rank, kind, table, key_column in _SIGNED_RECORD_KINDS:
+        key = key_column or "''"
+        selects.append(
+            f"SELECT {rank} AS rank, '{kind}' AS kind, {key} AS key, record_json, signature"
+            f" FROM {{{{tables.{table}}}}} WHERE team_uuid = $1"
+        )
+    rows = await db.fetch_all(
+        "SELECT rank, kind, key, record_json, signature FROM (" + " UNION ALL ".join(selects) + ") records"
+        " WHERE (rank, key) > ($2, $3) ORDER BY rank, key LIMIT $4",
+        team["team_uuid"], after_rank, after_key, page_size + 1,
+    )
+    has_more = len(rows) > page_size
+    rows = rows[:page_size]
+    items = [
+        {"kind": row["kind"], "key": row["key"] if row["rank"] else None, **_stored(row)}
+        for row in rows
+    ]
+    next_cursor = encode_cursor({"rank": rows[-1]["rank"], "key": rows[-1]["key"]}) if has_more else None
+    return {"items": items, "has_more": has_more, "next_cursor": next_cursor}

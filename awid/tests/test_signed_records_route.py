@@ -164,7 +164,8 @@ async def test_a_revoked_member_is_refused_like_an_unknown_team(controller_app):
 async def test_bad_pagination_is_refused(controller_app):
     env = controller_app
     assert (await _read(env, query="?cursor=not-a-cursor")).status_code == 400
-    assert (await _read(env, query=f"?limit={MAX_LIMIT + 1}")).status_code == 400
+    forged = await _read(env, query="?cursor=eyJyYW5rIjoiMSJ9")  # {"rank":"1"}
+    assert forged.status_code == 400
 
 
 @pytest.mark.asyncio

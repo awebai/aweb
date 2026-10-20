@@ -274,7 +274,10 @@ authority) takes an optional `resigned_records` object alongside
 - AWID swaps the team key and replaces every listed record in one
   transaction. Verifiers therefore never see the new key next to an old-key
   record.
-- A team with no stored records sends no `resigned_records`.
+- A team with no stored records may omit `resigned_records`. Sending the set
+  anyway, even empty, is safer: a record the controller did not see then
+  refuses the rotation instead of being left on the old key. `aw` always sends
+  it.
 - **Size.** The limit is deploy-configurable. Its default accepts one server
   record, up to two custodian records, 1,000 member-custody records and 1,000
   member-person records per team, which covers 1,000 custodial certificates.
@@ -282,8 +285,11 @@ authority) takes an optional `resigned_records` object alongside
   route's default body limit is 4 MiB. A batch over the configured limit is
   refused with `413`, which is distinct from `409`. Chunked rotation is future
   work.
-- The controller builds the set from its own records of what it published.
-  The `409` names anything it missed, so a failed rotation is diagnosable.
+- The controller builds the set by reading every stored record in pages
+  (`GET /v1/namespaces/{domain}/teams/{name}/signed-records`, same-team only,
+  [awid-sot.md](awid-sot.md)). It verifies each against the current key before
+  re-signing it. The `409` names anything it still missed, such as a record
+  published during the rotation, so a failed rotation is diagnosable.
 
 **Requirement.** Any hosted team-key rotation must use the atomic path (HO2);
 building hosted rotation is not part of L1. `aw`'s rotate flow uses the atomic
