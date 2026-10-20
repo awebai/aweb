@@ -47,10 +47,20 @@ func TestRegistrationBytesAreSentOnlyWhenTheyNameTheRegisteredOrigin(t *testing.
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := registrationManifestBytes(fetched, tc.declared, tc.registered)
+			got := registrationManifestBytesFor(fetched, 1, tc.declared, tc.registered)
 			if (got != nil) != tc.want {
 				t.Fatalf("bytes sent = %v, want %v", got != nil, tc.want)
 			}
 		})
+	}
+}
+
+func TestRegistrationBytesAreSentOnlyForManifestVersionsTheServerReads(t *testing.T) {
+	fetched := []byte(`{}`)
+	if registrationManifestBytesFor(fetched, 1, "https://notes.example", "https://notes.example") == nil {
+		t.Fatal("v1 bytes not sent")
+	}
+	if got := registrationManifestBytesFor(fetched, 2, "https://notes.example", "https://notes.example"); got != nil {
+		t.Fatal("v2 bytes sent before the server reads v2 manifests")
 	}
 }

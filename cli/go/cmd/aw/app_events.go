@@ -82,10 +82,15 @@ func installRegistrationBody(manifest appmanifest.Manifest, fetchedDigest string
 	return body
 }
 
-// registrationManifestBytes returns the fetched bytes when they name the origin
-// being registered, and nil when a dev-origin override registers the app at an
-// origin its bytes do not declare.
-func registrationManifestBytes(fetchedBytes []byte, declaredOrigin, registeredOrigin string) []byte {
+// registrationManifestBytesFor returns the fetched bytes when the server reads
+// that manifest version and the bytes name the origin being registered. It
+// returns nil for a version the server does not read from bytes yet, and when a
+// dev-origin override registers the app at an origin its bytes do not declare;
+// the install then registers its supplied fields as before.
+func registrationManifestBytesFor(fetchedBytes []byte, manifestVersion int, declaredOrigin, registeredOrigin string) []byte {
+	if manifestVersion != 1 {
+		return nil
+	}
 	declared, err := canonicalAppOrigin(declaredOrigin)
 	if err != nil {
 		return nil

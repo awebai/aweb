@@ -110,8 +110,12 @@ Current rules:
 ### Installing with the manifest bytes
 
 The request may carry `manifest`: standard base64 of the exact bytes the app
-serves, at most 10 MiB (`413` above). `aw plugin install` and `aw plugin update`
-send them. When present:
+serves, at most 10 MiB. The install body is read under a bound of that encoded
+size plus 1 MiB, and refused with `413` before it is parsed when it is larger;
+a `manifest` over the encoded bound is also `413`. `aw plugin install` and
+`aw plugin update` send the bytes for `manifest_version` 1 manifests, unless
+`--dev-origin` registers the app at an origin its bytes do not declare. When
+present:
 
 - the bytes must hash to `digest` and name the request's `app_id`, `origin`,
   `app_version` and `manifest_version`;

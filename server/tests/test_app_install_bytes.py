@@ -180,3 +180,33 @@ async def test_install_writes_the_operator_audit_row_with_its_registration(app, 
         {"event_type": "apps.install", "resource": "app:notes", "outcome": "success"},
         {"event_type": "apps.install", "resource": "app:notes", "outcome": "denied"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_a_manifest_over_the_size_bound_is_refused_with_413(app, aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    await _seed_team_and_agent(db)
+    _, did_key = _make_app_keypair()
+    body = _body(None, did_key=did_key, digest="sha256:" + "a" * 64)
+    bound = 4 * -(-(10 << 20) // 3)
+    body["manifest"] = "A" * (bound + 4)
+
+    response = await _install(app, body)
+
+    assert response.status_code == 413, response.text
+    assert await _install_rows(db) == []
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_install_body_is_refused_before_it_is_parsed(app, aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    await _seed_team_and_agent(db)
+    oversized_not_json = b"{" + b"A" * (4 * -(-(10 << 20) // 3) + (2 << 20))
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/apps/install", content=oversized_not_json, headers={"Content-Type": "application/json"}
+        )
+
+    assert response.status_code == 413, response.text
+    assert await _install_rows(db) == []

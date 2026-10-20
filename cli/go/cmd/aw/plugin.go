@@ -636,7 +636,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		}
 	}
 	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
-		if err := registerManifestEvents(manifest, fetchedDigest, registrationManifestBytes(fetchedBytes, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
+		if err := registerManifestEvents(manifest, fetchedDigest, registrationManifestBytesFor(fetchedBytes, manifest.ManifestVersion, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
 			return nil, err
 		}
 	}
