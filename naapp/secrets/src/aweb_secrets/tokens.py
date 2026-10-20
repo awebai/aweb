@@ -12,8 +12,13 @@ A cached token is a live bearer credential, so the cache's contract is:
   token. The key is never taken from a caller as free text.
 - **For how long.** A token is never served after the ``expires_at`` it was
   stored with, which the broker sets 60 s before the upstream's expiry.
-- **Revocation.** Disabling or destroying a secret evicts every token of that
-  secret (:meth:`TokenCache.evict_secret`), in every version.
+- **Revocation.** A cached token is only ever used by a call that has just
+  opened the secret's value from custody, which refuses a disabled or
+  destroyed secret. The broker needs that opened value before it consults
+  the cache, so a disabled secret is refused in every process at once,
+  whatever any process's cache holds. Disabling or destroying a secret also
+  evicts its tokens (:meth:`TokenCache.evict_secret`, every version), as
+  hygiene rather than as the revocation path.
 """
 
 from __future__ import annotations

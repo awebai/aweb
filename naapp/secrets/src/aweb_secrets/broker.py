@@ -16,6 +16,11 @@ and the owner-set scope. The access token is cached for its lifetime less
 never returned, and injected as a bearer. The client secret and the
 token are both known values. If the exchange fails, the target was never
 called: :class:`TokenExchangeFailed` is a kind of ``EgressNotSent``.
+
+Invariant: ``value`` is the secret as just opened from custody, which refuses
+a disabled or destroyed secret. The OAuth2 path reads the client
+credentials from it before it consults the token cache, so no cached token
+is used for a secret custody would not open.
 """
 
 from __future__ import annotations
