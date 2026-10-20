@@ -364,7 +364,8 @@ the time is bound once the event is purged), a skeleton that disagrees with its
 envelope, and the normative break order pinned pair by pair: each of those
 cases puts two adjacent faults on one event (a duplicate of another team, an
 event of another team with a broken link, a wrong event hash with its content
-gone, wrong key evidence with a changed skeleton) and expects the earlier. The
+gone, a wrong event hash with its content altered, wrong key evidence with a
+changed skeleton) and expects the earlier. The
 Python implementation in `naapp/logs` regenerates it byte for byte.
 
 ### `owner-act-v1.json`
