@@ -106,7 +106,7 @@ shared or core code.
 
 ### G1-a3 (hosted): custodial publication and backfill
 
-Listed under hosted-side items (H1).
+Hosted-side item H1, on the board as L6 (aweb-acgg.31).
 
 ## B. Server: purpose-split app credentials and grant status
 
@@ -178,7 +178,7 @@ Listed under hosted-side items (H1).
     stays `app-event` only.
 - **Done-signal:** SHA ACKed, landed.
 - **Depends on:** G1-b1, G1-b2a, and D1 C3 freezing the `app_keys` shape and
-  its interpreter vectors.
+  its interpreter vectors (aweb-acgg.9).
 - **Review:** reviewer plus Athena.
 
 ### G1-b3: key revocation (team and operator)
@@ -377,17 +377,18 @@ Listed under hosted-side items (H1).
 - **Depends on:** G1-d2 and the hooks lane's delivery path.
 - **Review:** reviewer.
 
-## Hosted-side items (for routing to the hosted-product team)
+## Hosted-side items
 
 The OSS contract states each of these as a generic requirement on a custodial
-deployment. Specifics go to the coordinator separately.
+deployment. They map onto existing board tasks; no new hosted item is
+created here.
 
-| Item | Requirement | Depends on |
-| --- | --- | --- |
-| H1 | Publish an `aweb.team-server/1` record for every team whose controller key the deployment holds: at creation, on any move and on team key rotation, in the same operation. Backfill all existing teams before any naapp depends on discovery. No interim pin or default. | G1-a1 |
-| H2 | The hosted install path sends the exact manifest bytes with every install, as `aw` does after G1-b2a, and reads no `app_registry_emit_keys` or `app_registry_event_types` rows. | G1-b2a (acgh.8 for the second half) |
-| H3 | Hosted admin controls for per-team key revocation call the G1-b3 route under the hosted admin policy. | G1-b3, F6/L1 |
-| H4 | Deploy runbook for each server release that migrates registrations: save installed apps' manifest bytes before migrating, reseed right after, report `key_conflict` teams (acgh.8 runbook). | each such release |
+| Item | Requirement | Board task | Depends on |
+| --- | --- | --- | --- |
+| H1 | Publish an `aweb.team-server/1` record for every team whose controller key the deployment holds: at creation, on any move and on team key rotation, in the same operation. Backfill all existing teams before any naapp depends on discovery. No interim pin or default. | L6, aweb-acgg.31 | G1-a1 |
+| H2 | The hosted install path sends the exact manifest bytes with every install, as `aw` does after G1-b2a, and reads no `app_registry_emit_keys` or `app_registry_event_types` rows. | L1, aweb-acgg.21 | G1-b2a; acgh.8 for the second half |
+| H3 | Hosted admin controls for per-team key revocation call the G1-b3 route under the hosted admin policy. | L1, aweb-acgg.21 | G1-b3, F6 |
+| H4 | Deploy runbook for each server release that migrates registrations: save installed apps' manifest bytes before migrating, reseed right after, report `key_conflict` teams. | operations (Hestia, on Juan's go), not a build task | each such release |
 
 ## Cross-lane dependencies
 
@@ -398,6 +399,7 @@ deployment. Specifics go to the coordinator separately.
 | aweb-acgh.1 `app_hook_bindings` and owner activation | G1-d1 |
 | aweb-acgh.6 runtime extraction (outbox emit) | G1-c1 (built together) |
 | aweb-acgh.4 approvals and passkeys | none here |
-| D1 C3 manifest v2 `app_keys` shape and interpreter vectors | G1-b2b |
+| D1 C3 (aweb-acgg.9) manifest v2 `app_keys` shape and interpreter vectors | G1-b2b |
 | D1 F6 (aweb-acgg.5) installation identity, admin policy, uninstall | G1-b3 (route authority), G1-b4 (fields), G1-d1 |
-| D1 L1–L3 | consume G1-c3 and G1-d2; nothing here waits on them |
+| D1 L6 (aweb-acgg.31) custodial record publication and backfill | G1-e1 for hosted teams; any naapp depending on discovery for a hosted team |
+| D1 L1 (aweb-acgg.21), L2 (aweb-abzo), L3 (aweb-acgg.22) | consume G1-c3 and G1-d2; nothing here waits on them |
