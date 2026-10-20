@@ -166,3 +166,79 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     denied = aw('alice', 'plugin', 'install', FOLIO, '--dev-origin', 'http://localhost:38765', check=False)
     assert denied.returncode != 0 and '409' in denied.stderr, denied.stderr
     print('PASS failed registration preserves cache and retries; origin conflict refuses', flush=True)
+
+    # Two teams on one server. A member of another team registers Folio keys at
+    # the digest this team pins, reusing Folio's own key id and adding one of
+    # its own. Each key is active only for the team that registered it.
+    homes['carol'] = root / 'carol'
+    homes['carol'].mkdir()
+    other_namespace = 'other-' + namespace
+    other_team = 'ops:' + other_namespace
+    aw('carol', 'id', 'create', '--name', 'carol', '--domain', other_namespace, '--registry', REGISTRY, '--skip-dns-verify')
+    aw('carol', 'id', 'namespace', 'set-delivery-origin', '--namespace', other_namespace, '--origin', SERVER)
+    aw('carol', 'id', 'team', 'create', '--name', 'ops', '--namespace', other_namespace, '--registry', REGISTRY)
+    invite = data('carol', 'id', 'team', 'invite', '--team', 'ops', '--namespace', other_namespace, '--global')['token']
+    aw('carol', 'id', 'team', 'accept-invite', invite, '--global', '--alias', 'carol')
+    aw('carol', 'init', '--url', SERVER)
+    pinned = get('alice', '/v1/apps/installed?team_id=' + team)['apps'][0]
+    served_events = json.loads(urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()).get('events', [])
+    declared = [dict(e, type=e['type'].removeprefix('folio/')) for e in served_events]
+    other_seed = '02' * 32
+    other_did = run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c',
+                               'from awid.did import did_from_public_key; from nacl.signing import SigningKey; '
+                               'print(did_from_public_key(bytes(SigningKey(bytes.fromhex(' + repr(other_seed) + ')).verify_key)))']).strip()
+    def install_with_key(who, kid, check=True):
+        body = json.dumps({
+            'app_id': 'folio', 'origin': pinned['origin'], 'app_version': pinned['app_version'],
+            'manifest_version': pinned['manifest_version'], 'digest': pinned['digest'],
+            'granted_scopes': pinned['granted_scopes'], 'events': declared,
+            'event_emitters': [{'kid': kid, 'did_key': other_did}],
+        })
+        return aw(who, 'id', 'request', 'POST', SERVER + '/v1/apps/install', '--team-auth', '--raw', '--body', body, check=check)
+    def emit_with_other_key(team_id, kid):
+        code = '''import json, urllib.error, urllib.request
+from datetime import UTC, datetime
+from folio.app_emit import sign_app_emit_credential
+target = "http://127.0.0.1:38000/v1/events/app"
+body = json.dumps({"type": "folio/doc.changed", "resource_ref": "wake-proof", "payload": {}}).encode()
+cred = sign_app_emit_credential(private_key=bytes.fromhex(SEED), method="POST", target=target, team_id=TEAM, app_id="folio", key_id=KID, body=body, timestamp=datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+request = urllib.request.Request(target, data=body, method="POST", headers={**cred.headers, "Content-Type": "application/json"})
+try:
+    print(urllib.request.urlopen(request).status)
+except urllib.error.HTTPError as exc:
+    print(exc.code)
+'''.replace('SEED', repr(other_seed)).replace('TEAM', repr(team_id)).replace('KID', repr(kid))
+        return int(run(COMPOSE + ['exec', '-T', 'folio', '/app/.venv/bin/python', '-c', code]).strip())
+    install_with_key('carol', 'folio:emit-test')
+    install_with_key('carol', 'folio:emit-other')
+    assert emit_with_other_key(team, 'folio:emit-test') == 403
+    assert emit_with_other_key(team, 'folio:emit-other') == 403
+    assert emit_with_other_key(other_team, 'folio:emit-other') == 200
+    replaced = install_with_key('alice', 'folio:emit-test', check=False)
+    assert replaced.returncode != 0 and '409' in replaced.stderr, replaced.stderr
+    a = stream('alice')
+    aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'fourth')
+    assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
+    print('PASS another team on the server cannot emit as Folio into this team or replace its registered key', flush=True)
+
+    # Deploy runbook: the migrations carry no registry-entry keys or
+    # declarations over, and the operator reseeds each installed app from its
+    # origin's bytes. Teams act on nothing and keep their subscription choices.
+    def psql(sql):
+        return run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', sql])
+    psql("DELETE FROM aweb.team_app_emit_keys WHERE team_id='" + team + "'; DELETE FROM aweb.team_app_event_types WHERE team_id='" + team + "'")
+    intents_before = get('bob', '/v1/events/subscriptions')['subscriptions']
+    # The origin's port is published only on the host, so the exact served
+    # bytes reach the operator command as a file.
+    served = urllib.request.urlopen(FOLIO + '/.well-known/aweb-app.json').read()
+    run(COMPOSE + ['exec', '-T', 'aweb', 'sh', '-c', 'cat > /tmp/folio-manifest.json'], input=served.decode())
+    reseed = subprocess.run(COMPOSE + ['exec', '-T', 'aweb', 'aweb', 'reseed-app-registrations', '--origin', FOLIO, '--manifest-file', '/tmp/folio-manifest.json'], text=True, capture_output=True)
+    report = json.loads(reseed.stdout)
+    assert team in report['reseeded'], report
+    assert report['key_conflict'] == [other_team], report
+    assert reseed.returncode == 1, reseed.stderr
+    assert get('bob', '/v1/events/subscriptions')['subscriptions'] == intents_before
+    a = stream('alice')
+    aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'fifth')
+    assert any(e['kind'] == 'app' and e['meta']['resource_ref'] == 'wake-proof' for e in events(a))
+    print('PASS operator reseed restores keys and declarations from origin bytes, keeps subscriptions, reports conflicts', flush=True)
