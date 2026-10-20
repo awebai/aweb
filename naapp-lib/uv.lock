@@ -165,6 +165,7 @@ egress = [
 ]
 hooks = [
     { name = "awid-service" },
+    { name = "pgdbm" },
     { name = "pynacl" },
 ]
 idempotency = [
@@ -214,6 +215,7 @@ requires-dist = [
     { name = "idna", marker = "extra == 'egress'", specifier = ">=3.10" },
     { name = "jsonschema", marker = "extra == 'pages'", specifier = ">=4.23" },
     { name = "pgdbm", marker = "extra == 'dispatch'", specifier = ">=0.5.0" },
+    { name = "pgdbm", marker = "extra == 'hooks'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'idempotency'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'outbox'", specifier = ">=0.5.0" },
     { name = "pgdbm", marker = "extra == 'roles'", specifier = ">=0.5.0" },

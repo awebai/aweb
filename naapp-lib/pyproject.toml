@@ -66,11 +66,15 @@ egress = [
   "idna>=3.10",
   "publicsuffixlist==1.1.0.20261018",
 ]
-# aw-hooks, aweb_naapp.hooks: the catalog reader (stdlib), the event envelope
-# and the delivery credential. Ed25519 and did:key only, so the core server and
-# every producing naapp can share it without the naapp runtime.
+# aw-hooks, aweb_naapp.hooks: the catalog reader (stdlib), the event envelope,
+# the delivery credential and the owner-act verifier with its nonce table.
+# It shares awid's did:key and canonical-JSON primitives and pgdbm, never the
+# naapp runtime: importing it loads no web framework, settings or HTTP client
+# (a subprocess test pins that). Installing awid-service brings that package's
+# own dependencies, which the core server and every naapp already carry.
 hooks = [
   "awid-service",
+  "pgdbm>=0.5.0",
   "pynacl>=1.6.2",
 ]
 
