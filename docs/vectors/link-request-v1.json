@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Capability-link requests (docs/page-links.md §2-§3): the secret verifier (bare hex SHA-256 of the secret's UTF-8 bytes), and aweb.link-request/1 payloads, signing bytes and Ed25519 signatures by a session key (base64url without padding). Verification cases give the request the payload must bind (`expected`) and the clock (`now`); `expect` null means it verifies. Binding is checked before time. Nonce replay, Origin and lifecycle are the app's stateful checks, in link-capability-v1.json.",
+  "description": "Capability-link requests (docs/page-links.md §2-§3): the secret verifier (bare hex SHA-256 of the secret's UTF-8 bytes); the session keys an exchange accepts (a canonical Ed25519 did:key); and aweb.link-request/1 payloads, signing bytes and Ed25519 signatures by a session key (base64url without padding). Verification cases give the request the payload must bind (`expected`) and the clock (`now`); `expect` null means it verifies, and binding is checked before time. `byte_cases` give the X-AWEB-Signed-Payload header exactly as received, signed over those bytes: only canonical bytes, without duplicate keys, in the one base64url encoding, verify. Nonce replay, Origin and lifecycle are the app's stateful checks, in link-capability-v1.json.",
   "keys": {
     "session": {
       "seed_hex": "3131313131313131313131313131313131313131313131313131313131313131",
@@ -683,6 +683,163 @@
       "now": "2026-10-20T12:02:01Z",
       "expect": "signature_invalid",
       "note": "binding is checked before time"
+    }
+  ],
+  "byte_cases": [
+    {
+      "name": "canonical",
+      "signed_payload": "eyJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwibWV0aG9kIjoiUE9TVCIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJwYXRoIjoiL3YxL3BhZ2VzL3BnXzRoZDIvYWN0aW9ucyIsInNlc3Npb25faWQiOiJsa3NfMDFKQzdSIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MX0",
+      "signature": "0O9GXMbmwatI_aNSxOAgyt718eif6HJ-FWIQA0HPSOSOxwOE_DTGOGmRYxUpwQ4uxVZvBbkDU7N-pTZ--toIDg",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": null
+    },
+    {
+      "name": "whitespace",
+      "signed_payload": "eyJib2R5X3NoYTI1NiI6ICJkMjc0MzZkMTg1MDcyMmZlZDU2NDhiOGI3YWM3MTZiZjNiMDg1N2U3NzJmYThlMTNlOWI2NGU2NzE2YWE4NDk2IiwgImlzc3VlZF9hdCI6ICIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsICJsaW5rX2lkIjogImxua18wMUpDN1EiLCAibWV0aG9kIjogIlBPU1QiLCAibm9uY2UiOiAiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCAicGF0aCI6ICIvdjEvcGFnZXMvcGdfNGhkMi9hY3Rpb25zIiwgInNlc3Npb25faWQiOiAibGtzXzAxSkM3UiIsICJ0eXBlIjogImF3ZWIubGluay1yZXF1ZXN0IiwgInYiOiAxfQ",
+      "signature": "rlM6-8WlXEyGjbqD0oWIiGMyInGN3PjCxNFSABRvaTjmf3dQkV8YaoNoRM33sgiWKc7bIUPapCnCaQBjuroCBA",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid",
+      "note": "signed over these exact bytes, but they are not canonical"
+    },
+    {
+      "name": "key-order",
+      "signed_payload": "eyJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJwYXRoIjoiL3YxL3BhZ2VzL3BnXzRoZDIvYWN0aW9ucyIsIm1ldGhvZCI6IlBPU1QiLCJzZXNzaW9uX2lkIjoibGtzXzAxSkM3UiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MX0",
+      "signature": "Dmp12x9Y8R9x3D7O9UKqNsmpcBCzBmoMMMwMXk8FRREeUi7Vp_6jI_rHkXzoCjbPzeOJZO4C3rwAkPY66OkgCw",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid"
+    },
+    {
+      "name": "duplicate-key",
+      "signed_payload": "eyJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwibWV0aG9kIjoiUE9TVCIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJwYXRoIjoiL3YxL3BhZ2VzL3BnXzRoZDIvYWN0aW9ucyIsInNlc3Npb25faWQiOiJsa3NfMDFKQzdSIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MSwicGF0aCI6Ii92MS9wYWdlcy9wZ19vdGhlci9hY3Rpb25zIn0",
+      "signature": "jn2LQing3uZPO7nvQUsGWeSXMDWks45Tg8VE9yNIQxsADqbucjbTVm4Xvk8hlHcW97oQ2GYRxT7F8S_sso34Ag",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid",
+      "note": "two path members that a proxy and the app could read differently"
+    },
+    {
+      "name": "padded-base64url",
+      "signed_payload": "eyJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwibWV0aG9kIjoiUE9TVCIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJwYXRoIjoiL3YxL3BhZ2VzL3BnXzRoZDIvYWN0aW9ucyIsInNlc3Npb25faWQiOiJsa3NfMDFKQzdSIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MX0=",
+      "signature": "0O9GXMbmwatI_aNSxOAgyt718eif6HJ-FWIQA0HPSOSOxwOE_DTGOGmRYxUpwQ4uxVZvBbkDU7N-pTZ--toIDg",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid"
+    },
+    {
+      "name": "standard-alphabet-base64",
+      "signed_payload": "eyJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOj+xOjAwWiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwibWV0aG9kIjoiUE9TVCIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJwYXRoIjoiL3YxL3BhZ2VzL3BnXzRoZDIvYWN0aW9ucyIsInNlc3Npb25faWQiOiJsa3NfMDFKQzdSIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MX0",
+      "signature": "0O9GXMbmwatI_aNSxOAgyt718eif6HJ-FWIQA0HPSOSOxwOE_DTGOGmRYxUpwQ4uxVZvBbkDU7N-pTZ--toIDg",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid"
+    },
+    {
+      "name": "not-base64url",
+      "signed_payload": "!!not-base64!!",
+      "signature": "0O9GXMbmwatI_aNSxOAgyt718eif6HJ-FWIQA0HPSOSOxwOE_DTGOGmRYxUpwQ4uxVZvBbkDU7N-pTZ--toIDg",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid"
+    },
+    {
+      "name": "not-an-object",
+      "signed_payload": "WyJ2IiwxXQ",
+      "signature": "RF_sbKOVF7j0ypmc7We3fUwfrDDDcX2BsQ0495L46_RlsvVHDl5TmPlTlBufAv8N5OnyvU9ava2xs1AS_6mcAg",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid"
+    },
+    {
+      "name": "float",
+      "signed_payload": "eyJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwibWV0aG9kIjoiUE9TVCIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJwYXRoIjoiL3YxL3BhZ2VzL3BnXzRoZDIvYWN0aW9ucyIsInNlc3Npb25faWQiOiJsa3NfMDFKQzdSIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MS4wfQ",
+      "signature": "_pBsra7BqI5KTpnihrZr31CjVR9cEaQ4lbhGseTidjbuwTRt5MnxWVNPyGrEOnomfAVBzpx-j8WReC0RYVAACQ",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid"
+    }
+  ],
+  "session_keys": [
+    {
+      "name": "canonical-ed25519",
+      "did_key": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+      "valid": true
+    },
+    {
+      "name": "not-did-key",
+      "did_key": "did:aw:abc",
+      "valid": false
+    },
+    {
+      "name": "bad-multibase",
+      "did_key": "did:key:z0000",
+      "valid": false
+    },
+    {
+      "name": "uppercase-prefix",
+      "did_key": "DID:KEY:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja",
+      "valid": false
+    },
+    {
+      "name": "trailing-space",
+      "did_key": "did:key:z6MkjJRuJtMxfTErK55eWeV7FQLLxpsvzSUQ3AC6DmdNPFja ",
+      "valid": false
     }
   ]
 }

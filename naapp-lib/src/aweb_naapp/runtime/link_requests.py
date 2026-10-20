@@ -11,7 +11,9 @@ checks.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
+import json
 import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -59,6 +61,61 @@ class LinkRequestRefused(ValueError):
 def secret_verifier(secret: str) -> str:
     """The stored form of a link secret: bare hex SHA-256 of its UTF-8 bytes."""
     return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def check_session_did_key(did_key: object) -> None:
+    """An exchange accepts only a canonical Ed25519 did:key (422 otherwise)."""
+    try:
+        if (
+            not isinstance(did_key, str)
+            or did_from_public_key(public_key_from_did(did_key)) != did_key
+        ):
+            raise LinkRequestRefused("schema_invalid", "session_did_key")
+    except ValueError as exc:
+        if isinstance(exc, LinkRequestRefused):
+            raise
+        raise LinkRequestRefused("schema_invalid", "session_did_key") from exc
+
+
+def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise LinkRequestRefused("signature_invalid", "duplicate key")
+        result[key] = value
+    return result
+
+
+def _no_number(text: str) -> Any:
+    raise LinkRequestRefused("signature_invalid", "non-integer number")
+
+
+def _decode_signed_payload(signed_payload: object) -> tuple[bytes, Mapping[str, Any]]:
+    def bad(reason: str) -> LinkRequestRefused:
+        return LinkRequestRefused("signature_invalid", reason)
+
+    if not isinstance(signed_payload, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", signed_payload):
+        raise bad("signed payload encoding")
+    try:
+        raw = base64.urlsafe_b64decode(signed_payload + "=" * (-len(signed_payload) % 4))
+    except (binascii.Error, ValueError) as exc:
+        raise bad("signed payload encoding") from exc
+    if base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != signed_payload:
+        raise bad("signed payload encoding")
+    try:
+        parsed = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_no_duplicates,
+            parse_float=_no_number,
+            parse_constant=_no_number,
+        )
+    except LinkRequestRefused:
+        raise
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+        raise bad("signed payload is not JSON") from exc
+    if not isinstance(parsed, dict) or canonical_json_bytes(parsed) != raw:
+        raise bad("signed payload is not canonical")
+    return raw, parsed
 
 
 def link_request_signing_bytes(payload: Mapping[str, Any]) -> bytes:
@@ -145,3 +202,25 @@ def verify_link_request(
         raise ValueError("now must be timezone-aware")
     if abs((issued - now.astimezone(UTC)).total_seconds()) > MAX_SKEW_SECONDS:
         raise LinkRequestRefused("authorization_expired", "outside the time window")
+
+
+def verify_link_request_bytes(
+    signed_payload: str,
+    signature: str,
+    *,
+    session_did_key: str,
+    expected: Mapping[str, Any],
+    now: datetime,
+) -> Mapping[str, Any]:
+    """Verify a link request as received: the X-AWEB-Signed-Payload header.
+
+    The bytes must be the one base64url encoding of canonical JSON with no
+    duplicate keys, so that every reader of the request sees the same fields;
+    then the checks of verify_link_request run. This is the serving app's
+    entry point. Returns the verified payload.
+    """
+    _, parsed = _decode_signed_payload(signed_payload)
+    verify_link_request(
+        parsed, signature, session_did_key=session_did_key, expected=expected, now=now
+    )
+    return parsed

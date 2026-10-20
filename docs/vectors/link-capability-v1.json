@@ -523,6 +523,56 @@
       "note": "no new session for a revoked link"
     }
   ],
+  "expiry_sequence": [
+    {
+      "step": "mint",
+      "expires_at": "2026-10-20T12:10:00Z",
+      "result": {
+        "status": 201
+      }
+    },
+    {
+      "step": "exchange",
+      "at": "2026-10-20T12:00:00Z",
+      "secret": "right",
+      "result": {
+        "status": 200,
+        "session_expires_at": "2026-10-20T12:10:00Z"
+      },
+      "note": "a session lasts at most 15 minutes and never past the link's expiry"
+    },
+    {
+      "step": "read",
+      "at": "2026-10-20T12:09:59Z",
+      "fields": [
+        "arrival"
+      ],
+      "result": {
+        "status": 200
+      }
+    },
+    {
+      "step": "read",
+      "at": "2026-10-20T12:10:00Z",
+      "fields": [
+        "arrival"
+      ],
+      "result": {
+        "status": 410,
+        "code": "link_unavailable"
+      },
+      "note": "the link has expired; its session goes with it"
+    },
+    {
+      "step": "exchange",
+      "at": "2026-10-20T12:10:01Z",
+      "secret": "right",
+      "result": {
+        "status": 404,
+        "code": "link_unavailable"
+      }
+    }
+  ],
   "race": [
     {
       "name": "revoke-commits-first",

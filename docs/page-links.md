@@ -125,7 +125,9 @@ there is no second key type), and exchanges the secret:
 {"secret": "<43 chars>", "session_did_key": "did:key:z6Mk…"}
 ```
 
-The app hashes `secret`, finds the link whose `verifier_sha256` matches, and
+`session_did_key` must be a canonical Ed25519 `did:key`; anything else is 422
+`schema_invalid`, before any lookup. The app hashes `secret`, finds the link
+whose `verifier_sha256` matches, and
 checks that the link is usable now (not revoked, not expired, not used up, and
 its creator still holds at least the read projection). It then creates a link
 session:
@@ -180,8 +182,13 @@ the canonical JSON of [app-task-requests.md](app-task-requests.md). The
 signature is Ed25519 by the session key, base64url without padding, one
 accepted encoding. The app verifies, in order, failing closed:
 
-1. **Shape and signature.** Exact fields, canonical bytes, and a signature by
-   the session's `session_did_key`. Failure: 401 `signature_invalid`.
+1. **Shape and signature.** The `X-AWEB-Signed-Payload` header is the one
+   base64url encoding (no padding) of bytes that are canonical JSON with no
+   duplicate key, exactly as received, so that every reader of the request sees
+   the same fields; the payload has exactly the fields above, and the signature
+   is by the session's `session_did_key` over the prefix and those bytes.
+   Failure: 401 `signature_invalid`. `verify_link_request_bytes` in
+   `aweb_naapp.runtime.link_requests` is the serving app's entry point.
 2. **Binding.** `link_id` and `session_id` name this live session; `method`,
    the raw `path` with query, and `body_sha256` equal the request. Failure:
    401 `signature_invalid`.

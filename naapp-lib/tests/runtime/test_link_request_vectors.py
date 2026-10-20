@@ -11,10 +11,12 @@ from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.link_requests import (
     LinkRequestRefused,
+    check_session_did_key,
     link_request_signing_bytes,
     secret_verifier,
     sign_link_request,
     verify_link_request,
+    verify_link_request_bytes,
 )
 
 AWEB_ROOT = Path(__file__).resolve().parents[3]
@@ -83,3 +85,32 @@ def test_incomplete_bindings_raise(missing):
             expected=expected,
             now=at(case["payload"]["issued_at"]),
         )
+
+
+@pytest.mark.parametrize("case", VECTORS["byte_cases"], ids=lambda case: case["name"])
+def test_received_bytes(case):
+    def verify():
+        verify_link_request_bytes(
+            case["signed_payload"],
+            case["signature"],
+            session_did_key=VECTORS["keys"]["session"]["did_key"],
+            expected=case["expected"],
+            now=at(case["now"]),
+        )
+
+    if case["expect"] is None:
+        verify()
+        return
+    with pytest.raises(LinkRequestRefused) as refused:
+        verify()
+    assert refused.value.code == case["expect"]
+
+
+@pytest.mark.parametrize("case", VECTORS["session_keys"], ids=lambda case: case["name"])
+def test_session_keys(case):
+    if case["valid"]:
+        check_session_did_key(case["did_key"])
+        return
+    with pytest.raises(LinkRequestRefused) as refused:
+        check_session_did_key(case["did_key"])
+    assert refused.value.code == "schema_invalid"
