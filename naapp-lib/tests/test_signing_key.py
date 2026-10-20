@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from aweb_naapp.signing_key import SigningKeyError, parse_signing_key_hex, read_signing_key_file
+from aweb_naapp.signing_key import (
+    KeyFileError,
+    SigningKeyError,
+    parse_signing_key_hex,
+    read_key_file,
+    read_signing_key_file,
+)
 
 SRC = Path(__file__).resolve().parents[1] / "src"
 
@@ -112,6 +118,23 @@ def test_a_malformed_file_is_refused_without_echoing_it(tmp_path: Path) -> None:
     with pytest.raises(SigningKeyError, match=str(path)) as refused:
         read_signing_key_file(path)
     assert seed[:62] not in str(refused.value)
+
+
+def test_a_key_file_is_read_as_its_raw_bytes(tmp_path: Path) -> None:
+    content = secrets.token_hex(40) + "\n"
+    assert read_key_file(_key_file(tmp_path, content)) == content.encode()
+
+
+def test_the_raw_reader_refuses_what_the_signing_key_reader_refuses(tmp_path: Path) -> None:
+    writable = _key_file(tmp_path, secrets.token_hex(32), mode=0o622)
+    directory = tmp_path / "directory.key"
+    directory.mkdir(mode=0o700)
+    large = tmp_path / "large.key"
+    large.write_bytes(b"0" * 4096)
+    large.chmod(0o600)
+    for path in (writable, directory, large, tmp_path / "absent.key"):
+        with pytest.raises(KeyFileError, match=str(path)):
+            read_key_file(path)
 
 
 def test_the_loader_imports_with_the_standard_library_and_pynacl_alone() -> None:

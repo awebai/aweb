@@ -363,10 +363,10 @@ CustodyBackend
   kind                                  "native-kms" | "1password"
   bind(secret_id, config)  -> backend_ref     # native: allocate; 1P: validate vault/item/field reference
   ingest(backend_ref, value) -> version_ref   # native only; console-only caller (§6)
-  open(version_ref, purpose) -> Plaintext     # one dispatch; purpose = {dispatch_id, secret_id, version}
+  open(version_ref) -> Plaintext              # one dispatch, under the version's bound context
   describe(backend_ref) -> {version_ref, updated_at, state}   # never the value
   disable(backend_ref)                        # refuse open() from now on
-  destroy(version_ref)                        # native: crypto-shred; 1P: forget reference only
+  destroy(version_ref)                        # native: delete from the live store; 1P: forget reference only
   health() -> ok | degraded(reason)
 ```
 
@@ -392,14 +392,17 @@ How a value is handled once opened:
   to another secret or version fails to decrypt.
 - **Decryption.** Every dispatch calls KMS `Decrypt` with that context. There is
   no long-lived cache of plaintext data keys. KMS's own audit trail is a second,
-  independent record of every unseal, correlated by `dispatch_id` in the
-  context.
+  independent record of every unseal. Decrypt needs exactly the context given
+  when the data key was generated, so the context cannot carry a per-dispatch
+  `dispatch_id`. A KMS record is correlated with a dispatch through the
+  dispatch's audit row instead: its timestamp and the secret version it names.
 - **Key policy.** Only the secrets service role can decrypt or generate keys. No
   human operator role has decrypt rights in production. Break-glass access is an
   explicit, audited KMS policy change outside the app.
-- **Destroy.** Deleting the wrapped data key and ciphertext row crypto-shreds the
-  version in the live database. Backups that still hold the old rows are covered
-  by §15, item 5.
+- **Destroy.** Destroying a version deletes its wrapped data key and
+  ciphertext from the live database. Copies in backups and the write-ahead log
+  stay decryptable until they expire or the key-encryption key is retired
+  (§15, item 5), so destroy is not an irreversible erasure.
 
 ### 5.3 1Password backend
 
@@ -1306,7 +1309,7 @@ availability, only for a failed local commit (§11.5).
 | **Revoke an approver passkey or contact** | That approver's pending decisions are voided. If no approver can decide anymore, `approve_only` uses refuse. Through team-auth, revoking the last owner's passkey or contact is refused (`last_owner_protected`, §10.2). |
 
 Installation uninstall (D1 §5) fences all normal calls. Deletion of secrets data
-follows D1's lifecycle jobs, with every native version crypto-shredded.
+follows D1's lifecycle jobs, with every native version destroyed as §5.2 describes.
 
 ## 13. Manifest v2 tool surface
 
