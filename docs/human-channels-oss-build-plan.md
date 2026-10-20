@@ -50,18 +50,21 @@ migration. Each includes old-data backfill, constraints/indexes and an upgrade
 journey from a populated old database. Preserve existing accepted native shapes;
 legacy unknown export capture never becomes eligible through backfill.
 
-Cloud owns `HumanChannelAdapter` (C0): both Telegram and Teams implement the
-same authenticate/normalize, capability, credential/intake qualification,
-resolve-installation, render/send and reconcile-outcome interface. Its normalized
-input carries private platform scope/speaker/source evidence and event identity;
-its public output is an ordinary signed aweb message/typed session operation.
+Cloud owns `ChannelAdapter` (C0): both Telegram and Teams implement
+`verify_and_extract -> VerifiedEvent`, link/account proof UX, exact-resource
+`prove_room_authority`, inspect/claim/disconnect intake, qualified capabilities
+and `render/send -> accepted|rate_limited|forbidden|too_large|transient_not_sent|unknown`.
+`VerifiedEvent` carries private subject/scope/event/time/kind/reply/thread evidence;
+it means authenticated platform intake, not native-human signature assurance.
+The common core produces an ordinary signed aweb message/typed session operation.
 Platform IDs, credentials and webhook logic stay in ac. OSS runtime consumers
 receive generic chat identity, verification, provenance, control policy and
 receipts; they do not import Telegram/Teams SDKs. C0 fixes exact method/DTO names
 in the canonical plan, with P0 agreeing the public request/result boundary.
 Adapter tests may use controlled fixtures, but D/R/F acceptance uses real providers.
 
-P0 fixes versioned API/byte/vector and consumer-facing DTOs. Spike-dependent re-share/federation annexes are frozen
+P0 fixes versioned API/byte/vector, consumer-facing DTOs and the supported
+embedded transaction/idempotency facade implemented by P2b. Spike-dependent re-share/federation annexes are frozen
 after X-E2/X-GF before their implementation tasks; native P1/P2 work does not
 wait for an unrelated risky annex. C resources,
 credential custody, linking and adapter qualification start before P0 finishes;
@@ -88,6 +91,15 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
   This local journey needs no Telegram/Teams credential.
 - **Staff:** `aweb-protocol-expert`; independent protocol reviewer, Athena for
   identity/E2EE correctness. This is the contract gate before feature emission.
+- **Embedding seam:** specify a public prepared-send/unit-of-work API, not
+  private messaging-table writes. Verify/prepare outside the transaction, then
+  recheck authority and accept the exact envelope with the caller's shared
+  transaction, message ID and idempotency key. An embedding can commit its own
+  ingress result in that same unit of work; message/receipt/result and durable
+  mutation outbox commit or roll back together. Events publish only after commit.
+  No Cloud-specific callback is inserted into the message write. A remote HTTP
+  consumer instead uses durable ingress intent + stable message ID/public
+  acceptance lookup and retry; it cannot claim a cross-database transaction.
 
 ### P1 — optional signed channel provenance on native mail and chat
 
@@ -104,14 +116,21 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
   no plaintext retry. Old/new clients exchange native messages on real servers.
 - **Staff:** `aweb-protocol-expert`. C/D consume this before channel emission.
 
-### P2 — human alias first contact and authorized key discovery
+### P2 — native direct addressing and prepared-send integration
 
-- **Repo/files:** aweb `cli/go/cmd/aw/{helpers,mail,chat}.go`,
+- **P2a repo/files:** aweb `cli/go/cmd/aw/{helpers,mail,chat}.go`,
   `cli/go/awid/{client,mail,e2ee_keys,registry_resolver}.go`,
   `server/src/aweb/messaging/{chat,messages}.py`, messaging HTTP/MCP routes and
   participant-key discovery; existing human/alias parity tests.
-- **Migrations:** none expected; existing actor/certificate/identity projections.
-- **Dependencies:** P0 selector/discovery contract; actual custody/access proof.
+- **P2b repo/files:** aweb `server/src/aweb/messaging/{messages,chat}.py`, a
+  new public embedding/unit-of-work module and HTTP/MCP acceptance callers.
+  Implement the P0 prepared-send/idempotency facade for native mail/chat, ready
+  for P7 to add group checkpoint/capture in the same acceptance boundary.
+- **Migrations:** P2a none expected; P2b adds an ordered durable result/idempotency
+  or publication-outbox migration only if current receipt/outbox storage lacks
+  the required result/transaction semantics; reuse existing ingress receipts.
+- **Dependencies:** P0 selector/discovery and embedding contracts; actual
+  custody/access proof. Children can be staffed separately and both gate D.
 - **Acceptance/live journey:** real `aw mail send --to juan` in an explicitly
   selected team reaches that team's human actor; agent aliases still work.
   HTTP/MCP agree; duplicate labels across teams, inactive actors and conflicting
@@ -119,6 +138,14 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
   local first contact; absent/invalid assertion fails explicitly, never plaintext.
   Unknown external bare DID first contact still refuses. Hosted/BYOT/local cases
   distinguish actual custody from team-controller authority.
+- **P2b acceptance/live journey:** real PostgreSQL embedding commits actor send
+  plus provider-owned ingress result once; inject failure on either write and
+  observe neither message nor result nor wake/charge. Retry exact bytes returns
+  the original result; conflicting bytes refuse. Commit then crash before event
+  publication recovers through the durable outbox with no duplicate message.
+  Cloud C2/C3 use this supported API in their live DM milestone, not a privileged
+  table/insert hook. HTTP mode is tested as idempotent recovery, not distributed
+  atomicity. No fake `aw` or fake database proves the integration.
 - **Staff:** `aweb-protocol-expert`. No new global human address.
 
 ### P3 — typed session-participant storage and authorization identity
@@ -207,7 +234,8 @@ first public send/checkpoint integration waits for P0 and the implementing P tas
 - **Migrations:** M-P7 adds transactional session acceptance order, checkpoints,
   immutable message capture and transition/replay tombstones. Backfill old rows
   only as `legacy_unknown`; never infer eligibility from later settings/time.
-- **Dependencies:** P0/P4; P5 for control-versus-message read authorization.
+- **Dependencies:** P0/P4 and P2b acceptance facade; P5 for control-versus-message
+  read authorization. Group capture extends the same supported public unit of work.
 - **Acceptance/live journey:** a send started before a checkpoint but committed
   after it revalidates/recomposes; no wrong-audience capture. Real concurrent
   clients cover commit/rollback, exact/conflicting retries, lost response before
@@ -301,6 +329,7 @@ flowchart TD
   XE[X-E2] --> P5
   P4 --> P5
   P4 --> P7
+  P2 --> P7
   P5 --> P7
   P4 --> P6
   P5 --> P6
