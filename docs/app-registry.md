@@ -324,7 +324,9 @@ before the wait and must not authorize a dispatch after expiry.
 
 An expired observation refuses even when refresh is not running. PostgreSQL
 stores the source's remaining monotonic freshness; waiting for the fence lock
-does not renew it, and a process restart does not reset it. Across the remote
+does not renew it, and a process restart does not reset it. Admission samples
+the SQL clock after acquiring its lock, then the remaining monotonic lifetime;
+a pre-wait clock would wrongly subtract the lock wait twice. Across the remote
 team server and app the guarantee is **max_age plus one bounded refresh**, at
 most **60 + 5 seconds with the remote source's defaults**. A local lock is not
 a cross-server lease. Earlier committed work is reconciled, never reported as
