@@ -1,6 +1,9 @@
 package strictjson
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCanonicalSortsKeysAndEscapesOnlyQuoteAndBackslash(t *testing.T) {
 	got, err := Canonical(map[string]any{
@@ -58,5 +61,36 @@ func TestParseCanonicalObjectRequiresExactBytes(t *testing.T) {
 		if _, err := ParseCanonicalObject([]byte(input)); Code(err) != "not_canonical" {
 			t.Errorf("%s: got %v, want not_canonical", input, err)
 		}
+	}
+}
+
+func TestParseStrictRefusesDeepNestingBeforeDescending(t *testing.T) {
+	ok := strings.Repeat("[", MaxDepth) + strings.Repeat("]", MaxDepth)
+	if _, err := ParseStrict([]byte(ok)); err != nil {
+		t.Fatalf("depth %d refused: %v", MaxDepth, err)
+	}
+	deep := strings.Repeat("[", MaxDepth+1) + strings.Repeat("]", MaxDepth+1)
+	if _, err := ParseStrict([]byte(deep)); Code(err) != "too_deep" {
+		t.Fatalf("got %v, want too_deep", err)
+	}
+	hostile := strings.Repeat("[", 1_000_000)
+	if _, err := ParseStrict([]byte(hostile)); Code(err) != "too_deep" {
+		t.Fatalf("got %v, want too_deep", err)
+	}
+}
+
+func TestStrictJSONEdgeCases(t *testing.T) {
+	for input, code := range map[string]string{
+		"{\"alias\":1,\"\\u0061lias\":2}": "duplicate_key",
+		`{"a":01}`:                        "invalid_json",
+		`{"a":+1}`:                        "invalid_json",
+		`{"a":-9007199254740992}`:         "invalid_value",
+	} {
+		if _, err := ParseStrict([]byte(input)); Code(err) != code {
+			t.Errorf("%s: got %v, want %s", input, err, code)
+		}
+	}
+	if _, err := ParseCanonicalObject([]byte(`{"a":-0}`)); Code(err) != "not_canonical" {
+		t.Errorf("-0: got %v, want not_canonical", err)
 	}
 }

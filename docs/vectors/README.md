@@ -264,8 +264,12 @@ detached Ed25519 signature: a core mutation, a core registry fact with a system
 actor, an app secret use by an identity-grant actor, and a client command
 signed by its own actor. Each negative carries its signing bytes and signature
 and one expected refusal. The `envelope` layer covers a wrong prefix,
-non-canonical bytes, a float, a duplicate key, a non-ASCII string, null,
-unknown and missing fields, an unknown catalog or hook, a zero trace id, a
+non-canonical bytes (including `-0`), a float, a duplicate key (plain or
+escaped), a leading zero or plus sign, an out-of-range integer, nesting deeper
+than eight, a non-ASCII string, null, unknown and missing fields, an impossible
+or imprecise time, more than four or non-strict attestations, a client
+producer with a `seq`, a non-Ed25519 `did:key`, three respellings of the
+signature (padded, URL alphabet, nonzero trailing bits), an unknown catalog or hook, a zero trace id, a
 fired time before the occurred time, the actor rules, a nested payload value, a
 producer kind the hook does not allow, a client actor that is not its signer, a
 team mismatch and a wrong signature. The `catalog` layer passes the envelope
@@ -277,8 +281,12 @@ checks and is refused by the catalog reader. A digest construction case shows
 
 The `AWEB-Hook DIDKey` request credential that carries an event to one binding
 (aweb-acgh.16.2; contract in [`hook-events.md`](../hook-events.md)). Positive
-cases pin the headers, the canonical signed payload and the body for a core and
-a client producer. Negatives refuse an app-event or `hook-resolve` credential at
+cases pin the headers, the canonical signed payload and the body for a core
+producer and for a client producer carrying its team certificate. Negatives
+refuse a client delivery without its certificate or with one for another key,
+team or certificate id, or not signed by the team's current key; three
+respellings of the credential signature; a padded signed payload; an empty
+team id; a timestamp with a fraction; an app-event or `hook-resolve` credential at
 a hook target, either purpose's payload under the hook scheme, a payload altered
 after signing, a cross-audience or cross-endpoint request, a tampered body, a
 stale or future timestamp, a wrong binding, a credential naming another event

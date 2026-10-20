@@ -151,6 +151,27 @@ func sign(key ed25519.PrivateKey, message []byte) string {
 
 func b64url(data []byte) string { return base64.RawURLEncoding.EncodeToString(data) }
 
+const standardAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// paddedSignature, urlAlphabetSignature and trailingBitsSignature each give a
+// second spelling of the same 64 signature bytes, which a strict verifier
+// refuses.
+func paddedSignature(sig string) string { return sig + "==" }
+
+func urlAlphabetSignature(t *testing.T) func(string) string {
+	return func(sig string) string {
+		if !strings.ContainsAny(sig, "+/") {
+			t.Fatal("the fixture signature has no + or / to respell")
+		}
+		return strings.NewReplacer("+", "-", "/", "_").Replace(sig)
+	}
+}
+
+func trailingBitsSignature(sig string) string {
+	last := strings.IndexByte(standardAlphabet, sig[len(sig)-1])
+	return sig[:len(sig)-1] + string(standardAlphabet[last|1])
+}
+
 func buildEnvelopeVector(t *testing.T) map[string]any {
 	type positive struct {
 		name string
@@ -189,8 +210,11 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 		name, layer, err, field, team string
 		key                           ed25519.PrivateKey
 		signing                       []byte
+		signature                     func(string) string
 	}
 	env := func(e map[string]any) []byte { return prefixed(mustCanonical(t, e)) }
+	nested := []any{[]any{[]any{[]any{[]any{[]any{[]any{"status"}}}}}}}
+	attestation := b64url([]byte("attestation"))
 	negatives := []negative{
 		{name: "wrong_prefix", err: "wrong_prefix", key: core, signing: append([]byte("aweb.hook-event/2\n"), coreBody...)},
 		{name: "non_canonical_whitespace", err: "not_canonical", key: core, signing: replace(`{"actor"`, `{ "actor"`)},
@@ -212,6 +236,23 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 		{name: "client_signed_server_hook", err: "producer_not_allowed", key: keyFrom(clientSeed), signing: env(with(clientEnvelope(), "hook", "post-mutation-hook"))},
 		{name: "app_signed_core_hook", err: "producer_not_allowed", key: keyFrom(appSeed), signing: env(with(appEnvelope(), "hook", "post-mutation-hook"))},
 		{name: "client_actor_not_its_signer", err: "actor_not_signer", key: keyFrom(clientSeed), signing: env(with(clientEnvelope(), "actor.did_key", didKeyOf(keyFrom(memberSeed))))},
+		{name: "escaped_duplicate_key", err: "duplicate_key", key: core, signing: replace(`"alias":"bond"`, `"alias":"bond","\u0061lias":"bond"`)},
+		{name: "negative_zero", err: "not_canonical", key: core, signing: replace(`"seq":812`, `"seq":-0`)},
+		{name: "leading_zero", err: "invalid_json", key: core, signing: replace(`"seq":812`, `"seq":0812`)},
+		{name: "plus_sign", err: "invalid_json", key: core, signing: replace(`"seq":812`, `"seq":+812`)},
+		{name: "integer_out_of_range", err: "invalid_value", key: core, signing: replace(`"seq":812`, `"seq":9007199254740992`)},
+		{name: "nesting_too_deep", err: "too_deep", key: core, signing: env(with(coreEnvelope(), "payload.changes", nested))},
+		{name: "impossible_month", err: "invalid_value", key: core, signing: env(with(coreEnvelope(), "occurred_at", "2026-13-20T12:00:00.412Z"))},
+		{name: "time_without_milliseconds", err: "invalid_value", key: core, signing: env(with(coreEnvelope(), "fired_at", "2026-10-20T12:00:01Z"))},
+		{name: "more_than_four_attestations", err: "invalid_value", key: core,
+			signing: env(with(coreEnvelope(), "actor.attestations", []any{attestation, attestation, attestation, attestation, attestation}))},
+		{name: "attestation_not_strict_base64url", err: "invalid_value", key: core, signing: env(with(coreEnvelope(), "actor.attestations", []any{"QUJDR"}))},
+		{name: "client_producer_with_seq", err: "unknown_field", key: keyFrom(clientSeed), signing: env(with(clientEnvelope(), "producer.seq", int64(1)))},
+		{name: "producer_did_key_not_ed25519", err: "invalid_value", key: core,
+			signing: env(with(coreEnvelope(), "producer.did_key", "did:key:zQ3shokFTS3brHcDQrn82RUDfCZESWL1ZdCEJwekUDPQiYBme"))},
+		{name: "signature_padded", err: "signature_encoding", key: core, signing: env(coreEnvelope()), signature: paddedSignature},
+		{name: "signature_url_alphabet", err: "signature_encoding", key: core, signing: env(coreEnvelope()), signature: urlAlphabetSignature(t)},
+		{name: "signature_nonzero_trailing_bits", err: "signature_encoding", key: core, signing: env(coreEnvelope()), signature: trailingBitsSignature},
 		{name: "team_mismatch", err: "team_mismatch", key: core, signing: env(coreEnvelope()), team: "other:example.com"},
 		{name: "signed_by_another_key", err: "bad_signature", key: keyFrom(memberSeed), signing: env(coreEnvelope())},
 		{name: "catalog_unknown_payload_field", layer: "catalog", err: "unknown_field", field: "note", key: core,
@@ -229,8 +270,12 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 		if team == "" {
 			team = teamID
 		}
+		signature := sign(n.key, n.signing)
+		if n.signature != nil {
+			signature = n.signature(signature)
+		}
 		c := map[string]any{
-			"name": n.name, "signing_bytes_b64url": b64url(n.signing), "signature_b64": sign(n.key, n.signing),
+			"name": n.name, "signing_bytes_b64url": b64url(n.signing), "signature_b64": signature,
 			"verify_team_id": team, "layer": layer, "error": n.err,
 		}
 		if n.field != "" {
@@ -251,11 +296,13 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 			"authority":      "docs/hook-events.md, Event envelope",
 			"signing_bytes":  "the ASCII prefix 'aweb.hook-event/1' and a newline, then the envelope's canonical JSON",
 			"canonical":      "keys sorted, no insignificant whitespace, strings of printable ASCII (0x20-0x7E) escaping only quote and backslash, integers within +-(2^53-1), no floats and no null; a verifier re-encodes and requires identical bytes",
-			"signature":      "detached Ed25519 by the producer's did:key, raw standard base64 without padding",
-			"order":          "prefix; strict parse (duplicate keys, floats, null, non-ASCII); canonical bytes; envelope fields top-down; catalog; hook; trace; team_id; producer; actor; times; result_status; payload shape; producer kind allowed for the hook; a client event's actor is its signer; the expected team; the signature",
+			"signature":      "detached Ed25519 by the producer's did:key: exactly 86 characters of the standard base64 alphabet, no padding, zero trailing bits",
+			"order":          "the verifier's expected team is required; prefix; strict parse (duplicate keys, floats, null, non-ASCII, nesting deeper than 8); canonical bytes; envelope fields top-down; catalog; hook; trace; team_id; producer; actor; times; result_status; payload shape; producer kind allowed for the hook; a client event's actor is its signer; the expected team; the signature",
 			"layers":         "envelope faults are refused by every envelope verifier; catalog faults pass the envelope layer and are refused by the catalog reader with the stated error and field",
 			"producer_kinds": "core {origin, kid, did_key, seq}; app {origin, app_id, installation_id, generation, kid, did_key, seq}; client {did_key, certificate_id}, with no seq",
-			"actor":          "authority_mode and attestations always; did_key unless the authority is system, which carries no identity; grant_id exactly when the authority is identity_grant; attestations are at most four unpadded base64url strings, each verified by its own contract",
+			"actor":          "authority_mode and attestations always; did_key unless the authority is system, which carries no identity; grant_id exactly when the authority is identity_grant; attestations are at most four strict unpadded base64url strings, untyped at this layer, each verified by its consumer under its own contract",
+			"times":          "occurred_at and fired_at are UTC with exactly three fractional digits, in their one canonical spelling",
+			"did_keys":       "every did:key decodes to an Ed25519 public key",
 		},
 		"positive_cases": positiveCases,
 		"negative_cases": negativeCases,
@@ -270,43 +317,95 @@ func buildEnvelopeVector(t *testing.T) map[string]any {
 	}
 }
 
+// teamSeed is the team's controller key, which signs member certificates.
+var teamSeed = seedFrom(0x80)
+
+// fixtureCertificate builds a team certificate deterministically: the
+// canonical JSON of its fields, signed by signer. VerifyTeamCertificate is
+// the check that it is a real certificate.
+func fixtureCertificate(t *testing.T, signer ed25519.PrivateKey, team, certificateID, memberDIDKey string) *awid.TeamCertificate {
+	t.Helper()
+	cert := &awid.TeamCertificate{
+		Version: 1, CertificateID: certificateID, Team: team, TeamDIDKey: didKeyOf(signer),
+		MemberDIDKey: memberDIDKey, Alias: "bond", IdentityScope: awid.IdentityModeLocal,
+		IssuedAt: "2026-10-01T09:00:00Z",
+	}
+	payload := mustCanonical(t, map[string]any{
+		"alias": cert.Alias, "certificate_id": cert.CertificateID, "identity_scope": cert.IdentityScope,
+		"issued_at": cert.IssuedAt, "member_did_key": cert.MemberDIDKey, "team_did_key": cert.TeamDIDKey,
+		"team_id": cert.Team, "version": int64(1),
+	})
+	cert.Signature = sign(signer, payload)
+	return cert
+}
+
+func certificateHeader(t *testing.T, cert *awid.TeamCertificate) string {
+	t.Helper()
+	encoded, err := awid.EncodeTeamCertificateHeader(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
+}
+
+func copyHeaders(headers map[string]string, changes map[string]string) map[string]string {
+	out := map[string]string{}
+	for name, value := range headers {
+		out[name] = value
+	}
+	for name, value := range changes {
+		if value == "" {
+			delete(out, name)
+		} else {
+			out[name] = value
+		}
+	}
+	return out
+}
+
 func buildDeliveryVector(t *testing.T) map[string]any {
 	target, _ := url.Parse(logsTarget)
 	stamp, _ := time.Parse(deliveryTimeLayout, signedAt)
-	receive := map[string]any{"audience": logsOrigin, "binding_id": bindingID, "now": receivedAt}
+	team := keyFrom(teamSeed)
+	receive := map[string]any{"audience": logsOrigin, "binding_id": bindingID, "team_key_did": didKeyOf(team), "now": receivedAt}
+	clientCert := fixtureCertificate(t, team, teamID, "c_77", didKeyOf(keyFrom(clientSeed)))
 
 	type positive struct {
 		name string
 		seed []byte
 		env  map[string]any
+		cert *awid.TeamCertificate
 	}
 	var positiveCases []map[string]any
 	deliveries := map[string]*Delivery{}
-	events := map[string][2]string{}
 	for _, p := range []positive{
-		{"core_event_to_logs", coreSeed, coreEnvelope()},
-		{"client_event_to_logs", clientSeed, clientEnvelope()},
+		{"core_event_to_logs", coreSeed, coreEnvelope(), nil},
+		{"client_event_to_logs_with_its_certificate", clientSeed, clientEnvelope(), clientCert},
 	} {
 		key := keyFrom(p.seed)
 		signing, signature, err := Sign(key, p.env)
 		if err != nil {
 			t.Fatal(err)
 		}
-		d, err := SignDelivery(key, "POST", target, bindingID, signing, signature, stamp)
+		d, err := SignDelivery(key, "POST", target, bindingID, signing, signature, p.cert, stamp)
 		if err != nil {
 			t.Fatal(err)
 		}
 		deliveries[p.name] = d
-		events[p.name] = [2]string{b64url(signing), signature}
-		positiveCases = append(positiveCases, map[string]any{
+		c := map[string]any{
 			"name": p.name, "seed_hex": hex.EncodeToString(p.seed), "target": logsTarget, "binding_id": bindingID,
 			"timestamp": signedAt, "event_signing_bytes_b64url": b64url(signing), "event_signature_b64": signature,
 			"headers": d.Headers, "body": string(d.Body), "canonical_signed_payload": string(d.SignedPayload),
 			"receive": receive,
-		})
+		}
+		if p.cert != nil {
+			c["certificate"] = certificateHeader(t, p.cert)
+		}
+		positiveCases = append(positiveCases, c)
 	}
 
 	base := deliveries["core_event_to_logs"]
+	client := deliveries["client_event_to_logs_with_its_certificate"]
 	core := keyFrom(coreSeed)
 	signed := func(key ed25519.PrivateKey, scheme string, payload map[string]any) map[string]string {
 		data := mustCanonical(t, payload)
@@ -323,6 +422,11 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 		}
 		return parsed
 	}
+	with := func(key string, value any) map[string]any {
+		payload := basePayload()
+		payload[key] = value
+		return payload
+	}
 	appEmit, err := awid.SignAppEmitCredential(keyFrom(appSeed), "POST", target, teamID, "secrets", "hook-2026-10", base.Body, signedAt)
 	if err != nil {
 		t.Fatal(err)
@@ -331,72 +435,85 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 	for name := range appEmit.Headers {
 		appEmitHeaders[name] = appEmit.Headers.Get(name)
 	}
-	resolvePayload := basePayload()
-	resolvePayload["auth"] = "hook-resolve"
 	appEventPayload := map[string]any{
 		"v": int64(1), "auth": "app-event", "aud": logsOrigin, "method": "POST", "path": "/hooks/ingest",
 		"team_id": teamID, "app_id": "secrets", "kid": "hook-2026-10", "did_key": didKeyOf(keyFrom(appSeed)),
 		"body_sha256": basePayload()["body_sha256"], "timestamp": signedAt,
 	}
-	tamperedHeaders := map[string]string{}
-	for name, value := range base.Headers {
-		tamperedHeaders[name] = value
-	}
-	tampered := basePayload()
-	tampered["aud"] = "https://evil.example.com"
-	tamperedHeaders[SignedPayloadHeader] = b64url(mustCanonical(t, tampered))
-	otherEvent := basePayload()
-	otherEvent["event_id"] = otherUUID
-	otherTeam := basePayload()
-	otherTeam["team_id"] = "other:example.com"
+	tampered := copyHeaders(base.Headers, map[string]string{SignedPayloadHeader: b64url(mustCanonical(t, with("aud", "https://evil.example.com")))})
 	member := keyFrom(memberSeed)
-	byMember := basePayload()
-	byMember["did_key"] = didKeyOf(member)
+	authSignature := strings.SplitN(strings.TrimPrefix(base.Headers["Authorization"], AuthScheme), " ", 2)[1]
+	respell := func(f func(string) string) map[string]string {
+		return copyHeaders(base.Headers, map[string]string{"Authorization": AuthScheme + didKeyOf(core) + " " + f(authSignature)})
+	}
+	certFor := func(cert *awid.TeamCertificate) map[string]string {
+		return copyHeaders(client.Headers, map[string]string{CertificateHeader: certificateHeader(t, cert)})
+	}
+	clientDID := didKeyOf(keyFrom(clientSeed))
 
 	type negative struct {
 		name, method, path, body, err string
 		headers                       map[string]string
 		receive                       map[string]any
+		client                        bool
 	}
 	rx := func(key, value string) map[string]any {
-		r := map[string]any{"audience": logsOrigin, "binding_id": bindingID, "now": receivedAt}
+		r := map[string]any{"audience": logsOrigin, "binding_id": bindingID, "team_key_did": didKeyOf(team), "now": receivedAt}
 		r[key] = value
 		return r
 	}
-	body := string(base.Body)
 	negatives := []negative{
 		{name: "app_event_credential_at_hook_target", headers: appEmitHeaders, err: "wrong_scheme"},
-		{name: "hook_resolve_credential_at_hook_target", headers: signed(keyFrom(appSeed), "AWEB-App-Hook-Resolve DIDKey ", resolvePayload), err: "wrong_scheme"},
+		{name: "hook_resolve_credential_at_hook_target", headers: signed(keyFrom(appSeed), "AWEB-App-Hook-Resolve DIDKey ", with("auth", "hook-resolve")), err: "wrong_scheme"},
 		{name: "app_event_payload_under_hook_scheme", headers: signed(keyFrom(appSeed), AuthScheme, appEventPayload), err: "wrong_auth"},
-		{name: "hook_resolve_payload_under_hook_scheme", headers: signed(core, AuthScheme, resolvePayload), err: "wrong_auth"},
-		{name: "payload_altered_after_signing", headers: tamperedHeaders, err: "bad_signature"},
+		{name: "hook_resolve_payload_under_hook_scheme", headers: signed(core, AuthScheme, with("auth", "hook-resolve")), err: "wrong_auth"},
+		{name: "payload_altered_after_signing", headers: tampered, err: "bad_signature"},
+		{name: "signature_padded", headers: respell(paddedSignature), err: "signature_encoding"},
+		{name: "signature_url_alphabet", headers: respell(urlAlphabetSignature(t)), err: "signature_encoding"},
+		{name: "signature_nonzero_trailing_bits", headers: respell(trailingBitsSignature), err: "signature_encoding"},
+		{name: "signed_payload_padded", headers: copyHeaders(base.Headers, map[string]string{SignedPayloadHeader: base.Headers[SignedPayloadHeader] + "="}), err: "invalid_value"},
+		{name: "team_id_empty", headers: signed(core, AuthScheme, with("team_id", "")), err: "invalid_value"},
+		{name: "timestamp_with_fraction", headers: signed(core, AuthScheme, with("timestamp", "2026-10-20T12:00:01.000Z")), err: "invalid_value"},
 		{name: "cross_audience", headers: base.Headers, receive: rx("audience", "https://logs.other.example.com"), err: "audience_mismatch"},
 		{name: "cross_endpoint", headers: base.Headers, path: "/hooks/other", err: "request_mismatch"},
-		{name: "tampered_body", headers: base.Headers, body: strings.Replace(body, `"signature":"`, `"signature":"A`, 1), err: "body_mismatch"},
+		{name: "tampered_body", headers: base.Headers, body: strings.Replace(string(base.Body), `"signature":"`, `"signature":"A`, 1), err: "body_mismatch"},
 		{name: "stale_timestamp", headers: base.Headers, receive: rx("now", "2026-10-20T12:05:02Z"), err: "timestamp_outside_window"},
 		{name: "future_timestamp", headers: base.Headers, receive: rx("now", "2026-10-20T11:55:00Z"), err: "timestamp_outside_window"},
 		{name: "wrong_binding", headers: base.Headers, receive: rx("binding_id", otherUUID), err: "binding_mismatch"},
-		{name: "credential_names_another_event", headers: signed(core, AuthScheme, otherEvent), err: "event_mismatch"},
-		{name: "credential_names_another_team", headers: signed(core, AuthScheme, otherTeam), err: "team_mismatch"},
-		{name: "signer_is_not_the_producer", headers: signed(member, AuthScheme, byMember), err: "producer_mismatch"},
+		{name: "credential_names_another_event", headers: signed(core, AuthScheme, with("event_id", otherUUID)), err: "event_mismatch"},
+		{name: "credential_names_another_team", headers: signed(core, AuthScheme, with("team_id", "other:example.com")), err: "team_mismatch"},
+		{name: "signer_is_not_the_producer", headers: signed(member, AuthScheme, with("did_key", didKeyOf(member))), err: "producer_mismatch"},
+		{name: "client_without_certificate", client: true, headers: copyHeaders(client.Headers, map[string]string{CertificateHeader: ""}), err: "certificate_missing"},
+		{name: "certificate_for_another_key", client: true, headers: certFor(fixtureCertificate(t, team, teamID, "c_77", didKeyOf(member))), err: "certificate_mismatch"},
+		{name: "certificate_for_another_team", client: true, headers: certFor(fixtureCertificate(t, team, "other:example.com", "c_77", clientDID)), err: "certificate_mismatch"},
+		{name: "certificate_for_another_certificate_id", client: true, headers: certFor(fixtureCertificate(t, team, teamID, "c_78", clientDID)), err: "certificate_mismatch"},
+		{name: "certificate_not_from_the_team_key", client: true, headers: certFor(fixtureCertificate(t, member, teamID, "c_77", clientDID)), err: "certificate_invalid"},
 	}
+	forgedSignature := fixtureCertificate(t, team, teamID, "c_77", clientDID)
+	forgedSignature.Signature = sign(member, []byte("not the certificate"))
+	negatives = append(negatives, negative{name: "certificate_signature_does_not_verify", client: true, headers: certFor(forgedSignature), err: "certificate_invalid"})
+
 	var negativeCases []map[string]any
 	for _, n := range negatives {
-		method, path, b, r := n.method, n.path, n.body, n.receive
+		method, path, r := n.method, n.path, n.receive
+		body := string(base.Body)
+		if n.client {
+			body = string(client.Body)
+		}
+		if n.body != "" {
+			body = n.body
+		}
 		if method == "" {
 			method = "POST"
 		}
 		if path == "" {
 			path = base.Path
 		}
-		if b == "" {
-			b = body
-		}
 		if r == nil {
 			r = receive
 		}
 		negativeCases = append(negativeCases, map[string]any{
-			"name": n.name, "method": method, "path": path, "headers": n.headers, "body": b,
+			"name": n.name, "method": method, "path": path, "headers": n.headers, "body": body,
 			"receive": r, "error": n.err,
 		})
 	}
@@ -405,15 +522,17 @@ func buildDeliveryVector(t *testing.T) map[string]any {
 		"name":   "hook-delivery-credential-v1",
 		"status": "proposed (aweb-acgh.16.2); frozen once reviewed",
 		"scheme": map[string]any{
-			"authority":       "docs/hook-events.md, Delivery",
-			"authorization":   "AWEB-Hook DIDKey <did:key> <signature>, the signature over the canonical signed payload, raw standard base64 without padding",
-			"signed_payload":  "X-AWEB-Signed-Payload carries the canonical payload, unpadded base64url",
+			"authority":       "docs/hook-events.md, The delivery credential",
+			"authorization":   "AWEB-Hook DIDKey <did:key> <signature>, the signature over the canonical signed payload: exactly 86 characters of the standard base64 alphabet, no padding, zero trailing bits",
+			"signed_payload":  "X-AWEB-Signed-Payload carries the canonical payload, strict unpadded base64url",
+			"certificate":     "a client delivery carries the member's team certificate in X-AWID-Team-Certificate, encoded as team-auth encodes it; it must be signed by the team's current key and name the event's team, producer key and certificate id; a server delivery carries none",
 			"payload_fields":  "v, auth (hook-delivery), aud (the target's origin), method, path (raw path and query), body_sha256, team_id, binding_id, event_id, producer, kid, did_key, timestamp",
 			"producer":        "core, app:<app_id> or client:<certificate_id>; kid is the server producer's kid, or member for a client producer",
-			"body":            "canonical JSON {hook_event: unpadded base64url signing bytes, signature: the envelope signature}",
-			"timestamp":       "UTC to the second; refused when more than 300 seconds from the receiver's clock",
-			"order":           "scheme; signed payload strict and canonical; signature by the header did:key; auth; payload fields; did_key equals the header's; v; aud; method and path; body_sha256; timestamp; binding_id; body; the event (with the credential's team); event_id; producer, kid and did_key equal the event's producer",
-			"receive_options": "what the target knows independently: its own public origin, the binding the delivery must name, and its clock",
+			"body":            "canonical JSON {hook_event: strict unpadded base64url signing bytes, signature: the envelope signature}",
+			"timestamp":       "UTC to the second in its one canonical spelling; refused when more than 300 seconds from the receiver's clock",
+			"order":           "audience and binding are required options; scheme; signed payload strict and canonical; signature by the header did:key; auth; payload fields; did_key equals the header's; v; team_id; aud; method and path; body_sha256; timestamp; binding_id; body; the event (with the credential's team); event_id; producer, kid and did_key equal the event's producer; for a client, the certificate",
+			"receive_options": "what the target knows independently: its own public origin, the binding the delivery must name, the team's current controller key read fresh from the registry, and its clock",
+			"what_it_proves":  "these checks prove self-consistency and, for a client, membership by certificate; a server producer's authority comes from resolving its registered key and active production through the team's server",
 		},
 		"positive_cases": positiveCases,
 		"negative_cases": negativeCases,

@@ -6,6 +6,7 @@ package strictjson
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,11 @@ import (
 
 // MaxSafeInteger is the largest integer every consumer reads exactly.
 const MaxSafeInteger = 1<<53 - 1
+
+// MaxDepth bounds how deeply objects and arrays may nest. Strict JSON is
+// parsed before any signature is checked, so unauthenticated input must not
+// drive unbounded recursion.
+const MaxDepth = 8
 
 // Error is a refusal with a stable code, so every consumer reports the same
 // fault for the same input.
@@ -50,12 +56,12 @@ var integerText = regexp.MustCompile(`^-?(0|[1-9][0-9]*)$`)
 
 // ParseStrict reads one JSON value. Objects become map[string]any, arrays
 // []any, numbers int64. It refuses duplicate keys, floats, integers outside
-// the safe range, null, strings with a character outside printable ASCII, and
-// trailing data.
+// the safe range, null, strings with a character outside printable ASCII,
+// nesting deeper than MaxDepth, and trailing data.
 func ParseStrict(data []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
-	value, err := parseValue(dec)
+	value, err := parseValue(dec, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -65,17 +71,20 @@ func ParseStrict(data []byte) (any, error) {
 	return value, nil
 }
 
-func parseValue(dec *json.Decoder) (any, error) {
+func parseValue(dec *json.Decoder, depth int) (any, error) {
 	token, err := dec.Token()
 	if err != nil {
 		return nil, Refuse("invalid_json", "%v", err)
 	}
-	return parseToken(dec, token)
+	return parseToken(dec, token, depth)
 }
 
-func parseToken(dec *json.Decoder, token json.Token) (any, error) {
+func parseToken(dec *json.Decoder, token json.Token, depth int) (any, error) {
 	switch t := token.(type) {
 	case json.Delim:
+		if depth >= MaxDepth {
+			return nil, Refuse("too_deep", "nesting deeper than %d", MaxDepth)
+		}
 		switch t {
 		case '{':
 			object := map[string]any{}
@@ -94,7 +103,7 @@ func parseToken(dec *json.Decoder, token json.Token) (any, error) {
 				if _, exists := object[key]; exists {
 					return nil, Refuse("duplicate_key", "%s", key)
 				}
-				value, err := parseValue(dec)
+				value, err := parseValue(dec, depth+1)
 				if err != nil {
 					return nil, err
 				}
@@ -107,7 +116,7 @@ func parseToken(dec *json.Decoder, token json.Token) (any, error) {
 		case '[':
 			list := []any{}
 			for dec.More() {
-				value, err := parseValue(dec)
+				value, err := parseValue(dec, depth+1)
 				if err != nil {
 					return nil, err
 				}
@@ -260,4 +269,32 @@ func ParseCanonicalObject(data []byte) (map[string]any, error) {
 		return nil, Refuse("not_canonical", "bytes are not the canonical encoding")
 	}
 	return object, nil
+}
+
+// SignatureLength is the length of an Ed25519 signature in unpadded standard
+// base64.
+const SignatureLength = 86
+
+// DecodeSignature accepts exactly one spelling of a 64-byte Ed25519
+// signature: 86 characters of the standard base64 alphabet, no padding, and
+// zero trailing bits.
+func DecodeSignature(signature string) ([]byte, error) {
+	if len(signature) != SignatureLength {
+		return nil, Refuse("signature_encoding", "a signature is %d characters", SignatureLength)
+	}
+	sig, err := base64.RawStdEncoding.Strict().DecodeString(signature)
+	if err != nil || len(sig) != 64 {
+		return nil, Refuse("signature_encoding", "not unpadded standard base64 with zero trailing bits")
+	}
+	return sig, nil
+}
+
+// DecodeBase64URL accepts exactly one spelling: the URL alphabet, no padding,
+// zero trailing bits.
+func DecodeBase64URL(text, what string) ([]byte, error) {
+	data, err := base64.RawURLEncoding.Strict().DecodeString(text)
+	if err != nil {
+		return nil, Refuse("invalid_value", "%s is not strict unpadded base64url", what)
+	}
+	return data, nil
 }

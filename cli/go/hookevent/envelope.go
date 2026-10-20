@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"regexp"
 	"sort"
+	"time"
 
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/strictjson"
@@ -49,18 +50,16 @@ func HookClass(hook string) (class string, producers []string, ok bool) {
 }
 
 var (
-	uuidPattern      = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
-	traceIDPattern   = regexp.MustCompile(`^[0-9a-f]{32}$`)
-	teamIDPattern    = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
-	originPattern    = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$`)
-	kidPattern       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-	didKeyPattern    = regexp.MustCompile(`^did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}$`)
-	didAWPattern     = regexp.MustCompile(`^did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}$`)
-	appIDPattern     = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
-	certIDPattern    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
-	aliasPattern     = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
-	timePattern      = regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$`)
-	attestationShape = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+	uuidPattern    = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	traceIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
+	teamIDPattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}:[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?$`)
+	originPattern  = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?$`)
+	kidPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+	didKeyPattern  = regexp.MustCompile(`^did:key:z[1-9A-HJ-NP-Za-km-z]{40,60}$`)
+	didAWPattern   = regexp.MustCompile(`^did:aw:[1-9A-HJ-NP-Za-km-z]{20,32}$`)
+	appIDPattern   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
+	certIDPattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	aliasPattern   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
 )
 
 const (
@@ -119,25 +118,28 @@ func Sign(key ed25519.PrivateKey, envelope map[string]any) ([]byte, string, erro
 
 // VerifyOptions are the facts a verifier already holds about the event.
 type VerifyOptions struct {
-	// TeamID, when set, is the team the event must belong to.
+	// TeamID is the team the event must belong to. It is required.
 	TeamID string
 }
 
 // Verify checks signing bytes and a signature, in the order the contract
 // states, and returns the verified envelope or the first refusal.
+//
+// Verify proves that the envelope is well formed, belongs to the expected
+// team, and was signed by the key it names as its producer. That is
+// self-consistency, not authority: whether that key may speak for the team
+// comes from resolving the producer's registered keys through the team's
+// server (core and app producers), or from the member's team certificate
+// (client producers), which VerifyDelivery checks.
 func Verify(signing []byte, signature string, opts VerifyOptions) (*Envelope, error) {
-	if !bytes.HasPrefix(signing, []byte(EnvelopePrefix)) {
-		return nil, strictjson.Refuse("wrong_prefix", "signing bytes do not start with %q", EnvelopePrefix)
+	if opts.TeamID == "" {
+		return nil, strictjson.Refuse("verifier_misconfigured", "an expected team is required")
 	}
-	fields, err := strictjson.ParseCanonicalObject(signing[len(EnvelopePrefix):])
+	env, err := open(signing, signature)
 	if err != nil {
 		return nil, err
 	}
-	env, err := checkEnvelope(fields)
-	if err != nil {
-		return nil, err
-	}
-	if opts.TeamID != "" && env.TeamID != opts.TeamID {
+	if env.TeamID != opts.TeamID {
 		return nil, strictjson.Refuse("team_mismatch", "event team %s, expected %s", env.TeamID, opts.TeamID)
 	}
 	if err := verifySignature(env.ProducerDIDKey, signing, signature); err != nil {
@@ -146,14 +148,26 @@ func Verify(signing []byte, signature string, opts VerifyOptions) (*Envelope, er
 	return env, nil
 }
 
+// open checks everything but the expected team and the signature.
+func open(signing []byte, signature string) (*Envelope, error) {
+	if !bytes.HasPrefix(signing, []byte(EnvelopePrefix)) {
+		return nil, strictjson.Refuse("wrong_prefix", "signing bytes do not start with %q", EnvelopePrefix)
+	}
+	fields, err := strictjson.ParseCanonicalObject(signing[len(EnvelopePrefix):])
+	if err != nil {
+		return nil, err
+	}
+	return checkEnvelope(fields)
+}
+
 func verifySignature(didKey string, message []byte, signature string) error {
 	public, err := awid.ExtractPublicKey(didKey)
 	if err != nil {
 		return strictjson.Refuse("bad_signature", "did:key does not decode")
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(signature)
-	if err != nil || len(sig) != ed25519.SignatureSize {
-		return strictjson.Refuse("bad_signature", "signature is not 64 bytes of unpadded standard base64")
+	sig, err := strictjson.DecodeSignature(signature)
+	if err != nil {
+		return err
 	}
 	if !ed25519.Verify(public, message, sig) {
 		return strictjson.Refuse("bad_signature", "signature does not verify")
@@ -228,7 +242,7 @@ func checkEnvelope(f map[string]any) (*Envelope, error) {
 	}
 
 	for _, name := range []string{"occurred_at", "fired_at"} {
-		if err := match(f, name, timePattern); err != nil {
+		if err := exactTime(f, name, eventTimeLayout); err != nil {
 			return nil, err
 		}
 	}
@@ -300,7 +314,7 @@ func checkProducer(p map[string]any, env *Envelope) error {
 		}
 		env.ProducerKID = p["kid"].(string)
 	}
-	if err := match(p, "did_key", didKeyPattern); err != nil {
+	if err := ed25519DIDKey(p, "did_key", "producer."); err != nil {
 		return err
 	}
 	env.ProducerKind = kind
@@ -342,14 +356,22 @@ func checkActor(a map[string]any) error {
 			}
 		}
 	}
+	if _, present := a["did_key"]; present {
+		if err := ed25519DIDKey(a, "did_key", "actor."); err != nil {
+			return err
+		}
+	}
 	list, ok := a["attestations"].([]any)
 	if !ok || len(list) > maxAttestations {
 		return strictjson.Refuse("invalid_value", "actor.attestations")
 	}
 	for _, item := range list {
 		s, ok := item.(string)
-		if !ok || len(s) > maxAttestationBytes || !attestationShape.MatchString(s) {
+		if !ok || s == "" || len(s) > maxAttestationBytes {
 			return strictjson.Refuse("invalid_value", "actor.attestations")
+		}
+		if _, err := strictjson.DecodeBase64URL(s, "actor.attestations"); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -395,6 +417,35 @@ func checkKeys(object map[string]any, prefix string, required, optional []string
 		if _, present := object[name]; !present {
 			return strictjson.Refuse("missing_field", "%s%s", prefix, name)
 		}
+	}
+	return nil
+}
+
+// eventTimeLayout is UTC with exactly three fractional digits.
+const eventTimeLayout = "2006-01-02T15:04:05.000Z"
+
+// exactTime accepts a time only in its one canonical spelling under layout,
+// so an out-of-range field or a different precision is refused.
+func exactTime(f map[string]any, name, layout string) error {
+	value, ok := f[name].(string)
+	if !ok {
+		return strictjson.Refuse("invalid_value", "%s", name)
+	}
+	parsed, err := time.Parse(layout, value)
+	if err != nil || parsed.UTC().Format(layout) != value {
+		return strictjson.Refuse("invalid_value", "%s", name)
+	}
+	return nil
+}
+
+// ed25519DIDKey requires a did:key that decodes to an Ed25519 public key.
+func ed25519DIDKey(f map[string]any, name, prefix string) error {
+	value, ok := f[name].(string)
+	if !ok || !didKeyPattern.MatchString(value) {
+		return strictjson.Refuse("invalid_value", "%s%s", prefix, name)
+	}
+	if _, err := awid.ExtractPublicKey(value); err != nil {
+		return strictjson.Refuse("invalid_value", "%s%s is not an Ed25519 did:key", prefix, name)
 	}
 	return nil
 }

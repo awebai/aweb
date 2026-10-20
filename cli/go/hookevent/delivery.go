@@ -19,6 +19,10 @@ const AuthScheme = "AWEB-Hook DIDKey "
 // SignedPayloadHeader carries the base64url canonical signed payload.
 const SignedPayloadHeader = "X-AWEB-Signed-Payload"
 
+// CertificateHeader carries a client producer's team certificate, in the
+// same encoding team-auth uses.
+const CertificateHeader = "X-AWID-Team-Certificate"
+
 // ReplayWindow bounds how far a delivery's timestamp may be from the
 // receiver's clock.
 const ReplayWindow = 300 * time.Second
@@ -42,15 +46,34 @@ type Delivery struct {
 
 // SignDelivery builds the request that delivers one signed event to one
 // binding. target is the binding's origin and raw path; timestamp is UTC to
-// the second.
-func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindingID string, signing []byte, signature string, timestamp time.Time) (*Delivery, error) {
-	env, err := Verify(signing, signature, VerifyOptions{})
+// the second. A client producer passes its team certificate, which must name
+// the event's producer key and certificate; a server producer passes nil.
+func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindingID string, signing []byte, signature string, certificate *awid.TeamCertificate, timestamp time.Time) (*Delivery, error) {
+	env, err := open(signing, signature)
 	if err != nil {
+		return nil, err
+	}
+	if err := verifySignature(env.ProducerDIDKey, signing, signature); err != nil {
 		return nil, err
 	}
 	didKey := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
 	if didKey != env.ProducerDIDKey {
 		return nil, strictjson.Refuse("signer_mismatch", "the key is not the event's producer key")
+	}
+	var certificateHeader string
+	if env.ProducerKind == "client" {
+		if certificate == nil {
+			return nil, strictjson.Refuse("certificate_missing", "a client delivery carries its team certificate")
+		}
+		if err := certificateNamesProducer(certificate, env); err != nil {
+			return nil, err
+		}
+		certificateHeader, err = awid.EncodeTeamCertificateHeader(certificate)
+		if err != nil {
+			return nil, strictjson.Refuse("certificate_invalid", "%v", err)
+		}
+	} else if certificate != nil {
+		return nil, strictjson.Refuse("invalid_value", "only a client delivery carries a team certificate")
 	}
 	if target == nil || target.Scheme != "https" || target.Host == "" {
 		return nil, strictjson.Refuse("invalid_value", "target must be an https URL")
@@ -86,26 +109,33 @@ func SignDelivery(key ed25519.PrivateKey, method string, target *url.URL, bindin
 		return nil, err
 	}
 	authSignature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(key, payload))
+	headers := map[string]string{
+		"Authorization":     AuthScheme + didKey + " " + authSignature,
+		SignedPayloadHeader: base64.RawURLEncoding.EncodeToString(payload),
+		"Content-Type":      "application/json",
+	}
+	if certificateHeader != "" {
+		headers[CertificateHeader] = certificateHeader
+	}
 	return &Delivery{
-		Method: strings.ToUpper(method),
-		Path:   path,
-		Headers: map[string]string{
-			"Authorization":     AuthScheme + didKey + " " + authSignature,
-			SignedPayloadHeader: base64.RawURLEncoding.EncodeToString(payload),
-			"Content-Type":      "application/json",
-		},
+		Method:        strings.ToUpper(method),
+		Path:          path,
+		Headers:       headers,
 		Body:          body,
 		SignedPayload: payload,
 	}, nil
 }
 
 // ReceiveOptions are what the receiving target knows independently of the
-// request: its own public origin, the binding the delivery must name, and
-// the current time.
+// request: its own public origin, the binding the delivery must name, the
+// team's current controller key (read fresh from the team's registry, and
+// needed for a client delivery's certificate), and the current time.
+// Audience and BindingID are required.
 type ReceiveOptions struct {
-	Audience  string
-	BindingID string
-	Now       time.Time
+	Audience   string
+	BindingID  string
+	TeamKeyDID string
+	Now        time.Time
 }
 
 // Received is a delivery that passed every check, with its verified event.
@@ -116,7 +146,17 @@ type Received struct {
 
 // VerifyDelivery checks a hook delivery in the contract's order and returns
 // the verified event, or the first refusal.
+//
+// A client delivery is authorized here by its team certificate: signed by the
+// team's current controller key, for the event's team, naming the producer's
+// key and certificate id. The certificate's revocation status is the shared
+// team-auth verifier's to check. A server delivery is self-consistent here;
+// its authority comes from the caller resolving the producer's registered
+// key and active production through the team's server.
 func VerifyDelivery(method, path string, headers map[string]string, body []byte, opts ReceiveOptions) (*Received, error) {
+	if opts.Audience == "" || opts.BindingID == "" {
+		return nil, strictjson.Refuse("verifier_misconfigured", "an audience and a binding are required")
+	}
 	authorization := header(headers, "Authorization")
 	if !strings.HasPrefix(authorization, AuthScheme) {
 		return nil, strictjson.Refuse("wrong_scheme", "not an AWEB-Hook credential")
@@ -127,10 +167,9 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 	}
 	headerDIDKey, authSignature := parts[0], parts[1]
 
-	encoded := header(headers, SignedPayloadHeader)
-	signedPayload, err := base64.RawURLEncoding.DecodeString(encoded)
+	signedPayload, err := strictjson.DecodeBase64URL(header(headers, SignedPayloadHeader), "the signed payload")
 	if err != nil {
-		return nil, strictjson.Refuse("invalid_value", "signed payload is not unpadded base64url")
+		return nil, err
 	}
 	payload, err := strictjson.ParseCanonicalObject(signedPayload)
 	if err != nil {
@@ -154,6 +193,10 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 	if v, ok := payload["v"].(int64); !ok || v != 1 {
 		return nil, strictjson.Refuse("invalid_value", "v")
 	}
+	teamID, ok := payload["team_id"].(string)
+	if !ok || !teamIDPattern.MatchString(teamID) {
+		return nil, strictjson.Refuse("invalid_value", "team_id")
+	}
 	if payload["aud"] != opts.Audience {
 		return nil, strictjson.Refuse("audience_mismatch", "%v", payload["aud"])
 	}
@@ -164,11 +207,11 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 	if payload["body_sha256"] != hex.EncodeToString(sum[:]) {
 		return nil, strictjson.Refuse("body_mismatch", "body_sha256")
 	}
-	stamp, _ := payload["timestamp"].(string)
-	signedAt, err := time.Parse(deliveryTimeLayout, stamp)
-	if err != nil {
-		return nil, strictjson.Refuse("invalid_value", "timestamp")
+	if err := exactTime(payload, "timestamp", deliveryTimeLayout); err != nil {
+		return nil, err
 	}
+	stamp := payload["timestamp"].(string)
+	signedAt, _ := time.Parse(deliveryTimeLayout, stamp)
 	if skew := opts.Now.Sub(signedAt); skew > ReplayWindow || skew < -ReplayWindow {
 		return nil, strictjson.Refuse("timestamp_outside_window", "%s", stamp)
 	}
@@ -184,12 +227,11 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 		return nil, strictjson.Refuse("invalid_body", "%v", err)
 	}
 	eventText, _ := bodyObject["hook_event"].(string)
-	signing, err := base64.RawURLEncoding.DecodeString(eventText)
+	signing, err := base64.RawURLEncoding.Strict().DecodeString(eventText)
 	if err != nil {
-		return nil, strictjson.Refuse("invalid_body", "hook_event is not unpadded base64url")
+		return nil, strictjson.Refuse("invalid_body", "hook_event is not strict unpadded base64url")
 	}
 	signature, _ := bodyObject["signature"].(string)
-	teamID, _ := payload["team_id"].(string)
 	env, err := Verify(signing, signature, VerifyOptions{TeamID: teamID})
 	if err != nil {
 		return nil, err
@@ -200,7 +242,51 @@ func VerifyDelivery(method, path string, headers map[string]string, body []byte,
 	if payload["producer"] != env.Producer || payload["did_key"] != env.ProducerDIDKey || payload["kid"] != credentialKID(env) {
 		return nil, strictjson.Refuse("producer_mismatch", "the credential's signer is not the event's producer")
 	}
+	if env.ProducerKind == "client" {
+		if err := verifyClientCertificate(header(headers, CertificateHeader), env, opts.TeamKeyDID); err != nil {
+			return nil, err
+		}
+	}
 	return &Received{Payload: payload, Envelope: env}, nil
+}
+
+func verifyClientCertificate(encoded string, env *Envelope, teamKeyDID string) error {
+	if encoded == "" {
+		return strictjson.Refuse("certificate_missing", "a client delivery carries its team certificate")
+	}
+	if teamKeyDID == "" {
+		return strictjson.Refuse("verifier_misconfigured", "a client delivery needs the team's current key")
+	}
+	certificate, err := awid.DecodeTeamCertificateHeader(encoded)
+	if err != nil {
+		return strictjson.Refuse("certificate_invalid", "%v", err)
+	}
+	if err := certificateNamesProducer(certificate, env); err != nil {
+		return err
+	}
+	if certificate.TeamDIDKey != teamKeyDID {
+		return strictjson.Refuse("certificate_invalid", "not issued under the team's current key")
+	}
+	teamKey, err := awid.ExtractPublicKey(teamKeyDID)
+	if err != nil {
+		return strictjson.Refuse("verifier_misconfigured", "the team key does not decode")
+	}
+	if err := awid.VerifyTeamCertificate(certificate, teamKey); err != nil {
+		return strictjson.Refuse("certificate_invalid", "%v", err)
+	}
+	return nil
+}
+
+// certificateNamesProducer requires a client's certificate to be for the
+// event's team, its producer key and its certificate id.
+func certificateNamesProducer(certificate *awid.TeamCertificate, env *Envelope) error {
+	producer := env.Fields["producer"].(map[string]any)
+	if certificate.Team != env.TeamID ||
+		certificate.MemberDIDKey != env.ProducerDIDKey ||
+		certificate.CertificateID != producer["certificate_id"] {
+		return strictjson.Refuse("certificate_mismatch", "the certificate does not name this producer")
+	}
+	return nil
 }
 
 // credentialKID is the key id a delivery credential names: the server

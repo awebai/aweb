@@ -354,12 +354,26 @@ followed by the envelope's canonical JSON. Canonical JSON here means:
 - every string is printable ASCII (0x20 to 0x7E), and only `"` and `\` are
   escaped;
 - integers lie within plus or minus 2^53 - 1;
-- there are no floats and no `null`: an absent value is an absent field.
+- there are no floats and no `null`: an absent value is an absent field;
+- objects and arrays nest at most eight deep. The bytes are parsed before any
+  signature is checked, so deeper input is refused before it is read.
 
 A verifier re-encodes what it parsed and requires identical bytes, so every
 language produces and accepts the same bytes. The signature is a detached
-Ed25519 signature by the producer's `did:key`, in standard base64 without
-padding.
+Ed25519 signature by the producer's `did:key`, written exactly one way: 86
+characters of the standard base64 alphabet, with no padding and zero trailing
+bits. Every other spelling of the same bytes is refused (`signature_encoding`).
+
+**ASCII by construction.** Every catalog payload type is an identifier, an
+enum, a digest, a bounded integer or a pattern-bounded ASCII string, and every
+envelope field is an identifier or a timestamp. A producer fills payloads from
+its own identifiers and never from user text, so an ASCII-only envelope never
+makes an effect unsignable. On `post-command-hook`, `command` is the command's
+path in `aw`'s own command tree and `flags` are the parser's declared flag
+names; argument values never enter the event. If `aw` cannot express an event
+in these types, it records nothing for that command, and the command itself
+still runs: client events are cooperative and never block the command they
+describe.
 
 **Fields:**
 
@@ -383,19 +397,24 @@ padding.
     `did_aw`, `certificate_id` and `alias`. A `system` actor carries no
     identity.
   - `grant_id` is present exactly when the authority is `identity_grant`.
-  - `attestations` holds at most four unpadded base64url strings. Each is the
-    signed bytes of a verifiable attestation, checked by its own contract.
-    Custody and principal facts appear only there.
+  - `attestations` holds at most four strict unpadded base64url strings. Each
+    is the signed bytes of an attestation. They are untyped at this layer: a
+    consumer verifies each one under its own contract before it relies on it,
+    and custody and principal facts appear only there.
+- Every `did_key` is an Ed25519 `did:key`.
 - `occurred_at` is when the effect happened and `fired_at` when the event was
-  built: UTC with milliseconds, with `fired_at` never earlier.
+  built: UTC with exactly three fractional digits, in their one canonical
+  spelling, with `fired_at` never earlier.
 - `result_status` is `success`, `denied`, `failed` or `outcome_unknown`.
 - `payload` is the catalog payload for the hook.
 
-**Verification** checks, in this order, and reports the first fault:
+**Verification** requires the team the verifier expects; without one it
+refuses (`verifier_misconfigured`). It then checks, in this order, and reports
+the first fault:
 
 1. the prefix (`wrong_prefix`);
 2. a strict parse (`duplicate_key`, `float_value`, `null_value`,
-   `string_not_ascii`, `invalid_json`);
+   `string_not_ascii`, `too_deep`, `invalid_json`);
 3. canonical bytes (`not_canonical`);
 4. the envelope's fields, top down (`unknown_field`, `missing_field`,
    `invalid_value`), with the catalog (`unknown_catalog`) and the hook
@@ -407,27 +426,39 @@ padding.
 7. for a client event, an actor equal to its signer (`actor_not_signer`), so
    one member cannot file events as another;
 8. the team the verifier expects (`team_mismatch`);
-9. the signature (`bad_signature`).
+9. the signature's spelling (`signature_encoding`), then the signature
+   (`bad_signature`).
 
 The catalog reader then checks the payload against its hook's allowlist (see
 [Payloads](#payloads)).
 
-**Keys.** A server producer signs with a key whose declared purposes include
-`hook-event`: an app's v2 `app_keys` entry, or the core server's hook key. A
-consumer resolves both through the team's server (aweb-acgh.7) and records the
-key it verified against at ingest. A client signs with its member key, and its
-delivery carries the member's team certificate, which the target verifies with
-the shared team-auth verifier.
+**What verification proves.** A verified envelope is well formed, belongs to
+the expected team, and was signed by the key it names as its producer. That is
+self-consistency, not authority. Authority comes from elsewhere:
+
+- A server producer signs with a key whose declared purposes include
+  `hook-event`: an app's v2 `app_keys` entry, or the core server's hook key. A
+  consumer resolves both through the team's server (aweb-acgh.7), requires an
+  active production for the hook, and records the key it verified against at
+  ingest.
+- A client signs with its member key, and its delivery carries the member's
+  team certificate (see below), signed by the team's current key and naming
+  that key and certificate id. The target checks the certificate's revocation
+  status with the shared team-auth verifier.
 
 ## The delivery credential
 
 A delivery is an HTTPS `POST` of the canonical JSON body
-`{"hook_event": <unpadded base64url signing bytes>, "signature": <envelope signature>}`
-with two headers:
+`{"hook_event": <strict unpadded base64url signing bytes>, "signature": <envelope signature>}`
+with these headers:
 
 - `Authorization: AWEB-Hook DIDKey <did:key> <signature>`, the signature over
-  the signed payload, in standard base64 without padding;
-- `X-AWEB-Signed-Payload`, the canonical signed payload, in unpadded base64url.
+  the signed payload, spelled as event signatures are (86 standard base64
+  characters, no padding, zero trailing bits);
+- `X-AWEB-Signed-Payload`, the canonical signed payload, in strict unpadded
+  base64url;
+- for a client producer only, `X-AWID-Team-Certificate`, the member's team
+  certificate, encoded as team-auth encodes it. A server producer sends none.
 
 The signed payload is:
 
@@ -450,21 +481,28 @@ The signed payload is:
 ```
 
 - `aud` is the target's origin and `path` its raw path and query.
+- `team_id` is a non-empty team id, and `timestamp` is UTC to the second in its
+  one canonical spelling.
 - `producer` is `core`, `app:<app_id>` or `client:<certificate_id>`.
 - `kid` is the server producer's key id, or `member` for a client.
 - The credential's purpose, `hook-delivery`, is separate from the event's
   content signature, from `app-event` and from `hook-resolve`, so none of them
   can be replayed as another.
 
-The target checks, in this order:
+The target holds facts of its own: its public origin, the binding the delivery
+must name, the team's current controller key (read fresh from the team's
+registry, for a client's certificate) and its clock. Without an origin or a
+binding it refuses (`verifier_misconfigured`), as it does for a client delivery
+without the team key. It checks, in this order:
 
 1. the `AWEB-Hook DIDKey` scheme (`wrong_scheme`), so an app-event or
    `hook-resolve` credential is refused at a hook target;
-2. the signed payload is strict canonical JSON, and its signature verifies under
-   the header's `did:key` (`bad_signature`);
+2. the signed payload is strict base64url and strict canonical JSON, and its
+   signature is spelled exactly (`signature_encoding`) and verifies under the
+   header's `did:key` (`bad_signature`);
 3. `auth` is `hook-delivery` (`wrong_auth`);
-4. the payload's fields, and that its `did_key` is the header's
-   (`signer_mismatch`);
+4. the payload's fields, its `did_key` is the header's (`signer_mismatch`), and
+   its `team_id` is well formed (`invalid_value`);
 5. `aud` is the target's own origin (`audience_mismatch`);
 6. method and path are the request's (`request_mismatch`);
 7. `body_sha256` matches the body (`body_mismatch`);
@@ -474,7 +512,11 @@ The target checks, in this order:
 10. the body carries a valid envelope of the credential's team, through the
     envelope checks above;
 11. the envelope's `event_id` (`event_mismatch`), and its producer, `kid` and
-    `did_key`, are the credential's (`producer_mismatch`).
+    `did_key`, are the credential's (`producer_mismatch`);
+12. for a client producer, the team certificate is present
+    (`certificate_missing`), names the event's team, producer key and
+    certificate id (`certificate_mismatch`), and is signed by the team's current
+    key (`certificate_invalid`).
 
 The target then checks that the binding is its own active registration, and
 that the producer holds an active production for the hook (aweb-acgh.7).
