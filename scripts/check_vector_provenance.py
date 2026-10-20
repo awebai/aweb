@@ -78,6 +78,10 @@ ROOT_CONSUMERS = {
         "team-server-record-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "team-server-record-v1.json"',
     ),
+    PurePosixPath("cli/go/internal/conformance/team_server_record_test.go"): _consumer(
+        "team-server-record-v1.json",
+        'readRootVector(t, "team-server-record-v1.json")',
+    ),
     PurePosixPath("awid/tests/test_a2a_publication_route.py"): _consumer(
         "a2a-awid-publication-v1.json",
         '_ROOT / "docs" / "vectors" / "a2a-awid-publication-v1.json"',
