@@ -319,3 +319,15 @@ async def test_publish_body_is_bounded(client, controller_identity):
     )
 
     assert response.status_code == 413, response.text
+
+
+def test_trailing_newlines_are_refused_not_crashed():
+    seed = bytes.fromhex("33" * 32)
+    team_did = did_from_public_key(bytes(SigningKey(seed).verify_key))
+    fields = {"team_id": "ops:url.example", "team_did_key": team_did, "server_url": "https://coord.example"}
+    newline_time = _signed_record(seed, **fields, issued_at="2026-01-20T10:00:00Z\n")
+    good = _signed_record(seed, **fields, issued_at="2026-01-20T10:00:00Z")
+
+    for record, signature in ((newline_time["record"], newline_time["signature"]), (good["record"], good["signature"] + "\n")):
+        with pytest.raises(TeamServerRecordError):
+            verify_team_server_record(record, signature, team_id="ops:url.example", current_team_did_key=team_did, now=NOW)

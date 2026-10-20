@@ -1,6 +1,7 @@
 package awid
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
@@ -173,11 +174,12 @@ func CanonicalTeamServerURL(value string) (string, string, error) {
 	return value, audience, nil
 }
 
+// teamServerVersionIsOne accepts the integer 1: an int in a record built in
+// memory, or the JSON literal 1 in a record decoded with UseNumber. A float,
+// a decimal literal such as 1.0 and a boolean are refused, as Python does.
 func teamServerVersionIsOne(value any) bool {
 	switch v := value.(type) {
 	case int:
-		return v == TeamServerRecordVersion
-	case float64:
 		return v == TeamServerRecordVersion
 	case json.Number:
 		return v.String() == "1"
@@ -186,12 +188,13 @@ func teamServerVersionIsOne(value any) bool {
 	}
 }
 
+// decodeTeamServerSignature accepts only unpadded standard base64 of a 64-byte
+// Ed25519 signature, as the Python verifier and the vector do.
 func decodeTeamServerSignature(signature string) ([]byte, error) {
-	trimmed := strings.TrimRight(signature, "=")
-	if decoded, err := base64.RawStdEncoding.DecodeString(trimmed); err == nil {
-		return decoded, nil
+	if len(signature) != 86 {
+		return nil, fmt.Errorf("signature must be 86 characters of unpadded standard base64")
 	}
-	return base64.RawURLEncoding.DecodeString(trimmed)
+	return base64.RawStdEncoding.Strict().DecodeString(signature)
 }
 
 // VerifyTeamServerRecord verifies one record for teamID against the team's
@@ -263,10 +266,26 @@ func VerifyTeamServerRecord(record map[string]any, signature, teamID, currentTea
 	}, nil
 }
 
-// TeamServerRecordResponse is AWID's stored record, exactly as signed.
+// TeamServerRecordResponse is AWID's stored record, exactly as signed. Record
+// numbers are json.Number, so the version keeps its literal form.
 type TeamServerRecordResponse struct {
 	Record    map[string]any `json:"record"`
 	Signature string         `json:"signature"`
+}
+
+type teamServerRecordWire struct {
+	Record    json.RawMessage `json:"record"`
+	Signature string          `json:"signature"`
+}
+
+func (w teamServerRecordWire) decode() (*TeamServerRecordResponse, error) {
+	decoder := json.NewDecoder(bytes.NewReader(w.Record))
+	decoder.UseNumber()
+	var record map[string]any
+	if err := decoder.Decode(&record); err != nil {
+		return nil, fmt.Errorf("decode team server record: %w", err)
+	}
+	return &TeamServerRecordResponse{Record: record, Signature: w.Signature}, nil
 }
 
 func teamServerPath(domain, name string) string {
@@ -276,19 +295,19 @@ func teamServerPath(domain, name string) string {
 // PublishTeamServerRecord stores a signed record at the registry. The record's
 // own team-key signature is the authority; no request signature is sent.
 func (c *RegistryClient) PublishTeamServerRecord(ctx context.Context, registryURL, domain, name string, record map[string]any, signature string) (*TeamServerRecordResponse, error) {
-	var out TeamServerRecordResponse
+	var out teamServerRecordWire
 	body := map[string]any{"record": record, "signature": signature}
 	if err := c.requestJSON(ctx, http.MethodPut, registryURL, teamServerPath(domain, name), nil, body, &out); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return out.decode()
 }
 
 // GetTeamServerRecord reads the team's stored record anonymously.
 func (c *RegistryClient) GetTeamServerRecord(ctx context.Context, registryURL, domain, name string) (*TeamServerRecordResponse, error) {
-	var out TeamServerRecordResponse
+	var out teamServerRecordWire
 	if err := c.requestJSON(ctx, http.MethodGet, registryURL, teamServerPath(domain, name), nil, nil, &out); err != nil {
 		return nil, err
 	}
-	return &out, nil
+	return out.decode()
 }

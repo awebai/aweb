@@ -24,6 +24,8 @@ RECORD_FIELDS = frozenset({"v", "type", "team_id", "team_did_key", "server_url",
 MAX_FUTURE_SECONDS = 300
 MAX_SERVER_URL_BYTES = 2048
 _ISSUED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+# An Ed25519 signature in unpadded standard base64: 64 bytes, 86 characters.
+_SIGNATURE_RE = re.compile(r"^[A-Za-z0-9+/]{86}$")
 
 
 class TeamServerRecordError(ValueError):
@@ -107,7 +109,7 @@ def canonical_team_server_url(value: str) -> tuple[str, str]:
 
 
 def _parse_issued_at(value: object) -> datetime:
-    if not isinstance(value, str) or not _ISSUED_AT_RE.match(value):
+    if not isinstance(value, str) or not _ISSUED_AT_RE.fullmatch(value):
         raise TeamServerRecordError("record_invalid", "issued_at must be RFC 3339 UTC seconds (YYYY-MM-DDTHH:MM:SSZ)")
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
@@ -141,8 +143,8 @@ def verify_team_server_record(
         raise TeamServerRecordError("team_mismatch", "record names another team")
     if record["team_did_key"] != current_team_did_key:
         raise TeamServerRecordError("team_server_key_mismatch", "record is not signed by the team's current key")
-    if not isinstance(signature, str) or not signature:
-        raise TeamServerRecordError("signature_invalid", "signature is required")
+    if not isinstance(signature, str) or not _SIGNATURE_RE.fullmatch(signature):
+        raise TeamServerRecordError("signature_invalid", "signature must be unpadded standard base64 Ed25519")
     try:
         public_key = public_key_from_did(current_team_did_key)
     except ValueError as exc:

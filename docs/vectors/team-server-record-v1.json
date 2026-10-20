@@ -55,6 +55,22 @@
       "signature": "QOTJq887FuE3OY+Mw2FCtaYV9sh20En68DuxrEBNQrw9W2WBcd7FbjtZJBUCJl3swvRB/eIM0EcQ/sSWklOzAw"
     },
     {
+      "name": "version_is_float",
+      "code": "record_invalid",
+      "http_status": 404,
+      "http_detail": "Team server record not found",
+      "record": {
+        "v": 1.0,
+        "type": "aweb.team-server",
+        "team_id": "ops:vector-server.example",
+        "team_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+        "server_url": "https://coord.vector-server.example/api",
+        "issued_at": "2026-01-20T10:00:00Z"
+      },
+      "signing_bytes_b64": "YXdlYi50ZWFtLXNlcnZlci8xCnsiaXNzdWVkX2F0IjoiMjAyNi0wMS0yMFQxMDowMDowMFoiLCJzZXJ2ZXJfdXJsIjoiaHR0cHM6Ly9jb29yZC52ZWN0b3Itc2VydmVyLmV4YW1wbGUvYXBpIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdFVMdWRUdEFzQWhSZWdZUGlaNjYzMVJWM3ZpdjEycWQ0R1FGOHoxeEIyMlMiLCJ0ZWFtX2lkIjoib3BzOnZlY3Rvci1zZXJ2ZXIuZXhhbXBsZSIsInR5cGUiOiJhd2ViLnRlYW0tc2VydmVyIiwidiI6MS4wfQ==",
+      "signature": "jOikyUMJJuBCihjY/W/qeUUfI9kNH+gNmNaqWY19GHZwTzWOrBNCcM4MRnmD9xirGP7Oy/WjZwKmNCIgYR2sAQ"
+    },
+    {
       "name": "missing_domain_prefix",
       "code": "signature_invalid",
       "http_status": 404,
@@ -150,6 +166,38 @@
       },
       "signing_bytes_b64": "YXdlYi50ZWFtLXNlcnZlci8xCnsiaXNzdWVkX2F0IjoiMjAyNi0wMS0yMFQxMDowMDowMFoiLCJzZXJ2ZXJfdXJsIjoiaHR0cDovL2Nvb3JkLnZlY3Rvci1zZXJ2ZXIuZXhhbXBsZS9hcGkiLCJ0ZWFtX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWt0VUx1ZFR0QXNBaFJlZ1lQaVo2NjMxUlYzdml2MTJxZDRHUUY4ejF4QjIyUyIsInRlYW1faWQiOiJvcHM6dmVjdG9yLXNlcnZlci5leGFtcGxlIiwidHlwZSI6ImF3ZWIudGVhbS1zZXJ2ZXIiLCJ2IjoxfQ==",
       "signature": "9JVN7pM68MrtduIBzZAWDMq0vuUqjLhXm8oMzlp7MMjMqu5gWUE64wZw84vb2o/u+r9uB8Uzv6XUgziANAHCCg"
+    },
+    {
+      "name": "signature_padded",
+      "code": "signature_invalid",
+      "http_status": 404,
+      "http_detail": "Team server record not found",
+      "record": {
+        "v": 1,
+        "type": "aweb.team-server",
+        "team_id": "ops:vector-server.example",
+        "team_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+        "server_url": "https://coord.vector-server.example/api",
+        "issued_at": "2026-01-20T09:00:00Z"
+      },
+      "signing_bytes_b64": "YXdlYi50ZWFtLXNlcnZlci8xCnsiaXNzdWVkX2F0IjoiMjAyNi0wMS0yMFQwOTowMDowMFoiLCJzZXJ2ZXJfdXJsIjoiaHR0cHM6Ly9jb29yZC52ZWN0b3Itc2VydmVyLmV4YW1wbGUvYXBpIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdFVMdWRUdEFzQWhSZWdZUGlaNjYzMVJWM3ZpdjEycWQ0R1FGOHoxeEIyMlMiLCJ0ZWFtX2lkIjoib3BzOnZlY3Rvci1zZXJ2ZXIuZXhhbXBsZSIsInR5cGUiOiJhd2ViLnRlYW0tc2VydmVyIiwidiI6MX0=",
+      "signature": "lD8xg5eXgXsIM1CQOpU4sdJaFPgBRbBsBK3iA1wqU3OJ6qOqlFuI1S6cYxwa+lMoVqyyPA1VpM29Jvy43MR2Bg=="
+    },
+    {
+      "name": "signature_urlsafe_alphabet",
+      "code": "signature_invalid",
+      "http_status": 404,
+      "http_detail": "Team server record not found",
+      "record": {
+        "v": 1,
+        "type": "aweb.team-server",
+        "team_id": "ops:vector-server.example",
+        "team_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+        "server_url": "https://coord.vector-server.example/api",
+        "issued_at": "2026-01-20T09:00:00Z"
+      },
+      "signing_bytes_b64": "YXdlYi50ZWFtLXNlcnZlci8xCnsiaXNzdWVkX2F0IjoiMjAyNi0wMS0yMFQwOTowMDowMFoiLCJzZXJ2ZXJfdXJsIjoiaHR0cHM6Ly9jb29yZC52ZWN0b3Itc2VydmVyLmV4YW1wbGUvYXBpIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdFVMdWRUdEFzQWhSZWdZUGlaNjYzMVJWM3ZpdjEycWQ0R1FGOHoxeEIyMlMiLCJ0ZWFtX2lkIjoib3BzOnZlY3Rvci1zZXJ2ZXIuZXhhbXBsZSIsInR5cGUiOiJhd2ViLnRlYW0tc2VydmVyIiwidiI6MX0=",
+      "signature": "lD8xg5eXgXsIM1CQOpU4sdJaFPgBRbBsBK3iA1wqU3OJ6qOqlFuI1S6cYxwa-lMoVqyyPA1VpM29Jvy43MR2Bg"
     },
     {
       "name": "server_url_too_long",
