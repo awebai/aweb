@@ -183,6 +183,10 @@ ROOT_CONSUMERS = {
         "team-auth-envelope-v2.json",
         'aweb_path("docs", "vectors", "team-auth-envelope-v2.json")',
     ),
+    PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
+        "team-auth-envelope-v2.json",
+        'AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json"',
+    ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
         "a2a-v1.json",
         'filepath.Join(root, "docs", "vectors", "a2a-v1.json")',
