@@ -11,7 +11,9 @@ from typing import Annotated
 
 import httpx
 import pytest
+from awid.did import stable_id_from_did_key
 from fastapi import Depends, FastAPI, Request
+from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 from pydantic_settings import SettingsConfigDict
 
@@ -20,7 +22,7 @@ from aweb_naapp.runtime.authorization import Authorization, DeclaredTool, Declar
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import Principal
 
-from .conftest import REGISTRY_URL, Member
+from .conftest import REGISTRY_URL, Member, did_key
 
 ORIGIN = "https://app.example"
 TOOLS = DeclaredTools.from_manifest(
@@ -109,10 +111,11 @@ async def member(registry) -> Member:
 
 
 async def _running(
-    registry, app_database_url: str, tmp_path: Path, grants: InstalledTeams
+    registry, app_database_url: str, tmp_path: Path, grants: InstalledTeams, **settings_values: object
 ) -> AsyncIterator[tuple[NaappRuntime, httpx.AsyncClient]]:
     settings = ExampleSettings(
-        _env_file=None, database_url=app_database_url, awid_registry_url=REGISTRY_URL
+        _env_file=None, database_url=app_database_url, awid_registry_url=REGISTRY_URL,
+        **settings_values,
     )
     runtime = NaappRuntime(
         settings,
@@ -193,6 +196,20 @@ async def test_principal_authenticates_only_and_records_nothing(
         assert response.status_code == 200, response.text
         assert response.json() == {"alias": "alice"}
         assert await _observed(runtime) == (0, 0)
+
+
+@pytest.mark.parametrize(("settings_values", "status"), [({}, 401), ({"did_aw_profile": "observe"}, 200)],
+                         ids=["required-by-default", "observed"])
+async def test_the_runtime_applies_the_configured_did_aw_profile(
+    registry, app_database_url: str, tmp_path: Path, settings_values, status
+) -> None:
+    unregistered = stable_id_from_did_key(did_key(SigningKey.generate()))
+    member = Member(team_id="backend:example.com", extra_cert_fields={"member_did_aw": unregistered})
+    await registry.add_team(member.team_id, member.team_did_key)
+    await registry.add_certificate(member.certificate())
+    async for _, client in _running(registry, app_database_url, tmp_path, InstalledTeams({}), **settings_values):
+        response = await client.post("/v1/whoami", **_signed(member, "/v1/whoami"))
+        assert response.status_code == status, response.text
 
 
 async def test_the_database_is_unavailable_outside_the_lifespan(tmp_path: Path) -> None:
@@ -319,7 +336,7 @@ def test_routes_that_are_not_exactly_declared_tools_are_refused(tmp_path: Path, 
 
 
 def test_the_root_path_is_part_of_the_declared_path(tmp_path: Path) -> None:
-    runtime, app = _guarded_app(tmp_path / "unprefixed", _renamed_placeholder, root_path="/api")
+    runtime, app = _guarded_app(tmp_path / "unprefixed", _renamed_placeholder, root_path="/mounted")
     with pytest.raises(RuntimeError):
         runtime.check_authorized_routes(app)
     prefixed = DeclaredTools.from_manifest(
@@ -328,14 +345,14 @@ def test_the_root_path_is_part_of_the_declared_path(tmp_path: Path) -> None:
                 {
                     "name": "get-thing",
                     "method": "GET",
-                    "path": "/api/v1/things/{id}",
+                    "path": "/mounted/v1/things/{id}",
                     "scopes": ["r"],
                 }
             ]
         }
     )
     runtime, app = _guarded_app(
-        tmp_path / "prefixed", _renamed_placeholder, tools=prefixed, root_path="/api/"
+        tmp_path / "prefixed", _renamed_placeholder, tools=prefixed, root_path="/mounted/"
     )
     runtime.check_authorized_routes(app)
 
