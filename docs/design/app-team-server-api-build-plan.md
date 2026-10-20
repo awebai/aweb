@@ -194,9 +194,9 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
   - `POST /v1/apps/{app_id}/keys/{kid}/revoke` sets the team row's one-way
     `revoked_at` under the team's install authority (F6 admin policy), for
     emit keys and app keys alike.
-  - In the same transaction, it enqueues post-mutation-hook `app_key.revoked`
-    (payload `app_id`, `kid`, `purposes`; `team_id` and the actor in the
-    envelope, audit-substrate §A10 at `98c1aa217`).
+  - The post-mutation-hook event `app_key.revoked` (payload `app_id`, `kid`,
+    `purposes`; `team_id` and the actor in the envelope, audit-substrate §A10
+    at `98c1aa217`) is added by follow-up G1-b3e below.
   - An operator command, `aweb revoke-app-key --team <id> --app <id> --kid
     <kid>`, does the same for a named key: the remedy for a reseed
     `key_conflict`.
@@ -416,7 +416,7 @@ created here.
 | Dependency | Needed by |
 | --- | --- |
 | aweb-acgh.8 landed and released | G1-b1, G1-b2a, G1-b3 |
-| aweb-acgh.1 hook contract (catalog with `app_key.revoked`, envelope, binding vectors) and core post-mutation-hook outbox | G1-b3 (event), G1-d1 |
+| aweb-acgh.1 hook contract (catalog with `app_key.revoked`, envelope, binding vectors) and core post-mutation-hook outbox | G1-b3e, G1-d1 |
 | aweb-acgh.1 `app_hook_bindings` and owner activation | G1-d1 |
 | aweb-acgh.6 runtime extraction (outbox emit) | G1-c1 (built together) |
 | aweb-acgh.4 approvals and passkeys | none here |
