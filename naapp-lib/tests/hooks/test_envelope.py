@@ -75,3 +75,13 @@ def test_hook_table_matches_the_catalog_vector() -> None:
     assert HOOKS == {
         name: (hook.hook_class, hook.producer_kinds) for name, hook in catalog.hooks.items()
     }
+
+
+def test_an_integer_too_long_for_int_is_refused_before_parsing_it() -> None:
+    from aweb_naapp.hooks.strictjson import parse_strict
+
+    for text in (b'{"a":' + b"1" * 5000 + b"}", b'{"a":-' + b"9" * 17 + b"}"):
+        with pytest.raises(Refused) as refused:
+            parse_strict(text)
+        assert refused.value.code == "invalid_value"
+    assert parse_strict(b'{"a":9007199254740991}') == {"a": 9007199254740991}

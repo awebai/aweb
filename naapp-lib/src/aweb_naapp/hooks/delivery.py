@@ -12,17 +12,18 @@ team's server.
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
-from awid.did import did_from_public_key, public_key_from_did
-from awid.signing import VerifyResult, canonical_json_bytes, verify_signature_with_public_key
+from awid.did import did_from_public_key
+from awid.team_certificate import (
+    TeamCertificateError,
+    decode_team_certificate,
+    verify_team_certificate_signature,
+)
 from nacl.signing import SigningKey
 
 from aweb_naapp.hooks.envelope import (
@@ -139,7 +140,7 @@ def sign_delivery(
             "producer": envelope.producer,
             "kid": _credential_kid(envelope),
             "did_key": did_key,
-            "timestamp": _utc(timestamp).strftime(_DELIVERY_TIME),
+            "timestamp": _utc(timestamp, "the delivery timestamp").strftime(_DELIVERY_TIME),
         }
     )
     headers = {
@@ -162,6 +163,7 @@ def verify_delivery(
     event, or raise the first refusal."""
     if not options.audience or not options.binding_id:
         raise Refused("verifier_misconfigured", "an audience and a binding are required")
+    _utc(options.now, "the receiver's clock")
     authorization = _header(headers, "Authorization")
     if not authorization.startswith(AUTH_SCHEME):
         raise Refused("wrong_scheme", "not an AWEB-Hook credential")
@@ -191,7 +193,7 @@ def verify_delivery(
         raise Refused("body_mismatch", "body_sha256")
     exact_time(payload, "timestamp", _DELIVERY_TIME)
     signed_at = datetime.strptime(payload["timestamp"], _DELIVERY_TIME)
-    if abs(_utc(options.now) - signed_at) > REPLAY_WINDOW:
+    if abs(_utc(options.now, "the receiver's clock") - signed_at) > REPLAY_WINDOW:
         raise Refused("timestamp_outside_window", payload["timestamp"])
     if payload["binding_id"] != options.binding_id:
         raise Refused("binding_mismatch", str(payload["binding_id"]))
@@ -231,25 +233,18 @@ def _verify_client_certificate(encoded: str, envelope: Envelope, team_key_did: s
     if certificate.get("team_did_key") != team_key_did:
         raise Refused("certificate_invalid", "not issued under the team's current key")
     try:
-        team_key = public_key_from_did(team_key_did)
-    except ValueError:
-        raise Refused("verifier_misconfigured", "the team key does not decode") from None
-    unsigned = {name: value for name, value in certificate.items() if name != "signature"}
-    result = verify_signature_with_public_key(
-        team_key, canonical_json_bytes(unsigned), str(certificate.get("signature") or "")
-    )
-    if result is not VerifyResult.VERIFIED:
-        raise Refused("certificate_invalid", "the certificate signature does not verify")
+        verify_team_certificate_signature(certificate, team_key_did)
+    except TeamCertificateError as exc:
+        if exc.reason == "invalid_team_key":
+            raise Refused("verifier_misconfigured", "the team key does not decode") from None
+        raise Refused("certificate_invalid", exc.reason) from None
 
 
 def _decode_certificate(encoded: str) -> dict[str, Any]:
     try:
-        certificate = json.loads(base64.b64decode(encoded, validate=True))
-    except (binascii.Error, ValueError):
-        raise Refused("certificate_invalid", "malformed team certificate") from None
-    if not isinstance(certificate, dict):
-        raise Refused("certificate_invalid", "malformed team certificate")
-    return certificate
+        return decode_team_certificate(encoded)
+    except TeamCertificateError as exc:
+        raise Refused("certificate_invalid", exc.reason) from None
 
 
 def _certificate_names_producer(certificate: dict[str, Any], envelope: Envelope) -> None:
@@ -275,7 +270,9 @@ def _header(headers: dict[str, str], name: str) -> str:
     return ""
 
 
-def _utc(moment: datetime) -> datetime:
-    if moment.tzinfo is None:
-        return moment
+def _utc(moment: datetime, what: str) -> datetime:
+    """A timezone-aware moment as naive UTC. A naive moment is refused: its
+    offset is unknown, so it cannot be compared with a signed UTC time."""
+    if moment is None or moment.tzinfo is None:
+        raise Refused("verifier_misconfigured", f"{what} must be timezone-aware")
     return moment.astimezone(UTC).replace(tzinfo=None)

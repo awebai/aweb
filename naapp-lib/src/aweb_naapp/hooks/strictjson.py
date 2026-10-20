@@ -73,7 +73,14 @@ def _parse_float(text: str) -> Any:
     raise Refused("float_value", text)
 
 
+# 2**53 - 1 has 16 digits, so a longer integer is out of range. Refusing it by
+# length first keeps unauthenticated input away from int()'s own digit limit.
+_MAX_INTEGER_DIGITS = len(str(MAX_SAFE_INTEGER))
+
+
 def _parse_int(text: str) -> int:
+    if len(text.lstrip("-")) > _MAX_INTEGER_DIGITS:
+        raise Refused("invalid_value", "integer outside the safe range")
     value = int(text)
     if abs(value) > MAX_SAFE_INTEGER:
         raise Refused("invalid_value", f"integer outside the safe range: {text}")
