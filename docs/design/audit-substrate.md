@@ -177,6 +177,9 @@ Per-hook payloads, beyond the common envelope:
 | --- | --- |
 | `post-secret-use-hook` | Defined here, and the secrets design cites it. See the flat allowlist below. |
 | `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
+| `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` over the canonical request bytes of the manifest mapping, declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the digest commits to them. |
+| `post-mutation-hook` | `mutation_type` (§A10), `target_ref`, optional `before_ref`/`after_ref` (revision or state refs), and the per-type fields in the catalog (status values, assignee identities, `content_mode`). Never bodies, subjects, previews or titles. |
+| `post-command-hook` | `command` (canonical command path), `flags` (names only, plus values of catalog-declared enum flags), `local_effects` (enumerated, e.g. `identity_key_created`, `team_certificate_stored`, `app_approval_recorded`, `grant_minted`), `exit_status`. |
 
 **`post-secret-use-hook` payload, v1** (one flat allowlist, with no nested
 objects and no free text). The hooks catalog vector records it.
@@ -204,9 +207,6 @@ A withheld value and an undeclared credential are properties of the
 `installation_id`, generation and the principal are carried by the envelope's
 `producer` and `actor` (§A6). **Digest rule (security):** no payload digest is
 ever unsalted over bytes that contain or may echo a credential.
-| `post-manifest-command-hook` | `app_id`, `tool`, `operation_kind` (`mutation`, `read`, `refusal`), `request_sha256` over the canonical request bytes of the manifest mapping, declared opaque `resource_refs`, `http_status`, optional `result_ref`. Parameter values are not copied; the digest commits to them. |
-| `post-mutation-hook` | `mutation_type` (§A10), `target_ref`, optional `before_ref`/`after_ref` (revision or state refs), and the per-type fields in the catalog (status values, assignee identities, `content_mode`). Never bodies, subjects, previews or titles. |
-| `post-command-hook` | `command` (canonical command path), `flags` (names only, plus values of catalog-declared enum flags), `local_effects` (enumerated, e.g. `identity_key_created`, `team_certificate_stored`, `app_approval_recorded`, `grant_minted`), `exit_status`. |
 
 ### A3. Registration and owner activation
 
@@ -658,7 +658,7 @@ manifest v2 and registered key. Its tools and their contexts:
 | `query`, `tail`, `verify`, `checkpoint`, `export` | `surface` on logs' own origin; CLI for owner acts | Owner or designated reader (§B5) |
 | `readers`, `retention`, `erase` | owner acts | Owner only |
 
-Its manifest registers `ingest` on all four v1 hooks. It never subscribes to
+Its manifest registers `ingest` on all five v1 hooks (`post-secret-use-hook`, `post-governance-hook`, `post-manifest-command-hook`, `post-mutation-hook`, `post-command-hook`). Omitting `post-governance-hook` would make every widening governance act refuse (§A7). It never subscribes to
 app events.
 
 ### B2. Ingest
