@@ -557,3 +557,12 @@ revoked tombstone, and rolls back on failure. Members presenting the old ID get
 controller signature and unchanged member key, install and retry once. Neither
 an expired certificate nor its member key authorizes controller renewal.
 See [the complete signed-policy and rollover contract](design/team-credential-lifetimes.md).
+
+Certificate renewal preserves grants when a bounded, cycle-free chain of at most
+eight replacement links ends in an unrevoked, unexpired certificate for the same
+team and member key, signed under the current team key. Disciplinary revocation
+without a replacement ends the grants immediately (within the revocation-cache
+bound). A grant's own stored mint-time deadline never extends through renewal
+or policy removal. Expiry of the final replacement also ends an originally
+unbounded grant. The current identity-grant team maximum remains an independent
+verification bound.

@@ -1118,7 +1118,25 @@ SDK invalidates both cached certificate statuses. Other verifiers converge
 within their at-most-60-second status cache. Relying services distinguish
 401 certificate_replaced from disciplinary certificate_revoked, permitting one
 verified same-member fetch/install/retry. Default status response shape stays
-unchanged; opt-in include_replacement=true exposes the link.
+unchanged; opt-in include_replacement=true exposes the link. Opt-in
+include_issuer=true adds only member_did_key, certificate_team_did_key and
+certificate_expires_at (null when absent), derived from the registered artifact.
+The status enum still describes revocation; consumers separately enforce the
+signed expiry without grace. No alias, address or blob is exposed.
+
+A controller may fetch a member's active certificate blob using its team-key
+path signature, for signature-verified renewal; other members may fetch only
+their own artifacts. Expired certificates remain fetchable by their owner and
+controller as public signed artifacts, but authorize no membership operations.
+The registry stores their signed expires_at and excludes expired memberships
+from every private-team read, team-list and attestation authorization predicate.
+
+If a non-atomic rotation strands an old-key policy, verifiers return
+503 authority_unavailable. The controller repairs it with
+`aw id team lifetimes set --team NAME --namespace DOMAIN` and all four explicit
+limit flags (duration or `none`). `lifetimes show` verifies against the locally
+held current controller key. The complete save increments the revision and is
+audited; no values from the unverified old policy are copied.
 
 See [the full policy, renewal, SDK and hosted integration contract](design/team-credential-lifetimes.md)
 and [the additive cross-language vectors](vectors/certificate-lifetimes-v2.json).

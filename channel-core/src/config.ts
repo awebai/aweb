@@ -245,6 +245,9 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
       }
     }
   }
+  if (certificate.expires_at && Date.now() >= Date.parse(certificate.expires_at)) {
+    throw new Error("certificate_expired: team certificate expired");
+  }
   return {
     baseURL,
     identityHome: identityHome.root,

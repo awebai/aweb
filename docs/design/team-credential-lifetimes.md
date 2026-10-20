@@ -253,3 +253,13 @@ status. A previously unbounded grant therefore ends if its current replacement
 certificate expires, even without disciplinary revocation. Its own stored
 mint-time clamp is a separate, potentially earlier bound; renewal never extends
 that deadline.
+
+OSS policy recovery: `aw id team lifetimes show --team NAME --namespace DOMAIN`
+verifies against the locally held current controller key. `lifetimes set` takes
+all four explicit flags (`--member-certificate`, `--ephemeral-certificate`,
+`--identity-grant`, `--hosted-mcp-grant`), each a duration or `none`. It signs a
+complete save under that controller and increments the stored revision. This
+repairs an old-key record after a non-atomic rotation without trusting its
+values. A stranded policy otherwise causes `503 authority_unavailable`, never
+an absent-policy fallback. Cloud MCP, UI and scheduler remain the separately
+assigned Cloud part of aweb-acic.4.

@@ -340,11 +340,15 @@ class AWIDTeamCache:
             raise HTTPException(
                 status_code=503, detail="AWID certificate status unavailable"
             ) from exc
+        cache_deadline = now + self.ttl_seconds
+        if active and active.get('certificate_expires_at'):
+            endpoint_expiry = datetime.fromisoformat(active['certificate_expires_at'].replace('Z', '+00:00'))
+            cache_deadline = min(cache_deadline, now + max(0, (endpoint_expiry-datetime.now(UTC)).total_seconds()))
         facts = CachedTeamFacts(
             team_did_key=payload["team_did_key"],
             published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
-            expires_at=now + self.ttl_seconds,
+            expires_at=cache_deadline,
             replacement_ids={certificate_id: replacement_id} if replacement_id else {},
         )
         self._certificate_cache[cache_key] = facts
@@ -622,7 +626,7 @@ async def authenticate_request(
     if certificate_id in facts.revoked_certificate_ids:
         if replacement_id := facts.replacement_ids.get(certificate_id):
             raise HTTPException(status_code=401, detail={'code': 'certificate_replaced', 'replacement_certificate_id': replacement_id})
-        raise HTTPException(status_code=401, detail="Team certificate has been revoked")
+        raise HTTPException(status_code=401, detail={"code": "certificate_revoked", "message": "Team certificate has been revoked"})
     _verify_certificate_signature(cert, facts.team_did_key)
 
     try:

@@ -53,11 +53,11 @@ func runTeamRenewCerts(cmd *cobra.Command, args []string) error {
 	if err := registry.SetFallbackRegistryURL(registryURL); err != nil {
 		return err
 	}
-	policy, err := registry.GetTeamCredentialPolicy(cmd.Context(), registryURL, domain, name)
+	controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
+	policy, err := registry.GetTeamCredentialPolicy(cmd.Context(), registryURL, domain, name, controllerDID)
 	if err != nil {
 		return fmt.Errorf("read current team lifetime policy: %w", err)
 	}
-	controllerDID := awid.ComputeDIDKey(key.Public().(ed25519.PublicKey))
 	if policy != nil && policy["team_did_key"] != controllerDID {
 		return fmt.Errorf("policy is not signed by this team's controller")
 	}

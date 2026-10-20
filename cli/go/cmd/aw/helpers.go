@@ -791,6 +791,9 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 		if issuedErr == nil && expiresErr == nil && !time.Now().Before(expires.Add(-expires.Sub(issued)/3)) {
 			_, attempted := proactiveCertificateAttempts.LoadOrStore(certPath+":"+cert.CertificateID, true)
 			if attempted {
+				if !time.Now().Before(expires) {
+					return nil, fmt.Errorf("certificate_expired: team certificate expired")
+				}
 				return client, nil
 			}
 			fresh, _, refreshErr := refresh(context.Background(), "")

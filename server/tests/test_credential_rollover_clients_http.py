@@ -218,3 +218,43 @@ async def test_controller_batch_renewal_obeys_policy_and_preserves_revoked_tombs
             assert json.loads(base64.b64decode(stored['certificate'])) == cert
             assert stored['revoked_at'] and stored['replaced_by_certificate_id']
         assert await env.registry_db.fetch_value("SELECT count(*) FROM {{tables.team_certificates}} WHERE alias='carol'") == 1
+
+
+@pytest.mark.usefixtures('source_cli_binary')
+@pytest.mark.asyncio
+async def test_controller_lifetimes_cli_sets_shows_and_repairs_stranded_policy(privacy_app, tmp_path):
+    env = privacy_app
+    name = TEAM.split(':')[0]
+    path = tmp_path / '.awid' / 'team-keys' / 'example.test' / (name + '.key')
+    path.parent.mkdir(parents=True)
+    _pem(path, 'ED25519 PRIVATE KEY', env.team_sk)
+    async with registry_listener(env) as (registry, origin):
+        async def call(action, *extra, expected=0):
+            process = await asyncio.create_subprocess_exec(os.environ['AW_TEST_CLI_BINARY'],
+                'id','team','lifetimes',action,'--team',name,'--namespace','example.test',
+                '--registry',origin,'--json',*extra,cwd=tmp_path,env=_child_env(tmp_path,origin),
+                stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE)
+            stdout,stderr = await asyncio.wait_for(process.communicate(),20)
+            assert (process.returncode == 0) == (expected == 0), (stdout+stderr).decode()
+            return stdout.decode() if expected == 0 else stderr.decode()
+        flags = ('--member-certificate','none','--ephemeral-certificate','none',
+            '--identity-grant','1h','--hosted-mcp-grant','none')
+        assert json.loads(await call('show'))['record'] is None
+        assert '--member-certificate is required' in await call('set',expected=1)
+        await call('set',*flags)
+        shown = json.loads(await call('show'))['record']
+        assert shown['revision'] == 1 and shown['identity_grant'] == 3600
+        assert shown['member_certificate'] is None
+        # A member key cannot change policy while the controller remains current.
+        bob = env.actors['bob']
+        _pem(path,'ED25519 PRIVATE KEY',bob.sk)
+        assert "not the team's current key" in await call('set',*flags,expected=1)
+        assert await env.registry_db.fetch_value('SELECT count(*) FROM {{tables.team_credential_policy_audit}}') == 1
+        # Reproduce a non-atomic rotation: the old signed policy is stranded.
+        await env.registry_db.execute('UPDATE {{tables.teams}} SET team_did_key=$1',bob.did)
+        assert 'authority_unavailable' in await call('show',expected=1)
+        await call('set',*flags)
+        repaired = json.loads(await call('show'))['record']
+        assert repaired['revision'] == 2 and repaired['team_did_key'] == bob.did
+        assert repaired['identity_grant'] == 3600
+        assert await env.registry_db.fetch_value('SELECT count(*) FROM {{tables.team_credential_policy_audit}}') == 2

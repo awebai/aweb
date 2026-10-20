@@ -91,8 +91,9 @@ func (c *RegistryClient) RolloverCertificate(ctx context.Context, registryURL, d
 }
 
 // GetTeamCredentialPolicy verifies the signed policy against the current key
-// returned by the configured registry, not a key asserted only in the record.
-func (c *RegistryClient) GetTeamCredentialPolicy(ctx context.Context, registryURL, domain, name string) (map[string]any, error) {
+// obtained independently (for example from the team record or local controller),
+// never a key asserted only in the policy response.
+func (c *RegistryClient) GetTeamCredentialPolicy(ctx context.Context, registryURL, domain, name, currentTeamKey string) (map[string]any, error) {
 	var wire map[string]json.RawMessage
 	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/credential-lifetimes"
 	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &wire); err != nil {
@@ -105,7 +106,7 @@ func (c *RegistryClient) GetTeamCredentialPolicy(ctx context.Context, registryUR
 		return nil, fmt.Errorf("malformed credential policy response")
 	}
 	var teamID, teamKey string
-	if json.Unmarshal(wire["team_id"], &teamID) != nil || teamID != BuildTeamID(domain, name) || json.Unmarshal(wire["team_did_key"], &teamKey) != nil {
+	if json.Unmarshal(wire["team_id"], &teamID) != nil || teamID != BuildTeamID(domain, name) || json.Unmarshal(wire["team_did_key"], &teamKey) != nil || teamKey != currentTeamKey {
 		return nil, fmt.Errorf("credential policy team mismatch")
 	}
 	_, err := ExtractPublicKey(teamKey)
@@ -231,4 +232,31 @@ func (c *RegistryClient) FetchTeamCertificateForRenewal(ctx context.Context, reg
 		return nil, err
 	}
 	return cert, nil
+}
+
+// TeamCredentialPolicyRevision reads only the concurrency token for a complete
+// controller-authored save. It deliberately does not authorize membership or
+// copy any policy values, including when repairing an old-key stranded record.
+func (c *RegistryClient) TeamCredentialPolicyRevision(ctx context.Context, registryURL, domain, name string) (int64, error) {
+	var wire struct {
+		TeamID string          `json:"team_id"`
+		Record json.RawMessage `json:"record"`
+	}
+	path := "/v1/namespaces/" + urlPathEscape(domain) + "/teams/" + urlPathEscape(name) + "/credential-lifetimes"
+	if err := c.requestJSON(ctx, http.MethodGet, registryURL, path, nil, nil, &wire); err != nil {
+		return 0, err
+	}
+	if wire.TeamID != BuildTeamID(domain, name) || len(wire.Record) == 0 {
+		return 0, fmt.Errorf("malformed policy revision response")
+	}
+	if string(wire.Record) == "null" {
+		return 0, nil
+	}
+	var record struct {
+		Revision int64 `json:"revision"`
+	}
+	if err := json.Unmarshal(wire.Record, &record); err != nil || record.Revision < 1 || record.Revision >= 9007199254740991 {
+		return 0, fmt.Errorf("invalid policy revision")
+	}
+	return record.Revision, nil
 }

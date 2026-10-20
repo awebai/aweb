@@ -89,7 +89,8 @@ async def test_opt_in_issuer_projection_preserves_default_shape_and_signed_expir
             body = certificate_body(env, member=keypair(), alias=item['name'])
             cert = json.loads(base64.b64decode(body['certificate']))
             cert.pop('signature')
-            cert.update(version=2, validity_class='member', issued_at='2026-01-01T00:00:00Z')
+            cert.pop('lifetime', None)
+            cert.update(version=2, validity_class='member', identity_scope='local', issued_at='2026-01-01T00:00:00Z')
             expiry = item['status']['certificate_expires_at']
             if expiry is not None:
                 cert['expires_at'] = expiry

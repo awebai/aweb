@@ -41,6 +41,7 @@ class TeamCertificateHTTPClient:
         await self.refresh_if_due()
         validate_certificate_lifetime(self.certificate)
         for attempt in range(2):
+            sent = self.certificate
             request = self.http.build_request(method, self.origin + path, content=content)
             timestamp = datetime.now(timezone.utc).isoformat()
             payload = canonical_json_bytes(dict(v=2, aud=self.origin, method=method.upper(),
@@ -62,7 +63,10 @@ class TeamCertificateHTTPClient:
                 return response
             if not isinstance(detail, dict) or detail.get('code') != 'certificate_replaced' or not isinstance(detail.get('replacement_certificate_id'), str):
                 return response
-            domain, name = parse_team_id(self.certificate['team_id'])
+            if self.certificate['certificate_id'] != sent['certificate_id']:
+                await response.aclose()
+                continue
+            domain, name = parse_team_id(sent['team_id'])
             fresh = await self.registry.fetch_team_certificate(domain, name, detail['replacement_certificate_id'], self.key)
             if fresh['certificate_id'] == self.certificate['certificate_id']:
                 raise ValueError('Replacement certificate changes membership')
