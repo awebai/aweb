@@ -99,6 +99,12 @@ user-verification requirement as explicit arguments, which this module binds to
 the approval, decision, policy and the app's own origin.
 
 - The relying party is the app's own origin (`RelyingParty`).
+- `verify_registration(credential, challenge=..., rp=...)` and
+  `verify_assertion(proof, challenge=..., rp=..., public_key=..., sign_count=...)`
+  are the stateless ceremony checks `Passkeys` uses, for any caller with its own
+  challenges and credentials. They always require user verification and raise
+  `WebAuthnRefused` on any failure. The caller makes each challenge single-use,
+  stores the credential and advances its counter atomically.
 - `designate(tx, scope=..., contact=..., evidence=...)` runs in the caller's
   transaction. The evidence is a `VerifiedOwnerAct`, which the owner-act
   verifier (`aweb_naapp.hooks.owner_act_nonces`) consumed in that same

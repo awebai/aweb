@@ -19,6 +19,13 @@ from aweb_naapp.runtime.passkeys.service import (
     Passkeys,
     contact_sha256,
 )
+from aweb_naapp.runtime.passkeys.webauthn import (
+    RegisteredPasskey,
+    VerifiedAssertion,
+    WebAuthnRefused,
+    verify_assertion,
+    verify_registration,
+)
 
 __all__ = [
     "CONTACT_CHANGE_DELAY_FLOOR",
@@ -36,6 +43,11 @@ __all__ = [
     "PasskeyEvidence",
     "PasskeyLogin",
     "Passkeys",
+    "RegisteredPasskey",
     "RelyingParty",
+    "VerifiedAssertion",
+    "WebAuthnRefused",
     "contact_sha256",
+    "verify_assertion",
+    "verify_registration",
 ]
