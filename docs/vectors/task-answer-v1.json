@@ -1253,10 +1253,10 @@
         "assignee": "assignee"
       },
       "result": {
-        "status": 201,
+        "status": 200,
         "question_rev": 1
       },
-      "note": "a task without an app_request, such as a dashboard request"
+      "note": "a task without an app_request, created with the existing POST /v1/tasks, which returns 200 as released"
     },
     {
       "step": "answer",
