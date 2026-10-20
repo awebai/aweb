@@ -429,17 +429,22 @@ def create_app(
         for Pydantic parsing after we've consumed the stream.
         """
         import hashlib as _hashlib
+        from aweb.auth_metrics import flush_request_auth_metrics
 
         if request.method in {"GET", "HEAD", "OPTIONS"}:
             request.state.cached_body = b""
             request.state.body_sha256 = _hashlib.sha256(b"").hexdigest()
-            return await call_next(request)
+            response = await call_next(request)
+            flush_request_auth_metrics(request)
+            return response
 
         body = await request.body()
         request.state.cached_body = body
         request.state.body_sha256 = _hashlib.sha256(body).hexdigest() if body else _hashlib.sha256(b"").hexdigest()
         request._receive = _cached_body_receive(body)
-        return await call_next(request)
+        response = await call_next(request)
+        flush_request_auth_metrics(request)
+        return response
 
     @app.exception_handler(RequestValidationError)
     async def _request_validation_error_handler(

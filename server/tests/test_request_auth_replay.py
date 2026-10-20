@@ -3,6 +3,7 @@ import asyncio
 import base64
 from datetime import datetime, timezone
 import hashlib
+import json
 import secrets
 import socket
 
@@ -144,7 +145,8 @@ async def test_simultaneous_identical_requests_have_one_winner(privacy_app):
 
 
 @pytest.mark.asyncio
-async def test_bridge_and_dependency_share_one_incoming_claim(privacy_app):
+@pytest.mark.parametrize('nonce_bearing', [True, False])
+async def test_bridge_and_dependency_share_one_incoming_claim(privacy_app, nonce_bearing):
     from aweb.team_auth_deps import verify_request_certificate
     env = privacy_app
 
@@ -161,12 +163,17 @@ async def test_bridge_and_dependency_share_one_incoming_claim(privacy_app):
             original = env.client
             env.client = client
             try:
-                headers = await _headers(env, 'certificate', nonce=_nonce())
+                headers = await _headers(env, 'certificate', nonce=_nonce() if nonce_bearing else ABSENT)
+                from aweb.auth_metrics import NONCE_FREE_REQUEST_AUTH_ACCEPTED
+                counter = NONCE_FREE_REQUEST_AUTH_ACCEPTED.labels(
+                    'certificate', 'GET', '/v1/messages/inbox', '1.36.45')
+                before = counter._value.get()
                 response = await client.get('/v1/messages/inbox', headers=headers)
                 assert response.status_code == 200, response.text
+                assert counter._value.get() == before + (0 if nonce_bearing else 1)
                 # A second request bypassing the outer bridge must still refuse.
                 replay = await original.get('/v1/messages/inbox', headers=headers)
-                assert replay.status_code == 401, replay.text
+                assert replay.status_code == (401 if nonce_bearing else 200), replay.text
             finally:
                 env.client = original
 
@@ -183,3 +190,54 @@ async def test_alternate_signature_encoding_is_the_same_replay(privacy_app):
     replay = await env.client.get('/v1/messages/inbox', headers=headers)
     assert replay.status_code == 401, replay.text
     assert replay.json()['detail']['code'] == 'request_replayed'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['certificate', 'identity-local', 'identity-global'])
+async def test_shared_python_signer_makes_fresh_bound_requests(privacy_app, family):
+    from awid.request_auth import sign_request_credential
+    env = privacy_app
+    actor = env.actors['alice']
+    baseline = await _headers(env, family)
+    claim, value = ('team_id', TEAM) if family == 'certificate' else ('did_aw', baseline.get('X-AWEB-DID-AW', ''))
+    nonces = []
+    for _ in range(2):
+        credential = sign_request_credential(
+            actor.sk, method='GET', target=str(env.client.base_url).rstrip('/') + '/v1/messages/inbox',
+            claim=claim, value=value, timestamp=baseline['X-AWEB-Timestamp'], custom={'operation': 'inbox'})
+        headers = {**baseline, **credential.headers}
+        nonces.append(json.loads(credential.canonical_payload)['nonce'])
+        response = await env.client.get('/v1/messages/inbox', headers=headers)
+        assert response.status_code == 200, response.text
+    assert nonces[0] != nonces[1]
+    with pytest.raises(ValueError):
+        sign_request_credential(actor.sk, method='GET', target=str(env.client.base_url),
+                                claim=claim, value=value, custom={'nonce': _nonce()})
+
+
+@pytest.mark.asyncio
+async def test_future_timestamp_retains_claim_for_the_full_acceptance_window(privacy_app):
+    from datetime import timedelta
+    from aweb.request_auth_replay import request_replay_key
+    env = privacy_app
+    timestamp = (datetime.now(timezone.utc) + timedelta(seconds=299)).isoformat()
+    headers = await _headers(env, 'identity-local', nonce=_nonce(), timestamp=timestamp)
+    response = await env.client.get('/v1/messages/inbox', headers=headers)
+    assert response.status_code == 200, response.text
+    _, did, signature = headers['Authorization'].split(' ')
+    key = env.app.state.request_auth_replay_store.key_prefix + request_replay_key(did, signature)
+    assert 590_000 < await env.redis.pttl(key) <= 600_000
+
+
+@pytest.mark.asyncio
+async def test_failed_certificate_authority_does_not_consume_a_proof(privacy_app):
+    env = privacy_app
+    headers = await _headers(env, 'certificate', nonce=_nonce())
+    broken_cert = json.loads(base64.b64decode(headers['X-AWID-Team-Certificate']))
+    broken_cert['alias'] = 'not-the-signed-alias'
+    refused = await env.client.get('/v1/messages/inbox', headers={
+        **headers, 'X-AWID-Team-Certificate': base64.b64encode(json.dumps(broken_cert).encode()).decode(),
+    })
+    assert refused.status_code == 401, refused.text
+    accepted = await env.client.get('/v1/messages/inbox', headers=headers)
+    assert accepted.status_code == 200, accepted.text
