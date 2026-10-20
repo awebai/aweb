@@ -101,9 +101,9 @@ class OwnerActEvidence(Protocol):
 
     Only the owner-act verifier produces these; until it exists this protocol
     is the seam it will fill. Member or admin authority never satisfies it.
-    Being a structural protocol, it accepts any object with these attributes,
-    including one an app builds itself. Until the verifier's own type replaces
-    it, no production app should expose `designate()` as if it were owner-gated.
+    OwnerActEvidence is a structural placeholder until acgh.1's owner-act
+    verifier lands. No production app may expose designate() as owner-gated
+    until it is replaced by the verifier's concrete type.
     """
 
     act_id: str
