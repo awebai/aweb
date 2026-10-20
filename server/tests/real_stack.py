@@ -8,12 +8,14 @@ A client reaches aweb only through team-server discovery: the team's
 
 Each service is reached through an in-process ASGI transport that records the
 requests it carries. A test may set ``fault`` to change a response after the
-real handler produced it, or ``down`` to make the service unreachable, so the
+real handler produced it, ``down`` to make the service unreachable, or
+``delay`` to hold each response that many seconds, so the
 code under test, the routes and the databases all stay real.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -52,11 +54,14 @@ class ServiceTransport(httpx.AsyncBaseTransport):
         self.calls: list[httpx.Request] = []
         self.fault: ResponseFault | None = None
         self.down = False
+        self.delay = 0.0
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(request)
         if self.down:
             raise httpx.ConnectError("service unreachable", request=request)
+        if self.delay:
+            await asyncio.sleep(self.delay)
         response = await self._inner.handle_async_request(request)
         if self.fault is None:
             return response
@@ -104,7 +109,9 @@ class RealStack:
             response = await client.put(f"{REGISTRY_URL}/v1/namespaces/{domain}/teams/{name}/server", json=body)
         response.raise_for_status()
 
-    def directory(self, *, clock: Callable[[], float] | None = None) -> TeamServerDirectory:
+    def directory(
+        self, *, clock: Callable[[], float] | None = None, ttl_seconds: int | None = None
+    ) -> TeamServerDirectory:
         """Team-server discovery against the stack's AWID."""
 
         async def no_registry_override(domain: str) -> str | None:
@@ -113,7 +120,9 @@ class RealStack:
         team_cache = AWIDTeamCache(
             registry_url=REGISTRY_URL, ttl_seconds=60, service_token=self.service_token, transport=self.awid
         )
-        options = {} if clock is None else {"clock": clock}
+        options: dict = {} if clock is None else {"clock": clock}
+        if ttl_seconds is not None:
+            options["ttl_seconds"] = ttl_seconds
         return TeamServerDirectory(
             team_cache=team_cache, transport=self.awid, registry_override=no_registry_override, **options
         )
