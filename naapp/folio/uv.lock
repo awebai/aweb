@@ -143,9 +143,11 @@ dev = [
     { name = "aweb-naapp", extras = ["runtime", "pages"] },
     { name = "httpx2", specifier = ">=2.9.1" },
     { name = "mypy", specifier = ">=1.18.0" },
+    { name = "playwright", specifier = "==1.63.0" },
     { name = "pytest", specifier = ">=9.0.0" },
     { name = "pytest-asyncio", specifier = ">=1.2.0" },
     { name = "ruff", specifier = ">=0.14.0" },
+    { name = "uvicorn", specifier = ">=0.35.0" },
 ]
 
 [[package]]
