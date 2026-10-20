@@ -242,10 +242,9 @@ across reporters into one installation-wide figure.
 Until pricing is decided, no app built on this contract denies, slows or
 degrades an operation because of a usage count, and neither does its host.
 Existing economic caps are not part of this contract. Folio's free-tier caps
-(`free_max_documents`, `free_max_versions_per_doc`, keyed on the team's
-subscription tier) must be explicitly reconciled when Folio moves onto the
-shared runtime (F5): removed, or kept by a recorded decision. This contract
-neither inherits nor encodes them.
+(`free_max_documents`, `free_max_versions_per_doc`) are removed by decision,
+and Folio drops them when it moves onto the shared runtime (F5). An app on
+this contract enforces no economic cap.
 
 ## Errors
 
