@@ -492,8 +492,8 @@ express it. The shared naapp runtime (`aweb_naapp`) enforces it in
 kind of the page action a request performs. An `answer`-kind action is
 refused on every tool except the surface's `answer_tool`
 (`answer_action_refused`). On the `invoke_tool`, an action whose kind does
-not resolve is refused (`action_unresolved`), and so is every invoke request
-of an app that supplies no `action_kind`.
+not resolve is refused (`action_unresolved`). An app that guards its
+`invoke_tool` route without an `action_kind` does not start.
 
 As an additional cheap guard, a request body for any v2 tool except a
 surface `answer_tool` that carries a member named `answer`, top-level or in

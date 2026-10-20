@@ -134,7 +134,8 @@ class NaappRuntime:
         )
         self._declared_tools = DeclaredTools.from_manifest(self._manifest)
         self._app_events = AppEvents.from_settings(settings, self._manifest)
-        self._guards: set[Callable[..., object]] = set()
+        # Each authorized() guard, with the action_kind it was given.
+        self._guards: dict[Callable[..., object], ActionKind | None] = {}
 
     @property
     def manifest_bytes(self) -> bytes:
@@ -264,7 +265,7 @@ class NaappRuntime:
             await record_observed_principal(self.db(), principal)
             return replace(authorization, attestation=attestation)
 
-        self._guards.add(authorized_request)
+        self._guards[authorized_request] = action_kind
         return authorized_request
 
     async def _attestation(self, request: Request, principal: Principal) -> tuple[VerifiedAttestation | None, str]:
@@ -295,7 +296,9 @@ class NaappRuntime:
         otherwise run its own handler while being authorized as the declared
         tool. Path converters are refused, because they change which requests a
         placeholder matches. Guarded routes must be declared on the runtime's
-        own app: one inside a mounted or host-routed application is refused.
+        own app: one inside a mounted or host-routed application is refused. A
+        route that is a surface's invoke tool must be guarded with an
+        ``action_kind``, since without one every invoke would be refused.
         The lifespan runs this check before anything else.
         """
         for route in app.routes:
@@ -316,12 +319,23 @@ class NaappRuntime:
                     )
                 template = _template(path.split("/"))
                 for method in sorted(route.methods or ()):
-                    if not any(
-                        tool.method == method and _template(tool.segments) == template
-                        for tool in self.declared_tools
-                    ):
+                    tool = next(
+                        (
+                            tool for tool in self.declared_tools
+                            if tool.method == method and _template(tool.segments) == template
+                        ),
+                        None,
+                    )
+                    if tool is None:
                         raise RuntimeError(
                             f"authorized route {method} {path} is not exactly a declared manifest tool"
+                        )
+                    if tool.invokes and any(
+                        self._guards[guard] is None for guard in self._route_guards(route.dependant)
+                    ):
+                        raise RuntimeError(
+                            f"authorized route {method} {path} is the invoke tool {tool.name!r}; "
+                            "guard it with an action_kind"
                         )
 
     def _contains_guards(self, routes: Sequence[BaseRoute]) -> bool:
@@ -331,6 +345,14 @@ class NaappRuntime:
             if isinstance(route, APIRoute) and self._is_guarded(route.dependant):
                 return True
         return False
+
+    def _route_guards(self, dependant: Dependant) -> list[Callable[..., object]]:
+        guards = []
+        for dependency in dependant.dependencies:
+            if dependency.call in self._guards:
+                guards.append(dependency.call)
+            guards.extend(self._route_guards(dependency))
+        return guards
 
     def _is_guarded(self, dependant: Dependant) -> bool:
         return any(

@@ -77,9 +77,12 @@ async def member(registry) -> Member:
     return member
 
 
+ROUTES = ("/v1/workspaces/{page_id}/invoke", "/v1/workspaces/{page_id}/answers", "/v1/export")
+
+
 async def _running(
     registry, app_database_url: str, tmp_path: Path, *, action_kind: ActionKind | None,
-    manifest: dict[str, Any] = MANIFEST,
+    manifest: dict[str, Any] = MANIFEST, routes: tuple[str, ...] = ROUTES,
 ) -> AsyncIterator[httpx.AsyncClient]:
     manifest_path = tmp_path / "aweb-app.json"
     write_manifest_file(manifest_path, manifest)
@@ -98,7 +101,7 @@ async def _running(
     async def admitted(auth: Annotated[Authorization, Depends(authorized)]) -> dict[str, str]:
         return {"tool": auth.tool.name}
 
-    for path in ("/v1/workspaces/{page_id}/invoke", "/v1/workspaces/{page_id}/answers", "/v1/export"):
+    for path in routes:
         app.add_api_route(path, admitted, methods=["POST"])
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=ORIGIN) as client:
@@ -152,12 +155,21 @@ async def test_an_invoke_action_whose_kind_cannot_be_resolved_is_refused(
     assert unknown == unnamed == (403, "action_unresolved")
 
 
-async def test_an_app_without_an_action_kind_refuses_every_invoke(registry, app_database_url, tmp_path, member):
-    async for client in _running(registry, app_database_url, tmp_path, action_kind=None):
-        invoke = await _post(client, member, INVOKE, {"request": {"action_id": "refresh"}})
-        export = await _post(client, member, EXPORT, {"page_id": "w1"})
-    assert invoke == (403, "action_unresolved")
-    assert export == (200, None)
+async def test_an_app_guarding_its_invoke_tool_without_an_action_kind_does_not_start(
+    registry, app_database_url, tmp_path, member
+):
+    with pytest.raises(RuntimeError, match="workspace-invoke"):
+        async for _client in _running(registry, app_database_url, tmp_path, action_kind=None):
+            pass
+
+
+async def test_an_app_that_does_not_route_its_invoke_tool_needs_no_action_kind(
+    registry, app_database_url, tmp_path, member
+):
+    async for client in _running(
+        registry, app_database_url, tmp_path, action_kind=None, routes=("/v1/export",)
+    ):
+        assert await _post(client, member, EXPORT, {"page_id": "w1"}) == (200, None)
 
 
 async def test_a_body_carrying_an_answer_member_is_refused_outside_the_answer_tool(
@@ -200,7 +212,6 @@ async def test_an_invoke_tool_is_known_by_the_name_the_manifest_resolves(
     renamed = "workspace-invoke\x1f"
     next(t for t in manifest["tools"] if t["name"] == "workspace-invoke")["name"] = renamed
     manifest["surfaces"][0]["invoke_tool"] = renamed
-    async for client in _running(registry, app_database_url, tmp_path, action_kind=None, manifest=manifest):
-        assert await _post(client, member, INVOKE, {"request": {"action_id": "refresh"}}) == (
-            403, "action_unresolved"
-        )
+    with pytest.raises(RuntimeError, match="workspace-invoke"):
+        async for _client in _running(registry, app_database_url, tmp_path, action_kind=None, manifest=manifest):
+            pass
