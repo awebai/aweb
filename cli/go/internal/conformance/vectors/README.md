@@ -44,7 +44,8 @@ Coverage includes:
 - raw body bytes via body-file/stdin-equivalent input
 - mutation classification
 - security rejection cases kept beside positives in this file: scheme/host
-  paths, `..` traversal, unsupported methods, reserved names/aliases, malformed
+  paths, `..` traversal, path param values that are not exactly one segment
+  (`/`, `\`, `%`), unsupported methods, reserved names/aliases, malformed
   raw body declarations, and float body fields for v1
 
 External-plugin PATH rejection is a CLI dispatch invariant and lives in

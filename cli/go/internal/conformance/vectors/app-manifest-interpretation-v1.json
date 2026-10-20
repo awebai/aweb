@@ -246,12 +246,12 @@
       },
       "verb": "show",
       "args": {
-        "slug": "pitch deck/ü"
+        "slug": "pitch deck ü"
       },
       "expected": {
         "method": "GET",
-        "url": "https://folio.aweb.ai/v1/documents/pitch%20deck%2F%C3%BC",
-        "path_query": "/v1/documents/pitch%20deck%2F%C3%BC",
+        "url": "https://folio.aweb.ai/v1/documents/pitch%20deck%20%C3%BC",
+        "path_query": "/v1/documents/pitch%20deck%20%C3%BC",
         "headers": {
           "Content-Type": "application/json"
         },
@@ -261,8 +261,8 @@
         "signed_payload": {
           "team_id": "default:example.aweb.ai",
           "timestamp": "2026-06-16T00:00:00Z",
-          "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"method\":\"GET\",\"path\":\"/v1/documents/pitch%20deck%2F%C3%BC\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
-          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJtZXRob2QiOiJHRVQiLCJwYXRoIjoiL3YxL2RvY3VtZW50cy9waXRjaCUyMGRlY2slMkYlQzMlQkMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
+          "canonical_payload": "{\"aud\":\"https://folio.aweb.ai\",\"body_sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"method\":\"GET\",\"path\":\"/v1/documents/pitch%20deck%20%C3%BC\",\"team_id\":\"default:example.aweb.ai\",\"timestamp\":\"2026-06-16T00:00:00Z\",\"v\":2}",
+          "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2ZvbGlvLmF3ZWIuYWkiLCJib2R5X3NoYTI1NiI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJtZXRob2QiOiJHRVQiLCJwYXRoIjoiL3YxL2RvY3VtZW50cy9waXRjaCUyMGRlY2slMjAlQzMlQkMiLCJ0ZWFtX2lkIjoiZGVmYXVsdDpleGFtcGxlLmF3ZWIuYWkiLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTE2VDAwOjAwOjAwWiIsInYiOjJ9"
         }
       }
     },
@@ -1383,6 +1383,138 @@
       "verb": "list-blueprints",
       "args": {},
       "expected_error_contains": "unsupported auth"
+    },
+    {
+      "name": "reject_path_param_slash",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
+        "tools": [
+          {
+            "name": "show",
+            "method": "GET",
+            "path": "/v1/documents/{slug}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "show",
+      "args": {
+        "slug": "a/b"
+      },
+      "expected_error_contains": "not a safe path segment"
+    },
+    {
+      "name": "reject_path_param_backslash",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
+        "tools": [
+          {
+            "name": "show",
+            "method": "GET",
+            "path": "/v1/documents/{slug}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "show",
+      "args": {
+        "slug": "..\\x"
+      },
+      "expected_error_contains": "not a safe path segment"
+    },
+    {
+      "name": "reject_path_param_percent",
+      "manifest": {
+        "manifest_version": 1,
+        "app": {
+          "id": "folio",
+          "version": "1.0.0",
+          "origin": "https://folio.aweb.ai"
+        },
+        "tools": [
+          {
+            "name": "show",
+            "method": "GET",
+            "path": "/v1/documents/{slug}",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "slug": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "slug",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "folio:read"
+            ],
+            "mutation": false
+          }
+        ]
+      },
+      "verb": "show",
+      "args": {
+        "slug": "%2e%2e"
+      },
+      "expected_error_contains": "not a safe path segment"
     }
   ]
 }

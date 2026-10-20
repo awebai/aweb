@@ -10,8 +10,6 @@
   surface-only and hook-only verbs (`tool_context_denied`), and grant
   snapshots hold only agent tools.
 - aw refuses to install a manifest whose answer path is agent-visible.
-- aw refuses a tool path parameter value that is blank, or `.` or `..`
-  once surrounding whitespace is trimmed.
 - aw and `aweb_naapp.manifest` refuse v1 manifests nested deeper than 512
   levels, as they do for v2.
 - `aweb_naapp.manifest.load_manifest` reads manifest bytes of either
@@ -20,6 +18,15 @@
 - `aw chat history <recipient>` applies its limit and unread filter before
   custody decryption, skips unrelated pending previews during session lookup,
   and uses individual request timeouts rather than one budget for the whole page.
+
+### Breaking changes
+
+- aw refuses a tool path parameter value that is blank, is `.` or `..`
+  once surrounding whitespace is trimmed, or contains `/`, `\` or `%`, in
+  manifest versions 1 and 2. Each value fills exactly one path segment, even
+  where an intermediary decodes the path. Send such values in the query or
+  body. The `path_param_percent_encoding` interpretation vector no longer
+  sends a `/`, and new `reject_path_param_*` cases pin the refusal.
 
 ## Release preparations
 

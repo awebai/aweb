@@ -318,7 +318,7 @@ func TestGrantAppToolRejectsDotSegmentParams(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.svc.serviceID = "svc"
-	values := []string{"..", ".", " .. "}
+	values := []string{"..", ".", " .. ", "x/../..", "%2e%2e"}
 	// The worker refuses before asking custody: custody records every
 	// signing request it receives in its replay table.
 	for _, value := range values {
