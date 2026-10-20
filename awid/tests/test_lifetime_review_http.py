@@ -47,6 +47,11 @@ async def test_expired_members_lose_private_reads_team_listing_and_attestation_a
     response=await env.client.get(listing,headers=read_headers(*member,listing))
     assert response.status_code==200 and response.json()['teams']==[]
     assert (await publish_person(env,record)).status_code==404
+    controller = RegistryClient(ORIGIN, transport=httpx.ASGITransport(app=env.app))
+    try:
+        assert await controller.fetch_team_certificate_for_renewal('local', 'base', cert['certificate_id'], env.team[0]) == cert
+    finally:
+        await controller.aclose()
     member_path=base+'/members/'+cert['alias']
     assert (await env.client.get(member_path,headers=read_headers(*member,member_path))).status_code==403
 

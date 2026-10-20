@@ -611,6 +611,30 @@ class RegistryClient:
         await self.invalidate_team_certificate_cache(domain, name)
         return result
 
+    async def fetch_team_certificate_for_renewal(self, domain: str, name: str, certificate_id: str, controller_signing_key: bytes) -> dict[str, Any]:
+        """Authenticate the old artifact under locally held controller authority.
+
+        Expired artifacts remain readable; they are signing input for the
+        controller, never authorization for an expired member. Roster fields
+        are not trusted as membership assertions.
+        """
+        import base64
+        from awid.certificates import validate_certificate_lifetime
+        from awid.did import public_key_from_did
+        from awid.signing import VerifyResult, verify_signature_with_public_key
+        origin = await self._registry_url_for_domain(domain)
+        path = f'/v1/namespaces/{domain}/teams/{name}/certificates/{quote(certificate_id, safe="")}'
+        data = await self._request_json('GET', path, headers=self._signed_path_headers('GET', path, controller_signing_key), registry_url=origin)
+        cert = json_loads(base64.b64decode(data['certificate'], validate=True))
+        controller_did = _did_key_from_signing_key(controller_signing_key)
+        if not isinstance(cert, dict) or cert.get('certificate_id') != certificate_id or cert.get('team_id') != f'{name}:{domain}' or cert.get('team_did_key') != controller_did:
+            raise ValueError('Old certificate controller binding mismatch')
+        payload = {key: value for key, value in cert.items() if key != 'signature'}
+        if verify_signature_with_public_key(public_key_from_did(controller_did), canonical_json_bytes(payload), cert.get('signature')) != VerifyResult.VERIFIED:
+            raise ValueError('Old certificate signature invalid')
+        validate_certificate_lifetime(cert, now=datetime.min.replace(tzinfo=timezone.utc))
+        return cert
+
     async def fetch_current_member_certificate(self, domain: str, name: str, alias: str, member_signing_key: bytes) -> dict[str, Any]:
         """Resolve an own-key replacement without presenting the old certificate."""
         origin = await self._registry_url_for_domain(domain)

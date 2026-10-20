@@ -269,3 +269,11 @@ and channel-core/Pi. Released clients keep the no-policy behavior; teams opting
 into a grant cap must update their stream consumers (including OATS's aw pin)
 first. A stream closes after this terminal event, so older clients cannot keep
 using a grant after the cap is enforced; they may lack the distinct diagnostic.
+
+Both public clients provide controller-pinned old-artifact reads for renewal:
+Python `fetch_team_certificate_for_renewal` and Go
+`FetchTeamCertificateForRenewal`. The signature is checked under the controller's
+own key before any fields are copied. Expiry does not prevent this artifact
+read; it still prevents all member authorization. Cloud's scheduler uses this
+public seam when retrieving signing input from AWID rather than its own verified
+certificate store.
