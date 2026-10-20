@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 28
+`docs/vectors/*.json` is the only public protocol-vector authority for the 30
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -212,6 +212,24 @@ renderer, which this file names but does not test. `bundle_hash` pins the
 bundle decision-card digest across languages. The reference consumer is
 `aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
 [the page format](../page-format.md).
+
+### `usage-report-v1.json`
+
+`aweb.usage/1` report batches (aweb-acgg.11): valid batches with canonical
+bytes and `report_sha256`, refused batches, one installation's ordered
+collector steps (retry, conflict, gap and fill, overlap, out-of-order
+snapshot, reporter epoch) with the expected ack and totals, and the lifecycle
+grant of a retired installation, each case marked as decidable from the batch
+or needing the collector's state. The reference consumer is
+`aweb_naapp.runtime.usage` in `naapp-lib/tests/runtime/`. See
+[app usage](../app-usage.md).
+
+### `app-usage-credential-v1.json`
+
+The `app-usage` purpose of the app credential family (aweb-acgg.11): one
+report's signed payload, canonical bytes, signature and headers, and
+collector refusals, including purpose separation in both directions and a
+key that does not declare `app-usage`. See [app usage](../app-usage.md) §4.
 
 ### `agent-status-v1.json`
 

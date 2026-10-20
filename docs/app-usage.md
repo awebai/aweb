@@ -250,3 +250,7 @@ neither inherits nor encodes them.
   `report_sha256`, and ordered collector sequences (retry, conflict, overlap,
   gap and fill, out-of-order snapshot, reporter epoch) with the expected ack
   of each.
+
+`aweb_naapp.runtime.usage` validates batches, computes `report_sha256`,
+checks the lifecycle grant's batch rules and builds the `app-usage`
+credential, and runs both files.
