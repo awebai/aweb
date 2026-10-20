@@ -9,14 +9,16 @@ issued by the hosted dashboard for human dashboard access.
 
 from __future__ import annotations
 
-import base64
-import json
 import logging
 from typing import Any, Callable, Optional
 
 import jwt as pyjwt
 
-from awid.team_certificate import TeamCertificateError, verify_team_certificate_signature
+from awid.team_certificate import (
+    TeamCertificateError,
+    decode_team_certificate,
+    verify_team_certificate_signature,
+)
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 
 logger = logging.getLogger(__name__)
@@ -68,9 +70,8 @@ def parse_and_verify_certificate(
         ValueError: If the certificate is invalid, tampered, revoked, or mismatched.
     """
     try:
-        cert_json = base64.b64decode(encoded_certificate)
-        cert = json.loads(cert_json)
-    except Exception:
+        cert = decode_team_certificate(encoded_certificate)
+    except TeamCertificateError:
         raise ValueError("Malformed certificate: invalid base64 or JSON")
 
     version = cert.get("version")
