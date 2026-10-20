@@ -130,7 +130,7 @@ the approval, decision, policy and the app's own origin.
 - `login_options(scope)` / `verify_login(scope, proof)` log in a scope's
   in-effect approver under the same rules, returning `PasskeyLogin(subject,
   contact, evidence_ref)`. What a login opens (a console or reader session) is
-  the caller's. Roles are named scopes, such as `secrets:owner`, each designated
+  the caller's. Roles are named scopes, such as `secrets.owner`, each designated
   through the same owner act.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.

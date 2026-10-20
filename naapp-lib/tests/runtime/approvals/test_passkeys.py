@@ -696,18 +696,18 @@ async def test_the_in_effect_approver_logs_in_with_its_passkey(pw):
 
 
 async def test_a_role_style_scope_logs_in_its_own_designee(pw):
-    pw.designated.add("secrets:owner")
+    pw.designated.add("secrets.owner")
     await pw.passkeys.designate(
-        scope="secrets:owner",
+        scope="secrets.owner",
         contact="owner@example.com",
-        owner_act=owner_act(OwnerActKind.DESIGNATE, "owner@example.com", scope="secrets:owner"),
+        owner_act=owner_act(OwnerActKind.DESIGNATE, "owner@example.com", scope="secrets.owner"),
     )
     token = pw.contacts.last("owner@example.com")
     device = SoftAuthenticator(ORIGIN)
     await pw.passkeys.complete_enrolment(
         token, device.create(await pw.passkeys.enrolment_options(token))
     )
-    assert (await login(pw, device, scope="secrets:owner")).contact == "owner@example.com"
+    assert (await login(pw, device, scope="secrets.owner")).contact == "owner@example.com"
     with pytest.raises(AuthenticationFailed):
         await pw.passkeys.login_options(SCOPE)
 
