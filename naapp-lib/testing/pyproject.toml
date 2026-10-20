@@ -8,6 +8,8 @@ requires-python = ">=3.12"
 dependencies = [
   "aweb-naapp[runtime]",
   "awid-service",
+  "cryptography>=44.0.0",
+  "dnspython>=2.7.0",
 ]
 
 [build-system]
