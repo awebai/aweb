@@ -644,6 +644,31 @@ async def reseed_app_registrations(db, *, origin: str, manifest: bytes) -> Resee
     )
 
 
+async def get_installation_on(
+    tx, *, team_id: str, app_id: str, for_update: bool = False,
+) -> dict[str, Any] | None:
+    """Read current installation authority in the caller's transaction.
+
+    Task admission/receipt and lifecycle mutations use ``for_update=True`` on
+    this same row, serializing retirement with admitted task work. A pending
+    origin verification or uninstalled state confers no ordinary authority.
+    Pinned manifest bytes are read separately when needed, so credential checks
+    never fetch a multi-megabyte manifest just to check an installation.
+    """
+    team_id = validate_team_id(team_id)
+    app_id = normalize_app_id(app_id)
+    lock = " FOR UPDATE OF i" if for_update else ""
+    row = await tx.fetch_one(
+        """SELECT i.team_id, i.app_id, i.installation_id, i.generation, i.state,
+                  i.origin, i.digest, i.granted_scopes, i.origin_verified,
+                  i.app_version, i.manifest_version, i.origin_verification_error
+           FROM {{tables.team_app_installs}} AS i
+           WHERE i.team_id = $1 AND i.app_id = $2""" + lock,
+        team_id, app_id,
+    )
+    return dict(row) if row is not None else None
+
+
 async def list_installed_apps(db, *, team_id: str) -> list[AppInstall]:
     team_id = validate_team_id(team_id)
     rows = await db.fetch_all(
