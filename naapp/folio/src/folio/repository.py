@@ -491,7 +491,7 @@ async def edit_presented_document(
     async with db.transaction() as tx:
         link = await tx.fetch_one(
             """
-            SELECT p.document_id, d.team_id, p.created_by_did_key, p.created_by_did_aw,
+            SELECT p.document_id, d.team_id, d.slug, p.created_by_did_key, p.created_by_did_aw,
                    p.created_by_alias, p.certificate_id
             FROM {{tables.presentation_links}} p
             JOIN {{tables.documents}} d ON d.document_id = p.document_id
@@ -574,7 +574,7 @@ async def edit_presented_document(
             "UPDATE {{tables.documents}} SET updated_at = NOW() WHERE document_id = $1",
             document_id,
         )
-    return {"version_number": new_version}
+    return {"version_number": new_version, "team_id": str(link["team_id"]), "slug": str(link["slug"])}
 
 
 def _json_value(value: Any) -> Any:

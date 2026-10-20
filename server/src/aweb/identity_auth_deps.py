@@ -7,13 +7,15 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request
 
 from awid.dns_auth import enforce_timestamp_skew, parse_didkey_auth, require_timestamp
-from awid.signing import canonical_json_bytes, verify_did_key_signature
+from awid.signing import verify_did_key_signature
 from aweb.awid_error_handling import (
     AWID_DEPENDENCY_ERRORS,
     awid_dependency_http_exception,
     awid_registry_not_configured_exception,
 )
 from aweb.auth_context import GrantContext
+from aweb.auth_metrics import count_legacy_request_auth
+from aweb.team_auth_envelope import identity_auth_signature_payload
 from aweb.config import require_registered_certificates
 from aweb.deps import get_db
 from aweb.team_auth_deps import (
@@ -22,6 +24,7 @@ from aweb.team_auth_deps import (
     _get_registered_certificates,
     _get_revoked_certificates,
     get_team_identity,
+    _team_auth_allowed_audiences,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,19 +78,25 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
     enforce_timestamp_skew(timestamp)
 
     did_aw = (request.headers.get(IDENTITY_DID_AW_HEADER) or "").strip()
-    payload = canonical_json_bytes(
-        {
-            "body_sha256": _get_body_sha256(request),
-            "did_aw": did_aw,
-            "timestamp": timestamp,
-        }
-    )
     try:
-        verify_did_key_signature(did_key=did_key, payload=payload, signature_b64=signature_b64)
+        envelope = identity_auth_signature_payload(
+            request, did_aw=did_aw, timestamp=timestamp,
+            body_sha256=_get_body_sha256(request),
+            allowed_audiences=_team_auth_allowed_audiences(request)
+            if request.headers.get("X-AWEB-Signed-Payload") else [],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    try:
+        verify_did_key_signature(
+            did_key=did_key, payload=envelope.canonical_payload, signature_b64=signature_b64,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature") from exc
 
     if not did_aw:
+        if envelope.version == 1:
+            count_legacy_request_auth(request, "identity")
         return IdentityAuth(did_key=did_key, did_aw=None, address=None)
 
     registry_client = getattr(request.app.state, "awid_registry_client", None)
@@ -121,6 +130,8 @@ async def resolve_identity_auth(request: Request) -> IdentityAuth:
         first = addresses[0]
         address = f"{first.domain}/{first.name}"
 
+    if envelope.version == 1:
+        count_legacy_request_auth(request, "identity")
     return IdentityAuth(did_key=did_key, did_aw=did_aw, address=address)
 
 
