@@ -154,8 +154,6 @@ through X6.
   - the runner protocol: `aweb.secrets.runner-request/1` and
     `aweb.secrets.runner-assignment/1` signatures, the HPKE suite and `info`
     binding (§9.3);
-  - URL canonicalization and destination matching (§7.2): every case in the §16
-    scope row, IDNA A-labels, the wildcard rules and the refused encodings;
   - the transition-to-action table (§11.5) as data the S13 tests read.
 - **Acceptance:** each vector has a test that consumes it. Negatives include a
   wrong domain prefix, a non-canonical encoding, a duplicate key, a float, an
@@ -171,7 +169,10 @@ through X6.
 
 - **Seat:** E. **Review:** R+A, +D1 (pages' A2 is the second consumer).
 - **Repo/path:** `naapp-lib/src/aweb_naapp/egress/`, behind an extra.
-- **Depends on:** S0's URL vectors.
+- **Depends on:** none. S1 owns the generic egress URL vectors (canonical
+  form, refused encodings, destination matching from §7.2) in
+  `docs/vectors/`, because pages' A2 and the hooks lane consume the guard
+  too. S0 keeps only secrets' own contracts.
 - **Scope:** §7.2–§7.4 and the bounds in §7.3, generic: canonical URL,
   destination matching, the app's own resolver with every A and AAAA record
   checked against the denied ranges, one pinned validated address with SNI and
@@ -180,7 +181,8 @@ through X6.
   environment, a header allowlist with an always-rejected set the caller can
   extend, connect and total timeouts, body and response bounds, and the
   `internal_destinations` deploy setting.
-- **Acceptance:** the S0 URL vectors pass. Against real local DNS and TLS
+- **Acceptance:** the egress URL vectors cover every case in the §16 scope
+  row, IDNA A-labels and the wildcard rules, and pass. Against real local DNS and TLS
   servers started by the tests: a name resolving to each denied range is
   refused, including IPv4-mapped, NAT64, 6to4 and Teredo forms; a name with one
   public and one private record is refused; a DNS answer that changes between
@@ -261,7 +263,7 @@ through X6.
   Juan's explicit approval is recorded in the commit before it lands; a
   reviewer's ACK is not that approval.
 - **Repo/path:** the AWID custodian record (AWID service and `docs/awid-sot.md`),
-  the artifact format and vectors (`docs/`, `test-vectors/`), and the verifier
+  the artifact format and vectors (`docs/`, with vectors in `docs/vectors/`), and the verifier
   in `naapp-lib/src/aweb_naapp/attestation/`.
 - **Depends on:** X4. HO2 implements the issuing side against this contract.
 - **Scope:** §4.6: the controller-signed AWID record that registers a
@@ -493,8 +495,8 @@ through X6.
 
 - **Seat:** E. **Review:** R+A. Production tooling, so the coordinator
   integrates it.
-- **Repo/path:** `naapp/secrets/Makefile`, `naapp/secrets/ops/`,
-  `naapp/secrets/docs/production-operations.md`, on the shared
+- **Repo/path:** `naapp/secrets/Makefile`, `naapp/secrets/ops/`, and a
+  production-operations document in the app's own docs directory, on the shared
   `aweb_naapp.ops` extra.
 - **Depends on:** S7; HO5.
 - **Scope:** §15 on Library's pattern: the pinned ops topology manifest;
