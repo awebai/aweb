@@ -382,7 +382,7 @@ it. The canonical Cloud graph additionally names O2/O3/O4 and exact C gates.
 | --- | --- | --- |
 | Local disposable PostgreSQL/Redis, three aweb services/AWID registries, real built/published aw and native keys | P0 old/new journey, P3–P7 database/HTTP proof, X-E2/X-GF and P9 real topology | Contract/vector drafting, C storage code and adapter fixture tests |
 | Approved Telegram shared bot, two dedicated identity bots, a separately owned native Hermes bot; linked + unlinked test humans, private chats, basic group and supergroup/topic | X-TS Telegram proof; D-TG/R-TG/N2/F2 real journeys. Do not use a native bot's token for Cloud intake | Generic P/C work and Teams qualification |
-| Approved Azure bot/Entra app resources, shared and dedicated bot/app identities, M365 customer test tenants and admins/users; personal/group/team/channel installations | X-MS and X-TS Teams proof; D-MS/R-MS/N2/F2 real journeys. Missing tenant/install/room capability is a hard live gate | Generic P/C work and Telegram qualification |
+| Approved Azure bot/Entra app resources, shared/dedicated and a separately operated native bot/app identity, M365 customer test tenants and admins/users; personal/group/team/channel installations | X-MS and X-TS Teams proof; D-MS/R-MS/N2/F2 real journeys. Missing tenant/install/room capability is a hard live gate | Generic P/C work and Telegram qualification |
 | Approved staging with managed custody/key storage, dashboard, public OSS package versions and cleanup permission | C custody proof, joint D/R/N/O live journeys and F2; private actor signing must be real | Local public protocol/schema work and bounded local spikes |
 | Real Claude/Codex/pi/Hermes seats and any required model access, with the native adapter/version qualified | P6 runtime proof, N1/N2 and F1/F2 model-driven journeys | Server/CLI behavior tests and deterministic operation-ledger crash tests |
 | Slack workspace/install/admin, then official WhatsApp business/group capability and consented chase endpoints | S/W/H live tasks after F, per J7 | All F work; later adapters may be designed against C0 without claiming live support |
@@ -394,6 +394,17 @@ operations supplies the approved staging/test targets. If a resource is absent,
 mark the exact live gate blocked while continuing independent tasks above.
 
 ## After F and completion evidence
+
+**H-OSS — signed advisory chase hint, after F2 only.** Repo aweb: native mail/chat
+compose DTOs, Go signing/E2EE content helpers, CLI send options and root vectors;
+migration none expected. Dependencies: F2, P0's reserved hint shape and Cloud H's
+human-consent/quiet-hour/default-off policy. `aweb-protocol-expert` freezes and
+implements the platform-kind-only hint with old/new compatibility. Real CLI/server
+journey preserves it through plaintext or verified decrypt; it never selects an
+account, overrides consent or causes a second authored message/charge. An unreadable
+encrypted hint stays unavailable, never triggers decryption/plaintext fallback.
+Cloud H then proves the permitted additional attempt on approved real endpoints.
+This is a distinct post-F task, not early chase activation hidden in P1.
 
 Canonical S/W/H tasks reuse C0 and all public message/session/identity contracts.
 They implement Slack rooms/threads and installation scopes, officially qualified
