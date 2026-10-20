@@ -11,6 +11,15 @@ from __future__ import annotations
 from .addresses import AddressPolicy, InternalDestinations
 from .headers import check_headers
 from .refused import EgressRefused
+from .send import (
+    Bounds,
+    DnsResolver,
+    Egress,
+    EgressNotSent,
+    EgressOutcomeUnknown,
+    Resolver,
+    Response,
+)
 from .urls import (
     PUBLIC_SUFFIX_LIST_VERSION,
     CanonicalURL,
@@ -27,13 +36,20 @@ from .urls import (
 __all__ = [
     "PUBLIC_SUFFIX_LIST_VERSION",
     "AddressPolicy",
+    "Bounds",
     "CanonicalURL",
     "Destination",
+    "DnsResolver",
+    "Egress",
+    "EgressNotSent",
+    "EgressOutcomeUnknown",
     "EgressRefused",
     "InternalDestinations",
     "Network",
     "Presence",
     "QueryRule",
+    "Resolver",
+    "Response",
     "canonical_url",
     "check_destination",
     "check_headers",

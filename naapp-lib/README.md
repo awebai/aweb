@@ -38,3 +38,11 @@ css_bytes = naapp.aweb_css()
 The docs surface is pure standard library. Request-time runtime code (the
 team-auth verifier, approvals, passkeys) lives under `aweb_naapp.runtime` and
 needs the `runtime` extra: `aweb-naapp[runtime]`.
+
+The egress guard, `aweb_naapp.egress`, is for naapps that call an external
+service with their own credential. It needs only the `egress` extra,
+`aweb-naapp[egress]`, and none of the runtime. It canonicalizes and matches
+outbound URLs under the contract in `docs/vectors/egress-url-v1.json`, resolves
+names itself and refuses any denied address, and sends through one pinned,
+verified connection. Redirects come back as responses, no proxy is read from
+the environment, and a failure is classed as not sent or of unknown outcome.

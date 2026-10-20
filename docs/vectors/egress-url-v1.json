@@ -1,6 +1,6 @@
 {
   "name": "egress-url-v1",
-  "status": "draft for review (aweb-acgh.18.2, S1), from secrets.md section 7.2 and the section 16 scope rows",
+  "status": "frozen by its reviewed landing (aweb-acgh.18.2, S1); derived from secrets.md section 7.2 and the section 16 scope rows; a change needs a new version",
   "scheme": {
     "url": "https only (scheme compared case-insensitively, written lowercase); no userinfo, no fragment, no backslash, no whitespace or control character anywhere; only the host may hold non-ASCII characters",
     "host": "IDNA2008 with UTS46 mapping (non-transitional, STD3 rules) to lowercase A-labels; empty labels and a trailing dot are refused; a host whose last label is numeric or 0x-hex is refused unless it is a dotted-quad IPv4 address without leading zeros; an IPv6 literal is bracketed, has no zone and is written compressed and lowercase",
@@ -184,7 +184,7 @@
     "allowed": [
       {"name": "accept", "header_allow": [], "headers": [["Accept", "application/json"]]},
       {"name": "case_insensitive", "header_allow": [], "headers": [["content-type", "application/json"]]},
-      {"name": "destination_allow", "header_allow": ["Stripe-Version"], "headers": [["stripe-version", "2024-06-20"]]}
+      {"name": "destination_allow", "header_allow": ["Api-Version"], "headers": [["api-version", "2024-06-20"]]}
     ],
     "refused": [
       {"name": "authorization", "header_allow": [], "headers": [["Authorization", "Bearer x"]], "code": "header_not_allowed"},
