@@ -811,6 +811,8 @@ Subcommands:
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
+- `set-server` Publish the team's coordination server at AWID, signed by the team controller key
+- `show-server` Show and verify the team's published coordination server
 - `switch` Switch the active team for this identity
 
 Flags:
@@ -1133,6 +1135,36 @@ Flags:
 - `-h, --help help for request`
 - `--name string Suggested member name for the new team membership`
 - `--team string Canonical team ID (<name>:<domain>)`
+
+## `id team set-server`
+
+### `id team set-server`
+
+Publish the team's aweb.team-server/1 record at AWID: the coordination server
+URL that installed apps use for this team, signed by the local team controller key.
+
+The record must be newer than the published one; republishing the same record is
+accepted unchanged. After a team key rotation, publish again with the new key.
+
+Flags:
+- `-h, --help help for set-server`
+- `--namespace string Namespace domain`
+- `--registry string Registry origin override`
+- `--team string Team name`
+- `--url string Coordination server URL (https origin with optional path prefix)`
+
+## `id team show-server`
+
+### `id team show-server`
+
+Read the team's aweb.team-server/1 record from AWID and verify it against the
+team's current key. A record signed by any other key is refused.
+
+Flags:
+- `-h, --help help for show-server`
+- `--namespace string Namespace domain`
+- `--registry string Registry origin override`
+- `--team string Team name`
 
 ## `id team switch`
 
