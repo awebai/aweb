@@ -91,7 +91,8 @@ committed.
 ## 4. Proposals and their digest
 
 A proposal is a record that a person decides on. Its digest binds the
-record's identity and exact value:
+record's identity and exact value, as [page-format.md](page-format.md) §5
+defines it:
 
 ```text
 proposal_sha256 = "sha256:" || hex(SHA-256("aweb.page-proposal/1\n" || C(proposal)))

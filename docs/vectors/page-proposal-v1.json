@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "proposal_sha256 (docs/page-actions.md §4): sha256: plus the hex SHA-256 of aweb.page-proposal/1\\n followed by the canonical JSON of {collection, record_id, value}. The record revision is not hashed. `bundle` checks that item digests feed the C1 bundle digest (docs/page-format.md §5). Refusals are parsed values without one canonical form; duplicate keys and non-finite numbers are refused earlier, when the page is parsed (page-format limits).",
+  "description": "proposal_sha256 (docs/page-format.md §5): sha256: plus the hex SHA-256 of aweb.page-proposal/1\\n followed by the canonical JSON of {collection, record_id, value}. The record revision is not hashed. `bundle` checks that item digests feed the C1 bundle digest (docs/page-format.md §5). Refusals are parsed values without one canonical form; duplicate keys and non-finite numbers are refused earlier, when the page is parsed (page-format limits).",
   "prefix": "aweb.page-proposal/1\n",
   "cases": [
     {
