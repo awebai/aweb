@@ -1,6 +1,5 @@
 """Actual aw user signatures cannot authorize protocol operations."""
 import asyncio
-from datetime import datetime, timezone
 import hashlib
 import json
 
