@@ -7,7 +7,17 @@ import sys
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parent.parent / "src"
-RUNTIME_MODULES = ("awid", "fastapi", "httpx", "nacl", "pgdbm", "pydantic", "starlette", "webauthn")
+RUNTIME_MODULES = (
+    "awid",
+    "fastapi",
+    "httpx",
+    "jsonschema",
+    "nacl",
+    "pgdbm",
+    "pydantic",
+    "starlette",
+    "webauthn",
+)
 
 
 def test_docs_surface_loads_no_runtime_dependency():
