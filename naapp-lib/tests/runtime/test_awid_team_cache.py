@@ -238,6 +238,7 @@ async def test_status_path_verifies_without_a_token_and_reuses_for_at_most_a_min
     async with relying_app(registry, public_origin=ORIGIN, cache=cache) as (client, _):
         assert (await client.get("/v1/items", headers=get_items(team))).status_code == 200
         assert [r.url.path for r in registry.transport.calls] == [
+            "/v1/namespaces/example.com/teams/backend/credential-lifetimes",
             "/v1/namespaces/example.com/teams/backend/certificates/target/status"
         ]
         assert "X-AWID-Service-Token" not in registry.transport.calls[0].headers
@@ -295,6 +296,13 @@ async def test_status_refresh_failure_has_no_stale_fallback(registry, team, kind
     assert caught.value.status_code == (401 if kind == 404 else 503)
     assert cache._certificate_cache[(TEAM_ID, "target")] is expired
     registry.transport.fault = None
+    if kind == 404:
+        calls = len(registry.transport.calls)
+        with pytest.raises(HTTPException) as negative:
+            await cache.get(TEAM_ID, "target")
+        assert negative.value.status_code == 401
+        assert len(registry.transport.calls) == calls
+        cache._unknown_certificates[(TEAM_ID, "target")] = -1
     assert (await cache.get(TEAM_ID, "target")).team_did_key == team.team_did_key
 
 
