@@ -51,7 +51,8 @@ def main():
                     f"{quote(env.get('PGPASSWORD', 'postgres'), safe='')}@{env['PGHOST']}:"
                     f"{env.get('PGPORT', '5432')}/{env.get('PGDATABASE', 'postgres')}")
         env.update(AWID_DATABASE_URL=database, AWID_REDIS_URL=env.get('REDIS_URL', 'redis://127.0.0.1:6379/0'),
-                   AWID_DB_SCHEMA=schema, AWID_RATE_LIMIT_DISABLED='true', APP_ENV='test')
+                   AWID_DB_SCHEMA=schema, AWID_RATE_LIMIT_DISABLED='true', APP_ENV='test',
+                   AWID_PUBLIC_ORIGINS=f'http://127.0.0.1:{port}')
         process = subprocess.Popen(['uv', 'run', '--offline', '--frozen', '--project', str(ROOT / 'awid'),
                                     'uvicorn', 'awid_service.main:app', '--host', '127.0.0.1', '--port', str(port)],
                                    env=env, stdout=sys.stderr, stderr=sys.stderr)

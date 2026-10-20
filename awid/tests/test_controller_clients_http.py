@@ -249,6 +249,9 @@ def test_signer_parser_rebuilder_refuses_protocol_confusion_and_unknown_fields()
                 canonical_json_bytes(dict(vector['payload'], type='aweb.team-auth-request')),
                 canonical_json_bytes(dict(vector['payload'], v=1)),
                 canonical_json_bytes(dict(vector['payload'], unsupported='value'))]
+    for field in ('aud', 'method', 'path', 'body_sha256', 'timestamp', 'operation', 'type'):
+        for value in (None, 7, [], {}, True):
+            variants.append(canonical_json_bytes(dict(vector['payload'], **{field: value})))
     missing = dict(vector['payload'])
     missing.pop('name')
     variants.append(canonical_json_bytes(missing))
@@ -298,3 +301,30 @@ async def test_public_external_signer_verifies_before_send_and_separates_parent(
         assert len(state.mutations) == 1
     finally:
         await registry.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('family', ['python', 'go'])
+async def test_controller_mutation_redirect_is_not_followed(network_registry, controller_driver, family):
+    env, state, origin = network_registry
+    claims = dict(domain='local', operation='register')
+    body = dict(domain='local', controller_did=env.controller[1])
+    if family == 'python':
+        registry = RegistryClient(registry_url=origin)
+        try:
+            with pytest.raises(RegistryError) as refused:
+                await registry.controller_request('POST', '/v1/namespaces/', claims=claims,
+                    body=body, signing_key=env.controller[0])
+            assert refused.value.status_code == 307
+        finally:
+            await registry.aclose()
+    else:
+        config = dict(URL=origin, Action='redirect', Key=base64.b64encode(env.controller[0]).decode(),
+            Method='POST', Path='/v1/namespaces/', Claims=claims, Body=body)
+        process = await asyncio.create_subprocess_exec(str(controller_driver), stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(process.communicate(json.dumps(config).encode()), 15)
+        assert process.returncode == 0, stderr.decode()
+        assert json.loads(stdout)['status'] == 307
+    assert len(state.mutations) == 1
+    assert state.status == [307]

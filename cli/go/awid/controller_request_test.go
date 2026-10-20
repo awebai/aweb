@@ -1,6 +1,7 @@
 package awid
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
@@ -46,6 +47,19 @@ func TestAWIDControllerRequestPublishedVector(t *testing.T) {
 	for _, name := range []string{"v", "type", "aud", "method", "path", "body_sha256", "timestamp"} {
 		if _, err := SignAWIDControllerRequest(key, "POST", "http://registry.test/", nil, map[string]string{name: "override"}, "2026-06-12T10:00:00Z"); err == nil {
 			t.Fatalf("reserved claim %s accepted", name)
+		}
+	}
+}
+
+func TestRegisterCertificateRefusesUnsignedBlob(t *testing.T) {
+	client := NewAWIDRegistryClient(nil, nil)
+	_, key, err := GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cert := range []*TeamCertificate{nil, {CertificateID: "unsigned"}} {
+		if err := client.RegisterCertificate(context.Background(), "http://127.0.0.1:0", "local", "base", cert, key); err == nil {
+			t.Fatal("unsigned certificate accepted")
 		}
 	}
 }

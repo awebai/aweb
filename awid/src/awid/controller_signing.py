@@ -69,6 +69,8 @@ def build_controller_payload(request: ControllerRequest) -> bytes:
     """
     if type(request.v) is not int or request.v != 2 or request.type != CONTROLLER_REQUEST_TYPE:
         raise ValueError('invalid controller envelope type or version')
+    if any(not isinstance(getattr(request, name), str) for name in _FIXED - {'v'}):
+        raise ValueError('invalid controller field type')
     if request.operation not in _ROUTE_CLAIMS:
         raise ValueError('unknown controller operation')
     required, optional = _ROUTE_CLAIMS[request.operation]
