@@ -2,8 +2,6 @@ package awid
 
 import (
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -159,60 +157,6 @@ func TestSetTeamVisibility(t *testing.T) {
 	}
 }
 
-func TestSetTeamVisibilitySignsVisibilityInPayload(t *testing.T) {
-	t.Parallel()
-
-	teamPub, teamKey, err := GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	teamDID := ComputeDIDKey(teamPub)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := strings.TrimSpace(r.Header.Get("Authorization"))
-		parts := strings.Split(auth, " ")
-		if len(parts) != 3 || parts[0] != "DIDKey" {
-			t.Fatalf("unexpected Authorization header %q", auth)
-		}
-		if parts[1] != teamDID {
-			t.Fatalf("authorization DID=%s want team DID=%s", parts[1], teamDID)
-		}
-		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
-			"domain":     "acme.com",
-			"operation":  "set_team_visibility",
-			"team_name":  "backend",
-			"timestamp":  timestamp,
-			"visibility": "public",
-		})
-		sig, err := base64.RawStdEncoding.DecodeString(parts[2])
-		if err != nil {
-			t.Fatalf("decode signature: %v", err)
-		}
-		if !ed25519.Verify(teamPub, []byte(payload), sig) {
-			t.Fatalf("invalid team signature for payload %s", payload)
-		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"team_id":      "backend:acme.com",
-			"domain":       "acme.com",
-			"name":         "backend",
-			"display_name": "Backend Team",
-			"team_did_key": teamDID,
-			"visibility":   "public",
-			"created_at":   "2026-04-06T00:00:00Z",
-		})
-	}))
-	defer server.Close()
-
-	client := NewAWIDRegistryClient(nil, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if _, err := client.SetTeamVisibility(ctx, server.URL, "acme.com", "backend", "public", teamKey); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestDeleteTeam(t *testing.T) {
 	t.Parallel()
 
@@ -257,51 +201,6 @@ func TestDeleteTeam(t *testing.T) {
 	}
 	if parts[1] != controllerDID {
 		t.Fatalf("authorization DID=%s want controller DID=%s", parts[1], controllerDID)
-	}
-}
-
-func TestDeleteTeamSignsTeamNameInPayload(t *testing.T) {
-	t.Parallel()
-
-	controllerPub, controllerKey, err := GenerateKeypair()
-	if err != nil {
-		t.Fatal(err)
-	}
-	controllerDID := ComputeDIDKey(controllerPub)
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := strings.TrimSpace(r.Header.Get("Authorization"))
-		parts := strings.Split(auth, " ")
-		if len(parts) != 3 || parts[0] != "DIDKey" {
-			t.Fatalf("unexpected Authorization header %q", auth)
-		}
-		if parts[1] != controllerDID {
-			t.Fatalf("authorization DID=%s want controller DID=%s", parts[1], controllerDID)
-		}
-		timestamp := strings.TrimSpace(r.Header.Get("X-AWEB-Timestamp"))
-		payload := canonicalRegistryJSON(map[string]string{
-			"domain":    "acme.com",
-			"operation": "delete_team",
-			"team_name": "backend",
-			"timestamp": timestamp,
-		})
-		sig, err := base64.RawStdEncoding.DecodeString(parts[2])
-		if err != nil {
-			t.Fatalf("decode signature: %v", err)
-		}
-		if !ed25519.Verify(controllerPub, []byte(payload), sig) {
-			t.Fatalf("invalid controller signature for payload %s", payload)
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	client := NewAWIDRegistryClient(nil, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := client.DeleteTeam(ctx, server.URL, "acme.com", "backend", controllerKey, ""); err != nil {
-		t.Fatal(err)
 	}
 }
 

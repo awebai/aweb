@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- AWID controller mutations from the Python SDK and aw use covering signatures
+  bound to the exact body, target and configured/discovered registry origin,
+  with no downgrade after refusal. Self-hosted registries must run AWID 0.5.29
+  or later and configure `AWID_PUBLIC_ORIGINS` before clients upgrade. New
+  certificate registrations require the signed blob on the client as well.
+- The Python SDK publishes a typed controller request parser/rebuilder and an
+  external signing callback; Go exports the covering signer and JSON mutation
+  method for record publication. Legacy server acceptance remains measured
+  until the operator's separate cutoff.
+
 ## Release preparations
 
 ### Release preparation: server 1.27.30

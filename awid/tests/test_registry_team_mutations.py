@@ -30,6 +30,7 @@ async def _team(service_client, controller_identity):
 
 
 def _registry(service_client, *, cached=False, transport=None, **kwargs):
+    service_client._transport.app.state.awid_public_origins = ("http://testserver",)
     options = {
         "registry_url": "http://testserver",
         "transport": transport or service_client._transport,

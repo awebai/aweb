@@ -75,3 +75,47 @@ The published aw 1.36.43 always sends the blob. Cloud's production registration
 wrapper also supplies a minted or validated persisted blob on every call;
 its paired change refuses an empty blob before calling the registry. Historical
 test evidence is seeded as old data, rather than creating a new unsigned record.
+
+## Client APIs and external signing
+
+The Python `awid.registry.RegistryClient` and Go `awid.RegistryClient` sign
+controller mutations after JSON serialization, over the exact transmitted body.
+The audience is the canonical origin of the configured or discovered registry
+URL. Mutation redirects are errors; neither client follows them or downgrades
+to legacy authentication after refusal. Self-hosted registries must run AWID
+**0.5.29 or later**, with their public origins configured, before clients upgrade.
+Certificate registration refuses a missing team-signed blob before sending.
+
+Python exposes `delete_team` and `delete_namespace` for lifecycle cleanup, plus
+`controller_request(method, path, claims=..., body=..., registry_url=...)` for
+controller operations such as rotation and signed-record publication. It accepts
+either `signing_key` or the pair `controller_did_key` and async `signer`.
+Parent authorization uses `parent_claims`, `parent_controller_did_key` and
+`parent_signer`, separately from the child's operation.
+
+`awid.controller_signing.ControllerSigningRequest` is frozen and contains
+`controller_did_key`, `operation`, and `canonical_payload`. The SDK serializes
+first, invokes the signer, verifies its returned base64 Ed25519 signature against
+the named key, and sends only after verification. Callbacks may perform network
+I/O; invoke them outside database transactions. Payloads and keys are not logs.
+
+A signing service must use the public pure `parse_controller_request(bytes)`
+and `build_controller_payload(ControllerRequest)` functions. The frozen typed
+request contains `v`, `type`, `operation`, `aud`, `method`, `path`, `body_sha256`,
+`timestamp`, and immutable `route_claims`. The parser refuses unknown or missing
+fields, a different protocol/version, and noncanonical bytes. The signing service
+checks its allowed audiences, the key's operation policy, namespace/team binding,
+and timestamp freshness, then rebuilds and signs SDK-derived bytes. When supplied
+bytes, it requires the rebuilt bytes to equal them. The outer signing operation
+must equal the parsed operation. It never signs arbitrary caller bytes. Log only
+operation, domain and outcome, never payloads or key material.
+
+Go exports `SignAWIDControllerRequest(key, method, requestURL, body, claims,
+timestamp)` for exact serialized bytes and `RegistryClient.ControllerRequest`
+for sending JSON mutations. `ParentControllerHeaders` maps an independently
+signed parent proof to its distinct headers. Existing signed record, atomic
+claim and DID-log protocols keep their own canonical bytes.
+
+Legacy acceptance is retained and measured. Publishing these clients does not
+itself retire the old envelope: Juan sets that cutoff from per-operation usage,
+and removal is a separate server change.
