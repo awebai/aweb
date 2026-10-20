@@ -12,6 +12,7 @@ import hashlib
 
 import asyncpg
 import pytest
+import pytest_asyncio
 from pgdbm.errors import QueryError
 
 from aweb.app_registry import install_app
@@ -77,7 +78,7 @@ async def _make_active(db, binding_id) -> None:
     )
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def db(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
     await _seed_team_and_agent(db, team_id=TEAM)
@@ -229,6 +230,7 @@ async def test_a_malformed_declaration_is_refused_and_nothing_is_written(db, dec
         ("registration", "state = 'active', activated_at = NOW(), active_from = NOW(), activation_act_sha256 = '"
          + "ab" * 32 + "'"),
         ("registration", "activation_act_sha256 = 'not-hex'"),
+        ("registration", "state = 'active', activated_at = NOW(), activation_act_sha256 = '" + "ab" * 32 + "'"),
         ("registration", "ended_by = 'uninstall'"),
     ],
 )
