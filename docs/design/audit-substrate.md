@@ -704,6 +704,11 @@ Per team and chain epoch, under a row lock on the team's chain head:
   did_key, previous_checkpoint_sha256}`. It is issued periodically while
   events arrive and on demand, and the owner can export it. External anchoring
   is future work (logs-spec §8).
+- **Logs' key purposes.** Logs signs receipts and checkpoints with its own
+  key, declared in its v2 manifest's `app_keys` with the purposes
+  `logs-receipt`, `logs-checkpoint` or both (one kid may carry both). Only
+  logs and the verifiers of its artefacts consume them. The bytes are
+  specified in [the logs chain](../logs-chain.md).
 - **`verify`** recomputes the chain over a range or from a checkpoint. It
   re-checks retained provenance signatures and commitments, and reports
   `intact`, `broken_at`, `missing` (gaps), purged ranges with their governing
