@@ -79,8 +79,8 @@ A field never accepts the other spelling.
 | Field | Rule |
 | --- | --- |
 | `v`, `type` | Exactly `1` and `"aweb.app-task-authorization"`. |
-| `aud` | The task service's public origin, as a canonical origin (scheme, host, optional port). |
-| `app_origin` | The installed app's origin, canonical. |
+| `aud` | The task service's public origin, in canonical origin form: `require_canonical_server_origin` (`awid/src/awid/log.py`) returns it unchanged. |
+| `app_origin` | The installed app's origin, in the same canonical form. |
 | `team_id`, `app_id` | The team and the installed app. |
 | `installation_id`, `installation_generation` | The installation and its generation at signing (F6). The generation is a safe positive integer. |
 | `external_request_id` | `^[A-Za-z0-9._-]{1,128}$`, chosen by the app, unique per originating member within the installation. |
@@ -180,7 +180,7 @@ current generation.
 
 | Field | Rule |
 | --- | --- |
-| `title` | 1–200 runes, no control or bidi control characters. |
+| `title` | 1–200 runes, with no control character (Unicode `Cc`) and no bidi control: U+061C, U+200E, U+200F, U+202A–U+202E, U+2066–U+2069 (the set manifest role labels refuse). |
 | `description` | `null`, or 1–2,000 runes with the same character rule. |
 | `assignee_did` | The target's principal DID: the `member_did_aw` of the target member's current certificate when it carries one, otherwise its `member_did_key`. |
 | `app_request.external_request_id` | Equals the authorization's. |
@@ -205,9 +205,10 @@ Each step fails closed. Nothing is written before step 8.
    the existing app credential messages.
 2. **Body.** Strict JSON: duplicate keys, floats, non-finite numbers and
    unknown fields are refused. Failure: 422 `schema_invalid`.
-3. **Authorization shape and signature.** Decode, re-canonicalize and compare
-   the payload; check every field rule in §1; verify the signature with
-   `actor_did_key` over the signing bytes. Failure: 401 `signature_invalid`.
+3. **Authorization shape and signature.** Check every field rule in §1 on the
+   parsed payload, canonicalize it, and verify the signature with
+   `actor_did_key` over the signing bytes. The signature is the one accepted
+   base64url encoding of 64 bytes. Failure: 401 `signature_invalid`.
 4. **Certificate.** The certificate verifies against AWID team authority, is
    not revoked, and its `team_id`, `certificate_id` and `member_did_key` equal
    the payload's `team_id`, `certificate_id` and `actor_did_key`. Revoked:

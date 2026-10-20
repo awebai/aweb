@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "description": "proposal_sha256 (docs/page-actions.md §4): sha256: plus the hex SHA-256 of aweb.page-proposal/1\\n followed by the canonical JSON of {collection, record_id, value}. The record revision is not hashed. `bundle` checks that item digests feed the C1 bundle digest (docs/page-format.md §5). Refusals are parsed values without one canonical form; duplicate keys and non-finite numbers are refused earlier, when the page is parsed (page-format limits).",
+  "prefix": "aweb.page-proposal/1\n",
+  "cases": [
+    {
+      "name": "price",
+      "collection": "proposals",
+      "record_id": "week-43",
+      "value": {
+        "currency": "EUR",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates."
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"proposals\",\"record_id\":\"week-43\",\"value\":{\"currency\":\"EUR\",\"end\":\"2026-10-30\",\"price_per_night_minor\":12000,\"reason\":\"Test proposal for available dates.\",\"start\":\"2026-10-24\"}}",
+      "proposal_sha256": "sha256:a3c9bcfee6e212f57ed39e9eb411cc3cc3583a0ce8acc371325bddaab45afdb8"
+    },
+    {
+      "name": "guest-reply",
+      "collection": "drafts",
+      "record_id": "draft-1",
+      "value": {
+        "channel": "booking",
+        "recipient": "guest-7",
+        "message": "Good morning! We will confirm availability after review."
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"drafts\",\"record_id\":\"draft-1\",\"value\":{\"channel\":\"booking\",\"message\":\"Good morning! We will confirm availability after review.\",\"recipient\":\"guest-7\"}}",
+      "proposal_sha256": "sha256:5bf24c22b5726f0089a9b407feeda1022f3632cbc2ebc8b0621ee6334a208266"
+    },
+    {
+      "name": "non-ascii-and-escapes",
+      "collection": "drafts",
+      "record_id": "draft-é",
+      "value": {
+        "message": "Café «terrace» — \"quoted\" \\ back\nslash",
+        "emoji": "🙂"
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"drafts\",\"record_id\":\"draft-é\",\"value\":{\"emoji\":\"🙂\",\"message\":\"Café «terrace» — \\\"quoted\\\" \\\\ back\\nslash\"}}",
+      "proposal_sha256": "sha256:2d177be8a3efdb3a8baa8f797019b45aacfb4e49342617854de7236c6a5387c8"
+    },
+    {
+      "name": "nested-and-key-order",
+      "collection": "proposals",
+      "record_id": "week-44",
+      "value": {
+        "z": [
+          3,
+          {
+            "b": 2,
+            "a": 1
+          }
+        ],
+        "a": {
+          "y": null,
+          "x": true
+        }
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"proposals\",\"record_id\":\"week-44\",\"value\":{\"a\":{\"x\":true,\"y\":null},\"z\":[3,{\"a\":1,\"b\":2}]}}",
+      "proposal_sha256": "sha256:7f097d08f5656238c42adcfd72bd3274ceddc4abd35ff063c098eccba95b3c5e"
+    },
+    {
+      "name": "boundary-integers",
+      "collection": "proposals",
+      "record_id": "edge",
+      "value": {
+        "max": 9007199254740991,
+        "min": -9007199254740991,
+        "zero": 0
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"proposals\",\"record_id\":\"edge\",\"value\":{\"max\":9007199254740991,\"min\":-9007199254740991,\"zero\":0}}",
+      "proposal_sha256": "sha256:39697dc3d77a36800c4bb21b446cff82a98463f0120e06e6866bbbc179aa8f29"
+    },
+    {
+      "name": "same-value-other-record",
+      "collection": "proposals",
+      "record_id": "week-45",
+      "value": {
+        "currency": "EUR",
+        "start": "2026-10-24",
+        "end": "2026-10-30",
+        "price_per_night_minor": 12000,
+        "reason": "Test proposal for available dates."
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"proposals\",\"record_id\":\"week-45\",\"value\":{\"currency\":\"EUR\",\"end\":\"2026-10-30\",\"price_per_night_minor\":12000,\"reason\":\"Test proposal for available dates.\",\"start\":\"2026-10-24\"}}",
+      "proposal_sha256": "sha256:98d5207e55b5dc43461ecac0d329b6d4957dc6e899d305ed21b609ac71125b4e"
+    }
+  ],
+  "bundle": {
+    "items": [
+      {
+        "record_id": "week-43",
+        "record_rev": 2,
+        "proposal_sha256": "sha256:a3c9bcfee6e212f57ed39e9eb411cc3cc3583a0ce8acc371325bddaab45afdb8"
+      },
+      {
+        "record_id": "draft-1",
+        "record_rev": 2,
+        "proposal_sha256": "sha256:5bf24c22b5726f0089a9b407feeda1022f3632cbc2ebc8b0621ee6334a208266"
+      }
+    ],
+    "sha256": "sha256:40ce8fa7f2c0559204df22d166dd6d134874468776a46076a0e69d92f552dc06"
+  },
+  "refusals": [
+    {
+      "name": "float",
+      "value_json": "{\"price\":120.5}"
+    },
+    {
+      "name": "integer-beyond-safe",
+      "value_json": "{\"price\":9007199254740992}"
+    }
+  ]
+}

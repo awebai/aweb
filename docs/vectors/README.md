@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 28
+`docs/vectors/*.json` is the only public protocol-vector authority for the 33
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -211,6 +211,46 @@ renderer, which this file names but does not test. `bundle_hash` pins the
 bundle decision-card digest across languages. The reference consumer is
 `aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
 [the page format](../page-format.md).
+
+### `app-task-authorization-v1.json`
+
+The member-signed `aweb.app-task-authorization/1` (aweb-acgg.8): task body
+digests, domain-prefixed signing bytes and base64url signatures under fixed
+test keys, verification cases at a pinned clock with the bindings each is
+checked against and its expected refusal code, strict-JSON refusals, and task
+body bounds. The reference consumer is `aweb_naapp.runtime.task_requests` in
+`naapp-lib/tests/runtime/`. See [app task requests](../app-task-requests.md).
+
+### `app-request-credential-v1.json`
+
+The `app-request` purpose of the app credential family (aweb-acgg.8): one
+request's signed payload, canonical bytes, signature and headers, plus
+request-level refusals for the task service's verifier. The reference consumer
+is `aweb_naapp.runtime.task_requests`. See
+[app task requests](../app-task-requests.md) §2.
+
+### `task-answer-v1.json`
+
+Conditional task answers (aweb-acgg.8): answer text digests, and one task's
+ordered answer, replay, reopen and conflict steps with the expected result of
+each. The answer digests are checked by `aweb_naapp.runtime.task_requests`; the
+sequence is for the task service. See
+[app task requests](../app-task-requests.md) §4.
+
+### `page-proposal-v1.json`
+
+`proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
+digests over a record's collection, id and value, a bundle built from item
+digests, and value refusals. The reference consumer is `aweb_naapp.pages` in
+`naapp-lib/tests/pages/`. See [page actions](../page-actions.md) §4.
+
+### `approval-request-v1.json`
+
+The approval primitive's `request_sha256` and challenge binding
+(aweb-acgg.8, aweb-acgh.4): the covered canonical bytes with the policy
+wrapper, digests for page decisions and a generic request, challenge bindings
+with and without a task answer, and refusals. Its consumer is the approval
+primitive in `aweb_naapp`. See [page actions](../page-actions.md) §6.
 
 ### `agent-status-v1.json`
 
