@@ -122,6 +122,7 @@ async def test_grant_read_returns_the_installed_grant_of_the_credentials_team_an
         "granted_scopes": ["folio:read"],
         "installation_id": None,
         "generation": None,
+        "origin_verified": None,
         "max_age_seconds": 60,
     }
 

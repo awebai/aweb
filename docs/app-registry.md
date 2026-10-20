@@ -203,6 +203,7 @@ Response:
   "granted_scopes": ["folio:read", "folio:write"],
   "installation_id": null,
   "generation": null,
+  "origin_verified": null,
   "as_of": "2026-10-20T12:00:00Z",
   "max_age_seconds": 60
 }
@@ -211,8 +212,10 @@ Response:
 - The team and the app come from the verified credential, never from the
   query, so an app reads only its own grant in the team that signed for.
 - `state` is `active`. Any other state grants no normal use.
-- `installation_id` and `generation` are always present and `null` until
-  installations carry them. A consumer that binds them refuses `null`.
+- `installation_id`, `generation` and `origin_verified` are always present and
+  `null` until installations carry them. A consumer that binds them refuses
+  `null`. `origin_verified` says whether the server verified the pinned bytes
+  against the app's origin; bytes being present is not that.
 - `as_of` is the server's time of the answer, in UTC seconds.
 - `max_age_seconds` is how long the app may reuse the answer, counted from
   when it received it. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
