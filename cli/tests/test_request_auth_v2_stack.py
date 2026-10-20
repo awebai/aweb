@@ -86,6 +86,7 @@ async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cl
     (home / cert_path).write_text(json.dumps(cert))
     membership = dict(team_id=TEAM, alias="alice", cert_path=cert_path)
     monkeypatch.setenv("AWEB_DATABASE_URL", env.db.config.get_dsn())
+    monkeypatch.setenv("AWEB_DISCOVERY_ORIGIN", str(env.client.base_url).rstrip("/"))
     (home / "teams.yaml").write_text(json.dumps(dict(active_team=TEAM, memberships=[membership])))
     (home / "workspace.yaml").write_text(json.dumps(dict(aweb_url=str(env.client.base_url), memberships=[membership])))
     (home / "signing.key").write_text("-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(actor.sk).decode() + "\n-----END ED25519 PRIVATE KEY-----\n")
