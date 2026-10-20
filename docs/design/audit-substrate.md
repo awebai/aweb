@@ -244,7 +244,10 @@ no change to existing migrations. **Dependency:** at A the install record keys
 only `(team_id, app_id)`
 (`server/src/aweb/migrations/aweb/008_app_registry_grants.sql:42`–`:60`). The
 `installation_id` and generation come from D1's F6, and activation refuses
-until F6 adds them.
+until F6 adds them. Logs trusts a production's keys to accept events, so
+owner activation of a **production** also refuses until the server derives
+its registered keys from manifest bytes that hash to the pinned digest. That
+is acgh.7's key-registration fix, which needs F6 first.
 
 **Binding state.** Install or update creates each declared binding as `pending`.
 An owner act moves it to `active`. Revocation, uninstall or a new generation
@@ -360,10 +363,11 @@ and has sent them to the acgh.7 seat:
 5. **The core producer's key** must be discoverable from the team-server
    origin, with retired keys still listed with their validity windows so that
    old events verify. The key is operator configuration, never a team,
-   controller or agent key. **Trust anchor:** a consumer pins the core server
-   origin it was installed from and resolves bindings against. It never takes
-   an origin discovered per event, so a spoofed discovery result cannot make
-   forged "core" events verify.
+   controller or agent key. **Trust anchor:** one anchor for every consumer,
+   the team's server origin from acgh.7's team-key-signed discovery record.
+   A consumer resolves it through that chain and caches it per team. It never
+   takes an origin from an event or from unsigned discovery, so forged "core"
+   events cannot verify.
 6. **Generic only:** no app names, and no catalog semantics beyond matching
    `(catalog id, version, hook)`.
 
