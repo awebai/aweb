@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, did_key
 from awid.dns_verify import DnsVerificationError
 from awid.signing import sign_message
 from awid.team_server_record import record_signing_bytes
@@ -13,8 +14,6 @@ from nacl.signing import SigningKey
 
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
 from aweb_naapp.runtime.team_server import TeamServerDirectory, TeamServerUnavailable
-
-from .conftest import REGISTRY_URL, SERVICE_TOKEN, did_key
 
 TEAM_ID = "ops:discovery.example"
 SERVER_URL = "https://coord.discovery.example/api"

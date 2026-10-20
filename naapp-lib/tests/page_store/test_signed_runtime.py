@@ -5,6 +5,7 @@ import time
 from typing import Annotated
 
 import httpx
+from aweb_naapp_testing import REGISTRY_URL, Member
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -13,7 +14,6 @@ from aweb_naapp.runtime.app import NaappRuntime
 from aweb_naapp.runtime.authorization import Authorization, DeclaredTools, Grant
 from aweb_naapp.runtime.settings import NaappSettings
 from tests.page_store.test_store import POLICY, page
-from tests.runtime.conftest import REGISTRY_URL, Member
 
 ORIGIN = "https://fixture.example"
 TOOLS = DeclaredTools.from_manifest(
