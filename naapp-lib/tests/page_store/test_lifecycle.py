@@ -142,47 +142,12 @@ async def test_delete_is_durable_revokes_access_and_does_not_claim_unowned_cover
 
 async def test_backup_restore_cannot_resurrect_deleted_page_or_prior_receipt(store, tmp_path):
     await create(store)
-    backup = tmp_path / "before-delete.dump"
-    config = store.db.config
-    database = await store.db.fetch_value("SELECT current_database()")
-    assert database.startswith("test_")
-    env = {
-        **os.environ,
-        "PGHOST": config.host,
-        "PGPORT": str(config.port),
-        "PGUSER": config.user,
-        "PGPASSWORD": config.password,
-        "PGDATABASE": database,
-    }
-    await asyncio.to_thread(
-        subprocess.run,
-        ["pg_dump", "--format=custom", "--no-owner", "--no-acl", "--file", str(backup)],
-        env=env,
-        check=True,
-        capture_output=True,
-    )
+    backup, env, database = await content_dump(store, tmp_path)
     store.lifecycle = EmptyAppHooks()
     await store.request_delete(SCOPE, OWNER, expected_rev=1, key="delete")
     await store.advance_delete(SCOPE)
     # Actual SQL restore into the content DB, keeping the separate ledger live.
-    await store.db.disconnect()
-    await asyncio.to_thread(
-        subprocess.run,
-        [
-            "pg_restore",
-            "--clean",
-            "--if-exists",
-            "--no-owner",
-            "--no-acl",
-            "--dbname",
-            database,
-            str(backup),
-        ],
-        env=env,
-        check=True,
-        capture_output=True,
-    )
-    await store.db.connect()
+    await restore_dump(store, backup, env, database)
     assert await store.db.fetch_value("SELECT count(*) FROM {{tables.page_records}}") == 1
     fresh_process = PageStore(store.db, ledger=store.ledger, retention=POLICY)
     with pytest.raises(StoreError, match="restore_not_ready"):
@@ -275,3 +240,161 @@ async def test_startup_reapplies_erasure_after_key_expiry(store):
     await store.start()
     with pytest.raises(StoreError, match="resource_not_found"):
         await store.read(SCOPE, OWNER)
+
+
+async def content_dump(store, tmp_path):
+    backup = tmp_path / "before-delete.dump"
+    config = store.db.config
+    database = await store.db.fetch_value("SELECT current_database()")
+    assert database.startswith("test_")
+    env = {
+        **os.environ,
+        "PGHOST": config.host,
+        "PGPORT": str(config.port),
+        "PGUSER": config.user,
+        "PGPASSWORD": config.password,
+        "PGDATABASE": database,
+    }
+    await asyncio.to_thread(
+        subprocess.run,
+        ["pg_dump", "--format=custom", "--no-owner", "--no-acl", "--file", str(backup)],
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    return backup, env, database
+
+
+async def restore_dump(store, backup, env, database):
+    await store.db.disconnect()
+    await asyncio.to_thread(
+        subprocess.run,
+        [
+            "pg_restore",
+            "--clean",
+            "--if-exists",
+            "--no-owner",
+            "--no-acl",
+            "--dbname",
+            database,
+            str(backup),
+        ],
+        env=env,
+        check=True,
+        capture_output=True,
+    )
+    await store.db.connect()
+
+
+async def test_live_page_restore_refuses_a_key_accepted_after_the_backup(store, tmp_path):
+    await create(store)
+    backup, env, database = await content_dump(store, tmp_path)
+    first = await store.mutate(
+        SCOPE, OWNER, expected_rev=1, key="accepted-after-backup", records=[record_change()]
+    )
+    await restore_dump(store, backup, env, database)
+    restored = PageStore(store.db, ledger=store.ledger, retention=POLICY)
+    await restored.start()
+    with pytest.raises(StoreError, match="request_lost_in_restore") as refused:
+        await restored.mutate(
+            SCOPE, OWNER, expected_rev=1, key="accepted-after-backup", records=[record_change()]
+        )
+    assert refused.value.status == 409
+    assert (await restored.read(SCOPE, OWNER))["rev"] == 1
+    assert (
+        await store.db.fetch_value(
+            "SELECT count(*) FROM {{tables.page_receipts}} WHERE transaction_id=$1::uuid",
+            first["transaction_id"],
+        )
+        == 0
+    )
+
+
+async def test_restore_preserves_a_key_whose_transaction_is_in_the_backup(store, tmp_path):
+    await create(store)
+    first = await store.mutate(
+        SCOPE, OWNER, expected_rev=1, key="before-backup", records=[record_change()]
+    )
+    backup, env, database = await content_dump(store, tmp_path)
+    await restore_dump(store, backup, env, database)
+    restored = PageStore(store.db, ledger=store.ledger, retention=POLICY)
+    await restored.start()
+    assert (
+        await restored.mutate(
+            SCOPE, OWNER, expected_rev=1, key="before-backup", records=[record_change()]
+        )
+        == first
+    )
+
+
+async def test_field_restricted_export_redacts_private_schema_annotations(store):
+    from tests.page_store.test_store import page
+
+    doc = page()
+    schema = doc["collections"][0]["schema"]
+    schema["properties"]["private"] = {"type": "string", "maxLength": 100}
+    schema["default"] = {"private": "PRIVATE-SCHEMA-SENTINEL"}
+    schema["examples"] = [{"private": "PRIVATE-SCHEMA-SENTINEL"}]
+    await create(store, doc, fields={READER.did_key: {"items": {"label", "checked"}}})
+
+    async def allow_export(scope, principal, operation):
+        return principal.did_key == READER.did_key and operation == "export"
+
+    store.lifecycle_authorizer = allow_export
+    assert "PRIVATE-SCHEMA-SENTINEL" not in json.dumps(await store.read(SCOPE, READER))
+    archive = await store.export_page(SCOPE, READER)
+    assert "PRIVATE-SCHEMA-SENTINEL" not in json.dumps(archive)
+    for definition in archive["content"]["schemas"]:
+        assert "private" not in definition["schema"]["properties"]
+        assert "default" not in definition["schema"] and "examples" not in definition["schema"]
+
+
+async def test_claim_survives_worker_rollback_and_same_generation_retry_executes_once(store):
+    await create(store)
+    state = {"items": {"busy": True}}
+    with pytest.raises(RuntimeError, match="simulated worker crash"):
+        async with store.db.transaction() as tx:
+            await store._load(tx, SCOPE, OWNER, "write")
+            transaction, receipt = await store._claim(
+                tx,
+                SCOPE,
+                OWNER,
+                "crash-before-commit",
+                {
+                    "op": "mutate",
+                    "expected_rev": 1,
+                    "records": [],
+                    "state": state,
+                },
+            )
+            assert receipt is None
+            raise RuntimeError("simulated worker crash")
+    assert (await store.read(SCOPE, OWNER))["rev"] == 1
+    result = await store.mutate(
+        SCOPE, OWNER, expected_rev=1, key="crash-before-commit", state=state
+    )
+    assert result["transaction_id"] == str(transaction)
+    assert (
+        await store.mutate(SCOPE, OWNER, expected_rev=1, key="crash-before-commit", state=state)
+        == result
+    )
+    assert (await store.read(SCOPE, OWNER))["rev"] == 2
+
+
+async def test_concurrent_retries_of_one_key_commit_exactly_once(store):
+    await create(store)
+    results = await asyncio.gather(
+        *[
+            store.mutate(
+                SCOPE,
+                OWNER,
+                expected_rev=1,
+                key="concurrent-retry",
+                state={"items": {"message": "Once"}},
+            )
+            for _ in range(5)
+        ]
+    )
+    assert all(result == results[0] for result in results)
+    assert (await store.read(SCOPE, OWNER))["rev"] == 2
+    assert await store.db.fetch_value("SELECT count(*) FROM {{tables.page_audit}}") == 2

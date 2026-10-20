@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -97,6 +98,19 @@ class Access:
         if principal == self.owner:
             return declared
         return declared & self.fields.get(principal, {}).get(collection["id"], declared)
+
+    def redact_schema(self, principal: str, collection: dict) -> dict:
+        schema = copy.deepcopy(collection["schema"])
+        allowed = self.visible_fields(principal, collection)
+        schema["properties"] = {
+            k: v for k, v in schema.get("properties", {}).items() if k in allowed
+        }
+        if "required" in schema:
+            schema["required"] = [field for field in schema["required"] if field in allowed]
+        if not self.all_value_fields(principal, collection):
+            schema.pop("default", None)
+            schema.pop("examples", None)
+        return schema
 
     def value_fields(self, principal: str, collection: dict, values) -> set[str]:
         if principal == self.owner or collection["id"] not in self.fields.get(principal, {}):

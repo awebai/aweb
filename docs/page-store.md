@@ -11,7 +11,10 @@ on every call, including reads and receipt retries.
 Create separate pgdbm database managers for content and the deletion ledger.
 Run `apply_page_store_migrations(content, ledger)`, construct the store, then
 `await store.start()` **before admitting traffic**. Startup reapplies live ledger
-tombstones to restored content. Reads and writes independently check the ledger,
+tombstones to restored content and assigns a fresh UUID `restore_generation`.
+Generation changes on every startup because a restore cannot otherwise be
+identified reliably. Startup waits for in-flight content transactions before
+advancing generation. Reads and writes independently check the ledger,
 so an unavailable ledger cannot authorize access. The ledger must have independent
 backup/recovery: never replace it with a content backup. All instances serving a
 restored database must restart through this fence before serving page or asset
@@ -58,13 +61,26 @@ verifies the source adapter. Schema migration validates every retained row,
 including rows past the first snapshot. Deleted record IDs remain tombstones.
 There is no generic patch path to policy, provenance, revisions or schemas.
 
-The transaction writes data, audit, receipt and the shared outbox together.
+The content transaction writes data, audit, receipt and the shared outbox
+together. The independent request claim commits first; a failed content
+transaction leaves a recoverable claim rather than an invented success receipt.
 Events contain only installation/app/page IDs, revision and deletion state.
 The existing outbox drain owns delivery and retries; applications do not emit
 before commit or copy the outbox primitive. Idempotency uses the shared store;
 matching retries return the first receipt after current access is checked,
 different bytes conflict, and expired keys never execute again. Live keys last
 for the resource lifetime; deletion starts their configured retry horizon.
+Request keys, canonical request hashes and transaction references are claimed
+through the shared idempotency primitive in the independent ledger before any
+content write. The claim records its content generation. A matching retry returns
+the first receipt only when that transaction exists in current content. A claim
+without a content receipt in the current generation can retry using the same
+transaction ID: the failed attempt never committed. A claim without its receipt
+from an older generation refuses with **409 `request_lost_in_restore`**, including
+an uncertain pre-commit attempt across a restart. The caller re-reads and decides;
+the old key never silently performs another mutation. A changed request under
+the same key remains **409 `idempotency_conflict`**. Both ordinary and deletion
+request keys survive content restore.
 
 The renderer seam is `read(scope, principal)` for a validated bootstrap (empty bound collection records; exact decision/bundle
 records retained as required by C1), and
@@ -115,5 +131,7 @@ to erase another application's records. Deletion overrides routine audit-content
 retention, retaining minimal non-content receipts and tombstones.
 
 F2 CI and F3 certificate pagination remain production-enablement prerequisites.
-The page-store tests use real PostgreSQL and a real `pg_dump` / `pg_restore`
-round trip while preserving the separate live ledger.
+The page-store tests use real PostgreSQL and real `pg_dump` / `pg_restore`
+round trips while preserving the separate live ledger. They cover both lost
+live-page mutations and surviving receipts, same-generation claim rollback,
+concurrent retries, deletion recovery and restricted schema-history exports.

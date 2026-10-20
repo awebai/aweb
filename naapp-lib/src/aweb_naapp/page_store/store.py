@@ -42,6 +42,7 @@ async def apply_page_store_migrations(
     if content_id == ledger_id:
         raise ValueError("the deletion ledger must use a separate database")
     await apply_idempotency_migrations(db)
+    await apply_idempotency_migrations(ledger)
     await apply_outbox_migrations(db)
     for manager, directory, module in (
         (db, "migrations", "aweb_naapp_pages"),
@@ -70,6 +71,10 @@ class PageStore(LifecycleMixin):
     async def start(self) -> None:
         """Reapply erasure fences before serving a restored content database."""
         self._ready = False
+        await self.db.execute(
+            "INSERT INTO {{tables.page_store_generation}} VALUES(TRUE,$1) ON CONFLICT(singleton) DO UPDATE SET generation=$1",
+            uuid4(),
+        )
         for row in await self.ledger.fetch_all(
             "SELECT scope, tombstone_rev FROM {{tables.page_deletions}}"
         ):
@@ -114,34 +119,73 @@ class PageStore(LifecycleMixin):
     async def _claim(self, tx, scope, principal, key, request, *, retention=None):
         if not isinstance(key, str) or not key or len(key) > 256:
             raise StoreError("precondition_required", 428)
+        request_key = [scope.installation_id, scope.team_id, identity(principal, scope), key]
+        request_hash = hashlib.sha256(canonical({"scope": scope.key, **request}).encode()).digest()
+        horizon = timedelta(days=(retention or self._policy()).retry_horizon_days)
+        # Serialize this key until the content transaction commits. The metadata
+        # lock also makes startup wait for in-flight transactions before advancing
+        # generation, rather than misclassifying a committing request as lost.
+        await tx.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1,1))", canonical(request_key)
+        )
+        generation = await tx.fetch_value(
+            "SELECT generation FROM {{tables.page_store_generation}} WHERE singleton FOR SHARE"
+        )
+        if generation is None:
+            raise StoreError("restore_not_ready", 503)
         try:
-            result = await claim(
-                tx,
-                key=[scope.installation_id, scope.team_id, identity(principal, scope), key],
-                request_hash=hashlib.sha256(
-                    canonical({"scope": scope.key, **request}).encode()
-                ).digest(),
-                receipt_ref=str(uuid4()),
-                retention=timedelta(days=(retention or self._policy()).retry_horizon_days),
+            async with self.ledger.transaction() as ledger_tx:
+                external = await claim(
+                    ledger_tx,
+                    key=request_key,
+                    request_hash=request_hash,
+                    receipt_ref=str(uuid4()),
+                    retention=horizon,
+                )
+                if external.created:
+                    await ledger_tx.execute(
+                        "INSERT INTO {{tables.page_request_claims}} VALUES($1,$2,$3)",
+                        request_key,
+                        scope.key,
+                        generation,
+                    )
+                    await ledger_tx.execute(
+                        "UPDATE {{tables.idempotency_keys}} SET expires_at='infinity' WHERE key=$1",
+                        request_key,
+                    )
+                claim_generation = await ledger_tx.fetch_value(
+                    "SELECT content_generation FROM {{tables.page_request_claims}} WHERE key=$1",
+                    request_key,
+                )
+            transaction = UUID(external.receipt_ref)
+            receipt = await tx.fetch_value(
+                "SELECT receipt FROM {{tables.page_receipts}} WHERE transaction_id=$1 AND scope=$2",
+                transaction,
+                scope.key,
             )
+            if receipt is not None:
+                return transaction, decoded(receipt)
+            if claim_generation != generation:
+                raise StoreError("request_lost_in_restore", 409)
+            # Same-generation claims without a receipt never committed. Reuse
+            # their original transaction ID, including after a worker rollback.
+            local = await claim(
+                tx,
+                key=request_key,
+                request_hash=request_hash,
+                receipt_ref=str(transaction),
+                retention=horizon,
+            )
+            if local.receipt_ref != str(transaction):
+                raise StoreError("request_lost_in_restore", 409)
+            if local.created:
+                await tx.execute(
+                    "UPDATE {{tables.idempotency_keys}} SET expires_at='infinity' WHERE key=$1",
+                    request_key,
+                )
+            return transaction, None
         except (IdempotencyConflict, IdempotencyExpired) as error:
             raise StoreError(error.code, error.status) from error
-        if result.created:
-            # Live resource keys last for the resource lifetime. Deletion starts
-            # the retry horizon; the shared primitive still owns key tombstones.
-            await tx.execute(
-                "UPDATE {{tables.idempotency_keys}} SET expires_at='infinity' WHERE receipt_ref=$1",
-                result.receipt_ref,
-            )
-            return UUID(result.receipt_ref), None
-        receipt = await tx.fetch_value(
-            "SELECT receipt FROM {{tables.page_receipts}} WHERE transaction_id=$1 AND scope=$2",
-            UUID(result.receipt_ref),
-            scope.key,
-        )
-        if receipt is None:
-            raise RuntimeError("idempotency receipt missing")
-        return UUID(result.receipt_ref), decoded(receipt)
 
     async def _commit(
         self, tx, scope, principal, transaction, document, old_rev, changed, record_revs=None
@@ -666,7 +710,6 @@ class PageStore(LifecycleMixin):
                 widget.clear()
                 widget.update(id=wid, type="access_unavailable", fallback="Unavailable", props={})
         for collection in document["collections"]:
-            allowed = access.visible_fields(actor, collection)
             collection["records"] = [
                 {
                     **r,
@@ -679,15 +722,7 @@ class PageStore(LifecycleMixin):
                 for r in required[collection["id"]].values()
                 if access.visible_row(actor, collection["id"], r["id"])
             ]
-            schema = collection["schema"]
-            schema["properties"] = {
-                k: v for k, v in schema.get("properties", {}).items() if k in allowed
-            }
-            if "required" in schema:
-                schema["required"] = [f for f in schema["required"] if f in allowed]
-            if not access.all_value_fields(actor, collection):
-                schema.pop("default", None)
-                schema.pop("examples", None)
+            collection["schema"] = access.redact_schema(actor, collection)
         validated(document)
         return document
 
@@ -895,6 +930,12 @@ class PageStore(LifecycleMixin):
                 )
             await tx.execute(
                 "UPDATE {{tables.idempotency_keys}} SET expires_at=LEAST(expires_at,$2) WHERE receipt_ref IN (SELECT transaction_id::text FROM {{tables.page_receipts}} WHERE scope=$1)",
+                scope.key,
+                key_deadline,
+            )
+        if policy is not None:
+            await self.ledger.execute(
+                "UPDATE {{tables.idempotency_keys}} SET expires_at=LEAST(expires_at,$2) WHERE key IN (SELECT key FROM {{tables.page_request_claims}} WHERE scope=$1)",
                 scope.key,
                 key_deadline,
             )

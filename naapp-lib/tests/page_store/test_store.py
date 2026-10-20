@@ -334,7 +334,7 @@ async def test_more_than_one_snapshot_of_records_can_be_stored_and_schema_migrat
 
 async def test_expired_request_key_never_executes_again(store):
     await create(store)
-    await store.db.execute(
+    await store.ledger.execute(
         "UPDATE {{tables.idempotency_keys}} SET expires_at=NOW() - $1::interval", timedelta(days=1)
     )
     with pytest.raises(StoreError, match="idempotency_expired"):
@@ -425,3 +425,41 @@ async def test_bundle_bootstrap_carries_exact_records_and_private_decisions_are_
     card = next(w for w in restricted["layout"] if w["id"] == "batch-decision")
     assert card["type"] == "access_unavailable"
     assert all(c["records"] == [] for c in restricted["collections"])
+
+
+async def test_non_writer_cannot_mutate_display_state(store):
+    await create(store)
+    with pytest.raises(StoreError, match="resource_not_found"):
+        await store.mutate(
+            SCOPE, READER, expected_rev=1, key="reader-write", state={"items": {"busy": True}}
+        )
+    assert (await store.read(SCOPE, OWNER))["rev"] == 1
+
+
+async def test_visible_row_does_not_expose_hidden_field_in_widget_projection(store):
+    doc = page()
+    doc["collections"][0]["schema"]["properties"]["private"] = {"type": "string", "maxLength": 100}
+    doc["collections"][0]["records"][0]["value"]["private"] = "PRIVATE-VISIBLE-ROW-SENTINEL"
+    await create(store, doc, fields={READER.did_key: {"items": {"label", "checked"}}})
+    projection = await store.read_widget(
+        SCOPE, READER, widget_id="items", expected_page_rev=1, bind={"collection": "items"}
+    )
+    assert [r["id"] for r in projection["records"]] == ["item-1"]
+    assert projection["records"][0]["value"] == {
+        "label": "Verify fixture inventory",
+        "checked": False,
+    }
+    assert "PRIVATE-VISIBLE-ROW-SENTINEL" not in json.dumps(projection)
+
+
+async def test_stale_state_only_mutation_requires_page_revision_without_record_cas(store):
+    await create(store)
+    await store.mutate(
+        SCOPE, OWNER, expected_rev=1, key="first-state", state={"items": {"message": "First"}}
+    )
+    with pytest.raises(StoreError, match="revision_conflict"):
+        await store.mutate(
+            SCOPE, OWNER, expected_rev=1, key="stale-state", state={"items": {"message": "Stale"}}
+        )
+    snapshot = await store.read(SCOPE, OWNER)
+    assert snapshot["rev"] == 2 and snapshot["widget_state"]["items"]["message"] == "First"

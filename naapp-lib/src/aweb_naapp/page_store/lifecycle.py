@@ -110,16 +110,7 @@ class LifecycleMixin:
                 scope.key,
             ):
                 definition = decoded(row["definition"])
-                fields = access.visible_fields(actor, definition)
-                definition["schema"]["properties"] = {
-                    k: v
-                    for k, v in definition["schema"].get("properties", {}).items()
-                    if k in fields
-                }
-                if "required" in definition["schema"]:
-                    definition["schema"]["required"] = [
-                        f for f in definition["schema"]["required"] if f in fields
-                    ]
+                definition["schema"] = access.redact_schema(actor, definition)
                 schemas.append(definition)
             visible = {cid: {r["id"] for r in records} for cid, records in full_records.items()}
             audit = []
@@ -465,3 +456,4 @@ class LifecycleMixin:
         )
         await self.db.execute("DELETE FROM {{tables.page_cursors}} WHERE expires_at<=NOW()")
         await expire_keys(self.db)
+        await expire_keys(self.ledger)
