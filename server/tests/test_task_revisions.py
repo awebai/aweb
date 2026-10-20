@@ -19,8 +19,9 @@ async def test_upgrade_freezes_current_assignment_without_inventing_historical_i
     db = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
     await db.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
     migrations = Path(aweb.__file__).parent / "migrations" / "aweb"
+    revision_migration = next(migrations.glob("*_task_revisions.sql"))
     for source in migrations.glob("*.sql"):
-        if source.name < "029":
+        if source.name < revision_migration.name:
             shutil.copy2(source, tmp_path / source.name)
     await AsyncMigrationManager(db, migrations_path=str(tmp_path), module_name="aweb-aweb", migrations_table="schema_migrations").apply_pending_migrations()
     await _seed_team(db)

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import re
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from awid.team_ids import team_slug
 from ..claims import claim_focus_task_ref, resolve_task_claim_apex_on
@@ -16,22 +18,28 @@ logger = logging.getLogger(__name__)
 _UNSET = object()
 
 
-def answer_comment_projection(receipt_id: str) -> str:
-    """Team-visible answer projection: caller-independent and content-free."""
-    return f"Answer recorded: {receipt_id}"
+def answer_comment_projection(*, body_md: str, answer_sha256: str) -> str:
+    """Juan's C2 ruling: every task answer preserves its exact text."""
+    if (isinstance(body_md, str) and 1 <= len(body_md) <= 20000
+            and hashlib.sha256(body_md.encode("utf-8")).hexdigest() == answer_sha256):
+        return body_md
+    raise ValidationError("schema_invalid")
 
 
-def _answer_receipt(row, *, current_question_rev: int) -> dict[str, Any]:
+def _answer_receipt(row, *, current_question_rev: int, cancelled: bool = False) -> dict[str, Any]:
     return {
-        "receipt_id": str(row["receipt_id"]),
+        "task_answer_ref": str(row["receipt_id"]),
         "task_id": str(row["task_id"]),
         "task_rev": row["task_rev"],
         "question_rev": row["question_rev"],
         "answer_key": row["answer_key"],
         "answer_sha256": row["answer_sha256"],
+        "choice": row["choice"],
+        "proposal_rev": row["proposal_rev"],
+        "proposal_sha256": row["proposal_sha256"],
         "answered_by": {"principal_did": row["answered_by_did"], "certificate_id": row["certificate_id"]},
-        "answered_at": row["answered_at"].isoformat(),
-        "current": row["question_rev"] == current_question_rev,
+        "answered_at": row["answered_at"].astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "current": row["question_rev"] == current_question_rev and not cancelled,
     }
 
 
@@ -42,7 +50,7 @@ async def get_task_answer_on(tx, *, team_id: str, task_id: UUID, answer_key: str
     Holding the task row stable makes `current` consistent with this read.
     """
     task = await tx.fetch_one(
-        """SELECT question_rev FROM {{tables.tasks}}
+        """SELECT question_rev, cancellation FROM {{tables.tasks}}
            WHERE task_id = $1 AND team_id = $2 AND deleted_at IS NULL FOR SHARE""",
         task_id, team_id,
     )
@@ -54,12 +62,14 @@ async def get_task_answer_on(tx, *, team_id: str, task_id: UUID, answer_key: str
     )
     if not row:
         raise NotFoundError("Answer not found")
-    return _answer_receipt(row, current_question_rev=task["question_rev"])
+    return _answer_receipt(row, current_question_rev=task["question_rev"], cancelled=task["cancellation"] is not None)
 
 
 async def answer_task_on(
     tx, *, team_id: str, task_id: UUID, actor: TeamIdentity,
     expected_task_rev: int, answer_key: str, answer_sha256: str,
+    body_md: str, choice: str | None = None, proposal_rev: int | None = None,
+    proposal_sha256: str | None = None, outcome: dict | None = None,
 ) -> dict[str, Any]:
     """Commit an answer using the caller's transaction and verified identity.
 
@@ -67,10 +77,14 @@ async def answer_task_on(
     local member projection must still match that certificate and principal.
     This function never opens/commits a transaction or delivers external mail.
     """
-    if (not isinstance(answer_key, str) or not 1 <= len(answer_key) <= 256
+    if (not isinstance(answer_key, str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", answer_key)
             or not isinstance(answer_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", answer_sha256)
-            or type(expected_task_rev) is not int or expected_task_rev < 1):
+            or type(expected_task_rev) is not int or not 1 <= expected_task_rev <= 2**53 - 1
+            or (proposal_rev is not None and (type(proposal_rev) is not int or not 0 <= proposal_rev <= 2**53 - 1))
+            or (proposal_sha256 is not None and (not isinstance(proposal_sha256, str)
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", proposal_sha256)))):
         raise ValidationError("schema_invalid")
+    comment_body = answer_comment_projection(body_md=body_md, answer_sha256=answer_sha256)
     principal = actor.did_aw or actor.did_key
     member = await tx.fetch_one(
         """SELECT COALESCE(NULLIF(did_aw, ''), did_key) AS principal_did, certificate_id
@@ -82,7 +96,7 @@ async def answer_task_on(
             or not actor.certificate_id or member["certificate_id"] != actor.certificate_id):
         raise ForbiddenError("target_mismatch")
     task = await tx.fetch_one(
-        """SELECT task_id, rev, question_rev, status, assignee_did
+        """SELECT task_id, rev, question_rev, status, assignee_did, app_request, cancellation
            FROM {{tables.tasks}} WHERE task_id = $1 AND team_id = $2
              AND deleted_at IS NULL FOR UPDATE""",
         task_id, team_id,
@@ -96,18 +110,38 @@ async def answer_task_on(
     if existing:
         if existing["answered_by_did"] != principal:
             raise ForbiddenError("target_mismatch")
-        if existing["answer_sha256"] != answer_sha256:
+        if any(existing[k] != v for k, v in {
+            "answer_sha256": answer_sha256, "choice": choice,
+            "proposal_rev": proposal_rev, "proposal_sha256": proposal_sha256,
+        }.items()):
             raise ConflictError("idempotency_conflict")
-        return _answer_receipt(existing, current_question_rev=task["question_rev"])
+        if outcome is not None:
+            outcome["created"] = False
+        return _answer_receipt(existing, current_question_rev=task["question_rev"], cancelled=task["cancellation"] is not None)
     if task["assignee_did"] != principal:
         raise ForbiddenError("target_mismatch")
-    if task["rev"] != expected_task_rev or task["status"] != "open":
+    if task["rev"] != expected_task_rev or task["status"] != "open" or task["cancellation"] is not None:
         raise ConflictError("revision_conflict")
+    app_request = task["app_request"]
+    if isinstance(app_request, str):
+        app_request = json.loads(app_request)
+    metadata = app_request or {}
+    if proposal_rev != metadata.get("proposal_rev") or proposal_sha256 != metadata.get("proposal_sha256"):
+        raise ConflictError("approval_changed")
+    choices = metadata.get("choices")
+    if (choices is not None and choice not in choices) or (choices is None and choice is not None):
+        raise ValidationError("schema_invalid")
+    receipt_id = uuid4()
     if await tx.fetch_value(
         "SELECT 1 FROM {{tables.task_answers}} WHERE task_id = $1 AND question_rev = $2",
         task_id, task["question_rev"],
     ):
         raise ConflictError("revision_conflict")
+    await tx.execute(
+        """INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body)
+           VALUES ($1, $2, $3, $4)""",
+        task_id, team_id, actor.alias, comment_body,
+    )
     updated = await tx.fetch_one(
         """UPDATE {{tables.tasks}} SET status = 'closed', closed_by_alias = $2,
                closed_by_did = $3, closed_at = NOW(), updated_at = NOW()
@@ -116,15 +150,14 @@ async def answer_task_on(
     )
     row = await tx.fetch_one(
         """INSERT INTO {{tables.task_answers}}
-               (task_id, question_rev, task_rev, answer_key, answer_sha256, answered_by_did, certificate_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *""",
+               (task_id, question_rev, task_rev, answer_key, answer_sha256, answered_by_did, certificate_id,
+                receipt_id, choice, proposal_rev, proposal_sha256)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *""",
         task_id, task["question_rev"], updated["rev"], answer_key, answer_sha256, principal, actor.certificate_id,
+        receipt_id, choice, proposal_rev, proposal_sha256,
     )
-    await tx.execute(
-        """INSERT INTO {{tables.task_comments}} (task_id, team_id, author_alias, body)
-           VALUES ($1, $2, $3, $4)""",
-        task_id, team_id, actor.alias, answer_comment_projection(str(row["receipt_id"])),
-    )
+    if outcome is not None:
+        outcome["created"] = True
     return _answer_receipt(row, current_question_rev=task["question_rev"])
 
 
@@ -484,7 +517,7 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
                task_ref_suffix, status, priority, task_type, labels, parent_task_id,
                assignee_alias, created_by_alias, closed_by_alias,
                created_at, updated_at, closed_at, rev, question_rev,
-               assignee_did, created_by_did, closed_by_did
+               assignee_did, created_by_did, closed_by_did, app_request, cancellation, picked_up
         FROM {{tables.tasks}}
         WHERE task_id = $1 AND deleted_at IS NULL
         """,
@@ -522,6 +555,13 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
             "status": r["status"],
         }
 
+    answer = await aweb_db.fetch_one(
+        "SELECT * FROM {{tables.task_answers}} WHERE task_id = $1 AND question_rev = $2",
+        task_id, row["question_rev"],
+    )
+    def json_value(value):
+        return json.loads(value) if isinstance(value, str) else value
+
     return {
         "task_id": str(row["task_id"]),
         "task_ref": format_task_ref(slug, row["task_ref_suffix"]),
@@ -548,6 +588,11 @@ async def get_task(db, *, team_id: str, ref: str) -> dict[str, Any]:
         "assignee_did": row["assignee_did"],
         "created_by_did": row["created_by_did"],
         "closed_by_did": row["closed_by_did"],
+        "app_request": json_value(row["app_request"]),
+        "cancellation": json_value(row["cancellation"]),
+        "picked_up": row["picked_up"],
+        "answer": _answer_receipt(answer, current_question_rev=row["question_rev"],
+                                  cancelled=row["cancellation"] is not None) if answer else None,
     }
 
 
@@ -1029,7 +1074,7 @@ async def update_task(
 
         current = await tx.fetch_one(
             """
-            SELECT task_id, status, assignee_alias, task_ref_suffix
+            SELECT task_id, status, assignee_alias, task_ref_suffix, assignee_did, app_request
             FROM {{tables.tasks}}
             WHERE task_id = $1 AND deleted_at IS NULL
             FOR UPDATE
@@ -1110,6 +1155,8 @@ async def update_task(
                 if assignee_alias else (None, None)
             )
             if status != "in_progress":
+                if current["app_request"] is not None and resolved_assignee_did != current["assignee_did"]:
+                    raise ForbiddenError("target_mismatch")
                 sets.append(f"assignee_alias = ${idx}")
                 params.append(resolved_assignee_alias)
                 idx += 1
@@ -1194,9 +1241,12 @@ async def update_task(
                        FOR SHARE""",
                     team_id, actor_alias,
                 )
+                if current["app_request"] is not None and (not actor or actor["principal_did"] != current["assignee_did"]):
+                    raise ForbiddenError("target_mismatch")
                 sets.append(f"assignee_did = ${idx}")
                 params.append(actor["principal_did"] if actor else None)
                 idx += 1
+                sets.append("picked_up = TRUE")
 
             sets.append(f"status = ${idx}")
             params.append(status)

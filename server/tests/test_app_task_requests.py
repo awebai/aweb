@@ -23,6 +23,7 @@ from aweb.coordination.app_tasks import (
     create_app_task_on, read_app_request_on,
 )
 from aweb.service_errors import ConflictError, ForbiddenError, ValidationError
+from aweb.task_contracts import AppTask, parse_contract, strict_json_bytes
 from test_dashboard_privacy import privacy_app, TEAM  # noqa: F401
 from test_task_answers import _v2_request
 
@@ -128,6 +129,8 @@ async def test_app_decision_answer_checks_proposal_and_choice_then_cancellation(
     env, request, credential, installation = app_request_context
     receipt, _ = await _create(app_request_context, _body(env))
     path = f'/v1/tasks/{receipt["task_ref"]}/answer'
+    stolen = await _v2_request(env, "carol", "PATCH", f'/v1/tasks/{receipt["task_ref"]}', {"status": "in_progress"})
+    assert stolen.status_code == 403, stolen.text
     text = "Approve the proposal"
     answer = dict(expected_task_rev=1, answer_key="decision-1", body_md=text,
                   answer_sha256=hashlib.sha256(text.encode()).hexdigest(), choice="approve",
@@ -162,3 +165,32 @@ async def test_f6_cancellation_hook_rolls_back_with_installation_transaction(app
     assert row["status"] == "open" and row["cancellation"] is None
     async with env.db.transaction() as tx:
         assert await cancel_installation_requests_on(tx, team_id=TEAM, app_id="fixture", installation_id="install-fixture") == 1
+
+
+@pytest.mark.parametrize("body", [b'{"key":1,"key":2}', b'{"n":1.0}', b'{"n":NaN}',
+    b'{"n":Infinity}', b'{"n":9007199254740992}', b'{"s":"\\ud800"}'])
+def test_c2_json_rejects_ambiguous_and_noncanonical_values(body):
+    with pytest.raises(ValidationError, match="schema_invalid"):
+        strict_json_bytes(body)
+
+
+@pytest.mark.parametrize("control", ["\n", "\u061c", "\u200e", "\u200f", "\u202e", "\u2066"])
+def test_app_task_titles_refuse_control_and_bidi_control_characters(control):
+    task = dict(title="Review" + control, description=None, assignee_did="did:key:example",
+                app_request=dict(external_request_id="a", resource_ref="r", action_ref="a",
+                                 proposal_rev=None, proposal_sha256=None, choices=None))
+    with pytest.raises(ValidationError, match="schema_invalid"):
+        parse_contract(AppTask, task)
+
+
+@pytest.mark.asyncio
+async def test_revoked_originator_cannot_create_or_read_by_replay(app_request_context):
+    env, *_ = app_request_context
+    body = _body(env)
+    await _create(app_request_context, body)
+    await env.app.state.awid_registry_client.revoke_team_certificate(
+        "example.test", TEAM.split(":", 1)[0], team_controller_signing_key=env.team_sk,
+        certificate_id="privacy-alice")
+    with pytest.raises(HTTPException) as caught:
+        await _create(app_request_context, body)
+    assert caught.value.status_code == 401 and caught.value.detail == "certificate_revoked"

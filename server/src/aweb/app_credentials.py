@@ -28,6 +28,7 @@ APP_CREDENTIAL_VERSION = 1
 APP_EVENT = "app-event"
 APP_GRANT_READ = "app-grant-read"
 HOOK_RESOLVE = "hook-resolve"
+APP_REQUEST = "app-request"
 
 KeyLookup = Callable[..., Awaitable[dict | None]]
 
@@ -48,6 +49,8 @@ class AppCredential:
     app_id: str
     kid: str
     did_key: str
+    installation_id: str | None = None
+    installation_generation: int | None = None
 
 
 async def _emit_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did_key: str) -> dict | None:
@@ -59,6 +62,13 @@ async def _app_key(db, *, purpose: str, team_id: str, app_id: str, kid: str, did
 
 
 PURPOSES: dict[str, AppCredentialPurpose] = {
+    APP_REQUEST: AppCredentialPurpose(
+        auth=APP_REQUEST,
+        prefix="AWEB-App-Request DIDKey ",
+        label="app request",
+        key_not_registered="app_key_not_registered",
+        lookup_key=_app_key,
+    ),
     APP_EVENT: AppCredentialPurpose(
         auth=APP_EVENT,
         prefix="AWEB-App DIDKey ",
@@ -88,7 +98,7 @@ def _allowed_audiences(request: Request) -> set[str]:
     return {canonical_server_origin(configured or get_settings().public_origin)}
 
 
-async def verify_app_credential(request: Request, db, purpose: str) -> AppCredential:
+async def verify_app_credential(request: Request, db, purpose: str, *, installation: dict | None = None) -> AppCredential:
     """Verify an app credential for exactly ``purpose``.
 
     The Authorization prefix selects nothing: it must be the purpose's own
@@ -121,7 +131,11 @@ async def verify_app_credential(request: Request, db, purpose: str) -> AppCreden
     except ValueError as exc:
         raise HTTPException(status_code=401, detail=f"Invalid {label} signed payload") from exc
     try:
-        payload = json.loads(canonical)
+        if purpose == APP_REQUEST:
+            from aweb.task_contracts import strict_json_bytes
+            payload = strict_json_bytes(canonical)
+        else:
+            payload = json.loads(canonical)
     except Exception as exc:
         raise HTTPException(status_code=401, detail=f"Invalid {label} signed payload") from exc
     if not isinstance(payload, dict) or canonical_json_bytes(payload) != canonical:
@@ -139,6 +153,15 @@ async def verify_app_credential(request: Request, db, purpose: str) -> AppCreden
         "body_sha256": body_sha256,
         "timestamp": timestamp,
     }
+    if purpose == APP_REQUEST:
+        if installation is None or installation["state"] != "active" or not installation.get("origin_verified", False):
+            raise HTTPException(status_code=403, detail="scope_denied")
+        expected.update(installation_id=str(installation["installation_id"]),
+                        installation_generation=installation["generation"])
+        if set(payload) != set(expected) | {"aud"}:
+            raise HTTPException(status_code=401, detail="Invalid app request signed payload")
+        if type(payload.get("installation_generation")) is not int or type(payload.get("v")) is not int:
+            raise HTTPException(status_code=401, detail="Invalid app request signed payload")
     for field, expected_value in expected.items():
         if payload.get(field) != expected_value:
             raise HTTPException(status_code=401, detail=f"{label.capitalize()} signed payload does not match request")
@@ -160,4 +183,6 @@ async def verify_app_credential(request: Request, db, purpose: str) -> AppCreden
     if row is None:
         raise HTTPException(status_code=403, detail=spec.key_not_registered)
 
-    return AppCredential(purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
+    return AppCredential(purpose=purpose, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key,
+        installation_id=str(installation["installation_id"]) if purpose == APP_REQUEST else None,
+        installation_generation=installation["generation"] if purpose == APP_REQUEST else None)
