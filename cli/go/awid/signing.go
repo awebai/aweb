@@ -154,8 +154,6 @@ func CanonicalJSONValue(v any) (string, error) {
 	return string(out), nil
 }
 
-// SignArbitraryPayload signs a JSON object after injecting the required
-// timestamp field into the signed payload.
 type AppEmitCredential struct {
 	DIDKey              string
 	SignatureB64        string
@@ -199,7 +197,7 @@ func SignAppEmitCredential(key ed25519.PrivateKey, method string, target *url.UR
 		"did_key":     didKey,
 		"body_sha256": bodyHash,
 	}
-	signedDIDKey, signature, canonical, err := SignArbitraryPayload(key, payload, timestamp)
+	signedDIDKey, signature, canonical, err := signProtocolPayload(key, payload, timestamp)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +256,7 @@ func SignIdentityGrantCredential(key ed25519.PrivateKey, method string, target *
 		"grant_id":    grantID,
 		"body_sha256": bodyHash,
 	}
-	signedDIDKey, signature, canonical, err := SignArbitraryPayload(key, payload, timestamp)
+	signedDIDKey, signature, canonical, err := signProtocolPayload(key, payload, timestamp)
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +287,21 @@ func appEmitRequestTargetPath(target *url.URL) string {
 	return path
 }
 
+// UserSignaturePrefix separates user data from every protocol signature.
+const UserSignaturePrefix = "aweb.user-signature/1\n"
+
+// SignArbitraryPayload signs UserSignaturePrefix followed by canonical JSON
+// containing the injected timestamp. canonical is the JSON portion alone.
 func SignArbitraryPayload(key ed25519.PrivateKey, payload map[string]any, timestamp string) (didKey string, signature string, canonical string, err error) {
+	return signPayload(key, payload, timestamp, UserSignaturePrefix)
+}
+
+// Only protocol-specific constructors may use the unprefixed protocol bytes.
+func signProtocolPayload(key ed25519.PrivateKey, payload map[string]any, timestamp string) (didKey string, signature string, canonical string, err error) {
+	return signPayload(key, payload, timestamp, "")
+}
+
+func signPayload(key ed25519.PrivateKey, payload map[string]any, timestamp, prefix string) (didKey string, signature string, canonical string, err error) {
 	if key == nil {
 		return "", "", "", fmt.Errorf("signing key is required")
 	}
@@ -315,7 +327,7 @@ func SignArbitraryPayload(key ed25519.PrivateKey, payload map[string]any, timest
 		return "", "", "", err
 	}
 	didKey = ComputeDIDKey(key.Public().(ed25519.PublicKey))
-	sig := ed25519.Sign(key, []byte(canonical))
+	sig := ed25519.Sign(key, []byte(prefix+canonical))
 	return didKey, base64.RawStdEncoding.EncodeToString(sig), canonical, nil
 }
 

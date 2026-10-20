@@ -461,6 +461,23 @@ finite notification streams keep their current behavior. Custody's authoritative
 status cache remains bounded to 30 seconds. Registry revocation freshness remains
 subject to the registry client's existing cache policy.
 
+## User-data signatures
+
+`aw id sign` injects its timestamp into the caller's JSON object, canonicalizes
+it, then signs the UTF-8 bytes `aweb.user-signature/1\n` followed by that canonical
+JSON. The newline is a literal byte. Verifiers of user signatures must prepend
+this exact prefix. There is no unprefixed compatibility mode: these signatures
+cannot authorize AWID log entries, controller operations or request authentication.
+Protocol-specific commands construct and sign their own protocol artifacts.
+
+`aw id request --team-auth` signs a target-bound v2 request envelope; optional
+`--sign` fields cannot override its authoritative claims. Without `--team-auth`,
+the interim request signs only the fixed compact-v1 identity claims: the actual
+body hash, selected `did_aw` and timestamp. Caller JSON is refused in this mode.
+This removes arbitrary signing but retains v1's known method/path/origin
+retargeting risk until identity-v2 verification is deployed and the client moves
+to v2. That migration follows the server-then-Cloud-then-client release order.
+
 ## Message verification and trust
 
 Every mail and chat message carries sender identity fields and an Ed25519

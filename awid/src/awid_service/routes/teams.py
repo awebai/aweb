@@ -12,7 +12,8 @@ from typing import Literal
 import asyncpg
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pgdbm.errors import QueryError
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from fastapi.exceptions import RequestValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 _TEAM_NAME_PATTERN = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 
@@ -32,6 +33,7 @@ from awid.team_ids import build_team_id
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 from awid_service.delivery_origin import validate_delivery_origin
 from awid.controller_request import ControllerAuthRoute, verify_controller_json_request
+from awid_service.attestation_rotation import ResignedRecords, apply_resigned_records
 
 router = APIRouter(prefix="/v1/namespaces/{domain}/teams", tags=["teams"], route_class=ControllerAuthRoute)
 
@@ -363,6 +365,7 @@ class TeamRotateKeyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     new_team_did_key: str = Field(..., min_length=1, max_length=256)
+    resigned_records: ResignedRecords | None = None
 
     @field_validator("new_team_did_key")
     @classmethod
@@ -755,6 +758,29 @@ async def delete_team(
     return {"deleted": True, "team_id": build_team_id(domain, name), "domain": domain, "name": name}
 
 
+async def _bounded_rotate_body(request: Request) -> TeamRotateKeyRequest:
+    """Read the rotate body with a bound before parsing it.
+
+    The body can carry every re-signed record of the team, so it is streamed
+    and refused with 413 past the deploy limit. The bytes are kept on the
+    request so the covering controller envelope can hash the same body.
+    """
+    limit = request.app.state.rotate_max_body_bytes
+    raw = bytearray()
+    async for chunk in request.stream():
+        raw.extend(chunk)
+        if len(raw) > limit:
+            raise HTTPException(
+                status_code=413,
+                detail={"code": "rotation_too_large", "message": "The re-signed record set exceeds the rotate body limit"},
+            )
+    request._body = bytes(raw)
+    try:
+        return TeamRotateKeyRequest.model_validate_json(request._body)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors()) from exc
+
+
 @router.post(
     "/{name}/rotate",
     response_model=TeamRotateResponse,
@@ -764,9 +790,9 @@ async def rotate_team_key(
     request: Request,
     domain: str,
     name: str,
-    body: TeamRotateKeyRequest,
     db_infra=Depends(get_db),
 ) -> TeamRotateResponse:
+    body = await _bounded_rotate_body(request)
     db = db_infra.get_manager("aweb")
     await _require_namespace_controller(
         request, db, domain=domain, operation="rotate_team_key",
@@ -776,7 +802,7 @@ async def rotate_team_key(
     async with db.transaction() as tx:
         old_row = await tx.fetch_one(
             """
-            SELECT team_did_key FROM {{tables.teams}}
+            SELECT team_uuid, team_did_key FROM {{tables.teams}}
             WHERE domain = $1 AND name = $2 AND deleted_at IS NULL
             FOR UPDATE
             """,
@@ -787,6 +813,10 @@ async def rotate_team_key(
             raise HTTPException(status_code=404, detail="Team not found")
 
         key_changed = old_row["team_did_key"] != body.new_team_did_key
+        await apply_resigned_records(
+            tx, team_uuid=old_row["team_uuid"], team_id=build_team_id(domain, name),
+            new_team_did_key=body.new_team_did_key, resigned=body.resigned_records,
+        )
         row = await tx.fetch_one(
             """
             UPDATE {{tables.teams}}

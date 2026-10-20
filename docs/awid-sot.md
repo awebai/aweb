@@ -113,7 +113,10 @@ private-team metadata, enumeration, certificate history, member lookup, and
 revocations require a controller or unrevoked-member path signature, or the
 trusted same-operator service credential described below. The per-certificate
 `/certificates/{certificate_id}/status` read is the narrow anonymous exception,
-including for private teams; it exposes only the four facts documented below. Identity-private
+including for private teams; it exposes only the four facts documented below.
+The team-server record and the principal-attestation record reads (custodians,
+custody, person) are likewise anonymous, each by exact key with one identical
+404, as documented below. Identity-private
 reads and certificate-blob fetch have their separately documented
 authentication requirements.
 
@@ -126,10 +129,10 @@ uses constant-time comparison. A matching credential is a confidential
 same-operator read capability: it may read and enumerate private-team metadata,
 certificate history, member references, and revocations so the aweb server can
 verify and reconcile memberships without holding every member key. It also
-exempts all 17 registry GET read buckets from public-IP rate limits: DID key,
+exempts all 18 registry GET read buckets from public-IP rate limits: DID key,
 addresses, head, full and log; namespace get/list; address get/list; A2A
-publication get; team get/list and member lookup; certificate list/fetch/status; and
-revocations. The exemption does not change identity-private or certificate-blob
+publication get; team get/list and member lookup; certificate list/fetch/status;
+attestation record get; and revocations. The exemption does not change identity-private or certificate-blob
 authentication. The same credential also exempts exactly six provisioning
 write buckets from public-IP rate limits: `did_register` (POST `/v1/did`),
 `namespace_register` (POST `/v1/namespaces`), `did_encryption_key_publish`
@@ -148,12 +151,21 @@ exempts three controller-signed team writes: `team_update`
 (POST `/v1/namespaces/{domain}/teams/{name}/certificates/revoke`). Visibility
 changes and revocation retain team-controller authorization; deletion retains
 namespace-controller authorization and its refusal while active certificates
-remain. All other write buckets remain rate-limited even with a matching token.
+remain. It also exempts the principal-attestation record publishes (PUT
+`/v1/namespaces/{domain}/teams/{name}/custodians/{custodian_id}` and
+`…/certificates/{certificate_id}/custody|person`) from both their buckets, so a
+custodial deployment's backfill is not throttled; the team-controller signature
+is still required. All other write buckets remain rate-limited even with a
+matching token.
 Public callers keep the existing 10/hour DID, namespace and team creation
 limits and 30/hour encryption-key, certificate and address registration limits.
 Visibility changes and team deletion allow 300/hour and certificate revocation
 1000/hour per IP: each already needs a controller signature, so the public
-budget only stops a runaway client.
+budget only stops a runaway client. Principal-attestation record publishes
+allow 3000/hour per IP before authentication, and 2500/hour per team, charged
+only after the team-controller signature verifies, so unauthenticated traffic
+cannot spend a team's allowance. A 1,000-certificate backfill, about 2,000
+records, fits within one hour.
 It never authorizes a write, and must not be shared with
 clients or sent to a discovered external registry. Missing credentials use the
 normal visibility and public-IP rules. A wrong presented credential grants no
@@ -522,9 +534,27 @@ DELETE /v1/namespaces/{domain}/teams/{name}
 POST   /v1/namespaces/{domain}/teams/{name}/rotate
        Rotate team public key.
        Auth: namespace controller DIDKey signature.
-       Body: { "new_team_did_key": "did:key:z6Mk..." }
+       Body: { "new_team_did_key": "did:key:z6Mk...",
+               "resigned_records": {                      (optional)
+                 "team_server":     { "record", "signature" },
+                 "team_custodians": [{ "record", "signature" }],
+                 "member_custody":  [{ "record", "signature" }],
+                 "member_person":   [{ "record", "signature" }] } }
        Note: invalidates ALL existing certificates (they were
        signed by the old key). Members need new certificates.
+       resigned_records carries every team-key-signed record of the team
+       re-signed with the NEW key: unchanged apart from team_did_key and a
+       newer issued_at, exactly one per stored record of each kind, and
+       team_server whenever a server record is stored. AWID swaps the key
+       and replaces the records in one transaction. A record that does not
+       verify: 422. An incomplete, extra or changed set: 409
+       resigned_records_incomplete with { missing, extra, changed } naming
+       the keys per kind (team_server as a boolean, custodian_id,
+       certificate_id), and nothing changes. The body is streamed against
+       AWID_ROTATE_MAX_BODY_BYTES (default 4 MiB, never configurable lower):
+       413 above it. Without resigned_records the rotation still succeeds,
+       and verifiers refuse the old-key records until they are re-published.
+       Contract: [principal-attestation.md](principal-attestation.md) §5.
 
 POST   /v1/namespaces/{domain}/teams/{name}/visibility
        Set team visibility.
@@ -666,7 +696,7 @@ PUT    /v1/namespaces/{domain}/teams/{name}/server
        Response: the stored { "record", "signature" }.
        A team key rotation leaves the stored record signed by the old key:
        consumers refuse it until the controller publishes a newer record
-       signed by the new key, which rotation should do in the same operation.
+       signed by the new key, or the rotation carries it in resigned_records.
 
 GET    /v1/namespaces/{domain}/teams/{name}/server
        Anonymous for public and private teams. Own team_server_get public-IP
@@ -680,6 +710,42 @@ GET    /v1/namespaces/{domain}/teams/{name}/server
        key from the same registry, refuse a key mismatch, cache for at most
        60 seconds and fail closed. Conformance:
        [`vectors/team-server-record-v1.json`](vectors/team-server-record-v1.json).
+
+PUT    /v1/namespaces/{domain}/teams/{name}/custodians/{custodian_id}
+PUT    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/custody
+PUT    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/person
+       Publish an aweb.team-custodian/1, aweb.member-custody/1 or
+       aweb.member-person/1 record.
+       Auth: team controller, covering (v2) controller envelope only, with
+       operation publish_team_custodian | publish_member_custody |
+       publish_member_person and the path key as a claim.
+       Body: { "record": {...}, "signature": "<unpadded base64url Ed25519>" }
+       The record must verify under the CURRENT team key, name this team and
+       the path key, and have issued_at at most five minutes ahead (422
+       record_invalid | issued_at_in_future). Each publish holds the team row
+       FOR SHARE and refuses with 409 team_key_changed if a rotation replaced
+       the key, so publishes and rotations serialise. A byte-identical
+       re-publish answers 200. Custodian and person records move forward only
+       (409 record_not_newer). Custody needs an active certificate with that
+       member_did_key and a custodian registered with at least one issuer key
+       (409 custodian_not_registered) and is immutable apart from a re-sign
+       after rotation (409 custody_immutable). Rate limits: 3000/hour per IP
+       before authentication and 2500/hour per team after it; the trusted
+       service token is exempt from both.
+
+GET    /v1/namespaces/{domain}/teams/{name}/custodians/{custodian_id}
+GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/custody
+GET    /v1/namespaces/{domain}/teams/{name}/certificates/{certificate_id}/person
+       Anonymous for public and private teams; own attestation_record_get
+       bucket, 60 reads per 60 seconds, trusted service reads exempt.
+       Response: { "record", "signature" } exactly as stored. Unknown or
+       deleted team, unknown key and absent record: identical 404
+       { "detail": "Record not found" }. The custody and person reads
+       disclose whether a certificate's key is held by a custodian and
+       whether the controller declares its member one person.
+       Contracts: [principal-attestation.md](principal-attestation.md),
+       [member-person.md](member-person.md). Conformance:
+       [`vectors/principal-attestation-v1.json`](vectors/principal-attestation-v1.json).
 ```
 
 ---
@@ -923,6 +989,10 @@ Current ordered effects are:
 6. `006_identity_encryption_key_custody.sql` adds the assertion custody signal.
 7. `007_a2a_publications.sql` adds digest-bound A2A delegation/publication
    records.
+8. `008_team_server_records.sql` adds the team-key-signed team-server record.
+9. `009_principal_attestation_records.sql` adds the team-key-signed team
+   custodian, member custody and member person records, deleted with their
+   team or certificate.
 
 The following inventory is exhaustive for current **AWID application tables
 declared by** that ordered component chain. It intentionally excludes pgdbm's
@@ -944,6 +1014,9 @@ full ordered SQL, not a copied `001` snapshot.
 - `a2a_bridge_delegations`
 - `a2a_route_publications`
 - `team_server_records`
+- `team_custodians`
+- `member_custody`
+- `member_person`
 <!-- END SOURCE INVENTORY: awid-tables -->
 
 ---

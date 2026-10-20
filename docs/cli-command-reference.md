@@ -367,7 +367,7 @@ Subcommands:
 - `resolve` Resolve a did:aw to its current did:key
 - `rotate-key` Rotate the current global identity signing key at the registry
 - `show` Show the current identity and registry status
-- `sign` Sign a canonical JSON payload with the local identity key
+- `sign` Sign user data with a domain-separated local identity signature
 - `team` Team membership plus protocol/admin certificate operations
 - `verify` Verify the full audit log for a did:aw
 
@@ -720,8 +720,8 @@ Flags:
 - `--header stringArray Additional header in 'Name: Value' form`
 - `-h, --help help for request`
 - `--raw Print only the upstream response body`
-- `--sign string JSON object describing the signed payload fields`
-- `--sign-file string Read the JSON sign payload from a file`
+- `--sign string Additional signed fields (requires --team-auth)`
+- `--sign-file string Read additional signed fields from a file (requires --team-auth)`
 - `--team-auth Attach the active team certificate and sign a team-bound request payload`
 
 ## `id resolve`
@@ -777,7 +777,7 @@ Flags:
 
 ### `id sign`
 
-Sign a canonical JSON payload with the local identity key
+Sign user data with a domain-separated local identity signature
 
 Flags:
 - `-h, --help help for sign`
