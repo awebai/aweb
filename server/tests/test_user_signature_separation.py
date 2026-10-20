@@ -112,5 +112,3 @@ async def test_identity_id_request_signs_only_fixed_identity_claims(privacy_app,
             assert process.returncode != 0
             assert not stdout
             assert len(captured) == 1
-
-
