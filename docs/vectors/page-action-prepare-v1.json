@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Intent preparation (docs/page-actions.md §3, §3.1). `preparations` freeze a prepare response, its task digest and bindings, and the member's completed, signed payload, which verifies under app-task-authorization/1 with the bindings as `expected` at `now`. `check_cases` are the signer's pre-signing checks: `expect` null passes, otherwise the refusal code. `sequence` is the naapp's prepare, submit, replay and renewal behaviour, replayed in order against one page; request ids are allocated at run time, so steps refer to each other by name.",
+  "description": "Intent preparation (docs/page-actions.md §3, §3.1). `preparations` freeze a prepare response, its task digest and bindings, and the member's completed, signed payload, which verifies under app-task-authorization/1 with the bindings as `expected` at `now`. `check_cases` and `raw_cases` are the signer's pre-signing checks against its own `signer_expects`: `expect` null passes, otherwise the refusal code. `sequence` is the naapp's prepare, submit, replay, renewal and delivery behaviour, replayed in order against one page; request ids are allocated at run time, so steps refer to each other by name.",
   "keys": {
     "member": {
       "seed_hex": "1111111111111111111111111111111111111111111111111111111111111111",
@@ -86,7 +86,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       },
       "signer": {
         "key": "member",
@@ -193,7 +195,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-price"
       },
       "signer": {
         "key": "member",
@@ -279,7 +283,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -351,7 +357,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-price"
       }
     },
     {
@@ -405,9 +413,68 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       },
       "note": "after acceptance a prepare returns the same preparation plus the submit's 202 body"
+    },
+    {
+      "name": "accepted-rebound-generation",
+      "expect": null,
+      "response": {
+        "status": "accepted",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 4,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        },
+        "receipt": {
+          "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "page_rev": 13,
+          "delivery": "pending",
+          "execution": "not_started"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
+      },
+      "note": "an accepted, pending request rebinds only installation_generation"
     },
     {
       "name": "accepted-without-receipt",
@@ -454,7 +521,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -508,7 +577,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -556,7 +627,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -605,7 +678,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       },
       "note": "a preparation never supplies a signer field"
     },
@@ -653,7 +728,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -702,7 +779,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -750,7 +829,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       },
       "note": "external_request_id is allocated, act_ and 32 hex, never the raw key"
     },
@@ -799,7 +880,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -847,7 +930,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -895,7 +980,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -943,7 +1030,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -991,7 +1080,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       },
       "note": "the response and bindings agree, but the signed task carries another request id"
     },
@@ -1040,7 +1131,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -1088,7 +1181,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -1159,7 +1254,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-price"
       },
       "note": "a decision request binds its whole eligible set"
     },
@@ -1208,8 +1305,112 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
+    },
+    {
+      "name": "self-consistent-other-page",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_other",
+            "action_ref": "request-cleaner",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "ba9bea01bc5b57987df44b8430e209a31eb91b6d2c5e55410c857d058b21f4cb",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "ba9bea01bc5b57987df44b8430e209a31eb91b6d2c5e55410c857d058b21f4cb",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "request-cleaner",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
+      },
+      "note": "digest and bindings agree, but the task is for a page the signer did not ask to prepare"
+    },
+    {
+      "name": "self-consistent-other-action",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+        "task": {
+          "title": "Find a cleaner for Saturday",
+          "description": null,
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "cancel-booking",
+            "proposal_rev": null,
+            "proposal_sha256": null,
+            "choices": null,
+            "fields": null,
+            "eligible_dids": null,
+            "role": null
+          }
+        },
+        "task_body_sha256": "0cad1085521aad63b556e6789fe8410e5838c0e3dc70938dba1bebe29255cfd5",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e",
+          "task_body_sha256": "0cad1085521aad63b556e6789fe8410e5838c0e3dc70938dba1bebe29255cfd5",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V"
+          ],
+          "action_id": "cancel-booking",
+          "proposal_rev": null,
+          "proposal_sha256": null
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
+      },
+      "note": "digest and bindings agree, but for an action the signer did not ask to prepare"
     },
     {
       "name": "proposal-rev-differs",
@@ -1280,8 +1481,85 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-price"
       }
+    },
+    {
+      "name": "proposal-digest-differs",
+      "expect": "target_mismatch",
+      "response": {
+        "status": "prepared",
+        "request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+        "task": {
+          "title": "Approve next week's prices",
+          "description": "Rates for 24–30 October, café terrace included.",
+          "assignee_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+          "app_request": {
+            "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+            "resource_ref": "pg_4hd2",
+            "action_ref": "approve-price",
+            "proposal_rev": 2,
+            "proposal_sha256": "sha256:ecd1378bc9dc130008f00d58db5d26f60db55934a49b949af7e6f6a8da2a2beb",
+            "choices": [
+              {
+                "value": "approve",
+                "label": "Approve the new rates"
+              },
+              {
+                "value": "reject",
+                "label": "Keep the current rates"
+              }
+            ],
+            "fields": [
+              {
+                "field": "start",
+                "label": "From",
+                "format": "date"
+              },
+              {
+                "field": "price_per_night_minor",
+                "label": "Nightly price",
+                "format": "money_minor"
+              }
+            ],
+            "eligible_dids": [
+              "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+              "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+            ],
+            "role": "pages.price-approver"
+          }
+        },
+        "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+        "bindings": {
+          "aud": "https://app.aweb.ai",
+          "app_origin": "https://pages.example.com",
+          "team_id": "backend:acme.com",
+          "app_id": "pages",
+          "installation_id": "inst_01JB7Q",
+          "installation_generation": 3,
+          "external_request_id": "act_c41e7a9b2d0f4c3e8a6b1d5f7e9c2a40",
+          "task_body_sha256": "af6f70c1c449eaeddd7c61e1ba1b7598f9c2a228ad5db20e4d90c68997ffc73a",
+          "target_dids": [
+            "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+            "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+          ],
+          "action_id": "approve-price",
+          "proposal_rev": 2,
+          "proposal_sha256": "sha256:1cb11ddf296cc8a18a3c6940fc156d2bf1443ac17e44ccf059faca4382527661"
+        }
+      },
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-price"
+      },
+      "note": "a well-formed digest that is not the task's proposal"
     },
     {
       "name": "proposal-rev-true-for-1",
@@ -1352,7 +1630,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-price"
       },
       "note": "a boolean never equals an integer binding"
     },
@@ -1401,7 +1681,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -1449,7 +1731,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -1497,7 +1781,9 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
     },
     {
@@ -1545,8 +1831,27 @@
         "app_origin": "https://pages.example.com",
         "team_id": "backend:acme.com",
         "app_id": "pages",
-        "installation_id": "inst_01JB7Q"
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
       }
+    }
+  ],
+  "raw_cases": [
+    {
+      "name": "title-lone-surrogate",
+      "expect": "schema_invalid",
+      "signer_expects": {
+        "aud": "https://app.aweb.ai",
+        "app_origin": "https://pages.example.com",
+        "team_id": "backend:acme.com",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "request-cleaner"
+      },
+      "raw": "{\"status\": \"prepared\", \"request_id\": \"act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e\", \"task\": {\"title\": \"Find a cleaner \\ud800\", \"description\": null, \"assignee_did\": \"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\", \"app_request\": {\"external_request_id\": \"act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e\", \"resource_ref\": \"pg_4hd2\", \"action_ref\": \"request-cleaner\", \"proposal_rev\": null, \"proposal_sha256\": null, \"choices\": null, \"fields\": null, \"eligible_dids\": null, \"role\": null}}, \"task_body_sha256\": \"4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf\", \"bindings\": {\"aud\": \"https://app.aweb.ai\", \"app_origin\": \"https://pages.example.com\", \"team_id\": \"backend:acme.com\", \"app_id\": \"pages\", \"installation_id\": \"inst_01JB7Q\", \"installation_generation\": 3, \"external_request_id\": \"act_3f9a0c2e5b7d4186a1c3e5f7092b4d6e\", \"task_body_sha256\": \"4abfd95c8d1a2ba6362b62f5ab8e0fd796554c226a13ce67f28df7a3d5f0b0cf\", \"target_dids\": [\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\"], \"action_id\": \"request-cleaner\", \"proposal_rev\": null, \"proposal_sha256\": null}}",
+      "note": "an escaped lone surrogate parses, but the task has no canonical form"
     }
   ],
   "sequence": {
@@ -1554,14 +1859,16 @@
       "page_rev": 12,
       "installation_generation": 3,
       "target_resolves_to": "target",
-      "member_certificate": "current",
-      "colleague_certificate": "current"
+      "action_policy_version": 1,
+      "member_certificate": "first",
+      "colleague_certificate": "first"
     },
     "rules": [
-      "Each `given` entry changes that state before its step and persists. `target_resolves_to` names the key whose principal the action's target role resolves to. `delivery` sets the delivery state of the request the named step accepted.",
-      "Certificates: `current` is the actor's first certificate; `renewed` is a second certificate of the same principal, its current one once a `given` says so; `revoked` is the actor's certificate after revocation.",
-      "An `authorization` is the bindings of the preparation `prepared_by` returned, completed with the actor's DID and the named certificate, the times and nonce, then any `tamper` fields, and signed with the actor's key.",
-      "`same_as`: the response equals that step's. `request_id_of`: the request id that step returned. `distinct_from`: a different request id. `receipt_same_as`: `receipt` equals that step's response. `evidence_count`: authorizations stored for the request after the step."
+      "Calls: `prepare` and `submit` are the member requests of page-actions.md §3 and §3.1, authenticated with the actor's current certificate. `deliver` is one outbox attempt to create the request's task (app-task-requests.md §3) and `reconcile` the receipt lookup; their outcomes are the task service's.",
+      "Each `given` entry changes that state before its step and persists. `target_resolves_to` names the key whose principal the action's target role resolves to. `action_policy_version` is the action's effective policy version. `delivery` sets the delivery state of the request the named step accepted. `revoked` revokes `<actor>:<certificate>`.",
+      "Certificates: `first` and `second` are two certificates of the same principal; the actor's current one is its `<actor>_certificate` state.",
+      "An `authorization` is the bindings that the preparation step `prepared_by` returned, completed with the actor's DID and the named certificate, the times and nonce, then any `tamper` fields, and signed with the actor's key.",
+      "`same_as`: the response equals that step's. `request_id_of`: the request id that step returned. `distinct_from`: a different request id. `receipt_same_as`: `receipt` equals that step's response. `task_same_as`: `task` equals that step's. `bindings`: those bindings have these values. `delivery`: the request's delivery state after the step. `evidence_count`: authorizations stored for the request after the step."
     ],
     "requests": {
       "r1": {
@@ -1640,6 +1947,39 @@
           "bookings/b-17": 3
         },
         "idempotency_key": "k_f731"
+      },
+      "r7": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 15,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_0842"
+      },
+      "r8": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 16,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_1953"
+      },
+      "r9": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 17,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_2a64"
       }
     },
     "steps": [
@@ -1697,7 +2037,7 @@
         "request": "r2",
         "authorization": {
           "prepared_by": "prepare",
-          "certificate": "current",
+          "certificate": "first",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
           "nonce": "00000000000000000000000000000001"
@@ -1715,7 +2055,7 @@
         "request": "r1",
         "authorization": {
           "prepared_by": "prepare",
-          "certificate": "current",
+          "certificate": "first",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
           "nonce": "00000000000000000000000000000002",
@@ -1739,7 +2079,7 @@
         "request": "r1",
         "authorization": {
           "prepared_by": "prepare",
-          "certificate": "current",
+          "certificate": "first",
           "issued_at": "2026-10-19T11:00:00Z",
           "expires_at": "2026-10-20T11:00:00Z",
           "nonce": "00000000000000000000000000000003"
@@ -1757,7 +2097,7 @@
         "request": "r1-changed-input",
         "authorization": {
           "prepared_by": "prepare",
-          "certificate": "current",
+          "certificate": "first",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
           "nonce": "00000000000000000000000000000004"
@@ -1775,7 +2115,7 @@
         "request": "r1",
         "authorization": {
           "prepared_by": "prepare",
-          "certificate": "current",
+          "certificate": "first",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
           "nonce": "00000000000000000000000000000005"
@@ -1790,13 +2130,27 @@
         }
       },
       {
+        "name": "prepare-after-accept",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r1",
+        "expect": {
+          "outcome": "accepted",
+          "status": 200,
+          "request_id_of": "prepare",
+          "receipt_same_as": "submit",
+          "delivery": "pending"
+        },
+        "note": "recognized before the revision check: the acceptance moved the page from 12 to 13"
+      },
+      {
         "name": "renew-after-lost-response",
         "actor": "member",
         "call": "submit",
         "request": "r1",
         "authorization": {
           "prepared_by": "prepare",
-          "certificate": "current",
+          "certificate": "first",
           "issued_at": "2026-10-20T12:00:20Z",
           "expires_at": "2026-10-21T12:00:20Z",
           "nonce": "00000000000000000000000000000006"
@@ -1810,18 +2164,18 @@
         "note": "a renewed authorization over the same task bytes; appended as evidence, nothing re-admitted"
       },
       {
-        "name": "replay-renewed-certificate",
+        "name": "replay-second-certificate",
         "actor": "member",
         "call": "submit",
         "request": "r1",
         "given": [
           {
-            "member_certificate": "renewed"
+            "member_certificate": "second"
           }
         ],
         "authorization": {
           "prepared_by": "prepare",
-          "certificate": "renewed",
+          "certificate": "second",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
           "nonce": "00000000000000000000000000000007"
@@ -1832,20 +2186,192 @@
           "same_as": "submit",
           "evidence_count": 3
         },
-        "note": "the same principal's current certificate; the identity excludes the authorization"
+        "note": "the same principal's renewed certificate; the identity excludes the authorization"
       },
       {
-        "name": "prepare-after-accept",
+        "name": "replay-evidence-tampered",
         "actor": "member",
-        "call": "prepare",
+        "call": "submit",
         "request": "r1",
-        "expect": {
-          "outcome": "accepted",
-          "status": 200,
-          "request_id_of": "prepare",
-          "receipt_same_as": "submit"
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:21Z",
+          "expires_at": "2026-10-21T12:00:21Z",
+          "nonce": "00000000000000000000000000000008",
+          "tamper": {
+            "target_dids": [
+              "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva"
+            ]
+          }
         },
-        "note": "re-derivation is skipped: the request's own page revision moved the page"
+        "expect": {
+          "outcome": "target_mismatch",
+          "status": 403,
+          "code": "target_mismatch",
+          "evidence_count": 3
+        },
+        "note": "the request authenticates; only the fresh evidence is invalid, and nothing is stored"
+      },
+      {
+        "name": "replay-evidence-revoked-certificate",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "given": [
+          {
+            "revoked": "member:first"
+          }
+        ],
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "first",
+          "issued_at": "2026-10-20T12:00:22Z",
+          "expires_at": "2026-10-21T12:00:22Z",
+          "nonce": "00000000000000000000000000000009"
+        },
+        "expect": {
+          "outcome": "target_mismatch",
+          "status": 403,
+          "code": "target_mismatch",
+          "evidence_count": 3
+        },
+        "note": "the request authenticates with the second certificate; evidence signed under the revoked first one is not the request's verified signer, and nothing is stored"
+      },
+      {
+        "name": "replay-evidence-expired",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "second",
+          "issued_at": "2026-10-19T11:00:00Z",
+          "expires_at": "2026-10-20T11:00:00Z",
+          "nonce": "0000000000000000000000000000000a"
+        },
+        "expect": {
+          "outcome": "authorization_expired",
+          "status": 401,
+          "code": "authorization_expired",
+          "evidence_count": 3
+        },
+        "note": "the request authenticates; the fresh evidence is outside its window, and nothing is stored"
+      },
+      {
+        "name": "renew-4",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:24Z",
+          "expires_at": "2026-10-21T12:00:24Z",
+          "nonce": "0000000000000000000000000000000b"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit",
+          "evidence_count": 4
+        }
+      },
+      {
+        "name": "renew-5",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:25Z",
+          "expires_at": "2026-10-21T12:00:25Z",
+          "nonce": "0000000000000000000000000000000c"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit",
+          "evidence_count": 5
+        }
+      },
+      {
+        "name": "renew-6",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:26Z",
+          "expires_at": "2026-10-21T12:00:26Z",
+          "nonce": "0000000000000000000000000000000d"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit",
+          "evidence_count": 6
+        }
+      },
+      {
+        "name": "renew-7",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:27Z",
+          "expires_at": "2026-10-21T12:00:27Z",
+          "nonce": "0000000000000000000000000000000e"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit",
+          "evidence_count": 7
+        }
+      },
+      {
+        "name": "renew-8",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:28Z",
+          "expires_at": "2026-10-21T12:00:28Z",
+          "nonce": "0000000000000000000000000000000f"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit",
+          "evidence_count": 8
+        }
+      },
+      {
+        "name": "renew-beyond-limit",
+        "actor": "member",
+        "call": "submit",
+        "request": "r1",
+        "authorization": {
+          "prepared_by": "prepare",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:29Z",
+          "expires_at": "2026-10-21T12:00:29Z",
+          "nonce": "00000000000000000000000000000010"
+        },
+        "expect": {
+          "outcome": "evidence_limit",
+          "status": 409,
+          "code": "evidence_limit",
+          "evidence_count": 8
+        },
+        "note": "a request stores at most 8 authorizations; nothing is stored beyond them"
       },
       {
         "name": "queued-replay",
@@ -1862,16 +2388,16 @@
         ],
         "authorization": {
           "prepared_by": "prepare",
-          "certificate": "renewed",
+          "certificate": "second",
           "issued_at": "2026-10-20T12:00:25Z",
           "expires_at": "2026-10-21T12:00:25Z",
-          "nonce": "00000000000000000000000000000008"
+          "nonce": "00000000000000000000000000000011"
         },
         "expect": {
           "outcome": "replayed",
           "status": 202,
           "same_as": "submit",
-          "evidence_count": 3
+          "evidence_count": 8
         },
         "note": "once delivery is queued a replay stores nothing"
       },
@@ -1899,7 +2425,8 @@
           "outcome": "preparation_stale",
           "status": 409,
           "code": "preparation_stale"
-        }
+        },
+        "note": "an unaccepted preparation is never rebound"
       },
       {
         "name": "submit-after-generation-moved",
@@ -1908,10 +2435,10 @@
         "request": "r3",
         "authorization": {
           "prepared_by": "prepare-r3",
-          "certificate": "renewed",
+          "certificate": "second",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
-          "nonce": "00000000000000000000000000000009"
+          "nonce": "00000000000000000000000000000012"
         },
         "expect": {
           "outcome": "preparation_stale",
@@ -1926,7 +2453,10 @@
         "request": "r4",
         "expect": {
           "outcome": "prepared",
-          "status": 200
+          "status": 200,
+          "bindings": {
+            "installation_generation": 4
+          }
         }
       },
       {
@@ -1941,10 +2471,10 @@
         ],
         "authorization": {
           "prepared_by": "prepare-r4",
-          "certificate": "renewed",
+          "certificate": "second",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
-          "nonce": "00000000000000000000000000000010"
+          "nonce": "00000000000000000000000000000013"
         },
         "expect": {
           "outcome": "preparation_stale",
@@ -1980,10 +2510,10 @@
         ],
         "authorization": {
           "prepared_by": "prepare-r5",
-          "certificate": "renewed",
+          "certificate": "second",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
-          "nonce": "00000000000000000000000000000011"
+          "nonce": "00000000000000000000000000000014"
         },
         "expect": {
           "outcome": "revision_conflict",
@@ -2008,10 +2538,10 @@
         "request": "r6",
         "authorization": {
           "prepared_by": "colleague-prepares-r6",
-          "certificate": "current",
+          "certificate": "first",
           "issued_at": "2026-10-20T12:00:00Z",
           "expires_at": "2026-10-21T12:00:00Z",
-          "nonce": "00000000000000000000000000000012"
+          "nonce": "00000000000000000000000000000015"
         },
         "expect": {
           "outcome": "accepted",
@@ -2023,29 +2553,237 @@
         }
       },
       {
-        "name": "revoked-replay",
+        "name": "revoked-caller-replay",
         "actor": "colleague",
         "call": "submit",
         "request": "r6",
         "given": [
           {
-            "colleague_certificate": "revoked"
+            "revoked": "colleague:first"
           }
         ],
         "authorization": {
           "prepared_by": "colleague-prepares-r6",
-          "certificate": "revoked",
+          "certificate": "first",
           "issued_at": "2026-10-20T12:00:20Z",
           "expires_at": "2026-10-21T12:00:20Z",
-          "nonce": "00000000000000000000000000000013"
+          "nonce": "00000000000000000000000000000016"
         },
         "expect": {
-          "outcome": "certificate_revoked",
+          "outcome": "unauthenticated",
           "status": 401,
-          "code": "certificate_revoked",
           "evidence_count": 1
         },
-        "note": "a replay never bypasses current authority: nothing is stored"
+        "note": "the caller's only certificate is revoked: team-auth v2 refuses the request with its own error before any action check, and nothing is stored"
+      },
+      {
+        "name": "prepare-r7",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r7",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200,
+          "bindings": {
+            "installation_generation": 4
+          }
+        }
+      },
+      {
+        "name": "submit-r7",
+        "actor": "member",
+        "call": "submit",
+        "request": "r7",
+        "authorization": {
+          "prepared_by": "prepare-r7",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "00000000000000000000000000000017"
+        },
+        "expect": {
+          "outcome": "accepted",
+          "status": 202,
+          "request_id_of": "prepare-r7",
+          "page_rev": 16,
+          "delivery": "pending",
+          "evidence_count": 1
+        }
+      },
+      {
+        "name": "reconcile-r7",
+        "actor": "member",
+        "call": "reconcile",
+        "request": "r7",
+        "given": [
+          {
+            "installation_generation": 5
+          }
+        ],
+        "expect": {
+          "outcome": "resource_not_found",
+          "status": 404,
+          "code": "resource_not_found",
+          "delivery": "pending"
+        },
+        "note": "the generation moved before any delivery: no task exists, and no stored authorization binds generation 5, so the outbox sends nothing"
+      },
+      {
+        "name": "prepare-r7-rebinds",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r7",
+        "expect": {
+          "outcome": "accepted",
+          "status": 200,
+          "request_id_of": "prepare-r7",
+          "delivery": "pending",
+          "bindings": {
+            "installation_generation": 5
+          },
+          "task_same_as": "prepare-r7"
+        },
+        "note": "only installation_generation is rebound; task bytes, request id and evidence are kept"
+      },
+      {
+        "name": "renew-r7-old-generation",
+        "actor": "member",
+        "call": "submit",
+        "request": "r7",
+        "authorization": {
+          "prepared_by": "prepare-r7",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:20Z",
+          "expires_at": "2026-10-21T12:00:20Z",
+          "nonce": "00000000000000000000000000000018"
+        },
+        "expect": {
+          "outcome": "target_mismatch",
+          "status": 403,
+          "code": "target_mismatch",
+          "evidence_count": 1
+        },
+        "note": "evidence over the earlier generation no longer matches the current bindings"
+      },
+      {
+        "name": "renew-r7",
+        "actor": "member",
+        "call": "submit",
+        "request": "r7",
+        "authorization": {
+          "prepared_by": "prepare-r7-rebinds",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:21Z",
+          "expires_at": "2026-10-21T12:00:21Z",
+          "nonce": "00000000000000000000000000000019"
+        },
+        "expect": {
+          "outcome": "replayed",
+          "status": 202,
+          "same_as": "submit-r7",
+          "evidence_count": 2
+        }
+      },
+      {
+        "name": "deliver-r7",
+        "actor": "member",
+        "call": "deliver",
+        "request": "r7",
+        "expect": {
+          "outcome": "delivered",
+          "status": 201,
+          "delivery": "queued"
+        },
+        "note": "delivered with the newest authorization binding the current generation"
+      },
+      {
+        "name": "prepare-r8",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r8",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200
+        }
+      },
+      {
+        "name": "submit-r8",
+        "actor": "member",
+        "call": "submit",
+        "request": "r8",
+        "authorization": {
+          "prepared_by": "prepare-r8",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "0000000000000000000000000000001a"
+        },
+        "expect": {
+          "outcome": "accepted",
+          "status": 202,
+          "request_id_of": "prepare-r8",
+          "page_rev": 17,
+          "delivery": "pending",
+          "evidence_count": 1
+        }
+      },
+      {
+        "name": "prepare-r9",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r9",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200
+        }
+      },
+      {
+        "name": "policy-changed-prepare",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r9",
+        "given": [
+          {
+            "action_policy_version": 2
+          }
+        ],
+        "expect": {
+          "outcome": "preparation_stale",
+          "status": 409,
+          "code": "preparation_stale"
+        },
+        "note": "the task and targets are identical; the context fingerprint is not"
+      },
+      {
+        "name": "policy-changed-submit",
+        "actor": "member",
+        "call": "submit",
+        "request": "r9",
+        "authorization": {
+          "prepared_by": "prepare-r9",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "0000000000000000000000000000001b"
+        },
+        "expect": {
+          "outcome": "preparation_stale",
+          "status": 409,
+          "code": "preparation_stale"
+        }
+      },
+      {
+        "name": "policy-changed-accepted",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r8",
+        "expect": {
+          "outcome": "preparation_stale",
+          "status": 409,
+          "code": "preparation_stale",
+          "delivery": "failed"
+        },
+        "note": "beyond a generation change an accepted, pending request cannot be rebound; it ends"
       }
     ]
   }

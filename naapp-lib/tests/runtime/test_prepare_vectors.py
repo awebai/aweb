@@ -15,6 +15,7 @@ from aweb_naapp.runtime.task_requests import (
     TaskRequestRefused,
     check_prepared_intent,
     complete_task_authorization,
+    parse_json,
     sign_task_authorization,
     task_body_sha256,
     verify_task_authorization,
@@ -23,7 +24,7 @@ from aweb_naapp.runtime.task_requests import (
 AWEB_ROOT = Path(__file__).resolve().parents[3]
 PREPARE = json.loads((AWEB_ROOT / "docs" / "vectors" / "page-action-prepare-v1.json").read_text())
 
-CALLS = {"prepare", "submit"}
+CALLS = {"prepare", "submit", "deliver", "reconcile"}
 OUTCOMES = {
     "prepared",
     "accepted",
@@ -34,7 +35,10 @@ OUTCOMES = {
     "target_mismatch",
     "authorization_expired",
     "revision_conflict",
-    "certificate_revoked",
+    "unauthenticated",
+    "evidence_limit",
+    "delivered",
+    "resource_not_found",
 }
 
 
@@ -91,12 +95,23 @@ def test_pre_signing_checks(case):
     assert refused.value.code == case["expect"]
 
 
+@pytest.mark.parametrize("case", PREPARE["raw_cases"], ids=lambda case: case["name"])
+def test_raw_pre_signing_checks(case):
+    with pytest.raises(TaskRequestRefused) as refused:
+        check_prepared_intent(
+            parse_json(case["raw"].encode("utf-8")), expected=case["signer_expects"]
+        )
+    assert refused.value.code == case["expect"]
+
+
 def test_pre_signing_check_refuses_incomplete_expectations():
     case = PREPARE["preparations"][0]
     expects = dict(case["signer_expects"])
-    expects.pop("aud")
-    with pytest.raises(ValueError):
-        check_prepared_intent(case["response"], expected=expects)
+    for field in ("aud", "page_id", "action_id"):
+        with pytest.raises(ValueError):
+            check_prepared_intent(
+                case["response"], expected={k: v for k, v in expects.items() if k != field}
+            )
 
 
 def test_sequence_is_well_formed():
@@ -107,8 +122,17 @@ def test_sequence_is_well_formed():
     for step in steps:
         assert step["call"] in CALLS, step["name"]
         assert step["actor"] in PREPARE["keys"], step["name"]
+        assert step["request"] in PREPARE["sequence"]["requests"], step["name"]
+        prepared_by = step.get("authorization", {}).get("prepared_by")
+        assert prepared_by is None or prepared_by in seen, (step["name"], "prepared_by")
         assert step["expect"]["outcome"] in OUTCOMES, step["name"]
-        for field in ("same_as", "request_id_of"):
+        for field in (
+            "same_as",
+            "request_id_of",
+            "distinct_from",
+            "receipt_same_as",
+            "task_same_as",
+        ):
             ref = step["expect"].get(field)
             assert ref is None or ref in seen, (step["name"], field)
         seen.add(step["name"])

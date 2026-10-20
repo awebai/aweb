@@ -297,6 +297,10 @@ def validate_task(task: object) -> None:
         labels = [option["label"] for option in choices]
         if len(set(values)) != len(values) or len(set(labels)) != len(labels):
             raise _refuse("schema_invalid", "choices")
+    try:
+        canonical_json_bytes(dict(task))
+    except (UnicodeEncodeError, ValueError, TypeError) as exc:
+        raise _refuse("schema_invalid", "task has no canonical form") from exc
 
 
 def task_body_sha256(task: Mapping[str, Any]) -> str:
@@ -423,8 +427,10 @@ def verify_task_authorization(
 # The payload fields the member's signer adds to a preparation's bindings.
 SIGNER_FIELDS = frozenset({"actor_did_key", "certificate_id", "issued_at", "expires_at", "nonce"})
 # What the signer knows independently of the naapp: the task service it signs
-# for, and the app and installation of the page the member acts on.
-SIGNER_EXPECTS = frozenset({"aud", "app_origin", "team_id", "app_id", "installation_id"})
+# for, the app and installation of the page the member acts on, and the page
+# and action it asked to prepare.
+_SIGNER_BINDINGS = frozenset({"aud", "app_origin", "team_id", "app_id", "installation_id"})
+SIGNER_EXPECTS = _SIGNER_BINDINGS | {"page_id", "action_id"}
 _PREPARED_FIELDS = frozenset({"status", "request_id", "task", "task_body_sha256", "bindings"})
 _PREPARED_REQUEST_ID = re.compile(r"act_[0-9a-f]{32}")
 
@@ -434,8 +440,10 @@ def check_prepared_intent(prepared: object, *, expected: Mapping[str, Any]) -> N
 
     The digest is the task's, the bindings agree with the task as the task
     service's step 5 requires, and ``expected`` (exactly SIGNER_EXPECTS) holds
-    what the signer knows itself. Field shapes are checked when the completed
-    payload is signed. Raises TaskRequestRefused: ``schema_invalid`` for the
+    what the signer knows itself, never values echoed back from the response:
+    the bindings must carry its task service, app and installation, and the
+    task's ``resource_ref`` and ``action_ref`` the page and action it asked to
+    prepare. Field shapes are checked when the completed payload is signed. Raises TaskRequestRefused: ``schema_invalid`` for the
     response's shape, ``target_mismatch`` for a value that disagrees.
     """
     if set(expected) != SIGNER_EXPECTS:
@@ -478,7 +486,12 @@ def check_prepared_intent(prepared: object, *, expected: Mapping[str, Any]) -> N
         raise _refuse("target_mismatch", "task_body_sha256")
     if request["external_request_id"] != request_id:
         raise _refuse("target_mismatch", "external_request_id")
-    _check_bindings(bindings, {**derived, **expected}, frozenset(derived) | SIGNER_EXPECTS)
+    if request["resource_ref"] != expected["page_id"]:
+        raise _refuse("target_mismatch", "resource_ref")
+    if request["action_ref"] != expected["action_id"]:
+        raise _refuse("target_mismatch", "action_ref")
+    signer = {field: expected[field] for field in _SIGNER_BINDINGS}
+    _check_bindings(bindings, {**derived, **signer}, frozenset(derived) | _SIGNER_BINDINGS)
 
 
 def complete_task_authorization(
