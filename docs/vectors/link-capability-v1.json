@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Capability-link semantics (docs/page-links.md §1, §4-§6), for the app that serves links. `delegation`: a creator's current authority and a requested link, with the mint result. `use_sequence`: one link's ordered steps (b-17/b-18 bookings; projection {arrival, status}; mark-cleaned constrained to b-17), each with its expected result; same_receipt_as names a step index (0-based). `race`: orderings of concurrent transactions under the link's row lock. `lockout`: exchange rate limiting that a stranger knowing a link_id cannot use against its holder. `replay_cases` separate operation retries (fresh nonce, same idempotency key: the stored receipt, while the session is live) from nonce replays (refused, even after a refused action). `asset_sequence` and `grant_expiry` cover asset grants for native image and video loads. Unless a step says otherwise, writes carry the right Origin and the session's CSRF token.",
+  "description": "Capability-link semantics (docs/page-links.md §1, §4-§6), for the app that serves links. `delegation`: a creator's current authority and a requested link, with the mint result. `use_sequence`: one link's ordered steps (b-17/b-18 bookings; projection {arrival, status}; mark-cleaned constrained to b-17), each with its expected result; same_receipt_as names a step index (0-based). `race`: orderings of concurrent transactions under the link's row lock. `lockout`: exchange rate limiting that a stranger knowing a link_id cannot use against its holder. `replay_cases` separate operation retries (fresh nonce, same idempotency key: the stored receipt, after use or revocation, while the session is live) from nonce replays (refused, even after a refused action). `asset_sequence` and `grant_expiry` cover asset grants for native image and video loads. Unless a step says otherwise, writes carry the right Origin and the session's CSRF token.",
   "delegation": [
     {
       "name": "within-creator-authority",
@@ -670,32 +670,8 @@
       ]
     },
     {
-      "name": "receipt-after-link-expiry-with-live-session",
-      "steps": [
-        {
-          "action": "k1",
-          "nonce": "n1",
-          "result": {
-            "status": 200,
-            "receipt": "r1"
-          }
-        },
-        {
-          "link_expires": true
-        },
-        {
-          "action": "k1",
-          "nonce": "n2",
-          "same_body": true,
-          "result": {
-            "status": 200,
-            "receipt": "r1"
-          }
-        }
-      ]
-    },
-    {
       "name": "no-receipt-once-the-session-expired",
+      "note": "a session never outlives its link, so after the link's expiry there is no live session to retry with",
       "steps": [
         {
           "action": "k1",

@@ -231,9 +231,10 @@ also requires its session to be unexpired. For a submit, the first step under
 the lock is the **receipt lookup**: if the link has an admitted operation with
 this idempotency key, the same body returns its stored receipt, and a
 different body is 409 `idempotency_conflict`. Nothing else below runs for a
-matching retry, so a retry gets its receipt even after the link was used up,
-revoked or expired, as long as its session is live; it never admits a second
-operation. Otherwise, in the same transaction, the request requires:
+matching retry, so a retry gets its receipt even after the link was used up
+or revoked, as long as its session is live; it never admits a second
+operation. A session never outlives its link, so once the link has expired
+there is no session left to retry with. Otherwise, in the same transaction, the request requires:
 
 - `revoked_at` is null, `expires_at` is in the future, and, for a one-use link,
   `used_at` is null;
@@ -309,8 +310,11 @@ agent, never instructions that bypass that decision.
 **Where this runs.** The exchange, the request verifier, the nonce and receipt
 stores, the link row locks and asset grants are the capability-link runtime in
 `aweb_naapp` (D1 §7: N5 builds page action links on it, beside B2's approval
-links). The shared renderer never sees a secret, grant or key, and calls only
-its host adapter.
+links). The shared renderer calls only its host adapter. It never receives the
+link secret, the session key or the CSRF token as page data. For media it
+receives only opaque, single-asset URLs on the pinned asset origin, which carry
+their grant; it neither parses nor stores the grant, and issuing or checking
+grants is never renderer authority.
 
 ## 6. Rate limits
 
