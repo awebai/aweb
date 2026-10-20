@@ -1121,6 +1121,9 @@ verified same-member fetch/install/retry. Default status response shape stays
 unchanged; opt-in include_replacement=true exposes the link. Opt-in
 include_issuer=true adds only member_did_key, certificate_team_did_key and
 certificate_expires_at (null when absent), derived from the registered artifact.
+These opt-in facts are anonymous even on private teams when the exact
+certificate ID is known; member public keys are already carried by the signed
+certificate, and no roster enumeration is exposed.
 The status enum still describes revocation; consumers separately enforce the
 signed expiry without grace. No alias, address or blob is exposed.
 
