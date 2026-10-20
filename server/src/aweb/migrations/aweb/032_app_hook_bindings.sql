@@ -73,14 +73,17 @@ CREATE TABLE IF NOT EXISTS {{tables.app_hook_bindings}} (
     )
 );
 
--- One binding per declaration per install generation. Before an install
--- carries its installation identity the generation is NULL, so the key reads
--- it through COALESCE: NULLs would otherwise never conflict.
+-- One live binding per declaration per install generation and digest. Ended
+-- rows are history and never hold the key, so a reinstall writes fresh pending
+-- bindings. Before an install carries its installation identity the
+-- generation is NULL, so the key reads it through COALESCE: NULLs would
+-- otherwise never conflict.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_app_hook_bindings_declaration
     ON {{tables.app_hook_bindings}} (
-        team_id, app_id, COALESCE(installation_id, ''), COALESCE(generation, 0),
+        team_id, app_id, digest, COALESCE(installation_id, ''), COALESCE(generation, 0),
         kind, catalog_id, catalog_version, hook, COALESCE(tool, '')
-    );
+    )
+    WHERE state IN ('pending', 'active');
 
 -- Producers' and consumers' queries: the active registrations or productions
 -- of one hook in one team.

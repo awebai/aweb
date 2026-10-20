@@ -129,7 +129,8 @@ async def write_pending_bindings(
 
     Runs in the install's transaction. Every earlier binding of the app in the
     team, pending or active, is superseded first. Writing the same generation
-    again keeps its bindings and their states. Returns the generation's
+    again keeps its live bindings and their states; ended bindings are history,
+    so a reinstall after uninstall writes fresh pending ones. Returns the generation's
     bindings in declaration order.
     """
 
@@ -186,7 +187,7 @@ async def write_pending_bindings(
         row = await tx.fetch_one(
             f"""
             SELECT {_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
-            WHERE team_id = $1 AND app_id = $2
+            WHERE team_id = $1 AND app_id = $2 AND digest = $10 AND state IN ('pending', 'active')
               AND COALESCE(installation_id, '') = COALESCE($3::TEXT, '')
               AND COALESCE(generation, 0) = COALESCE($4::INTEGER, 0)
               AND kind = $5 AND catalog_id = $6 AND catalog_version = $7 AND hook = $8
@@ -201,6 +202,7 @@ async def write_pending_bindings(
             declaration.catalog_version,
             declaration.hook,
             declaration.tool,
+            digest,
         )
         written.append(_binding(row))
     return written

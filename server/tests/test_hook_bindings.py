@@ -158,6 +158,40 @@ async def test_uninstall_revokes_the_live_bindings_and_leaves_ended_ones(db):
     assert {(rows[b.binding_id].state, rows[b.binding_id].ended_by) for b in first} == {("superseded", "generation")}
 
 
+async def _assert_fresh_pending(db, written, ended, *, digest, ended_state, ended_by):
+    rows = {b.binding_id: b for b in await list_app_bindings(db, team_id=TEAM, app_id="logs")}
+    assert len(written) == 2
+    assert {b.binding_id for b in written}.isdisjoint({b.binding_id for b in ended})
+    assert [(b.state, b.digest) for b in written] == [("pending", digest), ("pending", digest)]
+    assert {(rows[b.binding_id].state, rows[b.binding_id].ended_by) for b in ended} == {(ended_state, ended_by)}
+    assert len(rows) == 4
+
+
+@pytest.mark.asyncio
+async def test_before_installation_identity_a_new_digest_gets_fresh_pending_bindings(db):
+    old, new = _digest("v1"), _digest("v2")
+    await _install(db, digest=old)
+    first = await _write(db, digest=old, installation_id=None, generation=None)
+    await _install(db, digest=new)
+
+    second = await _write(db, digest=new, installation_id=None, generation=None)
+
+    await _assert_fresh_pending(db, second, first, digest=new, ended_state="superseded", ended_by="generation")
+
+
+@pytest.mark.asyncio
+async def test_a_reinstall_after_uninstall_gets_fresh_pending_bindings(db):
+    digest = _digest("v1")
+    await _install(db, digest=digest)
+    first = await _write(db, digest=digest, installation_id=None, generation=None)
+    async with db.transaction() as tx:
+        await revoke_uninstalled_bindings(tx, team_id=TEAM, app_id="logs")
+
+    second = await _write(db, digest=digest, installation_id=None, generation=None)
+
+    await _assert_fresh_pending(db, second, first, digest=digest, ended_state="revoked", ended_by="uninstall")
+
+
 @pytest.mark.asyncio
 async def test_another_team_and_another_app_are_untouched(db):
     digest = _digest("v1")
