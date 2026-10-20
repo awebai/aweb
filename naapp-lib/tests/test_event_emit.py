@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from awid.signing import canonical_json_bytes, verify_did_key_signature
+from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp.runtime.event_emit import app_event_body, build_emit_request, emit_app_event
 from aweb_naapp.runtime.settings import NaappSettings
@@ -27,6 +28,8 @@ _EVENT = dict(
 
 
 class ExampleSettings(NaappSettings):
+    model_config = SettingsConfigDict(env_prefix="EXAMPLE_")
+
     database_url: str = "postgresql://localhost/example"
     public_origin: str = "https://example.test"
     app_id: str = "example"

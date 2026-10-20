@@ -41,7 +41,10 @@ def test_app_subclass_reads_its_own_env_prefix(monkeypatch: pytest.MonkeyPatch) 
     assert (settings.db_pool_min_connections, settings.db_pool_max_connections) == (2, 4)
 
 
-def test_shared_settings_need_the_app_specific_values() -> None:
+def test_shared_settings_need_the_app_specific_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The base has no env_prefix, so it would read these bare names.
+    for name in ("DATABASE_URL", "PUBLIC_ORIGIN", "APP_ID"):
+        monkeypatch.delenv(name, raising=False)
     with pytest.raises(ValidationError) as caught:
         NaappSettings(_env_file=None)
     missing = {error["loc"][0] for error in caught.value.errors()}

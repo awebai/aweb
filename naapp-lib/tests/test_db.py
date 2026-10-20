@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
+from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp.runtime.db import NaappDatabase
 from aweb_naapp.runtime.settings import NaappSettings
@@ -20,6 +21,8 @@ _TEST_DB_CONFIG = DatabaseTestConfig(
 
 
 class ExampleSettings(NaappSettings):
+    model_config = SettingsConfigDict(env_prefix="EXAMPLE_")
+
     public_origin: str = "https://example.test"
     app_id: str = "example"
 
