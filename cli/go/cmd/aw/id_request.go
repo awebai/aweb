@@ -59,7 +59,7 @@ var (
 
 var idSignCmd = &cobra.Command{
 	Use:   "sign",
-	Short: "Sign a canonical JSON payload with the local identity key",
+	Short: "Sign user data with a domain-separated local identity signature",
 	RunE:  runIDSign,
 }
 
@@ -75,8 +75,8 @@ func init() {
 	idSignCmd.Flags().StringVar(&idSignPayloadFile, "payload-file", "", "Read the JSON payload to sign from a file")
 	identityCmd.AddCommand(idSignCmd)
 
-	idRequestCmd.Flags().StringVar(&idRequestSign, "sign", "", "JSON object describing the signed payload fields")
-	idRequestCmd.Flags().StringVar(&idRequestSignFile, "sign-file", "", "Read the JSON sign payload from a file")
+	idRequestCmd.Flags().StringVar(&idRequestSign, "sign", "", "Additional signed fields (requires --team-auth)")
+	idRequestCmd.Flags().StringVar(&idRequestSignFile, "sign-file", "", "Read additional signed fields from a file (requires --team-auth)")
 	idRequestCmd.Flags().StringVar(&idRequestBody, "body", "", shellExpandedInlineHelp("Request body to send", "--body-file"))
 	idRequestCmd.Flags().StringVar(&idRequestBodyFile, "body-file", "", safeFileInputHelp("request body"))
 	idRequestCmd.Flags().StringArrayVar(&idRequestHeaders, "header", nil, "Additional header in 'Name: Value' form")
@@ -133,7 +133,7 @@ func runIDRequest(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	signPayload, err := loadIDRequestSignPayload(idRequestSign, idRequestSignFile, idRequestTeamAuth)
+	signPayload, err := loadIDRequestSignPayload(idRequestSign, idRequestSignFile)
 	if err != nil {
 		return err
 	}
@@ -193,34 +193,46 @@ func signIDRequestHeaders(headers http.Header, method string, parsedURL *url.URL
 	if headers == nil {
 		return fmt.Errorf("headers are required")
 	}
+	if identity == nil || len(identity.SigningKey) != ed25519.PrivateKeySize {
+		return fmt.Errorf("local signing identity is required")
+	}
+	var payload map[string]any
 	if teamAuth {
 		teamPayload, cert, err := teamSignedRequestPayload(identity, parsedURL, method, bodyBytes, signPayload)
 		if err != nil {
 			return err
 		}
-		didKey, signature, canonical, err := awid.SignArbitraryPayload(identity.SigningKey, teamPayload, timestamp)
-		if err != nil {
-			return err
-		}
+		payload = teamPayload
 		certHeader, err := awid.EncodeTeamCertificateHeader(cert)
 		if err != nil {
 			return fmt.Errorf("encode team certificate header: %w", err)
 		}
-		headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
-		headers.Set("X-AWEB-Timestamp", timestamp)
-		headers.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
 		headers.Set("X-AWID-Team-Certificate", certHeader)
 	} else {
-		didKey, signature, _, err := awid.SignArbitraryPayload(identity.SigningKey, signPayload, timestamp)
-		if err != nil {
-			return err
+		// Until identity-v2 is deployed, retain ONLY the concrete v1 identity
+		// envelope. Never turn caller JSON into another root-key signing oracle.
+		if len(signPayload) != 0 {
+			return usageError("--sign fields require --team-auth")
 		}
-		headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
-		headers.Set("X-AWEB-Timestamp", timestamp)
+		payload = map[string]any{
+			"body_sha256": fmt.Sprintf("%x", sha256.Sum256(bodyBytes)),
+			"did_aw":      strings.TrimSpace(identity.StableID),
+		}
+		headers.Del("X-AWID-Team-Certificate")
+		headers.Del("X-AWEB-Signed-Payload")
 	}
-	if strings.TrimSpace(identity.StableID) != "" {
-		headers.Set("X-AWEB-DID-AW", strings.TrimSpace(identity.StableID))
+	payload["timestamp"] = timestamp
+	canonical, err := awid.CanonicalJSONValue(payload)
+	if err != nil {
+		return err
 	}
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(identity.SigningKey, []byte(canonical)))
+	headers.Set("Authorization", fmt.Sprintf("DIDKey %s %s", identity.DIDKey, signature))
+	headers.Set("X-AWEB-Timestamp", timestamp)
+	if teamAuth {
+		headers.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
+	}
+	headers.Set("X-AWEB-DID-AW", strings.TrimSpace(identity.StableID))
 	if len(bodyBytes) > 0 && strings.TrimSpace(headers.Get("Content-Type")) == "" {
 		headers.Set("Content-Type", "application/json")
 	}
@@ -293,8 +305,8 @@ func resolveLocalSigningIdentity() (*localSigningIdentity, error) {
 	}, nil
 }
 
-func loadIDRequestSignPayload(inline, filePath string, allowEmpty bool) (map[string]any, error) {
-	if strings.TrimSpace(inline) == "" && strings.TrimSpace(filePath) == "" && allowEmpty {
+func loadIDRequestSignPayload(inline, filePath string) (map[string]any, error) {
+	if strings.TrimSpace(inline) == "" && strings.TrimSpace(filePath) == "" {
 		return map[string]any{}, nil
 	}
 	return loadJSONObjectInput(inline, filePath, "sign")

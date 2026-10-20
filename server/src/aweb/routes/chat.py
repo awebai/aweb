@@ -64,6 +64,7 @@ from aweb.messaging.chat import (
     HANG_ON_EXTENSION_SECONDS,
     MAX_CHAT_MARK_READ_IDS,
     ensure_session,
+    validate_session_id,
     find_session_between,
     get_agent_by_alias,
     get_agents_by_aliases,
@@ -1339,6 +1340,12 @@ async def create_or_send(
     sender_address = _sender_address(auth)
     registry_client = getattr(request.app.state, "awid_registry_client", None)
 
+    requested_session_id = UUID(payload.session_id) if payload.session_id is not None else None
+    if requested_session_id is not None:
+        await validate_session_id(
+            db, session_id=requested_session_id, actor_dids=actor_dids, actor_agent_id=actor_agent_id,
+        )
+
     target_rows = await _resolve_chat_targets(
         db,
         request=request,
@@ -1387,7 +1394,6 @@ async def create_or_send(
         for row in target_rows
     ]
 
-    requested_session_id = UUID(payload.session_id) if payload.session_id is not None else None
     validation_conversation_id = str(requested_session_id) if requested_session_id is not None else None
     signed_requested_session_id = (
         requested_session_id is not None
