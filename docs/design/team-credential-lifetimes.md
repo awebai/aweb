@@ -15,13 +15,17 @@ the host then acts with its existing controller authority.
 
 AWID is the canonical policy source. The controller-authenticated endpoint is
 `POST /v1/namespaces/{domain}/teams/{name}/credential-lifetimes`; its signed
-operation is `set_credential_lifetimes`, binding the team and full policy. The
-matching GET requires the team controller or an active member, including on
-public teams; it is not anonymous. Existing authenticated registry-service reads
-need an explicit integration decision for servers verifying delegated grants.
+operation is `set_credential_lifetimes`, binding the team and full policy, and
+accepts only the covering v2 controller envelope. The policy is a team-key-signed
+`aweb.team-credential-policy/1` record, rather than unsigned configuration. Its
+exact-team GET is anonymously readable on public and private teams, following S6
+and team-server records. Readers verify it against the CURRENT team key, so a
+self-hosted verifier needs neither a service token nor a member's private key.
 Policy reads use an origin/team-scoped cache for at most 60 seconds, with no
 expired fallback. Fetch failure refuses as `authority_unavailable`. An older registry
 without the endpoint has no configurable policy and retains existing defaults.
+An absent record means no policy; malformed, wrong-key or unavailable records
+never become an absent-policy fallback.
 
 The policy has four nullable maximum durations in seconds:
 
@@ -36,12 +40,20 @@ All default to null. A positive duration opts that credential class into expiry.
 The response includes the policy revision. Changes audit the controller actor,
 team, old and new values and time in the registry transaction. No member or
 session grant can set policy. The hosted service also audits the human admin.
+The signed record contains `v:1`, `type:"aweb.team-credential-policy"`, team ID,
+current team did:key, revision, UTC issued_at and the four nullable maxima.
+Signing bytes are `aweb.team-credential-policy/1\n` plus canonical record JSON;
+the body is `{record, signature}`, like the existing signed-record endpoints.
+It joins the signed-records read and `resigned_records.team_credential_policy`
+in team-key rotation: the complete-set checks require its new-key signature,
+preserving policy/revision and changing only key/issued_at, in the same commit.
+No record is stranded on the old key after an atomic re-signing rotation.
 
 Cloud owns its dashboard API, with a target-team-scoped read and audited save
 using `assert_team_role(..., min_role="admin")` today; it later moves the same
 decision into `authorize()`. A service credential or team membership alone is
-insufficient. Cloud saves by signing the AWID policy operation with that team's
-controller key. Team settings → Credential lifetimes shows four rows, “No limit”
+insufficient. Cloud signs the record and covering policy operation through the
+public RegistryClient. Team settings → Credential lifetimes shows four rows, “No limit”
 or a positive duration, no presets. Saving a certificate limit is blocked until
 released verifier adoption has been measured. Cloud owns the adoption gate and
 its UX-owner sign-off. It must not issue v2 early to members or peers.
@@ -122,10 +134,21 @@ different replacement wins; a losing request preserves committed state.
 The public Python `RegistryClient.rollover_team_certificate(...)` and Go client
 own the covering request. Cloud and batch renew-certs call these; no private
 signing helpers. Both invalidation and tests cover certificate/revocation caches.
+Rollover invalidates the caller's cached status for both IDs. Other verifiers
+converge within the same at-most-60-second certificate-status TTL. A revoked row
+with `replaced_by_certificate_id` reports 401 `certificate_replaced`, distinct
+from disciplinary `certificate_revoked`. The response carries the replacement
+ID. aw and channel-core/naapp-lib clients follow that exact same-team link,
+verify the replacement under the current team key, require the same member
+did:key, install it and retry the original request once. A failed fetch or
+verification fails closed; never loop or fall back to root authority. Proactive
+auto-fetch remains. The real-stack full-loop test rolls over, observes the old
+credential refused, follows/installs and retries successfully; a second refusal
+does not trigger another retry.
 Real PG/HTTP tests: active-alias neighbor, failed registration rollback, successful
 atomic replacement, duplicate/reordered retries, parallel differing renewals,
 cross-team/non-controller refusal, body swapping, revoked tombstones and policy.
-The exact AWID release is coordinator-owned and not allocated yet; it must be
+AWID0.5.31 is allocated by the coordinator; it must be
 published and pinned before Cloud invokes rollover. aw1.36.46 is allocated for
 the client integration. This section needs Athena review before route building.
 
