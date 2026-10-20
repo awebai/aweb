@@ -52,8 +52,8 @@ def _apply(node: Any, tokens: list[str], op: str, value: Any) -> Any:
     raise AssertionError(f"pointer token {token!r} into a non-container")
 
 
-def _manifest_bytes(case: dict[str, Any]) -> bytes:
-    doc = copy.deepcopy(V2["base_manifests"][case["base"]])
+def _manifest_bytes(case: dict[str, Any], bases: dict[str, Any] | None = None) -> bytes:
+    doc = copy.deepcopy((bases or V2["base_manifests"])[case["base"]])
     for mutation in case.get("mutations", []):
         doc = _apply(doc, mutation["path"].split("/")[1:], mutation["op"], mutation.get("value"))
     return json.dumps(doc, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
@@ -135,8 +135,8 @@ def test_select_variant(case: dict[str, Any]) -> None:
 
 @pytest.mark.parametrize("case", DISCOVERY["lint_cases"], ids=lambda c: c["name"])
 def test_v1_variant_lint(case: dict[str, Any]) -> None:
-    v1 = json.dumps(case["v1"], separators=(",", ":")).encode("utf-8")
-    v2 = json.dumps(case["v2"], separators=(",", ":")).encode("utf-8")
+    v1 = _manifest_bytes(case["v1"], DISCOVERY["base_manifests"])
+    v2 = _manifest_bytes(case["v2"], DISCOVERY["base_manifests"])
     if case["expected"] == "compatible":
         check_v1_variant(v1, v2)
         return
