@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/awebai/aw/awconfig"
+	"github.com/awebai/aw/awid"
 )
 
 func TestExternalIdentityHomeSplitsStaticA2ACredentialsFromInstanceTaskTokens(t *testing.T) {
@@ -79,6 +80,17 @@ func TestExternalIdentityHomeA2AStatusMergesPrincipalStaticAndInstanceTaskCreden
 	}
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
+
+	pub, key, err := awid.GenerateKeypair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := awid.SaveSigningKey(filepath.Join(principal, "signing.key"), key); err != nil {
+		t.Fatal(err)
+	}
+	if err := awconfig.SaveWorktreeIdentityTo(filepath.Join(principal, "identity.yaml"), &awconfig.WorktreeIdentity{DID: awid.ComputeDIDKey(pub), Custody: awid.CustodySelf, IdentityScope: awid.IdentityModeLocal}); err != nil {
+		t.Fatal(err)
+	}
 
 	server := newLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

@@ -87,9 +87,14 @@ func ResolveWorkspace(opts ResolveOptions) (*Selection, error) {
 	}
 
 	identityHome := strings.TrimSpace(opts.IdentityHome)
-	workspace, teamState, rootDir, err := LoadWorkspaceAndTeamState(workingDir)
+	var workspace *WorktreeWorkspace
+	var teamState *TeamState
+	var rootDir string
+	var err error
 	if identityHome != "" && opts.ExternalIdentityHome {
 		workspace, teamState, rootDir, err = LoadWorkspaceAndTeamStateFromIdentityHome(identityHome)
+	} else {
+		workspace, teamState, rootDir, err = LoadWorkspaceAndTeamState(workingDir)
 	}
 	if err != nil {
 		if workspace == nil && errors.Is(err, os.ErrNotExist) {

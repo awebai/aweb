@@ -13,6 +13,7 @@ import (
 	"time"
 
 	aweb "github.com/awebai/aw"
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/pathpreflight"
 	"github.com/spf13/cobra"
@@ -197,6 +198,13 @@ func hostedRemovalRecoveryPath(workingDir, operationID string) (string, error) {
 	operationID = strings.TrimSpace(operationID)
 	if operationID == "" || strings.ContainsAny(operationID, `/\\`) || strings.Contains(operationID, "..") {
 		return "", fmt.Errorf("invalid hosted removal operation id")
+	}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return "", err
+	}
+	if home.External() {
+		return awconfig.IdentityHomePath(home, hostedRemovalRecoveryDir+"/"+operationID+".json")
 	}
 	return filepath.Join(hostedRemovalRecoveryRoot(workingDir), operationID+".json"), nil
 }

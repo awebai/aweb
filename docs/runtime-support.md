@@ -83,10 +83,11 @@ membership result: `not_started`, `incomplete`, or `prepared`. Prepared means
 local setup completed; it is not a delivery readiness result. Installer
 diagnostics go to stderr so stdout remains one JSON result.
 
-The existing external-identity-home restriction on `aw team join` also applies
-to `--setup-only`: neither `--identity-home` nor `AWEB_IDENTITY_HOME` is supported
-on this command. It refuses rather than using a different identity in the current
-directory. Orchestrators must not print an external-home join as a supported path.
+`aw team join --setup-only` uses the selected identity's connected workspace
+and writes harness documents/configuration for the current checkout. It does not
+redeem another invite or create identity state. To create a local identity while
+another identity is inherited through `AWEB_IDENTITY_HOME`, name a fresh target
+with `--identity-home`; joining never overwrites the inherited identity.
 
 ## Claude Code channel launch
 

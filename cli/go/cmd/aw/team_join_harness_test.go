@@ -283,8 +283,6 @@ func TestTeamJoinHarnessCommand(t *testing.T) {
 				t.Fatal(err)
 			}
 			otherBefore := snapshotJoinFiles(t, filepath.Join(wd, ".aw"))
-			cwdBefore := snapshotJoinFiles(t, wd)
-			configBefore := snapshotJoinFiles(t, configDir)
 			for _, explicit := range []bool{true, false} {
 				for _, joinArgs := range [][]string{
 					{"team", "join", "--setup-only", "--harness", actual, "--json"},
@@ -296,19 +294,20 @@ func TestTeamJoinHarnessCommand(t *testing.T) {
 						env = []string{"AWEB_IDENTITY_HOME=" + filepath.Join(wd, ".aw")}
 					}
 					a, c, d := admissionCalls.Load(), connectCalls.Load(), docsCalls.Load()
-					_, diagnostic, err := run(env, joinArgs...)
-					if err == nil || !strings.Contains(diagnostic, "not yet identity-home-aware") {
-						t.Fatalf("external home must retain command-policy refusal: %v %s", err, diagnostic)
+					result, diagnostic, err := run(env, joinArgs...)
+					setupOnly := strings.Join(joinArgs, " ")
+					if strings.Contains(setupOnly, "--setup-only") {
+						if err != nil || result["status"] != "prepared" || docsCalls.Load() != d+1 {
+							t.Fatalf("selected-principal harness setup: %v %v %s", result, err, diagnostic)
+						}
+					} else if err == nil || docsCalls.Load() != d {
+						t.Fatalf("local join must not overwrite selected identity: %v %s", err, diagnostic)
 					}
-					if admissionCalls.Load() != a || connectCalls.Load() != c || docsCalls.Load() != d {
-						t.Fatal("external refusal made network calls")
+					if admissionCalls.Load() != a || connectCalls.Load() != c {
+						t.Fatal("setup or refused identity creation changed membership/binding")
 					}
 				}
 			}
-			if !reflect.DeepEqual(cwdBefore, snapshotJoinFiles(t, wd)) || !reflect.DeepEqual(configBefore, snapshotJoinFiles(t, configDir)) {
-				t.Fatal("external refusal wrote docs or installer config")
-			}
-
 			if !reflect.DeepEqual(identityBefore, snapshotJoinFiles(t, external)) || !reflect.DeepEqual(otherBefore, snapshotJoinFiles(t, filepath.Join(wd, ".aw"))) {
 				t.Fatal("external setup mutated identity")
 			}

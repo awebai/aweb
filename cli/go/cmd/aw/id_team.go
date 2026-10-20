@@ -393,8 +393,9 @@ var teamInviteCmd = &cobra.Command{
 }
 
 var teamAcceptInviteCmd = &cobra.Command{
-	Use:   "accept-invite [token]",
-	Short: "Accept a team invite and receive a membership certificate",
+	Annotations: map[string]string{identityCreationTargetAnnotation: "true"},
+	Use:         "accept-invite [token]",
+	Short:       "Accept a team invite and receive a membership certificate",
 	Long: "Accept a team invite and receive a membership certificate.\n\n" +
 		"Pass the token positionally or use --token-stdin (never both). Stdin is read\n" +
 		"to EOF, up to 65536 bytes, and must contain one token line; surrounding\n" +
@@ -746,20 +747,27 @@ func runTeamInviteWithOutput(cmd *cobra.Command, args []string, porcelainJoin bo
 	if err != nil {
 		return err
 	}
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
 	global := teamInviteMemberGlobal || teamInviteGlobal || teamInviteDeprecatedGlobalScope
 	local := teamInviteMemberLocal || teamInviteLocal || teamInviteDeprecatedLocalScope
 	if global && local {
 		return usageError("--member-global and --member-local cannot be used together")
 	}
-	team, domain, registryURL, awebURL, err := resolveTeamInviteTarget(workingDir)
+	team, domain, registryURL, awebURL, err := resolveTeamInviteTargetAt(workingDir, externalIdentityHomeRoot(home))
 	if err != nil {
 		return err
 	}
 
 	localInvite := !global
-	hasTeamKey, err := awconfig.TeamKeyExists(domain, team)
-	if err != nil {
-		return err
+	hasTeamKey := false
+	if !awconfig.IsGrantHome(home.Root) {
+		hasTeamKey, err = awconfig.TeamKeyExists(domain, team)
+		if err != nil {
+			return err
+		}
 	}
 	var inviteID, token string
 	if hasTeamKey {
@@ -802,12 +810,34 @@ func (e *noActiveTeamInviteTargetError) Is(target error) bool {
 }
 
 func resolveTeamInviteTarget(workingDir string) (team, domain, registryURL, awebURL string, err error) {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return "", "", "", "", err
+	}
+	return resolveTeamInviteTargetAt(workingDir, externalIdentityHomeRoot(home))
+}
+
+func resolveTeamInviteTargetAt(workingDir, identityHome string) (team, domain, registryURL, awebURL string, err error) {
 	team = strings.ToLower(strings.TrimSpace(teamInviteTeam))
 	domain = awconfig.NormalizeDomain(teamInviteNamespace)
+	if awconfig.IsGrantHome(identityHome) {
+		grant, loadErr := awconfig.LoadGrantHome(identityHome)
+		if loadErr != nil {
+			return "", "", "", "", loadErr
+		}
+		grantDomain, grantTeam, parseErr := awid.ParseTeamID(grant.TeamID)
+		if parseErr != nil {
+			return "", "", "", "", parseErr
+		}
+		if (team != "" && team != grantTeam) || (domain != "" && domain != grantDomain) {
+			return "", "", "", "", usageError("grant home %s is bound to team %s", identityHome, grant.TeamID)
+		}
+		return grantTeam, grantDomain, "", grant.AwebURL, nil
+	}
 
 	rootDir := strings.TrimSpace(workingDir)
 	if team == "" || domain == "" {
-		teamState, loadedRoot, loadErr := loadTeamStateForInvite(workingDir)
+		teamState, loadedRoot, loadErr := loadTeamStateForInviteAt(workingDir, identityHome)
 		if loadErr != nil {
 			missing := "--team and --namespace"
 			if team != "" {
@@ -839,12 +869,24 @@ func resolveTeamInviteTarget(workingDir string) (team, domain, registryURL, aweb
 	if domain == "" {
 		return "", "", "", "", usageError("--namespace is required")
 	}
-	awebURL = awebURLForTeamInvite(rootDir, awid.BuildTeamID(domain, team))
-	registryURL = registryURLForTeamInvite(rootDir, domain, awebURL)
+	awebURL = awebURLForTeamInviteAt(rootDir, identityHome, awid.BuildTeamID(domain, team))
+	registryURL = registryURLForTeamInviteAt(rootDir, identityHome, domain, awebURL)
 	return team, domain, registryURL, awebURL, nil
 }
 
 func loadTeamStateForInvite(workingDir string) (*awconfig.TeamState, string, error) {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, "", err
+	}
+	return loadTeamStateForInviteAt(workingDir, externalIdentityHomeRoot(home))
+}
+
+func loadTeamStateForInviteAt(workingDir, identityHome string) (*awconfig.TeamState, string, error) {
+	if strings.TrimSpace(identityHome) != "" {
+		state, err := awconfig.LoadTeamStateFromIdentityHome(identityHome)
+		return state, workingDir, err
+	}
 	_, teamState, rootDir, workspaceErr := awconfig.LoadWorkspaceAndTeamState(workingDir)
 	if workspaceErr == nil {
 		return teamState, rootDir, nil
@@ -1021,6 +1063,9 @@ func runTeamAcceptInviteWithConnect(cmd *cobra.Command, args []string, connectWo
 	if err != nil {
 		return err
 	}
+	if home.Source == awconfig.IdentityHomeEnvVar && acceptScope == awid.IdentityModeLocal {
+		return usageError("local identity creation requires an explicit fresh --identity-home target; refusing to change inherited identity home %s", home.Root)
+	}
 	if home.External() && acceptScope == awid.IdentityModeLocal {
 		if err := ensureExternalLocalAcceptHomeAvailable(home.Root); err != nil {
 			return err
@@ -1165,13 +1210,13 @@ func acceptAndStoreTeamInvite(workingDir, token string, opts teamAcceptInviteOpt
 		return nil, err
 	}
 	if teamState != nil && teamState.Membership(accepted.Output.TeamID) != nil {
-		return nil, rollbackAddedTeamCertificate(workingDir, accepted, usageError("team %q is already present in local team memberships", accepted.Output.TeamID))
+		return nil, rollbackAddedTeamCertificate(workingDir, identityHomeRoot, accepted, usageError("team %q is already present in local team memberships", accepted.Output.TeamID))
 	}
 	// Join deliberately leaves the worktree binding for `aw init`; only the
 	// teams.yaml membership and the encryption key are recorded here.
 	if err := recordAcceptedTeamMembership(workingDir, accepted.Output, accepted.Certificate, accepted.RegistryURL, accepted.AwebURL, recordMembershipOptions{IdentityHome: store.IdentityHome, SetActive: store.SetActive}); err != nil {
 		if store.RejectDuplicate {
-			return nil, rollbackAddedTeamCertificate(workingDir, accepted, err)
+			return nil, rollbackAddedTeamCertificate(workingDir, identityHomeRoot, accepted, err)
 		}
 		return nil, err
 	}
@@ -2507,8 +2552,19 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	certPathAbs := awconfig.TeamCertificatePath(workingDir, teamID)
-	existingCert, existingErr := awconfig.LoadTeamCertificateForTeam(workingDir, teamID)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return err
+	}
+	if awconfig.IsGrantHome(home.Root) {
+		return errGrantHomeRootAuthority
+	}
+	identityRoot := externalIdentityHomeRoot(home)
+	certPathAbs, err := awconfig.IdentityHomeStoredPath(home, awconfig.TeamCertificateRelativePath(teamID))
+	if err != nil {
+		return err
+	}
+	existingCert, existingErr := loadTeamCertificateAt(workingDir, identityRoot, teamID)
 	if existingErr == nil && existingCert != nil {
 		if strings.TrimSpace(existingCert.CertificateID) == certificateID {
 			certPath := awconfig.TeamCertificateRelativePath(teamID)
@@ -2517,7 +2573,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 				TeamID:   teamID,
 				Alias:    strings.TrimSpace(existingCert.Alias),
 				CertPath: certPath,
-			}, existingCert, "", "", false); err != nil {
+			}, existingCert, "", "", false, identityRoot); err != nil {
 				return err
 			}
 			if err := ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
@@ -2540,7 +2596,11 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("existing team certificate at %s could not be read: %w (use --force to overwrite)", certPathAbs, existingErr)
 		}
 	}
-	signingKey, err := awid.LoadSigningKey(awconfig.WorktreeSigningKeyPath(workingDir))
+	signingKeyPath, err := awconfig.IdentityHomePath(home, "signing.key")
+	if err != nil {
+		return err
+	}
+	signingKey, err := awid.LoadSigningKey(signingKeyPath)
 	if err != nil {
 		return fmt.Errorf("load local signing key: %w (run `aw id create` first on this machine)", err)
 	}
@@ -2569,7 +2629,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("fetched certificate team_id %q does not match requested %q", cert.Team, teamID)
 	}
 
-	certPath, err := awconfig.SaveTeamCertificateForTeam(workingDir, teamID, cert)
+	certPath, err := saveAcceptedTeamCertificate(workingDir, identityRoot, teamID, cert)
 	if err != nil {
 		return err
 	}
@@ -2578,7 +2638,7 @@ func runTeamFetchCert(cmd *cobra.Command, args []string) error {
 		TeamID:   teamID,
 		Alias:    strings.TrimSpace(cert.Alias),
 		CertPath: certPath,
-	}, cert, registryURL, "", false); err != nil {
+	}, cert, registryURL, "", false, identityRoot); err != nil {
 		return err
 	}
 	if err := ensureAndPublishLocalIdentityEncryptionKeyForDir(workingDir, currentEncryptionKeyIdentityHome()); err != nil {
@@ -2750,8 +2810,10 @@ func resolveTeamRemoveRegistryURL(registry *awid.RegistryClient) string {
 	registryURL := strings.TrimSpace(teamRemoveRegistryURL)
 	if registryURL == "" {
 		if workingDir, wdErr := os.Getwd(); wdErr == nil {
-			if identity, _, idErr := awconfig.LoadWorktreeIdentityFromDir(workingDir); idErr == nil && identity != nil {
-				registryURL = strings.TrimSpace(identity.RegistryURL)
+			if home, homeErr := identityHomeForDir(workingDir); homeErr == nil {
+				if identity, idErr := awconfig.LoadWorktreeIdentityFrom(filepath.Join(home.Root, "identity.yaml")); idErr == nil && identity != nil {
+					registryURL = strings.TrimSpace(identity.RegistryURL)
+				}
 			}
 		}
 	}
@@ -2899,7 +2961,11 @@ func resolveHostedTeamRemoveAuth(workingDir, teamID string) (awebURL, apiKey str
 func resolveHostedTeamRemoveAuthWithAwebURL(workingDir, teamID, explicitAwebURL, explicitAPIKey string) (awebURL, apiKey string, err error) {
 	awebURL = strings.TrimSpace(explicitAwebURL)
 	apiKey = firstNonEmptyLibraryValue(explicitAPIKey, os.Getenv(initAPIKeyEnvVar))
-	workspace, teamState, _, loadErr := awconfig.LoadWorkspaceAndTeamState(workingDir)
+	home, homeErr := identityHomeForDir(workingDir)
+	if homeErr != nil {
+		return "", "", homeErr
+	}
+	workspace, teamState, _, loadErr := loadCurrentWorkspaceAndTeamState(workingDir, externalIdentityHomeRoot(home))
 	if loadErr == nil && workspace != nil {
 		if awebURL == "" {
 			awebURL = strings.TrimSpace(workspace.AwebURL)
@@ -3564,16 +3630,21 @@ func runCertShow(cmd *cobra.Command, args []string) error {
 }
 
 func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, string, error) {
-	if teamState, err := awconfig.LoadTeamState(workingDir); err == nil && teamState != nil {
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return nil, "", err
+	}
+	teamState, stateErr := loadSelectedTeamState(workingDir, home)
+	if stateErr == nil && teamState != nil {
 		selectedTeamID := strings.TrimSpace(teamFlag)
 		selectedMembership := teamState.Membership(selectedTeamID)
-		if selectedMembership == nil {
+		if selectedTeamID == "" {
 			selectedMembership = teamState.ActiveMembership()
 		}
 		if selectedMembership == nil {
 			return nil, "", fmt.Errorf("teams state is missing selected team membership")
 		}
-		certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, selectedMembership.CertPath)
+		certPath, err := awconfig.IdentityHomeStoredPath(home, selectedMembership.CertPath)
 		if err != nil {
 			return nil, "", err
 		}
@@ -3584,6 +3655,9 @@ func loadCurrentTeamCertificate(workingDir string) (*awid.TeamCertificate, strin
 		return cert, certPath, nil
 	}
 
+	if home.External() {
+		return nil, "", fmt.Errorf("load selected identity home %s: %w", home.Root, stateErr)
+	}
 	stored, err := awconfig.ListTeamCertificates(workingDir)
 	if err != nil {
 		return nil, "", err
@@ -3643,10 +3717,14 @@ func requireTeamStateForMembershipAt(workingDir, identityHome string) (*awconfig
 	return teamState, nil
 }
 
-func rollbackAddedTeamCertificate(workingDir string, accepted *acceptedTeamInvite, cause error) error {
+func rollbackAddedTeamCertificate(workingDir, identityHome string, accepted *acceptedTeamInvite, cause error) error {
 	revokeErr := revokeAcceptedTeamCertificate(accepted)
 	if accepted != nil && accepted.Output != nil && strings.TrimSpace(accepted.Output.CertPath) != "" {
-		if certPath, err := awconfig.WorktreeStoredIdentityPath(workingDir, accepted.Output.CertPath); err == nil {
+		home := awconfig.IdentityHome{Root: awconfig.WorktreeIdentityHome(workingDir)}
+		if identityHome != "" {
+			home.Root = identityHome
+		}
+		if certPath, err := awconfig.IdentityHomeStoredPath(home, accepted.Output.CertPath); err == nil {
 			_ = os.Remove(certPath)
 		}
 	}
@@ -4196,7 +4274,14 @@ func resolveOrGenerateMemberDIDKeyAt(workingDir, identityHome string, localMembe
 // resolveIdentityFieldsForCert reads stable identity fields from .aw/identity.yaml.
 // Returns empty strings for local agents that have no identity.yaml.
 func resolveIdentityFieldsForCert(workingDir string) (didAW, address string) {
-	identityPath := awconfig.WorktreeIdentityPath(workingDir)
+	home, err := identityHomeForDir(workingDir)
+	if err != nil {
+		return "", ""
+	}
+	identityPath, err := awconfig.IdentityHomePath(home, "identity.yaml")
+	if err != nil {
+		return "", ""
+	}
 	identity, err := awconfig.LoadWorktreeIdentityFrom(identityPath)
 	if err != nil {
 		return "", ""

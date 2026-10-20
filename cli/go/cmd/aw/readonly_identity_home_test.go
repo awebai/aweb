@@ -241,7 +241,7 @@ func TestReadOnlyGrantBoundaries(t *testing.T) {
 		{name: "instructions-team", args: []string{"instructions", "show", "--team", "other:acme.com"}, want: "conflicts"},
 		{name: "roster-registry", args: []string{"id", "team", "members", "--registry", "http://127.0.0.1:1"}, want: "--registry"},
 		{name: "roster-revoked", args: []string{"id", "team", "members", "--include-revoked"}, want: "--include-revoked"},
-		{name: "instructions-mutation-denied", args: []string{"instructions", "set", "--body", "replace"}, want: "not yet identity-home-aware"},
+		{name: "instructions-mutation-server-denied", args: []string{"instructions", "set", "--body", "replace"}, want: "outside grant scope", requests: 1, status: 403},
 		{name: "roster-same-team", args: []string{"id", "team", "members", "--team-id", "backend:acme.com", "--json"}, want: "service-roster", requests: 1},
 		{name: "roster-same-parts", args: []string{"id", "team", "members", "--team", "backend", "--namespace", "acme.com", "--json"}, want: "service-roster", requests: 1},
 	} {

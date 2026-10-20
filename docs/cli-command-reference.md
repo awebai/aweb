@@ -1261,7 +1261,7 @@ as an argument. Hosted envelopes make one non-redeeming Cloud preview request.
 Controller tokens are decoded locally without network or controller-store reads:
 scope is unknown, status is unverified, and expiry/validity are not established.
 Inspection creates no identity, membership or workspace. External identity homes
-remain unsupported. Cloud must support /api/v1/spawn/invite-preview.
+follow the shared identity selector. Cloud must support /api/v1/spawn/invite-preview.
 
 Flags:
 - `-h, --help help for inspect`

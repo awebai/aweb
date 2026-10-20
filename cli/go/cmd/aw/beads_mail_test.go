@@ -13,7 +13,7 @@ import (
 // The verb table from docs/beads-mail-delegate.md §6. Stub verbs are declared
 // implemented there and answer "not implemented yet" until their subtask
 // lands; unsupported verbs answer their decided message. The production-binary
-// run below is the identity-home allowlist evidence required by
+// run below is the selected-identity evidence required by
 // identity_home_policy.go: every beads-mail path must behave identically with
 // an external principal and an empty instance, never falling back to instance
 // state and never being refused as not identity-home-aware.
@@ -61,22 +61,14 @@ func TestBeadsMailVerbRouterProductionBinary(t *testing.T) {
 	bin := filepath.Join(root, "aw")
 	buildAwBinary(t, ctx, bin)
 
-	// External principal home with deliberately unreadable state, plus an
+	// External principal home with a distinct key, plus an
 	// empty instance directory: the frame must answer from its own routing
-	// without touching either (identity_home_policy.go's evidence bar).
+	// without changing either.
 	principalHome := filepath.Join(root, "principal")
 	if err := os.MkdirAll(principalHome, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string]string{
-		"identity.yaml":  "not: [valid identity yaml",
-		"signing.key":    "not a signing key",
-		"workspace.yaml": "not: [valid workspace yaml",
-	} {
-		if err := os.WriteFile(filepath.Join(principalHome, name), []byte(data), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeStandaloneSelectedIdentityForTest(t, principalHome)
 	emptyInstance := filepath.Join(root, "instance")
 	if err := os.MkdirAll(emptyInstance, 0o700); err != nil {
 		t.Fatal(err)
@@ -133,14 +125,5 @@ func TestBeadsMailVerbRouterProductionBinary(t *testing.T) {
 	}
 	if out, err := run(false); err != nil || !strings.Contains(out, "bd config set mail.delegate") {
 		t.Errorf("bare beads-mail: err=%v output:\n%s", err, out)
-	}
-}
-
-func TestBeadsMailPathsAllAllowlisted(t *testing.T) {
-	for _, sub := range beadsMailCmd.Commands() {
-		path := strings.TrimSpace(sub.CommandPath())
-		if _, ok := identityHomeAwareCommandPaths[path]; !ok {
-			t.Errorf("beads-mail verb %q is missing from identityHomeAwareCommandPaths", path)
-		}
 	}
 }

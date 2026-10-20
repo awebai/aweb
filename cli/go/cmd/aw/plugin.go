@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awebai/aw/awconfig"
 	"github.com/awebai/aw/awid"
 	"github.com/awebai/aw/internal/appmanifest"
 	"github.com/awebai/aw/internal/pathpreflight"
@@ -929,6 +930,17 @@ func dispatchPluginIfRequested(args []string) (int, bool) {
 		fmt.Fprintln(os.Stderr, err)
 		return 1, true
 	}
+	home, err := identityHomeForDir("")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1, true
+	}
+	if home.External() {
+		if err := validateSelectedIdentityHome(home); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1, true
+		}
+	}
 	pluginArgs := stripPluginTraceFlags(args[commandIndex+1:])
 	switch resolution.Kind {
 	case pluginResolutionManifest:
@@ -1460,6 +1472,10 @@ func pluginEnv() []string {
 		values["AW_DID"] = strings.TrimSpace(sel.DID)
 		values["AW_TEAM"] = strings.TrimSpace(sel.TeamID)
 		values["AW_SERVER"] = strings.TrimSpace(sel.BaseURL)
+	}
+	// AW_HELPER must retain the same actor when the plugin calls back into aw.
+	if home, err := identityHomeForDir(""); err == nil && home.External() {
+		values[awconfig.IdentityHomeEnv] = home.Root
 	}
 	env := allowlistedPluginBaseEnv()
 	for key, value := range values {

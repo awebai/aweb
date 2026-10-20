@@ -23,12 +23,12 @@ import (
 )
 
 // TestWakeCommandsProductionBinary is the identity-home regression every entry
-// in identityHomeAwareCommandPaths owes.
+// using the shared identity resolver owes.
 //
 // The wake commands hold no principal state: the state directory is per host
 // and each registration names its identity home explicitly, so an attached
 // external principal must change nothing about what they do. This runs each of
-// them against an unusable principal home from an empty instance directory and
+// them against a valid principal home from an empty instance directory and
 // asserts three things: the command answers, it does not fall back to the
 // instance directory, and it does not touch the principal.
 //
@@ -305,15 +305,7 @@ func TestWakeCommandsProductionBinary(t *testing.T) {
 	if err := os.MkdirAll(principalHome, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string]string{
-		"identity.yaml":  "not: [valid identity yaml",
-		"signing.key":    "not a signing key",
-		"workspace.yaml": "not: [valid workspace yaml",
-	} {
-		if err := os.WriteFile(filepath.Join(principalHome, name), []byte(data), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeStandaloneSelectedIdentityForTest(t, principalHome)
 	before := fileDigestsForTest(t, principalHome)
 
 	instanceHome := filepath.Join(root, "agent-home")

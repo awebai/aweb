@@ -257,15 +257,6 @@ func TestGCMailReadInputRejectsWhatItCannotUse(t *testing.T) {
 	}
 }
 
-func TestGCMailPathsAllAllowlisted(t *testing.T) {
-	for _, sub := range gcMailCmd.Commands() {
-		path := strings.TrimSpace(sub.CommandPath())
-		if _, ok := identityHomeAwareCommandPaths[path]; !ok {
-			t.Errorf("gc-mail operation %q is missing from identityHomeAwareCommandPaths", path)
-		}
-	}
-}
-
 func TestGCMailCoversTheWholeExecProtocol(t *testing.T) {
 	// Every operation gascity's exec provider can invoke, from
 	// internal/mail/exec/exec.go @ c96e54a3ab890ca984755b7fc5b5290cba5122d5.
@@ -287,7 +278,7 @@ func TestGCMailCoversTheWholeExecProtocol(t *testing.T) {
 	}
 }
 
-// gcMailVerbExpectations is the identity-home allowlist evidence required by
+// gcMailVerbExpectations is the selected-identity evidence required by
 // identity_home_policy.go: every gc-mail path must answer from its own routing
 // with an external principal and an empty instance directory — never falling
 // back to instance state, and never being refused as not identity-home-aware.
@@ -332,15 +323,7 @@ func TestGCMailVerbRouterProductionBinary(t *testing.T) {
 	if err := os.MkdirAll(principalHome, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for name, data := range map[string]string{
-		"identity.yaml":  "not: [valid identity yaml",
-		"signing.key":    "not a signing key",
-		"workspace.yaml": "not: [valid workspace yaml",
-	} {
-		if err := os.WriteFile(filepath.Join(principalHome, name), []byte(data), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeStandaloneSelectedIdentityForTest(t, principalHome)
 	emptyInstance := filepath.Join(root, "instance")
 	if err := os.MkdirAll(emptyInstance, 0o700); err != nil {
 		t.Fatal(err)
