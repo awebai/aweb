@@ -79,19 +79,16 @@ It registers a custodian and its issuer keys for one team.
 - **Publication:** `PUT /v1/namespaces/{domain}/teams/{name}/custodians/{custodian_id}`
   with `{record, signature}` and team-controller authority. AWID verifies the
   signature against the current team key and requires `team_did_key` to be that
-  key. It refuses an `issued_at` that is not newer than the stored record's, or
-  more than five minutes ahead of AWID's clock.
+  key. It refuses an `issued_at` more than five minutes ahead of AWID's clock.
+  A byte-identical re-publish of the stored record and signature succeeds, so a
+  lost response can be retried safely. Any other record must have an
+  `issued_at` newer than the stored one. The custodian serialises its writes
+  for a team, so two of its own writes never race.
 - **Read:** `GET` on the same path, anonymous for public and private teams. It
   returns `{record, signature}` exactly as stored. An unknown team and an
   unknown custodian get the same `404`.
 - **Rotation of the team key** invalidates every record signed with the old
-  key: the team's custodian records and every member-custody record, one per
-  custodial certificate, so the batch grows with the number of custodial
-  members. The rotation re-signs and publishes all of them in the same
-  operation, as it does for `aweb.team-server/1`. This is a requirement on
-  `aw`'s rotate flow and on custodial deployments (HO2, aweb-acgg.21). Until it finishes,
-  verifiers refuse with `attestation_record_stale`, which fails closed but
-  makes every attested call fail.
+  key. §5 says how a rotation carries the re-signed records.
 
 ## 2. Member custody record, `aweb.member-custody/1`
 
@@ -227,6 +224,52 @@ The refusal codes are distinct so that operators can tell a forged or
 malformed artifact, a stale record, an unregistered custodian and a registry
 outage apart.
 
+## 5. Team-key rotation
+
+A team-key rotation invalidates every record signed with the old key: the
+team's custodian records, one member-custody record per custodial
+certificate, and the member-person records of [member-person.md](member-person.md).
+The batch grows with the number of custodial members.
+
+**Atomic path.** The rotate request
+(`POST /v1/namespaces/{domain}/teams/{name}/rotate`, namespace-controller
+authority) takes an optional `resigned_records` object alongside
+`new_team_did_key`:
+
+```json
+{
+  "new_team_did_key": "did:key:z6Mk…",
+  "resigned_records": {
+    "team_custodians": [{"record": {…}, "signature": "…"}],
+    "member_custody":  [{"record": {…}, "signature": "…"}],
+    "member_person":   [{"record": {…}, "signature": "…"}]
+  }
+}
+```
+
+- Each record is signed with the **new** team key, and its `team_did_key` is
+  the new key.
+- Each re-signed record carries the same fields as the record it replaces,
+  apart from `team_did_key` and `issued_at`. `issued_at` is newer than the
+  stored one.
+- The set is complete: exactly one re-signed record for every record the team
+  has stored, of each kind. A missing, extra, duplicated or changed record
+  refuses the whole request with `409`, and nothing changes.
+- AWID swaps the team key and replaces every listed record in one
+  transaction. Verifiers therefore never see the new key next to an old-key
+  record.
+- A team with no stored records sends no `resigned_records`. The request size
+  is bounded by AWID's configured body limit.
+
+**Requirement.** Hosted rotation must use the atomic path (HO2,
+aweb-acgg.21). `aw`'s rotate flow uses it whenever the team has records.
+
+**Non-atomic path.** A rotation without `resigned_records`, as released
+clients send it, still succeeds, because released clients are a permanent
+constraint. The controller then re-publishes each record with the new key.
+In the window between, verifiers refuse with `attestation_record_stale`. That
+fails closed. A stale record during a rotation is never read as forgery.
+
 ## What this does not do
 
 - It does not prove self-custody, or that a request did not come through a
@@ -238,3 +281,7 @@ outage apart.
   tools a channel may call.
 - A self-hosted surface host cannot issue `dashboard` attestations until it is
   registered as a custodian through §1 and §2. That is a later item.
+- It does not declare that a member is one natural person. That declaration
+  is a separate controller-signed AWID record, `aweb.member-person/1`
+  ([member-person.md](member-person.md)). L1 (aweb-acgg.21) publishes it, and
+  the C2 `member_session` adapter (aweb-acgg.8) reads it.
