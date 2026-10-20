@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import unquote
@@ -51,19 +51,19 @@ class DeclaredTool:
         return tuple(self.path.split("/"))
 
 
-def _is_placeholder(segment: str) -> bool:
+def is_placeholder(segment: str) -> bool:
     return _PLACEHOLDER.fullmatch(segment) is not None
 
 
 def _segment_matches(template: str, raw: str) -> bool:
-    return bool(raw) if _is_placeholder(template) else template == raw
+    return bool(raw) if is_placeholder(template) else template == raw
 
 
 def _templates_overlap(a: DeclaredTool, b: DeclaredTool) -> bool:
     if a.method != b.method or len(a.segments) != len(b.segments):
         return False
     return all(
-        x == y or _is_placeholder(x) or _is_placeholder(y) for x, y in zip(a.segments, b.segments, strict=True)
+        x == y or is_placeholder(x) or is_placeholder(y) for x, y in zip(a.segments, b.segments, strict=True)
     )
 
 
@@ -79,7 +79,7 @@ def _declared_tool(tool: Mapping[str, Any]) -> DeclaredTool:
     if not isinstance(path, str) or not path.startswith("/") or "?" in path or "#" in path:
         raise ValueError(f"manifest tool {name!r} needs a relative path without query or fragment")
     for segment in path.split("/"):
-        if ("{" in segment or "}" in segment) and not _is_placeholder(segment):
+        if ("{" in segment or "}" in segment) and not is_placeholder(segment):
             raise ValueError(f"manifest tool {name!r} has a malformed path placeholder")
     if not isinstance(scopes, list) or not scopes or not all(isinstance(s, str) and s for s in scopes):
         raise ValueError(f"manifest tool {name!r} must declare the scopes it requires")
@@ -95,6 +95,9 @@ class DeclaredTools:
                 if _templates_overlap(a, b):
                     raise ValueError(f"manifest tools {a.name!r} and {b.name!r} match the same requests")
         self._tools = tuple(tools)
+
+    def __iter__(self) -> Iterator[DeclaredTool]:
+        return iter(self._tools)
 
     @classmethod
     def from_manifest(cls, manifest: Mapping[str, Any]) -> DeclaredTools:
