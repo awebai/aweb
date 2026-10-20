@@ -16,6 +16,7 @@ PAGE_LIMITS: Mapping[str, int] = MappingProxyType(
         "max_bundle_items": 64,
         "max_inline_schema_depth": 16,
         "max_inline_schema_cost": 10_000,
+        "max_enum_string": 256,
         "max_page_validation_cost": 200_000,
     }
 )

@@ -64,8 +64,10 @@ _PATTERN_KEYWORDS = frozenset({"pattern", "patternProperties"})
 
 
 def _is_scalar(value: object) -> bool:
-    """Closed choices compare in constant work: strings, integers, booleans and null."""
-    return value is None or isinstance(value, (str, int, bool))
+    """Closed choices compare in constant work: short strings, integers, booleans and null."""
+    if isinstance(value, str):
+        return len(value) <= PAGE_LIMITS["max_enum_string"]
+    return value is None or isinstance(value, (int, bool))
 
 
 def _types(node: Mapping[str, Any]) -> set[str]:
@@ -163,6 +165,14 @@ def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
                 for index, entry in enumerate(value):
                     if not _is_scalar(entry):
                         yield PageError("lint", "inline_schema_enum", pointer((*at, key, index)))
+            elif key == "required" and isinstance(value, list):
+                for index, name in enumerate(value):
+                    if isinstance(name, str) and len(name) > PAGE_LIMITS["max_enum_string"]:
+                        yield PageError("lint", "inline_schema_name", pointer((*at, key, index)))
+            elif key == "properties" and isinstance(value, dict):
+                for name in value:
+                    if len(name) > PAGE_LIMITS["max_enum_string"]:
+                        yield PageError("lint", "inline_schema_name", pointer((*at, key, name)))
         unbounded = (_is_array_schema(node) and "maxItems" not in node) or (
             _is_object_schema(node)
             and node.get("additionalProperties", True) is not False
@@ -178,12 +188,17 @@ def _inline_schema_errors(schema: object, path: Path) -> Iterator[PageError]:
 def schema_cost(schema: object) -> int:
     """Worst-case validation work of a checked inline schema on one value.
 
-    Each sub-schema counts 1 plus its enum length, multiplied by the declared
-    maxItems or maxProperties of every array or object applicator above it.
+    Each sub-schema counts 1 plus its enum and required lengths, multiplied by
+    the declared maxItems or maxProperties of every array or object applicator
+    above it. Compared strings (enum and const strings, property and required
+    names) are at most 256 characters, so each comparison is bounded work.
     """
     if not isinstance(schema, dict):
         return 1
-    cost = 1 + (len(schema["enum"]) if isinstance(schema.get("enum"), list) else 0)
+    cost = 1
+    for key in ("enum", "required"):
+        if isinstance(schema.get(key), list):
+            cost += len(schema[key])
     for _, child, bound in _children(schema):
         factor = 1 if bound == "one" else int(schema.get(bound, 0))
         cost += factor * schema_cost(child)

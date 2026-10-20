@@ -73,9 +73,10 @@ need care in every implementation:
 | `record_invalid` | Each record's `value` satisfies its collection schema. |
 | `inline_schema_keyword` | An inline schema (a collection schema or action input schema) uses only the keywords in the table below. Any other keyword is refused, `$ref`, `$defs`, every combinator (`allOf`, `anyOf`, `oneOf`, `not`, `if`/`then`/`else`) and `uniqueItems` included. With no references or combinators, the written schema is the whole schema, so its validation cost is computable statically. |
 | `inline_schema_unbounded` | Every array schema (`type` includes `array`, or it has `items` or `minItems`) declares `maxItems`. Every object schema whose `additionalProperties` is not `false` declares `maxProperties`. Pointer: the schema missing the bound. |
-| `inline_schema_cost` | The schema's cost is at most 10,000. Cost: each sub-schema counts 1 plus its `enum` length, multiplied by the declared `maxItems` or `maxProperties` of every `items` or `additionalProperties` applicator above it. Pointer: the inline schema's root. |
+| `inline_schema_cost` | The schema's cost is at most 10,000. Cost: each sub-schema counts 1 plus the lengths of its `enum` and `required` lists, multiplied by the declared `maxItems` or `maxProperties` of every `items` or `additionalProperties` applicator above it. Every compared string (enum and const strings, property and required names) is at most 256 characters, so each counted unit is bounded work. Pointer: the inline schema's root. |
 | `page_validation_cost` | The sum over collections of (records in the snapshot × schema cost) is at most 200,000. Pointer `/collections`. No record is validated when this fails. |
-| `inline_schema_enum` | Every `enum` entry and every `const` is a scalar: a string, a safe integer, a boolean or null. Closed choices then compare in constant work per entry. Pointer: the offending entry or `const`. |
+| `inline_schema_enum` | Every `enum` entry and every `const` is a scalar: a string of at most 256 characters, a safe integer, a boolean or null. Closed choices then compare in bounded work per entry. Pointer: the offending entry or `const`. |
+| `inline_schema_name` | Every property name in `properties` and every `required` entry is at most 256 characters. Pointer: the offending name. |
 | `inline_schema_number` | `type: "number"` is refused. Float literals and unsafe integers in an inline schema are already refused as `unsafe_number`. |
 | `inline_schema_pattern` | `pattern` and `patternProperties` are refused. A regular expression's work and dialect cannot be bounded portably (JSON Schema specifies ECMA-262, and backtracking engines can take exponential time), so inline schemas use `enum`, `const`, lengths and bounds instead. A linear-time, ECMA-compatible subset would be a later, explicit addition. |
 | `inline_schema_invalid` | A collection schema or action input schema is not a valid JSON Schema 2020-12 schema (checked against the meta-schema). Pointer: the offending keyword. Checked only after the subset rules pass, and before any record is validated. |
@@ -98,9 +99,10 @@ to cost × a constant and a whole snapshot to 200,000 × a constant. The
 value-count limit bounds the host checks, which are linear in the page's
 values. The targets are under 50 ms per record and under 1 s per page on
 ordinary hardware. In the reference validator, the worst shapes at the schema budgets measured
-under 35 ms for one record and under 450 ms for a full page. The shapes were
-9,000 1,000-character enum strings, a 99 × 99 nested array, a 9,992-entry map,
-and 9,990-entry enums of short strings and of integers. A page at the value
+under 25 ms for one record and under 450 ms for a full page. The shapes were
+enums of 9,990, 2,000 and 700 256-character strings differing only at the end,
+a 9,990-entry integer enum, a 99 × 99 nested array, a 9,992-entry map, and the
+largest `required` list within budget. A page at the value
 limit took under 300 ms, and a refused 10 MiB page under 400 ms. An implementation checks each value's arrays and objects
 against their declared `maxItems` and `maxProperties`, and an object under
 `additionalProperties: false` against its declared property count, **before**
