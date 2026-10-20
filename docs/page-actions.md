@@ -203,8 +203,13 @@ record and `proposal_sha256` is the bundle digest. The request is fixed when
 the card is shown. Changing any covered value needs a new approval.
 
 - The approval is minted when the decision task is created, with
-  `presentation: task` and `requested_by` set to the proposing principal's
-  key, derived as below.
+  `presentation: task`, `requested_by` set to the proposing principal's key
+  (derived as below), and exactly one candidate: the task's assignee. The
+  primitive records `candidates` (`{scope, subject}`) frozen at mint; it is
+  never re-read from the directory and is not part of `request_sha256`.
+- On decide, the primitive records `decided_by` (`{scope, subject, assurance,
+  evidence_ref}`), which every later check reads. For a page decision, the task
+  receipt's `answered_by.principal_did` must equal `decided_by.subject`.
 - It is decided only at step 3 of §5, with the receipt's `task_answer_ref`.
 - It is executable only while that receipt is `current`. A reopen therefore
   invalidates it before dispatch.
@@ -212,10 +217,15 @@ the card is shown. Changing any covered value needs a new approval.
   external effect, under one stable operation ID. An unknown outcome
   reconciles before any retry, and a new dispatch needs a new approval.
 
-**Requester and approver.** The primitive refuses at mint with
-`requester_is_approver` when the approver's subject equals `requested_by`,
-unless the action policy sets `allow_requester_approval` (default false), which
-a policy may do only for an internal reversible action (aweb-acgh.25).
+**Requester and approver.** At mint the primitive excludes the requester from
+the candidates, unless the action policy sets `allow_requester_approval`
+(default false), which a policy may do only for an internal reversible action
+(aweb-acgh.25). A mint left with no candidate is refused with
+`no_eligible_approver`; for a page decision, whose one candidate is the
+assignee, that is a proposal assigned to its own proposer. At decide, the
+decider must be one of the frozen candidates, still designated, enrolled at
+the policy's assurance and not the requester; mint-time filtering alone is not
+enough (decision 53, approver sets in the B2 primitive).
 The comparison is of raw strings, so both sides are derived the same way,
 from the verified certificate, with `aweb_naapp.roles.principal_key`: the
 certificate's `member_did_aw` when it carries one, otherwise its
@@ -268,7 +278,8 @@ returns partial evidence:
 
 Evidence: `subject` is the member's `did_aw`, `subject_type` is `member`, and
 `evidence_ref` references the stored request and attestation. The approver
-directory returns the same pair for member approvers.
+directory returns the same pair for member approvers, so the candidate the
+primitive froze at mint and the `decided_by` it records match exactly.
 
 ### `passkey`
 
