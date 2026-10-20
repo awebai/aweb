@@ -542,9 +542,12 @@ itself and refuses anything ambiguous instead of guessing.
 - **Host.** IDNA2008 is mapped to lowercase A-labels, and a trailing dot is
   refused. An IP literal is refused unless the destination entry is that exact
   IP and has `network: internal` (§7.3). A wildcard is allowed only as a single
-  leftmost label (`*.s3.eu-west-1.amazonaws.com`). It never matches the bare
-  parent domain, never matches more than one label, and is never allowed on a
-  public suffix.
+  leftmost label over a domain the owner controls (`*.api.example.com`). It
+  never matches the bare parent domain and never matches more than one label.
+  It is never allowed on a public suffix, as listed by the full Public Suffix
+  List, private section included. Shared-hosting suffixes such as
+  `s3.eu-west-1.amazonaws.com` are in that section, so owners list exact hosts
+  there (`mybucket.s3.eu-west-1.amazonaws.com`).
 - **Port.** It defaults to 443. An explicit port must equal the entry's port.
 - **Path.** Path matching works as follows:
   - **Decoding.** Percent-encodings of unreserved characters are decoded, and the
@@ -1170,7 +1173,7 @@ envelope and target registration.
 **Schema.** The hooks design owns the `post-secret-use-hook` schema: one action
 enum, one flat allowlisted payload and the `refusal_code` enum. They are defined
 in aweb-acgh.1, `docs/design/audit-substrate.md` §A2 (at hooks head 1b40a1d44, or
-as merged), and recorded in `docs/vectors/hook-catalog-v1.json` once reviewed.
+as merged), and recorded in the hook catalog vector that H1 freezes.
 This design cites that schema and does not define its own. The actor comes from
 the common envelope. secrets' part is deciding which transition emits which
 action:
@@ -1414,8 +1417,8 @@ secrets follows Library's pattern (A `naapp/library`):
   equivalent, pins the topology fail-closed.
 - **Production operations** are Make-only (`prod-status`, `prod-deploy`,
   `prod-wait`, `prod-verify`, `prod-rollback`, `prod-public-identity`), backed by
-  checked-in scripts with tests. `docs/production-operations.md` documents them,
-  along with the release record Library requires.
+  checked-in scripts with tests. The app's production-operations document
+  describes them, along with the release record Library requires.
 
 Requirements specific to secrets:
 
