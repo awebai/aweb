@@ -97,7 +97,7 @@ def _create_document_test_app() -> tuple:
     route = next(route for route in app.routes if getattr(route, "path", None) == "/v1/documents")
     principal_dependency = route.dependant.dependencies[0].call
     db_dependency = route.dependant.dependencies[1].call
-    app.dependency_overrides[principal_dependency] = lambda: object()
+    app.dependency_overrides[principal_dependency] = lambda: SimpleNamespace(team_id="default:test")
     app.dependency_overrides[db_dependency] = lambda: object()
     return app, TestClient(app)
 
