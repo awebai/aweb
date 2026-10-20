@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
 
+from aweb.auth_metrics import count_legacy_request_auth
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 
 from aweb.deps import get_db
@@ -160,9 +161,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
     did_key, signature_b64 = parse_didkey_auth(auth_header)
 
-    # -- Step 2: Verify DIDKey signature over {team_id, timestamp} --
-    # The signature proves the caller holds the private key for the did:key.
-    # We sign headers only (not the body) to avoid ASGI body-stream conflicts.
+    # -- Step 2: Verify the request envelope using the cached body hash. --
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
@@ -179,8 +178,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
 
     # Verify Ed25519 signature over the team-auth request envelope.
     # Legacy clients sign compact v1: {team_id, timestamp, body_sha256}.
-    # `aw id request --team-auth` signs request-bound v2 bytes in
-    # X-AWEB-Signed-Payload and the verifier binds those claims below.
+    # Current clients sign request-bound v2 in X-AWEB-Signed-Payload.
     body_sha256 = getattr(request.state, "body_sha256", None)
     if body_sha256 is None:
         import hashlib as _hashlib
@@ -258,6 +256,8 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
 
     # Include the registry-resolved team key (not the certificate's claim)
     cert_info["verified_team_did_key"] = team_did_key
+    if envelope.version == 1:
+        count_legacy_request_auth(request, "certificate")
     return cert_info
 
 
