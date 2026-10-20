@@ -8,21 +8,21 @@ from __future__ import annotations
 
 import base64
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 import pytest
+from awid.attestation_records import sign_record
+from awid.signing import canonical_json_bytes
 
 from aweb_naapp.runtime.attestation import (
-    AWIDAttestationRecords,
     AttestationRefused,
+    AWIDAttestationRecords,
     SignedRecord,
     read_member_person,
     verify_principal_attestation,
 )
-from awid.attestation_records import sign_record
-from awid.signing import canonical_json_bytes
 from tests.runtime.conftest import REGISTRY_URL
 
 VECTORS = json.loads(
@@ -31,7 +31,7 @@ VECTORS = json.loads(
 
 
 def _at(value: str) -> datetime:
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
 
 
 def _bytes(value: str | None) -> bytes | None:
