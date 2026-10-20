@@ -47,6 +47,17 @@ idempotency = [
 pages = [
   "jsonschema>=4.23",
 ]
+# aw-hooks, aweb_naapp.hooks: the catalog reader (stdlib), the event envelope,
+# the delivery credential and the owner-act verifier with its nonce table.
+# It shares awid's did:key and canonical-JSON primitives and pgdbm, never the
+# naapp runtime: importing it loads no web framework, settings or HTTP client
+# (a subprocess test pins that). Installing awid-service brings that package's
+# own dependencies, which the core server and every naapp already carry.
+hooks = [
+  "awid-service",
+  "pgdbm>=0.5.0",
+  "pynacl>=1.6.2",
+]
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb/tree/main/naapp-lib"

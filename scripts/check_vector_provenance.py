@@ -215,6 +215,34 @@ ROOT_CONSUMERS = {
         "hook-binding-cases-v1.json",
         'AWEB_ROOT / "docs" / "vectors" / "hook-binding-cases-v1.json"',
     ),
+    PurePosixPath("naapp-lib/tests/hooks/test_envelope_vector_payloads.py"): _consumer(
+        {"hook-catalog-v1.json", "hook-event-envelope-v1.json"},
+        '(AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json")',
+        '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_envelope.py"): _consumer(
+        {"hook-catalog-v1.json", "hook-event-envelope-v1.json"},
+        '(AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json")',
+        '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_delivery.py"): _consumer(
+        "hook-delivery-credential-v1.json",
+        '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v1.json")',
+    ),
+    PurePosixPath("naapp-lib/tests/hooks/test_owner_act_vector.py"): _consumer(
+        "owner-act-v1.json",
+        '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',
+    ),
+    PurePosixPath("cli/go/awid/owneract_test.go"): _consumer(
+        "owner-act-v1.json",
+        '"../../../docs/vectors/owner-act-v1.json"',
+    ),
+    PurePosixPath("cli/go/hookevent/vectors_test.go"): _consumer(
+        {"hook-catalog-v1.json", "hook-delivery-credential-v1.json", "hook-event-envelope-v1.json"},
+        '"../../../docs/vectors/hook-event-envelope-v1.json"',
+        '"../../../docs/vectors/hook-delivery-credential-v1.json"',
+        '"../../../docs/vectors/hook-catalog-v1.json"',
+    ),
     PurePosixPath("cli/go/a2a/card_test.go"): _consumer(
         "a2a-v1.json",
         'filepath.Join(root, "docs", "vectors", "a2a-v1.json")',

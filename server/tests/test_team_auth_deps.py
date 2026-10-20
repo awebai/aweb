@@ -540,3 +540,44 @@ async def test_get_messaging_auth_allows_identity_scoped_persistent_multi_member
     assert auth.team_id is None
     assert auth.alias is None
     assert auth.agent_id is None
+
+
+HOSTILE_CERTIFICATES = {
+    "list": base64.b64encode(b"[]").decode(),
+    "string": base64.b64encode(b'"x"').decode(),
+    "deep": base64.b64encode(b"[" * 6000).decode(),
+    "oversize": base64.b64encode(b'{"pad":"' + b"a" * 7000 + b'"}').decode(),
+}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys())
+async def test_verify_request_certificate_refuses_a_hostile_certificate_with_401(certificate):
+    from aweb.team_auth_deps import verify_request_certificate
+
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    request = _request_with_app_state(
+        {
+            "Authorization": "DIDKey did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK sig",
+            "X-AWEB-Timestamp": timestamp,
+            "X-AWID-Team-Certificate": certificate,
+        }
+    )
+    with pytest.raises(HTTPException) as refused:
+        await verify_request_certificate(request, db=object())
+    assert refused.value.status_code == 401
+    assert refused.value.detail == "Malformed certificate"
+
+
+@pytest.mark.parametrize("certificate", HOSTILE_CERTIFICATES.values(), ids=HOSTILE_CERTIFICATES.keys())
+def test_parse_and_verify_certificate_refuses_a_hostile_certificate(certificate):
+    from aweb.team_auth import parse_and_verify_certificate
+
+    with pytest.raises(ValueError) as refused:
+        parse_and_verify_certificate(
+            certificate,
+            request_did_key="did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+            team_public_key_resolver=lambda _team_id: "",
+            revocation_checker=lambda _team_id, _certificate_id: False,
+        )
+    assert str(refused.value) == "Malformed certificate: invalid base64 or JSON"
