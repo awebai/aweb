@@ -8,8 +8,10 @@ reinterpreted one. The change set is approved through B2: the approval covers
 B2's canonical bytes of ``{policy, request}``, with the change set as the
 request, so the console renders and the owner confirms exactly those bytes.
 
-A change set is drafted against a configuration revision. Confirming it
-against any other revision, or after it expires, is refused.
+A change set is drafted against one installation, generation and
+configuration revision, and lives at most seven days. Confirming it for any
+other installation, generation, team or revision, or after it expires, is
+refused.
 """
 
 from __future__ import annotations
@@ -17,17 +19,21 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from aweb_naapp.runtime.approvals import RequestNotCanonical, canonical_request
 from aweb_naapp.runtime.approvals.request import parse_request_json
+from awid.did import public_key_from_did, validate_stable_id
+from awid.utc_timestamps import parse_utc_seconds
 
 TYPE = "aweb.secrets.change"
 VERSION = 1
 MAX_REASON_CHARS = 1000
 MAX_TEXT_CHARS = 256
 MAX_CONTACT_CHARS = 320
+# A pending widening is confirmable for at most this long (decision 38).
+MAX_LIFETIME = timedelta(days=7)
 
 # The widening items of design §6.3, each with the ops that widen it. Destinations,
 # operations, grants and policies are immutable records: broadening one creates a
@@ -52,12 +58,14 @@ REENABLE_TARGETS = frozenset(
     {"installation", "secret", "destination", "operation", "job", "runner", "grant", "approver"}
 )
 
-_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 # The owner role, or an owner-defined user role named in S5's segment charset.
 _ROLE = re.compile(r"secrets\.(owner|role\.[a-z0-9][a-z0-9_-]*)")
 MAX_ROLE_CHARS = 128
-# A principal is S5's stable principal key: a did:aw, or a did:key without one.
-_PRINCIPAL = re.compile(r"did:(aw|key):\S+")
+# The ASCII base58btc alphabet. Matching it first keeps every DID ASCII and bounded
+# before AWID decodes it.
+_BASE58 = "[1-9A-HJ-NP-Za-km-z]"
+_DID_AW = re.compile(f"did:aw:{_BASE58}{{1,64}}")
+_DID_KEY = re.compile(f"did:key:z{_BASE58}{{1,64}}")
 
 
 class ChangeRefused(ValueError):
@@ -131,16 +139,38 @@ def _text_list(value: Any, where: str) -> None:
 
 
 def _timestamp(value: Any, where: str) -> None:
-    if not isinstance(value, str) or not _TIMESTAMP.fullmatch(value):
-        raise ChangeRefused(f"{where} must be an RFC 3339 UTC time like 2026-10-20T12:00:00Z")
     try:
-        _parse_time(value)
+        parse_utc_seconds(value)
     except ValueError:
-        raise ChangeRefused(f"{where} is not a valid time") from None
+        raise ChangeRefused(
+            f"{where} must be an RFC 3339 UTC time like 2026-10-20T12:00:00Z"
+        ) from None
 
 
-def _parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+def _did_aw(value: Any, where: str) -> None:
+    if not isinstance(value, str) or not _DID_AW.fullmatch(value):
+        raise ChangeRefused(f"{where} must be a did:aw")
+    try:
+        validate_stable_id(value)
+    except ValueError:
+        raise ChangeRefused(f"{where} must be a did:aw") from None
+
+
+def _did_key(value: Any, where: str) -> None:
+    if not isinstance(value, str) or not _DID_KEY.fullmatch(value):
+        raise ChangeRefused(f"{where} must be an Ed25519 did:key")
+    try:
+        public_key_from_did(value)
+    except ValueError:
+        raise ChangeRefused(f"{where} must be an Ed25519 did:key") from None
+
+
+def _principal(value: Any, where: str) -> None:
+    """S5's stable principal key: a member's did:aw, or its did:key when it has none."""
+    if isinstance(value, str) and value.startswith("did:aw:"):
+        _did_aw(value, where)
+    else:
+        _did_key(value, where)
 
 
 def _object(value: Any, where: str) -> None:
@@ -182,7 +212,7 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
             "approver_ref": _text(),
             "contact": _text(MAX_CONTACT_CHARS),
             "covers": _text_list,
-            "principal": _optional(_matching(_PRINCIPAL)),
+            "principal": _optional(_principal),
         },
         ref_field="approver_ref",
         identity=("approver_ref",),
@@ -196,7 +226,7 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         fields={
             "v": _V1,
             "role": _matching(_ROLE, MAX_ROLE_CHARS),
-            "principal": _matching(_PRINCIPAL),
+            "principal": _principal,
         },
         ref_field="role",
         identity=("role", "principal"),
@@ -215,8 +245,8 @@ _CONSOLE_DRAFTER: Mapping[str, Check] = {
 }
 _MEMBER_DRAFTER: Mapping[str, Check] = {
     "via": _one_of(frozenset({"team_auth"})),
-    "principal": _text(),
-    "member_did_key": _text(),
+    "principal": _principal,
+    "member_did_key": _did_key,
     "certificate_id": _text(),
     "alias": _text(),
 }
@@ -230,8 +260,10 @@ def _drafter(value: Any, where: str) -> None:
     elif value.get("via") == "team_auth":
         shape = dict(_MEMBER_DRAFTER)
         if "did_aw" in value:
-            shape["did_aw"] = _text()
+            shape["did_aw"] = _did_aw
         _fields(value, where, shape)
+        if value["principal"] != value.get("did_aw", value["member_did_key"]):
+            raise ChangeRefused(f"{where}.principal must be did_aw if present, else member_did_key")
     else:
         raise ChangeRefused(f"{where}.via must be console or team_auth")
 
@@ -292,8 +324,9 @@ def validate_change(change: Mapping[str, Any]) -> None:
     _fields(change, "change", _ENVELOPE)
     if change["v"] != VERSION:
         raise ChangeRefused(f"change.v must be {VERSION}")
-    if _parse_time(change["expires_at"]) <= _parse_time(change["issued_at"]):
-        raise ChangeRefused("change.expires_at must be after change.issued_at")
+    lifetime = parse_utc_seconds(change["expires_at"]) - parse_utc_seconds(change["issued_at"])
+    if not timedelta(0) < lifetime <= MAX_LIFETIME:
+        raise ChangeRefused("change.expires_at must be after change.issued_at, within 7 days")
     try:
         canonical_request(change)
     except RequestNotCanonical as exc:
@@ -317,14 +350,28 @@ def covered_bytes(change: Mapping[str, Any], policy: Mapping[str, Any]) -> bytes
     return canonical_request({"policy": dict(policy), "request": dict(change)})
 
 
-def check_confirmable(change: Mapping[str, Any], *, current_revision: int, now: datetime) -> None:
-    """Refuse confirming ``change`` unless it was drafted against ``current_revision``
-    and has not expired at ``now``."""
+def check_confirmable(
+    change: Mapping[str, Any],
+    *,
+    installation_id: str,
+    install_generation: int,
+    team_id: str,
+    current_revision: int,
+    now: datetime,
+) -> None:
+    """Refuse confirming ``change`` unless it was drafted for this installation,
+    generation and team, against ``current_revision``, and has not expired at ``now``."""
     validate_change(change)
+    drafted_for = (change["installation_id"], change["install_generation"], change["team_id"])
+    if drafted_for != (installation_id, install_generation, team_id):
+        raise ChangeRefused(
+            "the change set was drafted for another installation, generation or team",
+            code="change_wrong_installation",
+        )
     if change["base_revision"] != current_revision:
         raise ChangeRefused(
             "the configuration changed after this change set was drafted",
             code="base_revision_stale",
         )
-    if now >= _parse_time(change["expires_at"]):
+    if now >= parse_utc_seconds(change["expires_at"]):
         raise ChangeRefused("the change set has expired", code="change_expired")

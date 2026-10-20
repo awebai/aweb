@@ -10,16 +10,29 @@ import json
 import sys
 
 from aweb_naapp.runtime.approvals import canonical_request
+from awid.did import did_from_public_key, stable_id_from_public_key
+from nacl.signing import SigningKey
 
 from aweb_secrets.change import KINDS, REENABLE_TARGETS, covered_bytes, validate_change
+
+# Fixture identities, derived from fixed seeds the way AWID derives them.
+_KEY_A = bytes(SigningKey(b"\x01" * 32).verify_key)
+DID_KEY_A = did_from_public_key(_KEY_A)
+DID_AW_A = stable_id_from_public_key(_KEY_A)
+DID_KEY_B = did_from_public_key(bytes(SigningKey(b"\x02" * 32).verify_key))
+CURRENT = {
+    "installation_id": "inst_5d2a9c31",
+    "install_generation": 3,
+    "team_id": "backend:acme.com",
+}
 
 POLICY = {"ref": "9f1c4e0b7a2d5c8e3f6a1b4d7c0e9f2a5b8d1c4e7f0a3b6d9c2e5f8a1b4d7c0e", "version": 1}
 MEMBER = {
     "via": "team_auth",
-    "principal": "did:aw:2rMeyRyvQbWUZYjT8Jx6Kq",
-    "member_did_key": "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+    "principal": DID_AW_A,
+    "member_did_key": DID_KEY_A,
     "certificate_id": "0b4c2c1e-7f4e-4a53-9d43-2f1f0d2c6a11",
-    "did_aw": "did:aw:2rMeyRyvQbWUZYjT8Jx6Kq",
+    "did_aw": DID_AW_A,
     "alias": "alice",
 }
 
@@ -65,7 +78,7 @@ POSITIVE = [
                     "after": {
                         "v": 1,
                         "role": "secrets.owner",
-                        "principal": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
+                        "principal": DID_KEY_B,
                     },
                 },
             ],
@@ -114,7 +127,7 @@ POSITIVE = [
         "member-without-did-aw-untrusted-reason",
         envelope(
             "chg_7a03",
-            {k: v for k, v in MEMBER.items() if k != "did_aw"},
+            {**{k: v for k, v in MEMBER.items() if k != "did_aw"}, "principal": DID_KEY_A},
             [
                 {
                     "kind": "reenable",
@@ -129,7 +142,7 @@ POSITIVE = [
                     "after": {
                         "v": 1,
                         "role": "secrets.role.deployers",
-                        "principal": "did:aw:2rMeyRyvQbWUZYjT8Jx6Kq",
+                        "principal": DID_AW_A,
                     },
                 },
             ],
@@ -200,6 +213,30 @@ refused = [
         ),
     ),
     (
+        "principal-zero-width",
+        mutated(setitem(["changes", 1, "after", "principal"], DID_KEY_B + "\u200b")),
+    ),
+    (
+        "principal-bidi-override",
+        mutated(
+            setitem(["changes", 1, "after", "principal"], DID_KEY_B.replace("z6Mk", "z6M\u202ek"))
+        ),
+    ),
+    (
+        "principal-outside-base58",
+        mutated(setitem(["changes", 1, "after", "principal"], "did:aw:0OIl")),
+    ),
+    (
+        "principal-wrong-length",
+        mutated(setitem(["changes", 1, "after", "principal"], DID_AW_A[:-1])),
+    ),
+    ("timestamp-non-ascii-digit", mutated(setitem(["issued_at"], "2026-10-20T12:00:0\u0660Z"))),
+    ("lifetime-over-seven-days", mutated(setitem(["expires_at"], "2026-10-27T12:00:01Z"))),
+    (
+        "drafter-principal-not-its-did-aw",
+        mutated(setitem(["drafter"], {**MEMBER, "principal": DID_KEY_A})),
+    ),
+    (
         "kind-without-frozen-after",
         mutated(
             lambda c: c["changes"].append(
@@ -233,28 +270,42 @@ negatives = [
         "expected": "recanonicalized",
     },
 ]
+CONFIRMATION_CASES = [
+    ("same-installation-revision-in-time", {}, 12, "2026-10-20T12:14:59Z", "confirmable"),
+    ("later-revision", {}, 13, "2026-10-20T12:05:00Z", "base_revision_stale"),
+    ("at-expiry", {}, 12, "2026-10-20T12:15:00Z", "change_expired"),
+    (
+        "other-installation",
+        {"installation_id": "inst_9e1b07f4"},
+        12,
+        "2026-10-20T12:05:00Z",
+        "change_wrong_installation",
+    ),
+    (
+        "later-generation",
+        {"install_generation": 4},
+        12,
+        "2026-10-20T12:05:00Z",
+        "change_wrong_installation",
+    ),
+    (
+        "other-team",
+        {"team_id": "backend:other.com"},
+        12,
+        "2026-10-20T12:05:00Z",
+        "change_wrong_installation",
+    ),
+]
 confirmations = [
     {
-        "name": "same-revision-in-time",
+        "name": name,
         "of": "console-value-and-owner-role",
-        "current_revision": 12,
-        "now": "2026-10-20T12:14:59Z",
-        "expected": "confirmable",
-    },
-    {
-        "name": "later-revision",
-        "of": "console-value-and-owner-role",
-        "current_revision": 13,
-        "now": "2026-10-20T12:05:00Z",
-        "expected": "base_revision_stale",
-    },
-    {
-        "name": "at-expiry",
-        "of": "console-value-and-owner-role",
-        "current_revision": 12,
-        "now": "2026-10-20T12:15:00Z",
-        "expected": "change_expired",
-    },
+        "current": {**CURRENT, **current},
+        "current_revision": revision,
+        "now": now,
+        "expected": expected,
+    }
+    for name, current, revision, now, expected in CONFIRMATION_CASES
 ]
 
 vector = {
@@ -265,9 +316,12 @@ vector = {
         '"aweb.approval-request/1\\n" || canonical_json({policy, request}), with the change set as '
         "the request. Positive cases carry those exact bytes and their SHA-256. Negative cases "
         "never reach them: refused encodings and shapes, or other bytes. Confirmation cases "
-        "fix when a change set can be confirmed. The after shapes of secret, destination, "
+        "fix when a change set can be confirmed: for the current installation, generation and "
+        "team, at the revision it was drafted on, before it expires. A change set lives at most "
+        "seven days. Principals are exact did:aw or Ed25519 did:key strings. The after shapes of secret, destination, "
         "operation, grant and policy are added by their owning task (S8), and those of job and "
-        "runner by S15; until then those kinds are refused. Identifiers are fixtures."
+        "runner by S15; until then those kinds are refused. Identifiers are fixtures; DIDs are "
+        "derived from fixed seeds."
     ),
     "prefix": "aweb.approval-request/1\n",
     "type": "aweb.secrets.change",

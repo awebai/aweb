@@ -120,11 +120,12 @@ def test_negative_cases_never_reach_the_covered_bytes(case: dict) -> None:
 def test_confirmation_cases(case: dict) -> None:
     change = _case(case["of"])["request"]
     now = datetime.fromisoformat(case["now"].replace("Z", "+00:00"))
+    current = {**case["current"], "current_revision": case["current_revision"], "now": now}
     if case["expected"] == "confirmable":
-        check_confirmable(change, current_revision=case["current_revision"], now=now)
+        check_confirmable(change, **current)
         return
     with pytest.raises(ChangeRefused) as refused:
-        check_confirmable(change, current_revision=case["current_revision"], now=now)
+        check_confirmable(change, **current)
     assert refused.value.code == case["expected"]
 
 
