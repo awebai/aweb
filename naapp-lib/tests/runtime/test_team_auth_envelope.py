@@ -21,7 +21,9 @@ TEAM_ID = "backend:example.com"
 
 @pytest.fixture
 async def member(registry) -> Member:
-    member = Member(team_id=TEAM_ID, extra_cert_fields={"member_did_aw": "did:aw:synthetic", "member_address": "example.com/alice"})
+    member = Member(team_id=TEAM_ID)
+    member.extra_cert_fields = {"member_did_aw": await registry.register_did(member.member_key),
+                                "member_address": "example.com/alice"}
     await registry.add_team(TEAM_ID, member.team_did_key, visibility="private")
     await registry.add_certificate(member.certificate())
     return member
@@ -38,7 +40,8 @@ async def test_signed_request_yields_the_certified_principal(registry, member):
     assert response.json() == {
         "team_id": TEAM_ID,
         "did_key": member.did_key,
-        "did_aw": "did:aw:synthetic",
+        "did_aw": member.extra_cert_fields["member_did_aw"],
+        "did_aw_registry_verified": True,
         "address": "example.com/alice",
         "alias": "alice",
         "certificate_id": "cert-1",
@@ -216,11 +219,11 @@ async def test_revoked_certificate_is_refused_once_the_cache_expires(registry, m
 
 
 async def test_mounted_app_verifies_the_external_path(registry, member):
-    async with relying_app(registry, public_origin=ORIGIN, root_path="/api") as (client, _):
-        external = member.headers(aud=ORIGIN, method="GET", path="/api/v1/items")
-        assert (await client.get("/api/v1/items", headers=external)).status_code == 200
+    async with relying_app(registry, public_origin=ORIGIN, root_path="/mounted") as (client, _):
+        external = member.headers(aud=ORIGIN, method="GET", path="/mounted/v1/items")
+        assert (await client.get("/mounted/v1/items", headers=external)).status_code == 200
         internal = member.headers(aud=ORIGIN, method="GET", path="/v1/items")
-        assert (await client.get("/api/v1/items", headers=internal)).status_code == 401
+        assert (await client.get("/mounted/v1/items", headers=internal)).status_code == 401
 
 
 async def test_raw_percent_encoding_is_what_is_signed(registry, member):
