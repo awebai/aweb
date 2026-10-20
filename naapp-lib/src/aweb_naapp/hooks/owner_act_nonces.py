@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,8 @@ __all__ = [
 ]
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
+# How long a team key read in prepare stays current: the registry cache bound.
+KEY_FRESHNESS = timedelta(seconds=60)
 MIGRATIONS_MODULE = "aweb_naapp_hooks"
 
 
@@ -61,12 +63,19 @@ class PreparedOwnerAct:
     name, for logging.
     """
 
-    __slots__ = ("_checked", "_signing", "_verifier")
+    __slots__ = ("_checked", "_prepared_at", "_signing", "_verifier")
 
-    def __init__(self, checked: _CheckedAct, signing: bytes, verifier: OwnerActVerifier) -> None:
+    def __init__(
+        self,
+        checked: _CheckedAct,
+        signing: bytes,
+        verifier: OwnerActVerifier,
+        prepared_at: datetime,
+    ) -> None:
         self._checked = checked
         self._signing = signing
         self._verifier = verifier
+        self._prepared_at = prepared_at
 
     @property
     def act_name(self) -> str:
@@ -110,16 +119,18 @@ class OwnerActVerifier:
         Call this outside any transaction: it may read the registry over the
         network. The result is not authority; pass it to ``consume_in``.
         """
+        team_key = await self._team_key_for(team_id)
+        now = self._clock()
         checked = _check_owner_act(
             signing,
             signature,
             team_id=team_id,
-            current_team_key_did=await self._team_key_for(team_id),
+            current_team_key_did=team_key,
             audience=self.audience,
             acts=self.acts,
-            now=self._clock(),
+            now=now,
         )
-        return PreparedOwnerAct(checked, signing, self)
+        return PreparedOwnerAct(checked, signing, self, _utc_now(lambda: now))
 
     async def consume_in(
         self,
@@ -140,9 +151,15 @@ class OwnerActVerifier:
         if expected_subject is None:
             raise Refused("verifier_misconfigured", "every verifier option is required")
         act = prepared._checked
+        now = _utc_now(self._clock)
+        # The team key read in prepare is trusted for the same bound as the
+        # registry cache: a prepared act older than that may predate a key
+        # rotation, so it no longer proves the current controller key.
+        if now - prepared._prepared_at > KEY_FRESHNESS:
+            raise Refused("owner_required", "prepared too long ago for its team key to be current")
         # Expiry again: a prepared act held past its expiry could otherwise be
         # consumed after its earlier nonce row was pruned.
-        if _utc_now(self._clock) >= act.expires_at:
+        if now >= act.expires_at:
             raise Refused("expired", f"expired at {act.fields['expires_at']}")
         used = await tx.fetch_value(
             "SELECT 1 FROM {{tables.owner_act_nonces}} WHERE scope = $1 AND team_id = $2 AND nonce = $3",

@@ -12,7 +12,10 @@ act up to its signature, returning a `PreparedOwnerAct`, which is not authority.
 `consume_in` runs inside the transaction that applies the act's effect: it
 requires the exact subject and consumes the nonce (see
 [Single use](#verification)), with no network call, and returns the only
-verified type, `VerifiedOwnerAct`. The design and its rationale are
+verified type, `VerifiedOwnerAct`. It refuses an act prepared more than 60
+seconds earlier (`owner_required`), because the team key read in `prepare` is
+trusted only for the registry cache bound, and a key rotated since then must
+not authorize it. The design and its rationale are
 in [the audit substrate design](design/audit-substrate.md), §2 and §A3.
 
 This is an identity-path change. Juan approved `aweb.owner-act/1` explicitly,
