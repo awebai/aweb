@@ -43,6 +43,23 @@ def _answer_receipt(row, *, current_question_rev: int, cancelled: bool = False) 
     }
 
 
+def _task_request_metadata(value):
+    return json.loads(value) if isinstance(value, str) else value or {}
+
+
+def _eligible_task_condition(index: int) -> str:
+    # Absence/null retains single-assignee authority for ordinary/intent tasks.
+    # A present array is authoritative, including an empty array (fail closed).
+    return (f"((jsonb_typeof(app_request->'eligible_dids') = 'array' AND (app_request->'eligible_dids') ? ${index}) OR "
+            f"((app_request->'eligible_dids' IS NULL OR app_request->'eligible_dids' = 'null'::jsonb) "
+            f"AND assignee_did = ${index}))")
+
+
+def _task_list_contract(row):
+    return {"assignee_did": row["assignee_did"], "app_request": _task_request_metadata(row["app_request"]) or None,
+            "rev": row["rev"], "question_rev": row["question_rev"]}
+
+
 async def get_task_answer_on(tx, *, team_id: str, task_id: UUID, answer_key: str) -> dict[str, Any]:
     """Read an immutable receipt inside the caller's authorization transaction.
 
@@ -119,14 +136,13 @@ async def answer_task_on(
         if outcome is not None:
             outcome["created"] = False
         return _answer_receipt(existing, current_question_rev=task["question_rev"], cancelled=task["cancellation"] is not None)
-    if task["assignee_did"] != principal:
+    metadata = _task_request_metadata(task["app_request"])
+    eligible = metadata.get("eligible_dids")
+    answerers = [task["assignee_did"]] if eligible is None else eligible
+    if not isinstance(answerers, list) or principal not in answerers:
         raise ForbiddenError("target_mismatch")
     if task["rev"] != expected_task_rev or task["status"] != "open" or task["cancellation"] is not None:
         raise ConflictError("revision_conflict")
-    app_request = task["app_request"]
-    if isinstance(app_request, str):
-        app_request = json.loads(app_request)
-    metadata = app_request or {}
     if proposal_rev != metadata.get("proposal_rev") or proposal_sha256 != metadata.get("proposal_sha256"):
         raise ConflictError("approval_changed")
     choices = metadata.get("choices")
@@ -613,6 +629,7 @@ async def list_tasks(
     team_id: str,
     status: str | None = None,
     assignee_alias: str | None = None,
+    eligible_did: str | None = None,
     task_type: str | None = None,
     priority: int | None = None,
     labels: list[str] | None = None,
@@ -641,6 +658,10 @@ async def list_tasks(
         )
         conditions.append(f"assignee_alias = ${idx}")
         params.append(resolved_alias)
+        idx += 1
+    if eligible_did is not None:
+        conditions.append(_eligible_task_condition(idx))
+        params.append(eligible_did)
         idx += 1
     if task_type is not None:
         conditions.append(f"task_type = ${idx}")
@@ -675,7 +696,7 @@ async def list_tasks(
         f"""
         SELECT task_id, task_number, task_ref_suffix, title, status, priority, task_type,
                assignee_alias, created_by_alias, parent_task_id, labels,
-               created_at, updated_at
+               created_at, updated_at, assignee_did, app_request, rev, question_rev
         FROM {{{{tables.tasks}}}}
         WHERE {' AND '.join(conditions)}
         ORDER BY task_number ASC
@@ -684,6 +705,7 @@ async def list_tasks(
     )
     return [
         {
+            **_task_list_contract(r),
             "task_id": str(r["task_id"]),
             "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
             "task_number": r["task_number"],
@@ -708,6 +730,7 @@ async def list_tasks_paginated(
     team_id: str,
     status: str | None = None,
     assignee_alias: str | None = None,
+    eligible_did: str | None = None,
     task_type: str | None = None,
     priority: int | None = None,
     labels: list[str] | None = None,
@@ -738,6 +761,10 @@ async def list_tasks_paginated(
         )
         conditions.append(f"assignee_alias = ${idx}")
         params.append(resolved_alias)
+        idx += 1
+    if eligible_did is not None:
+        conditions.append(_eligible_task_condition(idx))
+        params.append(eligible_did)
         idx += 1
     if task_type is not None:
         conditions.append(f"task_type = ${idx}")
@@ -773,7 +800,7 @@ async def list_tasks_paginated(
         f"""
         SELECT t.task_id, t.task_number, t.task_ref_suffix, t.title, t.description, t.status,
                t.priority, t.task_type, t.assignee_alias, t.created_by_alias, t.parent_task_id,
-               t.labels, t.created_at, t.updated_at,
+               t.labels, t.created_at, t.updated_at, t.assignee_did, t.app_request, t.rev, t.question_rev,
                (
                    SELECT COUNT(*)
                    FROM {{{{tables.task_dependencies}}}} d
@@ -790,6 +817,7 @@ async def list_tasks_paginated(
     )
     return [
         {
+            **_task_list_contract(r),
             "task_id": str(r["task_id"]),
             "task_ref": format_task_ref(slug, r["task_ref_suffix"]),
             "task_number": r["task_number"],
