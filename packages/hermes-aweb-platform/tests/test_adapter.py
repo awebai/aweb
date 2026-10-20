@@ -1,12 +1,13 @@
 import asyncio
 import importlib.util
+import os
 import sys
 import types
 import unittest
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-HERMES = HERE.parents[4] / "other" / "hermes-agent"
+HERMES = Path(os.environ.get("HERMES_AGENT_SOURCE", HERE.parents[4] / "other" / "hermes-agent"))
 sys.path.insert(0, str(HERMES))
 
 if "yaml" not in sys.modules:
@@ -39,6 +40,7 @@ class FakeAwebAdapter(adapter_mod.AwebAdapter):
         self.commands = []
         self.delivered = []
         self.payloads = {}
+        self._running = True
 
     async def _run_aw_json(self, *args):
         self.commands.append(args)
@@ -87,19 +89,22 @@ class AwebAdapterTests(unittest.IsolatedAsyncioTestCase):
             "from_address": "team.example/alice",
         })
 
+        for _ in range(50):
+            if adapter.delivered:
+                break
+            await asyncio.sleep(.01)
         self.assertEqual(len(adapter.delivered), 1)
         event = adapter.delivered[0]
         self.assertEqual(event.source.chat_id, "mail:conv-1")
         self.assertEqual(event.source.user_id, "team.example/alice")
         self.assertIn("Subject: Review", event.text)
         self.assertIn("please review", event.text)
-        self.assertEqual(adapter._routes["mail:conv-1"]["message_id"], "mail-1")
+        self.assertEqual(adapter._route_for_event(event).message_id, "mail-1")
+        await adapter.disconnect()
 
     async def test_mail_reply_acks_only_after_send(self):
         adapter = FakeAwebAdapter()
-        adapter._routes["mail:conv-1"] = {"kind": "mail", "message_id": "mail-1", "conversation_id": "conv-1", "sender": "team.example/alice"}
-
-        result = await adapter.send("mail:conv-1", "done")
+        result = await adapter.send("mail:conv-1", "done", reply_to="mail-1")
 
         self.assertTrue(result.success, result.error)
         self.assertEqual(adapter.commands[0][:2], ("mail", "reply"))
@@ -107,9 +112,7 @@ class AwebAdapterTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_chat_reply_marks_read_after_send(self):
         adapter = FakeAwebAdapter()
-        adapter._routes["chat:sess-1"] = {"kind": "chat", "session_id": "sess-1", "message_id": "chat-1", "sender": "team.example/alice"}
-
-        result = await adapter.send("chat:sess-1", "pong")
+        result = await adapter.send("chat:sess-1", "pong", reply_to="chat-1")
 
         self.assertTrue(result.success, result.error)
         send_cmd = adapter.commands[0]
