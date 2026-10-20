@@ -92,10 +92,25 @@ class NaappRuntime:
         self._awid_transport = awid_transport
         self._database: NaappDatabase | None = None
         self._team_cache: AWIDTeamCache | None = None
-        self.manifest_bytes: bytes = read_manifest_bytes(manifest_path, settings.public_origin)
-        self.manifest: Mapping[str, Any] = json.loads(self.manifest_bytes)
-        self.declared_tools = DeclaredTools.from_manifest(self.manifest)
+        self._manifest_bytes = read_manifest_bytes(manifest_path, settings.public_origin)
+        self._manifest: Mapping[str, Any] = json.loads(self._manifest_bytes)
+        self._declared_tools = DeclaredTools.from_manifest(self._manifest)
         self._guards: set[Callable[..., object]] = set()
+
+    @property
+    def manifest_bytes(self) -> bytes:
+        """The manifest bytes served at the manifest routes, fixed at construction."""
+        return self._manifest_bytes
+
+    @property
+    def manifest(self) -> Mapping[str, Any]:
+        """The served manifest, parsed."""
+        return self._manifest
+
+    @property
+    def declared_tools(self) -> DeclaredTools:
+        """The tools authorization checks against, parsed from the served bytes."""
+        return self._declared_tools
 
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:

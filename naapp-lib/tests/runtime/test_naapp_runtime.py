@@ -426,3 +426,10 @@ def test_authorization_follows_the_served_manifest_for_a_self_hosted_origin(tmp_
     assert json.loads(runtime.manifest_bytes)["app"]["origin"] == "http://self.test"
     assert runtime.manifest == json.loads(runtime.manifest_bytes)
     assert [tool.name for tool in runtime.declared_tools] == ["get-thing"]
+
+
+def test_the_served_manifest_and_its_tools_cannot_be_replaced(tmp_path: Path) -> None:
+    runtime, _ = _guarded_app(tmp_path, _renamed_placeholder)
+    for name in ("manifest_bytes", "manifest", "declared_tools"):
+        with pytest.raises(AttributeError):
+            setattr(runtime, name, getattr(runtime, name))
