@@ -8,6 +8,9 @@
 
 Server changes are since `server-v1.27.29`.
 
+- **Security:** a team's revocation of an app emit key now outlives the
+  manifest digest it was made under. Installing new bytes that list the same
+  key id and `did_key` again registered the key active; it now stays revoked.
 - **Operator-facing:** `POST /v1/apps/install` is an audited operator route
   (`apps.install`). A successful install writes its audit row in the same
   transaction as the registration, and an authenticated refusal is recorded
