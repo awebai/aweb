@@ -9,7 +9,10 @@ import json
 from typing import Any
 from uuid import UUID
 
-from aweb.service_errors import NotFoundError, ServiceError, ValidationError
+import asyncpg
+from pgdbm.errors import QueryError
+
+from aweb.service_errors import ConflictError, NotFoundError, ServiceError, ValidationError
 from aweb.messaging.conversations import (
     _equivalent_identity_refs,
     find_active_one_to_one_conversation_between,
@@ -235,7 +238,6 @@ async def _ensure_chat_conversation(
             conversation_id, conversation_type, team_id, created_by_did
         )
         VALUES ($1, 'chat', $2, $3)
-        ON CONFLICT (conversation_id) DO NOTHING
         """,
         session_id,
         team_id,
@@ -248,13 +250,6 @@ async def _ensure_chat_conversation(
                 conversation_id, did, agent_id, alias, address, delivery_origin, current_did_key, transport_hint, role
             )
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (conversation_id, did) DO UPDATE
-            SET agent_id = EXCLUDED.agent_id,
-                alias = EXCLUDED.alias,
-                address = EXCLUDED.address,
-                delivery_origin = EXCLUDED.delivery_origin,
-                current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.conversation_participants}}.current_did_key),
-                transport_hint = EXCLUDED.transport_hint
             """,
             session_id,
             participant["did"],
@@ -265,6 +260,68 @@ async def _ensure_chat_conversation(
             participant.get("current_did_key"),
             participant["transport_hint"],
             "initiator" if participant["did"] == created_by_did else "participant",
+        )
+
+
+async def validate_session_id(
+    db,
+    *,
+    session_id: UUID,
+    actor_dids: list[str],
+    actor_agent_id: str | UUID | None = None,
+) -> bool:
+    """Allow a fresh UUID or an existing chat's active caller; never grant membership."""
+    row = await db.get_manager("aweb").fetch_one(
+        """
+        SELECT s.session_id, c.conversation_type,
+               EXISTS (
+                   SELECT 1 FROM {{tables.chat_participants}} p
+                   WHERE p.session_id = s.session_id AND p.left_at IS NULL
+                     AND (p.did = ANY($2::text[]) OR p.agent_id = $3::uuid)
+               ) AS caller_participant
+        FROM {{tables.conversations}} c
+        FULL OUTER JOIN {{tables.chat_sessions}} s ON s.session_id = c.conversation_id
+        WHERE COALESCE(c.conversation_id, s.session_id) = $1
+        """,
+        session_id, actor_dids, _uuid_or_none(actor_agent_id),
+    )
+    if row is None:
+        return False
+    if (row["conversation_type"] not in (None, "chat")
+            or row["session_id"] is None or not row["caller_participant"]):
+        raise ConflictError("session_id is not an existing chat session of the caller")
+    return True
+
+
+async def _backfill_legacy_chat_conversation(db, *, session_id: UUID) -> None:
+    # Serialize legacy projection, and copy only stored membership and routes.
+    # A create request must never modify an existing session's participants.
+    async with db.get_manager("aweb").transaction() as tx:
+        session = await tx.fetch_one(
+            "SELECT team_id, created_by FROM {{tables.chat_sessions}} WHERE session_id = $1 FOR UPDATE",
+            session_id,
+        )
+        conversation = await tx.fetch_one(
+            "SELECT conversation_type FROM {{tables.conversations}} WHERE conversation_id = $1", session_id,
+        )
+        if conversation is not None:
+            if conversation["conversation_type"] != "chat":
+                raise ConflictError("session_id is not an existing chat session of the caller")
+            return
+        participants = await tx.fetch_all(
+            """
+            SELECT did, agent_id, alias, address, delivery_origin, current_did_key,
+                   CASE WHEN delivery_origin IS NULL THEN 'local'
+                        ELSE 'federation:' || delivery_origin END AS transport_hint
+            FROM {{tables.chat_participants}} WHERE session_id = $1
+            """,
+            session_id,
+        )
+        creator = next((p["did"] for p in participants
+                        if session["created_by"] in (p["did"], p["alias"])), participants[0]["did"])
+        await _ensure_chat_conversation(
+            tx, session_id=session_id, team_id=session["team_id"],
+            created_by_did=creator, participants=participants,
         )
 
 
@@ -303,21 +360,13 @@ async def ensure_session(
     if len(normalized_participants) < 2:
         raise ServiceError("Chat session requires at least two participants")
 
-    if session_id is not None:
-        existing = await aweb_db.fetch_one(
-            "SELECT session_id FROM {{tables.chat_sessions}} WHERE session_id = $1",
-            session_id,
-        )
-        if existing is not None:
-            created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
-            await _ensure_chat_conversation(
-                aweb_db,
-                session_id=UUID(str(session_id)),
-                team_id=team_id,
-                created_by_did=created_by_did,
-                participants=normalized_participants,
-            )
-            return UUID(str(session_id))
+    actor = normalized_participants[0]  # Supplied by the authenticated adapter, never by target resolution.
+    actor_dids = list(dict.fromkeys(d for d in (actor["did"], actor.get("did_key")) if d))
+    if session_id is not None and await validate_session_id(
+        db, session_id=session_id, actor_dids=actor_dids, actor_agent_id=actor["agent_id"],
+    ):
+        await _backfill_legacy_chat_conversation(db, session_id=session_id)
+        return UUID(str(session_id))
 
     if session_id is None and len(normalized_participants) == 2:
         existing = await find_session_between(
@@ -332,59 +381,55 @@ async def ensure_session(
             address_b=normalized_participants[1].get("address"),
         )
         if existing is not None:
+            await validate_session_id(
+                db, session_id=existing, actor_dids=actor_dids, actor_agent_id=actor["agent_id"],
+            )
+            await _backfill_legacy_chat_conversation(db, session_id=existing)
+            return existing
+
+    try:
+        async with aweb_db.transaction() as tx:
+            row = await tx.fetch_one(
+                """
+                INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
+                VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3)
+                RETURNING session_id
+                """,
+                session_id,
+                team_id,
+                created_by,
+            )
+            if not row:
+                raise ServiceError("Failed to create chat session")
+            session_id = row["session_id"]
             created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
+
+            for participant in normalized_participants:
+                await tx.execute(
+                    """
+                    INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin, current_did_key)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    """,
+                    session_id,
+                    participant["did"],
+                    participant["agent_id"],
+                    participant["alias"],
+                    participant["address"],
+                    participant["delivery_origin"],
+                    participant["current_did_key"],
+                )
             await _ensure_chat_conversation(
-                aweb_db,
-                session_id=UUID(str(existing)),
+                tx,
+                session_id=UUID(str(session_id)),
                 team_id=team_id,
                 created_by_did=created_by_did,
                 participants=normalized_participants,
             )
-            return existing
-
-    async with aweb_db.transaction() as tx:
-        row = await tx.fetch_one(
-            """
-            INSERT INTO {{tables.chat_sessions}} (session_id, team_id, created_by)
-            VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3)
-            RETURNING session_id
-            """,
-            session_id,
-            team_id,
-            created_by,
-        )
-        if not row:
-            raise ServiceError("Failed to create chat session")
-        session_id = row["session_id"]
-        created_by_did = created_by if created_by.startswith("did:") else normalized_participants[0]["did"]
-
-        for participant in normalized_participants:
-            await tx.execute(
-                """
-                INSERT INTO {{tables.chat_participants}} (session_id, did, agent_id, alias, address, delivery_origin, current_did_key)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                ON CONFLICT (session_id, did) DO UPDATE
-                SET agent_id = EXCLUDED.agent_id,
-                    alias = EXCLUDED.alias,
-                    address = EXCLUDED.address,
-                    delivery_origin = EXCLUDED.delivery_origin,
-                    current_did_key = COALESCE(EXCLUDED.current_did_key, {{tables.chat_participants}}.current_did_key)
-                """,
-                session_id,
-                participant["did"],
-                participant["agent_id"],
-                participant["alias"],
-                participant["address"],
-                participant["delivery_origin"],
-                participant["current_did_key"],
-            )
-        await _ensure_chat_conversation(
-            tx,
-            session_id=UUID(str(session_id)),
-            team_id=team_id,
-            created_by_did=created_by_did,
-            participants=normalized_participants,
-        )
+    except (QueryError, asyncpg.exceptions.UniqueViolationError) as exc:
+        cause = exc.__cause__ if isinstance(exc, QueryError) else exc
+        if isinstance(cause, asyncpg.exceptions.UniqueViolationError):
+            raise ConflictError("session_id already exists") from exc
+        raise
 
     return UUID(str(session_id))
 
