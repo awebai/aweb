@@ -423,7 +423,8 @@ class Passkeys:
         self, tx: TransactionManager, *, scope: str, evidence: VerifiedOwnerAct
     ) -> None:
         """End `scope`'s designation in the caller's transaction, on an
-        `app-role.revoke` act consumed in this transaction.
+        `app-role.revoke` act consumed in this transaction that names the
+        approver it revokes as its `subject_ref`.
 
         The current approver, or a recovery's pending one, is superseded, its
         passkeys and unused enrolment links revoked and its live approvals
@@ -451,6 +452,10 @@ class Passkeys:
         )
         if current is None:
             raise DesignationRefused("the scope has no approver to retire")
+        # The act names the holder it revokes; checked under the lock, so a
+        # recovery committed after the act was signed cannot redirect it.
+        if evidence.subject.get("subject_ref") != current["subject"]:
+            raise DesignationRefused("owner act names another approver")
         now = self._clock()
         await self._retire(tx, current["subject"], actor, now)
         await tx.execute(

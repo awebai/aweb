@@ -614,10 +614,10 @@ async def test_a_reissue_during_recovery_tells_the_prior_contacts_again(pw):
 # Retirement
 
 
-async def retire(pw: PasskeyWorld, scope: str = SCOPE):
-    """The owner revokes the scope's role: consume the act and retire in one
+async def retire(pw: PasskeyWorld, holder: str, scope: str = SCOPE):
+    """The owner revokes `holder`'s role: consume the act and retire in one
     transaction. The scope's next designation is a first one."""
-    subject = revocation_subject(scope, "approver-1")
+    subject = revocation_subject(scope, holder)
     prepared = await pw.owner.prepare("app-role.revoke", subject)
     async with pw.passkeys.db.transaction() as tx:
         act = await pw.owner.consume(tx, prepared, subject)
@@ -628,7 +628,7 @@ async def retire(pw: PasskeyWorld, scope: str = SCOPE):
 
 async def test_retiring_ends_the_designation_and_its_passkey(pw):
     approver, device = await enrol(pw, "human@example.com")
-    await retire(pw)
+    await retire(pw, approver.subject)
     assert await pw.passkeys.designated_approver(policy()) is None
     assert not await pw.passkeys.is_current(approver.subject, policy())
     assert await refusal(mint(pw)) is Refusal.NO_APPROVER
@@ -640,11 +640,11 @@ async def test_retiring_ends_the_designation_and_its_passkey(pw):
 
 
 async def test_retiring_voids_the_approvers_live_approvals(pw):
-    _, device = await enrol(pw, "human@example.com")
+    approver, device = await enrol(pw, "human@example.com")
     approved = await mint(pw)
     await decide(pw, approved, await ceremony(pw, approved, device))
     pending = await mint(pw, {**REQUEST, "executor": "runner"})
-    await retire(pw)
+    await retire(pw, approver.subject)
     assert await refusal(pw.approvals.admit(approved.approval_id, REQUEST, "op-1")) is (
         Refusal.REVOKED
     )
@@ -652,8 +652,8 @@ async def test_retiring_voids_the_approvers_live_approvals(pw):
 
 
 async def test_a_re_granted_owner_enrols_again_and_the_old_passkey_stays_dead(pw):
-    _, old_device = await enrol(pw, "human@example.com")
-    await retire(pw)
+    old, old_device = await enrol(pw, "human@example.com")
+    await retire(pw, old.subject)
     designation = await designate(pw, "human@example.com")
     assert designation.effective_at == pw.clock()
     assert await pw.passkeys.designated_approver(policy()) is None
@@ -679,7 +679,7 @@ async def test_retiring_during_a_recovery_ends_the_pending_approver_too(pw):
     await enrol(pw, "human@example.com")
     pending = await designate(pw, "new-phone@example.com")
     token = pw.contacts.last("new-phone@example.com")
-    await retire(pw)
+    await retire(pw, pending.approver.subject)
     assert await pw.passkeys.recovery_pending_until(SCOPE) is None
     with pytest.raises(EnrolmentRefused):
         await pw.passkeys.enrolment_options(token)
@@ -688,20 +688,20 @@ async def test_retiring_during_a_recovery_ends_the_pending_approver_too(pw):
 
 
 async def test_retiring_needs_a_revocation_act_for_its_scope_in_its_transaction(pw):
-    await enrol(pw, "human@example.com")
+    approver, _ = await enrol(pw, "human@example.com")
     designating = designation_subject(SCOPE, "other@example.com")
     prepared = await pw.owner.prepare("app-credential.recover", designating)
     with pytest.raises(DesignationRefused):
         async with pw.passkeys.db.transaction() as tx:
             act = await pw.owner.consume(tx, prepared, designating)
             await pw.passkeys.retire(tx, scope=SCOPE, evidence=act)
-    elsewhere = revocation_subject("other-scope", "approver-1")
+    elsewhere = revocation_subject("other-scope", approver.subject)
     prepared = await pw.owner.prepare("app-role.revoke", elsewhere)
     with pytest.raises(DesignationRefused):
         async with pw.passkeys.db.transaction() as tx:
             act = await pw.owner.consume(tx, prepared, elsewhere)
             await pw.passkeys.retire(tx, scope=SCOPE, evidence=act)
-    revoking = revocation_subject(SCOPE, "approver-1")
+    revoking = revocation_subject(SCOPE, approver.subject)
     prepared = await pw.owner.prepare("app-role.revoke", revoking)
     async with pw.passkeys.db.transaction() as tx:
         stale = await pw.owner.consume(tx, prepared, revoking)
@@ -715,8 +715,8 @@ async def test_retiring_needs_a_revocation_act_for_its_scope_in_its_transaction(
 
 
 async def test_a_revocation_act_takes_effect_once(pw):
-    await enrol(pw, "human@example.com")
-    revoking = revocation_subject(SCOPE, "approver-1")
+    approver, _ = await enrol(pw, "human@example.com")
+    revoking = revocation_subject(SCOPE, approver.subject)
     designating = designation_subject(SCOPE, "human@example.com")
     revoke = await pw.owner.prepare("app-role.revoke", revoking)
     regrant = await pw.owner.prepare("app-role.designate", designating)
@@ -736,13 +736,27 @@ async def test_a_revocation_act_takes_effect_once(pw):
 
 async def test_retiring_a_scope_without_an_approver_is_refused(pw):
     with pytest.raises(DesignationRefused):
-        await retire(pw)
+        await retire(pw, "approver-1")
+
+
+async def test_a_revocation_act_retires_only_the_approver_it_names(pw):
+    named, _ = await enrol(pw, "human@example.com")
+    revoking = revocation_subject(SCOPE, named.subject)
+    prepared = await pw.owner.prepare("app-role.revoke", revoking)
+    successor = await designate(pw, "new-phone@example.com")
+    with pytest.raises(DesignationRefused):
+        async with pw.passkeys.db.transaction() as tx:
+            act = await pw.owner.consume(tx, prepared, revoking)
+            await pw.passkeys.retire(tx, scope=SCOPE, evidence=act)
+    assert await pw.passkeys.recovery_pending_until(SCOPE) == successor.effective_at
+    pw.clock.now = successor.effective_at
+    assert await pw.passkeys.is_current(successor.approver.subject, policy())
 
 
 async def test_a_retirement_rolled_back_with_its_transaction_leaves_the_approver(pw):
     approver, device = await enrol(pw, "human@example.com")
     approval = await mint(pw)
-    subject = revocation_subject(SCOPE, "approver-1")
+    subject = revocation_subject(SCOPE, approver.subject)
     prepared = await pw.owner.prepare("app-role.revoke", subject)
 
     class Abandoned(Exception):

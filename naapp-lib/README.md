@@ -137,7 +137,9 @@ the approval, decision, policy and the app's own origin.
   widening changes meanwhile.
 - `retire(tx, scope=..., evidence=...)` ends a scope's designation on an
   `app-role.revoke` act consumed in the same transaction, for instance when the
-  owner role behind the scope is revoked. The current approver, or a recovery's
+  owner role behind the scope is revoked. The act's `subject_ref` must name the
+  approver retire finds current, so a recovery committed after the act was
+  signed is never retired by it. The current approver, or a recovery's
   pending one, is retired with its passkeys, unused enrolment links and live
   approvals. The scope then has no approver: its next designation is a first
   one and enrols a new passkey, and the retired passkeys stay dead.
