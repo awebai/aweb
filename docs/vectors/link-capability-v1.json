@@ -1,0 +1,634 @@
+{
+  "version": 1,
+  "description": "Capability-link semantics (docs/page-links.md §1, §4-§6), for the app that serves links. `delegation`: a creator's current authority and a requested link, with the mint result. `use_sequence`: one link's ordered steps (b-17/b-18 bookings; projection {arrival, status}; mark-cleaned constrained to b-17), each with its expected result; same_receipt_as names a step index (0-based). `race`: orderings of concurrent transactions under the link's row lock. `lockout`: exchange rate limiting that a stranger knowing a link_id cannot use against its holder.",
+  "delegation": [
+    {
+      "name": "within-creator-authority",
+      "creator": {
+        "reads": {
+          "bookings": {
+            "records": [
+              "b-17",
+              "b-18"
+            ],
+            "fields": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_note"
+            ]
+          }
+        },
+        "actions": [
+          "mark-cleaned",
+          "request-cleaner"
+        ]
+      },
+      "link": {
+        "projection": {
+          "bookings": {
+            "records": [
+              "b-17"
+            ],
+            "fields": [
+              "arrival",
+              "status"
+            ]
+          }
+        },
+        "actions": [
+          {
+            "action_id": "mark-cleaned",
+            "constraints": {
+              "record_id": "b-17"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "minted": true
+      }
+    },
+    {
+      "name": "field-creator-lacks",
+      "creator": {
+        "reads": {
+          "bookings": {
+            "records": [
+              "b-17",
+              "b-18"
+            ],
+            "fields": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_note"
+            ]
+          }
+        },
+        "actions": [
+          "mark-cleaned",
+          "request-cleaner"
+        ]
+      },
+      "link": {
+        "projection": {
+          "bookings": {
+            "records": [
+              "b-17"
+            ],
+            "fields": [
+              "price"
+            ]
+          }
+        },
+        "actions": []
+      },
+      "expect": {
+        "refused": "action_denied"
+      }
+    },
+    {
+      "name": "record-creator-lacks",
+      "creator": {
+        "reads": {
+          "bookings": {
+            "records": [
+              "b-17",
+              "b-18"
+            ],
+            "fields": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_note"
+            ]
+          }
+        },
+        "actions": [
+          "mark-cleaned",
+          "request-cleaner"
+        ]
+      },
+      "link": {
+        "projection": {
+          "bookings": {
+            "records": [
+              "b-99"
+            ],
+            "fields": [
+              "status"
+            ]
+          }
+        },
+        "actions": []
+      },
+      "expect": {
+        "refused": "action_denied"
+      }
+    },
+    {
+      "name": "action-creator-lacks",
+      "creator": {
+        "reads": {
+          "bookings": {
+            "records": [
+              "b-17",
+              "b-18"
+            ],
+            "fields": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_note"
+            ]
+          }
+        },
+        "actions": [
+          "mark-cleaned",
+          "request-cleaner"
+        ]
+      },
+      "link": {
+        "projection": {
+          "bookings": {
+            "records": [
+              "b-17"
+            ],
+            "fields": [
+              "status"
+            ]
+          }
+        },
+        "actions": [
+          {
+            "action_id": "refund",
+            "constraints": {}
+          }
+        ]
+      },
+      "expect": {
+        "refused": "action_denied"
+      }
+    },
+    {
+      "name": "answer-kind-action",
+      "creator": {
+        "reads": {
+          "bookings": {
+            "records": [
+              "b-17",
+              "b-18"
+            ],
+            "fields": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_note"
+            ]
+          }
+        },
+        "actions": [
+          "mark-cleaned",
+          "request-cleaner",
+          "approve-price"
+        ]
+      },
+      "link": {
+        "projection": {
+          "bookings": {
+            "records": [
+              "b-17"
+            ],
+            "fields": [
+              "status"
+            ]
+          }
+        },
+        "actions": [
+          {
+            "action_id": "approve-price",
+            "kind": "answer",
+            "constraints": {}
+          }
+        ]
+      },
+      "expect": {
+        "refused": "action_denied"
+      },
+      "note": "a link never answers a member's decision"
+    },
+    {
+      "name": "intent-without-sponsor",
+      "creator": {
+        "reads": {
+          "bookings": {
+            "records": [
+              "b-17",
+              "b-18"
+            ],
+            "fields": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_note"
+            ]
+          }
+        },
+        "actions": [
+          "mark-cleaned",
+          "request-cleaner"
+        ]
+      },
+      "link": {
+        "projection": {
+          "bookings": {
+            "records": [
+              "b-17"
+            ],
+            "fields": [
+              "status"
+            ]
+          }
+        },
+        "actions": [
+          {
+            "action_id": "request-cleaner",
+            "kind": "intent",
+            "constraints": {}
+          }
+        ],
+        "intent_sponsor": null
+      },
+      "expect": {
+        "refused": "schema_invalid"
+      }
+    },
+    {
+      "name": "star-records-frozen-at-mint",
+      "creator": {
+        "reads": {
+          "bookings": {
+            "records": [
+              "b-17",
+              "b-18"
+            ],
+            "fields": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_note"
+            ]
+          }
+        },
+        "actions": [
+          "mark-cleaned",
+          "request-cleaner"
+        ]
+      },
+      "link": {
+        "projection": {
+          "bookings": {
+            "records": "*",
+            "fields": [
+              "status"
+            ]
+          }
+        },
+        "actions": []
+      },
+      "expect": {
+        "minted": true,
+        "frozen_records": [
+          "b-17",
+          "b-18"
+        ]
+      },
+      "note": "a record the creator gains later is not added to the link"
+    },
+    {
+      "name": "expiry-over-30-days",
+      "creator": {
+        "reads": {
+          "bookings": {
+            "records": [
+              "b-17",
+              "b-18"
+            ],
+            "fields": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_note"
+            ]
+          }
+        },
+        "actions": [
+          "mark-cleaned",
+          "request-cleaner"
+        ]
+      },
+      "link": {
+        "projection": {
+          "bookings": {
+            "records": [
+              "b-17"
+            ],
+            "fields": [
+              "status"
+            ]
+          }
+        },
+        "actions": [],
+        "expires_in_seconds": 2592001
+      },
+      "expect": {
+        "refused": "schema_invalid"
+      }
+    }
+  ],
+  "use_sequence": [
+    {
+      "step": "exchange",
+      "secret": "wrong",
+      "result": {
+        "status": 404,
+        "code": "link_unavailable"
+      }
+    },
+    {
+      "step": "exchange",
+      "secret": "right",
+      "result": {
+        "status": 200,
+        "session": "s1"
+      }
+    },
+    {
+      "step": "read",
+      "session": "s1",
+      "fields": [
+        "arrival",
+        "status"
+      ],
+      "result": {
+        "status": 200
+      }
+    },
+    {
+      "step": "read",
+      "session": "s1",
+      "fields": [
+        "guest_note"
+      ],
+      "result": {
+        "status": 403,
+        "code": "action_denied"
+      },
+      "note": "outside the projection, although the creator could read it"
+    },
+    {
+      "step": "action",
+      "session": "s1",
+      "action_id": "mark-cleaned",
+      "input": {
+        "record_id": "b-18"
+      },
+      "nonce": "n1",
+      "idempotency_key": "k1",
+      "result": {
+        "status": 403,
+        "code": "action_denied"
+      },
+      "note": "violates the link's constraint"
+    },
+    {
+      "step": "action",
+      "session": "s1",
+      "action_id": "mark-cleaned",
+      "input": {
+        "record_id": "b-17"
+      },
+      "nonce": "n2",
+      "idempotency_key": "k2",
+      "result": {
+        "status": 200,
+        "receipt": "r2"
+      }
+    },
+    {
+      "step": "action",
+      "session": "s1",
+      "action_id": "mark-cleaned",
+      "input": {
+        "record_id": "b-17"
+      },
+      "nonce": "n2",
+      "idempotency_key": "k2",
+      "result": {
+        "status": 409,
+        "code": "idempotency_conflict"
+      },
+      "note": "replayed nonce"
+    },
+    {
+      "step": "action",
+      "session": "s1",
+      "action_id": "mark-cleaned",
+      "input": {
+        "record_id": "b-17"
+      },
+      "nonce": "n3",
+      "idempotency_key": "k2",
+      "result": {
+        "status": 200,
+        "same_receipt_as": 5
+      },
+      "note": "a retry after a lost response: fresh nonce, same idempotency key, stored receipt"
+    },
+    {
+      "step": "action",
+      "session": "s1",
+      "action_id": "mark-cleaned",
+      "input": {
+        "record_id": "b-17"
+      },
+      "nonce": "n4",
+      "idempotency_key": "k4",
+      "origin": "https://evil.example",
+      "result": {
+        "status": 403,
+        "code": "action_denied"
+      }
+    },
+    {
+      "step": "creator_loses_field",
+      "field": "status"
+    },
+    {
+      "step": "read",
+      "session": "s1",
+      "fields": [
+        "status"
+      ],
+      "result": {
+        "status": 403,
+        "code": "action_denied"
+      },
+      "note": "the link narrows with its creator's authority"
+    },
+    {
+      "step": "stream_open",
+      "session": "s1",
+      "result": {
+        "status": 200
+      }
+    },
+    {
+      "step": "creator_loses_record",
+      "record_id": "b-17"
+    },
+    {
+      "step": "stream_check",
+      "after_seconds": 15,
+      "result": {
+        "closed": true
+      },
+      "note": "the stream re-runs the full lifecycle check, creator authority included, within 15 s"
+    },
+    {
+      "step": "revoke",
+      "result": {
+        "status": 200
+      }
+    },
+    {
+      "step": "read",
+      "session": "s1",
+      "fields": [
+        "arrival"
+      ],
+      "result": {
+        "status": 410,
+        "code": "link_unavailable"
+      }
+    },
+    {
+      "step": "exchange",
+      "secret": "right",
+      "result": {
+        "status": 404,
+        "code": "link_unavailable"
+      },
+      "note": "no new session for a revoked link"
+    }
+  ],
+  "race": [
+    {
+      "name": "revoke-commits-first",
+      "order": [
+        "revoke_commit",
+        "action_admit"
+      ],
+      "result": {
+        "action": {
+          "status": 410,
+          "code": "link_unavailable"
+        }
+      }
+    },
+    {
+      "name": "action-commits-first",
+      "order": [
+        "action_admit",
+        "revoke_commit"
+      ],
+      "result": {
+        "action": {
+          "status": 200,
+          "receipt_kept": true
+        },
+        "later_read": {
+          "status": 410,
+          "code": "link_unavailable"
+        }
+      }
+    },
+    {
+      "name": "one-use-concurrent-submits",
+      "one_use": true,
+      "order": [
+        "submit_a_admit",
+        "submit_b_waits_on_lock",
+        "submit_b_checks"
+      ],
+      "result": {
+        "a": {
+          "status": 200
+        },
+        "b": {
+          "status": 410,
+          "code": "link_unavailable"
+        }
+      }
+    },
+    {
+      "name": "one-use-reads-consume-nothing",
+      "one_use": true,
+      "order": [
+        "read",
+        "read",
+        "preview",
+        "failed_signature",
+        "submit_admit"
+      ],
+      "result": {
+        "submit": {
+          "status": 200
+        },
+        "used_at_set_by": "submit_admit"
+      }
+    },
+    {
+      "name": "stream-revoked-mid-stream",
+      "order": [
+        "stream_open",
+        "revoke_commit",
+        "stream_check_within_15s"
+      ],
+      "result": {
+        "stream": {
+          "closed": true
+        }
+      }
+    }
+  ],
+  "lockout": [
+    {
+      "name": "wrong-secrets-do-not-lock-out-holder",
+      "steps": [
+        {
+          "exchange": "wrong",
+          "from": "attacker",
+          "times": 50
+        },
+        {
+          "exchange": "right",
+          "from": "holder"
+        }
+      ],
+      "result": {
+        "attacker": {
+          "last": {
+            "status": 429,
+            "code": "safety_rate_limited"
+          }
+        },
+        "holder": {
+          "status": 200
+        }
+      },
+      "note": "failures count against the client address; only successful exchanges count per link"
+    }
+  ]
+}

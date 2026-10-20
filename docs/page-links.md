@@ -328,3 +328,6 @@ Errors carry no record values, no other link's existence and no secret.
   the creator lacks is refused, and authority lost later narrows the link),
   constraint matching, one-use admission and revocation-race orderings, with
   the expected result of each step.
+
+`aweb_naapp.runtime.link_requests` computes verifiers and builds and verifies
+link requests, and runs `link-request-v1.json`.

@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 28
+`docs/vectors/*.json` is the only public protocol-vector authority for the 30
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -212,6 +212,24 @@ renderer, which this file names but does not test. `bundle_hash` pins the
 bundle decision-card digest across languages. The reference consumer is
 `aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
 [the page format](../page-format.md).
+
+### `link-request-v1.json`
+
+Capability-link requests (aweb-acgg.10): secret verifiers, and
+`aweb.link-request/1` payloads, signing bytes and Ed25519 signatures by a
+session key, with verification cases that give the request each payload must
+bind and the clock. The reference consumer is `aweb_naapp.runtime.link_requests`
+in `naapp-lib/tests/runtime/`. See [page links](../page-links.md) §2–§3.
+
+### `link-capability-v1.json`
+
+Capability-link semantics (aweb-acgg.10), for the app that serves links:
+delegation against the creator's authority, one link's ordered use steps
+(projection, constraints, nonce replay and idempotent retry, Origin, narrowing
+when the creator loses authority, stream re-checks, revocation), revocation
+and one-use races under the link's row lock, and exchange rate limiting that a
+stranger cannot turn against a holder. See [page links](../page-links.md)
+§1 and §4–§6.
 
 ### `agent-status-v1.json`
 
