@@ -625,6 +625,7 @@ def _validate_v2(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) -> Non
             raise _refuse("tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts are invalid")
     _validate_app_keys(d["app_keys"])
     _validate_surfaces(d, app_id, tools)
+    _validate_answer_routes(d, tools)
     _validate_answer_inputs(d)
     _validate_usage(d["usage"], tools)
     _validate_lifecycle(d["lifecycle"], tools)
@@ -740,6 +741,31 @@ def _validate_surface_tools(s: dict[str, Any], tools: dict[str, _Tool]) -> None:
 
 def _answer_tools(surfaces: list[dict[str, Any]] | tuple[Mapping[str, Any], ...]) -> set[str]:
     return {s["answer_tool"] for s in surfaces if s["answer_tool"]}
+
+
+def _route(tool: _Tool) -> tuple[str, list[str]]:
+    return _go_trim(tool.method).upper(), _relative_path(tool.path, tool.name).split("/")
+
+
+def _is_placeholder(segment: str) -> bool:
+    return len(segment) > 2 and segment.startswith("{") and segment.endswith("}")
+
+
+def _routes_overlap(a: _Tool, b: _Tool) -> bool:
+    (method_a, segments_a), (method_b, segments_b) = _route(a), _route(b)
+    return method_a == method_b and len(segments_a) == len(segments_b) and all(
+        x == y or _is_placeholder(x) or _is_placeholder(y) for x, y in zip(segments_a, segments_b, strict=True)
+    )
+
+
+def _validate_answer_routes(d: dict[str, Any], tools: dict[str, _Tool]) -> None:
+    """No agent-visible tool may reach a surface answer_tool's route: the same
+    method, and a path whose segments are equal or a placeholder on either side."""
+    for name in _answer_tools(d["surfaces"]):
+        for tool in d["tools"]:
+            if _go_trim(tool.name) != name and AGENT in tool.effective_contexts and _routes_overlap(tool, tools[name]):
+                raise _refuse("answer_route_agent_visible",
+                              f"agent-visible tool {tool.name!r} can reach answer_tool {name!r}'s route")
 
 
 def _validate_answer_inputs(d: dict[str, Any]) -> None:
@@ -1058,18 +1084,14 @@ def _identity(data: bytes) -> tuple[int, str]:
 
 def _valid_variant_path(path: str) -> bool:
     """An absolute path that resolves under the install base: no scheme, host,
-    query, fragment, backslash, encoded slash or backslash, or dot segment,
-    encoded or not."""
+    query, fragment, backslash, percent-encoding or dot segment."""
     if not path or len(path) > 512 or not path.startswith("/") or path.startswith("//"):
         return False
     if any(c in path for c in "?#\\") or any(ord(c) <= 0x20 or ord(c) == 0x7F for c in path):
         return False
-    if "%2f" in path.lower() or "%5c" in path.lower():
+    if "%" in path:
         return False
-    for segment in path[1:].split("/"):
-        if re.search(r"%(?![0-9A-Fa-f]{2})", segment) or unquote(segment) in (".", ".."):
-            return False
-    return True
+    return not any(segment in (".", "..") for segment in path[1:].split("/"))
 
 
 def _parse_catalog(data: bytes) -> tuple[str, list[tuple[int, str, str]]]:

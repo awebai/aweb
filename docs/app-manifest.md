@@ -431,13 +431,30 @@ names, never a path expression.
 
 Answers reach an app only through a surface's `answer_tool`, which must
 declare `invocation_contexts` exactly `["surface"]`. A manifest whose answer
-path is agent-visible is refused at install (`answer_tool_contexts_invalid`).
-No other tool carries an answer, whatever its contexts, the `invoke_tool`
-included. It may not declare an `answer` input, top-level or inside an object
-body parameter (`answer_input_forbidden`). A request body for any other v2
-tool that carries an `answer` member, top-level or in a top-level object
-member, is refused (`answer_payload_refused`), whatever manifest validation
-and host filtering did.
+path is agent-visible is refused at install:
+
+- the answer tool itself declares other contexts
+  (`answer_tool_contexts_invalid`);
+- another tool whose contexts include `agent` can reach the answer tool's
+  route: the same method, and a path whose segments are equal or a
+  placeholder on either side (`answer_route_agent_visible`);
+- another tool, the `invoke_tool` included, declares an `answer` input,
+  top-level or inside an object body parameter (`answer_input_forbidden`).
+
+**The guarantee is the action's kind, not a member name.** An answer is an
+action whose page definition has `kind: "answer"` (D1 §4, C1). The naapp's
+own invoke handler refuses any request whose action, resolved from the
+page's action definitions, is `answer`-kind, whatever manifest validation
+and host filtering did. Only the naapp can resolve that; a manifest cannot
+express it. The shared naapp runtime (`aweb_naapp`) is to enforce it in
+`authorize_request` once the runtime loads its served manifest with
+`load_manifest`; that is not shipped yet. Its acceptance case is an
+answer-kind `action_id` submitted through the invoke tool and refused.
+
+As an additional cheap guard, a request body for any v2 tool except a
+surface `answer_tool` that carries a member named `answer`, top-level or in
+a top-level object member, is refused (`answer_payload_refused`). This guard
+does not recognise an answer-kind action, so it is not the guarantee.
 
 ### Hooks slot
 
@@ -483,13 +500,13 @@ An app that publishes more than one manifest version serves a catalog at
 ```
 
 A consumer GETs the catalog and selects the highest `manifest_version` it
-supports. A variant `url` is an absolute path resolved against the install
-base, path prefix included: an app installed from
+supports. A variant `url` is an absolute path, with no percent-encoding,
+resolved against the install base, path prefix included: an app installed from
 `https://apps.example/notes` serves its catalog at
 `https://apps.example/notes/.well-known/aweb-app-versions.json` and a variant
 `/manifests/v2.json` at `https://apps.example/notes/manifests/v2.json`. A
-path that could escape the base is refused: dot segments, encoded or not,
-and encoded slashes or backslashes. The consumer GETs that variant and checks
+path that could escape the base is refused: dot segments, and any
+percent-encoding. The consumer GETs that variant and checks
 three things: the bytes hash to the catalog digest, they declare that version, and
 they name the catalog's app id. Each variant is immutable: new bytes mean a
 new digest. Only a missing catalog (404) permits the legacy

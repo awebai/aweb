@@ -26,6 +26,7 @@ const (
 	CodeSurfaceToolInvalid         = "surface_tool_invalid"
 	CodeAnswerToolContextsInvalid  = "answer_tool_contexts_invalid"
 	CodeAnswerInputForbidden       = "answer_input_forbidden"
+	CodeAnswerRouteAgentVisible    = "answer_route_agent_visible"
 	CodeUsageInvalid               = "usage_invalid"
 	CodeLifecycleInvalid           = "lifecycle_invalid"
 	CodeHooksInvalid               = "hooks_invalid"
@@ -574,6 +575,9 @@ func validateV2(m Manifest) error {
 	if err := validateSurfaces(m, tools); err != nil {
 		return err
 	}
+	if err := validateAnswerRoutes(m, tools); err != nil {
+		return err
+	}
 	if err := validateAnswerInputs(m); err != nil {
 		return err
 	}
@@ -794,6 +798,50 @@ func answerTools(surfaces Surfaces) map[string]bool {
 		}
 	}
 	return out
+}
+
+// validateAnswerRoutes refuses an agent-visible tool that can reach a surface
+// answer_tool's route: the same method, and a path whose segments are equal
+// or a placeholder on either side.
+func validateAnswerRoutes(m Manifest, tools map[string]*Tool) error {
+	for name := range answerTools(m.Surfaces) {
+		answer := tools[name]
+		for i := range m.Tools {
+			tool := &m.Tools[i]
+			if strings.TrimSpace(tool.Name) == name || !toolContexts(tool)[ContextAgent] {
+				continue
+			}
+			if routesOverlap(tool, answer) {
+				return codedf(CodeAnswerRouteAgentVisible, "agent-visible tool %q can reach answer_tool %q's route", tool.Name, name)
+			}
+		}
+	}
+	return nil
+}
+
+func routesOverlap(a, b *Tool) bool {
+	if strings.ToUpper(strings.TrimSpace(a.Method)) != strings.ToUpper(strings.TrimSpace(b.Method)) {
+		return false
+	}
+	pathA, errA := validateRelativePath(a.Path)
+	pathB, errB := validateRelativePath(b.Path)
+	if errA != nil || errB != nil {
+		return false
+	}
+	segmentsA, segmentsB := strings.Split(pathA, "/"), strings.Split(pathB, "/")
+	if len(segmentsA) != len(segmentsB) {
+		return false
+	}
+	for i := range segmentsA {
+		if segmentsA[i] != segmentsB[i] && !isPlaceholderSegment(segmentsA[i]) && !isPlaceholderSegment(segmentsB[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isPlaceholderSegment(segment string) bool {
+	return len(segment) > 2 && strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}")
 }
 
 // validateAnswerInputs refuses an answer input on every tool except a surface

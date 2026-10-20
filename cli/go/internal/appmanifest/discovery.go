@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"net/url"
 	"reflect"
 	"regexp"
 	"strings"
@@ -169,8 +168,8 @@ func parseCatalog(body []byte) (*catalogDocument, error) {
 }
 
 // validVariantPath accepts an absolute path that resolves under the install
-// base: no scheme, host, query, fragment, backslash, encoded slash or
-// backslash, or dot segment, encoded or not.
+// base: no scheme, host, query, fragment, backslash, percent-encoding or dot
+// segment.
 func validVariantPath(path string) bool {
 	if len(path) == 0 || len(path) > maxVariantURLLen || path[0] != '/' || strings.HasPrefix(path, "//") {
 		return false
@@ -178,13 +177,11 @@ func validVariantPath(path string) bool {
 	if strings.ContainsAny(path, "?#\\") {
 		return false
 	}
-	lower := strings.ToLower(path)
-	if strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c") {
+	if strings.Contains(path, "%") {
 		return false
 	}
 	for _, segment := range strings.Split(path[1:], "/") {
-		decoded, err := url.PathUnescape(segment)
-		if err != nil || decoded == "." || decoded == ".." {
+		if segment == "." || segment == ".." {
 			return false
 		}
 	}
