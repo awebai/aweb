@@ -8,6 +8,7 @@ a server: the guard refuses before it connects.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -241,6 +242,26 @@ async def test_no_answer_within_the_total_bound_is_outcome_unknown(network: Netw
     with pytest.raises(EgressOutcomeUnknown):
         await egress.send("GET", canonical_url(network.url("/slow")), internal=LOOPBACK)
     assert len(network.tls.seen) == 1
+
+
+async def test_resolution_counts_against_the_total_bound(network: Network) -> None:
+    # A slow answer and an upstream that never answers must still end at the total bound.
+    network.dns.delay = 0.6
+    egress = network.egress(bounds=Bounds(connect_timeout=1.0, total_timeout=1.0))
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(EgressOutcomeUnknown):
+        await egress.send("GET", canonical_url(network.url("/slow")), internal=LOOPBACK)
+    assert asyncio.get_running_loop().time() - started < 1.3
+
+
+async def test_resolution_past_the_total_bound_is_not_sent(network: Network) -> None:
+    network.dns.delay = 1.0
+    egress = network.egress(bounds=Bounds(connect_timeout=2.0, total_timeout=0.5))
+    started = asyncio.get_running_loop().time()
+    with pytest.raises(EgressNotSent):
+        await egress.send("GET", canonical_url(network.url("/ok")), internal=LOOPBACK)
+    assert asyncio.get_running_loop().time() - started < 0.8
+    assert network.tls.seen == []
 
 
 async def test_response_over_the_bound_is_truncated_and_reported(network: Network) -> None:

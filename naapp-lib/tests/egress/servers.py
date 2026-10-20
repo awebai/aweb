@@ -38,6 +38,8 @@ class DnsServer:
 
     records: dict[tuple[str, str], Answer] = field(default_factory=dict)
     queries: Counter[tuple[str, str]] = field(default_factory=Counter)
+    # Seconds to wait before each answer, as a slow resolver would.
+    delay: float = 0.0
     port: int = 0
     _transport: asyncio.DatagramTransport | None = None
 
@@ -50,7 +52,12 @@ class DnsServer:
                 self.transport = transport
 
             def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-                self.transport.sendto(server._answer(data), addr)  # type: ignore[attr-defined]
+                answer = server._answer(data)
+                send = self.transport.sendto  # type: ignore[attr-defined]
+                if server.delay:
+                    loop.call_later(server.delay, send, answer, addr)
+                else:
+                    send(answer, addr)
 
         transport, _ = await loop.create_datagram_endpoint(Protocol, local_addr=("127.0.0.1", 0))
         self._transport = transport  # type: ignore[assignment]

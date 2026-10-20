@@ -165,13 +165,20 @@ class Egress:
                 raise EgressRefused("internal_destinations_disabled", "internal_destinations")
             if internal is None:
                 raise EgressRefused("destination_not_in_scope", "host", "an IP literal")
-        addresses = [url.ip] if url.ip is not None else await self._resolve(url.host, bounds)
+        # One deadline covers resolution and the exchange, so total_timeout is
+        # the longest a send can take.
+        deadline = asyncio.get_running_loop().time() + bounds.total_timeout
+        if url.ip is not None:
+            addresses: list[IPAddress] = [url.ip]
+        else:
+            addresses = await self._resolve(url.host, bounds, deadline)
         self.addresses.check(addresses, internal=internal)
-        return await self._exchange(method, url, addresses[0], headers, body, bounds)
+        return await self._exchange(method, url, addresses[0], headers, body, bounds, deadline)
 
-    async def _resolve(self, host: str, bounds: Bounds) -> list[IPAddress]:
+    async def _resolve(self, host: str, bounds: Bounds, deadline: float) -> list[IPAddress]:
+        resolve_by = min(deadline, asyncio.get_running_loop().time() + bounds.connect_timeout)
         try:
-            async with asyncio.timeout(bounds.connect_timeout):
+            async with asyncio.timeout_at(resolve_by):
                 return await self.resolver.resolve(host)
         except TimeoutError as error:
             raise EgressNotSent(f"resolving {host} timed out") from error
@@ -191,6 +198,7 @@ class Egress:
         headers: list[tuple[str, str]],
         body: bytes,
         bounds: Bounds,
+        deadline: float,
     ) -> Response:
         backend = _PinnedBackend(address)
         request_headers = [
@@ -208,7 +216,7 @@ class Egress:
             "pool": bounds.connect_timeout,
         }
         try:
-            async with asyncio.timeout(bounds.total_timeout):
+            async with asyncio.timeout_at(deadline):
                 async with httpcore.AsyncConnectionPool(
                     ssl_context=self._ssl_context(), network_backend=backend, retries=0
                 ) as pool:
