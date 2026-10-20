@@ -83,8 +83,8 @@ async def rollover(request: Request, domain: str, name: str, old_id: str, body: 
                 team['team_uuid'], new.certificate_id, new.member_did_key, new.member_did_aw, new.member_address, new.alias, new.identity_scope, new.certificate,
             )
             await tx.execute('UPDATE {{tables.team_certificates}} SET replaced_by_certificate_id=$3 WHERE team_uuid=$1 AND certificate_id=$2', team['team_uuid'], old_id, new.certificate_id)
-    except QueryError as exc:
-        if isinstance(exc.__cause__, asyncpg.UniqueViolationError):
+    except (QueryError, asyncpg.UniqueViolationError) as exc:
+        if isinstance(exc, asyncpg.UniqueViolationError) or isinstance(exc.__cause__, asyncpg.UniqueViolationError):
             raise HTTPException(status_code=409, detail='Certificate rollover collision') from exc
         raise
     return {'replaced': True, 'old_certificate_id': old_id, 'certificate_id': new.certificate_id}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -47,6 +48,7 @@ async def rollover(env, old, new, **kwargs):
 @pytest.mark.asyncio
 async def test_default_absence_and_signed_private_team_policy(controller_app):
     env = controller_app
+    assert await env.db.fetch_value('SELECT inet_server_port()') == int(os.environ.get('TEST_DB_PORT', '5432'))
     await env.db.execute("UPDATE {{tables.teams}} SET visibility='private' WHERE name='base'")
     path = '/v1/namespaces/local/teams/base/credential-lifetimes'
     absent = await env.client.get(path)

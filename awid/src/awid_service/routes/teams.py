@@ -894,8 +894,8 @@ async def register_certificate(
                 body.identity_scope,
                 body.certificate,
             )
-    except QueryError as exc:
-        cause = exc.__cause__
+    except (QueryError, asyncpg.UniqueViolationError) as exc:
+        cause = exc if isinstance(exc, asyncpg.UniqueViolationError) else exc.__cause__
         if not isinstance(cause, asyncpg.UniqueViolationError):
             raise
         constraint_name = getattr(cause, "constraint_name", "")
