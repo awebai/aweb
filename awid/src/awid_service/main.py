@@ -12,8 +12,10 @@ from redis.asyncio import from_url as async_redis_from_url
 
 from awid.log_config import configure_logging
 from awid.ratelimit import build_rate_limiter as _shared_build_rate_limiter
+from .attestation_rotation import rotate_max_body_bytes_from_env
 from .config import get_settings
 from .routes.a2a_publications import router as a2a_publications_router
+from .routes.attestation_records import router as attestation_records_router
 from .routes.did import router as did_router
 from .routes.dns_addresses import router as dns_addresses_router
 from .routes.dns_namespaces import router as dns_namespaces_router
@@ -118,6 +120,8 @@ def create_app(
 
     app = FastAPI(title="awid.ai registry", version=service_version, lifespan=lifespan)
 
+    app.state.rotate_max_body_bytes = rotate_max_body_bytes_from_env()
+
     # Covering controller signatures use configuration, never Host/forwarded headers.
     app.state.awid_public_origins = tuple(
         value.strip() for value in os.getenv("AWID_PUBLIC_ORIGINS", "").split(",") if value.strip()
@@ -164,6 +168,7 @@ def create_app(
     app.include_router(dns_addresses_router)
     app.include_router(a2a_publications_router)
     app.include_router(teams_router)
+    app.include_router(attestation_records_router)
     return app
 
 

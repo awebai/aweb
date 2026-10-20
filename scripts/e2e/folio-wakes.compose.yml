@@ -112,7 +112,8 @@ services:
     mem_limit: "1g"
     pids_limit: 512
     build:
-      context: ./naapp/folio
+      context: .
+      dockerfile: naapp/folio/Dockerfile
     environment:
       FOLIO_DATABASE_URL: postgresql://aweb:aweb@postgres:5432/library
       FOLIO_AWID_REGISTRY_URL: http://awid:8010

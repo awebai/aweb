@@ -109,38 +109,11 @@ def aweb_path(*parts: str) -> Path:
     )
 
 
-def aweb_naapp_local_source_candidates() -> list[Path]:
-    """Every place a LOCAL aweb-naapp source tree could sit.
-
-    folio depends on aweb-naapp as a pinned package, and test_surfaces asserts the import
-    resolves from that package rather than from a source tree lying around next to it.
-    Which source tree that could be depends on the layout: the sibling aweb-naapp checkout
-    today, and aweb/naapp-lib once the move puts it inside aweb.
-
-    Both are listed because a guard that names only the location which has stopped
-    existing still passes - it just can no longer fail. That is what happened to this
-    guard when the move was rehearsed: its subject became a path that can never exist, at
-    the same moment aweb-naapp's source arrived in the tree under a different name.
-    """
-    candidates = [_FOLIO_ROOT.parent / "aweb-naapp" / "src"]
-    candidates.extend(root / "naapp-lib" / "src" for root in aweb_candidate_roots())
-    return candidates
-
-
-def existing_local_sources(candidates: Iterable[Path]) -> list[Path]:
-    """The candidates that actually exist - the ones the guard can be tested against.
-
-    Separated out so a test can assert it found a subject at all. A guard checking only
-    locations that do not exist reports success without having looked at anything.
-    """
-    return [candidate for candidate in candidates if candidate.exists()]
-
-
 def shadowing_local_source(package_file: Path | str, candidates: Iterable[Path]) -> Path | None:
     """The local source tree an imported package came from, or None if it did not.
 
     Kept as a plain function of its inputs so it can be exercised in both directions. The
-    import it is normally asked about resolves from the pinned package, so the failing case
+    imports it is normally asked about resolve from this checkout, so the other case
     cannot be produced by importing anything - it has to be constructed, and a decision
     that cannot be constructed is one nobody has watched fail.
     """
