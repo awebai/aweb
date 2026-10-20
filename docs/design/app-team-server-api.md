@@ -14,7 +14,7 @@ team's aweb coordination server. Three consumers share it:
 - aw-hooks target resolution (aweb-acgh.1, `docs/design/audit-substrate.md`
   §A4 at `23a88a8ad`);
 - pages / D1 (aweb-acgg), whose `agent-pages.md` §5 "Installation authority
-  and scope" at `44ae7164a` lists its requirements.
+  and scope" at `1fb0fafcb` lists its requirements.
 
 It is generic: no app names, no catalog semantics and no naapp-specific core
 code. Where a hosted operator must act, this design states it as a generic
@@ -292,6 +292,11 @@ declarations and keys from digest-pinned bytes. App keys follow the same rules.
   the install's digest and that the server did not verify it against the
   origin, so agents in that team do not read such events as the real app's.
   This is acceptable once install is admin-only (F6).
+- **Transition.** While `manifest` is optional, an install that carries it is
+  refused when separately supplied `event_emitters`, `events` or
+  `granted_scopes` disagree with the bytes. Requiring the bytes on every
+  install is the end state (acgh.8 step 2), after it is measured that released
+  clients send them, per the released-client rule.
 - **No interim path.** v1 manifests declare no `app_keys` (strict v1 rejects
   unknown fields, `docs/app-manifest.md`, "Top-level structure"), so read
   purposes exist only for v2 installs after C3. Released clients send no
@@ -508,7 +513,8 @@ Docker e2e harness, with AWID, aweb and one fixture naapp.
    generation, state and uninstall. This lane reads them and reports `null`
    until then. *Recommendation: keep that split rather than adding columns
    here*, so one lane owns the install schema.
-4. **Disclosure of a private team's server URL** (§1, Privacy). Anyone who
+4. **Disclosure of a private team's server URL** (§1, Privacy), for you and
+   for Athena's review (her G5). Anyone who
    knows a private team's id can read its coordination server URL; certificate
    status discloses only the team key. *Recommendation: accept.* A server URL
    is not a credential, every request to it is still authenticated, and the
