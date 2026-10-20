@@ -127,18 +127,16 @@ answer-route checks cover:
 1. **Stage.** A body `{"stage": {expected_task_rev, choice, input,
    proposal_rev, proposal_sha256, answer_key}}`. The naapp checks that the task
    is the card's and that the proposal is still current. It then stores the
-   answer content under the page's access control and returns
-   `{answer_key, answer_sha256, approval_id, challenge}`, where:
-
-   ```text
-   answer_sha256 = hex(SHA-256("aweb.page-answer/1\n" || C(answer)))
-   answer = {"v": 1, "page_id", "action_id", "task_id", "choice", "input",
-             "proposal_rev", "proposal_sha256"}
-   ```
+   answer (choice and input) with the page, and returns
+   `{answer_key, body_md, answer_sha256, approval_id, challenge}`. `body_md`
+   is the answer's full text as the naapp renders it from the choice and
+   input, deterministically, and `answer_sha256` is the bare hex SHA-256 of its
+   UTF-8 bytes. The task comment shows that text to the team
+   ([app-task-requests.md](app-task-requests.md) §4).
 
    `challenge` is the approval adapter's challenge (§7).
 2. **Answer the task.** The same member answers the task with that
-   `answer_key` and `answer_sha256` ([app-task-requests.md](app-task-requests.md)
+   `answer_key`, `body_md` and `answer_sha256` ([app-task-requests.md](app-task-requests.md)
    §4). A host that embeds the task service calls `answer_task_on`; any other
    caller uses `POST /v1/tasks/{ref}/answer`. The result is the answer receipt.
 3. **Confirm.** A body `{"confirm": {answer_key, task_answer_ref, proof}}`,
@@ -277,8 +275,8 @@ The requesting principal, and any agent, can propose. It can never:
 - dispatch.
 
 Tools and responses an agent can see return only `{request_id,
-delivery_status}`. Task text, comments and agent-readable projections carry
-opaque references and safe outcomes, never a link, token or capability.
+delivery_status}`. Task text, comments and agent-readable projections never
+carry an approval link, token or capability.
 
 ## 8. Progress and resolution
 
@@ -334,8 +332,7 @@ The codes of [app-task-requests.md](app-task-requests.md) "Errors" apply, plus:
 ## Conformance vectors
 
 - `docs/vectors/page-proposal-v1.json`: `proposal_sha256` over single records
-  (with non-ASCII, nested and boundary integer values), `answer_sha256`, and
-  the refusal cases.
+  (with non-ASCII, nested and boundary integer values), and the refusal cases.
 - `docs/vectors/approval-request-v1.json`: `request_sha256` for page
   decisions and generic requests, the challenge binding (a raw 32-byte
   digest, a hex nonce, and a `task_answer_ref` that is always present and

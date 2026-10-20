@@ -354,7 +354,7 @@ Request:
   "choice": "approve",
   "proposal_rev": 2,
   "proposal_sha256": "sha256:<64 hex>",
-  "comment": {"kind": "reference"}
+  "body_md": "Approve. The new rate is 120 EUR per night."
 }
 ```
 
@@ -362,10 +362,10 @@ Request:
 | --- | --- |
 | `expected_task_rev` | The `rev` the person was shown. Required: missing is 428 `precondition_required`. |
 | `answer_key` | `^[A-Za-z0-9._-]{1,128}$`, chosen by the caller and stable across its retries. |
-| `answer_sha256` | Bare hex commitment to the answer content. With a `reference` comment the task service never receives the content; with a `text` comment it is the digest of `body_md`. |
+| `answer_sha256` | The bare hex SHA-256 of the UTF-8 bytes of `body_md`. The coordinator recomputes it and refuses a mismatch (422 `schema_invalid`). |
 | `choice` | `null`, or one of the task's declared `choices`. Required when the task declares choices. |
 | `proposal_rev`, `proposal_sha256` | Required, and equal to the task's, when the task carries a proposal; otherwise both `null`. |
-| `comment` | The comment projection, `{"kind": "reference"}` or `{"kind": "text", "body_md": …}` (below). |
+| `body_md` | The answer's full text, 1–20,000 runes, Markdown. It becomes the team-visible comment. |
 
 The answering identity is the verified team-auth signer. For the in-process
 form, it is the verified identity the host passes. It is never a body field.
@@ -427,19 +427,13 @@ A plain comment or close never answers a task and never mints approval.
 
 ### Team-visible comment
 
-The coordinator writes one comment per answer. The caller chooses its
-projection with a `comment` member of the request:
+Every answer, whoever gives it and whatever the task, writes one comment
+carrying the answer's full text, `body_md`, exactly as given. The team sees
+what was answered, as it sees the rest of the task. There is no projection
+choice.
 
-- `{"kind": "reference"}` writes `Answer recorded · <task_answer_ref>`. It
-  carries opaque references only: no choice, content or proposal value.
-- `{"kind": "text", "body_md": "<1–20,000 runes>"}` writes the caller's text.
-  `answer_sha256` is then the bare hex SHA-256 of the UTF-8 `body_md` bytes,
-  and the coordinator checks it.
-
-A task that carries an `app_request` (a page request, decision or approval)
-accepts only `reference`. `text` on such a task is 422 `schema_invalid`.
-Page and approval answer content stays in the app's access-controlled store.
-A plain task, such as a dashboard "waiting on you" request, may use either.
+`body_md` must not carry a link, token or capability; approval capabilities
+never reach the person through a task ([page-actions.md](page-actions.md) §7).
 
 ## 5. Request lifecycle in the app
 
