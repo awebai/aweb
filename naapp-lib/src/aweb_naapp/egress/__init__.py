@@ -9,7 +9,7 @@ followed and no proxy from the environment.
 from __future__ import annotations
 
 from .addresses import AddressPolicy, InternalDestinations, check_internal_cidr
-from .headers import HeaderRules, check_headers
+from .headers import HeaderRules, check_headers, check_injected
 from .refused import EgressRefused
 from .send import (
     Bounds,
@@ -55,6 +55,7 @@ __all__ = [
     "check_internal_cidr",
     "check_destination",
     "check_headers",
+    "check_injected",
     "match_destination",
     "parse_destination",
 ]

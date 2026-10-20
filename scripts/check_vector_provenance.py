@@ -188,8 +188,8 @@ ROOT_CONSUMERS = {
         'AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json"',
     ),
     PurePosixPath("naapp-lib/tests/egress/test_url_vectors.py"): _consumer(
-        "egress-url-v1.json",
-        'AWEB_ROOT / "docs" / "vectors" / "egress-url-v1.json"',
+        "egress-url-v2.json",
+        'AWEB_ROOT / "docs" / "vectors" / "egress-url-v2.json"',
     ),
     PurePosixPath("naapp-lib/tests/egress/test_addresses.py"): _consumer(
         "egress-address-v1.json",

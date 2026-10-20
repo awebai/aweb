@@ -233,7 +233,7 @@ NAT64, and IPv4 addresses embedded in NAT64, 6to4 and Teredo forms are checked
 as IPv4. Internal destinations need the deploy-level `internal_destinations`
 switch and an exact CIDR of bounded width that overlaps no floor range.
 
-### `egress-url-v1.json`
+### `egress-url-v2.json`
 
 The egress guard's URL contract (`aweb_naapp.egress`, secrets lane S1), used by
 every naapp that calls an external service with its own credential. It pins URL
@@ -243,7 +243,9 @@ wildcards never over a public suffix of the pinned Public Suffix List, private
 section included; typed `{param}` and trailing `**` path segments; methods;
 query rules; internal destinations behind the deploy-level
 `internal_destinations` switch), destination matching, and the request-header
-allowlist with its always-rejected names. Each refusal carries a code from the
+allowlist with its always-rejected names, including the guard's own `Accept-Encoding:
+identity`, and the rules for the headers a caller's credential handling injects
+(declared names only, never a guard-set one). Each refusal carries a code from the
 hook catalog's `refusal_code` enum and the rule that fired. The pinned list
 version is updated in the egress extra, this vector and the module together.
 
@@ -341,7 +343,7 @@ reference duplication are mutation-tested failures.
 | `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
 | `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py` and pre-activation federation harness; Go AWID `e2ee_cross_language_test.go`; TypeScript channel-core `encrypted_dispatch.test.ts` |
 | `egress-address-v1.json` | naapp-lib `test_addresses.py` |
-| `egress-url-v1.json` | naapp-lib `test_url_vectors.py` |
+| `egress-url-v2.json` | naapp-lib `test_url_vectors.py` |
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-v1.json` | Python AWID `test_conformance_vectors.py`, `test_did.py`, `test_external_registry.py`, and `test_identity_log_verify.py`; Python aweb `test_identity_conformance_vectors.py` and pre-activation federation harness; Go AWID `registry_register_test.go`, `federation_authority_test.go`, and `federation_external_registry_test.go`; Go shared `conformance_test.go`; TypeScript channel-core `registry.test.ts`, `log_rollback.test.ts`, and `received_sender_trust.test.ts` |
