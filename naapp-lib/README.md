@@ -42,6 +42,14 @@ shares import without it: the durable outbox, `aweb_naapp.outbox`
 (`aweb-naapp[outbox]`), and the signing-key reader, `aweb_naapp.signing_key`
 (`aweb-naapp[signing-key]`).
 
+### Database schema
+
+An app's tables live in `<PREFIX>DB_SCHEMA` (default `public`). The runtime pins
+every connection's search_path to it, so the app works whatever its database
+role's default search_path is. A new app should set its own schema. If the app's
+migrations are recorded in another schema of the same database, the app refuses
+to start rather than create its tables a second time.
+
 ### App keys
 
 An app names its signing keys by kid, as key files:
