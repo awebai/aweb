@@ -17,7 +17,13 @@ import aweb.routes.events as events_routes
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_events import current_app_events_for_agent
-from aweb.app_registry import AppEmitKey, AppEventType, install_app
+from aweb.app_registry import (
+    AppEmitKey,
+    AppEventType,
+    get_installed_app_event_type,
+    install_app,
+    list_installed_apps,
+)
 from aweb.internal_auth import build_internal_auth_header_value
 from aweb.routes.events import router as events_router
 from aweb.service_errors import ConflictError
@@ -612,3 +618,44 @@ async def test_another_team_cannot_replace_keys_at_a_public_folio_digest(aweb_cl
 
     assert registered.status_code == 200, registered.text
     assert replacement.status_code == 403, replacement.text
+
+
+@pytest.mark.asyncio
+async def test_event_declarations_are_scoped_to_the_installing_team(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    await _seed_team_and_agent(db)
+    await _seed_team_and_agent(db, team_id=OTHER_TEAM_ID)
+    _, team_did = _make_app_keypair()
+    _, other_did = _make_app_keypair()
+    await _install_folio(db, did_key=team_did, kid="emit-1")
+    await install_app(
+        db,
+        team_id=OTHER_TEAM_ID,
+        app_id="folio",
+        origin="https://folio.aweb.ai",
+        app_version="9.9",
+        manifest_version=1,
+        digest=DIGEST,
+        granted_scopes=["folio:read"],
+        event_types=[
+            AppEventType(type="doc.changed", default_delivery_intent="steer", description="changed"),
+            AppEventType(type="extra.type", default_delivery_intent="steer"),
+        ],
+        emit_keys=[AppEmitKey(kid="emit-2", did_key=other_did)],
+    )
+
+    team_declared = await get_installed_app_event_type(
+        db, team_id=TEAM_ID, app_id="folio", local_event_type="doc.changed"
+    )
+    team_extra = await get_installed_app_event_type(
+        db, team_id=TEAM_ID, app_id="folio", local_event_type="extra.type"
+    )
+    other_extra = await get_installed_app_event_type(
+        db, team_id=OTHER_TEAM_ID, app_id="folio", local_event_type="extra.type"
+    )
+    team_apps = await list_installed_apps(db, team_id=TEAM_ID)
+
+    assert team_declared["default_delivery_intent"] == "wake"
+    assert team_extra is None
+    assert other_extra is not None
+    assert team_apps[0].app_version == "1.x"

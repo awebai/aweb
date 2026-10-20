@@ -609,6 +609,7 @@ authority remains the ordered SQL itself; this SOT does not duplicate that DDL.
 - `agent_status`
 - `message_attachments`
 - `team_app_emit_keys`
+- `team_app_event_types`
 <!-- END SOURCE INVENTORY: aweb-tables -->
 
 ---
