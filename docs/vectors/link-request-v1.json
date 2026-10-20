@@ -299,6 +299,31 @@
       "expect": "signature_invalid"
     },
     {
+      "name": "version-float",
+      "payload": {
+        "v": 1.0,
+        "type": "aweb.link-request",
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496",
+        "nonce": "5f2b0c1e9a8d7c6b5a4f3e2d1c0b9a88",
+        "issued_at": "2026-10-20T12:01:00Z"
+      },
+      "signature": "_pBsra7BqI5KTpnihrZr31CjVR9cEaQ4lbhGseTidjbuwTRt5MnxWVNPyGrEOnomfAVBzpx-j8WReC0RYVAACQ",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid",
+      "note": "1.0 equals 1 in Python, but it is not the integer 1"
+    },
+    {
       "name": "nonce-short",
       "payload": {
         "v": 1,
@@ -813,6 +838,21 @@
       },
       "now": "2026-10-20T12:01:00Z",
       "expect": "signature_invalid"
+    },
+    {
+      "name": "lone-surrogate",
+      "signed_payload": "eyJib2R5X3NoYTI1NiI6ImQyNzQzNmQxODUwNzIyZmVkNTY0OGI4YjdhYzcxNmJmM2IwODU3ZTc3MmZhOGUxM2U5YjY0ZTY3MTZhYTg0OTYiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAxOjAwWiIsImxpbmtfaWQiOiJsbmtfMDFKQzdRIiwibWV0aG9kIjoiUE9TVCIsIm5vbmNlIjoiNWYyYjBjMWU5YThkN2M2YjVhNGYzZTJkMWMwYjlhODgiLCJwYXRoIjoiL1x1ZDgwMCIsInNlc3Npb25faWQiOiJsa3NfMDFKQzdSIiwidHlwZSI6ImF3ZWIubGluay1yZXF1ZXN0IiwidiI6MX0",
+      "signature": "OMHCsgVbmaTRicjzLOFx3LQlTCUvEKFmkPU50qUxFvkGLntDSMDYgD8vpKTIErog6urAey7VxN1PIBGCN7dzDg",
+      "expected": {
+        "link_id": "lnk_01JC7Q",
+        "session_id": "lks_01JC7R",
+        "method": "POST",
+        "path": "/v1/pages/pg_4hd2/actions",
+        "body_sha256": "d27436d1850722fed5648b8b7ac716bf3b0857e772fa8e13e9b64e6716aa8496"
+      },
+      "now": "2026-10-20T12:01:00Z",
+      "expect": "signature_invalid",
+      "note": "valid base64url of JSON text whose string escapes a lone surrogate; it has no UTF-8 canonical form"
     }
   ],
   "session_keys": [

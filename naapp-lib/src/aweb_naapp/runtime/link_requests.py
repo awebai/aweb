@@ -113,7 +113,13 @@ def _decode_signed_payload(signed_payload: object) -> tuple[bytes, Mapping[str, 
         raise
     except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise bad("signed payload is not JSON") from exc
-    if not isinstance(parsed, dict) or canonical_json_bytes(parsed) != raw:
+    if not isinstance(parsed, dict):
+        raise bad("signed payload is not an object")
+    try:
+        canonical = canonical_json_bytes(parsed)
+    except (UnicodeEncodeError, ValueError, TypeError) as exc:
+        raise bad("signed payload has no canonical form") from exc
+    if canonical != raw:
         raise bad("signed payload is not canonical")
     return raw, parsed
 
@@ -133,7 +139,9 @@ def _issued_at(payload: object) -> datetime:
     if not isinstance(payload, Mapping) or set(payload) != _FIELDS:
         raise bad("payload fields")
     version = payload["v"]
-    if isinstance(version, bool) or version != 1 or payload["type"] != LINK_REQUEST_TYPE:
+    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
+        raise bad("v")
+    if payload["type"] != LINK_REQUEST_TYPE:
         raise bad("v or type")
     for field in ("link_id", "session_id"):
         if not _matches(_ID, payload[field]):

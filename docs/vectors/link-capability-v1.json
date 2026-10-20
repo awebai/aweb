@@ -614,7 +614,8 @@
           "result": {
             "status": 200,
             "receipt": "r1"
-          }
+          },
+          "at": "2026-10-20T12:01:00Z"
         },
         {
           "action": "k1",
@@ -623,7 +624,8 @@
           "result": {
             "status": 200,
             "receipt": "r1"
-          }
+          },
+          "at": "2026-10-20T12:02:00Z"
         },
         {
           "action": "k2",
@@ -631,10 +633,14 @@
           "result": {
             "status": 410,
             "code": "link_unavailable"
-          }
+          },
+          "at": "2026-10-20T12:03:00Z"
         }
       ],
-      "note": "the stored receipt comes back after the link is used up; no second operation is admitted"
+      "note": "the stored receipt comes back after the link is used up; no second operation is admitted",
+      "link_expires_at": "2026-10-20T13:00:00Z",
+      "session_opened_at": "2026-10-20T12:00:00Z",
+      "session_expires_at": "2026-10-20T12:15:00Z"
     },
     {
       "name": "receipt-after-revocation-with-live-session",
@@ -645,10 +651,12 @@
           "result": {
             "status": 200,
             "receipt": "r1"
-          }
+          },
+          "at": "2026-10-20T12:01:00Z"
         },
         {
-          "revoke": true
+          "revoke": true,
+          "at": "2026-10-20T12:02:00Z"
         },
         {
           "action": "k1",
@@ -657,7 +665,8 @@
           "result": {
             "status": 200,
             "receipt": "r1"
-          }
+          },
+          "at": "2026-10-20T12:03:00Z"
         },
         {
           "action": "k2",
@@ -665,13 +674,17 @@
           "result": {
             "status": 410,
             "code": "link_unavailable"
-          }
+          },
+          "at": "2026-10-20T12:04:00Z"
         }
-      ]
+      ],
+      "link_expires_at": "2026-10-20T13:00:00Z",
+      "session_opened_at": "2026-10-20T12:00:00Z",
+      "session_expires_at": "2026-10-20T12:15:00Z"
     },
     {
       "name": "no-receipt-once-the-session-expired",
-      "note": "a session never outlives its link, so after the link's expiry there is no live session to retry with",
+      "note": "the session's own 15-minute expiry ends retries; a session never outlives its link either",
       "steps": [
         {
           "action": "k1",
@@ -679,10 +692,12 @@
           "result": {
             "status": 200,
             "receipt": "r1"
-          }
+          },
+          "at": "2026-10-20T12:01:00Z"
         },
         {
-          "session_expires": true
+          "session_expires": true,
+          "at": "2026-10-20T12:15:00Z"
         },
         {
           "action": "k1",
@@ -691,9 +706,13 @@
           "result": {
             "status": 410,
             "code": "link_unavailable"
-          }
+          },
+          "at": "2026-10-20T12:16:00Z"
         }
-      ]
+      ],
+      "link_expires_at": "2026-10-20T13:00:00Z",
+      "session_opened_at": "2026-10-20T12:00:00Z",
+      "session_expires_at": "2026-10-20T12:15:00Z"
     },
     {
       "name": "receipt-key-with-different-body",
@@ -704,7 +723,8 @@
           "result": {
             "status": 200,
             "receipt": "r1"
-          }
+          },
+          "at": "2026-10-20T12:01:00Z"
         },
         {
           "action": "k1",
@@ -713,9 +733,13 @@
           "result": {
             "status": 409,
             "code": "idempotency_conflict"
-          }
+          },
+          "at": "2026-10-20T12:02:00Z"
         }
-      ]
+      ],
+      "link_expires_at": "2026-10-20T13:00:00Z",
+      "session_opened_at": "2026-10-20T12:00:00Z",
+      "session_expires_at": "2026-10-20T12:15:00Z"
     },
     {
       "name": "refused-action-keeps-its-nonce",
@@ -727,17 +751,22 @@
           "result": {
             "status": 403,
             "code": "action_denied"
-          }
+          },
+          "at": "2026-10-20T12:01:00Z"
         },
         {
           "same_signed_request_again": true,
           "result": {
             "status": 409,
             "code": "idempotency_conflict"
-          }
+          },
+          "at": "2026-10-20T12:02:00Z"
         }
       ],
-      "note": "the nonce is recorded in its own write, before the action runs"
+      "note": "the nonce is recorded in its own write, before the action runs",
+      "link_expires_at": "2026-10-20T13:00:00Z",
+      "session_opened_at": "2026-10-20T12:00:00Z",
+      "session_expires_at": "2026-10-20T12:15:00Z"
     },
     {
       "name": "concurrent-duplicate-nonce",
@@ -755,9 +784,13 @@
               "status": 409,
               "code": "idempotency_conflict"
             }
-          }
+          },
+          "at": "2026-10-20T12:01:00Z"
         }
-      ]
+      ],
+      "link_expires_at": "2026-10-20T13:00:00Z",
+      "session_opened_at": "2026-10-20T12:00:00Z",
+      "session_expires_at": "2026-10-20T12:15:00Z"
     }
   ],
   "asset_sequence": [

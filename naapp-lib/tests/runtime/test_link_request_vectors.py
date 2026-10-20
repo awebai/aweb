@@ -114,3 +114,10 @@ def test_session_keys(case):
     with pytest.raises(LinkRequestRefused) as refused:
         check_session_did_key(case["did_key"])
     assert refused.value.code == "schema_invalid"
+
+
+def test_signer_refuses_a_payload_it_could_not_send():
+    case = next(c for c in VECTORS["verification_cases"] if c["name"] == "version-float")
+    with pytest.raises(LinkRequestRefused) as refused:
+        sign_link_request(case["payload"], session_key())
+    assert refused.value.code == "signature_invalid"
