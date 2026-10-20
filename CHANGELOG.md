@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Security:** `aw id sign` now signs only domain-separated user data, using
+  `aweb.user-signature/1\n` before canonical JSON. Its signatures cannot authorize
+  protocol operations. Internal protocol credentials retain their established
+  bytes. `aw id request --team-auth` remains target-bound v2; non-team requests
+  temporarily sign only fixed v1 identity claims and refuse caller JSON.
+  **Known residual:** compact-v1 identity requests remain retargetable until
+  identity-v2 verification deploys and the subsequent client release emits v2.
+
 - `aw chat history <recipient>` applies its limit and unread filter before
   custody decryption, skips unrelated pending previews during session lookup,
   and uses individual request timeouts rather than one budget for the whole page.

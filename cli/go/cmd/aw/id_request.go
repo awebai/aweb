@@ -59,7 +59,7 @@ var (
 
 var idSignCmd = &cobra.Command{
 	Use:   "sign",
-	Short: "Sign a canonical JSON payload with the local identity key",
+	Short: "Sign user data with a domain-separated local identity signature",
 	RunE:  runIDSign,
 }
 
@@ -75,8 +75,8 @@ func init() {
 	idSignCmd.Flags().StringVar(&idSignPayloadFile, "payload-file", "", "Read the JSON payload to sign from a file")
 	identityCmd.AddCommand(idSignCmd)
 
-	idRequestCmd.Flags().StringVar(&idRequestSign, "sign", "", "JSON object describing the signed payload fields")
-	idRequestCmd.Flags().StringVar(&idRequestSignFile, "sign-file", "", "Read the JSON sign payload from a file")
+	idRequestCmd.Flags().StringVar(&idRequestSign, "sign", "", "Additional signed fields (requires --team-auth)")
+	idRequestCmd.Flags().StringVar(&idRequestSignFile, "sign-file", "", "Read additional signed fields from a file (requires --team-auth)")
 	idRequestCmd.Flags().StringVar(&idRequestBody, "body", "", shellExpandedInlineHelp("Request body to send", "--body-file"))
 	idRequestCmd.Flags().StringVar(&idRequestBodyFile, "body-file", "", safeFileInputHelp("request body"))
 	idRequestCmd.Flags().StringArrayVar(&idRequestHeaders, "header", nil, "Additional header in 'Name: Value' form")
