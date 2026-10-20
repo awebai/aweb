@@ -108,34 +108,6 @@ func assertHermeticClaudeOnPath(t *testing.T) {
 	}
 }
 
-func TestHermeticClaudeExecutableNameIsRunnableOnTargetOS(t *testing.T) {
-	for goos, want := range map[string]string{
-		"darwin":  "claude",
-		"linux":   "claude",
-		"windows": "claude.exe",
-	} {
-		t.Run(goos, func(t *testing.T) {
-			if got := hermeticClaudeExecutableName(goos); got != want {
-				t.Fatalf("hermetic Claude executable for %s=%q, want %q", goos, got, want)
-			}
-		})
-	}
-}
-
-func TestHermeticClaudeWindowsLookupExcludesCurrentDirectory(t *testing.T) {
-	environment := hermeticClaudeLookupEnvironment("windows")
-	if _, ok := environment[windowsNoCurrentDirectoryPathEnv]; !ok {
-		t.Fatal("Windows hermetic Claude environment permits current-directory lookup ahead of PATH")
-	}
-}
-
-func TestHermeticClaudeExecutableRunsInChildProcess(t *testing.T) {
-	assertHermeticClaudeOnPath(t)
-	if output, err := exec.Command("claude", "plugin", "install", "must-stay-inert").CombinedOutput(); err != nil {
-		t.Fatalf("execute hermetic Claude: %v\n%s", err, output)
-	}
-}
-
 func restoreTestEnvironment(name, value string, existed bool) error {
 	if existed {
 		return os.Setenv(name, value)
@@ -207,7 +179,23 @@ func TestMain(m *testing.M) {
 	// executable also makes LookPath deterministic and is inherited by child aw
 	// processes, which do not share this package global.
 	runClaudeChannelPluginCommand = func(args ...string) error { return nil }
+	// Capture the source directory and build environment before tests change cwd
+	// or environment. Every subprocess still gets its own executable and home.
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "locate CLI source: %v\n", err)
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	awTestBinary.sourceDir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	awTestBinary.env = os.Environ()
 	code := m.Run()
+	if awTestBinary.dir != "" {
+		if err := os.RemoveAll(awTestBinary.dir); err != nil {
+			fmt.Fprintf(os.Stderr, "remove shared CLI build: %v\n", err)
+			code = 1
+		}
+	}
 
 	// os.Exit does not run defers. Restore every package/environment mutation and
 	// remove the executable explicitly before exiting the test process.

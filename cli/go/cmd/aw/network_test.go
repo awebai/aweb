@@ -189,13 +189,7 @@ func TestMailSendToAddressUsesUnifiedEndpoint(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, _ := os.Getwd()
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:       server.URL + "/api",
@@ -283,13 +277,7 @@ func TestMailSendToFlagAutoDetectsFullAddress(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, _ := os.Getwd()
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:       server.URL + "/api",
@@ -355,13 +343,7 @@ func TestMailSendPlainAliasRoutesToOSSEndpoint(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, _ := os.Getwd()
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
@@ -424,13 +406,7 @@ func TestChatSendNetworkAddressUsesUnifiedEndpoint(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, _ := os.Getwd()
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
@@ -497,13 +473,7 @@ func TestChatSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, _ := os.Getwd()
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "acme")
 
@@ -553,13 +523,7 @@ func TestMailSendNetworkTarget404ShowsAgentNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, _ := os.Getwd()
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	buildAwBinary(t, ctx, bin)
 
 	// Pin resolution to the disposable registry as well as the service.
 	writeNetworkWorkspace(t, tmp, server.URL+"/api", "eve", "aweb")
@@ -612,13 +576,7 @@ func TestDirectorySearch(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, _ := os.Getwd()
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
 
@@ -670,13 +628,7 @@ func TestDirectoryGetByAddress(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, _ := os.Getwd()
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL+"/api")
 

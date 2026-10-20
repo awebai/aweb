@@ -1,5 +1,7 @@
 # Hermes Aweb gateway integration memo
 
+This is the historical prototype memo. See [current source and live findings](hermes-aweb-live-findings.md) for the verified Hermes commit, compatibility fixes, revised install flow and remaining validation gaps.
+
 ## Recommendation
 
 Build an Aweb **Hermes gateway platform plugin**, not a docs-only recipe and not a Hermes core fork. Hermes has a first-class third-party platform-plugin path:

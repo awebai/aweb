@@ -23,20 +23,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func buildAwBinary(t *testing.T, ctx context.Context, outPath string) {
-	t.Helper()
-	build := exec.CommandContext(ctx, "go", "build", "-o", outPath, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
-}
-
 func initGitRepoWithOrigin(t *testing.T, dir, origin string) {
 	t.Helper()
 	commands := [][]string{

@@ -2,7 +2,7 @@
 # Complete local Docker gate for one exact OSS candidate commit.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SOURCE_SHA="${CANDIDATE_SOURCE_SHA:-$(git -C "$ROOT" rev-parse HEAD)}"
 refuse() { printf 'candidate gate refused: %s\n' "$*" >&2; exit 2; }
 LIBRARY_E2E_LIBRARY_CONTEXT="${LIBRARY_E2E_LIBRARY_CONTEXT:-$ROOT/naapp/library}"
@@ -25,15 +25,103 @@ LOG_DIR="/tmp/aweb-candidate-gate-$SOURCE_SHA"
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || refuse "CANDIDATE_SOURCE_SHA must be a full lowercase SHA"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || refuse "source checkout is dirty or has untracked files"
-git -C "$ROOT" fetch --quiet origin main
-git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
-  || refuse "source SHA is not on the synchronized origin/main history"
+[[ "$(git -C "$ROOT" rev-parse HEAD)" == "$SOURCE_SHA" ]] \
+  || refuse "source checkout HEAD differs from selected SHA"
+# Focused pre-landing proof uses the same stages and ledger. Release candidates
+# always request the complete list and retain the origin/main requirement.
+STAGES="${AWEB_CANDIDATE_STAGES:-}"
+REQUESTED="${STAGES:-checks unit artifacts integration}"
+if [[ -z "$STAGES" ]]; then
+  git -C "$ROOT" fetch --quiet origin main
+  git -C "$ROOT" merge-base --is-ancestor "$SOURCE_SHA" origin/main \
+    || refuse "source SHA is not on the synchronized origin/main history"
+fi
 [[ -d "$LIBRARY_E2E_LIBRARY_CONTEXT" ]] || refuse "Library input is missing"
 [[ -d "$LIBRARY_E2E_BLUEPRINT_SRC" ]] || refuse "blueprint input is missing"
-command -v docker >/dev/null || refuse "docker is unavailable"
-docker info >/dev/null || refuse "docker daemon is unavailable"
 CLI_VERSION="${CLI_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" aw-v)}"
 A2A_GATEWAY_VERSION="${A2A_GATEWAY_VERSION:-$(python3 "$ROOT/scripts/next_tag_version.py" a2a-gw-v)}"
+
+# Port of Cloud's entry-point ledger: all callers share one tree lock and
+# stage history. Version defaults depend on tags, so their effective values
+# are external inputs even when the caller did not supply an override.
+TREE="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
+external_inputs="CLI_VERSION=$CLI_VERSION"$'\n'"A2A_GATEWAY_VERSION=$A2A_GATEWAY_VERSION"$'\n'
+input_identity() {
+  local name="$1" path="$2" default="$3" repo sha relative
+  repo="$(git -C "$path" rev-parse --show-toplevel)"
+  repo="$(cd "$repo" && pwd -P)"
+  [[ -z "$(git -C "$repo" status --porcelain --untracked-files=all)" ]] \
+    || refuse "$name input checkout is dirty"
+  sha="$(git -C "$repo" rev-parse HEAD)"
+  relative="${path#"$repo"}"
+  printf -v "${name}_input_sha" '%s' "$sha"
+  if [[ "$repo" != "$ROOT" ]]; then
+    external_inputs+="$name=$sha$relative"$'\n'
+  elif [[ "$path" != "$ROOT/$default" ]]; then
+    external_inputs+="$name=source$relative"$'\n'
+  fi
+}
+input_identity library "$LIBRARY_E2E_LIBRARY_CONTEXT" naapp/library
+input_identity blueprints "$LIBRARY_E2E_BLUEPRINT_SRC" naapp/library/test-vectors/blueprints/team
+gate_setting() {
+  local name="$1" default="$2" value
+  value="${!name:-$default}"
+  printf -v "$name" '%s' "$value"
+  [[ "$value" == "$default" ]] || external_inputs+="$name=$value"$'\n'
+}
+gate_setting AWEB_CANDIDATE_RUNNER_CPUS 2
+gate_setting AWEB_CANDIDATE_RUNNER_MEMORY 8g
+gate_setting AWEB_CANDIDATE_RUNNER_PIDS 2048
+gate_setting AWEB_CANDIDATE_BUILDER_CPUS 2
+gate_setting AWEB_CANDIDATE_BUILDER_MEMORY 6g
+gate_setting AWEB_CANDIDATE_BUILDER_MEMORY_SWAP "$AWEB_CANDIDATE_BUILDER_MEMORY"
+gate_setting AWEB_CANDIDATE_BUILDER_PIDS 2048
+gate_setting AWEB_CANDIDATE_SERVICE_CPUS 1
+gate_setting AWEB_CANDIDATE_SERVICE_MEMORY 1g
+gate_setting AWEB_CANDIDATE_SERVICE_PIDS 512
+gate_setting AWEB_CANDIDATE_REDIS_CPUS 0.5
+gate_setting AWEB_CANDIDATE_REDIS_MEMORY 256m
+gate_setting AWEB_CANDIDATE_REDIS_PIDS 256
+gate_setting AWEB_CANDIDATE_SIBLING_CPUS 2
+gate_setting AWEB_CANDIDATE_SIBLING_MEMORY 4g
+gate_setting AWEB_CANDIDATE_SIBLING_PIDS 1024
+KEY="$TREE-$(printf '%s' "$external_inputs" | python3 -c 'import hashlib,sys;print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+LEDGER="${AWEB_GATE_LEDGER:-$HOME/.cache/aweb-oss/candidate-gate-ledger.tsv}"
+LEDGER_LOGS="${AWEB_GATE_LOG_DIR:-$(dirname "$LEDGER")/gate-logs}"
+OWNER="${GATE_OWNER:-${OATS_INSTANCE:-$(id -un)}}"
+mkdir -p "$(dirname "$LEDGER")/gate-locks" "$LEDGER_LOGS"
+touch "$LEDGER"
+# Hold through cleanup and recording, including concurrent direct/RC calls.
+exec 9>>"$(dirname "$LEDGER")/gate-locks/$TREE.lock"
+python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)' 2>/dev/null \
+  || refuse "tree $TREE is already being gated"
+recorded() {
+  awk -F'\t' -v key="$KEY" -v stage="$1" '$1 == key && $2 == stage' "$LEDGER" | tail -1
+}
+failed="$(awk -F'\t' -v key="$KEY" '$1 == key && $3 == "failed"' "$LEDGER" | tail -1)"
+if [[ -n "$failed" ]]; then
+  printf 'gate: tree %s already FAILED %s (log %s).\n' "$TREE" "$(cut -f2 <<<"$failed")" "$(cut -f6 <<<"$failed")" >&2
+  printf '%s\n' "Fix the code and gate the changed tree. For infrastructure failures only, the coordinator removes the failed ledger line and uses GATE_RERUN_REASON='<reason>'." >&2
+  exit 1
+fi
+pending=""
+for stage in $REQUESTED; do
+  case "$stage" in checks|unit|artifacts|integration) ;; *) refuse "unknown stage '$stage'" ;; esac
+  if [[ "$(recorded "$stage" | cut -f3)" == passed ]]; then
+    printf 'gate: tree %s already passed %s; original log %s\n' "$TREE" "$stage" "$(recorded "$stage" | cut -f6)"
+  elif [[ " $pending " != *" $stage "* ]]; then
+    pending="${pending:+$pending }$stage"
+  fi
+done
+if [[ -z "$pending" ]]; then
+  printf 'gate: tree %s passed %s; no stages run\n' "$TREE" "$REQUESTED"
+  exit 0
+fi
+
+run_candidate() (
+set -euo pipefail
+command -v docker >/dev/null || refuse "docker is unavailable"
+docker info >/dev/null || refuse "docker daemon is unavailable"
 
 if ! work="$(mktemp -d "/tmp/aweb-candidate-work.XXXXXX")"; then
   refuse "could not allocate the candidate work directory"
@@ -79,6 +167,7 @@ suite_projects=(
 rm -rf -- "$LOG_DIR"
 mkdir -p "$LOG_DIR"
 : > "$LOG_DIR/owned-resources.tsv"
+printf '%s\n' "$run_id" > "$LOG_DIR/run-id"
 source "$ROOT/scripts/candidate-cleanup.sh"
 trap 'cleanup "$?"' EXIT
 trap 'cleanup 130' INT
@@ -101,6 +190,8 @@ record_input() {
     || refuse "$name input checkout is dirty"
   sha="$(git -C "$repo" rev-parse HEAD)"
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || refuse "$name input has no exact SHA"
+  local selected="${name}_input_sha"
+  [[ "$sha" == "${!selected}" ]] || refuse "$name input changed after the ledger lookup"
   printf '%s\n' "$sha" > "$LOG_DIR/$name-sha"
   repo="$(cd "$repo" && pwd -P)"
   tree="$sha"
@@ -308,7 +399,7 @@ docker run --rm --init \
   -v "$LOG_DIR:$LOG_DIR" \
   -w "$checkout" \
   "$IMAGE" \
-  bash scripts/candidate-suite.sh \
+  bash scripts/candidate-suite.sh "$pending" \
   2>&1 | tee "$LOG_DIR/gate.log"
 status="${PIPESTATUS[0]}"
 set -e
@@ -319,3 +410,48 @@ if [[ "$status" -ne 0 ]]; then
 fi
 printf 'candidate gate PASSED at %s; logs: %s\n' \
   "$SOURCE_SHA" "$LOG_DIR" | tee -a "$LOG_DIR/wrapper-verdict.log"
+
+)
+
+# The child owns Docker cleanup. A stage is recorded only after it exits, and
+# only from this invocation's logs; stale logs cannot supply a missing result.
+started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+run_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+run_log="$LEDGER_LOGS/${KEY:0:12}-run-$run_id.log"
+set +e
+run_candidate 2>&1 | tee "$run_log"
+status="${PIPESTATUS[0]}"
+set -e
+finished="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+[[ "$status" != 130 && "$status" != 143 ]] || exit "$status"
+if [[ ! -f "$LOG_DIR/run-id" || "$(cat "$LOG_DIR/run-id")" != "$run_id" ]]; then
+  printf 'gate: stopped before allocation; nothing recorded\n' >&2
+  exit "$status"
+fi
+record() {
+  local stage="$1" result="$2" source="$3" log note=""
+  log="$LEDGER_LOGS/${KEY:0:12}-$stage-$run_id.log"
+  cp "$source" "$log"
+  [[ -z "${GATE_RERUN_REASON:-}" ]] || note="rerun after $GATE_RERUN_REASON"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$KEY" "$stage" "$result" "$SOURCE_SHA" "" "$log" "$OWNER" "$started" "$finished" "$note" >>"$LEDGER"
+}
+for stage in $pending; do
+  if [[ -f "$LOG_DIR/summary.tsv" ]] && grep -q "^$stage"$'\tPASSED\t' "$LOG_DIR/summary.tsv"; then
+    record "$stage" passed "$LOG_DIR/$stage.log"
+  elif [[ -f "$LOG_DIR/$stage.log" ]]; then
+    record "$stage" failed "$LOG_DIR/$stage.log"
+    status=1
+    break
+  else
+    record setup failed "$run_log"
+    status=1
+    break
+  fi
+done
+if [[ ! -f "$LOG_DIR/wrapper-verdict.log" ]] \
+   || ! grep -q '^candidate gate cleanup PASSED$' "$LOG_DIR/wrapper-verdict.log"; then
+  record cleanup failed "$run_log"
+  status=1
+fi
+exit "$status"

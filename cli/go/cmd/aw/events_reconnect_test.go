@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -88,16 +87,7 @@ func eventsTestServer(t *testing.T, stream func(open int64, w http.ResponseWrite
 func buildAwForTest(t *testing.T, ctx context.Context, tmp string) string {
 	t.Helper()
 	bin := filepath.Join(tmp, "aw")
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 	return bin
 }
 

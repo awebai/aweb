@@ -98,6 +98,8 @@ def create_candidate(root: Path, tags: list[str]) -> str:
     source_sha, versions = validate_tags(root, tags)
     run(root, "git", "merge-base", "--is-ancestor", source_sha, "origin/main")
     environment = {**os.environ, "CANDIDATE_SOURCE_SHA": source_sha}
+    # A caller's focused pre-landing selector cannot narrow a release gate.
+    environment.pop("AWEB_CANDIDATE_STAGES", None)
     if "aw-v" in versions:
         environment["CLI_VERSION"] = versions["aw-v"]
     if "a2a-gw-v" in versions:
