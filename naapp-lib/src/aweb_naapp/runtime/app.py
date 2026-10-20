@@ -4,22 +4,31 @@ An app creates a :class:`NaappRuntime`, builds its FastAPI app with the
 runtime's lifespan, and calls :func:`mount_naapp_routes` for the standard public
 surface.
 
-Member operations are guarded with ``Depends(runtime.authorized(tools=...,
-grants=..., policy=...))``. It admits a request only when it is signed by a
-team member, declared by the app's manifest, covered by the team's installed
-grant, and allowed by the app's policy. ``Depends(runtime.principal)`` only
+The runtime reads the app's manifest once, at construction, for its configured
+public origin: :attr:`NaappRuntime.manifest_bytes` are the bytes served at the
+manifest routes, and the tools authorization checks against are parsed from
+those same bytes, never from the app's authoring dict or a later file.
+
+Member operations are guarded with ``Depends(runtime.authorized(grants=...,
+policy=...))``. It admits a request only when it is signed by a team member,
+declared by the served manifest, covered by the team's installed grant, and
+allowed by the app's policy. ``Depends(runtime.principal)`` only
 authenticates: it says who signed the request, never that they may act, so it
 is for routes that need nothing more than the signer's identity.
 
-The ``/fonts/`` route is not part of the shared surface yet: it waits on
-whether the font files may ship inside this package.
+The font files under ``/fonts/`` are the app's: this package names the fonts
+its stylesheet loads and serves them from the app's directory, but does not
+ship them.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+import asyncio
+import json
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -29,8 +38,9 @@ from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
 from starlette.routing import BaseRoute, Host, Mount
 
-from aweb_naapp.css import aweb_css
+from aweb_naapp.css import FONT_NAMES, aweb_css
 from aweb_naapp.manifest import read_manifest_bytes
+from aweb_naapp.outbox import run_drain
 from aweb_naapp.robots import robots_txt
 from aweb_naapp.runtime.authorization import (
     ActionPolicy,
@@ -41,6 +51,7 @@ from aweb_naapp.runtime.authorization import (
     is_placeholder,
 )
 from aweb_naapp.runtime.db import NaappDatabase
+from aweb_naapp.runtime.event_emit import AppEvents
 from aweb_naapp.runtime.health import mount_health
 from aweb_naapp.runtime.settings import NaappSettings
 from aweb_naapp.runtime.team_auth import (
@@ -60,6 +71,13 @@ class NaappRuntime:
 
     ``root_path`` is the external prefix the server serves the app under, if
     any. Declared tool paths are external paths, so it is part of them.
+
+    ``manifest_path`` is the app's committed manifest file. It is read here,
+    once per process, for ``settings.public_origin`` (configuration, never a
+    request): ``manifest_bytes`` are served verbatim, and ``manifest`` and
+    ``declared_tools`` are parsed from them. The app-event key the manifest
+    declares is loaded here too, so a missing or wrong key stops the app
+    before it serves anything, and ``app_events`` emits through it.
     """
 
     def __init__(
@@ -68,6 +86,7 @@ class NaappRuntime:
         *,
         module_name: str,
         migrations_path: Path,
+        manifest_path: Path,
         root_path: str = "",
         awid_transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
@@ -79,7 +98,31 @@ class NaappRuntime:
         self._awid_transport = awid_transport
         self._database: NaappDatabase | None = None
         self._team_cache: AWIDTeamCache | None = None
-        self._guards: dict[Callable[..., object], DeclaredTools] = {}
+        self._manifest_bytes = read_manifest_bytes(manifest_path, settings.public_origin)
+        self._manifest: Mapping[str, Any] = json.loads(self._manifest_bytes)
+        self._declared_tools = DeclaredTools.from_manifest(self._manifest)
+        self._app_events = AppEvents.from_settings(settings, self._manifest)
+        self._guards: set[Callable[..., object]] = set()
+
+    @property
+    def manifest_bytes(self) -> bytes:
+        """The manifest bytes served at the manifest routes, fixed at construction."""
+        return self._manifest_bytes
+
+    @property
+    def manifest(self) -> Mapping[str, Any]:
+        """The served manifest, parsed."""
+        return self._manifest
+
+    @property
+    def declared_tools(self) -> DeclaredTools:
+        """The tools authorization checks against, parsed from the served bytes."""
+        return self._declared_tools
+
+    @property
+    def app_events(self) -> AppEvents:
+        """The app's app-event emits, drained by the lifespan."""
+        return self._app_events
 
     @asynccontextmanager
     async def lifespan(self, app: FastAPI) -> AsyncIterator[None]:
@@ -95,9 +138,22 @@ class NaappRuntime:
             service_token=self.settings.awid_service_token,
             transport=self._awid_transport,
         )
+        stop = asyncio.Event()
+        client = httpx.AsyncClient(timeout=self.settings.app_emit_timeout_seconds)
+        app_events_drain = (
+            asyncio.create_task(
+                run_drain(database.db, stop=stop, **self._app_events.drain_options(client))
+            )
+            if self._app_events.key is not None
+            else None
+        )
         try:
             yield
         finally:
+            stop.set()
+            if app_events_drain is not None:
+                await app_events_drain
+            await client.aclose()
             self._database = None
             self._team_cache = None
             await database.disconnect()
@@ -133,12 +189,12 @@ class NaappRuntime:
         )
 
     def authorized(
-        self, *, tools: DeclaredTools, grants: GrantSource, policy: ActionPolicy
+        self, *, grants: GrantSource, policy: ActionPolicy
     ) -> Callable[[Request], Awaitable[Authorization]]:
         """A FastAPI dependency admitting only authorized member requests.
 
-        It authenticates the request, then authorizes it against the app's
-        declared ``tools``, the team's grant from ``grants`` and the app's
+        It authenticates the request, then authorizes it against the tools of
+        the served manifest, the team's grant from ``grants`` and the app's
         ``policy``. Only an admitted member is recorded as observed, so
         refused requests never write to the app's database.
         """
@@ -146,12 +202,16 @@ class NaappRuntime:
         async def authorized_request(request: Request) -> Authorization:
             principal = await self.principal(request)
             authorization = await authorize_request(
-                request, principal=principal, tools=tools, grants=grants, policy=policy
+                request,
+                principal=principal,
+                tools=self.declared_tools,
+                grants=grants,
+                policy=policy,
             )
             await record_observed_principal(self.db(), principal)
             return authorization
 
-        self._guards[authorized_request] = tools
+        self._guards.add(authorized_request)
         return authorized_request
 
     def check_authorized_routes(self, app: FastAPI) -> None:
@@ -178,7 +238,7 @@ class NaappRuntime:
                 continue
             if not isinstance(route, APIRoute):
                 continue
-            for tools in self._route_guards(route.dependant):
+            if self._is_guarded(route.dependant):
                 path = self.root_path + route.path_format
                 if route.path != route.path_format:
                     raise RuntimeError(
@@ -188,7 +248,7 @@ class NaappRuntime:
                 for method in sorted(route.methods or ()):
                     if not any(
                         tool.method == method and _template(tool.segments) == template
-                        for tool in tools
+                        for tool in self.declared_tools
                     ):
                         raise RuntimeError(
                             f"authorized route {method} {path} is not exactly a declared manifest tool"
@@ -198,17 +258,15 @@ class NaappRuntime:
         for route in routes:
             if isinstance(route, Mount | Host) and self._contains_guards(route.routes):
                 return True
-            if isinstance(route, APIRoute) and self._route_guards(route.dependant):
+            if isinstance(route, APIRoute) and self._is_guarded(route.dependant):
                 return True
         return False
 
-    def _route_guards(self, dependant: Dependant) -> list[DeclaredTools]:
-        guards = []
-        for dependency in dependant.dependencies:
-            if dependency.call in self._guards:
-                guards.append(self._guards[dependency.call])
-            guards.extend(self._route_guards(dependency))
-        return guards
+    def _is_guarded(self, dependant: Dependant) -> bool:
+        return any(
+            dependency.call in self._guards or self._is_guarded(dependency)
+            for dependency in dependant.dependencies
+        )
 
 
 def _template(segments: Sequence[str]) -> tuple[str, ...]:
@@ -219,22 +277,26 @@ def mount_naapp_routes(
     app: FastAPI,
     *,
     runtime: NaappRuntime,
-    manifest_path: Path,
     skills: Skills,
     landing: Callable[[], Awaitable[str]],
     reference_html: str,
     llms_txt: str,
     og_card_png: bytes,
+    fonts_dir: Path,
     robots_disallow: Sequence[str] = (),
     noindex_paths: Sequence[str] = (),
 ) -> None:
     """Serve the standard naapp public surface.
 
+    ``fonts_dir`` holds the app's copies of the fonts the stylesheet loads
+    (``FONT_NAMES``); only those names are served, and a directory missing one
+    is refused here.
+
     The landing page, robots rules and noindex paths are the app's: ``landing``
     renders the front door on each request, ``robots_disallow`` lists the paths
     crawlers must skip, and every response under ``noindex_paths`` (found or
-    not) carries ``X-Robots-Tag``. The manifest is the committed file, adjusted
-    for a deployment whose public origin is not the committed one.
+    not) carries ``X-Robots-Tag``. The manifest routes serve the runtime's
+    ``manifest_bytes`` verbatim.
     """
     settings = runtime.settings
     noindex_prefixes = tuple(noindex_paths)
@@ -272,6 +334,19 @@ def mount_naapp_routes(
     async def aweb_css_fingerprinted_route(fingerprint: str) -> Response:
         return _aweb_css_response(immutable=True)
 
+    fonts = {name: (fonts_dir / name).read_bytes() for name in sorted(FONT_NAMES)}
+
+    @app.get("/fonts/{font_name}")
+    async def font_route(font_name: str) -> Response:
+        font = fonts.get(font_name)
+        if font is None:
+            raise HTTPException(status_code=404, detail="Font not found")
+        return Response(
+            content=font,
+            media_type="font/woff2",
+            headers={**_NOSNIFF, "Cache-Control": "public, max-age=31536000, immutable"},
+        )
+
     @app.get("/og-card.png")
     async def og_card_route() -> Response:
         return Response(
@@ -303,9 +378,11 @@ def mount_naapp_routes(
             raise HTTPException(status_code=404, detail="Skill not found")
         return PlainTextResponse(skill, headers=_NOSNIFF)
 
+    manifest_bytes = runtime.manifest_bytes
+
     async def _manifest_response() -> Response:
         return Response(
-            content=read_manifest_bytes(manifest_path, settings.public_origin),
+            content=manifest_bytes,
             media_type="application/json",
             headers=_NOSNIFF,
         )

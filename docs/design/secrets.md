@@ -302,7 +302,7 @@ every call exactly as it does for a CLI call. An owner who wants MCP agents to
 have less authority grants their principals less. An owner who wants the
 distinction enforced needs the attestation of §4.6.
 
-### 4.6 Proposed custody and principal attestation contract
+### 4.6 Custody and principal attestation contract
 
 Team-auth v2 tells secrets *which member signed*. It does not tell secrets who
 holds that key, or which human, if any, initiated the call (A
@@ -344,8 +344,12 @@ artifact format, the AWID custodian record and the verifier are generic AWID, OS
 and `aweb_naapp` work. Issuing the artifact is the custodial deployment's work.
 secrets only consumes it.
 
-**Until the artifact ships, any policy with `requires_attestation` refuses every
-request with `attestation_unavailable`.** Owners can configure the field now, and
+The frozen contract is [principal-attestation.md](../principal-attestation.md),
+which adds the controller-signed custody and custodian records this section
+describes, and the verifier is `aweb_naapp.runtime.attestation`.
+
+**Until custodial deployments issue the artifact, any policy with
+`requires_attestation` refuses every request without one.** Owners can configure the field now, and
 it is honestly inert. The artifact is a launch requirement (Q5, decided).
 
 ## 5. Custody backends
@@ -1008,19 +1012,34 @@ A denial or expiry is final for that `request_id`.
 
 ### 10.4 The frozen canonical request
 
-`aweb.secrets.use-approval/1` is secrets' payload type for B2's frozen request.
-It uses B2's canonical-bytes rules, with integer minor-unit amounts. It contains:
+`aweb.secrets.use-approval/1` is the typed request object secrets hands B2 to
+freeze. It carries `type` (`aweb.secrets.use-approval`) and `v` (1) inside. B2
+covers it under its single prefix: the approval binds
+`"aweb.approval-request/1\n" || canonical_json({policy, request})`, with B2's
+canonical-bytes rules (integers only, so amounts are integer minor units). It
+contains:
 
 ```text
-v, type, approval_id, installation_id, install_generation, team_id,
+v, type, installation_id, install_generation, team_id,
 requester: {principal, member_did_key, certificate_id, did_aw?, alias},
 secret: {secret_id, secret_ref, version, kind, backend},
 action: broker | run_job,
-broker: {operation_id@digest, params}  |  {method, canonical_url, header_names, body_sha256, body_preview}
-run_job: {runner_id, job_id@digest, params, credential_delivery},
+broker: {operation_id, operation_digest, params}  |  {method, canonical_url, header_names, body_sha256, body_preview}
+run_job: {runner_id, job_id, job_digest, params, credential_delivery},
 policy_digest, grant_id, request_id, reason (untrusted, bounded),
 issued_at, expires_at
 ```
+
+- **No approval id inside.** B2 mints the approval id after it freezes and hashes
+  the request, so the request cannot carry it. B2's record binds the two
+  (`request_sha256` with `approval_id`), admission compares the hash, and the
+  hook event takes `approval_id` from that record. `request_id` is secrets'
+  re-submission key.
+- **Shape.** `requester.principal` is `did_aw` when the certificate carries
+  `member_did_aw`, otherwise `member_did_key` (§4.1); `did_aw` is omitted, never
+  null, when absent. Exactly one of `broker` and `run_job` is present, named by
+  `action`. `naapp/secrets/vectors/use-approval-v1.json` freezes the fields and
+  bytes, and its test checks them against B2's real mint.
 
 - **Evidence.** B3 binds the assertion to the request hash. secrets keeps B2's
   `auth_evidence_ref` and puts the hash of the evidence in the hook event
@@ -1183,12 +1202,17 @@ action:
 | refusal at admission or at the fence | `refused`, with `refusal_code` |
 | `awaiting_approval` | `approval_requested` |
 | approval decided (approve, deny, expire, revoke) | `approval_decided`, with `approval_evidence_sha256` when a passkey decided |
+| `cancelled`: the requester withdraws, or containment revokes the pending approval through B2 | `approval_decided`, with `approval_decision: revoked` |
 | `admitted` | `admitted` |
 | `dispatching`, enqueued in the fence transaction before any byte is sent | `dispatching` |
 | `completed`, including a withheld result or an undeclared credential | `completed`, with `disposition`, `returned_hmac`, and `undeclared_credential: true` (with disposition `withheld`) when §8.3 detects an undeclared credential |
 | `not_sent` | `not_sent` |
 | `outcome_unknown` | `outcome_unknown` |
 | `reconciled_*` | `reconciled` |
+
+`naapp/secrets/vectors/hook-actions-v1.json` freezes this table and the
+governance table below as data, with an example event per row that the catalog
+validates. S13's tests read it.
 
 secrets fills every field of the §A2 allowlist that applies to the event. The
 list below highlights fields with secrets-specific rules and is not exhaustive:

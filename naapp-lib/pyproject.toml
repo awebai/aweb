@@ -34,11 +34,24 @@ runtime = [
 outbox = [
   "pgdbm>=0.5.0",
 ]
+# The signing-key reader, aweb_naapp.signing_key: pynacl only, so the core
+# server can read its keys the same way without the naapp runtime.
+signing-key = [
+  "pynacl>=1.6.2",
+]
+# The shared idempotency store, aweb_naapp.idempotency: pgdbm only.
+idempotency = [
+  "pgdbm>=0.5.0",
+]
+# The shared page-format validator, aweb_naapp.pages: JSON Schema only, no I/O.
+pages = [
+  "jsonschema>=4.23",
+]
 
 [project.urls]
-Homepage = "https://github.com/awebai/aweb-naapp"
-Repository = "https://github.com/awebai/aweb-naapp"
-Issues = "https://github.com/awebai/aweb-naapp/issues"
+Homepage = "https://github.com/awebai/aweb/tree/main/naapp-lib"
+Repository = "https://github.com/awebai/aweb"
+Issues = "https://github.com/awebai/aweb/issues"
 
 [build-system]
 requires = ["hatchling"]
@@ -48,11 +61,11 @@ build-backend = "hatchling.build"
 packages = ["src/aweb_naapp"]
 
 [tool.uv.sources]
-awid-service = { path = "../awid" }
+awid-service = { path = "../awid", editable = true }
 
 [dependency-groups]
 dev = [
-  "aweb-naapp[runtime]",
+  "aweb-naapp[runtime,pages]",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
   "httpx2>=2.9.1",
