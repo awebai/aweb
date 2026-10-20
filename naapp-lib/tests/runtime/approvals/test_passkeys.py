@@ -12,8 +12,6 @@ from datetime import timedelta
 
 import pytest
 import pytest_asyncio
-from approvals_support import SCOPE, AuditOutbox, Clock, Policies, TaskAnswers, policy
-from soft_authenticator import SoftAuthenticator
 
 from aweb_naapp.runtime.approvals import (
     Approval,
@@ -41,6 +39,8 @@ from aweb_naapp.runtime.passkeys import (
     RelyingParty,
     contact_sha256,
 )
+from tests.runtime.approvals.soft_authenticator import SoftAuthenticator
+from tests.runtime.approvals.support import SCOPE, AuditOutbox, Clock, Policies, TaskAnswers, policy
 
 ORIGIN = "https://app.example.com"
 REQUEST = {"operation": "charge", "destination": {"host": "api.example.com"}, "executor": "broker"}

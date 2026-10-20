@@ -18,7 +18,7 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Request-time runtime: the team-auth verifier, approvals and passkeys. The docs
+# Request-time runtime code under aweb_naapp.runtime. The docs
 # surface (`import aweb_naapp`) never imports these.
 runtime = [
   "awid-service",
@@ -50,6 +50,7 @@ dev = [
   "aweb-naapp[runtime]",
   "pytest>=9.0.0",
   "pytest-asyncio>=1.2.0",
+  "httpx2>=2.9.1",
   "ruff>=0.14.0",
   "mypy>=1.18.0",
 ]
@@ -58,6 +59,7 @@ dev = [
 pythonpath = ["src"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = ["error"]
 
 [tool.ruff]
 target-version = "py312"

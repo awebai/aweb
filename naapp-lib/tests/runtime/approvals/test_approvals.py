@@ -9,7 +9,6 @@ from datetime import timedelta
 
 import asyncpg
 import pytest
-from approvals_support import APPROVER, SUCCESSOR, World, policy, sign
 from pgdbm.errors import QueryError
 
 from aweb_naapp.runtime.approvals import (
@@ -27,6 +26,7 @@ from aweb_naapp.runtime.approvals import (
     Refusal,
 )
 from aweb_naapp.runtime.links import link_verifier
+from tests.runtime.approvals.support import APPROVER, SUCCESSOR, World, policy, sign
 
 REQUEST = {
     "operation": "charge",

@@ -1,1 +1,1 @@
-"""Request-time runtime shared by naapps. Requires the `runtime` extra."""
+"""Request-time naapp runtime, installed with the ``runtime`` extra."""
