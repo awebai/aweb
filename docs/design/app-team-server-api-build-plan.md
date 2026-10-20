@@ -409,7 +409,7 @@ created here.
 | H1 | Publish an `aweb.team-server/1` record for every team whose controller key the deployment holds: at creation, on any move and on team key rotation, in the same operation. Backfill all existing teams before any naapp depends on discovery. No interim pin or default. | L6, aweb-acgg.31 | G1-a1 |
 | H2 | The hosted install path sends the exact manifest bytes with every install, as `aw` does after G1-b2a, and reads no `app_registry_emit_keys` or `app_registry_event_types` rows. | L1, aweb-acgg.21 | G1-b2a; acgh.8 for the second half |
 | H3 | Hosted admin controls for per-team key revocation call the G1-b3 route under the hosted admin policy. | L1, aweb-acgg.21 | G1-b3, F6 |
-| H4 | Deploy steps for each server release that migrates registrations: save installed apps' manifest bytes before migrating, reseed right after, report `key_conflict` teams. Under Juan's standing rule a release deploys once its last reviewer approves; these steps are part of that operations deploy. | operations (Hestia), not a build task | each such release |
+| H4 | Deploy steps for each server release that migrates registrations, run during that release's production deploy: save installed apps' manifest bytes before migrating, reseed right after, report `key_conflict` teams. | operations deploy, not a build task | each such release |
 
 ## Cross-lane dependencies
 
