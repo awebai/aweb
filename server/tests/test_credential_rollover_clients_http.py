@@ -178,7 +178,11 @@ async def test_controller_batch_renewal_obeys_policy_and_preserves_revoked_tombs
     async with registry_listener(env) as (registry, origin):
         env.registry_app.state.awid_public_origins = (origin,)
         for actor in env.actors.values():
-            await _register(env, registry, json.loads(base64.b64decode(actor.certificate)))
+            cert = json.loads(base64.b64decode(actor.certificate))
+            # Released Go v1 certificates omit empty optional global fields.
+            cert = {k: v for k, v in cert.items() if k != 'signature' and v is not None}
+            cert['signature'] = sign_message(env.team_sk, canonical_json_bytes(cert))
+            await _register(env, registry, cert)
         await registry.revoke_team_certificate('example.test', name, team_controller_signing_key=env.team_sk,
             certificate_id='privacy-carol')
         async def renew():

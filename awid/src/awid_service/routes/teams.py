@@ -471,6 +471,7 @@ class CertificateStatusResponse(BaseModel):
     replaced_by_certificate_id: str | None = None
     member_did_key: str | None = None
     certificate_team_did_key: str | None = None
+    certificate_expires_at: str | None = None
 
 
 class CertificateResponse(BaseModel):
@@ -1140,13 +1141,16 @@ async def certificate_status(
     if row is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
     revoked_at = row["revoked_at"]
+    artifact = _parse_certificate_blob(row["certificate"]) or {}
     return CertificateStatusResponse(
         team_id=build_team_id(domain, name),
         team_did_key=row["team_did_key"],
         status="revoked" if revoked_at is not None else "active",
         revoked_at=revoked_at.isoformat() if revoked_at is not None else None,
         **({'replaced_by_certificate_id': row['replaced_by_certificate_id']} if include_replacement else {}),
-        **({'member_did_key': row['member_did_key'], 'certificate_team_did_key': (_parse_certificate_blob(row['certificate']) or {}).get('team_did_key')} if include_issuer else {}),
+        **({'member_did_key': artifact.get('member_did_key', row['member_did_key']),
+            'certificate_team_did_key': artifact.get('team_did_key'),
+            'certificate_expires_at': artifact.get('expires_at')} if include_issuer else {}),
     )
 
 
@@ -1342,7 +1346,7 @@ async def fetch_certificate(
     if row is None:
         raise HTTPException(status_code=404, detail="Certificate not found")
 
-    if caller_did != row["member_did_key"]:
+    if caller_did not in (row["member_did_key"], row["team_did_key"]):
         raise HTTPException(status_code=403, detail="Certificate is not readable by this DID")
     if row["revoked_at"] is not None:
         raise HTTPException(status_code=409, detail="Certificate has been revoked")

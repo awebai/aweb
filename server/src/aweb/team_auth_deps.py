@@ -262,6 +262,10 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
             active = await request.app.state.awid_registry_client.resolve_active_certificate(
                 domain, name, cert_id, member_did_key=cert_data['member_did_key'])
             replacement_id = active['certificate_id'] if active else None
+        except CertificateValidationError as exc:
+            if exc.code != 'certificate_expired':
+                raise
+            replacement_id = None
         except Exception as exc:
             logger.warning('AWID replacement chain unavailable', exc_info=True)
             raise HTTPException(status_code=503, detail={'code': 'authority_unavailable'}) from exc

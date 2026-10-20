@@ -88,17 +88,22 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     if issuing_certificate_id:
         public_status = row.get('issued_by_certificate_version', 1) == 2 or getattr(request.app.state.awid_registry_client, 'service_token', True) is None
         if public_status:
-            from aweb.credential_policy import issuer_certificate_revoked
-            revoked_certs = {issuing_certificate_id} if await issuer_certificate_revoked(request, row['team_id'], issuing_certificate_id, row.get('subject_did_key')) else set()
+            from aweb.credential_policy import issuer_certificate_status
+            issuer_status = await issuer_certificate_status(request, row['team_id'], issuing_certificate_id, row.get('subject_did_key'))
+            revoked_certs = {issuing_certificate_id} if issuer_status == 'revoked' else set()
         else:
+            issuer_status = 'active'
             revoked_certs = await _get_revoked_certificates(request, row["team_id"])
         if not public_status and issuing_certificate_id in revoked_certs:
-            from aweb.credential_policy import issuer_certificate_revoked
-            if not await issuer_certificate_revoked(request, row['team_id'], issuing_certificate_id,
-                    row.get('subject_did_key'), known_revoked=True):
+            from aweb.credential_policy import issuer_certificate_status
+            issuer_status = await issuer_certificate_status(request, row['team_id'], issuing_certificate_id,
+                    row.get('subject_did_key'), known_revoked=True)
+            if issuer_status != 'revoked':
                 revoked_certs = revoked_certs - {issuing_certificate_id}
         if issuing_certificate_id in revoked_certs:
             return "grant_issuer_revoked"
+        if issuer_status == 'expired':
+            return 'grant_expired'
         if require_registered_certificates() and not public_status:
             registered_certs = await _get_registered_certificates(request, row["team_id"])
             if issuing_certificate_id not in registered_certs:

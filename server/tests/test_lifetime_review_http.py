@@ -78,6 +78,24 @@ async def test_old_certificate_clamp_ends_grant_after_renewal(privacy_app, monke
 
 
 @pytest.mark.asyncio
+async def test_unbounded_grant_ends_when_finite_replacement_expires(privacy_app, monkeypatch):
+    env = privacy_app
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED', 'true')
+    cert = await parent(env)
+    key, did, grant = await _mint(env)
+    assert grant['expires_at'] == 'never'
+    expiry = datetime.now(timezone.utc) + timedelta(seconds=3)
+    await _rollover(env, env.app.state.awid_registry_client, cert, expires_at=expiry.isoformat())
+    # Cache the replacement while it is valid. Its signed deadline must still
+    # be checked locally on every verification, including on a cache hit.
+    assert (await _read(env, key, did, grant)).status_code == 200
+    await asyncio.sleep(max(0, (expiry-datetime.now(timezone.utc)).total_seconds()) + .02)
+    refused = await _read(env, key, did, grant)
+    assert refused.status_code == 401, refused.text
+    assert refused.json()['detail']['code'] == 'grant_expired'
+
+
+@pytest.mark.asyncio
 async def test_replacement_chain_refuses_changed_member_and_cycles(privacy_app, monkeypatch):
     env=privacy_app
     monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED','true')

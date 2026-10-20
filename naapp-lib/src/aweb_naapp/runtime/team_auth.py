@@ -291,7 +291,11 @@ class AWIDTeamCache:
         try:
             try:
                 payload = await registry.get_team_certificate_status(domain, team_name, certificate_id)
-                active = await registry.resolve_active_certificate(domain, team_name, certificate_id) if payload.get('replaced_by_certificate_id') else None
+                try:
+                    active = await registry.resolve_active_certificate(domain, team_name, certificate_id) if payload.get('replaced_by_certificate_id') else None
+                except CertificateValidationError as exc:
+                    if exc.code != 'certificate_expired': raise
+                    active = None
             except RegistryError as exc:
                 if exc.status_code == 404:
                     self._unknown_certificates[cache_key] = now + self.ttl_seconds
@@ -304,7 +308,7 @@ class AWIDTeamCache:
             if (
                 not isinstance(payload, dict)
                 or not {"team_id", "team_did_key", "status", "revoked_at"} <= set(payload)
-                or set(payload) - {"team_id", "team_did_key", "status", "revoked_at", "replaced_by_certificate_id", "member_did_key", "certificate_team_did_key"}
+                or set(payload) - {"team_id", "team_did_key", "status", "revoked_at", "replaced_by_certificate_id", "member_did_key", "certificate_team_did_key", "certificate_expires_at"}
                 or payload["team_id"] != team_id
                 or payload["status"] not in ("active", "revoked")
                 or not isinstance(payload["team_did_key"], str)

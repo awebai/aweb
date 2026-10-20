@@ -533,6 +533,12 @@ class RegistryClient:
             raise ValueError('Malformed certificate status')
         from awid.did import public_key_from_did
         public_key_from_did(data['team_did_key'])
+        issuer_fields = {'member_did_key', 'certificate_team_did_key', 'certificate_expires_at'}
+        if issuer_fields & set(data) and not issuer_fields <= set(data):
+            raise ValueError('Incomplete certificate issuer projection')
+        if data.get('certificate_expires_at') is not None:
+            from awid.certificates import certificate_timestamp
+            certificate_timestamp(data['certificate_expires_at'], 'expires_at')
         for field in ('member_did_key', 'certificate_team_did_key'):
             value = data.get(field)
             if value is not None:
@@ -577,6 +583,10 @@ class RegistryClient:
                     return None
                 if hop and (not expected_member or member != expected_member or status.get('certificate_team_did_key') != status['team_did_key']):
                     return None
+                if status.get('certificate_expires_at') is not None:
+                    from awid.certificates import certificate_timestamp, CertificateValidationError
+                    if certificate_timestamp(status['certificate_expires_at'], 'expires_at') <= datetime.now(timezone.utc):
+                        raise CertificateValidationError('certificate_expired', 'Issuing certificate chain expired')
                 return dict(status, certificate_id=certificate_id)
             replacement = status.get('replaced_by_certificate_id')
             if not replacement or hop == 8 or not expected_member or member != expected_member:

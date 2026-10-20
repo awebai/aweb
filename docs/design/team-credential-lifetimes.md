@@ -239,9 +239,17 @@ Cross-language signing examples are additive in
 Review adjustments (Athena fd10c6f8, d0eea79b): status stays a narrow exact-ID
 read, with an operator-configured default of 600/minute/IP via
 `AWID_CERTIFICATE_STATUS_LIMIT_PER_MINUTE`. There is no public team snapshot.
-`include_issuer=true` adds only member_did_key and certificate_team_did_key,
+`include_issuer=true` adds only member_did_key, certificate_team_did_key and
+certificate_expires_at (null when the signed artifact has no expiry),
 derived from the registered artifact; without opt-in the released shape stays
 unchanged. The same-member replacement-chain check uses these facts. Certificate
 signatures are checked against a cached per-team current key before per-ID
 reads. Status caches, including 404s, are bounded and last at most 60 seconds,
 without expired fallback; lock maps weakly retain only live locks.
+
+An active replacement-chain endpoint must be unrevoked AND unexpired under the
+current team key. Expiry is checked on every verification, including a cached
+status. A previously unbounded grant therefore ends if its current replacement
+certificate expires, even without disciplinary revocation. Its own stored
+mint-time clamp is a separate, potentially earlier bound; renewal never extends
+that deadline.

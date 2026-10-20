@@ -174,17 +174,22 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     if issuing_certificate_id:
         public_status = row.get('issued_by_certificate_version', 1) == 2 or getattr(request.app.state.awid_registry_client, 'service_token', True) is None
         if public_status:
-            from aweb.credential_policy import issuer_certificate_revoked
-            revoked_certs = {issuing_certificate_id} if await issuer_certificate_revoked(request, row['team_id'], issuing_certificate_id, row.get('subject_did_key')) else set()
+            from aweb.credential_policy import issuer_certificate_status
+            issuer_status = await issuer_certificate_status(request, row['team_id'], issuing_certificate_id, row.get('subject_did_key'))
+            revoked_certs = {issuing_certificate_id} if issuer_status == 'revoked' else set()
         else:
+            issuer_status = 'active'
             revoked_certs = await _get_revoked_certificates(request, row["team_id"])
         if not public_status and issuing_certificate_id in revoked_certs:
-            from aweb.credential_policy import issuer_certificate_revoked
-            if not await issuer_certificate_revoked(request, row['team_id'], issuing_certificate_id,
-                    row.get('subject_did_key'), known_revoked=True):
+            from aweb.credential_policy import issuer_certificate_status
+            issuer_status = await issuer_certificate_status(request, row['team_id'], issuing_certificate_id,
+                    row.get('subject_did_key'), known_revoked=True)
+            if issuer_status != 'revoked':
                 revoked_certs = revoked_certs - {issuing_certificate_id}
         if issuing_certificate_id in revoked_certs:
             raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
+        if issuer_status == 'expired':
+            raise HTTPException(status_code=401, detail={'code': 'grant_expired', 'message': 'Issuing certificate chain expired'})
         # Staged existence requirement (default OFF): an unregistered issuing
         # certificate is unrevocable, so with
         # AWEB_REQUIRE_REGISTERED_CERTIFICATES on it must exist at the
