@@ -72,3 +72,33 @@ def test_values_without_one_canonical_form_are_refused(bad):
 def test_request_must_be_an_object():
     with pytest.raises(RequestNotCanonical):
         canonical_request(["not", "an", "object"])  # type: ignore[arg-type]
+
+
+def test_parsed_json_requests_digest_like_the_object():
+    from aweb_naapp.runtime.approvals import parse_request_json
+
+    raw = b'{"executor":"broker","constraints":{"max_amount_cents":500},"operation":"send"}'
+    parsed = parse_request_json(raw)
+    assert request_sha256(parsed) == request_sha256(
+        {"operation": "send", "executor": "broker", "constraints": {"max_amount_cents": 500}}
+    )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b'{"operation":"send","operation":"delete"}',
+        b'{"nested":{"a":1,"a":2}}',
+        b'{"amount":1.5}',
+        b'{"amount":1e3}',
+        b'{"amount":NaN}',
+        b'{"amount":Infinity}',
+        b'["not","an","object"]',
+        b"not json",
+    ],
+)
+def test_parsed_json_without_one_canonical_form_is_refused(raw):
+    from aweb_naapp.runtime.approvals import parse_request_json
+
+    with pytest.raises(RequestNotCanonical):
+        parse_request_json(raw)

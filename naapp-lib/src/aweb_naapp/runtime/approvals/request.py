@@ -1,13 +1,15 @@
 """The canonical form of an approval request, frozen when it is minted.
 
 An approval covers exactly these bytes: the operation, destination, constraints,
-source version, executor and policy the app puts in the request object. Changing
-any covered value changes the digest, so it needs a new approval.
+source version and executor the app puts in the request object, together with
+the policy reference and version the primitive adds. Changing any covered value
+changes the digest, so it needs a new approval.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -42,6 +44,36 @@ def canonical_request(request: Mapping[str, Any]) -> bytes:
         raise RequestNotCanonical("request must be a JSON object")
     _check(request, "request")
     return DOMAIN_PREFIX + canonical_json_bytes(dict(request))
+
+
+def _refuse_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    keys = [key for key, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise RequestNotCanonical("duplicate object key")
+    return dict(pairs)
+
+
+def _refuse_number(text: str) -> Any:
+    raise RequestNotCanonical(f"non-integer number {text!r} has no canonical form")
+
+
+def parse_request_json(raw: bytes) -> dict[str, Any]:
+    """Parse a request received as JSON, refusing what canonical JSON cannot carry:
+    duplicate keys, floats and non-finite numbers."""
+    try:
+        request = json.loads(
+            raw,
+            object_pairs_hook=_refuse_duplicates,
+            parse_float=_refuse_number,
+            parse_constant=_refuse_number,
+        )
+    except ValueError as exc:
+        if isinstance(exc, RequestNotCanonical):
+            raise
+        raise RequestNotCanonical("request is not valid JSON") from exc
+    if not isinstance(request, dict):
+        raise RequestNotCanonical("request must be a JSON object")
+    return request
 
 
 def request_sha256(request: Mapping[str, Any]) -> str:
