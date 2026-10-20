@@ -1105,11 +1105,35 @@ class TeamServerRecordBody(BaseModel):
 
 
 _TEAM_SERVER_NOT_FOUND = "Team server record not found"
-_TEAM_SERVER_CONFLICT_CODES = frozenset({"team_server_key_mismatch", "not_newer"})
+_TEAM_SERVER_MAX_BODY_BYTES = 8192
+# A record that does not verify against an existing team's current key answers
+# exactly like an unknown team, so a publish attempt never reveals that a
+# private team exists. Only a verified record gets a distinct refusal.
+_TEAM_SERVER_UNVERIFIED_CODES = frozenset(
+    {"record_invalid", "team_mismatch", "team_server_key_mismatch", "signature_invalid"}
+)
+
+
+def _team_server_not_found() -> HTTPException:
+    return HTTPException(status_code=404, detail=_TEAM_SERVER_NOT_FOUND)
 
 
 def _team_server_refusal(code: str) -> HTTPException:
-    return HTTPException(status_code=409 if code in _TEAM_SERVER_CONFLICT_CODES else 422, detail=code)
+    if code in _TEAM_SERVER_UNVERIFIED_CODES:
+        return _team_server_not_found()
+    return HTTPException(status_code=409 if code == "not_newer" else 422, detail=code)
+
+
+async def _team_server_body(request: Request) -> TeamServerRecordBody:
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > _TEAM_SERVER_MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail="request body too large")
+    try:
+        return TeamServerRecordBody.model_validate(json.loads(bytes(body)))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="request body must be {record, signature}") from exc
 
 
 @router.put(
@@ -1118,9 +1142,9 @@ def _team_server_refusal(code: str) -> HTTPException:
     dependencies=[Depends(rate_limit_dep("team_server_publish"))],
 )
 async def publish_team_server(
+    request: Request,
     domain: str,
     name: str,
-    body: TeamServerRecordBody,
     db_infra=Depends(get_db),
 ) -> TeamServerRecordBody:
     """Store the team's aweb.team-server/1 record.
@@ -1131,6 +1155,7 @@ async def publish_team_server(
     accepted unchanged.
     """
     _validate_team_name_path(name)
+    body = await _team_server_body(request)
     db = db_infra.get_manager("aweb")
     async with db.transaction() as tx:
         team = await tx.fetch_one(
@@ -1143,7 +1168,7 @@ async def publish_team_server(
             name,
         )
         if team is None:
-            raise HTTPException(status_code=404, detail=_TEAM_SERVER_NOT_FOUND)
+            raise _team_server_not_found()
         try:
             verified = verify_team_server_record(
                 body.record,

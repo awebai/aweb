@@ -91,7 +91,7 @@ async def test_vector_cases_over_http(client, controller_identity, awid_db_infra
     for case in VECTOR["invalid"]:
         response = await client.put(path, json={"record": case["record"], "signature": case["signature"]})
         assert response.status_code == case["http_status"], (case["name"], response.text)
-        assert response.json()["detail"] == case["code"]
+        assert response.json()["detail"] == case["http_detail"]
 
     latest = VECTOR["valid"][-1]
     response = await client.get(path)
@@ -196,7 +196,7 @@ async def test_rotation_leaves_the_record_refused_until_re_signed(client, contro
     )
 
     assert refused.value.code == "team_server_key_mismatch"
-    assert old_key_newer.status_code == 409, old_key_newer.text
+    assert old_key_newer.status_code == 404, old_key_newer.text
     assert re_signed.status_code == 200, re_signed.text
     current = (await client.get(path)).json()
     verify_team_server_record(
@@ -282,3 +282,40 @@ async def test_localhost_http_server_is_accepted_only_in_development(
     )
 
     assert response.status_code == expected, response.text
+
+
+@pytest.mark.asyncio
+async def test_unverifiable_records_answer_like_an_unknown_team(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    domain = "probe-server.example"
+    await _setup_namespace(client, ns_key, ns_did, domain)
+    _, team_did, team = await _create_team(client, ns_key, ns_did, domain, "ops", visibility="private")
+    stranger_key, stranger_pub = generate_keypair()
+    garbage = [
+        {"record": {"anything": 1}, "signature": "AAAA"},
+        _signed_record(stranger_key, **_record_fields(team, did_from_public_key(stranger_pub), issued_at="2026-01-20T10:00:00Z")),
+        {"record": _record_fields(team, team_did, issued_at="2026-01-20T10:00:00Z") | {"v": 1, "type": "aweb.team-server"}, "signature": "AAAA"},
+    ]
+
+    unknown = await client.put(_server_path(domain, "missing"), json=garbage[0])
+    probes = [await client.put(_server_path(domain, "ops"), json=body) for body in garbage]
+
+    assert unknown.status_code == 404
+    assert all(probe.status_code == 404 for probe in probes)
+    assert {probe.content for probe in probes} == {unknown.content}
+
+
+@pytest.mark.asyncio
+async def test_publish_body_is_bounded(client, controller_identity):
+    ns_key, ns_did = controller_identity
+    domain = "bounded-server.example"
+    await _setup_namespace(client, ns_key, ns_did, domain)
+    await _create_team(client, ns_key, ns_did, domain, "ops")
+
+    response = await client.put(
+        _server_path(domain, "ops"),
+        content=json.dumps({"record": {"pad": "x" * 9000}, "signature": "AAAA"}),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert response.status_code == 413, response.text

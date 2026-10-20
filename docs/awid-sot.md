@@ -649,13 +649,20 @@ PUT    /v1/namespaces/{domain}/teams/{name}/server
        team, carries the current team key and verifies under it, and its
        issued_at (UTC seconds) is at most five minutes ahead of AWID's clock.
        server_url is a canonical https origin with an optional path prefix
-       (no trailing slash, userinfo, query or fragment); http only for
-       loopback hosts, and localhost only in development.
+       (no trailing slash, userinfo, query or fragment), at most 2048 bytes;
+       http only for loopback hosts, and localhost only in development. The
+       request body is at most 8192 bytes (413 otherwise).
        A record must be newer than the stored one; resending the stored
-       record answers 200 unchanged. Refusals: 422 with detail
-       record_invalid | team_mismatch | server_url_invalid |
-       signature_invalid | issued_at_in_future; 409 with detail
-       team_server_key_mismatch | not_newer; unknown or deleted team 404.
+       record answers 200 unchanged.
+       Refusals: a record that does not verify against an existing team's
+       current key (malformed, another team, another key, bad signature)
+       answers exactly like an unknown or deleted team: 404
+       { "detail": "Team server record not found" }, so publishing never
+       reveals that a private team exists. A verified record can still be
+       refused: 422 server_url_invalid | issued_at_in_future, 409 not_newer.
+       Verifiers report the unverified cases with distinct codes
+       (record_invalid | team_mismatch | team_server_key_mismatch |
+       signature_invalid); AWID does not.
        Response: the stored { "record", "signature" }.
        A team key rotation leaves the stored record signed by the old key:
        consumers refuse it until the controller publishes a newer record

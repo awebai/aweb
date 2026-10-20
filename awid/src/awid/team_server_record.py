@@ -22,6 +22,7 @@ RECORD_TYPE = "aweb.team-server"
 RECORD_VERSION = 1
 RECORD_FIELDS = frozenset({"v", "type", "team_id", "team_did_key", "server_url", "issued_at"})
 MAX_FUTURE_SECONDS = 300
+MAX_SERVER_URL_BYTES = 2048
 _ISSUED_AT_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
@@ -69,6 +70,8 @@ def canonical_team_server_url(value: str) -> tuple[str, str]:
 
     if not isinstance(value, str) or not value:
         raise refuse("is required")
+    if len(value.encode("utf-8")) > MAX_SERVER_URL_BYTES:
+        raise refuse(f"must be at most {MAX_SERVER_URL_BYTES} bytes")
     try:
         parsed = urlparse(value)
         port = parsed.port
@@ -121,20 +124,21 @@ def verify_team_server_record(
     """Verify one record for ``team_id`` against the team's current key.
 
     Raises TeamServerRecordError with one of the codes ``record_invalid``,
-    ``team_mismatch``, ``server_url_invalid``, ``team_server_key_mismatch``,
-    ``signature_invalid`` or ``issued_at_in_future``.
+    ``team_mismatch``, ``team_server_key_mismatch`` or ``signature_invalid``
+    for a record that does not verify, or ``server_url_invalid`` or
+    ``issued_at_in_future`` for a verified record that is still refused.
     """
 
     if not isinstance(record, dict) or set(record) != RECORD_FIELDS:
         raise TeamServerRecordError("record_invalid", "record must have exactly the aweb.team-server/1 fields")
-    if record["v"] != RECORD_VERSION or record["type"] != RECORD_TYPE:
+    version = record["v"]
+    if type(version) is not int or version != RECORD_VERSION or record["type"] != RECORD_TYPE:
         raise TeamServerRecordError("record_invalid", "record must be version 1 of aweb.team-server")
     if not all(isinstance(record[field], str) for field in ("team_id", "team_did_key", "server_url")):
         raise TeamServerRecordError("record_invalid", "record fields must be strings")
     issued_at = _parse_issued_at(record["issued_at"])
     if record["team_id"] != team_id:
         raise TeamServerRecordError("team_mismatch", "record names another team")
-    server_url, audience = canonical_team_server_url(record["server_url"])
     if record["team_did_key"] != current_team_did_key:
         raise TeamServerRecordError("team_server_key_mismatch", "record is not signed by the team's current key")
     if not isinstance(signature, str) or not signature:
@@ -145,6 +149,7 @@ def verify_team_server_record(
         raise TeamServerRecordError("team_server_key_mismatch", "team key is not a did:key") from exc
     if verify_signature_with_public_key(public_key, record_signing_bytes(record), signature) != VerifyResult.VERIFIED:
         raise TeamServerRecordError("signature_invalid", "signature does not verify against the team key")
+    server_url, audience = canonical_team_server_url(record["server_url"])
     if issued_at > now + timedelta(seconds=max_future_seconds):
         raise TeamServerRecordError("issued_at_in_future", "issued_at is too far in the future")
     return TeamServerRecord(

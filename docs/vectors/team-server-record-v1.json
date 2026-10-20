@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "aweb.team-server/1: a team-key-signed binding of a team to its coordination server URL. Signing bytes are the domain prefix followed by canonical JSON of the record; the signature is unpadded standard base64 Ed25519. Seeds are public test material.",
+  "description": "aweb.team-server/1: a team-key-signed binding of a team to its coordination server URL. Signing bytes are the domain prefix followed by canonical JSON of the record; the signature is unpadded standard base64 Ed25519. code is the verifier's refusal; http_status/http_detail are AWID's answer, which is the not-found answer for any record that does not verify against an existing team's current key. Seeds are public test material.",
   "domain_prefix": "aweb.team-server/1\n",
   "team_id": "ops:vector-server.example",
   "team_key_seed_hex": "1111111111111111111111111111111111111111111111111111111111111111",
@@ -8,6 +8,7 @@
   "other_key_seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
   "other_did_key": "did:key:z6MkqGC3nWZhYieEVTVDKW5v588CiGfsDSmRVG9ZwwWTvLSK",
   "max_future_seconds": 300,
+  "max_server_url_bytes": 2048,
   "valid": [
     {
       "name": "with_path_prefix",
@@ -38,9 +39,26 @@
   ],
   "invalid": [
     {
+      "name": "version_is_boolean",
+      "code": "record_invalid",
+      "http_status": 404,
+      "http_detail": "Team server record not found",
+      "record": {
+        "v": true,
+        "type": "aweb.team-server",
+        "team_id": "ops:vector-server.example",
+        "team_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+        "server_url": "https://coord.vector-server.example/api",
+        "issued_at": "2026-01-20T10:00:00Z"
+      },
+      "signing_bytes_b64": "YXdlYi50ZWFtLXNlcnZlci8xCnsiaXNzdWVkX2F0IjoiMjAyNi0wMS0yMFQxMDowMDowMFoiLCJzZXJ2ZXJfdXJsIjoiaHR0cHM6Ly9jb29yZC52ZWN0b3Itc2VydmVyLmV4YW1wbGUvYXBpIiwidGVhbV9kaWRfa2V5IjoiZGlkOmtleTp6Nk1rdFVMdWRUdEFzQWhSZWdZUGlaNjYzMVJWM3ZpdjEycWQ0R1FGOHoxeEIyMlMiLCJ0ZWFtX2lkIjoib3BzOnZlY3Rvci1zZXJ2ZXIuZXhhbXBsZSIsInR5cGUiOiJhd2ViLnRlYW0tc2VydmVyIiwidiI6dHJ1ZX0=",
+      "signature": "QOTJq887FuE3OY+Mw2FCtaYV9sh20En68DuxrEBNQrw9W2WBcd7FbjtZJBUCJl3swvRB/eIM0EcQ/sSWklOzAw"
+    },
+    {
       "name": "missing_domain_prefix",
       "code": "signature_invalid",
-      "http_status": 422,
+      "http_status": 404,
+      "http_detail": "Team server record not found",
       "record": {
         "v": 1,
         "type": "aweb.team-server",
@@ -55,7 +73,8 @@
     {
       "name": "signed_by_non_current_key",
       "code": "team_server_key_mismatch",
-      "http_status": 409,
+      "http_status": 404,
+      "http_detail": "Team server record not found",
       "record": {
         "v": 1,
         "type": "aweb.team-server",
@@ -70,7 +89,8 @@
     {
       "name": "team_mismatch",
       "code": "team_mismatch",
-      "http_status": 422,
+      "http_status": 404,
+      "http_detail": "Team server record not found",
       "record": {
         "v": 1,
         "type": "aweb.team-server",
@@ -86,6 +106,7 @@
       "name": "issued_at_far_future",
       "code": "issued_at_in_future",
       "http_status": 422,
+      "http_detail": "issued_at_in_future",
       "record": {
         "v": 1,
         "type": "aweb.team-server",
@@ -101,6 +122,7 @@
       "name": "issued_at_not_newer",
       "code": "not_newer",
       "http_status": 409,
+      "http_detail": "not_newer",
       "record": {
         "v": 1,
         "type": "aweb.team-server",
@@ -117,6 +139,7 @@
       "name": "http_server_url_outside_localhost",
       "code": "server_url_invalid",
       "http_status": 422,
+      "http_detail": "server_url_invalid",
       "record": {
         "v": 1,
         "type": "aweb.team-server",
@@ -127,6 +150,22 @@
       },
       "signing_bytes_b64": "YXdlYi50ZWFtLXNlcnZlci8xCnsiaXNzdWVkX2F0IjoiMjAyNi0wMS0yMFQxMDowMDowMFoiLCJzZXJ2ZXJfdXJsIjoiaHR0cDovL2Nvb3JkLnZlY3Rvci1zZXJ2ZXIuZXhhbXBsZS9hcGkiLCJ0ZWFtX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWt0VUx1ZFR0QXNBaFJlZ1lQaVo2NjMxUlYzdml2MTJxZDRHUUY4ejF4QjIyUyIsInRlYW1faWQiOiJvcHM6dmVjdG9yLXNlcnZlci5leGFtcGxlIiwidHlwZSI6ImF3ZWIudGVhbS1zZXJ2ZXIiLCJ2IjoxfQ==",
       "signature": "9JVN7pM68MrtduIBzZAWDMq0vuUqjLhXm8oMzlp7MMjMqu5gWUE64wZw84vb2o/u+r9uB8Uzv6XUgziANAHCCg"
+    },
+    {
+      "name": "server_url_too_long",
+      "code": "server_url_invalid",
+      "http_status": 422,
+      "http_detail": "server_url_invalid",
+      "record": {
+        "v": 1,
+        "type": "aweb.team-server",
+        "team_id": "ops:vector-server.example",
+        "team_did_key": "did:key:z6MktULudTtAsAhRegYPiZ6631RV3viv12qd4GQF8z1xB22S",
+        "server_url": "https://coord.vector-server.example/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "issued_at": "2026-01-20T10:00:00Z"
+      },
+      "signing_bytes_b64": "YXdlYi50ZWFtLXNlcnZlci8xCnsiaXNzdWVkX2F0IjoiMjAyNi0wMS0yMFQxMDowMDowMFoiLCJzZXJ2ZXJfdXJsIjoiaHR0cHM6Ly9jb29yZC52ZWN0b3Itc2VydmVyLmV4YW1wbGUvYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJ0ZWFtX2RpZF9rZXkiOiJkaWQ6a2V5Ono2TWt0VUx1ZFR0QXNBaFJlZ1lQaVo2NjMxUlYzdml2MTJxZDRHUUY4ejF4QjIyUyIsInRlYW1faWQiOiJvcHM6dmVjdG9yLXNlcnZlci5leGFtcGxlIiwidHlwZSI6ImF3ZWIudGVhbS1zZXJ2ZXIiLCJ2IjoxfQ==",
+      "signature": "fJtOYJuy4ajbmzqXDMF/LYfHkFT2rRicpZqFpnxXocaBDruEW/l5WxHKPnQJoP5ORYmj7Mv86ZLp59eNprFbBA"
     }
   ],
   "not_found": {
