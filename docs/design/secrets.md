@@ -49,7 +49,8 @@ The decisions Juan needs to make are listed in §18.
 Source baseline **A = aweb origin/main b423415a92bf**. Every `A path:line` refers
 to that commit.
 
-D1 baseline **D1 = origin/agents/aweb-protocol-expert-pages-design fb42372bc**.
+D1 baseline **D1 = origin/agents/aweb-protocol-expert-pages-design 8ef61170a70f**
+(the branch was rebuilt as one commit; earlier D1 SHAs are no longer on it).
 It covers `docs/design/agent-pages.md` and `docs/design/agent-pages/contracts.md`.
 It is a draft that Juan has not approved.
 
@@ -208,13 +209,24 @@ Every agent-API request is verified in this order, and every step fails closed.
    generic app-to-team-server API (aweb-acgh.7) and D1's admission fence. The
    admitted generation is recorded on the intent. B1's resource/action policy
    hook is where secrets plugs in steps 3–5.
-3. **Principal.** The stable principal is the certificate's controller-certified
-   `member_did_aw` field when present, as B1 surfaces it from the verified
-   certificate. secrets does not need the did:aw current-key profile, which is
-   out of B1's scope.
-   Otherwise it is `member_did_key`, which covers local identities. A key
-   rotation under the same `did:aw` keeps the principal's grants. A new local key
-   is a new principal.
+3. **Principal.** The principal is keyed `(team_id, member_did_aw)` when the
+   certificate carries `member_did_aw`, and never by `did:aw` alone across
+   teams. Otherwise it is `(team_id, member_did_key)`, which covers local
+   identities.
+   - **What the key rests on.** `member_did_aw` is a binding asserted by the team
+     controller. The team signature covers the whole certificate, and the
+     controller is the membership authority. That is sound for grants inside
+     that team (A `docs/awid-sot.md:97`–`:100`, `:650`–`:672`). B1 surfaces it
+     from the verified certificate.
+   - **What it does not prove.** It does not prove that the `did:key` is the
+     did:aw's current registry key. That check is D1's proposed current-key
+     profile (B1b), which is out of B1's scope. Nothing here calls the principal
+     registry-verified, and a policy that requires that assurance refuses until
+     B1b lands.
+   - **Rotation.** A key rotation keeps the principal's grants only through a
+     reissued certificate under the same `member_did_aw`. Until the old
+     certificate is revoked, both keys act as the same principal. A new local
+     key is a new principal.
 4. **Replay.** Every mutating body carries a client `request_id`, covered by
    `body_sha256`. secrets deduplicates `(installation_id, principal, request_id)`
    (§11.2). A replayed envelope inside the skew window therefore returns the
@@ -904,9 +916,18 @@ which proves only possession.
 - **(a)** Admission must run inside the caller's database transaction, so that
   the compare-and-set, secrets' intent row and its outbox rows commit or fail
   together (§10.5).
-- **(b)** Its storage interface must let an app revoke every open approval
-  matching an app-side predicate (a grant, a secret or a version), for
-  containment (§12).
+- **(b)** It must offer `revoke_many(connection, approval_ids, reason)` for
+  containment (§12). secrets selects the IDs with its own predicate (a grant, a
+  secret or a version) in the same transaction, and B2 never interprets app
+  predicates. Only `pending` and `approved` approvals move to `revoked`;
+  `consumed` ones are never touched. Each revocation is audited, and the dispatch
+  fence (§11.3) still re-checks.
+
+Under the primitive's states, an approved approval goes to `consumed`, `expired`
+or `revoked`, and a revocation before dispatch wins. A `not_sent` transport
+retry under the same `dispatch_id` (§11.1) is a retry of the one admitted
+operation. It does not consume again, and it needs no new approval. D1 has
+adopted this outcome vocabulary.
 
 ### 10.2 What secrets adds to designation, enrolment and recovery
 
@@ -1064,7 +1085,9 @@ received ─┬─> refused (terminal)
 - **Client key.** The key is `(installation_id, principal, request_id)` with the
   canonical request hash. The same bytes return the existing receipt at its
   current state, after rechecking current read permission. Different bytes
-  return `409 idempotency_conflict`. Keys are kept for 30 days and then return
+  return `409 idempotency_conflict`. The key store is the shared one (§3.1), with
+  D1's semantics and a retention period set per app. secrets keeps keys for 30
+  days. After that they return
   `410 idempotency_expired`; they never re-execute.
 - **Upstream key.** Where the operation declares one, secrets sends
   `Idempotency-Key: secrets-<dispatch_id>` (the header name comes from the operation).
@@ -1197,9 +1220,11 @@ whose effect is a secret use fires only `post-secret-use-hook`. A governance act
 fires only the governance hook. Other secrets tool calls fire
 `post-manifest-command-hook` through the shared middleware.
 
-**Provenance.** Events are signed by secrets' registered app key under a purpose
-the hooks seat defines. D1 already separates app-event, app-request and app-usage
-purposes on the same key.
+**Provenance and production.** secrets declares `post-secret-use-hook`, and the
+governance hook, in its manifest v2 `hooks.productions`. An owner must activate
+each production; until then, ingest refuses secrets' events. The signing key is
+declared in v2 `app_keys`, with explicit purposes for the hook events the hooks
+seat defines. A v1 emitter key stays emit-only.
 
 ## 12. Containment from day one
 
@@ -1258,16 +1283,21 @@ Authority always comes from secrets' role, grant and passkey checks. That is why
 - **aw users.** The generic dispatcher renders the tools as `aw secrets list`,
   `aw secrets describe stripe-test`, and
   `aw secrets request stripe-test --op create-refund --param charge=ch_123 --param amount_minor=500`.
-  For an open request it renders
-  `aw secrets request github-ci -- POST https://api.github.com/repos/o/r/dispatches --data @body.json`.
+  For an open request it renders the typed body parameters as flags, for example
+  `aw secrets request github-ci --method POST --url https://api.github.com/repos/o/r/dispatches --data '{…}'`.
+  A curl-like positional form would be a generic CLI feature; it is not part of
+  the manifest contract.
   It also renders `aw secrets run deploy-staging --runner home-1 --param env=staging`,
   `aw secrets status <request_id>` and `aw secrets contain revoke-grant <grant_id>`.
   The CLI generates `request_id` once per invocation and reuses it on transport
   retries. Exit codes distinguish `awaiting_approval`, `refused`,
   `outcome_unknown` and `result_withheld`. `--param` binding follows the manifest
-  `params` mapping. Open-request argument parsing needs no special code if the
-  manifest models `method`, `url`, `header` and `data` as typed parameters,
-  which C3 must confirm.
+  `params` mapping. Open requests need no manifest change. `method` (a string
+  enum), `url`, `headers` (an array) and `data` (a string or an object) are
+  `in: body` parameters with typed coercion (A `docs/app-manifest.md:121`–`:150`,
+  `:189`–`:205`). Binary data uses base64. The manifest's relative-path rule
+  protects secrets' own endpoint, not the URL argument. SSRF control for the URL
+  stays at the egress guard (§7.3).
 - **MCP users (L2).** The same tools appear as `secrets_list`,
   `secrets_request`, and so on, with the same parameter schemas. A pending
   approval returns `approval_ref` and a message that a designated human has been
@@ -1470,8 +1500,8 @@ Each harness states whether it was shown to fail for the fault it targets.
 
 The design is one generic naapp architecture serving pages and secrets. §3.1
 places every component. This table lists what secrets needs from contracts that
-others own. At D1 fb42372bc, the items marked * are not yet written in D1's
-draft. They belong to D1's contracts, so those requests go to the D1 lead.
+others own. The D1 lead's fit review (against D1 8ef61170) confirmed the D1
+rows.
 
 | Need | Owner | Notes |
 | --- | --- | --- |
@@ -1480,8 +1510,8 @@ draft. They belong to D1's contracts, so those requests go to the D1 lead.
 | Approval primitive and WebAuthn | B2+B3, aweb-acgh.4 | §10. Requirements (a) and (b) in §10.1, plus the owner-lockout protection in §10.2, proposed as generic B3 behaviour. |
 | Team owner act `aweb.owner-act/1` and its verifier | hooks design (aweb-acgh.1); `aweb_naapp` | §10.2: bootstrap and re-designation. |
 | Generic governance hook in the v1 catalog; post-secret-use-hook schema and action enum | hooks design (aweb-acgh.1) | §11.5. secrets cites the schema and proposes the additions listed there. |
-| Manifest v2 with `invocation_contexts`* and a `hooks` slot* | D1 C3 | §13. Typed parameters must be able to model open requests. |
-| Surface link-out to an app-owned origin* | D1 C1/R1 | §6.1. Normalized visible destination, opened in a new top-level context. |
+| Manifest v2 with `invocation_contexts`, the `hooks` slot (`productions`) and `app_keys` with purposes | D1 C3 (in D1 §5) | §13 and §11.5. Open requests already fit as typed body parameters. |
+| `link_out` widget restricted to the installed app's pinned origin | D1 C1/R1, a *proposed* vocabulary addition that needs Juan's acceptance | §6.1. It shows the normalized domain, opens a new top-level context with no opener or referrer, and carries no token in the URL. |
 | Hook envelope, catalog, provenance purpose, producer outbox, delivery | hooks seat; B4 for the shared code | §11.5. secrets owns its payload fields and its enqueue points. |
 | Usage reporting `aweb.usage/1` | D1 C5 | secrets reports `uses_admitted`, `dispatches`, `approvals_requested` and `job_runs` under the same rules. |
 | The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Mainly the egress guard, auth injectors, response handling, dispatch state machine, idempotency store, KMS sealing and console session. Pages' A2 adapter needs most of them. |
