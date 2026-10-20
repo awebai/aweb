@@ -4,6 +4,48 @@
 
 ## Release preparations
 
+### Release preparation: AWID 0.5.30
+
+Changes are since `awid-v0.5.29` / `awid-service-v0.5.29`.
+Publishes PyPI `awid-service` 0.5.30 and the `awid` image 0.5.30.
+
+- Publish and serve the team-key-signed records behind principal attestation
+  (`docs/principal-attestation.md`, `docs/member-person.md`):
+  `aweb.team-custodian/1` at `PUT|GET /v1/namespaces/{domain}/teams/{name}/custodians/{custodian_id}`,
+  `aweb.member-custody/1` at `…/certificates/{certificate_id}/custody` and
+  `aweb.member-person/1` at `…/certificates/{certificate_id}/person`.
+  Publishing requires the team controller's covering (v2) controller
+  envelope; each record must verify under the current team key. Custodian
+  and person records only move forward; a custody record is immutable apart
+  from a re-sign after rotation. A publish that races a key rotation is
+  refused with `409 team_key_changed`. `GET` is anonymous for public and
+  private teams, by exact key, with one identical `404` for an unknown team,
+  key or record. The custody and person reads disclose whether a
+  certificate's key is held by a custodian and whether the controller
+  declares its member one person. Publishes are limited to 3000/hour per IP
+  and 2500/hour per team; reads to 60 per 60 seconds per IP; the trusted
+  service token is exempt. Migration `009_principal_attestation_records`;
+  the records are deleted with their team or certificate.
+  Conformance: `docs/vectors/principal-attestation-v1.json`.
+- `POST /v1/namespaces/{domain}/teams/{name}/rotate` accepts optional
+  `resigned_records` (`team_server`, `team_custodians`, `member_custody`,
+  `member_person`): every stored team-key-signed record, re-signed by the new
+  key, unchanged apart from `team_did_key` and a newer `issued_at`. AWID swaps
+  the key and replaces the records in one transaction. A record that does not
+  verify is `422`; a set that is incomplete, has extras or changes a record is
+  `409 resigned_records_incomplete` with `{ missing, extra, changed }` per kind
+  (`team_server` as a boolean), and nothing changes. The rotate body is
+  streamed against `AWID_ROTATE_MAX_BODY_BYTES` (default and minimum 4 MiB);
+  larger bodies are `413`. A rotation without `resigned_records` behaves as
+  before: the team's records, including its `aweb.team-server/1` record, stay
+  signed by the old key and verifiers refuse them until they are published
+  again under the new key. No released `aw` sends `resigned_records` yet.
+- Nothing consumes these records yet: they are inputs for apps that verify
+  `X-AWEB-Principal-Attestation` with the in-repo `aweb_naapp` verifier,
+  which refuses an attestation whose records are not registered.
+- **Deploy order:** deploy this AWID, with migration 009, before anything
+  publishes the records. It needs no aweb server or `aw` change.
+
 ### Release preparation: aw 1.36.44
 
 CLI changes are since `aw-v1.36.43`. Prepared alongside server 1.27.29 and AWID 0.5.29.

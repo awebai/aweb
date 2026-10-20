@@ -23,6 +23,7 @@ from awid.ratelimit import NoOpRateLimiter
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
 from awid_service.db import AwidDatabaseInfra
+from awid_service.routes.attestation_records import router as awid_attestation_records_router
 from awid_service.routes.did import router as awid_did_router
 from awid_service.routes.teams import router as awid_teams_router
 from fastapi import FastAPI, Request
@@ -116,6 +117,7 @@ async def registry(test_db_factory, monkeypatch) -> AsyncIterator[Registry]:
     app.state.rate_limiter = NoOpRateLimiter()
     app.state.awid_service_token = SERVICE_TOKEN
     app.include_router(awid_teams_router)
+    app.include_router(awid_attestation_records_router)
     app.include_router(awid_did_router)
     try:
         yield Registry(db=infra.get_manager("aweb"), transport=RecordingTransport(app))
