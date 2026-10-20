@@ -199,6 +199,10 @@ ROOT_CONSUMERS = {
         "principal-attestation-v1.json",
         '(Path(__file__).parents[3] / "docs" / "vectors" / "principal-attestation-v1.json")',
     ),
+    PurePosixPath("naapp/secrets/tests/test_runner_protocol_vectors.py"): _consumer(
+        "secrets-runner-protocol-v1.json",
+        '(Path(__file__).parents[3] / "docs" / "vectors" / "secrets-runner-protocol-v1.json")',
+    ),
     PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
         "team-auth-envelope-v2.json",
         'AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json"',

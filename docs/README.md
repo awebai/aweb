@@ -88,6 +88,8 @@ authority.
   statement of custody and channel for a team-auth request (proposal).
 - [Member person declaration](member-person.md) — team controller's statement
   that a certificate's member is one natural person (proposal).
+- [secrets runner protocol](secrets-runner-protocol.md) — signed runner requests
+  and assignments, and HPKE credential sealing, between secrets and its runners.
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
 - [Agent health](agent-health.md) — status-host designation and the signed
