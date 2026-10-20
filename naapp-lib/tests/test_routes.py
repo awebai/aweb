@@ -246,10 +246,10 @@ def test_health_is_mounted_with_the_runtime_checks(tmp_path: Path) -> None:
 
 def test_health_checks_the_apps_own_dependencies(tmp_path: Path) -> None:
     async def kms() -> CheckResult:
-        return CheckResult(ok=True, detail={"canary": "ok"})
+        return CheckResult(ok=True, detail={"canary_age_seconds": 4})
 
     response = _client(tmp_path, health_checks={"kms": kms}).get("/health")
-    assert response.json()["checks"]["kms"] == {"ok": True, "canary": "ok"}
+    assert response.json()["checks"]["kms"] == {"ok": True, "canary_age_seconds": 4}
 
 
 def test_an_app_without_the_docs_surface_serves_its_manifest_alone(tmp_path: Path) -> None:

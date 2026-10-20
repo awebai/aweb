@@ -62,7 +62,9 @@ check fails, and `health` always answers 200. The runtime checks its database
 and reports the age of its oldest undelivered outbox event
 (`NaappRuntime.health_checks()`). An app adds its own as async callables that
 return a `CheckResult`. A check that raises, or does not answer within 5 s,
-fails, and its error is logged, never served. The routes are unauthenticated,
+fails, and its error is logged, never served. `/ready` serves only whether each
+check passed; `/health` adds each check's detail, whose values are numbers,
+booleans or null, never text. The routes are unauthenticated,
 so the checks run at most once every 10 s: concurrent requests share the run in
 flight, and later ones get its result until it expires.
 
