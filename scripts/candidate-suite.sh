@@ -22,6 +22,7 @@ stages="${1:-checks unit artifacts integration}"
 checks() {
   run _candidate-gate-docker-boundaries
   run test-shipping
+  run check-page-renderer-bundle
   run check-aw-commit-repo-stamp
   run check-cli-go-tidy
   run check-cli-release-vcs-stamps

@@ -15,7 +15,11 @@ export function safeLink(value) {
     decoded = decoded.replace(/[\s\u0000-\u001f\u007f]/gu, '');
     const url = new URL(decoded);
     if (url.protocol !== 'https:' || url.username || url.password) return null;
-    return url;
+    // Decode only for the safety check. URL-encoded path delimiters retain
+    // their original meaning in the destination actually opened.
+    const original = new URL(value);
+    if (original.protocol !== 'https:' || original.username || original.password) return null;
+    return original;
   } catch { return null; }
 }
 markdown.validateLink = value => safeLink(value) !== null;
