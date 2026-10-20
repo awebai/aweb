@@ -7,6 +7,7 @@ from pydantic import Field, ValidationError
 from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp.runtime.settings import NaappSettings
+from aweb_naapp.runtime.team_auth import MAX_TEAM_FACTS_TTL_SECONDS, MAX_TIMESTAMP_SKEW_SECONDS
 
 
 class ExampleSettings(NaappSettings):
@@ -90,3 +91,18 @@ def test_credentials_are_kept_out_of_repr() -> None:
     text = repr(_settings(awid_service_token=token, app_emit_key_seed_hex=seed_hex))
     assert token not in text
     assert seed_hex not in text
+
+
+def test_auth_cache_ttl_defaults_to_the_verifier_limit_and_cannot_exceed_it() -> None:
+    assert _settings().auth_cache_ttl_seconds == MAX_TEAM_FACTS_TTL_SECONDS
+    assert _settings(auth_cache_ttl_seconds=1).auth_cache_ttl_seconds == 1
+    with pytest.raises(ValidationError):
+        _settings(auth_cache_ttl_seconds=MAX_TEAM_FACTS_TTL_SECONDS + 1)
+
+
+def test_timestamp_skew_cannot_exceed_the_verifier_limit() -> None:
+    assert (
+        _settings(timestamp_skew_seconds=MAX_TIMESTAMP_SKEW_SECONDS).timestamp_skew_seconds == 300
+    )
+    with pytest.raises(ValidationError):
+        _settings(timestamp_skew_seconds=MAX_TIMESTAMP_SKEW_SECONDS + 1)
