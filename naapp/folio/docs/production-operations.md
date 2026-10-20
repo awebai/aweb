@@ -74,7 +74,11 @@ setting that differs, so the move is visible before it is made.
 
 All production operations go through Make and the shared `aweb_naapp.ops`
 tool. Each one first checks the live service against the manifest and refuses
-on any difference.
+on any difference. It also refuses unless the service is not suspended and its
+auto-deploy is off: the service builds from `main` of the aweb repository, so
+with auto-deploy on every push to `main` would redeploy Folio outside these
+targets. The tool requires both for every service; they are not manifest
+settings.
 
 | Target | Effect | Inputs |
 | --- | --- | --- |
