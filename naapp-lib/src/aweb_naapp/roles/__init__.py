@@ -165,8 +165,11 @@ async def hold_role(tx: TransactionManager, principal: PrincipalKey, role: str) 
 
     Lock order for a transaction that acts on a role: the installation fence
     first, then this hold, then approval and candidate locks, then the
-    transaction's own writes. A withdrawal of the role must take the role's
-    row before any approval lock it needs, so the two orders never cycle.
+    transaction's own writes. A withdrawal of the role (an unassign, a team
+    purge, an owner revocation, an installation retirement) takes the same
+    order: the installation fence first when it needs it, then the role's row
+    through :func:`unassign` or :func:`purge_team`, then any approval locks,
+    so the two orders never cycle.
     """
     _require_role_name(role)
     held = await tx.fetch_value(
