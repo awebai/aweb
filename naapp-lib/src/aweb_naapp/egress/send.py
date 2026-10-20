@@ -29,10 +29,10 @@ import dns.name
 import dns.resolver
 import httpcore
 
-from .addresses import AddressPolicy, InternalDestinations, IPAddress, IPNetwork
-from .headers import HeaderRefusal, check_headers
+from .addresses import AddressPolicy, IPAddress
+from .headers import HeaderRefusal, HeaderRules, check_headers
 from .refused import EgressRefused
-from .urls import CanonicalURL
+from .urls import CanonicalURL, Destination, Network, canonical_url, match_destination
 
 CONNECT_TIMEOUT_SECONDS = 5.0
 TOTAL_TIMEOUT_SECONDS = 30.0
@@ -142,38 +142,50 @@ class Egress:
     async def send(
         self,
         method: str,
-        url: CanonicalURL,
+        url: str | CanonicalURL,
+        destination: Destination,
         *,
+        header_rules: HeaderRules,
         headers: Sequence[tuple[str, str]] = (),
-        header_allow: Iterable[str] = (),
         refuse_header: HeaderRefusal | None = None,
         body: bytes = b"",
-        internal: IPNetwork | None = None,
         bounds: Bounds | None = None,
     ) -> Response:
-        """Send one request to ``url``.
+        """Send one request to ``url``, which must match ``destination``.
 
-        The caller has already matched ``url`` against its destination;
-        ``internal`` is that destination's exact CIDR when it is internal.
+        The guard canonicalizes ``url`` again and matches it, with the
+        method, against the destination under the deploy setting, so a caller
+        that skipped either step is still refused. Whether the destination is
+        internal, and its CIDR, come from the destination alone.
         """
         bounds = bounds or self.bounds
-        headers = check_headers(headers, header_allow=header_allow, refuse=refuse_header)
+        canonical = canonical_url(str(url))
+        match_destination(
+            destination,
+            method,
+            canonical,
+            internal_destinations=self.addresses.internal_destinations,
+        )
+        headers = check_headers(
+            headers,
+            header_allow=destination.header_allow,
+            rules=header_rules,
+            refuse=refuse_header,
+        )
         if len(body) > bounds.max_request_bytes:
             raise EgressRefused("params_invalid", "request_body", "over the request bound")
-        if url.ip is not None or internal is not None:
-            if self.addresses.internal_destinations is not InternalDestinations.ALLOWED:
-                raise EgressRefused("internal_destinations_disabled", "internal_destinations")
-            if internal is None:
-                raise EgressRefused("destination_not_in_scope", "host", "an IP literal")
+        internal = destination.cidr if destination.network is Network.INTERNAL else None
         # One deadline covers resolution and the exchange, so total_timeout is
         # the longest a send can take.
         deadline = asyncio.get_running_loop().time() + bounds.total_timeout
-        if url.ip is not None:
-            addresses: list[IPAddress] = [url.ip]
+        if canonical.ip is not None:
+            addresses: list[IPAddress] = [canonical.ip]
         else:
-            addresses = await self._resolve(url.host, bounds, deadline)
+            addresses = await self._resolve(canonical.host, bounds, deadline)
         self.addresses.check(addresses, internal=internal)
-        return await self._exchange(method, url, addresses[0], headers, body, bounds, deadline)
+        return await self._exchange(
+            method, canonical, addresses[0], headers, body, bounds, deadline
+        )
 
     async def _resolve(self, host: str, bounds: Bounds, deadline: float) -> list[IPAddress]:
         resolve_by = min(deadline, asyncio.get_running_loop().time() + bounds.connect_timeout)

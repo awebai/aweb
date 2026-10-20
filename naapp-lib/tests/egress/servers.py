@@ -12,6 +12,7 @@ import asyncio
 import datetime
 import ipaddress
 import json
+import socket
 import ssl
 from collections import Counter
 from collections.abc import Callable
@@ -30,6 +31,28 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
 Answer = list[str] | Callable[[int], list[str]]
+
+
+def local_address() -> str:
+    """This host's own non-loopback IPv4 address.
+
+    The guard refuses loopback for every destination, internal ones included,
+    so the TLS server listens on the address of the host's outbound
+    interface. Connecting a UDP socket sends nothing; it only picks the route.
+    """
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))
+        address = probe.getsockname()[0]
+    except OSError as error:
+        raise RuntimeError(
+            "the egress network tests need a non-loopback IPv4 address on this host"
+        ) from error
+    finally:
+        probe.close()
+    if ipaddress.ip_address(address).is_loopback:
+        raise RuntimeError("the egress network tests need a non-loopback IPv4 address")
+    return address
 
 
 @dataclass
@@ -172,7 +195,7 @@ class Seen:
 
 @dataclass
 class TlsServer:
-    """An HTTPS/1.1 server on 127.0.0.1 with a few fixed paths.
+    """An HTTPS/1.1 server on ``host`` with a few fixed paths.
 
     ``/ok`` answers JSON, ``/redirect`` answers 302 to another host,
     ``/big?n=`` answers ``n`` bytes, ``/slow`` never answers, and ``/echo``
@@ -180,6 +203,7 @@ class TlsServer:
     """
 
     certificates: Certificates
+    host: str
     seen: list[Seen] = field(default_factory=list)
     port: int = 0
     _server: asyncio.Server | None = None
@@ -202,7 +226,7 @@ class TlsServer:
             finally:
                 writer.close()
 
-        self._server = await asyncio.start_server(handle, "127.0.0.1", 0, ssl=context)
+        self._server = await asyncio.start_server(handle, self.host, 0, ssl=context)
         self.port = self._server.sockets[0].getsockname()[1]
 
     async def close(self) -> None:

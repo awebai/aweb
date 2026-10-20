@@ -9,6 +9,7 @@ than guessed at.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -17,7 +18,7 @@ from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 import idna
 from publicsuffixlist import PublicSuffixList
 
-from .addresses import InternalDestinations, IPAddress, IPNetwork
+from .addresses import InternalDestinations, IPAddress, IPNetwork, check_internal_cidr
 from .refused import EgressRefused
 
 # Pinned in the egress extra and in the egress URL vector, which says how to update it.
@@ -142,6 +143,8 @@ def canonical_host(host: str) -> tuple[str, IPAddress | None]:
     """A hostname as lowercase A-labels, or a dotted-quad IPv4 literal."""
     if not host or "%" in host:
         raise _refuse("host")
+    if any(unicodedata.category(char) == "Cf" for char in host):
+        raise _refuse("host", "an invisible format character")
     try:
         encoded = idna.encode(host, uts46=True, std3_rules=True, transitional=False)
     except idna.IDNAError as error:
@@ -366,6 +369,8 @@ def check_destination(
     internal = destination.network is Network.INTERNAL
     if internal != (destination.cidr is not None):
         raise _refuse("network")
+    if destination.cidr is not None:
+        check_internal_cidr(destination.cidr)
     _check_destination_host(destination)
     _check_destination_path(destination.path)
     if (internal or destination.ip is not None) and (

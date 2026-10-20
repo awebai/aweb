@@ -1,16 +1,26 @@
 """Which caller-supplied request headers may be sent.
 
-A header passes only if it is on the default allowlist or the destination's
-``header_allow``, and is never one of the always-rejected names, whatever the
-destination allows. The caller can refuse more through ``refuse``, for
-example the names its own credential injection sets or values that look like
-a credential.
+The contract is the headers section of the egress URL conformance vector in
+``docs/vectors``. A header passes only if it is on the default allowlist, the
+destination's ``header_allow`` or the operation's ``amz_allowed``, and none of
+the refusals below applies, whatever the destination allows:
+
+- an always-rejected name or prefix, including the ones the guard sets itself;
+- a name the caller's own credential injection sets;
+- an ``X-Amz-*`` name outside ``amz_allowed`` (``X-Amz-Security-Token`` always);
+- a value the caller's credential-shape detector flags, or one holding a
+  control character other than tab or a character outside latin-1.
+
+The detector and the injected names belong to the caller's credential
+handling, so :class:`HeaderRules` has no defaults: a caller cannot leave a
+rule out by forgetting it. ``refuse`` can add refusals, never remove one.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 
 from .refused import EgressRefused
 
@@ -44,33 +54,66 @@ ALWAYS_REJECTED = frozenset(
     )
 )
 ALWAYS_REJECTED_PREFIXES = ("x-forwarded-",)
+AMZ_PREFIX = "x-amz-"
 
-_TOKEN = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
-_UNSAFE_VALUE = re.compile(r"[\r\n\x00]")
+_TOKEN = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+\Z")
+_CONTROL = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
 
 HeaderRefusal = Callable[[str, str], bool]
+
+
+@dataclass(frozen=True)
+class HeaderRules:
+    """The caller's part of the header rules; every field is required.
+
+    ``injected`` names the headers the caller's credential sets.
+    ``amz_allowed`` names the ``X-Amz-*`` headers the operation fixes.
+    ``is_credential`` says whether a value looks like a credential.
+    """
+
+    injected: Iterable[str]
+    amz_allowed: Iterable[str]
+    is_credential: Callable[[str], bool]
 
 
 def check_headers(
     headers: Sequence[tuple[str, str]],
     *,
     header_allow: Iterable[str],
+    rules: HeaderRules,
     refuse: HeaderRefusal | None = None,
 ) -> list[tuple[str, str]]:
     """Return ``headers`` unchanged, or refuse with ``header_not_allowed``."""
-    allowed = DEFAULT_ALLOW | {name.lower() for name in header_allow}
+    injected = {name.lower() for name in rules.injected}
+    amz_allowed = {name.lower() for name in rules.amz_allowed}
+    allowed = DEFAULT_ALLOW | {name.lower() for name in header_allow} | amz_allowed
     seen: set[str] = set()
     for name, value in headers:
+        if not _well_formed(name, value):
+            raise EgressRefused("header_not_allowed", "header", "malformed header")
         lowered = name.lower()
-        if not _TOKEN.match(name) or _UNSAFE_VALUE.search(value):
-            raise EgressRefused("header_not_allowed", "header", name)
         if lowered in seen:
             raise EgressRefused("header_not_allowed", "header", name)
         seen.add(lowered)
-        if lowered in ALWAYS_REJECTED or lowered.startswith(ALWAYS_REJECTED_PREFIXES):
+        if (
+            lowered in ALWAYS_REJECTED
+            or lowered.startswith(ALWAYS_REJECTED_PREFIXES)
+            or lowered in injected
+            or (lowered.startswith(AMZ_PREFIX) and lowered not in amz_allowed)
+            or lowered not in allowed
+        ):
             raise EgressRefused("header_not_allowed", "header", name)
-        if lowered not in allowed:
-            raise EgressRefused("header_not_allowed", "header", name)
-        if refuse is not None and refuse(name, value):
+        if rules.is_credential(value) or (refuse is not None and refuse(name, value)):
             raise EgressRefused("header_not_allowed", "header", name)
     return list(headers)
+
+
+def _well_formed(name: str, value: str) -> bool:
+    """True when the name is a token and the value is latin-1 without control characters."""
+    if not _TOKEN.match(name) or _CONTROL.search(value):
+        return False
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return True

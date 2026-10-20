@@ -1,9 +1,13 @@
 """Which resolved addresses an outbound request may connect to.
 
-Every address a name resolves to is checked, and one denied address refuses
-the name. IPv6 forms that carry an IPv4 address (IPv4-mapped, NAT64, 6to4 and
-Teredo) are checked against the IPv4 ranges as well, so a denied IPv4 address
-cannot be reached by writing it as IPv6.
+The contract is the egress address conformance vector in ``docs/vectors``.
+Every address a name resolves to is checked, and one refused address refuses
+the name. A floor of ranges (loopback, link-local and cloud metadata,
+unspecified, multicast) is refused for every destination, internal ones
+included. A public destination's IPv6 address must be global unicast, and
+IPv6 forms that carry an IPv4 address (NAT64, 6to4, Teredo) are checked
+against the IPv4 ranges as well, so a refused IPv4 address cannot be reached
+by writing it as IPv6.
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import StrEnum
-from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network
+from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_network
 
 from .refused import EgressRefused
 
@@ -38,23 +42,36 @@ DENIED_IPV4: tuple[IPv4Network, ...] = tuple(
     )
 )
 
+# Inside 2000::/3, the only IPv6 a public destination may use besides NAT64.
 DENIED_IPV6: tuple[IPv6Network, ...] = tuple(
     IPv6Network(cidr)
     for cidr in (
-        "::/96",  # unspecified, loopback and IPv4-compatible
-        "100::/64",  # discard-only
         "64:ff9b:1::/48",  # local-use NAT64
         "2001:2::/48",  # benchmarking
         "2001:db8::/32",  # documentation
         "3fff::/20",  # documentation
-        "fc00::/7",  # unique local
+    )
+)
+
+PUBLIC_IPV6 = IPv6Network("2000::/3")
+NAT64 = IPv6Network("64:ff9b::/96")
+
+# Refused for every destination, internal ones included.
+FLOOR: tuple[IPNetwork, ...] = tuple(
+    ip_network(cidr)
+    for cidr in (
+        "0.0.0.0/8",  # "this network" and unspecified
+        "127.0.0.0/8",  # loopback
+        "169.254.0.0/16",  # link-local, cloud metadata
+        "224.0.0.0/4",  # multicast
+        "::/8",  # unspecified, loopback, IPv4-mapped/compatible/translated (NAT64 aside)
         "fe80::/10",  # link-local
-        "fec0::/10",  # deprecated site-local
+        "fd00:ec2::254/128",  # cloud metadata
         "ff00::/8",  # multicast
     )
 )
 
-NAT64 = IPv6Network("64:ff9b::/96")
+MIN_INTERNAL_PREFIX = {4: 8, 6: 32}
 
 
 class InternalDestinations(StrEnum):
@@ -66,8 +83,6 @@ class InternalDestinations(StrEnum):
 
 def embedded_ipv4(address: IPv6Address) -> tuple[IPv4Address, ...]:
     """The IPv4 addresses an IPv6 address carries and would route to."""
-    if address.ipv4_mapped is not None:
-        return (address.ipv4_mapped,)
     if address in NAT64:
         return (IPv4Address(int(address) & 0xFFFFFFFF),)
     if address.sixtofour is not None:
@@ -75,6 +90,30 @@ def embedded_ipv4(address: IPv6Address) -> tuple[IPv4Address, ...]:
     if address.teredo is not None:
         return address.teredo
     return ()
+
+
+def _in_floor(address: IPAddress) -> bool:
+    if isinstance(address, IPv6Address) and address in NAT64:
+        return any(_in_floor(v4) for v4 in embedded_ipv4(address))
+    return any(address.version == n.version and address in n for n in FLOOR)
+
+
+def check_internal_cidr(cidr: str | IPNetwork) -> IPNetwork:
+    """An internal destination's CIDR: exact, not too wide, and clear of the floor."""
+    try:
+        network = ip_network(cidr, strict=True) if isinstance(cidr, str) else cidr
+    except ValueError as error:
+        raise EgressRefused("destination_not_in_scope", "network", str(cidr)) from error
+    if network.prefixlen < MIN_INTERNAL_PREFIX[network.version]:
+        raise EgressRefused("destination_not_in_scope", "network", f"{network} is too wide")
+    inside_nat64 = isinstance(network, IPv6Network) and network.subnet_of(NAT64)
+    for floor in FLOOR:
+        if floor.version != network.version or not network.overlaps(floor):
+            continue
+        if inside_nat64 and str(floor) == "::/8":
+            continue
+        raise EgressRefused("destination_not_in_scope", "network", f"{network} overlaps {floor}")
+    return network
 
 
 @dataclass(frozen=True)
@@ -104,8 +143,10 @@ class AddressPolicy:
             raise EgressRefused("destination_address_denied", "address", "the name has no address")
         if internal is not None and self.internal_destinations is not InternalDestinations.ALLOWED:
             raise EgressRefused("internal_destinations_disabled", "internal_destinations")
+        if internal is not None:
+            check_internal_cidr(internal)
         for address in addresses:
-            if self._deployment_denies(address):
+            if _in_floor(address) or self._deployment_denies(address):
                 raise EgressRefused("destination_address_denied", "address", str(address))
             if internal is not None:
                 if address.version != internal.version or address not in internal:
@@ -126,6 +167,8 @@ class AddressPolicy:
     def _is_denied(self, address: IPAddress) -> bool:
         if isinstance(address, IPv4Address):
             return any(address in network for network in DENIED_IPV4)
-        if any(address in network for network in DENIED_IPV6):
+        if address not in NAT64 and (
+            address not in PUBLIC_IPV6 or any(address in network for network in DENIED_IPV6)
+        ):
             return True
         return any(self._is_denied(v4) for v4 in embedded_ipv4(address))

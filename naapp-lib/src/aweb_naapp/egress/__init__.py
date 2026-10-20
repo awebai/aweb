@@ -8,8 +8,8 @@ followed and no proxy from the environment.
 
 from __future__ import annotations
 
-from .addresses import AddressPolicy, InternalDestinations
-from .headers import check_headers
+from .addresses import AddressPolicy, InternalDestinations, check_internal_cidr
+from .headers import HeaderRules, check_headers
 from .refused import EgressRefused
 from .send import (
     Bounds,
@@ -44,6 +44,7 @@ __all__ = [
     "EgressNotSent",
     "EgressOutcomeUnknown",
     "EgressRefused",
+    "HeaderRules",
     "InternalDestinations",
     "Network",
     "Presence",
@@ -51,6 +52,7 @@ __all__ = [
     "Resolver",
     "Response",
     "canonical_url",
+    "check_internal_cidr",
     "check_destination",
     "check_headers",
     "match_destination",

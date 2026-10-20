@@ -3,11 +3,12 @@
   "status": "frozen by its reviewed landing (aweb-acgh.18.2, S1); derived from secrets.md section 7.2 and the section 16 scope rows; a change needs a new version",
   "scheme": {
     "url": "https only (scheme compared case-insensitively, written lowercase); no userinfo, no fragment, no backslash, no whitespace or control character anywhere; only the host may hold non-ASCII characters",
-    "host": "IDNA2008 with UTS46 mapping (non-transitional, STD3 rules) to lowercase A-labels; empty labels and a trailing dot are refused; a host whose last label is numeric or 0x-hex is refused unless it is a dotted-quad IPv4 address without leading zeros; an IPv6 literal is bracketed, has no zone and is written compressed and lowercase",
+    "host": "IDNA2008 with UTS46 mapping (non-transitional, STD3 rules) to lowercase A-labels; empty labels and a trailing dot are refused; a host whose last label is numeric or 0x-hex is refused unless it is a dotted-quad IPv4 address without leading zeros; an IPv6 literal is bracketed, has no zone and is written in RFC 5952 form (compressed, lowercase, an IPv4-mapped address in dotted notation)",
     "port": "decimal 1-65535 without leading zeros; 443 is the default and is omitted from the canonical URL",
     "path": "empty becomes '/'; raw characters are unreserved, sub-delims, ':', '@', '/' and '%'; each percent-encoding is two hex digits; encodings of unreserved characters are decoded and the hex of every other encoding is uppercased; %2F, %5C, %00 to %1F and %7F are refused; after decoding, an empty segment ('//') and a '.' or '..' segment are refused; one trailing '/' is kept",
     "query": "an empty query after '?' is dropped; pairs are separated by '&' and kept in order; a pair is key or key=value; an empty pair, a raw '+', and a raw '=' inside a value are refused; raw characters are unreserved, sub-delims other than '&', '+' and '=', ':', '@', '/', '?' and '%'; percent-encodings follow the path rules except that only %00 to %1F and %7F are refused; keys and values must decode to UTF-8",
-    "destination": "{host, port (default 443), path, methods, query_rules, header_allow, network ('public' default, or 'internal' with cidr)}",
+    "destination": "{host, port (default 443), path, methods, query_rules, header_allow, network ('public' default, or 'internal' with cidr)}; an internal cidr follows the internal_cidr rule of egress-address-v1.json",
+    "host_format_characters": "a host holding any Unicode format character (category Cf: zero-width space, joiners, soft hyphen, byte-order mark and the like) is refused, since IDNA mapping would silently drop or keep an invisible difference",
     "destination_host": "a canonical host; or '*.' plus a canonical host, where '*' is exactly one leftmost label, never matches the bare parent and never matches more than one label, and the parent must not be a public suffix in the pinned Public Suffix List, ICANN and private sections alike; or an IP literal, only with network 'internal'",
     "destination_path": "a canonical path whose segments are literal, '{name}' (one non-empty segment, captured), or '**' as the last segment (that position and everything below it, including nothing); names match ^[a-z_][a-z0-9_]{0,63}$ and are unique",
     "methods": "a non-empty subset of GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS, matched case-sensitively; CONNECT, TRACE and any other method are always refused",
@@ -32,6 +33,9 @@
     {"name": "idna_fullwidth_mapped", "url": "https://ＡＰＩ.example/x", "canonical": "https://api.example/x"},
     {"name": "ipv4_literal", "url": "https://10.0.0.5/x", "canonical": "https://10.0.0.5/x"},
     {"name": "ipv6_literal_compressed", "url": "https://[FD00:0:0:0:0:0:0:5]:8443/x", "canonical": "https://[fd00::5]:8443/x"},
+    {"name": "fullwidth_ipv4_literal", "url": "https://１２７．０．０．１/x", "canonical": "https://127.0.0.1/x"},
+    {"name": "ideographic_dot_ipv4_literal", "url": "https://127。0。0。1/x", "canonical": "https://127.0.0.1/x"},
+    {"name": "ipv4_mapped_literal", "url": "https://[::ffff:127.0.0.1]/x", "canonical": "https://[::ffff:127.0.0.1]/x"},
     {"name": "unreserved_decoded", "url": "https://api.example.com/%7euser/%41b%2D", "canonical": "https://api.example.com/~user/Ab-"},
     {"name": "reserved_hex_uppercased", "url": "https://api.example.com/a%3ab/%c3%a9", "canonical": "https://api.example.com/a%3Ab/%C3%A9"},
     {"name": "trailing_slash_kept", "url": "https://api.example.com/v1/charges/", "canonical": "https://api.example.com/v1/charges/"},
@@ -58,6 +62,10 @@
     {"name": "trailing_dot", "url": "https://api.example.com./x", "code": "destination_not_in_scope", "rule": "host"},
     {"name": "trailing_ideographic_full_stop", "url": "https://api.example.com。/x", "code": "destination_not_in_scope", "rule": "host"},
     {"name": "empty_label", "url": "https://api..example.com/x", "code": "destination_not_in_scope", "rule": "host"},
+    {"name": "zero_width_space_in_host", "url": "https://api\u200b.example.com/x", "code": "destination_not_in_scope", "rule": "host"},
+    {"name": "zero_width_joiner_in_host", "url": "https://ap\u200di.example.com/x", "code": "destination_not_in_scope", "rule": "host"},
+    {"name": "soft_hyphen_in_host", "url": "https://api\u00ad.example.com/x", "code": "destination_not_in_scope", "rule": "host"},
+    {"name": "byte_order_mark_in_host", "url": "https://\ufeffapi.example.com/x", "code": "destination_not_in_scope", "rule": "host"},
     {"name": "underscore_label", "url": "https://a_b.example.com/x", "code": "destination_not_in_scope", "rule": "host"},
     {"name": "wildcard_in_url", "url": "https://*.example.com/x", "code": "destination_not_in_scope", "rule": "host"},
     {"name": "percent_in_host", "url": "https://api%2eexample.com/x", "code": "destination_not_in_scope", "rule": "host"},
@@ -117,6 +125,10 @@
     {"name": "internal_without_cidr", "internal_destinations": "allowed", "destination": {"host": "billing.corp.example", "path": "/**", "methods": ["GET"], "network": "internal"}, "code": "destination_not_in_scope", "rule": "network"},
     {"name": "cidr_with_host_bits", "internal_destinations": "allowed", "destination": {"host": "billing.corp.example", "path": "/**", "methods": ["GET"], "network": "internal", "cidr": "10.20.0.5/24"}, "code": "destination_not_in_scope", "rule": "network"},
     {"name": "cidr_on_public", "internal_destinations": "allowed", "destination": {"host": "api.example.com", "path": "/**", "methods": ["GET"], "cidr": "10.20.0.0/24"}, "code": "destination_not_in_scope", "rule": "network"},
+    {"name": "cidr_unbounded", "internal_destinations": "allowed", "destination": {"host": "billing.corp.example", "path": "/**", "methods": ["GET"], "network": "internal", "cidr": "0.0.0.0/0"}, "code": "destination_not_in_scope", "rule": "network"},
+    {"name": "cidr_loopback", "internal_destinations": "allowed", "destination": {"host": "127.0.0.1", "path": "/**", "methods": ["GET"], "network": "internal", "cidr": "127.0.0.1/32"}, "code": "destination_not_in_scope", "rule": "network"},
+    {"name": "cidr_metadata", "internal_destinations": "allowed", "destination": {"host": "169.254.169.254", "path": "/**", "methods": ["GET"], "network": "internal", "cidr": "169.254.169.254/32"}, "code": "destination_not_in_scope", "rule": "network"},
+    {"name": "cidr_ipv6_too_wide", "internal_destinations": "allowed", "destination": {"host": "billing.corp.example", "path": "/**", "methods": ["GET"], "network": "internal", "cidr": "fd00::/16"}, "code": "destination_not_in_scope", "rule": "network"},
     {"name": "internal_when_disabled", "internal_destinations": "disabled", "destination": {"host": "billing.corp.example", "path": "/**", "methods": ["GET"], "network": "internal", "cidr": "10.20.0.0/24"}, "code": "internal_destinations_disabled", "rule": "internal_destinations"},
     {"name": "ip_literal_when_disabled", "internal_destinations": "disabled", "destination": {"host": "10.20.0.5", "path": "/**", "methods": ["GET"], "network": "internal", "cidr": "10.20.0.5/32"}, "code": "internal_destinations_disabled", "rule": "internal_destinations"},
     {"name": "method_connect", "internal_destinations": "disabled", "destination": {"host": "api.example.com", "path": "/**", "methods": ["CONNECT"]}, "code": "destination_not_in_scope", "rule": "method"},
@@ -180,11 +192,13 @@
     "default_allow": ["Accept", "Accept-Language", "Content-Type", "If-Match", "If-None-Match", "X-Request-Id"],
     "always_rejected": ["Authorization", "Proxy-Authorization", "Cookie", "X-Api-Key", "X-Amz-Security-Token", "Host", "Content-Length", "Transfer-Encoding", "Connection", "TE", "Upgrade", "Forwarded", "User-Agent"],
     "always_rejected_prefixes": ["X-Forwarded-"],
-    "rules": "the guard itself sets Host, User-Agent, Connection and Content-Length; names compare case-insensitively; a name must be an RFC 9110 token and a value must hold no CR, LF or NUL; a header passes only if it is in default_allow or the destination's header_allow and is not always rejected, whatever header_allow says; the caller may refuse more names or values; duplicate names are refused",
+    "rules": "the guard itself sets Host, User-Agent, Connection and Content-Length; names compare case-insensitively; a name must be an RFC 9110 token and a value must be latin-1 with no control character other than tab; duplicate names are refused; a header passes only if it is in default_allow, the destination's header_allow or the operation's amz_allowed, and is never always rejected, never one of the names the caller's credential injects, and never an X-Amz-* header outside amz_allowed (X-Amz-Security-Token is always rejected); its value must not look like a credential to the caller's detector, which every caller supplies; a caller may refuse more but cannot allow what these rules refuse",
     "allowed": [
       {"name": "accept", "header_allow": [], "headers": [["Accept", "application/json"]]},
       {"name": "case_insensitive", "header_allow": [], "headers": [["content-type", "application/json"]]},
-      {"name": "destination_allow", "header_allow": ["Api-Version"], "headers": [["api-version", "2024-06-20"]]}
+      {"name": "destination_allow", "header_allow": ["Api-Version"], "headers": [["api-version", "2024-06-20"]]},
+      {"name": "tab_in_value", "header_allow": [], "headers": [["Accept", "a\tb"]]},
+      {"name": "amz_declared_by_operation", "header_allow": [], "amz_allowed": ["X-Amz-Target"], "headers": [["x-amz-target", "DynamoDB_20120810.GetItem"]]}
     ],
     "refused": [
       {"name": "authorization", "header_allow": [], "headers": [["Authorization", "Bearer x"]], "code": "header_not_allowed"},
@@ -197,7 +211,18 @@
       {"name": "unlisted", "header_allow": [], "headers": [["X-Custom", "1"]], "code": "header_not_allowed"},
       {"name": "crlf_value", "header_allow": [], "headers": [["Accept", "a\r\nX-Injected: 1"]], "code": "header_not_allowed"},
       {"name": "bad_name", "header_allow": [], "headers": [["Accept:", "a"]], "code": "header_not_allowed"},
-      {"name": "duplicate", "header_allow": [], "headers": [["Accept", "a"], ["accept", "b"]], "code": "header_not_allowed"}
+      {"name": "duplicate", "header_allow": [], "headers": [["Accept", "a"], ["accept", "b"]], "code": "header_not_allowed"},
+      {"name": "user_agent_lowercase", "header_allow": ["user-agent"], "headers": [["user-agent", "a"]], "code": "header_not_allowed"},
+      {"name": "x_forwarded_host", "header_allow": ["X-Forwarded-Host"], "headers": [["X-Forwarded-Host", "evil.example"]], "code": "header_not_allowed"},
+      {"name": "amz_undeclared", "header_allow": ["X-Amz-Date"], "headers": [["X-Amz-Date", "20261020T000000Z"]], "code": "header_not_allowed"},
+      {"name": "amz_target_undeclared", "header_allow": ["X-Amz-Target"], "headers": [["X-Amz-Target", "a"]], "code": "header_not_allowed"},
+      {"name": "amz_security_token_declared", "header_allow": [], "amz_allowed": ["X-Amz-Security-Token"], "headers": [["X-Amz-Security-Token", "a"]], "code": "header_not_allowed"},
+      {"name": "injected_name", "header_allow": ["X-Vendor-Key"], "injected": ["X-Vendor-Key"], "headers": [["x-vendor-key", "a"]], "code": "header_not_allowed"},
+      {"name": "control_soh_value", "header_allow": [], "headers": [["Accept", "a\u0001b"]], "code": "header_not_allowed"},
+      {"name": "control_del_value", "header_allow": [], "headers": [["Accept", "ab"]], "code": "header_not_allowed"},
+      {"name": "non_latin1_value", "header_allow": [], "headers": [["Accept", "a☃"]], "code": "header_not_allowed"},
+      {"name": "name_with_trailing_newline", "header_allow": [], "headers": [["Accept\n", "a"]], "code": "header_not_allowed"},
+      {"name": "allowlisted_name_with_trailing_newline", "header_allow": ["X-Vendor\n"], "headers": [["X-Vendor\n", "a"]], "code": "header_not_allowed"}
     ]
   }
 }

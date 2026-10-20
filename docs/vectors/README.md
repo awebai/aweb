@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 24
+`docs/vectors/*.json` is the only public protocol-vector authority for the 25
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -223,6 +223,16 @@ implemented them; changing them needs a new version.
 
 ## Shared naapp library fixtures
 
+### `egress-address-v1.json`
+
+The egress guard's address rules (`aweb_naapp.egress`, secrets lane S1). Every
+address a name resolves to is checked. A floor (loopback, link-local and cloud
+metadata, unspecified, multicast) is refused for every destination, internal
+ones included. A public destination's IPv6 address must be global unicast or
+NAT64, and IPv4 addresses embedded in NAT64, 6to4 and Teredo forms are checked
+as IPv4. Internal destinations need the deploy-level `internal_destinations`
+switch and an exact CIDR of bounded width that overlaps no floor range.
+
 ### `egress-url-v1.json`
 
 The egress guard's URL contract (`aweb_naapp.egress`, secrets lane S1), used by
@@ -330,6 +340,7 @@ reference duplication are mutation-tested failures.
 | `atomic-address-claim-v1.json` | Python AWID `test_atomic_claim.py`; Go AWID `atomic_address_claim_test.go` |
 | `dns-txt-v1.json` | Python AWID `test_conformance_vectors.py`; Python aweb `test_identity_conformance_vectors.py`; TypeScript channel-core `registry.test.ts` |
 | `e2ee-v2-cross-language.json` | Python aweb `test_e2ee_crypto_helpers.py` and pre-activation federation harness; Go AWID `e2ee_cross_language_test.go`; TypeScript channel-core `encrypted_dispatch.test.ts` |
+| `egress-address-v1.json` | naapp-lib `test_addresses.py` |
 | `egress-url-v1.json` | naapp-lib `test_url_vectors.py` |
 | `identity-log-negative-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_negative_test.go`; TypeScript channel-core `registry.test.ts` |
 | `identity-log-raw-wire-v1.json` | Python AWID `test_identity_log_verify.py`; Go shared `identity_log_raw_wire_test.go`; TypeScript channel-core `registry.test.ts` |

@@ -11,6 +11,7 @@ import pytest
 from aweb_naapp.egress import (
     PUBLIC_SUFFIX_LIST_VERSION,
     EgressRefused,
+    HeaderRules,
     InternalDestinations,
     canonical_url,
     check_headers,
@@ -95,39 +96,80 @@ def test_refused_match(case: dict) -> None:
 
 
 HEADERS = VECTORS["headers"]
+CANARY = "credential-canary"
+
+
+def _never(value: str) -> bool:
+    return False
+
+
+def _rules(case: dict | None = None, detector=_never) -> HeaderRules:
+    case = case or {}
+    return HeaderRules(
+        injected=case.get("injected", []),
+        amz_allowed=case.get("amz_allowed", []),
+        is_credential=detector,
+    )
 
 
 @pytest.mark.parametrize("case", _named(HEADERS["allowed"]))
 def test_headers_allowed(case: dict) -> None:
     headers = [tuple(pair) for pair in case["headers"]]
-    assert check_headers(headers, header_allow=case["header_allow"]) == headers
+    assert check_headers(headers, header_allow=case["header_allow"], rules=_rules(case)) == headers
 
 
 @pytest.mark.parametrize("case", _named(HEADERS["refused"]))
 def test_headers_refused(case: dict) -> None:
     with pytest.raises(EgressRefused) as refused:
-        check_headers([tuple(pair) for pair in case["headers"]], header_allow=case["header_allow"])
+        check_headers(
+            [tuple(pair) for pair in case["headers"]],
+            header_allow=case["header_allow"],
+            rules=_rules(case),
+        )
     assert refused.value.code == case["code"]
 
 
 def test_every_always_rejected_header_is_refused_even_when_allowed() -> None:
     for name in HEADERS["always_rejected"]:
-        with pytest.raises(EgressRefused):
-            check_headers([(name, "x")], header_allow=[name])
-        with pytest.raises(EgressRefused):
-            check_headers([(name.upper(), "x")], header_allow=[name])
+        for spelling in (name, name.upper(), name.lower()):
+            with pytest.raises(EgressRefused):
+                check_headers([(spelling, "x")], header_allow=[name], rules=_rules())
+
+
+def test_every_always_rejected_prefix_is_refused_even_when_allowed() -> None:
+    for prefix in HEADERS["always_rejected_prefixes"]:
+        for name in (prefix + "For", prefix + "Host", (prefix + "Proto").upper()):
+            with pytest.raises(EgressRefused):
+                check_headers([(name, "x")], header_allow=[name], rules=_rules())
 
 
 def test_every_default_allowed_header_passes() -> None:
     for name in HEADERS["default_allow"]:
-        assert check_headers([(name, "x")], header_allow=[]) == [(name, "x")]
+        assert check_headers([(name, "x")], header_allow=[], rules=_rules()) == [(name, "x")]
 
 
-def test_caller_can_refuse_more_headers() -> None:
-    def refuse(name: str, value: str) -> bool:
-        return value.startswith("sk_live_")
+def test_a_credential_shaped_value_is_refused() -> None:
+    def detector(value: str) -> bool:
+        return CANARY in value
 
-    check_headers([("Accept", "application/json")], header_allow=[], refuse=refuse)
+    check_headers(
+        [("Accept", "application/json")], header_allow=[], rules=_rules(detector=detector)
+    )
     with pytest.raises(EgressRefused) as refused:
-        check_headers([("Accept", "sk_live_canary")], header_allow=[], refuse=refuse)
+        check_headers([("Accept", CANARY)], header_allow=[], rules=_rules(detector=detector))
     assert refused.value.code == "header_not_allowed"
+
+
+def test_the_extra_refusal_cannot_allow_a_refused_header() -> None:
+    def refuse(name: str, value: str) -> bool:
+        return value.startswith("block")
+
+    with pytest.raises(EgressRefused):
+        check_headers([("Accept", "block-me")], header_allow=[], rules=_rules(), refuse=refuse)
+    with pytest.raises(EgressRefused):
+        check_headers([("Cookie", "a")], header_allow=["Cookie"], rules=_rules(), refuse=refuse)
+
+
+def test_header_rules_have_no_defaults() -> None:
+    with pytest.raises(TypeError):
+        HeaderRules()  # type: ignore[call-arg]

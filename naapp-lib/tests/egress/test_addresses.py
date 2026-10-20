@@ -1,150 +1,91 @@
-"""The address policy refuses every denied range, directly or embedded in IPv6."""
+"""The address policy against the frozen egress address vector, read in place."""
 
 from __future__ import annotations
 
+import json
 from ipaddress import ip_address, ip_network
+from pathlib import Path
 
 import pytest
 
-from aweb_naapp.egress import AddressPolicy, EgressRefused, InternalDestinations
+from aweb_naapp.egress import (
+    AddressPolicy,
+    EgressRefused,
+    InternalDestinations,
+    check_internal_cidr,
+)
+from aweb_naapp.egress.addresses import DENIED_IPV4, DENIED_IPV6, FLOOR, NAT64, PUBLIC_IPV6
 
-DENIED = [
-    "0.0.0.0",
-    "0.1.2.3",
-    "127.0.0.1",
-    "127.255.255.254",
-    "10.0.0.1",
-    "172.16.0.1",
-    "172.31.255.255",
-    "192.168.1.1",
-    "100.64.0.1",
-    "100.127.255.255",
-    "169.254.169.254",
-    "169.254.0.1",
-    "224.0.0.1",
-    "239.255.255.250",
-    "255.255.255.255",
-    "240.0.0.1",
-    "192.0.2.1",
-    "198.51.100.7",
-    "203.0.113.9",
-    "198.18.0.1",
-    "198.19.255.255",
-    "192.0.0.170",
-    "::",
-    "::1",
-    "fe80::1",
-    "fc00::1",
-    "fd12:3456::1",
-    "ff02::1",
-    "2001:db8::1",
-    "3fff::1",
-    "2001:2::1",
-    "fec0::1",
-    "100::1",
-    # IPv4-mapped and IPv4-compatible forms of denied addresses.
-    "::ffff:127.0.0.1",
-    "::ffff:10.0.0.1",
-    "::ffff:169.254.169.254",
-    "::127.0.0.1",
-    "::8.8.8.8",
-    # NAT64 well-known prefix embedding a denied address; local-use NAT64.
-    "64:ff9b::a00:1",
-    "64:ff9b::7f00:1",
-    "64:ff9b:1::808:808",
-    # 6to4 embedding a denied address.
-    "2002:a00:1::1",
-    "2002:7f00:1::",
-    "2002:a9fe:a9fe::1",
-    # Teredo with a denied client (stored inverted) or a denied server.
-    "2001:0:4136:e378:8000:63bf:f5ff:fffe",
-    "2001:0:a00:1:8000:63bf:f7f7:f7f7",
-]
-
-ALLOWED = [
-    "8.8.8.8",
-    "1.1.1.1",
-    "93.184.215.14",
-    "100.63.255.255",
-    "100.128.0.0",
-    "172.32.0.1",
-    "2606:4700:4700::1111",
-    "2a00:1450:4001:80b::200e",
-    "::ffff:8.8.8.8",
-    "64:ff9b::808:808",
-    "2002:808:808::1",
-    "2001:0:4136:e378:8000:63bf:f7f7:f7f7",
-]
+AWEB_ROOT = Path(__file__).resolve().parents[3]
+VECTORS = json.loads((AWEB_ROOT / "docs" / "vectors" / "egress-address-v1.json").read_text())
 
 
-@pytest.mark.parametrize("address", DENIED)
-def test_denied_address_is_refused(address: str) -> None:
-    with pytest.raises(EgressRefused) as refused:
-        AddressPolicy().check([ip_address(address)])
-    assert refused.value.code == "destination_address_denied"
+def test_the_ranges_are_the_vectors() -> None:
+    assert [str(n) for n in DENIED_IPV4] == VECTORS["denied_ipv4"]
+    assert [str(n) for n in DENIED_IPV6] == VECTORS["denied_ipv6"]
+    assert [str(n) for n in FLOOR] == VECTORS["floor_ipv4"] + VECTORS["floor_ipv6"]
+    assert (str(NAT64), str(PUBLIC_IPV6)) == (VECTORS["nat64"], VECTORS["public_ipv6"])
 
 
-@pytest.mark.parametrize("address", ALLOWED)
-def test_public_address_passes(address: str) -> None:
-    AddressPolicy().check([ip_address(address)])
+def _check(policy: AddressPolicy, addresses: list[str], cidr: str | None = None) -> str:
+    internal = ip_network(cidr) if cidr else None
+    try:
+        policy.check([ip_address(a) for a in addresses], internal=internal)
+    except EgressRefused as refused:
+        return refused.code
+    return "allowed"
 
 
-def test_one_private_record_among_public_ones_refuses_the_name() -> None:
-    addresses = [ip_address("8.8.8.8"), ip_address("10.0.0.1"), ip_address("1.1.1.1")]
-    with pytest.raises(EgressRefused) as refused:
-        AddressPolicy().check(addresses)
-    assert refused.value.code == "destination_address_denied"
+@pytest.mark.parametrize("address", VECTORS["public_denied"])
+def test_public_denied(address: str) -> None:
+    assert _check(AddressPolicy(), [address]) == "destination_address_denied"
+
+
+@pytest.mark.parametrize("address", VECTORS["public_allowed"])
+def test_public_allowed(address: str) -> None:
+    assert _check(AddressPolicy(), [address]) == "allowed"
+
+
+@pytest.mark.parametrize("case", VECTORS["mixed_records"], ids=lambda c: c["name"])
+def test_one_refused_record_refuses_the_name(case: dict) -> None:
+    assert _check(AddressPolicy(), case["addresses"]) == "destination_address_denied"
 
 
 def test_no_address_is_refused() -> None:
-    with pytest.raises(EgressRefused) as refused:
-        AddressPolicy().check([])
-    assert refused.value.code == "destination_address_denied"
+    assert _check(AddressPolicy(), []) == "destination_address_denied"
 
 
-def test_deployment_denied_addresses_are_refused_directly_and_embedded() -> None:
-    policy = AddressPolicy(denied=(ip_network("203.0.112.0/24"),))
-    AddressPolicy().check([ip_address("203.0.112.5")])
-    for address in ("203.0.112.5", "::ffff:203.0.112.5", "64:ff9b::cb00:7005"):
-        with pytest.raises(EgressRefused) as refused:
-            policy.check([ip_address(address)])
-        assert refused.value.code == "destination_address_denied"
+@pytest.mark.parametrize("case", VECTORS["internal"], ids=lambda c: c["name"])
+def test_internal(case: dict) -> None:
+    policy = AddressPolicy(internal_destinations=InternalDestinations(case["setting"]))
+    assert _check(policy, case["addresses"], case["cidr"]) == case["result"]
 
 
-INTERNAL = ip_network("10.20.0.0/24")
-
-
-def test_internal_destination_is_refused_when_disabled() -> None:
-    with pytest.raises(EgressRefused) as refused:
-        AddressPolicy().check([ip_address("10.20.0.5")], internal=INTERNAL)
-    assert refused.value.code == "internal_destinations_disabled"
-
-
-def test_internal_destination_passes_inside_its_exact_cidr_when_allowed() -> None:
-    policy = AddressPolicy(internal_destinations=InternalDestinations.ALLOWED)
-    policy.check([ip_address("10.20.0.5")], internal=INTERNAL)
-
-
-def test_internal_destination_refuses_an_address_outside_its_cidr() -> None:
-    policy = AddressPolicy(internal_destinations=InternalDestinations.ALLOWED)
-    for address in ("10.20.1.5", "8.8.8.8"):
-        with pytest.raises(EgressRefused) as refused:
-            policy.check([ip_address("10.20.0.5"), ip_address(address)], internal=INTERNAL)
-        assert refused.value.code == "destination_address_denied"
-
-
-def test_allowed_setting_does_not_open_denied_ranges_to_public_destinations() -> None:
-    policy = AddressPolicy(internal_destinations=InternalDestinations.ALLOWED)
-    with pytest.raises(EgressRefused) as refused:
-        policy.check([ip_address("10.20.0.5")])
-    assert refused.value.code == "destination_address_denied"
-
-
-def test_deployment_denied_addresses_stay_denied_inside_an_internal_cidr() -> None:
+@pytest.mark.parametrize("case", VECTORS["deployment_denied"], ids=lambda c: c["name"])
+def test_deployment_denied(case: dict) -> None:
     policy = AddressPolicy(
         internal_destinations=InternalDestinations.ALLOWED,
-        denied=(ip_network("10.20.0.1/32"),),
+        denied=tuple(ip_network(n) for n in case["denied"]),
     )
+    assert _check(policy, case["addresses"], case["cidr"]) == case["result"]
+
+
+@pytest.mark.parametrize("cidr", VECTORS["internal_cidrs"]["valid"])
+def test_internal_cidr_valid(cidr: str) -> None:
+    check_internal_cidr(cidr)
+
+
+@pytest.mark.parametrize("cidr", VECTORS["internal_cidrs"]["refused"])
+def test_internal_cidr_refused(cidr: str) -> None:
     with pytest.raises(EgressRefused) as refused:
-        policy.check([ip_address("10.20.0.1")], internal=INTERNAL)
-    assert refused.value.code == "destination_address_denied"
+        check_internal_cidr(cidr)
+    assert (refused.value.code, refused.value.rule) == ("destination_not_in_scope", "network")
+
+
+def test_the_policy_refuses_an_unbounded_internal_cidr() -> None:
+    # The address alone would pass; only the CIDR is out of bounds.
+    policy = AddressPolicy(internal_destinations=InternalDestinations.ALLOWED)
+    policy.check([ip_address("10.0.0.1")], internal=ip_network("10.0.0.0/8"))
+    with pytest.raises(EgressRefused) as refused:
+        policy.check([ip_address("10.0.0.1")], internal=ip_network("0.0.0.0/0"))
+    assert refused.value.rule == "network"
