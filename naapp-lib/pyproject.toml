@@ -39,6 +39,10 @@ outbox = [
 signing-key = [
   "pynacl>=1.6.2",
 ]
+# The shared dispatch state machine, aweb_naapp.dispatch: pgdbm only.
+dispatch = [
+  "pgdbm>=0.5.0",
+]
 # The shared idempotency store, aweb_naapp.idempotency: pgdbm only.
 idempotency = [
   "pgdbm>=0.5.0",
