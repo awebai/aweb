@@ -1,4 +1,4 @@
--- 029_app_hook_bindings.sql
+-- 032_app_hook_bindings.sql
 -- An installed app's declared hook bindings (docs/design/audit-substrate.md
 -- §A3). A registration names a hook the app receives through one of its
 -- tools; a production names a hook the app may emit. Each install generation

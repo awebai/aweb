@@ -130,7 +130,7 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "026_team_app_event_types.sql",
         "027_team_app_keys.sql",
         "028_team_app_install_bytes.sql",
-        "029_app_hook_bindings.sql",
+        "032_app_hook_bindings.sql",
     ]
 
 
