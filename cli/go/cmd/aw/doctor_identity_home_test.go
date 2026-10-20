@@ -3,11 +3,8 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -49,6 +46,7 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 	principalDID := awid.ComputeDIDKey(principalPub)
 	principalStableID := awid.ComputeStableID(principalPub)
 	type observedDoctorRequest struct {
+		payload       []byte
 		authorization string
 		certificate   string
 		timestamp     string
@@ -65,6 +63,7 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 			requestMu.Lock()
 			authenticatedRequests = append(authenticatedRequests, observedDoctorRequest{
 				authorization: r.Header.Get("Authorization"),
+				payload:       requestSigningPayloadForTest(t, r, body),
 				certificate:   r.Header.Get("X-AWID-Team-Certificate"),
 				timestamp:     r.Header.Get("X-AWEB-Timestamp"),
 				body:          body,
@@ -322,7 +321,11 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 		if len(parts) != 3 || parts[1] != principalDID {
 			t.Fatalf("online doctor request used wrong identity: %q", request.authorization)
 		}
-		payload := []byte(nil)
+		payload := request.payload
+		var claims map[string]any
+		if err := json.Unmarshal(payload, &claims); err != nil {
+			t.Fatal(err)
+		}
 		if strings.TrimSpace(request.certificate) != "" {
 			certificateRequestCount++
 			cert, err := awid.DecodeTeamCertificateHeader(request.certificate)
@@ -332,11 +335,13 @@ func TestExternalIdentityHomeDoctorIdentityAndRegistry(t *testing.T) {
 			if cert.MemberDIDKey != principalDID || cert.Team != "default:external.aweb.ai" {
 				t.Fatalf("online doctor request used wrong certificate: %+v", cert)
 			}
-			payload = messagingCertificateAuthPayload(cert.Team, request.timestamp, request.body)
+			if claims["team_id"] != cert.Team {
+				t.Fatalf("wrong certificate claims: %s", payload)
+			}
 		} else {
-			hash := sha256.Sum256(request.body)
-			payload = []byte(fmt.Sprintf(`{"body_sha256":"%s","did_aw":"%s","timestamp":"%s"}`,
-				hex.EncodeToString(hash[:]), principalStableID, request.timestamp))
+			if claims["did_aw"] != principalStableID {
+				t.Fatalf("wrong identity claims: %s", payload)
+			}
 		}
 		signature, err := base64.RawStdEncoding.DecodeString(parts[2])
 		if err != nil {

@@ -1,5 +1,6 @@
 """Actual aw user signatures cannot authorize protocol operations."""
 import asyncio
+import base64
 import hashlib
 import json
 
@@ -82,7 +83,8 @@ async def test_user_signature_cannot_authorize_protocol(privacy_app, tmp_path, f
 
 @pytest.mark.usefixtures('source_cli_binary')
 @pytest.mark.asyncio
-async def test_identity_id_request_signs_only_fixed_identity_claims(privacy_app, tmp_path):
+@pytest.mark.parametrize('family', ['certificate', 'identity-local', 'identity-global'])
+async def test_id_request_uses_fixed_target_bound_v2(privacy_app, tmp_path, family):
     env = privacy_app
     captured = []
 
@@ -93,22 +95,41 @@ async def test_identity_id_request_signs_only_fixed_identity_claims(privacy_app,
 
     async with _registry_http(front) as (url, _):
         env.client.base_url = url
-        async with _local_sender_mail(env, tmp_path, False, False, False) as (
+        async with _local_sender_mail(env, tmp_path, family == 'identity-global', False, False) as (
                 _, _, binary, cwd, command_env, _):
-            result = await _cli(binary, cwd, command_env, 'id', 'request', 'GET', url + '/v1/messages/inbox', '--json')
+            path = '/v1/messages/inbox?opaque=a%2Fb&b=2&a=1'
+            flags = ['--team-auth', '--sign', '{"operation":"read_inbox"}'] if family == 'certificate' else []
+            result = await _cli(binary, cwd, command_env, 'id', 'request', 'GET', url + path, *flags, '--json')
             assert result['status'] == 200
             headers = captured[-1]
-            assert b'x-aweb-signed-payload' not in headers  # Explicit interim compact-v1 residual.
-            timestamp = headers[b'x-aweb-timestamp'].decode()
-            payload = canonical_json_bytes(dict(body_sha256=hashlib.sha256(b'').hexdigest(), did_aw='', timestamp=timestamp))
+            canonical = base64.urlsafe_b64decode(headers[b'x-aweb-signed-payload'] + b'===')
+            payload = json.loads(canonical)
+            assert canonical == canonical_json_bytes(payload)
+            assert payload['v'] == 2
+            assert payload['aud'] == url
+            assert payload['method'] == 'GET'
+            assert payload['path'] == path
+            assert payload['body_sha256'] == hashlib.sha256(b'').hexdigest()
+            assert payload['timestamp'] == headers[b'x-aweb-timestamp'].decode()
+            if family == 'certificate':
+                assert payload['team_id'] == TEAM
+                assert payload['operation'] == 'read_inbox'
+                assert 'did_aw' not in payload
+            else:
+                assert payload['did_aw'] == (stable_id_from_did_key(env.actors['bob'].did) if family == 'identity-global' else '')
+                assert 'team_id' not in payload
             signature = headers[b'authorization'].decode().split(' ')[2]
-            assert verify_signature(env.actors['bob'].did, payload, signature) == VerifyResult.VERIFIED
+            assert verify_signature(env.actors['bob'].did, canonical, signature) == VerifyResult.VERIFIED
             assert len(captured) == 1
+            replay = await env.client.get('/v1/messages/inbox?opaque=changed', headers=headers)
+            assert replay.status_code == 401, replay.text
+            before = len(captured)
+            flags = ['--team-auth', '--sign', '{"did_aw":"caller-chosen"}'] if family == 'certificate' else [
+                '--sign', '{"operation":"rotate_key","new_did_key":"caller-chosen"}']
             process = await asyncio.create_subprocess_exec(
-                str(binary), 'id', 'request', 'GET', url + '/v1/messages/inbox',
-                '--sign', '{"operation":"rotate_key","new_did_key":"caller-chosen"}', '--json',
+                str(binary), 'id', 'request', 'GET', url + path, *flags, '--json',
                 cwd=cwd, env=command_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
             stdout, _ = await asyncio.wait_for(process.communicate(), 10)
             assert process.returncode != 0
             assert not stdout
-            assert len(captured) == 1
+            assert len(captured) == before

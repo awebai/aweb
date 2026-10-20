@@ -30,6 +30,7 @@ async def main(dsn: str, sending: Path) -> None:
 
     await drain(
         db,
+        channel="default",
         resolver=resolver,
         transport=Blocking(),
         policy=RetryPolicy(stalled_after=timedelta(hours=1)),
