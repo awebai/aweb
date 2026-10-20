@@ -110,12 +110,15 @@ the approval, decision, policy and the app's own origin.
 - Recovery from a lockout retires the previous approver at once, with its
   passkeys, unused enrolment links and live approvals (through
   `ApprovalRevocation`, in the same transaction). The new approver takes effect
-  after a cooling-off period (`LockoutPolicy`, 72 h by default), during which
+  after a cooling-off period (`LockoutPolicy`, at least 72 h), during which
   the scope has no approver, and every contact previously recorded for the
   scope is notified. `recovery_pending_until` tells the app to freeze its own
   widening changes meanwhile.
 - A contact change needs the approver's own passkey, takes effect after a delay
-  (24 h by default) and is notified to the old and the new contact.
+  (at least 24 h) and is notified to the old and the new contact.
+- These durations are floors. App or owner policy may lengthen them, and
+  deploy configuration may raise the floor itself (`lockout_floor`); nothing
+  can go below 72 h and 24 h.
 - Assertions are bound to one approval, purpose, task answer, request digest
   and policy version through `challenge_binding`. They need user verification, are
   single-use, and the authenticator counter must advance.

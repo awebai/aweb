@@ -30,8 +30,11 @@ from aweb_naapp.runtime.approvals import (
     Refusal,
 )
 from aweb_naapp.runtime.passkeys import (
+    CONTACT_CHANGE_DELAY_FLOOR,
+    RECOVERY_COOLING_OFF_FLOOR,
     DesignationRefused,
     EnrolmentRefused,
+    LockoutPolicy,
     Notice,
     NoticeKind,
     OwnerActKind,
@@ -512,11 +515,9 @@ async def test_recovery_freezes_approvals_for_the_cooling_off_and_tells_prior_co
     )
 
 
-async def test_lockout_durations_are_policy_parameters(pw):
-    from aweb_naapp.runtime.passkeys import LockoutPolicy
-
+def passkeys_with(pw, **lockout):
     store = PgApprovalStore(pw.passkeys.db)
-    quick = Passkeys(
+    return Passkeys(
         pw.passkeys.db,
         rp=pw.passkeys.rp,
         delivery=pw.contacts,
@@ -524,20 +525,67 @@ async def test_lockout_durations_are_policy_parameters(pw):
         retirement=ApprovalRevocation(store, pw.audit, pw.clock),
         enrolment_ttl=timedelta(hours=1),
         challenge_ttl=timedelta(minutes=5),
-        lockout=LockoutPolicy(recovery_cooling_off=timedelta(hours=1)),
         clock=pw.clock,
+        **lockout,
     )
-    await quick.designate(
-        scope="quick",
+
+
+@pytest.mark.parametrize(
+    "durations",
+    [
+        {"recovery_cooling_off": timedelta(0)},
+        {"recovery_cooling_off": timedelta(hours=71, minutes=59)},
+        {"contact_change_delay": timedelta(0)},
+        {"contact_change_delay": timedelta(hours=23)},
+    ],
+)
+def test_lockout_durations_below_the_floor_are_refused(durations):
+    with pytest.raises(ValueError):
+        LockoutPolicy(**durations)
+
+
+def test_lockout_durations_at_or_above_the_floor_are_accepted():
+    assert (
+        LockoutPolicy(
+            recovery_cooling_off=RECOVERY_COOLING_OFF_FLOOR,
+            contact_change_delay=CONTACT_CHANGE_DELAY_FLOOR,
+        )
+        == LockoutPolicy()
+    )
+    longer = LockoutPolicy(
+        recovery_cooling_off=timedelta(hours=96), contact_change_delay=timedelta(hours=48)
+    )
+    assert longer.recovery_cooling_off == timedelta(hours=96)
+
+
+async def test_an_app_may_lengthen_the_cooling_off(pw):
+    longer = passkeys_with(pw, lockout=LockoutPolicy(recovery_cooling_off=timedelta(hours=96)))
+    await longer.designate(
+        scope="long",
         contact="a@example.com",
-        owner_act=owner_act(OwnerActKind.DESIGNATE, "a@example.com", scope="quick"),
+        owner_act=owner_act(OwnerActKind.DESIGNATE, "a@example.com", scope="long"),
     )
-    designation = await quick.designate(
-        scope="quick",
+    designation = await longer.designate(
+        scope="long",
         contact="b@example.com",
-        owner_act=owner_act(OwnerActKind.RECOVER, "b@example.com", scope="quick"),
+        owner_act=owner_act(OwnerActKind.RECOVER, "b@example.com", scope="long"),
     )
-    assert designation.effective_at == pw.clock() + timedelta(hours=1)
+    assert designation.effective_at == pw.clock() + timedelta(hours=96)
+
+
+def test_deploy_configuration_may_raise_the_floor_and_apps_must_meet_it(pw):
+    raised = LockoutPolicy(recovery_cooling_off=timedelta(hours=120))
+    with pytest.raises(ValueError):
+        passkeys_with(
+            pw,
+            lockout_floor=raised,
+            lockout=LockoutPolicy(recovery_cooling_off=timedelta(hours=96)),
+        )
+    passkeys_with(
+        pw,
+        lockout_floor=raised,
+        lockout=LockoutPolicy(recovery_cooling_off=timedelta(hours=120)),
+    )
 
 
 async def change_contact(pw, device, new_contact: str):

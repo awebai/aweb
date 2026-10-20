@@ -2,6 +2,8 @@
 
 from aweb_naapp.runtime.passkeys.rp import RelyingParty
 from aweb_naapp.runtime.passkeys.service import (
+    CONTACT_CHANGE_DELAY_FLOOR,
+    RECOVERY_COOLING_OFF_FLOOR,
     Designation,
     DesignationRefused,
     EnrolmentRefused,
@@ -18,6 +20,8 @@ from aweb_naapp.runtime.passkeys.service import (
 )
 
 __all__ = [
+    "CONTACT_CHANGE_DELAY_FLOOR",
+    "RECOVERY_COOLING_OFF_FLOOR",
     "Designation",
     "DesignationRefused",
     "EnrolmentRefused",

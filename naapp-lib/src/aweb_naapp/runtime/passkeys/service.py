@@ -117,12 +117,33 @@ class OwnerActEvidence(Protocol):
     contact_sha256: str
 
 
+# The shortest protections any deployment may run with. Deploy configuration can
+# raise them (`Passkeys(lockout_floor=...)`); app or owner policy can lengthen
+# them; nothing can shorten them.
+RECOVERY_COOLING_OFF_FLOOR = timedelta(hours=72)
+CONTACT_CHANGE_DELAY_FLOOR = timedelta(hours=24)
+
+
 @dataclass(frozen=True)
 class LockoutPolicy:
-    """Protections around replacing an approver or its contact."""
+    """Protections around replacing an approver or its contact. Each duration
+    is at least its floor; a shorter one is refused at construction."""
 
-    recovery_cooling_off: timedelta = timedelta(hours=72)
-    contact_change_delay: timedelta = timedelta(hours=24)
+    recovery_cooling_off: timedelta = RECOVERY_COOLING_OFF_FLOOR
+    contact_change_delay: timedelta = CONTACT_CHANGE_DELAY_FLOOR
+
+    def __post_init__(self) -> None:
+        self.require_at_least(
+            RECOVERY_COOLING_OFF_FLOOR, CONTACT_CHANGE_DELAY_FLOOR, "the protection floor"
+        )
+
+    def require_at_least(
+        self, recovery_cooling_off: timedelta, contact_change_delay: timedelta, floor: str
+    ) -> None:
+        if self.recovery_cooling_off < recovery_cooling_off:
+            raise ValueError(f"recovery cooling-off is shorter than {floor}")
+        if self.contact_change_delay < contact_change_delay:
+            raise ValueError(f"contact-change delay is shorter than {floor}")
 
 
 class NoticeKind(StrEnum):
@@ -220,8 +241,12 @@ class Passkeys:
         enrolment_ttl: timedelta,
         challenge_ttl: timedelta,
         lockout: LockoutPolicy | None = None,
+        lockout_floor: LockoutPolicy | None = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
+        """`lockout` is the app's or owner's policy; `lockout_floor` is the
+        deployment's, at or above the module floors. The policy must meet the
+        deployment floor."""
         self.db = db
         self.rp = rp
         self._delivery = delivery
@@ -229,7 +254,11 @@ class Passkeys:
         self._retirement = retirement
         self._enrolment_ttl = enrolment_ttl
         self._challenge_ttl = challenge_ttl
-        self._lockout = lockout or LockoutPolicy()
+        floor = lockout_floor or LockoutPolicy()
+        self._lockout = lockout or floor
+        self._lockout.require_at_least(
+            floor.recovery_cooling_off, floor.contact_change_delay, "the deployment floor"
+        )
         self._clock = clock
 
     async def migrate(self) -> None:
