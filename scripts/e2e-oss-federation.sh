@@ -11,7 +11,6 @@
 #
 # Requirements:
 #   - Docker and Docker Compose
-#   - Go toolchain
 #
 # Environment overrides:
 #   AWID_FED_E2E_PORT     awid host port (default: 8310)
@@ -34,16 +33,8 @@ canonicalize_dir() {
   bash -c 'cd "$1" && pwd -P' _ "$dir"
 }
 
-make_temp_dir() {
-  local prefix="$1"
-  local dir
-  dir="$(mktemp -d "${TMPDIR:-/tmp}/${prefix}.XXXXXX")"
-  canonicalize_dir "$dir"
-}
-
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 SERVER_DIR="$REPO_ROOT/server"
-CLI_DIR="$REPO_ROOT/cli/go"
 
 AWID_PORT="${AWID_FED_E2E_PORT:-8310}"
 ALPHA_PORT="${AWEB_ALPHA_E2E_PORT:-8320}"
@@ -56,20 +47,25 @@ case "$DOCKER_PUBLISHED_HOST" in
   127.0.0.1|aweb-docker.test) ;;
   *) echo "unsupported AWEB_DOCKER_PUBLISHED_HOST: $DOCKER_PUBLISHED_HOST" >&2; exit 2 ;;
 esac
-AWID_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
-ALPHA_URL="http://$DOCKER_PUBLISHED_HOST:$ALPHA_PORT"
-BETA_URL="http://$DOCKER_PUBLISHED_HOST:$BETA_PORT"
+AWID_PUBLISHED_URL="http://$DOCKER_PUBLISHED_HOST:$AWID_PORT"
+ALPHA_PUBLISHED_URL="http://$DOCKER_PUBLISHED_HOST:$ALPHA_PORT"
+BETA_PUBLISHED_URL="http://$DOCKER_PUBLISHED_HOST:$BETA_PORT"
+# Clients and federation peers use the same advertised origin. Published ports
+# are host-side observation endpoints, not additional authentication audiences.
+AWID_URL="http://awid:8010"
 ALPHA_ORIGIN="http://aweb-alpha:8000"
 BETA_ORIGIN="http://aweb-beta:8000"
+ALPHA_URL="$ALPHA_ORIGIN"
+BETA_URL="$BETA_ORIGIN"
 PROJECT="${AWEB_FED_E2E_PROJECT:-aweb-fed-e2e-$RANDOM}"
 SERVER_MODE="${AWEB_FED_E2E_SERVER_MODE:-source}"
 CELL_DIRECTION="${AWEB_FED_E2E_DIRECTION:-a-to-b}"
 CELL_ID="${AWEB_FED_E2E_CELL_ID:-source-journey}"
 ROUTE_PROBE_ONLY="${AWEB_FED_E2E_ROUTE_PROBE_ONLY:-0}"
 
-E2E_ROOT="$(make_temp_dir aw-fed-e2e)"
 DOCKER_RUNTIME="$(mktemp -d "$DOCKER_BIND_ROOT/aw-fed-docker.XXXXXX")"
 DOCKER_RUNTIME="$(canonicalize_dir "$DOCKER_RUNTIME")"
+E2E_ROOT="$DOCKER_RUNTIME/work"
 E2E_HOME="$E2E_ROOT/home"
 COMPOSE_FILE="$DOCKER_RUNTIME/docker-compose.yml"
 DNS_DIR="$DOCKER_RUNTIME/dns"
@@ -292,11 +288,7 @@ canonical_json_sha256() {
 run_aw_in() {
   local workdir="$1"
   shift
-  HOME="$E2E_HOME" \
-  AW_CONFIG_PATH="$E2E_HOME/.config/aw/config.yaml" \
-  AWID_REGISTRY_URL="$AWID_URL" \
-  AWID_SKIP_DNS_VERIFY=1 \
-  bash -c 'cd "$1" && shift && exec "$@"' _ "$workdir" "$CLI_DIR/aw" "$@"
+  compose run --rm -T --no-deps -w "/work/${workdir##*/}" cli "$@"
 }
 
 capture_success() {
@@ -556,12 +548,6 @@ $TTL 1
 ns IN A 127.0.0.1
 EOF
 
-echo "=== Phase 0: Build aw CLI ==="
-cd "$CLI_DIR"
-make build >/dev/null
-echo "  aw binary: $CLI_DIR/aw"
-echo ""
-
 echo "=== Phase 1: Write and start federation compose ==="
 cat > "$COMPOSE_FILE" <<EOF
 services:
@@ -641,7 +627,6 @@ $ALPHA_SERVER_BUILD
       AWID_REGISTRY_URL: http://awid:8010
       AWID_SERVICE_TOKEN: aweb-oss-federation-e2e-service-token-32-bytes
       AWEB_PUBLIC_ORIGIN: $ALPHA_ORIGIN
-      AWEB_DISCOVERY_ORIGIN: $ALPHA_URL
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
       APP_ENV: development
@@ -685,7 +670,6 @@ $BETA_SERVER_BUILD
       AWID_REGISTRY_URL: http://awid:8010
       AWID_SERVICE_TOKEN: aweb-oss-federation-e2e-service-token-32-bytes
       AWEB_PUBLIC_ORIGIN: $BETA_ORIGIN
-      AWEB_DISCOVERY_ORIGIN: $BETA_URL
       AWEB_HOST: 0.0.0.0
       AWEB_PORT: 8000
       APP_ENV: development
@@ -700,6 +684,19 @@ $BETA_SERVER_BUILD
         condition: service_started
       federation-dns:
         condition: service_started
+
+  cli:
+    build:
+      context: $REPO_ROOT
+      dockerfile: scripts/federation-cli.Dockerfile
+    environment:
+      HOME: /work/home
+      AW_CONFIG_PATH: /work/home/.config/aw/config.yaml
+      AWID_REGISTRY_URL: $AWID_URL
+      AWID_SKIP_DNS_VERIFY: "1"
+    volumes:
+      - "$E2E_ROOT:/work"
+    # FEDERATION_DNS_IP_CLI
 EOF
 
 compose down -v --remove-orphans >/dev/null 2>&1 || true
@@ -707,7 +704,7 @@ if [[ "${AWEB_FED_E2E_BUILD:-1}" != "0" ]]; then
   compose build
 fi
 compose up -d federation-dns redis-awid postgres-awid awid redis-alpha postgres-alpha redis-beta postgres-beta
-wait_health "awid" "$AWID_URL" "awid"
+wait_health "awid" "$AWID_PUBLISHED_URL" "awid"
 FEDERATION_DNS_IP="$(
   docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' \
     "$(compose ps -q federation-dns)"
@@ -724,7 +721,7 @@ import sys
 path = Path(sys.argv[1])
 ip = str(ipaddress.ip_address(sys.argv[2]))
 text = path.read_text()
-for marker in ("ALPHA", "BETA"):
+for marker in ("ALPHA", "BETA", "CLI"):
     source = f"    # FEDERATION_DNS_IP_{marker}"
     replacement = f'    dns:\n      - "{ip}"'
     if text.count(source) != 1:
@@ -733,8 +730,8 @@ for marker in ("ALPHA", "BETA"):
 path.write_text(text)
 PY
 compose up -d aweb-alpha aweb-beta
-wait_health "alpha" "$ALPHA_URL" "aweb-alpha"
-wait_health "beta" "$BETA_URL" "aweb-beta"
+wait_health "alpha" "$ALPHA_PUBLISHED_URL" "aweb-alpha"
+wait_health "beta" "$BETA_PUBLISHED_URL" "aweb-beta"
 if [[ "$SERVER_MODE" == "wheel" ]]; then
   alpha_installed_version="$(container_package_version aweb-alpha aweb)"
   beta_installed_version="$(container_package_version aweb-beta aweb)"
@@ -823,8 +820,8 @@ print(
 PY
 fi
 
-probe_federation_route alpha "$ALPHA_URL"
-probe_federation_route beta "$BETA_URL"
+probe_federation_route alpha "$ALPHA_PUBLISHED_URL"
+probe_federation_route beta "$BETA_PUBLISHED_URL"
 if [[ "$ROUTE_PROBE_ONLY" == "1" ]]; then
   echo "Route probe controls complete before broader federation setup."
   exit 0
@@ -1152,7 +1149,7 @@ replay_result="$(
   ALICE_DID_AW="$ALICE_DID_AW" \
   BOB_DID_KEY="$BOB_DID_KEY" \
   BOB_DID_AW="$BOB_DID_AW" \
-  BETA_URL="$BETA_URL" \
+  BETA_URL="$BETA_PUBLISHED_URL" \
   ALPHA_ORIGIN="$ALPHA_ORIGIN" \
   BETA_ORIGIN="$BETA_ORIGIN" \
   uv run python - <<'PY'
