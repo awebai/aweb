@@ -287,12 +287,12 @@ are included here, not raw runtime logs or credentials.
 | `real-model-release-acceptance.py` | `17854aa9ba51a9a22e48896d3c1597bd8a0c9a5db3763a842200d71db1753ded` |
 | `install-hermes-release.py` | `ce55cdb317c334c63ef4a7a2ef580a501130e93417c205ffae4be4ce3ab04067` |
 
-Validation of this delta passed:
+Validation after the final current-main synchronization passed:
 
-- `python3 scripts/check-doc-links.py --self-test` and normal check: 419 links.
+- `python3 scripts/check-doc-links.py --self-test` and normal check: 421 links.
 - `bash scripts/check-doc-paths.sh --self-test` and normal check: 126 paths.
 - `python3 scripts/check-extension-docs.py --self-test` and normal inventory check.
-- `python3 cli/go/scripts/check_docs_regressions.py --root docs`: 86 files.
+- `python3 cli/go/scripts/check_docs_regressions.py --root docs`: 87 files.
 - `git diff --check`, and a literal approved-key scan of changed repository
   files plus retained runtime logs/receipts: no credential bytes found.
 
