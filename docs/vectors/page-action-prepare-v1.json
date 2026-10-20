@@ -1860,12 +1860,13 @@
       "installation_generation": 3,
       "target_resolves_to": "target",
       "action_policy_version": 1,
+      "member_may_act": true,
       "member_certificate": "first",
       "colleague_certificate": "first"
     },
     "rules": [
       "Calls: `prepare` and `submit` are the member requests of page-actions.md §3 and §3.1, authenticated with the actor's current certificate. `deliver` is one outbox attempt to create the request's task (app-task-requests.md §3) and `reconcile` the receipt lookup; their outcomes are the task service's.",
-      "Each `given` entry changes that state before its step and persists. `target_resolves_to` names the key whose principal the action's target role resolves to. `action_policy_version` is the action's effective policy version. `delivery` sets the delivery state of the request the named step accepted. `revoked` revokes `<actor>:<certificate>`.",
+      "Each `given` entry changes that state before its step and persists. `target_resolves_to` names the key whose principal the action's target role resolves to. `action_policy_version` is the action's effective policy version. `delivery` sets the delivery state of the request the named step accepted. `revoked` revokes `<actor>:<certificate>`. `member_may_act` false means the action's policy no longer lets the member perform it, though the member can still read the page.",
       "Certificates: `first` and `second` are two certificates of the same principal; the actor's current one is its `<actor>_certificate` state.",
       "An `authorization` is the bindings that the preparation step `prepared_by` returned, completed with the actor's DID and the named certificate, the times and nonce, then any `tamper` fields, and signed with the actor's key.",
       "`same_as`: the response equals that step's. `request_id_of`: the request id that step returned. `distinct_from`: a different request id. `receipt_same_as`: `receipt` equals that step's response. `task_same_as`: `task` equals that step's. `bindings`: those bindings have these values. `delivery`: the request's delivery state after the step. `evidence_count`: authorizations stored for the request after the step."
@@ -1980,6 +1981,17 @@
           "bookings/b-17": 3
         },
         "idempotency_key": "k_2a64"
+      },
+      "r10": {
+        "action_id": "request-cleaner",
+        "input": {
+          "date": "2026-10-24"
+        },
+        "expected_page_rev": 17,
+        "expected_record_revs": {
+          "bookings/b-17": 3
+        },
+        "idempotency_key": "k_3b75"
       }
     },
     "steps": [
@@ -2784,6 +2796,62 @@
           "delivery": "failed"
         },
         "note": "beyond a generation change an accepted, pending request cannot be rebound; it ends"
+      },
+      {
+        "name": "prepare-r10",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r10",
+        "expect": {
+          "outcome": "prepared",
+          "status": 200,
+          "bindings": {
+            "installation_generation": 5
+          }
+        }
+      },
+      {
+        "name": "submit-r10",
+        "actor": "member",
+        "call": "submit",
+        "request": "r10",
+        "authorization": {
+          "prepared_by": "prepare-r10",
+          "certificate": "second",
+          "issued_at": "2026-10-20T12:00:00Z",
+          "expires_at": "2026-10-21T12:00:00Z",
+          "nonce": "0000000000000000000000000000001c"
+        },
+        "expect": {
+          "outcome": "accepted",
+          "status": 202,
+          "request_id_of": "prepare-r10",
+          "page_rev": 18,
+          "delivery": "pending",
+          "evidence_count": 1
+        }
+      },
+      {
+        "name": "rebind-after-losing-the-action",
+        "actor": "member",
+        "call": "prepare",
+        "request": "r10",
+        "given": [
+          {
+            "member_may_act": false
+          },
+          {
+            "installation_generation": 6
+          }
+        ],
+        "expect": {
+          "outcome": "action_denied",
+          "status": 403,
+          "code": "action_denied",
+          "delivery": "pending",
+          "evidence_count": 1
+        },
+        "note": "the member can still read the request but no longer perform the action: nothing is rebound"
       }
     ]
   }

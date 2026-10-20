@@ -212,8 +212,11 @@ the naapp first re-derives the preparation:
 - **Unchanged:** the stored bindings, so the member can renew an expired
   authorization.
 - **Only `installation_generation` differs,** because the installation is
-  active at a newer generation: the naapp **rebinds**. It stores bindings
-  carrying the current generation, keeping the earlier ones, and returns them.
+  active at a newer generation: the naapp **rebinds**. It first re-checks that
+  the caller can still perform the action, under its policy and §2's target,
+  not only read it; if not, it is 403 `action_denied` and nothing is rebound.
+  It then stores bindings carrying the current generation, keeping the earlier
+  ones, and returns them.
   `installation_generation` is the only transport binding. The task bytes,
   `external_request_id`, the context fingerprint, the stored evidence and
   every other binding never change: `aud`, `app_origin`, `team_id`, `app_id`,
