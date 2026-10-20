@@ -87,7 +87,7 @@ func runTeamLifetimes(cmd *cobra.Command, action string) error {
 		for _, field := range lifetimeFields {
 			flag := strings.ReplaceAll(field, "_", "-")
 			if !cmd.Flags().Changed(flag) {
-				return usageError("--" + flag + " is required; use none for no limit")
+				return usageError("--%s is required; use none for no limit", flag)
 			}
 			raw, _ := cmd.Flags().GetString(flag)
 			if strings.EqualFold(strings.TrimSpace(raw), "none") {
@@ -96,7 +96,7 @@ func runTeamLifetimes(cmd *cobra.Command, action string) error {
 			}
 			duration, parseErr := time.ParseDuration(raw)
 			if parseErr != nil || duration < time.Second || duration%time.Second != 0 || duration/time.Second > math.MaxInt32 {
-				return usageError("--" + flag + " must be none or a positive whole-second duration")
+				return usageError("--%s must be none or a positive whole-second duration", flag)
 			}
 			record[field] = int64(duration / time.Second)
 		}
