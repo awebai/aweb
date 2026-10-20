@@ -8,7 +8,9 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from awid.did import stable_id_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
+from nacl.signing import SigningKey
 from test_dashboard_privacy import TEAM, _request, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair
 
@@ -207,6 +209,13 @@ async def test_legacy_reuse_projects_only_stored_participants(privacy_app):
 @pytest.mark.asyncio
 async def test_remote_identity_cannot_borrow_target_membership_on_create(privacy_app):
     env = privacy_app
+    # Local-only recipients refuse first contact from an outside identity.
+    # Use a global open recipient to make the neighboring fresh send valid.
+    bob_stable = stable_id_from_public_key(bytes(SigningKey(env.actors['bob'].sk).verify_key))
+    await env.db.execute(
+        "UPDATE {{tables.agents}} SET did_aw = $2, identity_scope = 'global' WHERE agent_id = $1",
+        env.actors['bob'].id, bob_stable,
+    )
     victim = await _chat(env, 'alice', ['bob'])
     assert victim.status_code == 200, victim.text
     thread = victim.json()['session_id']
