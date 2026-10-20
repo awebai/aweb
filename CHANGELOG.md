@@ -11,6 +11,11 @@
   external signing callback; Go exports the covering signer and JSON mutation
   method for record publication. Legacy server acceptance remains measured
   until the operator's separate cutoff.
+- The Python `RegistryClient` publishes the team-key-signed records:
+  `publish_team_custodian`, `publish_member_custody` and
+  `publish_member_person` under the covering team-controller envelope, with a
+  local team key or an external signer, and `publish_team_server`, whose record
+  signature is its own authority.
 
 ## Release preparations
 

@@ -93,6 +93,14 @@ either `signing_key` or the pair `controller_did_key` and async `signer`.
 Parent authorization uses `parent_claims`, `parent_controller_did_key` and
 `parent_signer`, separately from the child's operation.
 
+The team-key-signed records have typed methods over `controller_request`:
+`publish_team_custodian`, `publish_member_custody` and `publish_member_person`
+take the signed `record` and its `signature` and the same choice of
+`team_controller_signing_key` or `controller_did_key` and `signer`; the route and
+its claims come from the record. `publish_team_server` sends no controller
+envelope, because AWID takes the team-server record's own team-key signature as
+its authority.
+
 `awid.controller_signing.ControllerSigningRequest` is frozen and contains
 `controller_did_key`, `operation`, and `canonical_payload`. The SDK serializes
 first, invokes the signer, verifies its returned base64 Ed25519 signature against
