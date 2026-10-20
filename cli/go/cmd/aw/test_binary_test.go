@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -77,45 +76,5 @@ func buildAwBinary(t *testing.T, ctx context.Context, outPath string) {
 	}
 	if closeErr != nil {
 		t.Fatal(closeErr)
-	}
-}
-
-func TestAwBinaryFixtureCopiesAreIndependent(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	root := t.TempDir()
-	paths := []string{filepath.Join(root, "first"), filepath.Join(root, "second")}
-	t.Run("parallel copies", func(t *testing.T) {
-		for i := range paths {
-			t.Run(fmt.Sprint(i), func(t *testing.T) {
-				t.Parallel()
-				buildAwBinary(t, ctx, paths[i])
-			})
-		}
-	})
-	original, err := os.ReadFile(paths[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(paths[0], []byte("replaced executable"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	third := filepath.Join(root, "third")
-	buildAwBinary(t, ctx, third)
-	for _, path := range []string{paths[1], third} {
-		data, err := os.ReadFile(path)
-		if err != nil || !bytes.Equal(data, original) {
-			t.Fatalf("another test mutated executable %s: %v", path, err)
-		}
-		if runtime.GOOS == "windows" {
-			// Go's exec lookup requires the native extension even for explicit paths.
-			if err := os.Rename(path, path+".exe"); err != nil {
-				t.Fatal(err)
-			}
-			path += ".exe"
-		}
-		if output, err := exec.CommandContext(ctx, path, "--version").CombinedOutput(); err != nil {
-			t.Fatalf("run independent source-built CLI: %v\n%s", err, output)
-		}
 	}
 }

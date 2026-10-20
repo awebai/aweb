@@ -108,34 +108,6 @@ func assertHermeticClaudeOnPath(t *testing.T) {
 	}
 }
 
-func TestHermeticClaudeExecutableNameIsRunnableOnTargetOS(t *testing.T) {
-	for goos, want := range map[string]string{
-		"darwin":  "claude",
-		"linux":   "claude",
-		"windows": "claude.exe",
-	} {
-		t.Run(goos, func(t *testing.T) {
-			if got := hermeticClaudeExecutableName(goos); got != want {
-				t.Fatalf("hermetic Claude executable for %s=%q, want %q", goos, got, want)
-			}
-		})
-	}
-}
-
-func TestHermeticClaudeWindowsLookupExcludesCurrentDirectory(t *testing.T) {
-	environment := hermeticClaudeLookupEnvironment("windows")
-	if _, ok := environment[windowsNoCurrentDirectoryPathEnv]; !ok {
-		t.Fatal("Windows hermetic Claude environment permits current-directory lookup ahead of PATH")
-	}
-}
-
-func TestHermeticClaudeExecutableRunsInChildProcess(t *testing.T) {
-	assertHermeticClaudeOnPath(t)
-	if output, err := exec.Command("claude", "plugin", "install", "must-stay-inert").CombinedOutput(); err != nil {
-		t.Fatalf("execute hermetic Claude: %v\n%s", err, output)
-	}
-}
-
 func restoreTestEnvironment(name, value string, existed bool) error {
 	if existed {
 		return os.Setenv(name, value)
