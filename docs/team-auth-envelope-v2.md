@@ -165,6 +165,23 @@ Duplicates remain accepted. If the store is unavailable, omit the duplicate
 count and preserve existing availability. This compatibility path has no replay
 protection. Compact v1 remains accepted and measured separately as above.
 
+Client attribution is self-reported, unsigned measurement only. Clients send
+their product/version token in `User-Agent` and `X-AWEB-Client-Version`.
+Authentication, authorization, routing, rate limits and feature selection never
+depend on that token. Metric labels recognize a fixed product set and a bounded
+version shape/length; other product tokens map to `other`.
+
+Cutoff evidence also needs the identities that still send nonce-free v2. After
+verified authentication and authorization, a separate private usage store may
+record the verified signing `did:key`, the verified certificate team when there
+is one, a count and `last_seen`. Identity-only proofs invent no team. These
+identifiers never become Prometheus labels or replay keys. Records expire after
+30 days, refreshed only by authenticated use; reporting is operator-only, with
+no public endpoint or credential/signature logging. Usage recording is
+best-effort and cannot change a request's outcome: dispatch it outside the
+critical path, or use a short timeout and swallow storage failures. Replay
+enforcement retains its distinct required-store behavior above.
+
 Cloud and other multiprocess deployments use a shared Redis store with an atomic
 claim and expiry. An explicit in-memory mode is permitted only for a documented
 single-process self-hosted service; it cannot protect multiple workers or retain
