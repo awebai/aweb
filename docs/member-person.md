@@ -1,9 +1,10 @@
 # Member person declaration
 
-Status: **contract proposal, not yet implemented.** The AWID side is built
-with the principal attestation records (aweb-acgh.18.7). L1 (aweb-acgg.21)
-publishes the record, and the C2 `member_session` adapter (aweb-acgg.8) reads
-it. Vectors in `docs/vectors/` freeze it once it is reviewed.
+Status: **contract.** AWID serves the record with the principal attestation
+records (aweb-acgh.18.7), `docs/vectors/principal-attestation-v1.json` freezes
+it, and `aweb_naapp.runtime.attestation.read_member_person` reads it. L1
+(aweb-acgg.21) publishes the record, and the C2 `member_session` adapter
+(aweb-acgg.8) reads it.
 
 ## Why it exists
 

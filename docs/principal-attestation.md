@@ -1,9 +1,11 @@
 # Principal attestation
 
-Status: **contract proposal for aweb-acgh.18.7 (S6), not yet implemented.**
-It turns the design in [secrets §4.6](design/secrets.md) into three wire
-artifacts and one verification procedure. Vectors in `docs/vectors/` freeze it
-once it is reviewed.
+Status: **contract for aweb-acgh.18.7 (S6).** It turns the design in
+[secrets §4.6](design/secrets.md) into three wire artifacts and one
+verification procedure. `docs/vectors/principal-attestation-v1.json` freezes
+it. AWID serves the records (`awid/src/awid_service/routes/attestation_records.py`),
+and relying naapps verify with `aweb_naapp.runtime.attestation`. Custodial
+deployments issue attestations (HO2).
 
 ## Why it exists
 
