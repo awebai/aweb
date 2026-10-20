@@ -215,3 +215,68 @@ async def test_a_wrong_credential_is_refused_by_the_upstream(upstream: Upstream)
         token_issuing=False,
     )
     assert call.result.status == 401
+
+
+# --- aws-sigv4 -------------------------------------------------------------------
+
+
+async def _sigv4_call(upstream: Upstream, value: dict, *, headers=(), params=None):
+    return await broker(
+        upstream.egress,
+        method="POST",
+        url=upstream.url("/sigv4/echo"),
+        destination=upstream.destination(header_allow=["X-Amz-Target"]),
+        headers=list(headers),
+        body=b'{"q":1}',
+        kind="aws-sigv4",
+        value=value,
+        kind_params=params
+        or {"region": upstream.creds.sigv4_region, "service": upstream.creds.sigv4_service},
+        secret_ref="aws-test",
+        max_bytes=4096,
+        projection=None,
+        token_issuing=False,
+        amz_allowed=["X-Amz-Target"],
+    )
+
+
+def _aws(upstream: Upstream, **change: str) -> dict:
+    return {
+        "access_key_id": upstream.creds.sigv4_access_key_id,
+        "secret_access_key": upstream.creds.sigv4_secret_access_key,
+        **change,
+    }
+
+
+async def test_sigv4_verifies_at_the_upstream(upstream: Upstream) -> None:
+    call = await _sigv4_call(
+        upstream,
+        _aws(upstream),
+        headers=[("Content-Type", "application/x-amz-json-1.1"), ("X-Amz-Target", "Things.Get")],
+    )
+    assert call.result.status == 200, call.result.body
+    assert json.loads(call.result.body)["scheme"] == "aws-sigv4"
+
+
+async def test_sigv4_with_a_session_token_verifies_at_the_upstream(upstream: Upstream) -> None:
+    call = await _sigv4_call(upstream, _aws(upstream, session_token=secrets.token_urlsafe(40)))
+    assert call.result.status == 200, call.result.body
+
+
+async def test_sigv4_with_a_wrong_secret_key_is_refused_by_the_upstream(upstream: Upstream) -> None:
+    call = await _sigv4_call(upstream, _aws(upstream, secret_access_key="wrong-secret-key"))
+    assert call.result.status == 401
+
+
+async def test_sigv4_signs_only_with_the_secrets_region(upstream: Upstream) -> None:
+    call = await _sigv4_call(
+        upstream, _aws(upstream), params={"region": "us-east-1", "service": upstream.creds.sigv4_service}
+    )
+    assert call.result.status == 401
+
+
+async def test_an_undeclared_amz_header_sends_nothing(upstream: Upstream) -> None:
+    with pytest.raises(EgressRefused) as refused:
+        await _sigv4_call(upstream, _aws(upstream), headers=[("X-Amz-Region-Override", "us-east-1")])
+    assert refused.value.code == "header_not_allowed"
+    assert upstream.requests == []

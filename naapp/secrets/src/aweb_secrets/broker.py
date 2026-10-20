@@ -52,7 +52,16 @@ async def broker(
     Raises the guard's ``EgressRefused`` before sending, and its
     ``EgressNotSent`` or ``EgressOutcomeUnknown`` when the exchange fails.
     """
-    injection = inject(kind, value, kind_params, secret_ref=secret_ref, url=url)
+    injection = inject(
+        kind,
+        value,
+        kind_params,
+        secret_ref=secret_ref,
+        url=url,
+        method=method,
+        body=body,
+        headers=headers,
+    )
     response = await egress.send(
         method,
         injection.url,

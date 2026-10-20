@@ -14,17 +14,27 @@ response handling redacts it. Where a value goes is the secret's metadata
 - ``query``: ``<param>=<value>`` added to the URL. The agent's URL may not
   carry that parameter already, and the URL recorded for the request has the
   value replaced with ``[REDACTED]``.
+- ``aws-sigv4``: the final request, as the guard will send it (canonical URL,
+  ``Host`` as its authority, the agent's headers, the body), signed with
+  botocore's SigV4 signer. The region and service are the secret's, never
+  the agent's. ``X-Amz-Content-SHA256`` is always sent, and a session
+  token goes as ``X-Amz-Security-Token``. An agent header that would take
+  the place of a signed one is refused.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, quote, urlsplit
 
-from aweb_naapp.egress import EgressRefused
+from aweb_naapp.egress import EgressRefused, canonical_url
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
+from botocore.credentials import Credentials
 
 from aweb_secrets.redaction import KnownValues
 
@@ -86,6 +96,56 @@ def _query(param: str, value: str, *, url: str, known: KnownValues) -> Injection
     )
 
 
+_SIGV4_HEADERS = ("Authorization", "X-Amz-Date", "X-Amz-Content-SHA256", "X-Amz-Security-Token")
+
+
+def _sigv4(
+    value: Mapping[str, str],
+    kind_params: Mapping[str, str],
+    *,
+    secret_ref: str,
+    url: str,
+    method: str,
+    body: bytes,
+    headers: Sequence[tuple[str, str]],
+    known: KnownValues,
+) -> Injection:
+    access_key_id = _required(value, "access_key_id")
+    secret_access_key = _required(value, "secret_access_key")
+    session_token = value.get("session_token") or None
+    region = _required(kind_params, "region")
+    service = _required(kind_params, "service")
+    signed_names = {name.lower() for name in _SIGV4_HEADERS}
+    for name, _ in headers:
+        if name.lower() in signed_names:
+            raise EgressRefused("header_not_allowed", "header", name)
+    known.add(secret_ref, secret_access_key)
+    if session_token is not None:
+        known.add(secret_ref, session_token)
+    canonical = canonical_url(url)
+    request = AWSRequest(
+        method=method,
+        url=str(canonical),
+        data=body,
+        headers={
+            "Host": canonical.authority,
+            "X-Amz-Content-SHA256": hashlib.sha256(body).hexdigest(),
+            **dict(headers),
+        },
+    )
+    SigV4Auth(Credentials(access_key_id, secret_access_key, session_token), service, region).add_auth(
+        request
+    )
+    injected = [(name, request.headers[name]) for name in _SIGV4_HEADERS if name in request.headers]
+    return Injection(
+        url=str(canonical),
+        recorded_url=str(canonical),
+        headers=injected,
+        injected_names=frozenset(name.lower() for name, _ in injected),
+        known=known,
+    )
+
+
 def inject(
     kind: str,
     value: Mapping[str, str],
@@ -93,9 +153,27 @@ def inject(
     *,
     secret_ref: str,
     url: str,
+    method: str = "GET",
+    body: bytes = b"",
+    headers: Sequence[tuple[str, str]] = (),
 ) -> Injection:
-    """Place an opened secret ``value`` into a request to ``url``."""
+    """Place an opened secret ``value`` into a request to ``url``.
+
+    ``method``, ``body`` and the agent's ``headers`` are what a signing kind
+    signs; the other kinds do not read them.
+    """
     known = KnownValues()
+    if kind == "aws-sigv4":
+        return _sigv4(
+            value,
+            kind_params,
+            secret_ref=secret_ref,
+            url=url,
+            method=method,
+            body=body,
+            headers=headers,
+            known=known,
+        )
     if kind == "basic":
         username = value.get("username", "")
         password = _required(value, "password")

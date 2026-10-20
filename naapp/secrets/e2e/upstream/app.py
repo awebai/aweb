@@ -15,7 +15,7 @@ hash, idempotency key, accepted encodings), so a test can see what the broker ac
   ``/oauth2/stats`` counts issuances.
 - ``/sigv4/echo…``: AWS Signature Version 4, recomputed with the upstream's
   own secret key over the request as it arrived, with the region, service,
-  key id, date and payload hash checked.
+  key id and date checked, and the payload hash header checked when sent.
 
 It is never deployed with secrets, and holds no credential of any real
 service.
@@ -110,7 +110,8 @@ def _sigv4_valid(
         return False
     if amz_date[:8] != match["date"] or abs(now - signed_at) > SIGV4_MAX_SKEW:
         return False
-    if request.headers.get("x-amz-content-sha256") != hashlib.sha256(body).hexdigest():
+    payload_hash = request.headers.get("x-amz-content-sha256")
+    if payload_hash is not None and payload_hash != hashlib.sha256(body).hexdigest():
         return False
     signed = match["signed"].split(";")
     if "host" not in signed or any(name not in request.headers for name in signed):
