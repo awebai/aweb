@@ -36,7 +36,8 @@ css_bytes = naapp.aweb_css()
 ```
 
 The docs surface is pure standard library. Request-time runtime code (the
-team-auth verifier, approvals, passkeys) lives under `aweb_naapp.runtime` and
+team-auth verifier, approvals, passkeys, and team-server discovery from the
+team's AWID `aweb.team-server/1` record) lives under `aweb_naapp.runtime` and
 needs the `runtime` extra: `aweb-naapp[runtime]`. Two parts the core server
 shares import without it: the durable outbox, `aweb_naapp.outbox`
 (`aweb-naapp[outbox]`), and the signing-key reader, `aweb_naapp.signing_key`
