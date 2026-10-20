@@ -101,3 +101,59 @@ async def test_existing_onboarding_verifier_never_ignores_present_v2(privacy_app
     del headers['X-AWEB-Signed-Payload']
     accepted = await env.client.post('/onboarding-old-entry', content=body, headers=headers)
     assert accepted.status_code == 200, accepted.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('legacy_path', [None, '/onboarding-compat'])
+@pytest.mark.parametrize('side_headers', [False, True])
+async def test_onboarding_legacy_path_override_never_rewrites_v2(privacy_app, legacy_path, side_headers):
+    from awid.http_didkey import build_http_didkey_payload, verify_http_didkey_proof
+    env = privacy_app
+    actor = env.actors['alice']
+    origin = str(env.client.base_url).rstrip('/')
+    auth = 'X-AWEB-DIDKey-Signature' if side_headers else 'Authorization'
+    clock = 'X-AWEB-DIDKey-Timestamp' if side_headers else 'X-AWEB-Timestamp'
+    payload = 'X-AWEB-DIDKey-Signed-Payload' if side_headers else 'X-AWEB-Signed-Payload'
+
+    @env.app.post('/onboarding-compat/')
+    async def endpoint(request: Request):
+        proof = await verify_http_didkey_proof(
+            request, allowed_audiences=[origin], legacy_path=legacy_path,
+            authorization_header=auth, timestamp_header=clock, signed_payload_header=payload)
+        return {'did_key': proof.did_key, 'version': proof.envelope.version}
+
+    body = b'{}'
+    timestamp = datetime.now(timezone.utc).isoformat()
+    headers = {'Content-Type': 'application/json', clock: timestamp}
+    if side_headers:
+        headers['Authorization'] = 'Bearer separate-route-authority'
+
+    def sign(canonical):
+        headers[auth] = f'DIDKey {actor.did} {sign_message(actor.sk, canonical)}'
+
+    def legacy(path):
+        return build_http_didkey_payload(body_bytes=body, method='POST', path=path, timestamp=timestamp)
+
+    sign(legacy(legacy_path if legacy_path is not None else '/onboarding-compat/'))
+    accepted = await env.client.post('/onboarding-compat/?q=ignored-by-legacy', content=body, headers=headers)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json() == {'did_key': actor.did, 'version': 1}
+    sign(legacy('/onboarding-compat/' if legacy_path is not None else '/onboarding-compat'))
+    refused = await env.client.post('/onboarding-compat/', content=body, headers=headers)
+    assert refused.status_code == 401, refused.text
+
+    fields = dict(v=2, aud=origin, method='POST', path='/onboarding-compat/?q=a%2Fb',
+                  did_aw='', timestamp=timestamp, body_sha256=hashlib.sha256(body).hexdigest())
+    canonical = canonical_json_bytes(fields)
+    sign(canonical)
+    headers[payload] = base64.urlsafe_b64encode(canonical).rstrip(b'=').decode()
+    accepted = await env.client.post('/onboarding-compat/?q=a%2Fb', content=body, headers=headers)
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()['version'] == 2
+    retargeted = await env.client.post('/onboarding-compat/?q=changed', content=body, headers=headers)
+    assert retargeted.status_code == 401, retargeted.text
+    canonical = canonical_json_bytes(dict(fields, path='/onboarding-compat'))
+    sign(canonical)
+    headers[payload] = base64.urlsafe_b64encode(canonical).rstrip(b'=').decode()
+    rewritten = await env.client.post('/onboarding-compat/', content=body, headers=headers)
+    assert rewritten.status_code == 401, rewritten.text
