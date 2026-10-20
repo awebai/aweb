@@ -588,6 +588,9 @@ async def authenticate_request(
         team_cache, did_aw=did_aw, did_key=did_key, profile=did_aw_profile
     )
 
+    logger.info("event=certificate_auth_accepted metric=certificate_auth_accepted value=1 verifier=naapp_lib certificate_version=%s client_supports_v2=%s",
+                cert['version'], '2' in request.headers.get('X-AWEB-Certificate-Versions', '')[:32].replace(' ', '').split(','))
+
     return Principal(
         team_id=team_id,
         did_key=did_key,

@@ -1764,6 +1764,7 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
 	if certificateHeader != "" {
 		req.Header.Set("X-AWID-Team-Certificate", certificateHeader)
+		req.Header.Set("X-AWEB-Certificate-Versions", "1,2")
 	} else if c.stableID != "" {
 		req.Header.Set("X-AWEB-DID-AW", c.stableID)
 	}

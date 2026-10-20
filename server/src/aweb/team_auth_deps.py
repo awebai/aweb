@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
 
-from aweb.auth_metrics import count_legacy_request_auth
+from aweb.auth_metrics import count_legacy_request_auth, count_certificate_auth
 from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 
@@ -173,6 +173,8 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
 
     try:
         cert_data = json.loads(base64.b64decode(cert_header))
+        if not isinstance(cert_data, dict):
+            raise ValueError("Certificate must be an object")
     except Exception:
         raise HTTPException(status_code=401, detail="Malformed certificate")
 
@@ -307,6 +309,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     cert_info["verified_team_did_key"] = team_did_key
     if envelope.version == 1:
         count_legacy_request_auth(request, "certificate")
+    count_certificate_auth(request, cert_data['version'])
     set_verified_audit_actor(request, AuditActor(
         team_id=cert_info["team_id"], principal_type="c",
         auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",

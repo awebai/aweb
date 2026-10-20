@@ -231,6 +231,7 @@ export class APIClient {
       Authorization: `DIDKey ${this.auth.did} ${signature}`,
       "X-AWEB-Timestamp": timestamp,
       "X-AWID-Team-Certificate": this.auth.teamCertificateHeader,
+      "X-AWEB-Certificate-Versions": "1,2",
     };
   }
 }

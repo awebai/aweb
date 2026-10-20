@@ -169,7 +169,7 @@ async def test_policy_is_part_of_atomic_team_key_rotation(controller_app):
     path = '/v1/namespaces/local/teams/base/rotate'
     claims = dict(operation='rotate_team_key', domain='local', name='base', new_team_did_key=next_key[1])
     # Omitting any stored signed record refuses the whole rotation.
-    refused = await send(env, 'POST', path, claims, dict(new_team_did_key=next_key[1], resigned_records={}), signer=env.team)
+    refused = await send(env, 'POST', path, claims, dict(new_team_did_key=next_key[1], resigned_records={}))
     assert refused.status_code == 409, refused.text
     assert refused.json()['detail']['missing']['team_credential_policy'] is True
     assert await env.db.fetch_value("SELECT team_did_key FROM {{tables.teams}} WHERE name='base'") == env.team[1]
@@ -179,11 +179,11 @@ async def test_policy_is_part_of_atomic_team_key_rotation(controller_app):
     changed = dict(fresh, identity_grant=1)
     refused = await send(env, 'POST', path, claims, dict(new_team_did_key=next_key[1], resigned_records={
         'team_credential_policy': dict(record=changed, signature=sign_message(next_key[0], policy_signing_bytes(changed))),
-    }), signer=env.team)
+    }))
     assert refused.status_code == 409, refused.text
     accepted = await send(env, 'POST', path, claims, dict(new_team_did_key=next_key[1], resigned_records={
         'team_credential_policy': dict(record=fresh, signature=signature),
-    }), signer=env.team)
+    }))
     assert accepted.status_code == 200, accepted.text
     client = RegistryClient(ORIGIN, transport=httpx.ASGITransport(app=env.app))
     try:

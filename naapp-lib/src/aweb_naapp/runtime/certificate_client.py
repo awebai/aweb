@@ -45,6 +45,7 @@ class TeamCertificateHTTPClient:
                 'X-AWEB-Timestamp': timestamp,
                 'X-AWEB-Signed-Payload': base64.urlsafe_b64encode(payload).rstrip(b'=').decode(),
                 'X-AWID-Team-Certificate': base64.b64encode(json.dumps(self.certificate).encode()).decode(),
+                'X-AWEB-Certificate-Versions': '1,2',
             })
             response = await self.http.send(request, follow_redirects=False)
             if attempt or response.status_code != 401:
