@@ -1987,7 +1987,7 @@ async def test_grant_real_task_workspace_repo_role_instruction_routes(aweb_cloud
     assert wrong_workspace_heartbeat.json()["detail"] == "grant workspace mismatch"
     assert metadata_heartbeat.status_code == 403
     assert metadata_heartbeat.json()["detail"] == "grant workspace metadata is not shared presence"
-    assert expired_heartbeat.status_code == 403
+    assert expired_heartbeat.status_code == 401
     assert expired_heartbeat.json()["detail"] == "grant expired"
     assert revoked_heartbeat.status_code == 403
     assert revoked_heartbeat.json()["detail"] == "grant revoked"
