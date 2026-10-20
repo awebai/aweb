@@ -19,7 +19,13 @@ from httpx import ASGITransport, AsyncClient
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
 from aweb.app_registry import install_app
-from aweb.hook_bindings import PRODUCTION, REGISTRATION, HookBindingDeclaration, write_pending_bindings
+from aweb.hook_bindings import (
+    PRODUCTION,
+    REGISTRATION,
+    HookBindingDeclaration,
+    revoke_uninstalled_bindings,
+    write_pending_bindings,
+)
 from aweb.routes.app_hooks import router as app_hooks_router
 from tests.test_app_events_http import _build_events_app, _make_app_keypair, _seed_team_and_agent
 
@@ -376,3 +382,29 @@ async def test_a_productions_keys_are_only_those_of_its_own_installed_digest(tea
     response = await _get(team, LOGS, "logs_key", _resolution("productions"))
     [binding] = response.json()["bindings"]
     assert binding["keys"] == [{"kid": "hook-own", "did_key": own_did, "purposes": ["hook-event"]}]
+
+
+@pytest.mark.asyncio
+async def test_own_bindings_never_show_an_earlier_origins_history(team):
+    db = team["db"]
+    # Server-side uninstall is not built yet (the installation model owns it):
+    # revoke the bindings as uninstall will, and remove the install record.
+    async with db.transaction() as tx:
+        await revoke_uninstalled_bindings(tx, team_id=TEAM, app_id="logs")
+        await tx.execute(
+            "DELETE FROM {{tables.team_app_installs}} WHERE team_id = $1 AND app_id = 'logs'", TEAM
+        )
+    moved = {"app_id": "logs", "origin": "https://logs.other.example", "digest": "sha256:" + "5" * 64}
+    current = await _install(db, moved, installation_id="inst-logs-moved", declarations=[INGEST])
+    moved_key = await _register_key(db, moved, kid="resolve-1", purposes=[HOOK_RESOLVE])
+    team["moved_key"] = moved_key
+    response = await _get(team, moved, "moved_key", f"/v1/apps/self/hooks/bindings?hook={HOOK_PATH}")
+    assert response.status_code == 200, response.text
+    assert [b["binding_id"] for b in response.json()["bindings"]] == [str(current[REGISTRATION].binding_id)]
+    assert {b["origin"] for b in response.json()["bindings"]} == {moved["origin"]}
+
+
+@pytest.mark.asyncio
+async def test_a_catalog_version_out_of_range_is_refused_not_an_error(team):
+    response = await _get(team, LOGS, "logs_key", _resolution("registrations", f"aweb.hooks/{2**31}/{HOOK}"))
+    assert response.status_code == 422

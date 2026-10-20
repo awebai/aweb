@@ -288,7 +288,10 @@ listed and never authorize.
 }
 ```
 
-**Own bindings** return the caller's own bindings in the team in every state,
+**Own bindings** return the caller's own bindings in the team from its
+installed origin, in every state and across that origin's digests, so a
+superseded generation's bindings are included. Bindings an earlier origin left
+under the same app id are another publisher's and are never shown. They are
 selected by exactly one of `binding_id` or `hook`, each with its `catalog`,
 `hook`, `state` (`pending`, `active`, `revoked` or `superseded`), `ended_by`
 (`owner_act`, `uninstall` or `generation`) and `activated_at`, `active_from`

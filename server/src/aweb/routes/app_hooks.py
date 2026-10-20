@@ -141,13 +141,13 @@ async def _caller(request: Request, db_infra: DatabaseInfra):
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     if installed is None:
         raise HTTPException(status_code=403, detail=PURPOSES[HOOK_RESOLVE].key_not_registered)
-    return db, credential
+    return db, credential, installed
 
 
 async def _resolve(
     kind: str, request: Request, db_infra: DatabaseInfra, selector: HookSelector
 ) -> HookResolutionResponse:
-    db, credential = await _caller(request, db_infra)
+    db, credential, _ = await _caller(request, db_infra)
     if not await holds_active_binding(
         db,
         team_id=credential.team_id,
@@ -183,7 +183,8 @@ async def _resolve(
 
 
 CatalogId = Annotated[str, Path(pattern=_CATALOG_ID.pattern)]
-CatalogVersion = Annotated[int, Path(ge=1)]
+# The bound _selector applies too, inside the binding table's integer range.
+CatalogVersion = Annotated[int, Path(ge=1, le=999_999_999)]
 HookName = Annotated[str, Path(pattern=_HOOK.pattern)]
 
 
@@ -248,9 +249,14 @@ async def own_hook_bindings_route(
             parsed_id = UUID(binding_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="binding_id is a UUID") from None
-    db, credential = await _caller(request, db_infra)
+    db, credential, installed = await _caller(request, db_infra)
     bindings = await own_bindings(
-        db, team_id=credential.team_id, app_id=credential.app_id, binding_id=parsed_id, selector=selector
+        db,
+        team_id=credential.team_id,
+        app_id=credential.app_id,
+        origin=installed.origin,
+        binding_id=parsed_id,
+        selector=selector,
     )
     return OwnHookBindingsResponse(
         team_id=credential.team_id,

@@ -97,19 +97,28 @@ async def hook_keys(db, binding: HookBinding) -> list[HookKey]:
 
 
 async def own_bindings(
-    db, *, team_id: str, app_id: str, binding_id: UUID | None = None, selector: HookSelector | None = None
+    db,
+    *,
+    team_id: str,
+    app_id: str,
+    origin: str,
+    binding_id: UUID | None = None,
+    selector: HookSelector | None = None,
 ) -> list[HookBinding]:
-    """The app's own bindings in the team, in every state, by id or by hook."""
+    """The app's own bindings in the team from its installed origin, in every
+    state and across that origin's digests, by id or by hook. Bindings of an
+    earlier origin under the same app id are another publisher's."""
     if (binding_id is None) == (selector is None):
         raise ValueError("select own bindings by exactly one of binding_id or hook")
     if binding_id is not None:
         rows = await db.fetch_all(
             f"""
             SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
-            WHERE team_id = $1 AND app_id = $2 AND binding_id = $3
+            WHERE team_id = $1 AND app_id = $2 AND origin = $3 AND binding_id = $4
             """,
             team_id,
             app_id,
+            origin,
             binding_id,
         )
     else:
@@ -117,11 +126,13 @@ async def own_bindings(
         rows = await db.fetch_all(
             f"""
             SELECT {BINDING_COLUMNS} FROM {{{{tables.app_hook_bindings}}}}
-            WHERE team_id = $1 AND app_id = $2 AND catalog_id = $3 AND catalog_version = $4 AND hook = $5
+            WHERE team_id = $1 AND app_id = $2 AND origin = $3
+              AND catalog_id = $4 AND catalog_version = $5 AND hook = $6
             ORDER BY created_at, binding_id
             """,
             team_id,
             app_id,
+            origin,
             selector.catalog_id,
             selector.catalog_version,
             selector.hook,
