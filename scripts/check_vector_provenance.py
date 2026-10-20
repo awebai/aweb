@@ -82,6 +82,10 @@ ROOT_CONSUMERS = {
         "team-server-record-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "team-server-record-v1.json"',
     ),
+    PurePosixPath("cli/go/internal/conformance/attestation_records_test.go"): _consumer(
+        "principal-attestation-v1.json",
+        'readRootVector(t, "principal-attestation-v1.json")',
+    ),
     PurePosixPath("cli/go/internal/conformance/team_server_record_test.go"): _consumer(
         "team-server-record-v1.json",
         'readRootVector(t, "team-server-record-v1.json")',
