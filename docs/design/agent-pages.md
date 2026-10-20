@@ -190,7 +190,9 @@ Ordinary page/tool operations do not gain a new custody-proof prerequisite.
 
 ## 2. Portable page format
 
-Draft artifacts: [JSON Schema](agent-pages/page.schema.json),
+The frozen contract is [`aweb.page/1`](../page-format.md), with its schema,
+vectors and reference validator; where it and this section differ, the
+contract governs. Draft artifacts: [JSON Schema](agent-pages/page.schema.json),
 [wire sketches](agent-pages/contracts.md), and [examples](agent-pages/examples/).
 They are review material under `docs/design/`,
 not frozen conformance vectors. C1 promotes reviewed contracts next to

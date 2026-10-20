@@ -183,6 +183,10 @@ ROOT_CONSUMERS = {
         "team-auth-envelope-v2.json",
         'aweb_path("docs", "vectors", "team-auth-envelope-v2.json")',
     ),
+    PurePosixPath("naapp-lib/tests/pages/test_page_format_vectors.py"): _consumer(
+        "page-format-v1.json",
+        'AWEB_ROOT / "docs" / "vectors" / "page-format-v1.json"',
+    ),
     PurePosixPath("naapp-lib/tests/runtime/test_team_auth_vectors.py"): _consumer(
         "team-auth-envelope-v2.json",
         'AWEB_ROOT / "docs" / "vectors" / "team-auth-envelope-v2.json"',

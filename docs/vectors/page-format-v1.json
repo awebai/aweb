@@ -1,0 +1,3979 @@
+{
+  "format": "aweb.page-format-vectors/1",
+  "page_format": "aweb.page/1",
+  "contract": "docs/page-format.md",
+  "schema": "naapp-lib/src/aweb_naapp/pages/page-format-v1.schema.json",
+  "limits": {
+    "max_bytes": 10485760,
+    "max_json_depth": 64,
+    "max_depth": 8,
+    "max_widgets": 2000,
+    "max_bundle_items": 64,
+    "max_inline_schema_depth": 16,
+    "max_inline_schema_pattern": 256
+  },
+  "render_expectations": {
+    "link_inert": "the link renders without an active destination; no navigation or script runs",
+    "html_inert": "raw HTML renders as escaped text; no element is created",
+    "destination_domain_shown": "the normalized destination domain is shown with the link, in host chrome",
+    "bidi_isolated": "the value is isolated so bidi controls cannot reorder surrounding text",
+    "asset_origin_only": "the asset loads only from the app's asset origin, never inline in the host origin",
+    "text_escaped": "the text renders verbatim as text"
+  },
+  "bases": {
+    "price-proposal": {
+      "page_format": "aweb.page/1",
+      "page_id": "price-fixture",
+      "locale": "ca",
+      "title": "Proposta de preus — dades fictícies",
+      "rev": 1,
+      "layout_version": 1,
+      "owner": "agent-fixture",
+      "policy_ref": "staff-read",
+      "layout": [
+        {
+          "id": "title",
+          "type": "heading",
+          "props": {
+            "text": "Revisió de preus",
+            "level": 1
+          }
+        },
+        {
+          "id": "summary",
+          "type": "cards",
+          "props": {
+            "fields": {
+              "title": "channel",
+              "body": "reason",
+              "amount": "price_minor"
+            }
+          },
+          "bind": {
+            "collection": "proposals",
+            "limit": 1
+          }
+        },
+        {
+          "id": "dates",
+          "type": "table",
+          "props": {
+            "columns": [
+              {
+                "field": "start",
+                "label": "Des de",
+                "format": "date"
+              },
+              {
+                "field": "end",
+                "label": "Fins a",
+                "format": "date"
+              },
+              {
+                "field": "price_minor",
+                "label": "Preu per nit (EUR)",
+                "format": "money_minor"
+              }
+            ]
+          },
+          "bind": {
+            "collection": "proposals",
+            "limit": 1
+          }
+        },
+        {
+          "id": "price-decision",
+          "type": "decision_card",
+          "props": {
+            "task_id": "task-price-1",
+            "task_rev": 1,
+            "collection": "proposals",
+            "record_id": "price-1",
+            "record_rev": 1,
+            "options": [
+              {
+                "value": "approve",
+                "label": "Aprovar"
+              },
+              {
+                "value": "reject",
+                "label": "Rebutjar"
+              }
+            ],
+            "recommendation": "approve",
+            "answer_action": "answer-price",
+            "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "operation": {
+              "kind": "pms.price.set",
+              "destination": "PMS · tarifa canal Airbnb",
+              "summary": "Synthetic: exact values shown in the bound record."
+            },
+            "source_version": "pms-v7",
+            "expires_at": "2026-10-21T10:00:00Z"
+          }
+        },
+        {
+          "id": "agent",
+          "type": "agent_presence",
+          "props": {
+            "subject": "agent-fixture"
+          }
+        }
+      ],
+      "collections": [
+        {
+          "id": "proposals",
+          "schema_version": 1,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "string",
+                "format": "date"
+              },
+              "end": {
+                "type": "string",
+                "format": "date"
+              },
+              "price_minor": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "currency": {
+                "const": "EUR"
+              },
+              "reason": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "channel": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "source_version": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "price_minor",
+              "currency",
+              "reason",
+              "channel",
+              "source_version"
+            ],
+            "additionalProperties": false
+          },
+          "mode": "owned",
+          "records": [
+            {
+              "id": "price-1",
+              "rev": 1,
+              "value": {
+                "start": "2026-11-01",
+                "end": "2026-11-08",
+                "price_minor": 18500,
+                "currency": "EUR",
+                "reason": "Proposta de prova per a dates disponibles.",
+                "channel": "pms-fixture",
+                "source_version": "pms-v7"
+              }
+            }
+          ]
+        }
+      ],
+      "widget_state": {},
+      "actions": [
+        {
+          "id": "answer-price",
+          "kind": "answer",
+          "label": "Respondre a la proposta",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "choice": {
+                "enum": [
+                  "approve",
+                  "reject"
+                ]
+              },
+              "proposal_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "expected_task_rev": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "choice",
+              "proposal_digest",
+              "expected_task_rev"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "manager-approve",
+          "operation": "pms.price.set",
+          "requires_approval": true
+        }
+      ]
+    },
+    "guest-reply": {
+      "page_format": "aweb.page/1",
+      "page_id": "reply-fixture",
+      "locale": "ca",
+      "title": "Resposta a una consulta — dades fictícies",
+      "rev": 1,
+      "layout_version": 1,
+      "owner": "agent-fixture",
+      "policy_ref": "staff-read",
+      "layout": [
+        {
+          "id": "title",
+          "type": "heading",
+          "props": {
+            "text": "Revisar resposta al client",
+            "level": 1
+          }
+        },
+        {
+          "id": "draft",
+          "type": "cards",
+          "props": {
+            "fields": {
+              "title": "recipient",
+              "subtitle": "channel",
+              "body": "message"
+            }
+          },
+          "bind": {
+            "collection": "drafts",
+            "limit": 1
+          }
+        },
+        {
+          "id": "reply-decision",
+          "type": "decision_card",
+          "props": {
+            "task_id": "task-reply-1",
+            "task_rev": 1,
+            "collection": "drafts",
+            "record_id": "reply-1",
+            "record_rev": 1,
+            "options": [
+              {
+                "value": "approve",
+                "label": "Aprovar"
+              },
+              {
+                "value": "reject",
+                "label": "Rebutjar"
+              }
+            ],
+            "recommendation": "approve",
+            "answer_action": "answer-reply",
+            "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "operation": {
+              "kind": "pms.message.send",
+              "destination": "PMS · missatge al client per Booking.com",
+              "summary": "Synthetic: exact values shown in the bound record."
+            },
+            "source_version": "enquiry-v3",
+            "expires_at": "2026-10-21T10:00:00Z"
+          }
+        },
+        {
+          "id": "edit-draft",
+          "type": "form",
+          "props": {
+            "fields": [
+              {
+                "id": "message",
+                "kind": "text",
+                "label": "Text final",
+                "required": true
+              }
+            ],
+            "submit_action": "revise-reply"
+          }
+        }
+      ],
+      "collections": [
+        {
+          "id": "drafts",
+          "schema_version": 1,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "recipient": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "channel": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "source_version": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "recipient",
+              "channel",
+              "message",
+              "source_version"
+            ],
+            "additionalProperties": false
+          },
+          "mode": "owned",
+          "records": [
+            {
+              "id": "reply-1",
+              "rev": 1,
+              "value": {
+                "recipient": "guest-fixture",
+                "channel": "pms-fixture",
+                "message": "Bon dia! Gràcies pel vostre interès. Confirmarem la disponibilitat després de la revisió.",
+                "source_version": "enquiry-v3"
+              }
+            }
+          ]
+        }
+      ],
+      "widget_state": {},
+      "actions": [
+        {
+          "id": "answer-reply",
+          "kind": "answer",
+          "label": "Aprovar resposta exacta",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "choice": {
+                "enum": [
+                  "approve",
+                  "reject"
+                ]
+              },
+              "proposal_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "expected_task_rev": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "choice",
+              "proposal_digest",
+              "expected_task_rev"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "manager-approve",
+          "operation": "pms.message.send",
+          "requires_approval": true
+        },
+        {
+          "id": "revise-reply",
+          "kind": "edit",
+          "label": "Desar nova proposta",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "manager-draft",
+          "operation": "draft.replace"
+        }
+      ]
+    },
+    "bookings": {
+      "page_format": "aweb.page/1",
+      "page_id": "bookings-fixture",
+      "locale": "ca",
+      "title": "Reserves — dades fictícies",
+      "rev": 1,
+      "layout_version": 1,
+      "owner": "agent-fixture",
+      "policy_ref": "staff-read",
+      "layout": [
+        {
+          "id": "title",
+          "type": "heading",
+          "props": {
+            "text": "Reserves",
+            "level": 1
+          }
+        },
+        {
+          "id": "bookings-table",
+          "type": "table",
+          "props": {
+            "columns": [
+              {
+                "field": "arrival",
+                "label": "Entrada",
+                "format": "date"
+              },
+              {
+                "field": "departure",
+                "label": "Sortida",
+                "format": "date"
+              },
+              {
+                "field": "status",
+                "label": "Estat",
+                "format": "status"
+              }
+            ],
+            "row_actions": [
+              "propose-accept",
+              "propose-decline"
+            ]
+          },
+          "bind": {
+            "collection": "bookings",
+            "sort": [
+              {
+                "field": "arrival",
+                "direction": "asc"
+              }
+            ],
+            "limit": 50
+          }
+        },
+        {
+          "id": "local-note",
+          "type": "form",
+          "props": {
+            "fields": [
+              {
+                "id": "booking_id",
+                "kind": "select",
+                "label": "Reserva",
+                "required": true,
+                "options": [
+                  {
+                    "value": "booking-1",
+                    "label": "2026-11-02"
+                  }
+                ]
+              },
+              {
+                "id": "note",
+                "kind": "text",
+                "label": "Nota interna",
+                "required": true
+              }
+            ],
+            "submit_action": "edit-note"
+          }
+        },
+        {
+          "id": "annotations-list",
+          "type": "list",
+          "props": {
+            "fields": {
+              "title": "booking_id",
+              "body": "note"
+            }
+          },
+          "bind": {
+            "collection": "annotations",
+            "limit": 50
+          }
+        }
+      ],
+      "collections": [
+        {
+          "id": "bookings",
+          "schema_version": 1,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "arrival": {
+                "type": "string",
+                "format": "date"
+              },
+              "departure": {
+                "type": "string",
+                "format": "date"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "accepted",
+                  "declined"
+                ]
+              },
+              "guest_ref": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "arrival",
+              "departure",
+              "status",
+              "guest_ref"
+            ],
+            "additionalProperties": false
+          },
+          "mode": "synced",
+          "records": [
+            {
+              "id": "booking-1",
+              "rev": 1,
+              "value": {
+                "arrival": "2026-11-02",
+                "departure": "2026-11-05",
+                "status": "pending",
+                "guest_ref": "guest-fixture"
+              },
+              "source": {
+                "system": "pms-fixture",
+                "external_id": "booking-synthetic-1",
+                "version": "booking-v9",
+                "synced_at": "2026-10-19T10:00:00Z"
+              }
+            }
+          ]
+        },
+        {
+          "id": "annotations",
+          "schema_version": 1,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "booking_id": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "required": [
+              "booking_id",
+              "note"
+            ],
+            "additionalProperties": false
+          },
+          "mode": "owned",
+          "records": [
+            {
+              "id": "note-1",
+              "rev": 1,
+              "value": {
+                "booking_id": "booking-1",
+                "note": "Cal revisar la petició."
+              }
+            }
+          ]
+        }
+      ],
+      "widget_state": {},
+      "actions": [
+        {
+          "id": "propose-accept",
+          "kind": "intent",
+          "label": "Demanar acceptació",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+              }
+            },
+            "required": [
+              "record_id"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "manager-request",
+          "target": "agent-fixture",
+          "operation": "pms.booking.accept",
+          "requires_approval": true
+        },
+        {
+          "id": "propose-decline",
+          "kind": "intent",
+          "label": "Demanar rebuig",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+              }
+            },
+            "required": [
+              "record_id"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "manager-request",
+          "target": "agent-fixture",
+          "operation": "pms.booking.decline",
+          "requires_approval": true
+        },
+        {
+          "id": "edit-note",
+          "kind": "edit",
+          "label": "Desar nota local",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "note": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "booking_id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+              }
+            },
+            "required": [
+              "booking_id",
+              "note"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "staff-edit",
+          "operation": "annotation.replace"
+        }
+      ]
+    },
+    "fixture": {
+      "page_format": "aweb.page/1",
+      "page_id": "fixture-home",
+      "locale": "en",
+      "title": "Fixture inventory",
+      "rev": 1,
+      "layout_version": 1,
+      "owner": "agent-fixture",
+      "policy_ref": "staff-read",
+      "layout": [
+        {
+          "id": "items",
+          "type": "table",
+          "props": {
+            "columns": [
+              {
+                "field": "label",
+                "label": "Item",
+                "format": "text"
+              },
+              {
+                "field": "checked",
+                "label": "Checked",
+                "format": "status"
+              }
+            ],
+            "row_actions": [
+              "check",
+              "request-restock"
+            ]
+          },
+          "bind": {
+            "collection": "items"
+          }
+        },
+        {
+          "id": "future",
+          "type": "future_widget",
+          "fallback": "This widget needs a newer renderer.",
+          "props": {
+            "untrusted": "inert"
+          }
+        }
+      ],
+      "collections": [
+        {
+          "id": "items",
+          "schema_version": 1,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "checked": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "label",
+              "checked"
+            ],
+            "additionalProperties": false
+          },
+          "mode": "owned",
+          "records": [
+            {
+              "id": "item-1",
+              "rev": 1,
+              "value": {
+                "label": "Verify fixture inventory",
+                "checked": false
+              }
+            }
+          ]
+        }
+      ],
+      "widget_state": {},
+      "actions": [
+        {
+          "id": "check",
+          "kind": "edit",
+          "label": "Check item",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+              },
+              "checked": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "record_id",
+              "checked"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "fixture-edit",
+          "operation": "item.check"
+        },
+        {
+          "id": "request-restock",
+          "kind": "intent",
+          "label": "Ask the agent to restock",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "record_id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+              }
+            },
+            "required": [
+              "record_id"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "fixture-request",
+          "target": "agent-fixture",
+          "operation": "item.restock"
+        }
+      ]
+    },
+    "link-out": {
+      "page_format": "aweb.page/1",
+      "page_id": "console-entry",
+      "locale": "ca",
+      "title": "Accés a la consola",
+      "rev": 1,
+      "layout_version": 1,
+      "owner": "agent-fixture",
+      "policy_ref": "owner-only",
+      "layout": [
+        {
+          "id": "title",
+          "type": "heading",
+          "props": {
+            "text": "Consola",
+            "level": 1
+          }
+        },
+        {
+          "id": "console",
+          "type": "link_out",
+          "props": {
+            "label": "Obrir la consola",
+            "path": "/console/approvals"
+          }
+        }
+      ],
+      "collections": [],
+      "widget_state": {},
+      "actions": []
+    },
+    "bundle": {
+      "page_format": "aweb.page/1",
+      "page_id": "daily-prices",
+      "locale": "ca",
+      "title": "Propostes del dia",
+      "rev": 7,
+      "layout_version": 1,
+      "owner": "agent-fixture",
+      "policy_ref": "manager-approve",
+      "layout": [
+        {
+          "id": "title",
+          "type": "heading",
+          "props": {
+            "text": "Propostes del dia",
+            "level": 1
+          }
+        },
+        {
+          "id": "items",
+          "type": "table",
+          "props": {
+            "columns": [
+              {
+                "field": "week",
+                "label": "Setmana",
+                "format": "text"
+              },
+              {
+                "field": "current_price_minor",
+                "label": "Preu actual",
+                "format": "money_minor"
+              },
+              {
+                "field": "proposed_price_minor",
+                "label": "Preu proposat",
+                "format": "money_minor"
+              }
+            ]
+          },
+          "bind": {
+            "collection": "proposals",
+            "limit": 64
+          }
+        },
+        {
+          "id": "batch-decision",
+          "type": "decision_card",
+          "props": {
+            "task_id": "task-batch-1",
+            "task_rev": 1,
+            "collection": "batches",
+            "record_id": "batch-1",
+            "record_rev": 1,
+            "bundle": true,
+            "items_collection": "proposals",
+            "options": [
+              {
+                "value": "approve",
+                "label": "Aprovar el lot"
+              },
+              {
+                "value": "reject",
+                "label": "Rebutjar"
+              }
+            ],
+            "recommendation": "approve",
+            "answer_action": "answer-batch",
+            "proposal_sha256": "sha256:5cfa2fb14c6b6e7ed93c33e0e59f8dd416da8aed8c69e7e61202890812f56bff",
+            "operation": {
+              "kind": "pms.price.set",
+              "destination": "PMS",
+              "summary": "Synthetic batch."
+            },
+            "source_version": "history-2026-10-20",
+            "expires_at": "2026-10-21T10:00:00Z"
+          }
+        }
+      ],
+      "collections": [
+        {
+          "id": "proposals",
+          "schema_version": 1,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "week": {
+                "type": "string",
+                "maxLength": 16
+              },
+              "current_price_minor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000000
+              },
+              "proposed_price_minor": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 100000000
+              }
+            },
+            "required": [
+              "week",
+              "current_price_minor",
+              "proposed_price_minor"
+            ],
+            "additionalProperties": false
+          },
+          "mode": "owned",
+          "records": [
+            {
+              "id": "week-43",
+              "rev": 2,
+              "value": {
+                "week": "2026-W43",
+                "current_price_minor": 18000,
+                "proposed_price_minor": 19500
+              }
+            },
+            {
+              "id": "week-44",
+              "rev": 1,
+              "value": {
+                "week": "2026-W44",
+                "current_price_minor": 18000,
+                "proposed_price_minor": 17000
+              }
+            }
+          ]
+        },
+        {
+          "id": "batches",
+          "schema_version": 1,
+          "schema": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "record_id": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "record_rev": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "proposal_sha256": {
+                      "type": "string",
+                      "pattern": "^sha256:[0-9a-f]{64}$"
+                    }
+                  },
+                  "required": [
+                    "record_id",
+                    "record_rev",
+                    "proposal_sha256"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          "mode": "owned",
+          "records": [
+            {
+              "id": "batch-1",
+              "rev": 1,
+              "value": {
+                "items": [
+                  {
+                    "record_id": "week-43",
+                    "record_rev": 2,
+                    "proposal_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  {
+                    "record_id": "week-44",
+                    "record_rev": 1,
+                    "proposal_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "widget_state": {},
+      "actions": [
+        {
+          "id": "answer-batch",
+          "kind": "answer",
+          "label": "Respondre al lot",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "choice": {
+                "enum": [
+                  "approve",
+                  "reject"
+                ]
+              },
+              "proposal_digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "expected_task_rev": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "choice",
+              "proposal_digest",
+              "expected_task_rev"
+            ],
+            "additionalProperties": false
+          },
+          "policy_ref": "manager-approve",
+          "operation": "pms.price.set",
+          "requires_approval": true
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "name": "bytes-not-json",
+      "input": {
+        "raw": "{\"page_format\": "
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "not_json",
+            "pointer": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "bytes-duplicate-key",
+      "input": {
+        "raw": "{\"page_format\":\"aweb.page/1\",\"page_format\":\"aweb.page/1\"}"
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "duplicate_key",
+            "pointer": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "bytes-non-finite-number",
+      "input": {
+        "raw": "{\"rev\": NaN}"
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "non_finite_number",
+            "pointer": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "too-large",
+      "input": {
+        "generate": {
+          "shape": "padded",
+          "base": "fixture",
+          "bytes": 10485761
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "too_large",
+            "pointer": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "bytes-not-an-object",
+      "input": {
+        "raw": "[]"
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "not_object",
+            "pointer": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "json-depth-64-accepted",
+      "input": {
+        "generate": {
+          "shape": "deep_record",
+          "base": "fixture",
+          "depth": 64
+        }
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "json-depth-65-refused",
+      "input": {
+        "generate": {
+          "shape": "deep_record",
+          "base": "fixture",
+          "depth": 65
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "too_deep_json",
+            "pointer": "/collections/0/records/0/value/deep/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n/n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "depth-8-accepted",
+      "input": {
+        "generate": {
+          "shape": "nested",
+          "base": "fixture",
+          "depth": 8
+        }
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "depth-9-refused",
+      "input": {
+        "generate": {
+          "shape": "nested",
+          "base": "fixture",
+          "depth": 9
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "too_deep",
+            "pointer": "/layout/0/children/0/children/0/children/0/children/0/children/0/children/0/children/0/children/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "depth-500-refused-before-schema",
+      "input": {
+        "generate": {
+          "shape": "nested",
+          "base": "fixture",
+          "depth": 500
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "too_deep",
+            "pointer": "/layout/0/children/0/children/0/children/0/children/0/children/0/children/0/children/0/children/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "widgets-2000-accepted",
+      "input": {
+        "generate": {
+          "shape": "flat",
+          "base": "fixture",
+          "widgets": 2000
+        }
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "widgets-2001-refused",
+      "input": {
+        "generate": {
+          "shape": "flat",
+          "base": "fixture",
+          "widgets": 2001
+        }
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "limits",
+            "code": "too_many_widgets",
+            "pointer": "/layout"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-major-format",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/page_format",
+            "value": "aweb.page/2"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/page_format"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-top-level-field",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/theme",
+            "value": "dark"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": ""
+          }
+        ]
+      }
+    },
+    {
+      "name": "heading-level-7",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/level",
+            "value": 7
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/0/props/level"
+          }
+        ]
+      }
+    },
+    {
+      "name": "raw-html-props-key",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/0/props/html",
+            "value": "<b>x</b>"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/0/props"
+          }
+        ]
+      }
+    },
+    {
+      "name": "layout-version-above-safe-integer",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout_version",
+            "value": 9007199254740992
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout_version"
+          }
+        ]
+      }
+    },
+    {
+      "name": "rev-negative",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/rev",
+            "value": -1
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/rev"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stat-fractional-number",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "s1",
+              "type": "stat",
+              "props": {
+                "label": "Ràtio",
+                "value": 0.1
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/2/props/value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "stat-decimal-string",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "s1",
+              "type": "stat",
+              "props": {
+                "label": "Ràtio",
+                "value": "0.1"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "unknown-widget-too-many-props",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props",
+            "value": {
+              "k0": 0,
+              "k1": 1,
+              "k2": 2,
+              "k3": 3,
+              "k4": 4,
+              "k5": 5,
+              "k6": 6,
+              "k7": 7,
+              "k8": 8,
+              "k9": 9,
+              "k10": 10,
+              "k11": 11,
+              "k12": 12,
+              "k13": 13,
+              "k14": 14,
+              "k15": 15,
+              "k16": 16,
+              "k17": 17,
+              "k18": 18,
+              "k19": 19,
+              "k20": 20,
+              "k21": 21,
+              "k22": 22,
+              "k23": 23,
+              "k24": 24,
+              "k25": 25,
+              "k26": 26,
+              "k27": 27,
+              "k28": 28,
+              "k29": 29,
+              "k30": 30,
+              "k31": 31,
+              "k32": 32
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-widget-bounded-props",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props",
+            "value": {
+              "k0": 0,
+              "k1": 1,
+              "k2": 2,
+              "k3": 3,
+              "k4": 4,
+              "k5": 5,
+              "k6": 6,
+              "k7": 7,
+              "k8": 8,
+              "k9": 9,
+              "k10": 10,
+              "k11": 11,
+              "k12": 12,
+              "k13": 13,
+              "k14": 14,
+              "k15": 15,
+              "k16": 16,
+              "k17": 17,
+              "k18": 18,
+              "k19": 19,
+              "k20": 20,
+              "k21": 21,
+              "k22": 22,
+              "k23": 23,
+              "k24": 24,
+              "k25": 25,
+              "k26": 26,
+              "k27": 27,
+              "k28": 28,
+              "k29": 29,
+              "k30": 30,
+              "k31": 31
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "form-password-field",
+      "input": {
+        "base": "bookings",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/2/props/fields/1/kind",
+            "value": "password"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/2/props/fields/1/kind"
+          }
+        ]
+      }
+    },
+    {
+      "name": "select-without-options",
+      "input": {
+        "base": "bookings",
+        "patch": [
+          {
+            "op": "remove",
+            "path": "/layout/2/props/fields/0/options"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/2/props/fields/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "file-field-without-bounds",
+      "input": {
+        "base": "bookings",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/2/props/fields/1",
+            "value": {
+              "id": "note",
+              "kind": "file",
+              "label": "Fitxer"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/2/props/fields/1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "file-accept-not-mime",
+      "input": {
+        "base": "bookings",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/2/props/fields/1",
+            "value": {
+              "id": "note",
+              "kind": "file",
+              "label": "Fitxer",
+              "accept": [
+                "javascript"
+              ],
+              "max_bytes": 1024
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/2/props/fields/1/accept/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "widget-state-key-not-an-id",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/widget_state",
+            "value": {
+              "bad key!": {
+                "busy": true
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/widget_state"
+          }
+        ]
+      }
+    },
+    {
+      "name": "binding-value-float",
+      "input": {
+        "base": "bookings",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/1/bind/all",
+            "value": [
+              {
+                "field": "status",
+                "op": "eq",
+                "value": 1.5
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/bind/all/0/value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "decision-card-missing-expiry",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "remove",
+            "path": "/layout/3/props/expires_at"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/3/props"
+          }
+        ]
+      }
+    },
+    {
+      "name": "decision-card-bad-expiry",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/expires_at",
+            "value": "tomorrow"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/3/props/expires_at"
+          }
+        ]
+      }
+    },
+    {
+      "name": "decision-card-expiry-without-offset",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/expires_at",
+            "value": "2026-10-21T10:00:00"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/3/props/expires_at"
+          }
+        ]
+      }
+    },
+    {
+      "name": "decision-card-bad-digest",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/proposal_sha256",
+            "value": "sha256:XYZ"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/3/props/proposal_sha256"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-card-without-items-collection",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "remove",
+            "path": "/layout/2/props/items_collection"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/2/props"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-absolute-url",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "https://evil.example/x"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-scheme-relative",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "//evil.example/x"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-javascript-scheme",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "javascript:alert(1)"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-dot-segment",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "/console/../admin"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-percent-encoded",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "/console%2F..%2Fadmin"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-query-carries-token",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "/console?token=abc"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-fragment",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "/console#token=abc"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-backslash",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "/console\\evil"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "widget-id-trailing-newline",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/id",
+            "value": "items\n"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/0/id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-trailing-newline",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "/console\n"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props/path"
+          }
+        ]
+      }
+    },
+    {
+      "name": "link-out-root",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/path",
+            "value": "/"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "link-out-has-no-url-field",
+      "input": {
+        "base": "link-out",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/1/props/url",
+            "value": "https://evil.example"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "schema",
+            "code": "schema",
+            "pointer": "/layout/1/props"
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate-widget-id",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "items",
+              "type": "heading",
+              "props": {
+                "text": "Dup",
+                "level": 2
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "duplicate_widget_id",
+            "pointer": "/layout/2/id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate-widget-id-nested",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "box",
+              "type": "stack",
+              "props": {},
+              "children": [
+                {
+                  "id": "items",
+                  "type": "heading",
+                  "props": {
+                    "text": "Dup",
+                    "level": 2
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "duplicate_widget_id",
+            "pointer": "/layout/2/children/0/id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-row-action",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/row_actions/0",
+            "value": "missing"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_action",
+            "pointer": "/layout/0/props/row_actions/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-binding-collection",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/bind/collection",
+            "value": "missing"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_collection",
+            "pointer": "/layout/0/bind/collection"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-column-field",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/columns/0/field",
+            "value": "missing"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_field",
+            "pointer": "/layout/0/props/columns/0/field"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-sort-field",
+      "input": {
+        "base": "bookings",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/bind/sort/0/field",
+            "value": "missing"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_field",
+            "pointer": "/layout/1/bind/sort/0/field"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-cards-field",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/1/props/fields/title",
+            "value": "missing"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_field",
+            "pointer": "/layout/1/props/fields/title"
+          }
+        ]
+      }
+    },
+    {
+      "name": "answer-action-not-answer-kind",
+      "input": {
+        "base": "guest-reply",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/2/props/answer_action",
+            "value": "revise-reply"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "answer_action_not_answer",
+            "pointer": "/layout/2/props/answer_action"
+          }
+        ]
+      }
+    },
+    {
+      "name": "recommendation-not-an-option",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/recommendation",
+            "value": "defer"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "recommendation_not_option",
+            "pointer": "/layout/3/props/recommendation"
+          }
+        ]
+      }
+    },
+    {
+      "name": "decision-card-unknown-collection",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/3/props/collection",
+            "value": "missing"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_collection",
+            "pointer": "/layout/3/props/collection"
+          }
+        ]
+      }
+    },
+    {
+      "name": "form-misses-required-input",
+      "input": {
+        "base": "bookings",
+        "patch": [
+          {
+            "op": "remove",
+            "path": "/layout/2/props/fields/0"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "form_missing_required_input",
+            "pointer": "/layout/2/props/fields"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-form-submit-action",
+      "input": {
+        "base": "bookings",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/2/props/submit_action",
+            "value": "missing"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_action",
+            "pointer": "/layout/2/props/submit_action"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-button-action",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "b1",
+              "type": "button",
+              "props": {
+                "label": "Fer",
+                "action": "missing"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_action",
+            "pointer": "/layout/2/props/action"
+          }
+        ]
+      }
+    },
+    {
+      "name": "chart-fields-resolve",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "c1",
+              "type": "chart",
+              "bind": {
+                "collection": "proposals"
+              },
+              "props": {
+                "kind": "bar",
+                "x": "week",
+                "series": [
+                  "proposed_price_minor"
+                ],
+                "alternative": "Taula de preus"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "unknown-chart-series-field",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "c1",
+              "type": "chart",
+              "bind": {
+                "collection": "proposals"
+              },
+              "props": {
+                "kind": "bar",
+                "x": "week",
+                "series": [
+                  "missing"
+                ],
+                "alternative": "Taula de preus"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_field",
+            "pointer": "/layout/3/props/series/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "unknown-stat-field",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "s1",
+              "type": "stat",
+              "bind": {
+                "collection": "proposals",
+                "limit": 1
+              },
+              "props": {
+                "label": "Preu",
+                "field": "missing"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_field",
+            "pointer": "/layout/3/props/field"
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate-collection-id",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/1/id",
+            "value": "proposals"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "duplicate_collection_id",
+            "pointer": "/collections/1/id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate-action-id",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/-",
+            "value": {
+              "id": "check",
+              "kind": "edit",
+              "label": "Check item",
+              "input_schema": {
+                "type": "object",
+                "properties": {
+                  "record_id": {
+                    "type": "string",
+                    "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+                  },
+                  "checked": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "record_id",
+                  "checked"
+                ],
+                "additionalProperties": false
+              },
+              "policy_ref": "fixture-edit",
+              "operation": "item.check"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "duplicate_action_id",
+            "pointer": "/actions/2/id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "widget-state-unknown-widget",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/widget_state",
+            "value": {
+              "ghost": {
+                "busy": true
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "state_unknown_widget",
+            "pointer": "/widget_state/ghost"
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate-record-id",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/records/-",
+            "value": {
+              "id": "item-1",
+              "rev": 1,
+              "value": {
+                "label": "Verify fixture inventory",
+                "checked": false
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "duplicate_record_id",
+            "pointer": "/collections/0/records/1/id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "record-violates-collection-schema",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/checked",
+            "value": "yes"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "record_invalid",
+            "pointer": "/collections/0/records/0/value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-remote-ref",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$ref": "https://evil.example/s.json"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/collections/0/schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-local-ref",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/$defs",
+            "value": {
+              "label": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      }
+    },
+    {
+      "name": "inline-schema-number-type",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "number"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_number",
+            "pointer": "/collections/0/schema/properties/extra/type"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-long-pattern",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "string",
+              "pattern": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_pattern",
+            "pointer": "/collections/0/schema/properties/extra/pattern"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-unsupported-keyword",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "$dynamicRef": "#x"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_keyword",
+            "pointer": "/collections/0/schema/properties/extra/$dynamicRef"
+          }
+        ]
+      }
+    },
+    {
+      "name": "inline-schema-too-deep",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/collections/0/schema/properties/extra",
+            "value": {
+              "type": "object",
+              "properties": {
+                "n": {
+                  "type": "object",
+                  "properties": {
+                    "n": {
+                      "type": "object",
+                      "properties": {
+                        "n": {
+                          "type": "object",
+                          "properties": {
+                            "n": {
+                              "type": "object",
+                              "properties": {
+                                "n": {
+                                  "type": "object",
+                                  "properties": {
+                                    "n": {
+                                      "type": "object",
+                                      "properties": {
+                                        "n": {
+                                          "type": "object",
+                                          "properties": {
+                                            "n": {
+                                              "type": "object",
+                                              "properties": {
+                                                "n": {
+                                                  "type": "object",
+                                                  "properties": {
+                                                    "n": {
+                                                      "type": "object",
+                                                      "properties": {
+                                                        "n": {
+                                                          "type": "object",
+                                                          "properties": {
+                                                            "n": {
+                                                              "type": "object",
+                                                              "properties": {
+                                                                "n": {
+                                                                  "type": "object",
+                                                                  "properties": {
+                                                                    "n": {
+                                                                      "type": "object",
+                                                                      "properties": {
+                                                                        "n": {
+                                                                          "type": "object",
+                                                                          "properties": {
+                                                                            "n": {
+                                                                              "type": "object",
+                                                                              "properties": {
+                                                                                "n": {
+                                                                                  "type": "object"
+                                                                                }
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                }
+                                                              }
+                                                            }
+                                                          }
+                                                        }
+                                                      }
+                                                    }
+                                                  }
+                                                }
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_depth",
+            "pointer": "/collections/0/schema/properties/extra/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n/properties/n"
+          }
+        ]
+      }
+    },
+    {
+      "name": "action-input-schema-remote-ref",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/actions/0/input_schema/properties/extra",
+            "value": {
+              "$ref": "file:///etc/passwd"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "inline_schema_ref",
+            "pointer": "/actions/0/input_schema/properties/extra/$ref"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bidi-control-in-label",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/text",
+            "value": "Preus \u202epdf.exe"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bidi_control",
+            "pointer": "/layout/0/props/text"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bidi-control-in-action-label",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/actions/0/label",
+            "value": "Check \u2066item"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bidi_control",
+            "pointer": "/actions/0/label"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-hash-mismatch",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/2/props/proposal_sha256",
+            "value": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_hash_mismatch",
+            "pointer": "/layout/2/props/proposal_sha256"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-item-revised-after-hashing",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/rev",
+            "value": 3
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_item_mismatch",
+            "pointer": "/collections/1/records/0/value/items/0"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-item-unknown",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "remove",
+            "path": "/collections/0/records/1"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_item_unknown",
+            "pointer": "/collections/1/records/0/value/items/1"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-record-not-in-snapshot",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "remove",
+            "path": "/collections/1/records/0"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_record_unknown",
+            "pointer": "/layout/2/props/record_id"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-record-revision-mismatch",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/2/props/record_rev",
+            "value": 2
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_record_mismatch",
+            "pointer": "/layout/2/props/record_rev"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-items-collection-unknown",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/2/props/items_collection",
+            "value": "missing"
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "unknown_collection",
+            "pointer": "/layout/2/props/items_collection"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-record-not-an-item-list",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/1/records/0/value",
+            "value": {
+              "items": [
+                {
+                  "record_id": "week-43"
+                }
+              ]
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/collections/1/schema",
+            "value": {
+              "type": "object"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_record_shape",
+            "pointer": "/collections/1/records/0/value"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bundle-too-many-items",
+      "input": {
+        "base": "bundle",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/1/records/0/value",
+            "value": {
+              "items": [
+                {
+                  "record_id": "w0",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w1",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w2",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w3",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w4",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w5",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w6",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w7",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w8",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w9",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w10",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w11",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w12",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w13",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w14",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w15",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w16",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w17",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w18",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w19",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w20",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w21",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w22",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w23",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w24",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w25",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w26",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w27",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w28",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w29",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w30",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w31",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w32",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w33",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w34",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w35",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w36",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w37",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w38",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w39",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w40",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w41",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w42",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w43",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w44",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w45",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w46",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w47",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w48",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w49",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w50",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w51",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w52",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w53",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w54",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w55",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w56",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w57",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w58",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w59",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w60",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w61",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w62",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w63",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                },
+                {
+                  "record_id": "w64",
+                  "record_rev": 1,
+                  "proposal_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+              ]
+            }
+          },
+          {
+            "op": "replace",
+            "path": "/collections/1/schema",
+            "value": {
+              "type": "object"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bundle_too_many_items",
+            "pointer": "/collections/1/records/0/value/items"
+          }
+        ]
+      }
+    },
+    {
+      "name": "markdown-javascript-link",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[obrir](javascript:alert(1))"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-mixed-case-scheme",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[obrir](JaVaScRiPt:alert(1))"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-entity-encoded-scheme",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[obrir](jav&#x61;script:alert(1))"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-percent-encoded-scheme",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[obrir](%6Aavascript:alert(1))"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-whitespace-in-scheme",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[obrir](java\tscript:alert(1))"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-data-url",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[obrir](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-vbscript-url",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[obrir](vbscript:msgbox(1))"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-autolink-javascript",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "<javascript:alert(1)>"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-reference-link-javascript",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[obrir][x]\n\n[x]: javascript:alert(1)"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-raw-html-img",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "<img src=x onerror=alert(1)>"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "html_inert"
+    },
+    {
+      "name": "markdown-raw-svg",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "<svg onload=alert(1)></svg>"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "html_inert"
+    },
+    {
+      "name": "markdown-image-javascript",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "![x](javascript:alert(1))"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "link_inert"
+    },
+    {
+      "name": "markdown-domain-spoof-text",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[https://bank.example](https://evil.example/login)"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "destination_domain_shown"
+    },
+    {
+      "name": "markdown-homoglyph-domain",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "[p\u0430ypal.example](https://p\u0430ypal.example)"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "destination_domain_shown"
+    },
+    {
+      "name": "markdown-bidi-control",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "t1",
+              "type": "text",
+              "props": {
+                "markdown": "Factura \u202egnp.exe"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": false,
+        "errors": [
+          {
+            "layer": "lint",
+            "code": "bidi_control",
+            "pointer": "/layout/2/props/markdown"
+          }
+        ]
+      }
+    },
+    {
+      "name": "record-value-bidi-and-homoglyph",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/collections/0/records/0/value/label",
+            "value": "p\u0430y \u202eexe"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "bidi_isolated"
+    },
+    {
+      "name": "svg-asset-reference",
+      "input": {
+        "base": "fixture",
+        "patch": [
+          {
+            "op": "add",
+            "path": "/layout/-",
+            "value": {
+              "id": "img",
+              "type": "image",
+              "props": {
+                "asset_id": "asset-svg-1",
+                "alt": "Logo"
+              }
+            }
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "asset_origin_only"
+    },
+    {
+      "name": "homoglyph-heading",
+      "input": {
+        "base": "price-proposal",
+        "patch": [
+          {
+            "op": "replace",
+            "path": "/layout/0/props/text",
+            "value": "Revisi\u043e de preus"
+          }
+        ]
+      },
+      "expect": {
+        "valid": true,
+        "errors": []
+      },
+      "render": "text_escaped"
+    }
+  ],
+  "bundle_hash": [
+    {
+      "name": "two-items",
+      "items": [
+        {
+          "record_id": "week-43",
+          "record_rev": 2,
+          "proposal_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "record_id": "week-44",
+          "record_rev": 1,
+          "proposal_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        }
+      ],
+      "sha256": "sha256:5cfa2fb14c6b6e7ed93c33e0e59f8dd416da8aed8c69e7e61202890812f56bff"
+    },
+    {
+      "name": "one-item-non-ascii-id",
+      "items": [
+        {
+          "record_id": "setmana-àè",
+          "record_rev": 0,
+          "proposal_sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "sha256": "sha256:4af2aa76219aeb546bd5f00175fd8bb46cbf507d14756cb3ec9fe0d60b41525a"
+    },
+    {
+      "name": "empty",
+      "items": [],
+      "sha256": "sha256:8d859e171eee49f33d0252ec37e5e2f26cb2fda6f9761c0c0ef223b438151ad4"
+    }
+  ]
+}
