@@ -10,6 +10,7 @@ import dataclasses
 import hashlib
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from aweb_naapp.hooks.envelope import (
@@ -46,6 +47,14 @@ CHECKPOINT_PREFIX = b"aweb.logs-checkpoint/1\n"
 SALT_BYTES = 32
 TIME_LAYOUT = "%Y-%m-%dT%H:%M:%S.%fZ"
 _DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+def format_time(moment: datetime) -> str:
+    """A moment in the chain's one time spelling: UTC to the millisecond."""
+    if moment.tzinfo is None:
+        raise ValueError("a chain time needs a timezone")
+    utc = moment.astimezone(UTC)
+    return utc.strftime("%Y-%m-%dT%H:%M:%S.") + f"{utc.microsecond // 1000:03d}Z"
 
 
 def sha256_hex(data: bytes) -> str:

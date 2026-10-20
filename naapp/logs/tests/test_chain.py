@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -16,6 +17,7 @@ from aweb_logs.chain import (
     Receipt,
     artefact_sha256,
     content_commitment,
+    format_time,
     link_for,
     open_checkpoint,
     open_receipt,
@@ -254,3 +256,10 @@ def test_only_an_empty_epoch_checkpoints_sequence_zero() -> None:
         sign_checkpoint(SigningKey(LOGS_SEED), _checkpoint(team_seq=-1))
     with pytest.raises(Refused):
         sign_receipt(SigningKey(LOGS_SEED), _receipt(team_seq=0))
+
+
+def test_times_are_spelled_to_the_millisecond_in_utc() -> None:
+    moment = datetime(2026, 10, 20, 14, 0, 3, 100999, tzinfo=timezone(timedelta(hours=2)))
+    assert format_time(moment) == "2026-10-20T12:00:03.100Z"
+    with pytest.raises(ValueError):
+        format_time(datetime(2026, 10, 20, 12, 0, 3))
