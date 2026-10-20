@@ -93,8 +93,16 @@ def embedded_ipv4(address: IPv6Address) -> tuple[IPv4Address, ...]:
 
 
 def _in_floor(address: IPAddress) -> bool:
-    if isinstance(address, IPv6Address) and address in NAT64:
-        return any(_in_floor(v4) for v4 in embedded_ipv4(address))
+    """True when the address, or any IPv4 address it embeds, is in the floor.
+
+    A NAT64 address sits inside ::/8 but is judged only by the IPv4 address it
+    carries.
+    """
+    if isinstance(address, IPv6Address):
+        if any(_in_floor(v4) for v4 in embedded_ipv4(address)):
+            return True
+        if address in NAT64:
+            return False
     return any(address.version == n.version and address in n for n in FLOOR)
 
 
