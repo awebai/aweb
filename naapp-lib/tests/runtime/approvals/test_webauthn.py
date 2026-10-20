@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 
 import pytest
+from aweb_naapp_testing.webauthn import SoftAuthenticator, b64url
 
 from aweb_naapp.runtime.passkeys import (
     RelyingParty,
@@ -12,7 +13,6 @@ from aweb_naapp.runtime.passkeys import (
     verify_assertion,
     verify_registration,
 )
-from tests.runtime.approvals.soft_authenticator import SoftAuthenticator, b64url
 
 RP = RelyingParty(origin="https://app.example.com", name="Example")
 OTHER_RP = RelyingParty(origin="https://other.example.com", name="Other")
