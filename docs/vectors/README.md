@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 27
+`docs/vectors/*.json` is the only public protocol-vector authority for the 28
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -292,6 +292,22 @@ after signing, a cross-audience or cross-endpoint request, a tampered body, a
 stale or future timestamp, a wrong binding, a credential naming another event
 or team, and a signer that is not the event's producer. Each negative is a full
 request with the receiver's own options and one expected refusal.
+
+### `owner-act-v1.json`
+
+The `aweb.owner-act/1` artifact, signed by a team's current controller key
+(aweb-acgh.16.3; contract in [`owner-act.md`](../owner-act.md)). Positive cases
+cover every act in the three vocabularies (core, app and logs) with their
+subjects, including registration and production bindings. Each case carries the
+verifier's own facts: its team, the current team key, its audience and
+vocabulary, its clock, the stored subject and the nonce state. Negatives refuse
+an admin signer and a rotated-out team key (`owner_required`), a claimed team
+key that an admin signed, expiry, an act issued in the future, a lifetime over
+ten minutes, a reused nonce, a subject whose generation or digest differs, an act
+outside the verifier's vocabulary or audience, another team, a team
+certificate presented as an owner act, an unknown act, kind-specific subject
+fields on the wrong kind, and non-canonical bytes. The Go authority in
+`cli/go/awid/owneract.go` regenerates the vector byte for byte.
 
 ## Experimental and compatibility A2A fixtures
 

@@ -200,6 +200,10 @@ ROOT_CONSUMERS = {
         '(AWEB_ROOT / "docs" / "vectors" / "hook-event-envelope-v1.json")',
         '(AWEB_ROOT / "docs" / "vectors" / "hook-catalog-v1.json")',
     ),
+    PurePosixPath("cli/go/awid/owneract_test.go"): _consumer(
+        "owner-act-v1.json",
+        '"../../../docs/vectors/owner-act-v1.json"',
+    ),
     PurePosixPath("cli/go/hookevent/vectors_test.go"): _consumer(
         {"hook-catalog-v1.json", "hook-delivery-credential-v1.json", "hook-event-envelope-v1.json"},
         '"../../../docs/vectors/hook-event-envelope-v1.json"',

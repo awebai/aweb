@@ -239,8 +239,8 @@ installation and its generation.
 - **Install never activates.** An install or update by an admin creates its
   bindings as `pending`.
 - **Only the team owner activates or revokes**, with an `aweb.owner-act/1`
-  signed by the team's controller authority. The owner-act contract is
-  aweb-acgh.16.3. Any other signer is refused with `owner_required`. Activation
+  signed by the team's controller authority ([owner act](owner-act.md)). Any
+  other signer is refused with `owner_required`. Activation
   compares the act's subject, including the manifest digest the owner's client
   fetched, with the stored pending row.
 - **A new generation supersedes.** Every binding of the old generation becomes
