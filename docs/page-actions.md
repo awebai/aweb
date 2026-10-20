@@ -205,12 +205,13 @@ the card is shown. Changing any covered value needs a new approval.
   external effect, under one stable operation ID. An unknown outcome
   reconciles before any retry, and a new dispatch needs a new approval.
 
-**Requester and approver.** The primitive refuses at mint when the approver's
-subject equals `requested_by`, unless the action policy sets
-`allow_requester_approval` for an internal reversible action. `requested_by`
-and member approver subjects are both principal DIDs, so the comparison is
-exact. This is a B2 follow-up change (aweb-acgh.4 lane). Until it lands, the
-pages naapp makes the same refusal before minting.
+**Requester and approver.** The primitive refuses at mint with
+`requester_is_approver` when the approver's subject equals `requested_by`,
+unless the action policy sets `allow_requester_approval` (default false), which
+a policy may do only for an internal reversible action (aweb-acgh.25).
+`requested_by` and member approver subjects are both principal DIDs, so the
+comparison is exact. Until that change lands, the pages naapp makes the same
+refusal before minting.
 
 ## 7. Approval adapters and minimum assurance
 
