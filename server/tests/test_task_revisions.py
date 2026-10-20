@@ -1,12 +1,38 @@
 """Task revisions and assignment principals use the real service and database."""
 
 from uuid import UUID
+from pathlib import Path
+import shutil
 
 import pytest
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb.coordination.tasks_service import create_task, get_task, update_task
 from test_task_human_assignment_events import _member
 from test_tasks_http import TEAM_ID, _DbShim, _seed_team
+
+
+@pytest.mark.asyncio
+async def test_upgrade_freezes_current_assignment_without_inventing_historical_identity(shared_test_pool, tmp_path):
+    import aweb
+
+    db = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
+    await db.execute('CREATE SCHEMA IF NOT EXISTS "aweb"')
+    migrations = Path(aweb.__file__).parent / "migrations" / "aweb"
+    for source in migrations.glob("*.sql"):
+        if source.name < "029":
+            shutil.copy2(source, tmp_path / source.name)
+    await AsyncMigrationManager(db, migrations_path=str(tmp_path), module_name="aweb-aweb", migrations_table="schema_migrations").apply_pending_migrations()
+    await _seed_team(db)
+    human_id = await _member(db, "requester", human=True)
+    await db.execute("""INSERT INTO {{tables.tasks}}
+        (team_id, task_number, task_ref_suffix, title, assignee_alias, created_by_alias)
+        VALUES ($1, 1, 'aaaa', 'Legacy question', 'requester', 'historical-alias')""", TEAM_ID)
+    await AsyncMigrationManager(db, migrations_path=str(migrations), module_name="aweb-aweb", migrations_table="schema_migrations").apply_pending_migrations()
+    row = await db.fetch_one("SELECT rev, question_rev, assignee_did, created_by_did FROM {{tables.tasks}} WHERE team_id = $1", TEAM_ID)
+    assert (row["rev"], row["question_rev"]) == (1, 1)
+    assert row["assignee_did"] == f"did:key:{human_id}"
+    assert row["created_by_did"] is None
 
 
 @pytest.mark.asyncio

@@ -106,6 +106,7 @@ async def create_task_route(
         db_infra,
         team_id=identity.team_id,
         created_by_alias=identity.alias,
+        created_by_did=identity.did_aw or identity.did_key,
         title=payload.title,
         description=payload.description,
         notes=payload.notes,

@@ -44,9 +44,13 @@ async def test_answer_replay_is_immutable_and_reopen_allows_another_answer(aweb_
     assert first["question_rev"] == 1
     assert first["answered_by"] == {"principal_did": actor.did_key, "certificate_id": actor.certificate_id}
     assert await _commit(db, **_answer(task, actor)) == first
+    async with db.transaction() as tx:
+        assert await tasks_service.get_task_answer_on(tx, team_id=TEAM_ID, task_id=UUID(task["task_id"]), answer_key="answer-1") == first
     reopened = await tasks_service.update_task(service, team_id=TEAM_ID, ref=task["task_id"], actor_alias="alice", status="open")
     historical = await _commit(db, **_answer(task, actor))
     assert historical == {**first, "current": False}
+    async with db.transaction() as tx:
+        assert await tasks_service.get_task_answer_on(tx, team_id=TEAM_ID, task_id=UUID(task["task_id"]), answer_key="answer-1") == historical
     assert (await tasks_service.get_task(service, team_id=TEAM_ID, ref=task["task_id"]))["status"] == "open"
     second = await _commit(db, **_answer(reopened, actor, key="answer-2"))
     assert second["question_rev"] == 2
@@ -86,6 +90,17 @@ async def test_concurrent_answers_commit_one_receipt(aweb_cloud_db):
 
 
 @pytest.mark.asyncio
+async def test_concurrent_identical_retries_return_the_same_receipt(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    service, task, actor = await _question(db)
+    first, retry = await asyncio.gather(
+        _commit(db, **_answer(task, actor)), _commit(db, **_answer(task, actor)),
+    )
+    assert first == retry
+    assert len(await tasks_service.list_comments(service, team_id=TEAM_ID, ref=task["task_id"])) == 1
+
+
+@pytest.mark.asyncio
 async def test_answer_rolls_back_with_callers_delivery_transaction(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
     service, task, actor = await _question(db)
@@ -102,6 +117,8 @@ async def test_answer_rolls_back_with_callers_delivery_transaction(aweb_cloud_db
 async def test_alias_reuse_and_replaced_certificate_cannot_answer(aweb_cloud_db):
     db = aweb_cloud_db.aweb_db
     service, task, actor = await _question(db)
+    with pytest.raises(ForbiddenError, match="target_mismatch"):
+        await _commit(db, **_answer(task, replace(actor, certificate_id="replaced-certificate")))
     await db.execute("UPDATE {{tables.agents}} SET deleted_at = NOW() WHERE agent_id = $1", UUID(actor.agent_id))
     replacement_id = await _member(db, "requester", human=True)
     replacement = replace(actor, agent_id=str(replacement_id), did_key=f"did:key:{replacement_id}")
