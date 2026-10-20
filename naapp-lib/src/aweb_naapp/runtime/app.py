@@ -27,6 +27,7 @@ from fastapi.dependencies.models import Dependant
 from fastapi.responses import HTMLResponse, PlainTextResponse, Response
 from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager
+from starlette.routing import BaseRoute, Host, Mount
 
 from aweb_naapp.css import aweb_css
 from aweb_naapp.manifest import read_manifest_bytes
@@ -162,9 +163,18 @@ class NaappRuntime:
         such as ``/v1/things/purge`` under a declared ``/v1/things/{id}``, would
         otherwise run its own handler while being authorized as the declared
         tool. Path converters are refused, because they change which requests a
-        placeholder matches. The lifespan runs this check before anything else.
+        placeholder matches. Guarded routes must be declared on the runtime's
+        own app: one inside a mounted or host-routed application is refused.
+        The lifespan runs this check before anything else.
         """
         for route in app.routes:
+            if isinstance(route, Mount | Host):
+                if self._contains_guards(route.routes):
+                    raise RuntimeError(
+                        "authorized routes must be declared on the runtime's own app, "
+                        f"not inside a mounted application ({route!r})"
+                    )
+                continue
             if not isinstance(route, APIRoute):
                 continue
             for tools in self._route_guards(route.dependant):
@@ -182,6 +192,14 @@ class NaappRuntime:
                         raise RuntimeError(
                             f"authorized route {method} {path} is not exactly a declared manifest tool"
                         )
+
+    def _contains_guards(self, routes: Sequence[BaseRoute]) -> bool:
+        for route in routes:
+            if isinstance(route, Mount | Host) and self._contains_guards(route.routes):
+                return True
+            if isinstance(route, APIRoute) and self._route_guards(route.dependant):
+                return True
+        return False
 
     def _route_guards(self, dependant: Dependant) -> list[DeclaredTools]:
         guards = []

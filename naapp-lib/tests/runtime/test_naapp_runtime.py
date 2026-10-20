@@ -338,3 +338,58 @@ def test_the_root_path_is_part_of_the_declared_path(tmp_path: Path) -> None:
         tmp_path / "prefixed", _renamed_placeholder, tools=prefixed, root_path="/api/"
     )
     runtime.check_authorized_routes(app)
+
+
+def _mounted(sub_path: str, mount_at: str):
+    def register(app: FastAPI, authorized) -> None:
+        sub = FastAPI()
+
+        @sub.get(sub_path)
+        async def handler(auth: Annotated[Authorization, Depends(authorized)]) -> dict:
+            return {}
+
+        app.mount(mount_at, sub)
+
+    return register
+
+
+def test_a_guarded_route_in_a_mounted_app_is_refused(tmp_path: Path) -> None:
+    for name, register in (
+        ("declared", _mounted("/things/{id}", "/v1")),
+        ("shadow", _mounted("/things/purge", "/v1")),
+    ):
+        runtime, app = _guarded_app(tmp_path / name, register)
+        with pytest.raises(RuntimeError, match="mounted"):
+            runtime.check_authorized_routes(app)
+
+
+def test_a_mounted_app_without_guarded_routes_is_allowed(tmp_path: Path) -> None:
+    def register(app: FastAPI, authorized) -> None:
+        _renamed_placeholder(app, authorized)
+        sub = FastAPI()
+
+        @sub.get("/status")
+        async def status() -> dict:
+            return {}
+
+        app.mount("/public", sub)
+
+    runtime, app = _guarded_app(tmp_path, register)
+    runtime.check_authorized_routes(app)
+
+
+def test_a_guarded_route_under_a_host_route_is_refused(tmp_path: Path) -> None:
+    from starlette.routing import Host
+
+    def register(app: FastAPI, authorized) -> None:
+        sub = FastAPI()
+
+        @sub.get("/v1/things/{id}")
+        async def handler(id: str, auth: Annotated[Authorization, Depends(authorized)]) -> dict:
+            return {}
+
+        app.router.routes.append(Host("api.example", app=sub))
+
+    runtime, app = _guarded_app(tmp_path, register)
+    with pytest.raises(RuntimeError):
+        runtime.check_authorized_routes(app)
