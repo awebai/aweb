@@ -15,15 +15,23 @@ from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_messages_http import _make_keypair, _signed_team_headers
 
 
-async def _policy(env, maximum, revision):
+async def _policy(env, maximum, revision, *, independent=False):
     record = dict(v=1, type='aweb.team-credential-policy', team_id=TEAM, team_did_key=env.team_did,
                   revision=revision, issued_at=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
     record.update(dict.fromkeys(POLICY_FIELDS))
     record['identity_grant'] = maximum
     env.registry_app.state.awid_public_origins = ('http://registry.test',)
-    await env.app.state.awid_registry_client.set_team_credential_policy(
-        'example.test', TEAM.split(':')[0], record, sign_message(env.team_sk, policy_signing_bytes(record)), signing_key=env.team_sk,
-    )
+    client = env.app.state.awid_registry_client
+    if independent:
+        from awid.registry import RegistryClient
+        client = RegistryClient(client.registry_url, transport=client.transport, service_token=client.service_token)
+    try:
+        await client.set_team_credential_policy(
+            'example.test', TEAM.split(':')[0], record, sign_message(env.team_sk, policy_signing_bytes(record)), signing_key=env.team_sk,
+        )
+    finally:
+        if independent: await client.aclose()
+
 
 
 async def _mint(env, ttl='never', scopes=None):
@@ -114,7 +122,7 @@ async def test_open_grant_stream_stops_when_team_lifetime_is_lowered(privacy_app
     path = '/v1/events/stream?' + urlencode(dict(deadline=(datetime.now(timezone.utc) + timedelta(seconds=50)).isoformat()))
     async with env.client.stream('GET', path, headers=_grant_headers(env, key, did, grant, path), timeout=40) as response:
         assert response.status_code == 200, await response.aread()
-        await _policy(env, 60, 1)
+        await _policy(env, 60, 1, independent=True)
         async def terminal():
             async for line in response.aiter_lines():
                 if line == 'event: grant_lifetime_exceeded':

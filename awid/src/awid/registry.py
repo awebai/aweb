@@ -441,8 +441,10 @@ class RegistryClient:
         origin = await self._registry_url_for_domain(domain)
         cache_key = (origin, domain, name)
         async with self._credential_policy_locks.setdefault(cache_key, asyncio.Lock()):
+            # Thirty seconds also leaves room for the server stream recheck
+            # cadence, keeping policy changes within the one-minute bound.
             cached = self._credential_policy_cache.get(cache_key)
-            if cached is not None and time.monotonic() - cached[0] < 60:
+            if cached is not None and time.monotonic() - cached[0] < 30:
                 return None if cached[1] is None else dict(cached[1])
             started = time.monotonic()
             try:
