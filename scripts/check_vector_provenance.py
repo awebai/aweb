@@ -209,6 +209,10 @@ ROOT_CONSUMERS = {
         "hook-delivery-credential-v1.json",
         '(AWEB_ROOT / "docs" / "vectors" / "hook-delivery-credential-v1.json")',
     ),
+    PurePosixPath("naapp-lib/tests/hooks/test_owner_act_vector.py"): _consumer(
+        "owner-act-v1.json",
+        '(AWEB_ROOT / "docs" / "vectors" / "owner-act-v1.json")',
+    ),
     PurePosixPath("cli/go/awid/owneract_test.go"): _consumer(
         "owner-act-v1.json",
         '"../../../docs/vectors/owner-act-v1.json"',
