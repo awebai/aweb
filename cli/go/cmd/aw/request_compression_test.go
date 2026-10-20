@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -105,6 +106,18 @@ func TestDirectHostedRequestCompression(t *testing.T) {
 					body, err := io.ReadAll(reader)
 					if err != nil {
 						t.Error(err)
+					}
+					if tc.name == "connect" {
+						payload := requestSigningPayloadForTest(t, r, body)
+						auth := strings.Fields(r.Header.Get("Authorization"))
+						if len(auth) != 3 {
+							t.Error("missing connect credential")
+						} else {
+							signature, err := base64.RawStdEncoding.DecodeString(auth[2])
+							if err != nil || !ed25519.Verify(pub, payload, signature) {
+								t.Error("connect signature does not bind target and decoded body")
+							}
+						}
 					}
 					if tc.name != "account_form" && !json.Valid(body) {
 						t.Errorf("invalid decoded JSON: %q", body)

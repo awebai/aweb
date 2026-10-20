@@ -3,8 +3,6 @@ package awid
 import (
 	"bytes"
 	"context"
-	"crypto/ed25519"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -138,31 +136,8 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
 	setUserAgent(req, c.userAgent)
-	if c.grantID != "" && c.signingKey != nil {
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		credential, err := SignIdentityGrantCredential(c.signingKey, http.MethodGet, req.URL, c.grantID, nil, timestamp)
-		if err != nil {
-			return nil, err
-		}
-		for key := range credential.Headers {
-			req.Header.Set(key, credential.Headers.Get(key))
-		}
-	} else if c.teamCertHeader != "" && c.signingKey != nil {
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		sigPayload := certAuthSignPayload(c.teamID, timestamp, nil)
-		sig := ed25519.Sign(c.signingKey, sigPayload)
-		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
-		req.Header.Set("X-AWEB-Timestamp", timestamp)
-		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
-	} else if c.signingKey != nil {
-		timestamp := time.Now().UTC().Format(time.RFC3339)
-		signPayload := identityAuthSignPayload(c.stableID, timestamp, nil)
-		sig := ed25519.Sign(c.signingKey, signPayload)
-		req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", c.did, base64.RawStdEncoding.EncodeToString(sig)))
-		req.Header.Set("X-AWEB-Timestamp", timestamp)
-		if c.stableID != "" {
-			req.Header.Set("X-AWEB-DID-AW", c.stableID)
-		}
+	if err := c.signRequest(req, nil); err != nil {
+		return nil, err
 	}
 
 	resp, err := DoNoRedirect(c.sseClient, req)
