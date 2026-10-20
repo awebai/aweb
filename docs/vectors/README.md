@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 28
+`docs/vectors/*.json` is the only public protocol-vector authority for the 29
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -66,7 +66,8 @@ coordination server URL. Signing bytes are the `aweb.team-server/1` domain
 prefix and a newline, followed by canonical JSON of the record. Valid cases
 carry their exact signing bytes; refused cases carry the stable refusal code
 and AWID status (missing prefix, non-current key, team mismatch, far-future
-`issued_at`, not newer than the stored record, plain http outside loopback).
+`issued_at`, `issued_at` with non-ASCII digits or an impossible date, not newer
+than the stored record, plain http outside loopback).
 Seeds are public test material. The AWID real-route tests consume these
 bytes. See [the team contract](../awid-sot.md#teams).
 
@@ -211,6 +212,14 @@ renderer, which this file names but does not test. `bundle_hash` pins the
 bundle decision-card digest across languages. The reference consumer is
 `aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
 [the page format](../page-format.md).
+
+### `page-proposal-v1.json`
+
+`proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
+digests over a record's collection, id and value, a bundle built from item
+digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
+`naapp-lib/tests/pages/` and `cli/go/awid/`. See
+[the page format](../page-format.md) §5.
 
 ### `agent-status-v1.json`
 
