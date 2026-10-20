@@ -5,8 +5,8 @@ AAAA record is checked. The connection then goes to one validated address
 and nowhere else: the network backend ignores the name it is handed, so a
 second resolution cannot happen. TLS verifies the certificate against the
 canonical name, and SNI and ``Host`` carry that name. Redirects come back as
-responses, no proxy is read from the environment, and the bounds can only be
-lowered.
+responses, no proxy is read from the environment, and no bound can exceed its
+module ceiling.
 
 A failure before any byte of the request was written raises
 :class:`EgressNotSent`; a failure after raises :class:`EgressOutcomeUnknown`,
@@ -37,7 +37,9 @@ from .urls import CanonicalURL, Destination, Network, canonical_url, match_desti
 CONNECT_TIMEOUT_SECONDS = 5.0
 TOTAL_TIMEOUT_SECONDS = 30.0
 MAX_REQUEST_BYTES = 1024 * 1024
-MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+# The hard maximum any caller may ask for; a caller that sets no bound gets the default.
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+DEFAULT_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
 class EgressNotSent(Exception):
@@ -50,12 +52,16 @@ class EgressOutcomeUnknown(Exception):
 
 @dataclass(frozen=True)
 class Bounds:
-    """Timeouts and sizes for one request. Each may only be lowered."""
+    """Timeouts and sizes for one request, each above 0 and at most its ceiling.
+
+    The response bound defaults to 4 MiB; a caller may set it up to the 16 MiB
+    ceiling. The others default to their ceilings.
+    """
 
     connect_timeout: float = CONNECT_TIMEOUT_SECONDS
     total_timeout: float = TOTAL_TIMEOUT_SECONDS
     max_request_bytes: int = MAX_REQUEST_BYTES
-    max_response_bytes: int = MAX_RESPONSE_BYTES
+    max_response_bytes: int = DEFAULT_RESPONSE_BYTES
 
     def __post_init__(self) -> None:
         for value, ceiling in (
