@@ -1826,11 +1826,7 @@ class CachedRegistryClient(RegistryClient):
             certificate=certificate,
             lifetime=lifetime,
         )
-        await self._invalidate_team_certificate_cache_keys(
-            domain,
-            name,
-            tolerate_unavailable=True,
-        )
+        # The base mutation invokes our post-commit invalidation hook.
 
     async def revoke_team_certificate(
         self,
@@ -1855,12 +1851,7 @@ class CachedRegistryClient(RegistryClient):
             team_controller_signing_key=team_controller_signing_key,
             certificate_id=certificate_id,
         )
-        await self._invalidate_team_certificate_cache_keys(
-            domain,
-            name,
-            tolerate_unavailable=True,
-        )
-        await self._invalidate_keys(self._team_revocations_cache_key(domain, name))
+        # The base mutation invokes our post-commit invalidation hook.
 
     async def invalidate_team_certificate_cache(self, domain: str, name: str) -> None:
         await super().invalidate_team_certificate_cache(domain, name)
