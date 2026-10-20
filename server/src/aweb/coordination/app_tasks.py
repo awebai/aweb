@@ -14,7 +14,6 @@ from aweb.claims import release_task_claims_on
 from aweb.service_errors import ConflictError, ForbiddenError, NotFoundError, ValidationError
 from aweb.task_contracts import validate_app_task
 from aweb.team_auth import parse_and_verify_certificate
-from aweb.team_auth_deps import _get_revoked_certificates, _resolve_team_key
 from .tasks_service import (
     _allocate_root_task_seq_on, _allocate_task_number_on, _answer_receipt,
     _encode_alpha_component, _get_team_slug, format_task_ref,
@@ -56,7 +55,7 @@ async def _current_certificates(request, team_id):
         domain, name = parse_team_id(team_id)
         if registry is None:
             raise RuntimeError("registry absent")
-        return await registry.list_team_certificates(domain, name, active_only=True)
+        return await registry.list_team_certificates_fresh(domain, name, active_only=True)
     except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
 
@@ -73,9 +72,13 @@ def validate_task_authorization(payload, signature, *, expected, now):
 async def verify_authorization_certificate(request, authorization):
     payload = authorization["payload"]
     try:
-        team_key = await _resolve_team_key(request, payload["team_id"])
-        revoked = await _get_revoked_certificates(request, payload["team_id"])
-    except HTTPException as exc:
+        domain, name = parse_team_id(payload["team_id"])
+        registry = request.app.state.awid_registry_client
+        # C2 requires live authority even when the app otherwise uses a
+        # CachedRegistryClient. Never use its stale/outage-grace reads here.
+        team_key = await registry.get_team_public_key_fresh(domain, name)
+        revoked = await registry.get_team_revocations_fresh(domain, name)
+    except Exception as exc:
         raise HTTPException(status_code=503, detail="authority_unavailable") from exc
     if payload["certificate_id"] in revoked:
         raise HTTPException(status_code=401, detail="certificate_revoked")

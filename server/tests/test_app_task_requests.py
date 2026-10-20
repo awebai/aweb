@@ -6,7 +6,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
@@ -14,6 +14,9 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from nacl.signing import SigningKey
 from awid.did import did_from_public_key
+from awid.registry import CachedRegistryClient
+import awid.registry as registry_module
+import httpx
 from aweb.app_registry import get_installation_on
 from aweb_naapp.runtime.task_requests import app_request_credential
 
@@ -344,6 +347,76 @@ async def test_stalled_awid_does_not_block_installation_retirement(app_request_c
         resume.set()
         response = await asyncio.wait_for(creating, 5)
     assert response.status_code == 403 and response.json()["detail"] == "scope_denied", response.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
+
+
+@pytest_asyncio.fixture
+async def cached_app_request_context(app_request_context, monkeypatch):
+    env, *_ = app_request_context
+    uncached = env.app.state.awid_registry_client
+    clock = [1_000_000]
+    unavailable = [None]
+    monkeypatch.setattr(registry_module, "_cache_now", lambda: clock[0])
+
+    async def registry_boundary(scope, receive, send):
+        if scope["type"] == "http" and scope["path"] == unavailable[0]:
+            raise httpx.ConnectError("disposable registry outage")
+        await env.registry_app(scope, receive, send)
+
+    cached = CachedRegistryClient(
+        registry_url=f"http://c2-cache-{uuid4().hex}.test", redis_client=env.redis,
+        transport=httpx.ASGITransport(app=registry_boundary), service_token=uncached.service_token,
+    )
+    monkeypatch.setattr(env.app.state, "awid_registry_client", cached)
+    team_name = TEAM.split(":", 1)[0]
+    try:
+        # Prime the same public cached API production uses, against real AWID
+        # and Redis. Revoke through another client so the old cache survives.
+        assert await cached.get_team_public_key("example.test", team_name) == env.team_did
+        assert await cached.get_team_revocations("example.test", team_name) == set()
+        assert len(await cached.list_team_certificates("example.test", team_name)) == 3
+        yield app_request_context, uncached, clock, unavailable
+    finally:
+        await asyncio.gather(*list(cached._refresh_tasks.values()), return_exceptions=True)
+        await cached.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("registry_suffix", ["", "/revocations", "/certificates"])
+@pytest.mark.parametrize("expired_replay", [False, True])
+async def test_c2_cached_authority_outage_fails_closed(cached_app_request_context, registry_suffix, expired_replay):
+    context, uncached, clock, unavailable = cached_app_request_context
+    env, *_ = context
+    made = await _app_http(context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    team_name = TEAM.split(":", 1)[0]
+    # Keep the certificate-list case's actor current so the preceding
+    # revocation check cannot short circuit the failed list read.
+    if registry_suffix != "/certificates":
+        await uncached.revoke_team_certificate("example.test", team_name,
+            team_controller_signing_key=env.team_sk, certificate_id="privacy-alice")
+    clock[0] += 61
+    unavailable[0] = f"/v1/namespaces/example.test/teams/{team_name}" + registry_suffix
+    body = _body(env, expired=expired_replay, request_id="action-1" if expired_replay else "cache-new")
+    response = await _app_http(context, "POST", "/v1/tasks/app-requests", body)
+    assert response.status_code == 503 and response.json()["detail"] == "authority_unavailable", response.text
+    assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cache_age", [0, 61, 601])
+@pytest.mark.parametrize("expired_replay", [False, True])
+async def test_c2_cached_authority_observes_revocation(cached_app_request_context, cache_age, expired_replay):
+    context, uncached, clock, _ = cached_app_request_context
+    env, *_ = context
+    made = await _app_http(context, "POST", "/v1/tasks/app-requests", _body(env))
+    assert made.status_code == 201, made.text
+    await uncached.revoke_team_certificate("example.test", TEAM.split(":", 1)[0],
+        team_controller_signing_key=env.team_sk, certificate_id="privacy-alice")
+    clock[0] += cache_age
+    body = _body(env, expired=expired_replay, request_id="action-1" if expired_replay else "cache-new")
+    response = await _app_http(context, "POST", "/v1/tasks/app-requests", body)
+    assert response.status_code == 401 and response.json()["detail"] == "certificate_revoked", response.text
     assert await env.db.fetch_value("SELECT count(*) FROM {{tables.task_app_requests}}") == 1
 
 
