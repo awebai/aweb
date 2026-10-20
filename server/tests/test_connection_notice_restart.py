@@ -161,6 +161,7 @@ async def _runtime(name, root, binary, env):
             terminal_state.cleanup()
 
 
+@pytest.mark.usefixtures("source_cli_binary")
 @pytest.mark.asyncio
 @pytest.mark.parametrize("runtime", ["core", "channel", "pi", "wake"])
 async def test_listener_restart_is_operator_only_and_catches_pending_mail(
