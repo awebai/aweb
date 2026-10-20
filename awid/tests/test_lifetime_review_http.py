@@ -86,7 +86,7 @@ async def test_opt_in_issuer_projection_preserves_default_shape_and_signed_expir
     sdk = RegistryClient(ORIGIN, transport=httpx.ASGITransport(app=env.app))
     try:
         for item in vector['issuer_projections']:
-            body = certificate_body(env, member=keypair())
+            body = certificate_body(env, member=keypair(), alias=item['name'])
             cert = json.loads(base64.b64decode(body['certificate']))
             cert.pop('signature')
             cert.update(version=2, validity_class='member', issued_at='2026-01-01T00:00:00Z')

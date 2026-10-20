@@ -180,7 +180,7 @@ async def test_controller_batch_renewal_obeys_policy_and_preserves_revoked_tombs
         for actor in env.actors.values():
             cert = json.loads(base64.b64decode(actor.certificate))
             # Released Go v1 certificates omit empty optional global fields.
-            cert = {k: v for k, v in cert.items() if k != 'signature' and v is not None}
+            cert = {k: v for k, v in cert.items() if k != 'signature' and v not in (None, '')}
             cert['signature'] = sign_message(env.team_sk, canonical_json_bytes(cert))
             await _register(env, registry, cert)
         await registry.revoke_team_certificate('example.test', name, team_controller_signing_key=env.team_sk,
