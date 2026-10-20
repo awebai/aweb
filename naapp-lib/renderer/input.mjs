@@ -142,3 +142,17 @@ export function fieldError(value, schema, required, kind) {
     return `Use at least ${schema.minLength} characters.`;
   return "Enter a valid value for this field.";
 }
+
+export function fieldValueText(field, value) {
+  if (value === null || value === undefined || value === "") return "Empty";
+  if (field.kind === "checkbox") return value ? "Checked" : "Not checked";
+  if (field.kind === "select")
+    return (
+      field.options.find((option) => String(option.value) === String(value))
+        ?.label || String(value)
+    );
+  if (field.kind === "file") return "Attached file";
+  return typeof value === "number"
+    ? new Intl.NumberFormat("en").format(value)
+    : String(value);
+}

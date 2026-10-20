@@ -151,7 +151,7 @@ main {
   align-items: baseline;
   gap: 0.4rem;
   font-size: clamp(var(--step-0), 11cqi, var(--page-stat-size));
-  overflow-x: auto;
+  overflow: hidden;
   max-width: 100%;
 }
 .stat-value {
@@ -651,4 +651,15 @@ polyline {
   margin: 0.75rem 0 0;
   font-weight: 400;
   color: var(--muted);
+}
+
+.conflict-message {
+  color: var(--muted);
+}
+
+.pie-direct-label {
+  fill: var(--ink);
+  stroke: none;
+  font-size: calc(var(--page-small) * 1.8);
+  unicode-bidi: isolate;
 }

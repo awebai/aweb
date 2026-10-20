@@ -120,3 +120,29 @@ test("empty collections have one quiet message, and charts and timelines carry r
     page.locator('[data-widget="activity"] time').first(),
   ).toContainText(/\d:\d\d (AM|PM)/);
 });
+test("pie slices have visible gaps, direct category/value labels and matching legend tints", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto("/");
+  const pie = page.locator('[data-widget="chart-pie"]');
+  await expect(pie.locator(".pie-direct-label")).toHaveCount(3);
+  await expect(pie.locator(".pie-direct-label").first()).toContainText(
+    "Maple House62",
+  );
+  const geometry = await pie.evaluate((node) => {
+    const circles = [...node.querySelectorAll("circle[stroke-dasharray]")];
+    const labels = [...node.querySelectorAll(".chart-swatch")];
+    return {
+      gap: 6 * circles[0].getScreenCTM().a,
+      matching: circles.every(
+        (circle, i) =>
+          getComputedStyle(circle).stroke ===
+          getComputedStyle(labels[i]).backgroundColor,
+      ),
+    };
+  });
+  expect(geometry.gap).toBeGreaterThanOrEqual(2);
+  expect(geometry.matching).toBe(true);
+});

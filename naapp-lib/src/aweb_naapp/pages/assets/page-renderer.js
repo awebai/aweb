@@ -7612,6 +7612,14 @@ function fieldError(value, schema, required, kind) {
     return `Use at least ${schema.minLength} characters.`;
   return "Enter a valid value for this field.";
 }
+function fieldValueText(field, value) {
+  if (value === null || value === void 0 || value === "") return "Empty";
+  if (field.kind === "checkbox") return value ? "Checked" : "Not checked";
+  if (field.kind === "select")
+    return field.options.find((option) => String(option.value) === String(value))?.label || String(value);
+  if (field.kind === "file") return "Attached file";
+  return typeof value === "number" ? new Intl.NumberFormat("en").format(value) : String(value);
+}
 
 // actions.mjs
 var errorText = (error2) => ({
@@ -7750,6 +7758,7 @@ function createActions({ host, getPage, update, announce }) {
     if (errors2.length) throw { code: "schema_invalid", pointers: errors2 };
     const request = requestFor(context, values), credential = await csrf(context);
     assertCurrent(context);
+    context.submittedInput = structuredClone(values);
     const receipt = await host.invoke(request, credential);
     assertCurrent(context);
     return receipt;
@@ -7770,7 +7779,7 @@ function createActions({ host, getPage, update, announce }) {
     } catch {
       return;
     }
-    const target = control?.isConnected && !control.disabled ? control : message;
+    const target = control?.isConnected && !control.disabled && !control.hidden ? control : message;
     if (!target?.isConnected) return;
     if (target !== control) target.tabIndex = -1;
     target.focus({ preventScroll: true });
@@ -7888,7 +7897,7 @@ function createActions({ host, getPage, update, announce }) {
     node.noValidate = true;
     node.setAttribute("aria-label", action.label);
     const controls = /* @__PURE__ */ new Map();
-    let baseRev, pending = false;
+    let baseRev = getPage().rev, pending = false;
     for (const field of p.fields) {
       const group = element("div", null, "form-field");
       const isRequired = field.required || action.input_schema.required?.includes(field.id);
@@ -7949,17 +7958,33 @@ function createActions({ host, getPage, update, announce }) {
     const ui = feedback(node);
     box.append(node);
     initialize(submit, ui, w, action.id);
-    let baseline = structuredClone(host.formValues?.(w.id) || {});
+    function draftValues() {
+      const values = {};
+      for (const [id, { field, input }] of controls) {
+        if (field.kind === "file") continue;
+        if (field.kind !== "checkbox" && input.value === "") continue;
+        values[id] = field.kind === "checkbox" ? input.checked : typedValue(input.value, action.input_schema.properties?.[id]);
+      }
+      return values;
+    }
+    const initialValues = draftValues();
+    let baseline = {
+      ...initialValues,
+      ...structuredClone(host.formValues?.(w.id) || {})
+    };
     node.onsubmit = async (event) => {
       event.preventDefault();
       if (pending || !event.isTrusted) return;
       ui.error.hidden = true;
+      ui.error.classList.remove("conflict-message");
+      submit.hidden = false;
       ui.status.textContent = "";
       ui.recovery.replaceChildren();
       const values = {}, files = [];
       let invalid;
       for (const { field, input, error: error2 } of controls.values()) {
         error2.hidden = true;
+        error2.classList.remove("conflict-message");
         input.removeAttribute("aria-invalid");
         const property = getPage().actions.find((a) => a.id === action.id)?.input_schema.properties?.[field.id];
         let message;
@@ -8008,6 +8033,7 @@ function createActions({ host, getPage, update, announce }) {
         if (receipt) {
           ui.status.textContent = receiptText(receipt);
           announce(ui.status.textContent);
+          baseline = structuredClone(context.submittedInput);
           baseRev = receipt.page_rev ?? getPage()?.rev;
         }
       } catch (error2) {
@@ -8017,11 +8043,16 @@ function createActions({ host, getPage, update, announce }) {
           error2,
           {
             updated() {
-              const latest = host.formValues?.(w.id) || {};
+              ui.error.classList.add("conflict-message");
+              submit.hidden = true;
+              const hostValues = host.formValues?.(w.id);
+              if (!hostValues) return;
+              const latest = { ...initialValues, ...hostValues };
               for (const [id, control] of controls) {
-                if (Object.hasOwn(latest, id) && JSON.stringify(latest[id]) !== JSON.stringify(baseline[id])) {
+                if (JSON.stringify(latest[id]) !== JSON.stringify(baseline[id])) {
                   control.error.hidden = false;
-                  control.error.textContent = `Changed while you were editing: now ${String(latest[id])}`;
+                  control.error.classList.add("conflict-message");
+                  control.error.textContent = `Changed while you were editing: now ${fieldValueText(control.field, latest[id])}`;
                 }
               }
             },
@@ -8031,7 +8062,12 @@ function createActions({ host, getPage, update, announce }) {
             },
             discard(revision) {
               baseRev = revision;
-              baseline = structuredClone(host.formValues?.(w.id) || {});
+              baseline = {
+                ...initialValues,
+                ...structuredClone(host.formValues?.(w.id) || {})
+              };
+              submit.hidden = false;
+              ui.error.classList.remove("conflict-message");
               for (const [id, { field, input, error: error3 }] of controls) {
                 const value = baseline[id] ?? action.input_schema.properties?.[id]?.default;
                 if (field.kind === "checkbox") input.checked = value === true;
@@ -8392,11 +8428,27 @@ function chartGraphic(records, p, seriesIndex) {
           r: 85,
           fill: "none",
           "stroke-width": 45,
-          "stroke-dasharray": `${fraction * 534.071} 534.071`,
+          "stroke-dasharray": `${Math.max(0, fraction * 534.071 - 6)} 534.071`,
           "stroke-dashoffset": -offset * 534.071,
           class: `series-${i % 8}`
         })
       );
+      const angle = (offset + fraction / 2) * Math.PI * 2;
+      const label = svg2("text", {
+        x: Math.cos(angle) < 0 ? 200 : 440,
+        y: 120 + Math.sin(angle) * 100,
+        "text-anchor": Math.cos(angle) < 0 ? "end" : "start",
+        class: "pie-direct-label"
+      });
+      const category = svg2("tspan", { x: Math.cos(angle) < 0 ? 200 : 440 });
+      category.textContent = valueText(records[i].value[p.x]);
+      const amount = svg2("tspan", {
+        x: Math.cos(angle) < 0 ? 200 : 440,
+        dy: 25
+      });
+      amount.textContent = valueText(records[i].value[field], "number");
+      label.append(category, amount);
+      chart.append(label);
       offset += fraction;
     });
   }
@@ -9022,7 +9074,12 @@ function createPageRenderer({
                   "stat-value"
                 )
               );
-              if (p.unit) figure.append(element("span", p.unit, "stat-unit"));
+              if (value === void 0 || value === null) {
+                figure.setAttribute("role", "img");
+                figure.setAttribute("aria-label", "No value");
+              }
+              if (p.unit && value !== void 0 && value !== null)
+                figure.append(element("span", p.unit, "stat-unit"));
               content.append(figure);
             } else
               content.append(

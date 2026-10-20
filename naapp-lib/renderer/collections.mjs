@@ -137,11 +137,27 @@ function chartGraphic(records, p, seriesIndex) {
           r: 85,
           fill: "none",
           "stroke-width": 45,
-          "stroke-dasharray": `${fraction * 534.071} 534.071`,
+          "stroke-dasharray": `${Math.max(0, fraction * 534.071 - 6)} 534.071`,
           "stroke-dashoffset": -offset * 534.071,
           class: `series-${i % 8}`,
         }),
       );
+      const angle = (offset + fraction / 2) * Math.PI * 2;
+      const label = svg("text", {
+        x: Math.cos(angle) < 0 ? 200 : 440,
+        y: 120 + Math.sin(angle) * 100,
+        "text-anchor": Math.cos(angle) < 0 ? "end" : "start",
+        class: "pie-direct-label",
+      });
+      const category = svg("tspan", { x: Math.cos(angle) < 0 ? 200 : 440 });
+      category.textContent = valueText(records[i].value[p.x]);
+      const amount = svg("tspan", {
+        x: Math.cos(angle) < 0 ? 200 : 440,
+        dy: 25,
+      });
+      amount.textContent = valueText(records[i].value[field], "number");
+      label.append(category, amount);
+      chart.append(label);
       offset += fraction;
     });
   }

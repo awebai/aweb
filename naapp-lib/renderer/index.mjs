@@ -304,7 +304,12 @@ export function createPageRenderer({
                   "stat-value",
                 ),
               );
-              if (p.unit) figure.append(element("span", p.unit, "stat-unit"));
+              if (value === undefined || value === null) {
+                figure.setAttribute("role", "img");
+                figure.setAttribute("aria-label", "No value");
+              }
+              if (p.unit && value !== undefined && value !== null)
+                figure.append(element("span", p.unit, "stat-unit"));
               content.append(figure);
             } else
               content.append(

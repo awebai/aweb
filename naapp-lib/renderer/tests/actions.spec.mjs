@@ -133,7 +133,7 @@ test("form drafts survive live updates and conflicts require an explicit reapply
   await expect(note).toBeFocused();
   await form.getByRole("button", { name: "Save note" }).click();
   await expect(form.getByRole("alert")).toContainText("draft is kept");
-  await expect(form.getByRole("button", { name: "Save note" })).toBeFocused();
+  await expect(form.getByRole("alert")).toBeFocused();
   await expect(note).toHaveValue("Keep my draft");
   await form.getByRole("button", { name: "Save my changes" }).click();
   await expect(form.getByRole("status")).toContainText("Saved");
@@ -280,4 +280,55 @@ test("form validation explains numeric bounds and text limits", async ({
   await form.getByRole("button", { name: "Save note" }).click();
   await expect(form).toContainText("Use at most 500 characters.");
   await expect(form).toContainText("Enter a whole number from 1 to 20.");
+});
+test("a successful save resets the edit base so only a concurrently changed field is marked", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const form = page.locator('[data-widget="note-form"]');
+  await form
+    .getByLabel("Note (required)", { exact: true })
+    .fill("Boiler pressure low");
+  await form.getByLabel("Guests (required)", { exact: true }).fill("2");
+  await form.getByRole("button", { name: "Save note", exact: true }).click();
+  await expect(form.getByRole("status")).toContainText("Saved");
+  await form.getByLabel("Guests (required)", { exact: true }).fill("3");
+  const changed = page.waitForResponse((r) =>
+    r.url().endsWith("/api/fixture-change"),
+  );
+  await page.keyboard.press("Alt+f");
+  await changed;
+  await form.getByRole("button", { name: "Save note", exact: true }).click();
+  await expect(
+    form.locator(".form-field p", {
+      hasText: "Changed while you were editing:",
+    }),
+  ).toHaveCount(1);
+  await expect(form).toContainText("Changed while you were editing: now 4");
+  await expect(
+    form.getByRole("button", { name: "Save note", exact: true }),
+  ).not.toBeVisible();
+  await expect(
+    form.getByRole("button", { name: "Save my changes", exact: true }),
+  ).toBeVisible();
+});
+test("a refresh before editing cannot silently rebase displayed form values", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const form = page.locator('[data-widget="note-form"]');
+  await expect(form).toBeVisible();
+  await page.keyboard.press("Alt+u");
+  await expect(page.locator("#announcements")).toContainText(
+    "Projection updated",
+  );
+  await form
+    .getByLabel("Note (required)", { exact: true })
+    .fill("Edit after refresh");
+  await form.getByLabel("Guests (required)", { exact: true }).fill("2");
+  await form.getByRole("button", { name: "Save note", exact: true }).click();
+  await expect(form.getByRole("alert")).toContainText("draft is kept");
+  await expect(
+    form.getByRole("button", { name: "Save my changes" }),
+  ).toBeVisible();
 });

@@ -6,6 +6,7 @@ import {
   fileTypes,
   fileSize,
   fieldError,
+  fieldValueText,
 } from "./input.mjs";
 
 const errorText = (error) =>
@@ -185,6 +186,7 @@ export function createActions({ host, getPage, update, announce }) {
     const request = requestFor(context, values),
       credential = await csrf(context);
     assertCurrent(context);
+    context.submittedInput = structuredClone(values);
     const receipt = await host.invoke(request, credential);
     assertCurrent(context);
     return receipt;
@@ -206,7 +208,9 @@ export function createActions({ host, getPage, update, announce }) {
       return;
     }
     const target =
-      control?.isConnected && !control.disabled ? control : message;
+      control?.isConnected && !control.disabled && !control.hidden
+        ? control
+        : message;
     if (!target?.isConnected) return;
     if (target !== control) target.tabIndex = -1;
     target.focus({ preventScroll: true });
@@ -338,7 +342,7 @@ export function createActions({ host, getPage, update, announce }) {
     node.noValidate = true;
     node.setAttribute("aria-label", action.label);
     const controls = new Map();
-    let baseRev,
+    let baseRev = getPage().rev,
       pending = false;
     for (const field of p.fields) {
       const group = element("div", null, "form-field");
@@ -419,11 +423,29 @@ export function createActions({ host, getPage, update, announce }) {
     const ui = feedback(node);
     box.append(node);
     initialize(submit, ui, w, action.id);
-    let baseline = structuredClone(host.formValues?.(w.id) || {});
+    function draftValues() {
+      const values = {};
+      for (const [id, { field, input }] of controls) {
+        if (field.kind === "file") continue;
+        if (field.kind !== "checkbox" && input.value === "") continue;
+        values[id] =
+          field.kind === "checkbox"
+            ? input.checked
+            : typedValue(input.value, action.input_schema.properties?.[id]);
+      }
+      return values;
+    }
+    const initialValues = draftValues();
+    let baseline = {
+      ...initialValues,
+      ...structuredClone(host.formValues?.(w.id) || {}),
+    };
     node.onsubmit = async (event) => {
       event.preventDefault();
       if (pending || !event.isTrusted) return;
       ui.error.hidden = true;
+      ui.error.classList.remove("conflict-message");
+      submit.hidden = false;
       ui.status.textContent = "";
       ui.recovery.replaceChildren();
       const values = {},
@@ -431,6 +453,7 @@ export function createActions({ host, getPage, update, announce }) {
       let invalid;
       for (const { field, input, error } of controls.values()) {
         error.hidden = true;
+        error.classList.remove("conflict-message");
         input.removeAttribute("aria-invalid");
         const property = getPage().actions.find((a) => a.id === action.id)
           ?.input_schema.properties?.[field.id];
@@ -497,6 +520,7 @@ export function createActions({ host, getPage, update, announce }) {
         if (receipt) {
           ui.status.textContent = receiptText(receipt);
           announce(ui.status.textContent);
+          baseline = structuredClone(context.submittedInput);
           baseRev = receipt.page_rev ?? getPage()?.rev;
         }
       } catch (error) {
@@ -506,14 +530,18 @@ export function createActions({ host, getPage, update, announce }) {
           error,
           {
             updated() {
-              const latest = host.formValues?.(w.id) || {};
+              ui.error.classList.add("conflict-message");
+              submit.hidden = true;
+              const hostValues = host.formValues?.(w.id);
+              if (!hostValues) return;
+              const latest = { ...initialValues, ...hostValues };
               for (const [id, control] of controls) {
                 if (
-                  Object.hasOwn(latest, id) &&
                   JSON.stringify(latest[id]) !== JSON.stringify(baseline[id])
                 ) {
                   control.error.hidden = false;
-                  control.error.textContent = `Changed while you were editing: now ${String(latest[id])}`;
+                  control.error.classList.add("conflict-message");
+                  control.error.textContent = `Changed while you were editing: now ${fieldValueText(control.field, latest[id])}`;
                 }
               }
             },
@@ -523,7 +551,12 @@ export function createActions({ host, getPage, update, announce }) {
             },
             discard(revision) {
               baseRev = revision;
-              baseline = structuredClone(host.formValues?.(w.id) || {});
+              baseline = {
+                ...initialValues,
+                ...structuredClone(host.formValues?.(w.id) || {}),
+              };
+              submit.hidden = false;
+              ui.error.classList.remove("conflict-message");
               for (const [id, { field, input, error }] of controls) {
                 const value =
                   baseline[id] ?? action.input_schema.properties?.[id]?.default;

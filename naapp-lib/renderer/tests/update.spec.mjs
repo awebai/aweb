@@ -191,3 +191,35 @@ test("a bound pager stays focused across an asynchronous projection refresh", as
   await expect(table.locator("tbody tr")).toHaveCount(2);
   await expect(next).toBeFocused();
 });
+test("one-page collections have no visible pagination and stats are never keyboard scroll stops", async ({
+  page,
+}) => {
+  await page.goto("/");
+  for (const id of [
+    "property-cards",
+    "property-list",
+    "activity",
+    "chart-bar",
+    "chart-line",
+    "chart-pie",
+  ]) {
+    const widget = page.locator(`[data-widget="${id}"]`);
+    await expect(widget.locator("[data-record],svg").first()).toBeVisible();
+    await expect(widget.locator(".pagination")).not.toBeVisible();
+    expect(
+      await widget
+        .locator(".pagination")
+        .evaluate((n) => n.getBoundingClientRect().height),
+    ).toBe(0);
+  }
+  expect(
+    await page
+      .locator(".stat-figure")
+      .first()
+      .evaluate((n) => getComputedStyle(n).overflowX),
+  ).toBe("hidden");
+  await page.goto("/?case=empty");
+  const empty = page.locator('[data-widget="bound-one"] .stat-figure');
+  await expect(empty).toHaveText("—");
+  await expect(empty).toHaveAttribute("aria-label", "No value");
+});
