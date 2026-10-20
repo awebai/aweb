@@ -218,3 +218,25 @@ async def test_opening_a_session_does_not_wait_on_a_locked_ended_one(
         finally:
             await tx_context.__aexit__(None, None, None)
         assert (await client.get("/whoami", headers={"Cookie": current})).status_code == 200
+
+
+async def test_a_failing_prune_does_not_fail_opening_a_session(
+    console: Console, owners: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    await console.db.execute(
+        "CREATE FUNCTION {{tables.refuse_delete}}() RETURNS trigger LANGUAGE plpgsql AS "
+        "$$ BEGIN RAISE EXCEPTION 'prune refused'; END $$"
+    )
+    await console.db.execute(
+        "CREATE TRIGGER refuse_delete BEFORE DELETE ON {{tables.console_sessions}} "
+        "FOR EACH ROW EXECUTE FUNCTION {{tables.refuse_delete}}()"
+    )
+    async with await _client(console.sessions()) as client:
+        cookie, csrf = await _login(client, owners)
+        await client.post("/logout", headers={"Cookie": cookie, "X-CSRF-Token": csrf})
+        with caplog.at_level("WARNING", logger="aweb_naapp.console"):
+            current, _ = await _login(client, owners)
+        assert (await client.get("/whoami", headers={"Cookie": current})).status_code == 200
+    [record] = [r for r in caplog.records if r.name == "aweb_naapp.console"]
+    assert "console_sessions" in record.getMessage()
+    assert cookie.split("=", 1)[1] not in record.getMessage()

@@ -242,3 +242,33 @@ async def test_a_client_whose_window_ended_starts_a_new_one(db: AsyncDatabaseMan
             "UPDATE {{tables.console_login_attempts}} SET window_start = NOW() - interval '2 minutes'"
         )
         assert await _codes(client, 2) == [200, 429]
+
+
+async def _refuse_deletes(db: AsyncDatabaseManager, table: str) -> None:
+    """Make every delete from `table` raise, as a lost connection or a lock error would."""
+    await db.execute(
+        "CREATE FUNCTION {{tables.refuse_delete}}() RETURNS trigger LANGUAGE plpgsql AS "
+        "$$ BEGIN RAISE EXCEPTION 'prune refused'; END $$"
+    )
+    await db.execute(
+        f"CREATE TRIGGER refuse_delete BEFORE DELETE ON {{{{tables.{table}}}}} "
+        "FOR EACH ROW EXECUTE FUNCTION {{tables.refuse_delete}}()"
+    )
+
+
+async def test_a_failing_prune_does_not_fail_the_login(
+    db: AsyncDatabaseManager, caplog: pytest.LogCaptureFixture
+) -> None:
+    limiter = _limiter(db, window=timedelta(seconds=1))
+    async with _client(limiter, "203.0.113.7") as client:
+        await _codes(client, 1)
+    await db.execute(
+        "UPDATE {{tables.console_login_attempts}} SET window_start = NOW() - interval '1 hour'"
+    )
+    await _refuse_deletes(db, "console_login_attempts")
+    with caplog.at_level("WARNING", logger="aweb_naapp.console"):
+        async with _client(limiter, "198.51.100.9") as client:
+            assert await _codes(client, 1) == [200]
+    [record] = [r for r in caplog.records if r.name == "aweb_naapp.console"]
+    assert "console_login_attempts" in record.getMessage()
+    assert "203.0.113.7" not in record.getMessage()

@@ -20,6 +20,7 @@ Installed with the ``runtime`` extra.
 
 import hashlib
 import hmac
+import logging
 import secrets
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
@@ -37,6 +38,8 @@ from pydantic import BaseModel
 
 from aweb_naapp.runtime.approvals import AuthenticationFailed
 from aweb_naapp.runtime.passkeys import Passkeys
+
+logger = logging.getLogger(__name__)
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_console"
@@ -88,6 +91,18 @@ def _sha256(value: str) -> bytes:
     return hashlib.sha256(value.encode("utf-8")).digest()
 
 
+async def _housekeeping(db: AsyncDatabaseManager, table: str, statement: str, *args: Any) -> None:
+    """Run a housekeeping delete after the request's writes have committed.
+
+    A failure leaves rows for a later prune and must not fail a request whose
+    work is already done, so it is logged, by table and error type only.
+    """
+    try:
+        await db.execute(statement, *args)
+    except Exception as error:
+        logger.warning("console prune of %s failed: %s", table, type(error).__name__)
+
+
 ScopeAdmission = Callable[[str], Awaitable[bool]]
 
 
@@ -136,12 +151,14 @@ class ConsoleSessions:
         # A session that has ended is refused already; dropping it, after the
         # insert has committed and skipping rows another transaction holds,
         # bounds the table without ever waiting on a login.
-        await self._db.execute(
+        await _housekeeping(
+            self._db,
+            "console_sessions",
             """
             DELETE FROM {{tables.console_sessions}} WHERE token_sha256 IN (
                 SELECT token_sha256 FROM {{tables.console_sessions}}
                 WHERE expires_at <= NOW() OR closed_at IS NOT NULL FOR UPDATE SKIP LOCKED)
-            """
+            """,
         )
         return IssuedSession(token, csrf_token, expires_at, int(self._ttl.total_seconds()))
 
@@ -307,7 +324,9 @@ class LoginLimiter:
         """Drop ended windows and volume past its retention, after the request's
         writes have committed; rows another transaction holds are left for a
         later prune, so a prune never waits on a login."""
-        await self._db.execute(
+        await _housekeeping(
+            self._db,
+            "console_login_attempts",
             """
             DELETE FROM {{tables.console_login_attempts}} WHERE client_key IN (
                 SELECT client_key FROM {{tables.console_login_attempts}}
@@ -315,7 +334,9 @@ class LoginLimiter:
             """,
             self._window,
         )
-        await self._db.execute(
+        await _housekeeping(
+            self._db,
+            "console_login_volume",
             """
             DELETE FROM {{tables.console_login_volume}} WHERE (scope, window_start) IN (
                 SELECT scope, window_start FROM {{tables.console_login_volume}}
