@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- aw reads manifest version 2 as well as version 1. `aw plugin install` and
+  `aw plugin update` read an app's variant catalog first and select the
+  highest version they support. Only a missing catalog falls back to the
+  legacy manifest, and a failed update keeps the installed manifest.
+- Only agent tools of an installed app are aw verbs. aw refuses
+  surface-only and hook-only verbs (`tool_context_denied`), and grant
+  snapshots hold only agent tools.
+- aw refuses to install a manifest whose answer path is agent-visible.
+- `aweb_naapp.manifest.load_manifest` reads manifest bytes of either
+  version and passes the same vectors as aw.
+
 - `aw chat history <recipient>` applies its limit and unread filter before
   custody decryption, skips unrelated pending previews during session lookup,
   and uses individual request timeouts rather than one budget for the whole page.

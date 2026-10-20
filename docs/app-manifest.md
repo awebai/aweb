@@ -1,4 +1,4 @@
-# App manifest v1
+# App manifest
 
 Status: **current experimental public contract**. Owner: the aweb OSS CLI
 extension surface. The shipped interpreter and validator live in
@@ -46,7 +46,9 @@ AWID publication are governed by [`a2a.md`](a2a.md) and
 **Compatibility.** `manifest_version` is the **contract version the consumer
 interprets** (distinct from `app.version`, the app's own release). A consumer
 MUST reject a manifest whose `manifest_version` it does not support rather than
-best-effort parse it. v1 consumers support `manifest_version: 1`.
+best-effort parse it. v1 consumers support `manifest_version: 1`. The aw CLI
+and `aweb_naapp.manifest` support versions 1 and 2; see
+[Manifest version 2](#manifest-version-2).
 
 The v1 manifest also accepts optional `events` declaration metadata. When
 present it must be an array of at most 64 objects. Each object accepts only
@@ -75,6 +77,11 @@ and missing count limit are recorded as known divergences, not valid v1
 exceptions. Gateway tightening is a separate change.
 
 ## Manifest discovery
+
+A consumer that supports more than one manifest version discovers the
+variant to use from the app's catalog first; see
+[Variant discovery](#variant-discovery). Consumers that support only v1, and
+apps that publish no catalog, use the legacy path below.
 
 An app serves its manifest at a **well-known path on its origin**:
 `<app.origin>/.well-known/aweb-app.json` (RFC 8615; parallels A2A's
@@ -352,11 +359,144 @@ Deferred consistently; capture so they aren't lost. None block v1.
 
 ## Compatibility and change control
 
-`manifest_version: 1` is frozen for the fields and mapping rules above. Additive
+`manifest_version: 1` is frozen for the fields and mapping rules above.
+Version 2 is defined by its section above and its vectors. Additive
 application releases use `app.version`; a breaking interpretation change needs
 a new `manifest_version` and new conformance fixtures. Streaming responses,
 multipart bodies, float canonicalization, and output selectors remain outside
 v1 until source, vectors, and this contract change together.
+
+## Manifest version 2
+
+Status: **interpreter, vectors and CLI discovery shipped; no app publishes v2
+until a catalog-aware CLI is released.** Design: D1 §5
+(`docs/design/agent-pages.md`). Authority: the shared vectors
+`test-vectors/app-manifests/app-manifest-v2-v1.json`, which both the Go
+interpreter (`cli/go/internal/appmanifest`) and the Python reader
+(`aweb_naapp.manifest.load_manifest`) pass. Consumers compare error **codes**
+from those vectors, never wording.
+
+Version 2 keeps every v1 tool field and the whole verb → HTTP mapping
+unchanged, removes `event_emitters`, and adds:
+
+| Field | Meaning |
+|---|---|
+| `tools[].invocation_contexts` | Nonempty, unique subset of `agent`, `surface`, `hook`. Absent means `agent` and `surface`; `hook` is never implied. |
+| `app_keys` | Purpose-split app keys: `[{kid, did_key, purposes}]`, at most 16 keys and 8 purposes each. |
+| `surfaces` | Member page bindings (at most 16): `id`, `label`, `format`, `list_tool`, `read_tool`, optional `invoke_tool` and `answer_tool`, `inputs: {resource, invocation}` and event bindings. |
+| `usage` | `{format, snapshot_tool}`. |
+| `lifecycle` | `{export_tool, delete_tool, status_tool}`, at least one. |
+| `hooks` | The versioned hooks slot: `registration_version: 1`, `registrations` and `productions` (at most 64 each). |
+
+A v2 member is never `null`, and unknown fields are refused at every level.
+v1 decoding is unchanged, and a v2 field in a v1 manifest is refused.
+
+### Tool invocation contexts
+
+The context a tool may be called from is part of its declaration:
+
+- **agent** — CLI verbs, hosted MCP tools and grant snapshots. The aw CLI is
+  an agent caller: `aw <app> --help` lists only agent tools, and calling a
+  surface-only or hook-only verb fails with `tool_context_denied` before
+  anything is signed or sent. Grant snapshots hold only agent tools, and
+  custody refuses a snapshot tool outside the agent context.
+- **surface** — tools a member page host calls. Every surface reference must
+  name a `surface` tool.
+- **hook** — hook targets. A registration's `tool` must declare exactly
+  `["hook"]`.
+
+At call time, a request's caller context comes from its verified
+`aweb.principal-attestation/1` `channel` claim: `dashboard` is `surface`;
+`mcp_l2` and `api` are `agent`; no attestation is `agent`. Any other channel
+fails closed (`channel_invalid`). A present attestation that did not verify
+is `attestation_invalid`, never treated as absent. The check only refuses:
+passing it grants nothing, and the call still faces the app's grants, roles
+and policy. A naapp enforces it once that attestation ships. Until then, the
+CLI, grant snapshots and custody refuse, and a naapp cannot tell a page
+host's member-signed call from an agent's. Today only the hosted custodial
+path produces the attestation.
+
+### Surfaces and answers
+
+`format` names the page format, e.g. `aweb.page/1`. A host that does not know
+a format shows the surface as unavailable. List and read tools are
+member-authenticated, non-mutating GETs; invoke and answer tools are
+member-authenticated mutations. `inputs.resource` names a parameter of the
+read, invoke and answer tools. `inputs.invocation` names the invoke and answer
+tools' JSON object body parameter. A surface event binds a declared manifest
+event, as `<app.id>/<type>` or the local type, with fixed top-level field
+names, never a path expression.
+
+Answers reach an app only through a surface's `answer_tool`, which must
+declare `invocation_contexts` exactly `["surface"]`. A manifest whose answer
+path is agent-visible is refused at install (`answer_tool_contexts_invalid`).
+An `invoke_tool` never carries an answer: it may not declare an `answer`
+input, top-level or inside its invocation object
+(`invoke_answer_forbidden`). An invoke request body that carries a top-level
+`answer` member, directly or in its invocation object, is refused
+(`answer_payload_refused`), whatever the manifest validation and host
+filtering did.
+
+### Hooks slot
+
+`registrations` declare where the app receives a hook:
+`{catalog: {id, version}, hook, tool, scopes}`. `productions` declare which
+hooks it may fire: `{catalog, hook, reads}`. `reads` lists local
+non-mutating tools whose reads fire the hook, where the hook's catalog
+says reads fire at all. The slot's structure is strict. The hook catalog,
+its names and its firing and delivery semantics are not part of this
+contract.
+
+Every registration and production is **pending** when installed. Only the
+team owner activates one, bound to the installation's generation and
+manifest digest. A new generation returns them to pending, and uninstall
+revokes them.
+
+### App keys
+
+A verifier accepts a key only for a purpose the key declares and the
+verifier implements. D1 uses `app-event`, `app-request` and `app-usage`, and
+the hooks lane defines its own. An unrecognized purpose is shown to the
+admin and grants nothing. A v1 `event_emitters` entry reads as an
+`app-event` key only.
+
+## Variant discovery
+
+Authority: `test-vectors/app-manifests/app-manifest-discovery-v1.json`.
+
+An app that publishes more than one manifest version serves a catalog at
+`<origin>/.well-known/aweb-app-versions.json`:
+
+```json
+{
+  "catalog_version": 1,
+  "app_id": "fixture",
+  "variants": [
+    {"manifest_version": 1, "url": "/manifests/v1.json", "digest": "sha256:<exact bytes>"},
+    {"manifest_version": 2, "url": "/manifests/v2.json", "digest": "sha256:<exact bytes>"}
+  ]
+}
+```
+
+A consumer GETs the catalog and selects the highest `manifest_version` it
+supports. It then GETs that variant on the same origin and checks three
+things: the bytes hash to the catalog digest, they declare that version, and
+they name the catalog's app id. Each variant is immutable: new bytes mean a
+new digest. Only a missing catalog (404) permits the legacy
+`/.well-known/aweb-app.json`. Any other catalog failure, and any failure of
+the selected variant, fails discovery; nothing falls back to another variant
+or to the legacy path. Catalog and variant fetches follow no redirects.
+
+`aw plugin install` and `aw plugin update` discover this way. A failed
+update keeps the installed manifest. An app that publishes v2 keeps serving
+its v1 variant's exact bytes at the legacy path, so released v1-only clients
+keep installing and updating. That v1 variant must be an agent-safe subset
+of v2. Its app and events must equal v2's. Every v1 tool must be a v2 agent
+tool with an identical mapping, since a v1 tool has no contexts and is
+always agent-visible. Every v1 event emitter must be a v2 `app-event` key.
+Publishers check this with `aweb_naapp.manifest.check_v1_variant`
+(`v1_variant_incompatible`). How long the legacy v1 variant must stay is
+not settled here.
 
 ## CLI resident and grant access
 
