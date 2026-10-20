@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "description": "The approval primitive's request digest and challenge binding (docs/page-actions.md §6). request_sha256 is bare lowercase hex of SHA-256 over aweb.approval-request/1\\n followed by the canonical JSON of {policy: {ref, version}, request}. The challenge binding is the raw 32-byte SHA-256 over aweb.approval-challenge/1\\n followed by the canonical JSON of its fields, shown here as hex; the nonce inside the fields is hex, and task_answer_ref is always present, null when there is no task answer. Refusals apply to the whole covered object.",
+  "request_prefix": "aweb.approval-request/1\n",
+  "challenge_prefix": "aweb.approval-challenge/1\n",
+  "requests": [
+    {
+      "name": "page-decision",
+      "policy_ref": "pages.price-approval",
+      "policy_version": 3,
+      "request": {
+        "v": 1,
+        "type": "aweb.page-decision",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-price",
+        "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+        "collection": "proposals",
+        "record_id": "week-43",
+        "record_rev": 2,
+        "proposal_sha256": "sha256:a3c9bcfee6e212f57ed39e9eb411cc3cc3583a0ce8acc371325bddaab45afdb8",
+        "operation": {
+          "kind": "pms.rate.update",
+          "destination": "pms:listing/7"
+        },
+        "source_version": "pms-sync-2026-10-20T11:58Z",
+        "executor_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "expires_at": "2026-10-21T12:00:00Z"
+      },
+      "covered_canonical": "aweb.approval-request/1\n{\"policy\":{\"ref\":\"pages.price-approval\",\"version\":3},\"request\":{\"action_id\":\"approve-price\",\"app_id\":\"pages\",\"collection\":\"proposals\",\"executor_did\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"expires_at\":\"2026-10-21T12:00:00Z\",\"installation_id\":\"inst_01JB7Q\",\"operation\":{\"destination\":\"pms:listing/7\",\"kind\":\"pms.rate.update\"},\"page_id\":\"pg_4hd2\",\"proposal_sha256\":\"sha256:a3c9bcfee6e212f57ed39e9eb411cc3cc3583a0ce8acc371325bddaab45afdb8\",\"record_id\":\"week-43\",\"record_rev\":2,\"source_version\":\"pms-sync-2026-10-20T11:58Z\",\"task_id\":\"6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20\",\"type\":\"aweb.page-decision\",\"v\":1}}",
+      "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd"
+    },
+    {
+      "name": "internal-page-decision",
+      "policy_ref": "pages.internal-note",
+      "policy_version": 1,
+      "request": {
+        "v": 1,
+        "type": "aweb.page-decision",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-note",
+        "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+        "collection": "proposals",
+        "record_id": "week-43",
+        "record_rev": 2,
+        "proposal_sha256": "sha256:a3c9bcfee6e212f57ed39e9eb411cc3cc3583a0ce8acc371325bddaab45afdb8",
+        "operation": null,
+        "source_version": null,
+        "executor_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "expires_at": "2026-10-21T12:00:00Z"
+      },
+      "covered_canonical": "aweb.approval-request/1\n{\"policy\":{\"ref\":\"pages.internal-note\",\"version\":1},\"request\":{\"action_id\":\"approve-note\",\"app_id\":\"pages\",\"collection\":\"proposals\",\"executor_did\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"expires_at\":\"2026-10-21T12:00:00Z\",\"installation_id\":\"inst_01JB7Q\",\"operation\":null,\"page_id\":\"pg_4hd2\",\"proposal_sha256\":\"sha256:a3c9bcfee6e212f57ed39e9eb411cc3cc3583a0ce8acc371325bddaab45afdb8\",\"record_id\":\"week-43\",\"record_rev\":2,\"source_version\":null,\"task_id\":\"6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20\",\"type\":\"aweb.page-decision\",\"v\":1}}",
+      "request_sha256": "b4f5b15fac3ecd9eea6297ab3a257d0bfccdd4fb678b114151a6049eab242e65"
+    },
+    {
+      "name": "generic",
+      "policy_ref": "secrets.rotation",
+      "policy_version": 12,
+      "request": {
+        "operation": "secrets.rotate",
+        "destination": "vault:prod/db",
+        "constraints": {
+          "max_age_s": 3600
+        },
+        "source_version": "v7",
+        "executor": "dispatcher-1",
+        "note": "naïve café"
+      },
+      "covered_canonical": "aweb.approval-request/1\n{\"policy\":{\"ref\":\"secrets.rotation\",\"version\":12},\"request\":{\"constraints\":{\"max_age_s\":3600},\"destination\":\"vault:prod/db\",\"executor\":\"dispatcher-1\",\"note\":\"naïve café\",\"operation\":\"secrets.rotate\",\"source_version\":\"v7\"}}",
+      "request_sha256": "90201e5170e001ab050ea4b4b8445e49111f993f521f5c213b32f38ced619682"
+    },
+    {
+      "name": "policy-version-changes-digest",
+      "policy_ref": "pages.price-approval",
+      "policy_version": 4,
+      "request": {
+        "v": 1,
+        "type": "aweb.page-decision",
+        "app_id": "pages",
+        "installation_id": "inst_01JB7Q",
+        "page_id": "pg_4hd2",
+        "action_id": "approve-price",
+        "task_id": "6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20",
+        "collection": "proposals",
+        "record_id": "week-43",
+        "record_rev": 2,
+        "proposal_sha256": "sha256:a3c9bcfee6e212f57ed39e9eb411cc3cc3583a0ce8acc371325bddaab45afdb8",
+        "operation": {
+          "kind": "pms.rate.update",
+          "destination": "pms:listing/7"
+        },
+        "source_version": "pms-sync-2026-10-20T11:58Z",
+        "executor_did": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "expires_at": "2026-10-21T12:00:00Z"
+      },
+      "covered_canonical": "aweb.approval-request/1\n{\"policy\":{\"ref\":\"pages.price-approval\",\"version\":4},\"request\":{\"action_id\":\"approve-price\",\"app_id\":\"pages\",\"collection\":\"proposals\",\"executor_did\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"expires_at\":\"2026-10-21T12:00:00Z\",\"installation_id\":\"inst_01JB7Q\",\"operation\":{\"destination\":\"pms:listing/7\",\"kind\":\"pms.rate.update\"},\"page_id\":\"pg_4hd2\",\"proposal_sha256\":\"sha256:a3c9bcfee6e212f57ed39e9eb411cc3cc3583a0ce8acc371325bddaab45afdb8\",\"record_id\":\"week-43\",\"record_rev\":2,\"source_version\":\"pms-sync-2026-10-20T11:58Z\",\"task_id\":\"6c1f0a52-2b1e-4c7a-9a59-3f7d0a1e8b20\",\"type\":\"aweb.page-decision\",\"v\":1}}",
+      "request_sha256": "a7080089378359f3056221cc155ad9da6bbb2693afe00eed66ab795abd620385"
+    }
+  ],
+  "challenges": [
+    {
+      "name": "approve-with-task-answer",
+      "fields": {
+        "approval_id": "apr_01JB8",
+        "nonce": "00112233445566778899aabbccddeeff",
+        "policy_ref": "pages.price-approval",
+        "policy_version": 3,
+        "purpose": "approve",
+        "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
+        "task_answer_ref": "tar_7Hq2"
+      },
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"approve\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":\"tar_7Hq2\"}",
+      "binding_hex": "44cb77e39e222e4404da93d3d503f8f1727858048884cb205afee77264857fdb"
+    },
+    {
+      "name": "reject-with-task-answer",
+      "fields": {
+        "approval_id": "apr_01JB8",
+        "nonce": "00112233445566778899aabbccddeeff",
+        "policy_ref": "pages.price-approval",
+        "policy_version": 3,
+        "purpose": "reject",
+        "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
+        "task_answer_ref": "tar_7Hq2"
+      },
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"reject\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":\"tar_7Hq2\"}",
+      "binding_hex": "8ebfcf841bbeb60e75c2d6649700cd62ce70d78ae90b600396404025173a8c90"
+    },
+    {
+      "name": "approve-link-no-task-answer",
+      "fields": {
+        "approval_id": "apr_01JB8",
+        "nonce": "00112233445566778899aabbccddeeff",
+        "policy_ref": "pages.price-approval",
+        "policy_version": 3,
+        "purpose": "approve",
+        "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
+        "task_answer_ref": null
+      },
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"approve\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":null}",
+      "binding_hex": "b0292f084f1f348519db252b1938833503ee83cb83b31ac4bc6a499bffe3b114"
+    },
+    {
+      "name": "view",
+      "fields": {
+        "approval_id": "apr_01JB8",
+        "nonce": "00112233445566778899aabbccddeeff",
+        "policy_ref": "pages.price-approval",
+        "policy_version": 3,
+        "purpose": "view",
+        "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
+        "task_answer_ref": null
+      },
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"view\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":null}",
+      "binding_hex": "f70746a189d6f0d916ee4788d3e490f66f141b380a36332c037b86611a4fc036"
+    }
+  ],
+  "refusals": [
+    {
+      "name": "float-in-request",
+      "request_json": "{\"amount\":1.5}"
+    },
+    {
+      "name": "integer-beyond-safe",
+      "request_json": "{\"amount\":9007199254740992}"
+    },
+    {
+      "name": "negative-beyond-safe",
+      "request_json": "{\"amount\":-9007199254740992}"
+    },
+    {
+      "name": "duplicate-key",
+      "request_json": "{\"a\":1,\"a\":2}"
+    },
+    {
+      "name": "non-finite",
+      "request_json": "{\"a\":NaN}"
+    },
+    {
+      "name": "not-an-object",
+      "request_json": "[\"a\"]"
+    }
+  ]
+}
