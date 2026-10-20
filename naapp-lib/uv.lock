@@ -147,6 +147,7 @@ source = { editable = "." }
 [package.optional-dependencies]
 runtime = [
     { name = "awid-service" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "pgdbm" },
@@ -167,6 +168,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "awid-service", marker = "extra == 'runtime'", directory = "../awid" },
+    { name = "cryptography", marker = "extra == 'runtime'", specifier = ">=44.0.0" },
     { name = "fastapi", marker = "extra == 'runtime'", specifier = ">=0.116.1" },
     { name = "httpx", marker = "extra == 'runtime'", specifier = ">=0.28.1" },
     { name = "pgdbm", marker = "extra == 'runtime'", specifier = ">=0.5.0" },
