@@ -129,6 +129,9 @@ func parseCatalog(body []byte) (*catalogDocument, error) {
 	if len(body) > MaxCatalogBytes {
 		return nil, codedf(CodeCatalogInvalid, "manifest catalog exceeds %d bytes", MaxCatalogBytes)
 	}
+	if err := checkNestingDepth(body, MaxJSONDepth); err != nil {
+		return nil, codedf(CodeCatalogInvalid, "decode manifest catalog: %v", err)
+	}
 	var catalog catalogDocument
 	if err := DecodeSingleJSONStrict(body, &catalog); err != nil {
 		return nil, codedf(CodeCatalogInvalid, "decode manifest catalog: %v", err)
@@ -211,6 +214,9 @@ func manifestDigest(body []byte) string {
 // keys, so discovery can check a variant before the consumer validates it.
 // A null reads as its zero value; any other wrong type reads as no identity.
 func manifestIdentity(body []byte) (int, string) {
+	if checkNestingDepth(body, MaxJSONDepth) != nil {
+		return 0, ""
+	}
 	var members map[string]json.RawMessage
 	if err := json.Unmarshal(body, &members); err != nil || members == nil {
 		return 0, ""

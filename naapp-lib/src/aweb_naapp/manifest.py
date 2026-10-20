@@ -119,6 +119,9 @@ CATALOG_PATH = "/.well-known/aweb-app-versions.json"
 LEGACY_MANIFEST_PATH = "/.well-known/aweb-app.json"
 MAX_CATALOG_BYTES = 64 << 10
 MAX_MANIFEST_BYTES = 10 << 20
+MAX_JSON_DEPTH = 512
+_MAX_V2_TOOLS = 256
+_MAX_V2_PATH_SEGMENTS = 32
 
 AGENT, SURFACE, HOOK = "agent", "surface", "hook"
 _CONTEXTS = (AGENT, SURFACE, HOOK)
@@ -162,7 +165,32 @@ def _reject_constant(name: str) -> Any:
     raise ValueError(f"non-finite number {name}")
 
 
+def _nesting_depth_exceeds(data: bytes, limit: int) -> bool:
+    """Whether JSON nests objects and arrays deeper than ``limit``, counting
+    only brackets outside strings."""
+    depth, in_string, escaped = 0, False, False
+    for byte in data:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif byte == 0x5C:
+                escaped = True
+            elif byte == 0x22:
+                in_string = False
+        elif byte == 0x22:
+            in_string = True
+        elif byte in (0x7B, 0x5B):
+            depth += 1
+            if depth > limit:
+                return True
+        elif byte in (0x7D, 0x5D):
+            depth -= 1
+    return False
+
+
 def _decode_document(data: bytes, what: str = "manifest") -> Any:
+    if _nesting_depth_exceeds(data, MAX_JSON_DEPTH):
+        raise _invalid(f"{what} is nested deeper than {MAX_JSON_DEPTH} levels")
     try:
         return json.loads(data.decode("utf-8"), parse_constant=_reject_constant)
     except (UnicodeDecodeError, ValueError) as exc:
@@ -491,8 +519,9 @@ def _relative_path(raw: str, name: str) -> str:
 
 def _placeholders(path: str) -> set[str]:
     out: set[str] = set()
+    position = 0
     while True:
-        start = path.find("{")
+        start = path.find("{", position)
         if start < 0:
             return out
         end = path.find("}", start + 1)
@@ -501,7 +530,7 @@ def _placeholders(path: str) -> set[str]:
         name = _go_trim(path[start + 1:end])
         if name:
             out.add(name)
-        path = path[end + 1:]
+        position = end + 1
 
 
 def _schema_properties(schema: Mapping[str, Any] | None) -> dict[str, dict[str, Any]]:
@@ -613,12 +642,16 @@ def _refuse(code: str, message: str) -> ManifestError:
 def _validate_v2(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) -> None:
     if "event_emitters" in d["present"]:
         raise _invalid("event_emitters is replaced by app_keys in manifest_version 2")
+    if len(d["tools"]) > _MAX_V2_TOOLS:
+        raise _invalid(f"a manifest_version 2 manifest declares at most {_MAX_V2_TOOLS} tools")
     names = [_go_trim(tool.name) for tool in d["tools"]]
     if len(set(names)) != len(names):
         raise _invalid("tool names must be unique")
     for tool in d["tools"]:
         if "%" in tool.path:
             raise _invalid(f"tool {tool.name!r} path must not carry percent-encoding")
+        if len([segment for segment in tool.path.split("/") if segment]) > _MAX_V2_PATH_SEGMENTS:
+            raise _invalid(f"tool {tool.name!r} path has more than {_MAX_V2_PATH_SEGMENTS} segments")
     for tool in d["tools"]:
         if tool.contexts is None:
             continue
@@ -755,14 +788,20 @@ def _segments_reach(caller: list[str], target: list[str]) -> bool:
     """A caller segment holding a placeholder covers one or more target
     segments, because its value may carry an encoded '/' that the server decodes
     before routing. A target segment holding a placeholder matches any one
-    caller segment."""
-    if not caller:
-        return not target
-    if "{" in caller[0]:
-        return any(_segments_reach(caller[1:], target[covered:]) for covered in range(1, len(target) + 1))
-    if not target or (caller[0] != target[0] and "{" not in target[0]):
-        return False
-    return _segments_reach(caller[1:], target[1:])
+    caller segment. Fills "caller[i:] can match target[j:]" from the end, in
+    O(len(caller) * len(target))."""
+    following = [False] * len(target) + [True]
+    for segment in reversed(caller):
+        current = [False] * (len(target) + 1)
+        later_match = False
+        for j in range(len(target), -1, -1):
+            if "{" in segment:
+                current[j] = later_match
+            elif j < len(target):
+                current[j] = (segment == target[j] or "{" in target[j]) and following[j + 1]
+            later_match = later_match or following[j]
+        following = current
+    return following[0]
 
 
 def _can_reach_route(caller: _Tool, target: _Tool) -> bool:
@@ -1072,6 +1111,8 @@ def _digest(data: bytes) -> str:
 
 def _identity(data: bytes) -> tuple[int, str]:
     """manifest_version and app.id only, read the way Go's lenient decode does."""
+    if _nesting_depth_exceeds(data, MAX_JSON_DEPTH):
+        return 0, ""
     try:
         doc = json.loads(data.decode("utf-8"), parse_constant=_reject_constant)
     except (UnicodeDecodeError, ValueError):

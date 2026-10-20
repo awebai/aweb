@@ -127,8 +127,10 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 			return nil, snapshotFailure("app_manifest_mismatch", usageError("app_manifest_mismatch: installed app id differs from %s", name))
 		}
 		counts := map[string]int{}
+		byName := map[string]appmanifest.Tool{}
 		for _, tool := range manifest.Tools {
 			counts[strings.TrimSpace(tool.Name)]++
+			byName[strings.TrimSpace(tool.Name)] = tool
 		}
 		origin, err := canonicalAppOrigin(manifest.App.Origin)
 		if err != nil {
@@ -159,15 +161,11 @@ func buildGrantAppSnapshotsWithApprovals(specs map[string][]string, deniedOrigin
 			if err := resolved.CheckInvocationContext(verb, nil); err != nil {
 				return nil, usageError("--app-tool %s:%s: %v", name, verb, manifestError(err))
 			}
-			for _, tool := range manifest.Tools {
-				if strings.TrimSpace(tool.Name) != verb {
-					continue
-				}
-				if strings.TrimSpace(tool.Auth) == "none" {
-					return nil, usageError("--app-tool %s:%s is a public tool; it needs no grant", name, verb)
-				}
-				snap.Tools = append(snap.Tools, tool)
+			tool := byName[verb]
+			if strings.TrimSpace(tool.Auth) == "none" {
+				return nil, usageError("--app-tool %s:%s is a public tool; it needs no grant", name, verb)
 			}
+			snap.Tools = append(snap.Tools, tool)
 		}
 		out[name] = snap
 	}

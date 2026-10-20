@@ -89,6 +89,11 @@ const (
 	maxHookScopes        = 32
 	maxHookReads         = 64
 	maxSurfaceLabelRunes = 128
+	maxV2Tools           = 256
+	maxV2PathSegments    = 32
+	// MaxJSONDepth bounds the nesting of any manifest or catalog document, so
+	// every reader handles it within its own recursion limits.
+	MaxJSONDepth = 512
 )
 
 var (
@@ -219,6 +224,33 @@ func checkManifestKeys(members map[string]json.RawMessage) error {
 		}
 		return checkArrayKeys(tool["params"], reflect.TypeOf(Param{}), "tools[].params[]", nil)
 	})
+}
+
+// checkNestingDepth refuses JSON nested deeper than max levels of objects
+// and arrays, counting only brackets outside strings.
+func checkNestingDepth(data []byte, max int) error {
+	depth, inString, escaped := 0, false, false
+	for _, c := range data {
+		switch {
+		case inString && escaped:
+			escaped = false
+		case inString && c == '\\':
+			escaped = true
+		case inString && c == '"':
+			inString = false
+		case inString:
+		case c == '"':
+			inString = true
+		case c == '{' || c == '[':
+			depth++
+			if depth > max {
+				return fmt.Errorf("JSON is nested deeper than %d levels", max)
+			}
+		case c == '}' || c == ']':
+			depth--
+		}
+	}
+	return nil
 }
 
 func isJSONNull(raw json.RawMessage) bool {
@@ -555,6 +587,9 @@ func validateV2(m Manifest) error {
 	if m.hasMember("event_emitters", m.EventEmitters != nil) {
 		return codedf(CodeManifestInvalid, "event_emitters is replaced by app_keys in manifest_version 2")
 	}
+	if len(m.Tools) > maxV2Tools {
+		return codedf(CodeManifestInvalid, "a manifest_version 2 manifest declares at most %d tools", maxV2Tools)
+	}
 	names := map[string]bool{}
 	for _, tool := range m.Tools {
 		name := strings.TrimSpace(tool.Name)
@@ -564,6 +599,9 @@ func validateV2(m Manifest) error {
 		names[name] = true
 		if strings.Contains(tool.Path, "%") {
 			return codedf(CodeManifestInvalid, "tool %q path must not carry percent-encoding", name)
+		}
+		if len(routeSegments(tool.Path)) > maxV2PathSegments {
+			return codedf(CodeManifestInvalid, "tool %q path has more than %d segments", name, maxV2PathSegments)
 		}
 	}
 	tools := toolIndex(m.Tools)
@@ -847,23 +885,26 @@ func routeSegments(path string) []string {
 // segmentsReach matches caller segments against target segments. A caller
 // segment holding a placeholder covers one or more target segments, because
 // its value may carry an encoded '/' that the server decodes before routing.
-// A target segment holding a placeholder matches any one caller segment.
+// A target segment holding a placeholder matches any one caller segment. It
+// fills reach[i][j], "caller[i:] can match target[j:]", from the end, in
+// O(len(caller) * len(target)).
 func segmentsReach(caller, target []string) bool {
-	if len(caller) == 0 {
-		return len(target) == 0
-	}
-	if strings.Contains(caller[0], "{") {
-		for covered := 1; covered <= len(target); covered++ {
-			if segmentsReach(caller[1:], target[covered:]) {
-				return true
+	next := make([]bool, len(target)+1)
+	next[len(target)] = true
+	for i := len(caller) - 1; i >= 0; i-- {
+		current := make([]bool, len(target)+1)
+		laterMatch := false
+		for j := len(target); j >= 0; j-- {
+			if strings.Contains(caller[i], "{") {
+				current[j] = laterMatch
+			} else if j < len(target) {
+				current[j] = (caller[i] == target[j] || strings.Contains(target[j], "{")) && next[j+1]
 			}
+			laterMatch = laterMatch || next[j]
 		}
-		return false
+		next = current
 	}
-	if len(target) == 0 || (caller[0] != target[0] && !strings.Contains(target[0], "{")) {
-		return false
-	}
-	return segmentsReach(caller[1:], target[1:])
+	return next[0]
 }
 
 // validateAnswerInputs refuses an answer input on every tool except a surface
@@ -1152,6 +1193,9 @@ type ResolvedHookProduction struct {
 // Load decodes exact manifest bytes of either supported version, validates
 // them and resolves them.
 func Load(data []byte, reservedNames map[string]bool) (*Resolved, error) {
+	if err := checkNestingDepth(data, MaxJSONDepth); err != nil {
+		return nil, codedError(CodeManifestInvalid, err)
+	}
 	var manifest Manifest
 	if err := DecodeSingleJSONStrict(data, &manifest); err != nil {
 		return nil, codedError(CodeManifestInvalid, fmt.Errorf("decode manifest: %w", err))

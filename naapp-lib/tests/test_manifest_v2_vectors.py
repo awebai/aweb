@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -159,3 +160,11 @@ def test_app_keys_for_v2_by_declared_purpose() -> None:
     for purpose in ("app-event", "app-request", "app-usage"):
         assert manifest.app_keys_for(purpose) == {key["kid"]: key["did_key"]}
     assert manifest.app_keys_for("hook-delivery") == {}
+
+
+def test_route_reach_check_is_prompt() -> None:
+    case = next(c for c in V2["cases"] if c["name"] == "route_reach_many_placeholders_is_prompt")
+    data = _manifest_bytes(case)
+    started = time.monotonic()
+    load_manifest(data, reserved_names=RESERVED)
+    assert time.monotonic() - started < 1.0

@@ -9,7 +9,7 @@
   ],
   "mutation_semantics": "Each case starts from a deep copy of base_manifests[base] and applies mutations in order. Paths are RFC 6901 JSON Pointers. op=set replaces or adds the member or array element at path; a final token '-' appends to the array. op=remove deletes the member. The result is serialized as canonical JSON (sorted keys, no insignificant whitespace, UTF-8) and passed to the loader as bytes.",
   "error_codes": {
-    "manifest_invalid": "Not exactly one JSON object; a v2 tool path with percent-encoding; a non-finite number; an unknown or wrongly typed field (null included) at any modeled level; a v2 field in v1; event_emitters in v2; or any v1 rule.",
+    "manifest_invalid": "Not exactly one JSON object; JSON nested deeper than 512 levels; a v2 manifest with more than 256 tools; a v2 tool path with percent-encoding or more than 32 segments; a non-finite number; an unknown or wrongly typed field (null included) at any modeled level; a v2 field in v1; event_emitters in v2; or any v1 rule.",
     "manifest_version_unsupported": "manifest_version is neither 1 nor 2.",
     "tool_contexts_invalid": "invocation_contexts is empty, has duplicates or a value other than agent, surface, hook.",
     "surface_invalid": "A surface field value, bound, input binding or event binding is invalid.",
@@ -3050,6 +3050,391 @@
       }
     },
     {
+      "name": "route_reach_many_placeholders_is_prompt",
+      "description": "Sixteen caller placeholders against a 32-segment answer route cannot reach it and must load promptly; an unmemoised backtracking match takes combinatorial time here.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/3/path",
+          "value": "/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/x/{page_id}/answers"
+        },
+        {
+          "op": "set",
+          "path": "/tools/-",
+          "value": {
+            "name": "deep",
+            "method": "POST",
+            "path": "/{p0}/{p1}/{p2}/{p3}/{p4}/{p5}/{p6}/{p7}/{p8}/{p9}/{p10}/{p11}/{p12}/{p13}/{p14}/{p15}/nomatch",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "p0": {
+                  "type": "string"
+                },
+                "p1": {
+                  "type": "string"
+                },
+                "p2": {
+                  "type": "string"
+                },
+                "p3": {
+                  "type": "string"
+                },
+                "p4": {
+                  "type": "string"
+                },
+                "p5": {
+                  "type": "string"
+                },
+                "p6": {
+                  "type": "string"
+                },
+                "p7": {
+                  "type": "string"
+                },
+                "p8": {
+                  "type": "string"
+                },
+                "p9": {
+                  "type": "string"
+                },
+                "p10": {
+                  "type": "string"
+                },
+                "p11": {
+                  "type": "string"
+                },
+                "p12": {
+                  "type": "string"
+                },
+                "p13": {
+                  "type": "string"
+                },
+                "p14": {
+                  "type": "string"
+                },
+                "p15": {
+                  "type": "string"
+                }
+              }
+            },
+            "params": [
+              {
+                "name": "p0",
+                "in": "path"
+              },
+              {
+                "name": "p1",
+                "in": "path"
+              },
+              {
+                "name": "p2",
+                "in": "path"
+              },
+              {
+                "name": "p3",
+                "in": "path"
+              },
+              {
+                "name": "p4",
+                "in": "path"
+              },
+              {
+                "name": "p5",
+                "in": "path"
+              },
+              {
+                "name": "p6",
+                "in": "path"
+              },
+              {
+                "name": "p7",
+                "in": "path"
+              },
+              {
+                "name": "p8",
+                "in": "path"
+              },
+              {
+                "name": "p9",
+                "in": "path"
+              },
+              {
+                "name": "p10",
+                "in": "path"
+              },
+              {
+                "name": "p11",
+                "in": "path"
+              },
+              {
+                "name": "p12",
+                "in": "path"
+              },
+              {
+                "name": "p13",
+                "in": "path"
+              },
+              {
+                "name": "p14",
+                "in": "path"
+              },
+              {
+                "name": "p15",
+                "in": "path"
+              }
+            ],
+            "body": {
+              "mode": "json"
+            },
+            "scopes": [
+              "fixture:write"
+            ],
+            "mutation": true,
+            "invocation_contexts": [
+              "agent"
+            ]
+          }
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "deep"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "v2_tool_path_over_32_segments",
+      "description": "v2 tool paths have at most 32 segments, which bounds every path check.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/0/path",
+          "value": "/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s"
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_tool_path_at_32_segments",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/0/path",
+          "value": "/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s/s"
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
       "name": "surface_tool_on_answer_route_allowed",
       "description": "",
       "base": "v2",
@@ -4926,6 +5311,24 @@
     }
   ],
   "raw_cases": [
+    {
+      "name": "v2_over_256_tools",
+      "description": "A v2 manifest declares at most 256 tools, which bounds every per-tool check.",
+      "bytes": "{\"app\":{\"id\":\"fixture\",\"origin\":\"https://fixture.example\",\"version\":\"0.0.0\"},\"app_keys\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\",\"purposes\":[\"app-event\",\"app-request\",\"app-usage\"]}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"hooks\":{\"productions\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-command\",\"reads\":[\"workspace-list\"]}],\"registration_version\":1,\"registrations\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-operation\",\"scopes\":[\"fixture:audit-ingest\"],\"tool\":\"audit-ingest\"}]},\"lifecycle\":{\"delete_tool\":\"workspace-delete\",\"export_tool\":\"workspace-export\",\"status_tool\":\"lifecycle-status\"},\"manifest_version\":2,\"surfaces\":[{\"answer_tool\":\"workspace-answer\",\"events\":[{\"resource_field\":\"resource_ref\",\"revision_field\":\"rev\",\"type\":\"fixture/workspace.changed\"}],\"format\":\"aweb.page/1\",\"id\":\"workbench\",\"inputs\":{\"invocation\":\"request\",\"resource\":\"page_id\"},\"invoke_tool\":\"workspace-invoke\",\"label\":\"Workspace\",\"list_tool\":\"workspace-list\",\"read_tool\":\"workspace-read\"}],\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"agent\",\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-answer\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-answer\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/answers\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture audit-ingest\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"hook\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"audit-ingest\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/audit-ingest\",\"scopes\":[\"fixture:audit-ingest\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture human-input\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"human-input\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/human-input\",\"scopes\":[\"fixture:human-input\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t0\",\"params\":[],\"path\":\"/v1/t0\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t1\",\"params\":[],\"path\":\"/v1/t1\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t2\",\"params\":[],\"path\":\"/v1/t2\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t3\",\"params\":[],\"path\":\"/v1/t3\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t4\",\"params\":[],\"path\":\"/v1/t4\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t5\",\"params\":[],\"path\":\"/v1/t5\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t6\",\"params\":[],\"path\":\"/v1/t6\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t7\",\"params\":[],\"path\":\"/v1/t7\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t8\",\"params\":[],\"path\":\"/v1/t8\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t9\",\"params\":[],\"path\":\"/v1/t9\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t10\",\"params\":[],\"path\":\"/v1/t10\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t11\",\"params\":[],\"path\":\"/v1/t11\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t12\",\"params\":[],\"path\":\"/v1/t12\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t13\",\"params\":[],\"path\":\"/v1/t13\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t14\",\"params\":[],\"path\":\"/v1/t14\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t15\",\"params\":[],\"path\":\"/v1/t15\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t16\",\"params\":[],\"path\":\"/v1/t16\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t17\",\"params\":[],\"path\":\"/v1/t17\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t18\",\"params\":[],\"path\":\"/v1/t18\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t19\",\"params\":[],\"path\":\"/v1/t19\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t20\",\"params\":[],\"path\":\"/v1/t20\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t21\",\"params\":[],\"path\":\"/v1/t21\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t22\",\"params\":[],\"path\":\"/v1/t22\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t23\",\"params\":[],\"path\":\"/v1/t23\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t24\",\"params\":[],\"path\":\"/v1/t24\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t25\",\"params\":[],\"path\":\"/v1/t25\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t26\",\"params\":[],\"path\":\"/v1/t26\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t27\",\"params\":[],\"path\":\"/v1/t27\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t28\",\"params\":[],\"path\":\"/v1/t28\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t29\",\"params\":[],\"path\":\"/v1/t29\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t30\",\"params\":[],\"path\":\"/v1/t30\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t31\",\"params\":[],\"path\":\"/v1/t31\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t32\",\"params\":[],\"path\":\"/v1/t32\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t33\",\"params\":[],\"path\":\"/v1/t33\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t34\",\"params\":[],\"path\":\"/v1/t34\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t35\",\"params\":[],\"path\":\"/v1/t35\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t36\",\"params\":[],\"path\":\"/v1/t36\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t37\",\"params\":[],\"path\":\"/v1/t37\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t38\",\"params\":[],\"path\":\"/v1/t38\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t39\",\"params\":[],\"path\":\"/v1/t39\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t40\",\"params\":[],\"path\":\"/v1/t40\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t41\",\"params\":[],\"path\":\"/v1/t41\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t42\",\"params\":[],\"path\":\"/v1/t42\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t43\",\"params\":[],\"path\":\"/v1/t43\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t44\",\"params\":[],\"path\":\"/v1/t44\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t45\",\"params\":[],\"path\":\"/v1/t45\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t46\",\"params\":[],\"path\":\"/v1/t46\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t47\",\"params\":[],\"path\":\"/v1/t47\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t48\",\"params\":[],\"path\":\"/v1/t48\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t49\",\"params\":[],\"path\":\"/v1/t49\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t50\",\"params\":[],\"path\":\"/v1/t50\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t51\",\"params\":[],\"path\":\"/v1/t51\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t52\",\"params\":[],\"path\":\"/v1/t52\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t53\",\"params\":[],\"path\":\"/v1/t53\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t54\",\"params\":[],\"path\":\"/v1/t54\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t55\",\"params\":[],\"path\":\"/v1/t55\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t56\",\"params\":[],\"path\":\"/v1/t56\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t57\",\"params\":[],\"path\":\"/v1/t57\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t58\",\"params\":[],\"path\":\"/v1/t58\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t59\",\"params\":[],\"path\":\"/v1/t59\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t60\",\"params\":[],\"path\":\"/v1/t60\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t61\",\"params\":[],\"path\":\"/v1/t61\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t62\",\"params\":[],\"path\":\"/v1/t62\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t63\",\"params\":[],\"path\":\"/v1/t63\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t64\",\"params\":[],\"path\":\"/v1/t64\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t65\",\"params\":[],\"path\":\"/v1/t65\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t66\",\"params\":[],\"path\":\"/v1/t66\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t67\",\"params\":[],\"path\":\"/v1/t67\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t68\",\"params\":[],\"path\":\"/v1/t68\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t69\",\"params\":[],\"path\":\"/v1/t69\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t70\",\"params\":[],\"path\":\"/v1/t70\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t71\",\"params\":[],\"path\":\"/v1/t71\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t72\",\"params\":[],\"path\":\"/v1/t72\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t73\",\"params\":[],\"path\":\"/v1/t73\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t74\",\"params\":[],\"path\":\"/v1/t74\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t75\",\"params\":[],\"path\":\"/v1/t75\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t76\",\"params\":[],\"path\":\"/v1/t76\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t77\",\"params\":[],\"path\":\"/v1/t77\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t78\",\"params\":[],\"path\":\"/v1/t78\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t79\",\"params\":[],\"path\":\"/v1/t79\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t80\",\"params\":[],\"path\":\"/v1/t80\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t81\",\"params\":[],\"path\":\"/v1/t81\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t82\",\"params\":[],\"path\":\"/v1/t82\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t83\",\"params\":[],\"path\":\"/v1/t83\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t84\",\"params\":[],\"path\":\"/v1/t84\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t85\",\"params\":[],\"path\":\"/v1/t85\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t86\",\"params\":[],\"path\":\"/v1/t86\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t87\",\"params\":[],\"path\":\"/v1/t87\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t88\",\"params\":[],\"path\":\"/v1/t88\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t89\",\"params\":[],\"path\":\"/v1/t89\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t90\",\"params\":[],\"path\":\"/v1/t90\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t91\",\"params\":[],\"path\":\"/v1/t91\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t92\",\"params\":[],\"path\":\"/v1/t92\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t93\",\"params\":[],\"path\":\"/v1/t93\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t94\",\"params\":[],\"path\":\"/v1/t94\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t95\",\"params\":[],\"path\":\"/v1/t95\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t96\",\"params\":[],\"path\":\"/v1/t96\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t97\",\"params\":[],\"path\":\"/v1/t97\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t98\",\"params\":[],\"path\":\"/v1/t98\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t99\",\"params\":[],\"path\":\"/v1/t99\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t100\",\"params\":[],\"path\":\"/v1/t100\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t101\",\"params\":[],\"path\":\"/v1/t101\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t102\",\"params\":[],\"path\":\"/v1/t102\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t103\",\"params\":[],\"path\":\"/v1/t103\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t104\",\"params\":[],\"path\":\"/v1/t104\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t105\",\"params\":[],\"path\":\"/v1/t105\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t106\",\"params\":[],\"path\":\"/v1/t106\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t107\",\"params\":[],\"path\":\"/v1/t107\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t108\",\"params\":[],\"path\":\"/v1/t108\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t109\",\"params\":[],\"path\":\"/v1/t109\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t110\",\"params\":[],\"path\":\"/v1/t110\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t111\",\"params\":[],\"path\":\"/v1/t111\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t112\",\"params\":[],\"path\":\"/v1/t112\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t113\",\"params\":[],\"path\":\"/v1/t113\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t114\",\"params\":[],\"path\":\"/v1/t114\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t115\",\"params\":[],\"path\":\"/v1/t115\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t116\",\"params\":[],\"path\":\"/v1/t116\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t117\",\"params\":[],\"path\":\"/v1/t117\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t118\",\"params\":[],\"path\":\"/v1/t118\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t119\",\"params\":[],\"path\":\"/v1/t119\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t120\",\"params\":[],\"path\":\"/v1/t120\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t121\",\"params\":[],\"path\":\"/v1/t121\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t122\",\"params\":[],\"path\":\"/v1/t122\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t123\",\"params\":[],\"path\":\"/v1/t123\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t124\",\"params\":[],\"path\":\"/v1/t124\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t125\",\"params\":[],\"path\":\"/v1/t125\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t126\",\"params\":[],\"path\":\"/v1/t126\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t127\",\"params\":[],\"path\":\"/v1/t127\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t128\",\"params\":[],\"path\":\"/v1/t128\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t129\",\"params\":[],\"path\":\"/v1/t129\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t130\",\"params\":[],\"path\":\"/v1/t130\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t131\",\"params\":[],\"path\":\"/v1/t131\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t132\",\"params\":[],\"path\":\"/v1/t132\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t133\",\"params\":[],\"path\":\"/v1/t133\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t134\",\"params\":[],\"path\":\"/v1/t134\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t135\",\"params\":[],\"path\":\"/v1/t135\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t136\",\"params\":[],\"path\":\"/v1/t136\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t137\",\"params\":[],\"path\":\"/v1/t137\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t138\",\"params\":[],\"path\":\"/v1/t138\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t139\",\"params\":[],\"path\":\"/v1/t139\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t140\",\"params\":[],\"path\":\"/v1/t140\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t141\",\"params\":[],\"path\":\"/v1/t141\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t142\",\"params\":[],\"path\":\"/v1/t142\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t143\",\"params\":[],\"path\":\"/v1/t143\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t144\",\"params\":[],\"path\":\"/v1/t144\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t145\",\"params\":[],\"path\":\"/v1/t145\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t146\",\"params\":[],\"path\":\"/v1/t146\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t147\",\"params\":[],\"path\":\"/v1/t147\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t148\",\"params\":[],\"path\":\"/v1/t148\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t149\",\"params\":[],\"path\":\"/v1/t149\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t150\",\"params\":[],\"path\":\"/v1/t150\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t151\",\"params\":[],\"path\":\"/v1/t151\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t152\",\"params\":[],\"path\":\"/v1/t152\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t153\",\"params\":[],\"path\":\"/v1/t153\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t154\",\"params\":[],\"path\":\"/v1/t154\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t155\",\"params\":[],\"path\":\"/v1/t155\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t156\",\"params\":[],\"path\":\"/v1/t156\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t157\",\"params\":[],\"path\":\"/v1/t157\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t158\",\"params\":[],\"path\":\"/v1/t158\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t159\",\"params\":[],\"path\":\"/v1/t159\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t160\",\"params\":[],\"path\":\"/v1/t160\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t161\",\"params\":[],\"path\":\"/v1/t161\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t162\",\"params\":[],\"path\":\"/v1/t162\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t163\",\"params\":[],\"path\":\"/v1/t163\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t164\",\"params\":[],\"path\":\"/v1/t164\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t165\",\"params\":[],\"path\":\"/v1/t165\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t166\",\"params\":[],\"path\":\"/v1/t166\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t167\",\"params\":[],\"path\":\"/v1/t167\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t168\",\"params\":[],\"path\":\"/v1/t168\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t169\",\"params\":[],\"path\":\"/v1/t169\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t170\",\"params\":[],\"path\":\"/v1/t170\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t171\",\"params\":[],\"path\":\"/v1/t171\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t172\",\"params\":[],\"path\":\"/v1/t172\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t173\",\"params\":[],\"path\":\"/v1/t173\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t174\",\"params\":[],\"path\":\"/v1/t174\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t175\",\"params\":[],\"path\":\"/v1/t175\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t176\",\"params\":[],\"path\":\"/v1/t176\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t177\",\"params\":[],\"path\":\"/v1/t177\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t178\",\"params\":[],\"path\":\"/v1/t178\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t179\",\"params\":[],\"path\":\"/v1/t179\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t180\",\"params\":[],\"path\":\"/v1/t180\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t181\",\"params\":[],\"path\":\"/v1/t181\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t182\",\"params\":[],\"path\":\"/v1/t182\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t183\",\"params\":[],\"path\":\"/v1/t183\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t184\",\"params\":[],\"path\":\"/v1/t184\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t185\",\"params\":[],\"path\":\"/v1/t185\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t186\",\"params\":[],\"path\":\"/v1/t186\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t187\",\"params\":[],\"path\":\"/v1/t187\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t188\",\"params\":[],\"path\":\"/v1/t188\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t189\",\"params\":[],\"path\":\"/v1/t189\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t190\",\"params\":[],\"path\":\"/v1/t190\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t191\",\"params\":[],\"path\":\"/v1/t191\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t192\",\"params\":[],\"path\":\"/v1/t192\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t193\",\"params\":[],\"path\":\"/v1/t193\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t194\",\"params\":[],\"path\":\"/v1/t194\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t195\",\"params\":[],\"path\":\"/v1/t195\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t196\",\"params\":[],\"path\":\"/v1/t196\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t197\",\"params\":[],\"path\":\"/v1/t197\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t198\",\"params\":[],\"path\":\"/v1/t198\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t199\",\"params\":[],\"path\":\"/v1/t199\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t200\",\"params\":[],\"path\":\"/v1/t200\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t201\",\"params\":[],\"path\":\"/v1/t201\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t202\",\"params\":[],\"path\":\"/v1/t202\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t203\",\"params\":[],\"path\":\"/v1/t203\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t204\",\"params\":[],\"path\":\"/v1/t204\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t205\",\"params\":[],\"path\":\"/v1/t205\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t206\",\"params\":[],\"path\":\"/v1/t206\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t207\",\"params\":[],\"path\":\"/v1/t207\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t208\",\"params\":[],\"path\":\"/v1/t208\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t209\",\"params\":[],\"path\":\"/v1/t209\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t210\",\"params\":[],\"path\":\"/v1/t210\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t211\",\"params\":[],\"path\":\"/v1/t211\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t212\",\"params\":[],\"path\":\"/v1/t212\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t213\",\"params\":[],\"path\":\"/v1/t213\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t214\",\"params\":[],\"path\":\"/v1/t214\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t215\",\"params\":[],\"path\":\"/v1/t215\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t216\",\"params\":[],\"path\":\"/v1/t216\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t217\",\"params\":[],\"path\":\"/v1/t217\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t218\",\"params\":[],\"path\":\"/v1/t218\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t219\",\"params\":[],\"path\":\"/v1/t219\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t220\",\"params\":[],\"path\":\"/v1/t220\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t221\",\"params\":[],\"path\":\"/v1/t221\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t222\",\"params\":[],\"path\":\"/v1/t222\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t223\",\"params\":[],\"path\":\"/v1/t223\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t224\",\"params\":[],\"path\":\"/v1/t224\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t225\",\"params\":[],\"path\":\"/v1/t225\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t226\",\"params\":[],\"path\":\"/v1/t226\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t227\",\"params\":[],\"path\":\"/v1/t227\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t228\",\"params\":[],\"path\":\"/v1/t228\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t229\",\"params\":[],\"path\":\"/v1/t229\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t230\",\"params\":[],\"path\":\"/v1/t230\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t231\",\"params\":[],\"path\":\"/v1/t231\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t232\",\"params\":[],\"path\":\"/v1/t232\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t233\",\"params\":[],\"path\":\"/v1/t233\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t234\",\"params\":[],\"path\":\"/v1/t234\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t235\",\"params\":[],\"path\":\"/v1/t235\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t236\",\"params\":[],\"path\":\"/v1/t236\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t237\",\"params\":[],\"path\":\"/v1/t237\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t238\",\"params\":[],\"path\":\"/v1/t238\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t239\",\"params\":[],\"path\":\"/v1/t239\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t240\",\"params\":[],\"path\":\"/v1/t240\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t241\",\"params\":[],\"path\":\"/v1/t241\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t242\",\"params\":[],\"path\":\"/v1/t242\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t243\",\"params\":[],\"path\":\"/v1/t243\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t244\",\"params\":[],\"path\":\"/v1/t244\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t245\",\"params\":[],\"path\":\"/v1/t245\",\"scopes\":[\"fixture:read\"]},{\"input_schema\":{\"properties\":{},\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"t246\",\"params\":[],\"path\":\"/v1/t246\",\"scopes\":[\"fixture:read\"]}],\"usage\":{\"format\":\"aweb.usage/1\",\"snapshot_tool\":\"usage-snapshot\"}}",
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "json_nesting_over_512",
+      "description": "Any manifest nested deeper than 512 levels is refused before decoding, in both versions.",
+      "bytes": "{\"app\":{\"id\":\"fixture\",\"origin\":\"https://fixture.example\",\"version\":\"0.0.0\"},\"event_emitters\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\"}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"manifest_version\":1,\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"object\",\"properties\":{\"a\":{}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]}]}",
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
     {
       "name": "v1_case_variant_top_level_key",
       "description": "Keys match exactly; a JSON decoder's case folding is not part of the contract.",

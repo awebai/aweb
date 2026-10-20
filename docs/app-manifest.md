@@ -388,7 +388,11 @@ unchanged, removes `event_emitters`, and adds:
 | `lifecycle` | `{export_tool, delete_tool, status_tool}`, at least one. |
 | `hooks` | The versioned hooks slot: `registration_version: 1`, `registrations` and `productions` (at most 64 each). |
 
-A v2 member is never `null`, and unknown fields are refused at every level.
+A v2 manifest declares at most 256 tools, and a v2 tool path has at most 32
+segments and no percent-encoding. Any manifest or catalog nested deeper than
+512 levels is refused, in both versions; these bounds keep every check
+linear. A v2 member is never `null`, and unknown fields are refused at every
+level.
 Keys match exactly: `Surfaces` is not `surfaces`. v2 tool names are unique,
 so every lookup by name finds the same tool. v1 decoding is unchanged, and a
 v2 field in a v1 manifest is refused.
