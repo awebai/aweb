@@ -263,6 +263,12 @@ def cases() -> list[ChainCase]:
     wrong_hash_without_content[2] = dataclasses.replace(
         chain[2], content=None, event_hash=chain[1].event_hash
     )
+    # With content retained, content_missing drops out of the order and the
+    # event hash comes directly before the commitment.
+    wrong_hash_and_altered_content = copy.copy(chain)
+    wrong_hash_and_altered_content[0] = dataclasses.replace(
+        chain[0], content=_altered(contents[0]), event_hash=chain[1].event_hash
+    )
     wrong_key_and_skeleton = copy.copy(chain)
     wrong_key_and_skeleton[0] = rehashed(
         dataclasses.replace(
@@ -399,6 +405,12 @@ def cases() -> list[ChainCase]:
             start,
             wrong_hash_without_content,
             _broken(3, "event_hash_mismatch"),
+        ),
+        ChainCase(
+            "wrong_event_hash_comes_before_altered_content",
+            start,
+            wrong_hash_and_altered_content,
+            _broken(1, "event_hash_mismatch"),
         ),
         ChainCase(
             "provenance_comes_before_the_skeleton",
