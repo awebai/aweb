@@ -645,16 +645,7 @@ func TestAwLockRenew(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
@@ -712,16 +703,7 @@ func TestAwLockRevoke(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
@@ -787,16 +769,7 @@ func TestAwChatSendAndLeavePositionalArgs(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "eve", "workspace-1"))
 
@@ -853,16 +826,7 @@ func TestAwChatSendAndWaitMissingArgs(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	// No positional args at all
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait")
@@ -886,16 +850,7 @@ func TestAwChatSendAndWaitExtraArgsRejected(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "chat", "send-and-wait", "--plaintext", "bob", "hello", "extra-arg")
 	run.Env = testCommandEnv(tmp)
@@ -954,16 +909,7 @@ func TestAwChatSendAndLeavePositionalArgsOrder(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeWorkspaceBindingForTest(t, tmp, workspaceBinding(server.URL, "backend:demo", "eve", "workspace-1"))
 
@@ -1004,16 +950,7 @@ func TestVersionCommand(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	run := exec.CommandContext(ctx, bin, "version")
 	run.Env = append(os.Environ(), "AWEB_URL=")
@@ -1060,16 +997,7 @@ func TestAwContactsList(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
@@ -1127,16 +1055,7 @@ func TestAwContactsAdd(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
@@ -1195,16 +1114,7 @@ func TestAwContactsRemove(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
@@ -1250,16 +1160,7 @@ func TestAwContactsRemoveNotFound(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
@@ -1314,16 +1215,7 @@ func TestAwMailSendAliasUsesTeamScopedTarget(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 
@@ -1402,16 +1294,7 @@ func TestAwMailSendToDIDStableFirstContactFailsClosed(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	address := "myco/agent"
 
@@ -1489,16 +1372,7 @@ func TestAwMailSendToAddressUsesIdentityAuth(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	address := "acme/bot"
 
@@ -1629,16 +1503,7 @@ func TestAwMessagingUsesIdentityRegistryURLForRecipientBinding(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:       apiServer.URL,
@@ -1752,16 +1617,7 @@ func TestAwMessagingUsesKnownAgentPinWhenRegistryAddressMissing(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:       apiServer.URL,
@@ -1862,16 +1718,7 @@ func TestAwChatSendFailsClosedWhenRecipientBindingCannotResolve(t *testing.T) {
 
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeSelectionFixtureForTest(t, tmp, testSelectionFixture{
 		AwebURL:       apiServer.URL,
@@ -2123,16 +1970,7 @@ func TestAwResetLocal(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	// Create .aw/context and .aw/workspace.yaml.
 	awDir := filepath.Join(tmp, ".aw")
@@ -2195,16 +2033,7 @@ func TestAwMailSendWritesCommLog(t *testing.T) {
 	tmp := t.TempDir()
 	bin := filepath.Join(tmp, "aw")
 
-	build := exec.CommandContext(ctx, "go", "build", "-o", bin, "./cmd/aw")
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	build.Dir = filepath.Clean(filepath.Join(wd, "..", ".."))
-	build.Env = os.Environ()
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, string(out))
-	}
+	buildAwBinary(t, ctx, bin)
 
 	writeDefaultWorkspaceBindingForTest(t, tmp, server.URL)
 

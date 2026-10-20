@@ -207,7 +207,23 @@ func TestMain(m *testing.M) {
 	// executable also makes LookPath deterministic and is inherited by child aw
 	// processes, which do not share this package global.
 	runClaudeChannelPluginCommand = func(args ...string) error { return nil }
+	// Capture the source directory and build environment before tests change cwd
+	// or environment. Every subprocess still gets its own executable and home.
+	wd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "locate CLI source: %v\n", err)
+		_ = os.RemoveAll(dir)
+		os.Exit(1)
+	}
+	awTestBinary.sourceDir = filepath.Clean(filepath.Join(wd, "..", ".."))
+	awTestBinary.env = os.Environ()
 	code := m.Run()
+	if awTestBinary.dir != "" {
+		if err := os.RemoveAll(awTestBinary.dir); err != nil {
+			fmt.Fprintf(os.Stderr, "remove shared CLI build: %v\n", err)
+			code = 1
+		}
+	}
 
 	// os.Exit does not run defers. Restore every package/environment mutation and
 	// remove the executable explicitly before exiting the test process.
