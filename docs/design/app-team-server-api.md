@@ -1,18 +1,20 @@
 # App → team-server API: discovery, app read credentials, grant status, hook resolution
 
-Status: **design proposal, aweb-acgh.7 (D1 task G1)**, awaiting fit review by
-the D1 lead and the aw-hooks seat, one independent reviewer and Athena, then
-Juan. Nothing here ships yet. Baseline is `origin/main` at `b423415a9`; source
-citations are at that commit.
+Status: **design proposal, aweb-acgh.7 (D1 task G1)**, amended after fit
+review by the D1 lead and the aw-hooks seat, an independent review and Athena;
+awaiting their re-review, then Juan. Nothing here ships yet. Baseline is
+`origin/main` at `b423415a9`; source citations are at that commit unless marked
+acgh.8, which cites the team-scoped app registrations on
+`agents/aweb-protocol-expert-app-team-api-emit-keys@a7ee9f186` (under review).
 
 This is the one generic contract by which an installed naapp reads from its
 team's aweb coordination server. Three consumers share it:
 
 - the B1 `GrantSource` (aweb-acgh.3), for which this is the remote source;
 - aw-hooks target resolution (aweb-acgh.1, `docs/design/audit-substrate.md`
-  §A4 on `agents/aweb-protocol-expert-hooks-design@d9a44ddbb`);
-- pages / D1 (aweb-acgg), whose "Installation authority and scope" section on
-  `agents/aweb-protocol-expert-pages-design@2b0a8eb2b` lists its requirements.
+  §A4 at `23a88a8ad`);
+- pages / D1 (aweb-acgg), whose `agent-pages.md` §5 "Installation authority
+  and scope" at `44ae7164a` lists its requirements.
 
 It is generic: no app names, no catalog semantics and no naapp-specific core
 code. Where a hosted operator must act, this design states it as a generic
@@ -26,7 +28,7 @@ requirement on a custodial deployment.
    key. AWID stores it with its signature and serves it anonymously. The naapp
    verifies the signature itself against the current AWID team key. This is a
    new AWID migration and route plus an `aw` command, and needs your explicit
-   approval.
+   approval and Athena's review.
 2. **A custodial deployment publishes for the teams it controls.** Where a
    deployment holds a team's controller key (Fully Hosted), that deployment
    signs and publishes the team's record, at team creation and on any move or
@@ -37,8 +39,8 @@ requirement on a custodial deployment.
 3. **App reads use new purposes over the same verifier.** The server
    generalizes the shipped app-emit verifier into one verifier with a fixed
    purpose table: `app-event` (unchanged bytes), `app-grant-read` and
-   `hook-resolve`. Read purposes are accepted only from keys registered with
-   that purpose, never from `event_emitters` keys.
+   `hook-resolve`. A purpose is accepted only from a key the pinned manifest
+   bytes declare for it; `event_emitters` keys stay `app-event` only.
 4. **Grant status** is `GET /v1/apps/self/grant`: the calling app's own grant
    in the credential's team, with `as_of` and `max_age_seconds ≤ 60`. Clients
    fail closed on expiry plus refresh failure. A digest change revokes the old
@@ -112,7 +114,9 @@ record = {
   team certificate or an `aweb.owner-act/1`.
 - **Publication.** `PUT /v1/namespaces/{domain}/teams/{name}/server` stores the
   record and signature. AWID verifies the signature against the team's current
-  key and refuses an `issued_at` that is not newer than the stored record.
+  key, refuses an `issued_at` that is not newer than the stored record, and
+  refuses one more than five minutes ahead of its clock, so a far-future
+  record cannot pin the team.
   `GET` on the same path is anonymous for public and private teams alike, as
   certificate status is (`docs/awid-sot.md:583`–`:597`). It returns
   `{record, signature}` exactly as stored. Only the current record is served.
@@ -122,10 +126,11 @@ record = {
   custodial deployment. A publish that fails after rotation is reported and
   retried, because publishing is idempotent. Until it succeeds, naapps fail
   closed for that team.
-- **Privacy.** Like certificate status, the anonymous `GET` reveals a private
-  team's server URL to anyone who knows the team id. A server URL is not a
-  credential, and the team-id-keyed anonymous reads are already accepted for
-  certificate status. This design accepts the same exposure, and states it.
+- **Privacy.** The anonymous `GET` reveals a private team's server URL to
+  anyone who knows the team id. Certificate status reveals only the team key.
+  `GET` answers an identical `404` for an unknown team and for a team with no
+  record, as certificate status does for unknown records
+  (`docs/awid-sot.md:583`–`:597`). The disclosure is open question 4.
 - **CLI.** `aw id team set-server --url <server_url>` signs locally with the
   team key under the existing controller custody, BYOT or local, and
   publishes. `aw id team show-server` reads and verifies. Both are generic.
@@ -137,9 +142,11 @@ record = {
 
 ### Trust chain the naapp checks
 
-Input: a `team_id` taken from a team certificate that B1 has already verified
-against AWID. The naapp never uses a team id or URL from a request body or
-header.
+Input: a `team_id` used only as a lookup key. A naapp takes it from whatever
+it already authenticated: a team certificate verified by B1, or the team of a
+verified app or hook-delivery credential. Trust comes from steps 1 to 3, never
+from the input. No URL, registry or server is ever taken from a request,
+header, event or certificate.
 
 1. **Registry.** Select the registry for the team's domain: the
    `_awid.<domain>` statement's registry, or the canonical public registry
@@ -153,15 +160,23 @@ header.
 2. **Current team key** from that registry, read through B1's team cache
    (`AWIDTeamCache`), one instance per registry origin, not a second cache.
 3. **Record.** `GET …/teams/{name}/server` from the same registry. Require
-   `type`, `v`, `team_id` equal to the input, and `team_did_key` equal to the
-   current team key. Verify the Ed25519 signature over the signing bytes.
+   `type`, `v` and `team_id` equal to the input. If `team_did_key` differs
+   from the current team key, as after a rotation that has not yet been
+   re-published, refuse with `team_server_key_mismatch`; the old record is
+   never valid. Verify the Ed25519 signature over the signing bytes, and
+   refuse an `issued_at` more than five minutes ahead of the client clock.
 4. **Use.** Call only `server_url`, sign with `aud` set to its origin, and
    follow no redirects.
 5. **Cache.** Key the cache on `(registry origin, team_id)`, reuse for at most
    60 s, and keep no expired fallback. A refresh failure returns
    `authority_unavailable`. A verified absent record returns
-   `team_server_unpublished`. Both fail closed, and the codes stay distinct
-   so operators can tell an outage from a missing record.
+   `team_server_unpublished`. All three refusals fail closed, and the codes
+   stay distinct so operators can tell an outage, a missing record and an
+   unpublished rotation apart.
+
+The record's freshness rests on the selected registry, exactly as the team
+key's does: this adds no new trust, only a signed statement under the trust
+already placed in that registry.
 
 The naapp also learns the app-side half of D1's rule here. It never accepts a
 grant answer from any origin other than the one verified in step 3.
@@ -205,9 +220,9 @@ from the existing app-emit verifier and driven by a fixed purpose table:
 
 | Purpose | `Authorization` prefix | `auth` | Key source |
 | --- | --- | --- | --- |
-| `app-event` | `AWEB-App DIDKey ` | `app-event` | `app_registry_emit_keys`, unchanged |
-| `app-grant-read` | `AWEB-App-Grant-Read DIDKey ` | `app-grant-read` | `app_registry_app_keys` row whose `purposes` contains it |
-| `hook-resolve` | `AWEB-App-Hook-Resolve DIDKey ` | `hook-resolve` | `app_registry_app_keys` row whose `purposes` contains it |
+| `app-event` | `AWEB-App DIDKey ` | `app-event` | a `team_app_emit_keys` row (acgh.8), or a `team_app_keys` row whose `purposes` contains `app-event` |
+| `app-grant-read` | `AWEB-App-Grant-Read DIDKey ` | `app-grant-read` | `team_app_keys` row whose `purposes` contains it |
+| `hook-resolve` | `AWEB-App-Hook-Resolve DIDKey ` | `hook-resolve` | `team_app_keys` row whose `purposes` contains it |
 
 - **Headers and signed payload** are those of app-emit v1
   (`docs/app-events.md:105`–`:153`): `X-AWEB-App-ID`, `X-AWEB-App-Key-ID`,
@@ -225,8 +240,10 @@ from the existing app-emit verifier and driven by a fixed purpose table:
 - **The emit key stays emit-only by construction.** `event_emitters` rows live
   in their own table, and only the `app-event` purpose reads that table. A
   v2 `app_keys` entry may name the same physical `did_key` for several
-  purposes (D1, "App keys are a generic, purpose-split set"). Each purpose is
-  still verified separately.
+  purposes, `app-event` among them (D1, "App keys are a generic,
+  purpose-split set"), so a v2 app emits with an `app_keys` key. Each purpose
+  is still verified separately, and the app-event wire bytes and
+  `app-emit-credential-v1.json` do not change.
 - **Reads do not bind installation id or generation.** The grant read is how
   the app *learns* them. D1's `app-request` and `app-usage` mutations do bind
   them, and keep their own verifiers.
@@ -240,40 +257,36 @@ from the existing app-emit verifier and driven by a fixed purpose table:
 An app key is the app's own statement, so the server takes it only from the
 manifest bytes that hash to the pinned digest. It never takes one from a
 field the installer fills in. Otherwise any certified member could install an
-app's real origin and digest with keys of its own. Because key rows belong to
-the shared `(app_id, origin, digest)` entry
-(`server/src/aweb/migrations/aweb/009_app_events.sql:21`–`:40`), that key
-would then be active for every team that pins the digest. The shipped
-`event_emitters` path has exactly this gap today
-(`server/src/aweb/routes/apps.py:104`–`:133`,
-`server/src/aweb/app_registry.py:371`–`:385`, `:462`–`:492`). Its fix belongs
-to the event lane and can reuse the mechanism below.
+app's real origin and digest with keys of its own. acgh.8 already makes every
+registration a row of the installing team (`team_app_emit_keys`,
+`team_app_event_types`), refuses a changed `did_key` for a registered key id,
+keeps revocation one-way, and adds `manifest_registration()`, the reader of
+declarations and keys from digest-pinned bytes. App keys follow the same rules.
 
 - **Install carries the bytes.** The install request gains an additive,
-  optional `manifest` field: the exact fetched bytes, base64, bounded in size
+  optional `manifest` field: the exact fetched bytes, base64, at most 10 MiB
   (`server/src/aweb/routes/apps.py:30`–`:40`). There is no `app_keys` request
   field.
-- **The server checks the bytes.** `sha256(manifest)` must equal `digest`.
-  The bytes must parse as the declared `manifest_version`, with `app.id` and
-  `app.origin` equal to the request's `app_id` and `origin`. The server then
-  reads `app_keys: [{kid, did_key, purposes}]` from those bytes (v2, frozen by
-  C3), using a strict reader of only the fields it needs, held to C3's
+- **The server checks the bytes** with `manifest_registration()`, extended to
+  v2: `sha256(manifest)` must equal `digest`, the bytes must parse as the
+  declared `manifest_version`, and `app.id` and `app.origin` must equal the
+  request's. It then reads `app_keys: [{kid, did_key, purposes}]` (v2, frozen
+  by C3) with a strict reader of only the fields it needs, held to C3's
   interpreter vectors. A mismatch refuses the install with a distinct error.
-- **Rows are content-determined and immutable.** They go in a new ordered
-  migration, `app_registry_app_keys (app_id, origin, digest, key_id, did_key,
-  purposes TEXT[], created_at)`. A row for a given `(app_id, origin, digest,
-  key_id)` is written once and never overwritten. The same bytes always yield
-  the same rows, so every team pinning that digest shares exactly the keys the
-  bytes declare.
+- **Rows are the installing team's.** A new ordered migration adds
+  `team_app_keys (team_id, app_id, origin, digest, key_id, did_key, purposes
+  TEXT[], created_at, revoked_at)`. As for emit keys, a key id keeps its first
+  `did_key` within the team, a conflicting install gets `409`, and a revoked
+  key stays revoked. The operator reseed of acgh.8 recreates these rows from
+  the bytes as well.
 - **Labels.** A purpose label is a lower-case token. An unrecognized label is
   stored and grants nothing, which is D1's rule.
 - **What this does not prove.** Matching the digest does not prove that the
   origin serves those bytes. An installer can pin bytes of its own making, but
   only under its own digest and in its own team, where it already holds
-  install authority (narrowed to admins by F6). It cannot add a key to
-  another team's digest. Owner activation of a hook binding compares the
-  digest the owner's client fetched from the origin (audit-substrate §A3), so
-  bytes the installer made never activate.
+  install authority (narrowed to admins by F6). Owner activation of a hook
+  binding compares the digest the owner's client fetched from the origin
+  (audit-substrate §A3), so bytes the installer made never activate.
 - **No interim path.** v1 manifests declare no `app_keys` (strict v1 rejects
   unknown fields, `docs/app-manifest.md`, "Top-level structure"), so read
   purposes exist only for v2 installs after C3. Released clients send no
@@ -283,12 +296,11 @@ to the event lane and can reuse the mechanism below.
 
 A team's install authority, meaning F6's admin policy, may revoke one key for
 its own team at once, without waiting for a new digest:
-`POST /v1/apps/{app_id}/keys/{kid}/revoke`, with ordinary team auth. The row
-goes in `team_app_key_revocations (team_id, app_id, digest, key_id,
-revoked_at, revoked_by)`, which every purpose's key lookup consults. Revocation
-is per team because key rows are shared across teams, and one team must not be
-able to disable an app for another. Revocation for every team is the app's
-own act: it publishes new bytes, and each team installs the new digest.
+`POST /v1/apps/{app_id}/keys/{kid}/revoke`, with ordinary team auth. It sets
+the team row's `revoked_at`, which is one-way. Key rows are the team's own, so
+one team can never disable an app for another. Revocation for every team is
+the app's own act: it publishes new bytes, and each team installs the new
+digest.
 
 ## 3. Grant status
 
@@ -375,11 +387,21 @@ GET /v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/productions
 - **Productions with keys** answer the target's question: whether a producer
   is approved, and with which key. They are allowed only while the caller
   holds an active registration for that hook.
+- **Own bindings.** `GET /v1/apps/self/hooks/bindings?binding_id=<id>` or
+  `?hook=<catalog_id>/<catalog_version>/<hook>` returns the caller's own
+  bindings of both kinds, so a target can confirm that the `binding_id` a
+  delivery names is its own active registration (audit-substrate §B2, step 2).
 - **Response.** Each binding carries `binding_id`, `kind`, `app_id`,
   `installation_id`, `generation`, `origin`, the resolved `method` and raw
-  `path`, `digest`, and `active_from`. Productions also carry the active
-  registered keys `{kid, did_key}` of that generation. The response envelope
-  carries `as_of` and `max_age_seconds` (≤ 60).
+  `path`, `digest`, and `active_from`. Productions also carry the producer's
+  active keys of that generation whose declared purposes include
+  `hook-event` or `hook-delivery`, each as `{kid, did_key, purposes}`; an
+  emit-only or usage key is never listed. The response envelope carries
+  `as_of` and `max_age_seconds` (≤ 60).
+- **Historical verification.** Responses list currently active keys only.
+  Verifying an event after its producer's key was retired relies on the key
+  evidence the target records at ingest (logs' ingest record, audit-substrate
+  §B2). This API keeps no key history for apps.
 - **A refused read** returns `403 hook_binding_required`. An unknown catalog
   id, version or hook resolves to nothing, and is reported as `200` with an
   empty list only when the caller holds the complementary binding. That
@@ -391,7 +413,12 @@ GET /v1/apps/self/hooks/{catalog_id}/{catalog_version}/{hook}/productions
 - **The core producer's keys.** `GET /v1/hooks/producer-keys`, anonymous on
   the discovered server URL, returns `{keys: [{kid, did_key, valid_from,
   valid_until|null}]}`, retired keys included. These are operator
-  configuration, never a team, controller or agent key.
+  configuration, never a team, controller or agent key. A consumer anchors the
+  core origin per team through the §1 chain, at install or first resolution,
+  and caches it under §1's rules. It never takes an origin from an event or a
+  request. When the team's `aweb.team-server/1` record changes, the consumer
+  re-resolves; events received before the change keep verifying from the key
+  evidence recorded at their ingest.
 - **Client.** The client keeps a cache of at most 60 s and fails closed on
   expiry plus refresh failure, as grant status does.
 - **Dependency.** Bindings are child rows of the installation (the hooks
@@ -405,7 +432,9 @@ Placed under B1's `runtime` extra, which already depends on `awid-service`
 and `httpx` (`naapp-lib/pyproject.toml` on `agents/aweb-protocol-expert-naapp-verifier`):
 
 - `TeamServerDirectory`: `resolve(team_id) -> TeamServer(server_url, audience, team_did_key)`, implementing the §1 chain. It reuses the same registry selection and team-key cache as B1's verifier rather than a second copy.
-- `AppCredentialSigner(app_id, kid, private_key_path, purpose)`: signs one purpose. The key is loaded from a path. No key material appears in configuration values or logs.
+- `AppCredentialSigner(app_id, kid, key, purpose)`: signs one purpose. How
+  every app key is loaded is one rule for the whole lane, agreed with the
+  shared naapp runtime (open question 5); no key material appears in logs.
 - `TeamGrantSource`: the remote implementation of B1's `GrantSource`
   (`aweb_naapp.runtime.authorization`), using
   `async grant_for(team_id) -> Grant | None`:
@@ -428,9 +457,9 @@ and `httpx` (`naapp-lib/pyproject.toml` on `agents/aweb-protocol-expert-naapp-ve
 | --- | --- | --- |
 | G1-a | AWID `aweb.team-server/1`: migration, PUT/GET routes, `aw id team set-server/show-server`, conformance vector `team-server-record-v1.json` | **Juan's identity-path approval** |
 | G1-a′ | Custodial deployment publishes and backfills records for the teams whose controller key it holds (hosted operator's build) | G1-a |
-| G1-b | Server: generalized purpose verifier (app-event unchanged and vector-checked), `app_registry_app_keys` migration, install `app_keys`, `GET /v1/apps/self/grant`, vector `app-read-credential-v1.json` | design ACK |
+| G1-b | Server: generalized purpose verifier (app-event unchanged and vector-checked), `team_app_keys` migration, install `manifest` bytes through `manifest_registration()`, per-team key revocation, `GET /v1/apps/self/grant`, vector `app-read-credential-v1.json` | design ACK, acgh.8 landed, C3 `app_keys` shape |
 | G1-c | `aweb_naapp.runtime`: directory, signer, `TeamGrantSource` | G1-a, G1-b, B1 `GrantSource` |
-| G1-d | Hook resolution endpoints, producer keys, `HookResolver` | hooks-lane binding table, F6 |
+| G1-d | Hook resolution endpoints including own bindings, producer keys, `HookResolver` | hooks-lane binding table, F6 |
 
 Each step is TDD with tests in both directions. Server tests run on real
 Postgres through the existing pgdbm fixtures (`server/tests/conftest.py`).
@@ -441,9 +470,10 @@ Docker e2e harness, with AWID, aweb and one fixture naapp.
 ## Open questions for Juan
 
 1. **Approve the `aweb.team-server/1` identity-path change** (§1): an AWID
-   schema and route, signed by the team key. *Recommendation: approve.* It is
-   the only option where the controller authorizes the binding and a newer
-   record supersedes an older one.
+   schema and route, signed by the team key. It needs your explicit approval
+   and Athena's review. *Recommendation: approve.* It is the only option where
+   the controller authorizes the binding and a newer record supersedes an
+   older one.
 2. **Existing teams of custodial deployments.** Teams created before the
    record existed need a one-time publication by the deployment that holds
    their controller key. Until that runs, they fail closed at naapps.
@@ -453,3 +483,16 @@ Docker e2e harness, with AWID, aweb and one fixture naapp.
    generation, state and uninstall. This lane reads them and reports `null`
    until then. *Recommendation: keep that split rather than adding columns
    here*, so one lane owns the install schema.
+4. **Disclosure of a private team's server URL** (§1, Privacy). Anyone who
+   knows a private team's id can read its coordination server URL; certificate
+   status discloses only the team key. *Recommendation: accept.* A server URL
+   is not a credential, every request to it is still authenticated, and the
+   alternative, an authenticated read, would leave a naapp unable to discover
+   a team before it can authenticate to it.
+5. **One rule for loading app keys** (§5). The shared runtime's settings
+   currently carry an emit key seed as a configuration value, and released
+   Folio and Library load theirs that way. *Recommendation: one loader for
+   every app key and purpose, reading a key file whose path is configuration;
+   the released seed-value setting stays accepted for existing deployments
+   until it is measured that none use it.* That is a compatibility change, so
+   it is routed to you with the runtime seat's agreement.
