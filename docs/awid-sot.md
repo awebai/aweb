@@ -1121,4 +1121,4 @@ verified same-member fetch/install/retry. Default status response shape stays
 unchanged; opt-in include_replacement=true exposes the link.
 
 See [the full policy, renewal, SDK and hosted integration contract](design/team-credential-lifetimes.md)
-and [the additive cross-language vectors](../test-vectors/certificate-lifetimes-v2.json).
+and [the additive cross-language vectors](vectors/certificate-lifetimes-v2.json).

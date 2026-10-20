@@ -227,4 +227,4 @@ blocked until its owner has that measured inventory. The default no-policy path
 keeps accepting released v1 certificates and never grants throughout.
 
 Cross-language signing examples are additive in
-`test-vectors/certificate-lifetimes-v2.json`; existing v1 vectors remain intact.
+`docs/vectors/certificate-lifetimes-v2.json`; existing v1 vectors remain intact.

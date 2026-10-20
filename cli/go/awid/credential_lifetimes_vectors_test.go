@@ -7,7 +7,7 @@ import (
 )
 
 func TestCredentialLifetimesCrossLanguageVectors(t *testing.T) {
-	raw, err := os.ReadFile("../../../test-vectors/certificate-lifetimes-v2.json")
+	raw, err := os.ReadFile("../../../docs/vectors/certificate-lifetimes-v2.json")
 	if err != nil {
 		t.Fatal(err)
 	}

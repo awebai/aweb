@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 28
+`docs/vectors/*.json` is the only public protocol-vector authority for the 29
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -443,3 +443,12 @@ npm test
 
 A vector change is incomplete until every listed consumer for that fixture
 passes and the lifecycle label above still describes what the bytes prove.
+
+### `certificate-lifetimes-v2.json`
+
+Current additive certificate v2 and `aweb.team-credential-policy/1` signing
+examples. Public deterministic seeds produce the exact canonical bytes and
+signatures consumed directly by Python, Go and TypeScript. Includes absent and
+finite signed expiry; the consumer tests also refuse deadline/policy tampering.
+Existing v1 fixtures are unchanged. The governing [optional lifetime contract](../design/team-credential-lifetimes.md)
+requires verifier adoption before v2 issuance; an absent expiry is the default.
