@@ -233,7 +233,29 @@ async def test_missing_later_replacement_is_revoked_not_unregistered(privacy_app
     registry=env.app.state.awid_registry_client
     fresh=await _rollover(env,registry,cert)
     assert (await _read(env,key,did,grant)).status_code==200
-    await env.registry_db.execute('DELETE FROM {{tables.team_certificates}} WHERE certificate_id=$1',fresh['certificate_id'])
-    await registry.invalidate_team_certificate_cache('example.test',TEAM.split(':')[0])
-    refused=await _read(env,key,did,grant)
-    assert refused.status_code==403 and 'issuing certificate revoked' in refused.text
+    # The FK prevents honest storage from losing a linked row, but a registry
+    # intermediary may return 404. Run the real handler before altering its reply.
+    original_app=registry.transport.app
+    class MissingReplacementResponse:
+        async def __call__(self,scope,receive,send):
+            messages=[]
+            async def collect(message): messages.append(message)
+            await original_app(scope,receive,collect)
+            if scope['path'].endswith('/certificates/'+fresh['certificate_id']+'/status'):
+                messages=[{'type':'http.response.start','status':404,'headers':[(b'content-type',b'application/json')]},
+                    {'type':'http.response.body','body':b'{"detail":"Certificate not found"}'}]
+            for message in messages: await send(message)
+    registry.transport.app=MissingReplacementResponse()
+    try:
+        await registry.invalidate_team_certificate_cache('example.test',TEAM.split(':')[0])
+        refused=await _read(env,key,did,grant)
+        assert refused.status_code==403 and 'issuing certificate revoked' in refused.text
+        # A genuinely unpublished hop-0 issuer retains the released opt-out.
+        unpublished={k:v for k,v in cert.items() if k!='signature'}
+        unpublished['certificate_id']=str(uuid4())
+        unpublished['signature']=sign_message(env.team_sk,canonical_json_bytes(unpublished))
+        env.actors['alice'].certificate=base64.b64encode(json.dumps(unpublished).encode()).decode()
+        new_key,new_did,new_grant=await _mint(env)
+        assert (await _read(env,new_key,new_did,new_grant)).status_code==200
+    finally:
+        registry.transport.app=original_app
