@@ -61,7 +61,7 @@ def main() -> None:
         (repo / "naapp/library/test-vectors/blueprints/team/proof").write_text("fixture\n")
         (repo / "server").mkdir()
         (repo / "server/pyproject.toml").write_text('[project]\nname="ledger-proof"\nversion="1.2.3"\n')
-        recipes = f".PHONY: {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"
+        recipes = f".PHONY: candidate-gate {' '.join(SOURCE_CHECKS)}\n{' '.join(SOURCE_CHECKS)}:\n\t@git diff --exit-code\n"
         recipes += '''test-shipping:
 \t@python3 -c 'assert 6 * 7 == 42'
 _candidate-node-deps:
