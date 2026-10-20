@@ -164,27 +164,6 @@ async def test_a_closed_session_is_refused(db: AsyncDatabaseManager) -> None:
         assert (await client.get("/whoami", headers={"Cookie": cookie})).status_code == 401
 
 
-@pytest.mark.parametrize(
-    "header",
-    [
-        ("X-AWEB-Signed-Payload", "eyJ2IjoyfQ"),
-        ("X-AWEB-Signature", "sig"),
-        ("X-AWEB-Timestamp", "2026-10-20T00:00:00Z"),
-        ("Authorization", "Bearer token"),
-    ],
-)
-async def test_team_auth_is_refused_on_console_routes(
-    db: AsyncDatabaseManager, header: tuple[str, str]
-) -> None:
-    async with await _client(ConsoleSessions(db)) as client:
-        cookie, csrf = await _login(client)
-        response = await client.get("/whoami", headers={"Cookie": cookie, header[0]: header[1]})
-        login = await client.post("/test-login", headers={header[0]: header[1]})
-    assert response.status_code == 403
-    assert login.status_code == 403
-    assert "set-cookie" not in login.headers
-
-
 async def test_console_responses_carry_the_console_headers(db: AsyncDatabaseManager) -> None:
     async with await _client(ConsoleSessions(db)) as client:
         cookie, _ = await _login(client)

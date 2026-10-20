@@ -1,34 +1,42 @@
 """The console session for an app-origin human page.
 
-A person logs in with a passkey through B3; the login route then opens a
-session here. The session lives at most 15 minutes, in a host-only
+A person logs in with a passkey through B3, on the routes
+:func:`console_login_router` serves; the login then opens a session here. The session lives at most 15 minutes, in a host-only
 ``__Host-`` cookie that is ``Secure``, ``HttpOnly`` and ``SameSite=Strict``.
 Every state-changing request carries the session's CSRF token in
 ``X-CSRF-Token``. Only hashes of both tokens are stored.
 
 Console routes use :class:`ConsoleRoute`: every response carries the console
 headers (a strict CSP with ``frame-ancestors 'none'``, ``Referrer-Policy:
-no-referrer`` and ``Cache-Control: no-store``), and a request carrying any
-team-auth header is refused, so the console never accepts agent credentials.
+no-referrer`` and ``Cache-Control: no-store``). The console is served on the
+human origin of :func:`aweb_naapp.runtime.origins.split_origins`, which refuses
+any request carrying team-auth, so the console never accepts agent credentials.
+
+Each person logs in to a scope of their own. The app says which scopes may log
+in on its console; any other scope is refused exactly as a failed login is.
 
 Installed with the ``runtime`` extra.
 """
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import secrets
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+from pydantic import BaseModel
+
+from aweb_naapp.runtime.approvals import AuthenticationFailed
+from aweb_naapp.runtime.passkeys import Passkeys
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_console"
@@ -37,8 +45,7 @@ MAX_SESSION = timedelta(minutes=15)
 COOKIE_NAME = "__Host-console"
 CSRF_HEADER = "X-CSRF-Token"
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-TEAM_AUTH_HEADERS = ("authorization",)
-TEAM_AUTH_PREFIX = "x-aweb-"
+LOGIN_REFUSED = "login_refused"
 
 CONSOLE_HEADERS = {
     "Content-Security-Policy": (
@@ -273,30 +280,88 @@ class LoginLimiter:
         return LoginVolume(int(row["requests"]), int(row["throttled"]))
 
 
-def _carries_team_auth(request: Request) -> bool:
-    return any(
-        name in TEAM_AUTH_HEADERS or name.startswith(TEAM_AUTH_PREFIX)
-        for name in (key.lower() for key in request.headers.keys())
-    )
-
-
 class ConsoleRoute(APIRoute):
-    """A route on the console origin: console headers, and no team-auth."""
+    """A route on the console origin: every response, refusals included,
+    carries the console headers."""
 
     def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
         handler = super().get_route_handler()
 
         async def console_handler(request: Request) -> Response:
-            if _carries_team_auth(request):
-                response: Response = JSONResponse({"detail": "team_auth_not_accepted"}, 403)
-            else:
-                try:
-                    response = await handler(request)
-                except HTTPException as error:
-                    response = JSONResponse(
-                        {"detail": error.detail}, error.status_code, headers=error.headers
-                    )
+            try:
+                response = await handler(request)
+            except HTTPException as error:
+                response = JSONResponse(
+                    {"detail": error.detail}, error.status_code, headers=error.headers
+                )
+            except RequestValidationError as error:
+                response = JSONResponse({"detail": jsonable_encoder(error.errors())}, 422)
             response.headers.update(CONSOLE_HEADERS)
             return response
 
         return console_handler
+
+
+class LoginOptionsRequest(BaseModel):
+    scope: str
+
+
+class LoginRequest(BaseModel):
+    scope: str
+    assertion: dict[str, Any]
+
+
+def console_login_router(
+    *,
+    passkeys: Passkeys,
+    sessions: ConsoleSessions,
+    limiter: LoginLimiter,
+    scopes: Callable[[str], Awaitable[bool]],
+    prefix: str = "",
+) -> APIRouter:
+    """The console's passkey login: ``POST /login/options``, ``POST /login`` and
+    ``POST /logout``, under ``prefix``.
+
+    A login names its scope, and ``scopes`` says whether that scope may log in
+    on this console. A scope it refuses gets the same 401 as a failed login and
+    is neither metered nor passed to B3. An accepted scope is rate-limited per
+    client, and B3 verifies the assertion with user verification required. A
+    verified login opens a session for that scope and returns its CSRF token.
+    """
+    router = APIRouter(prefix=prefix, route_class=ConsoleRoute)
+
+    async def admit(request: Request, scope: str) -> None:
+        if not await scopes(scope):
+            raise HTTPException(status_code=401, detail=LOGIN_REFUSED)
+        await limiter.admit(request, scope)
+
+    @router.post("/login/options")
+    async def login_options(request: Request, body: LoginOptionsRequest) -> dict[str, Any]:
+        await admit(request, body.scope)
+        try:
+            return dict(await passkeys.login_options(body.scope))
+        except AuthenticationFailed:
+            raise HTTPException(status_code=401, detail=LOGIN_REFUSED) from None
+
+    @router.post("/login")
+    async def login(request: Request, response: Response, body: LoginRequest) -> dict[str, str]:
+        await admit(request, body.scope)
+        try:
+            verified = await passkeys.verify_login(body.scope, body.assertion)
+        except AuthenticationFailed:
+            raise HTTPException(status_code=401, detail=LOGIN_REFUSED) from None
+        issued = await sessions.open(
+            subject=verified.subject, scope=body.scope, evidence_ref=verified.evidence_ref
+        )
+        sessions.set_cookie(response, issued)
+        return {"csrf_token": issued.csrf_token}
+
+    @router.post("/logout")
+    async def logout(
+        response: Response, session: Annotated[ConsoleSession, Depends(sessions.current)]
+    ) -> dict[str, bool]:
+        await sessions.close(session)
+        sessions.clear_cookie(response)
+        return {"closed": True}
+
+    return router
