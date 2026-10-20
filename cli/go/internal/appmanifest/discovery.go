@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"strings"
 )
@@ -206,9 +205,4 @@ func manifestIdentity(body []byte) (int, string) {
 		return 0, ""
 	}
 	return head.ManifestVersion, strings.TrimSpace(head.App.ID)
-}
-
-// String describes a variant for provenance and messages.
-func (v *Variant) String() string {
-	return fmt.Sprintf("%s manifest v%d at %s (%s)", v.Source, v.ManifestVersion, v.URL, v.Digest)
 }

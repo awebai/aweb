@@ -554,6 +554,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 			return nil, err
 		}
 		manifest.App.Origin = normalized
+		resolved.Manifest = manifest
 		manifestBytes, err = json.Marshal(manifest)
 		if err != nil {
 			return nil, fmt.Errorf("re-encode manifest with --dev-origin: %w", err)
@@ -637,7 +638,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		}
 	}
 	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
-		if err := registerManifestEvents(manifest, fetchedDigest, previous, &provenance, update); err != nil {
+		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update); err != nil {
 			return nil, err
 		}
 	}

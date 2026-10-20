@@ -13,7 +13,8 @@ import (
 // local resident approval. A receipt is saved only after every requested write
 // succeeds. Failed registration can be retried with update; a partial initial
 // subscription failure is retried by repeating install.
-func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string, previous, next *pluginProvenance, update bool) error {
+func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, previous, next *pluginProvenance, update bool) error {
+	manifest := resolved.Manifest
 	client, selection, err := resolveClientSelection()
 	if err != nil {
 		return fmt.Errorf("app events require a resident connected to a team: %w", err)
@@ -22,30 +23,10 @@ func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string,
 		next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = previous.RegisteredDigest, previous.RegisteredTeam, previous.RegisteredServer
 		return nil
 	}
-	events := make([]appmanifest.Event, len(manifest.Events))
-	copy(events, manifest.Events)
-	for i := range events {
-		events[i].Type = strings.TrimPrefix(strings.TrimSpace(events[i].Type), manifest.App.ID+"/")
-	}
-	scopes := []string{}
-	seen := map[string]bool{}
-	for _, tool := range manifest.Tools {
-		for _, scope := range tool.Scopes {
-			if !seen[scope] {
-				seen[scope] = true
-				scopes = append(scopes, scope)
-			}
-		}
-	}
-	sort.Strings(scopes)
+	body := manifestRegistrationBody(resolved, fetchedDigest)
+	events := body["events"].([]appmanifest.Event)
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
-	body := map[string]any{
-		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
-		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
-		"digest": fetchedDigest, "granted_scopes": scopes,
-		"events": events, "event_emitters": append([]appmanifest.EventEmitter{}, manifest.EventEmitters...),
-	}
 	if err := client.Post(ctx, "/v1/apps/install", body, nil); err != nil {
 		return fmt.Errorf("register app events (local approval retained; retry install/update): %w", err)
 	}
@@ -63,6 +44,39 @@ func registerManifestEvents(manifest appmanifest.Manifest, fetchedDigest string,
 	}
 	next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = fetchedDigest, selection.TeamID, selection.BaseURL
 	return nil
+}
+
+// manifestRegistrationBody is the registry install request for a resolved
+// manifest. Its event emitters are the manifest's app-event keys, from
+// event_emitters in version 1 and app_keys in version 2.
+func manifestRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string) map[string]any {
+	manifest := resolved.Manifest
+	events := make([]appmanifest.Event, len(manifest.Events))
+	copy(events, manifest.Events)
+	for i := range events {
+		events[i].Type = strings.TrimPrefix(strings.TrimSpace(events[i].Type), manifest.App.ID+"/")
+	}
+	scopes := []string{}
+	seen := map[string]bool{}
+	for _, tool := range manifest.Tools {
+		for _, scope := range tool.Scopes {
+			if !seen[scope] {
+				seen[scope] = true
+				scopes = append(scopes, scope)
+			}
+		}
+	}
+	sort.Strings(scopes)
+	emitters := []appmanifest.EventEmitter{}
+	for _, key := range resolved.AppKeysFor("app-event") {
+		emitters = append(emitters, appmanifest.EventEmitter{KID: key.KID, DIDKey: key.DIDKey})
+	}
+	return map[string]any{
+		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
+		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
+		"digest": fetchedDigest, "granted_scopes": scopes,
+		"events": events, "event_emitters": emitters,
+	}
 }
 
 func init() {

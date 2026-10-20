@@ -1058,14 +1058,14 @@ func (r *Resolved) Tool(name string) (*Tool, bool) {
 	return tool, ok
 }
 
-// AppKeysFor returns the declared keys usable for one purpose, by kid. A
-// version 1 event emitter serves only "app-event".
-func (r *Resolved) AppKeysFor(purpose string) map[string]string {
-	out := map[string]string{}
+// AppKeysFor returns the declared keys usable for one purpose, in manifest
+// order. A version 1 event emitter serves only "app-event".
+func (r *Resolved) AppKeysFor(purpose string) []ResolvedAppKey {
+	out := []ResolvedAppKey{}
 	for _, key := range r.AppKeys {
 		for _, declared := range key.Purposes {
 			if declared == purpose {
-				out[key.KID] = key.DIDKey
+				out = append(out, key)
 			}
 		}
 	}

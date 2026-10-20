@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/awebai/aw/internal/appmanifest"
 )
 
 // notesManifestV2 is a v2 manifest with an agent verb, a surface page, a
@@ -367,5 +369,32 @@ func TestCustodyDeniesSnapshotToolOutsideAgentContext(t *testing.T) {
 	}
 	if seen, _ := f.app.requests(); len(seen) != 0 {
 		t.Fatalf("request reached the app: %v", seen)
+	}
+}
+
+func TestManifestRegistrationSendsOnlyAppEventKeys(t *testing.T) {
+	manifest := map[string]any{}
+	if err := json.Unmarshal(notesManifestV2(t, "https://notes.example", []string{"surface"}), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest["app_keys"] = []any{
+		map[string]any{"kid": "events", "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd", "purposes": []string{"app-event", "app-request"}},
+		map[string]any{"kid": "usage", "did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2", "purposes": []string{"app-usage"}},
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := appmanifest.Load(data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := manifestRegistrationBody(resolved, "sha256:"+strings.Repeat("0", 64))
+	emitters, ok := body["event_emitters"].([]appmanifest.EventEmitter)
+	if !ok || len(emitters) != 1 || emitters[0].KID != "events" {
+		t.Fatalf("event_emitters = %#v, want only the app-event key", body["event_emitters"])
+	}
+	if body["manifest_version"] != 2 {
+		t.Fatalf("manifest_version = %v", body["manifest_version"])
 	}
 }
