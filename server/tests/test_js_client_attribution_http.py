@@ -105,3 +105,33 @@ async def test_client_label_is_bounded_and_never_changes_auth(privacy_app, repor
     response = await env.client.get("/v1/messages/inbox", headers=headers)
     assert response.status_code == 200, response.text
     assert counter._value.get() == before + 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("vary_release", [False, True])
+async def test_client_version_flood_has_bounded_metric_series(privacy_app, monkeypatch, vary_release):
+    import aweb.auth_metrics as metrics
+    env = privacy_app
+    actor = env.actors["alice"]
+    monkeypatch.setattr(metrics, "_SEEN_CLIENT_VERSIONS", {})
+
+    def totals():
+        return {sample.labels["client_version"]: sample.value
+                for metric in metrics.LEGACY_REQUEST_AUTH_ACCEPTED.collect() for sample in metric.samples
+                if sample.name.endswith("_total") and sample.labels["auth_family"] == "identity"
+                and sample.labels["route"] == "/v1/messages/inbox"}
+
+    before = totals()
+    for i in range(100):
+        headers = _signed_identity_headers(actor.sk, actor.did, "", b"")
+        headers["X-AWEB-Client-Version"] = f"aweb-python/{i if vary_release else 1}.2.3-build.{i}"
+        response = await env.client.get("/v1/messages/inbox", headers=headers)
+        assert response.status_code == 200, response.text
+    changed = {label: value - before.get(label, 0) for label, value in totals().items()
+               if value > before.get(label, 0)}
+    assert sum(changed.values()) == 100
+    if vary_release:
+        assert len(changed) == 33
+        assert changed["other"] == 68
+    else:
+        assert changed == {"aweb-python/1.2.3": 100}

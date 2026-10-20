@@ -4,6 +4,7 @@ Embedding hosts choose how to expose their registry; no public metrics route is
 installed here. No signatures, credentials, identifiers or raw targets are kept.
 """
 import re
+from threading import Lock
 
 from fastapi import Request
 from prometheus_client import Counter
@@ -17,6 +18,9 @@ _CLIENT_VERSION = re.compile(
     r"(aw|aweb-channel|aweb-pi|aweb-wake|aweb-channel-core|aweb-python|aweb-cloud)/"
     r"(dev|[0-9]{1,8}\.[0-9]{1,8}\.[0-9]{1,8}(?:[-+][A-Za-z0-9.-]{1,40})?)"
 )
+_MAX_CLIENT_VERSIONS = 32
+_SEEN_CLIENT_VERSIONS: dict[str, set[str]] = {}
+_CLIENT_VERSION_LOCK = Lock()
 
 
 NONCE_FREE_REQUEST_AUTH_ACCEPTED = Counter(
@@ -44,7 +48,14 @@ def _client_label(request: Request) -> str:
             continue
         match = _CLIENT_VERSION.fullmatch(token)
         if match and len(match.group(2)) <= 64:
-            return match.group(2) if match.group(1) == "aw" else token
+            product = match.group(1)
+            version = re.split(r"[-+]", match.group(2), maxsplit=1)[0]
+            with _CLIENT_VERSION_LOCK:
+                seen = _SEEN_CLIENT_VERSIONS.setdefault(product, set())
+                if version not in seen and len(seen) >= _MAX_CLIENT_VERSIONS:
+                    return "other"
+                seen.add(version)
+            return version if product == "aw" else product + "/" + version
     return "other"
 
 

@@ -169,7 +169,9 @@ Client attribution is self-reported, unsigned measurement only. Clients send
 their product/version token in `User-Agent` and `X-AWEB-Client-Version`.
 Authentication, authorization, routing, rate limits and feature selection never
 depend on that token. Metric labels recognize a fixed product set and a bounded
-version shape/length; other product tokens map to `other`.
+version shape/length, discard pre-release/build suffixes, and retain at most 32
+distinct versions per product per process. Unknown products and additional
+versions map to `other`; `dev` remains a version value.
 
 Cutoff evidence also needs the identities that still send nonce-free v2. After
 verified authentication and authorization, a separate private usage store may
