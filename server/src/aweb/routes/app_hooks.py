@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from aweb.app_credentials import HOOK_RESOLVE, PURPOSES, verify_app_credential
@@ -49,6 +48,8 @@ def _as_of() -> str:
 HOOK_BINDING_REQUIRED = "hook_binding_required"
 _CATALOG_ID = re.compile(r"[a-z][a-z0-9.-]{0,63}")
 _HOOK = re.compile(r"[a-z][a-z0-9-]{0,63}")
+# Inside the binding table's integer range.
+_CATALOG_VERSION = re.compile(r"[1-9][0-9]{0,8}")
 
 
 def _milliseconds(moment: datetime | None, *, round_up: bool = False) -> str | None:
@@ -144,11 +145,26 @@ async def _caller(request: Request, db_infra: DatabaseInfra):
     return db, credential, installed
 
 
+def _parsed_selector(catalog_id: str, catalog_version: str, hook: str) -> HookSelector | None:
+    """The hook the path names, or None when no binding could ever name it."""
+    if (
+        not _CATALOG_ID.fullmatch(catalog_id)
+        or not _CATALOG_VERSION.fullmatch(catalog_version)
+        or not _HOOK.fullmatch(hook)
+    ):
+        return None
+    return HookSelector(catalog_id, int(catalog_version), hook)
+
+
 async def _resolve(
-    kind: str, request: Request, db_infra: DatabaseInfra, selector: HookSelector
+    kind: str, request: Request, db_infra: DatabaseInfra, catalog_id: str, catalog_version: str, hook: str
 ) -> HookResolutionResponse:
+    as_of = _as_of()
     db, credential, _ = await _caller(request, db_infra)
-    if not await holds_active_binding(
+    # A hook no binding could name resolves to nothing, like any unknown hook:
+    # the caller cannot hold the complementary binding.
+    selector = _parsed_selector(catalog_id, catalog_version, hook)
+    if selector is None or not await holds_active_binding(
         db,
         team_id=credential.team_id,
         app_id=credential.app_id,
@@ -177,15 +193,9 @@ async def _resolve(
         catalog={"id": selector.catalog_id, "version": selector.catalog_version},
         hook=selector.hook,
         bindings=bindings,
-        as_of=_as_of(),
+        as_of=as_of,
         max_age_seconds=get_app_grant_max_age_seconds(),
     )
-
-
-CatalogId = Annotated[str, Path(pattern=_CATALOG_ID.pattern)]
-# The bound _selector applies too, inside the binding table's integer range.
-CatalogVersion = Annotated[int, Path(ge=1, le=999_999_999)]
-HookName = Annotated[str, Path(pattern=_HOOK.pattern)]
 
 
 @router.get(
@@ -193,15 +203,15 @@ HookName = Annotated[str, Path(pattern=_HOOK.pattern)]
     response_model=HookResolutionResponse,
 )
 async def hook_registrations_route(
-    catalog_id: CatalogId,
-    catalog_version: CatalogVersion,
-    hook: HookName,
+    catalog_id: str,
+    catalog_version: str,
+    hook: str,
     request: Request,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> HookResolutionResponse:
     """Where to deliver: the team's active registrations of the hook, for a caller
     holding an active production of it."""
-    return await _resolve(REGISTRATION, request, db_infra, HookSelector(catalog_id, catalog_version, hook))
+    return await _resolve(REGISTRATION, request, db_infra, catalog_id, catalog_version, hook)
 
 
 @router.get(
@@ -209,27 +219,23 @@ async def hook_registrations_route(
     response_model=HookResolutionResponse,
 )
 async def hook_productions_route(
-    catalog_id: CatalogId,
-    catalog_version: CatalogVersion,
-    hook: HookName,
+    catalog_id: str,
+    catalog_version: str,
+    hook: str,
     request: Request,
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> HookResolutionResponse:
     """Who may produce: the team's active productions of the hook with their hook
     keys, for a caller holding an active registration of it."""
-    return await _resolve(PRODUCTION, request, db_infra, HookSelector(catalog_id, catalog_version, hook))
+    return await _resolve(PRODUCTION, request, db_infra, catalog_id, catalog_version, hook)
 
 
 def _selector(hook: str) -> HookSelector:
     parts = hook.split("/")
-    if (
-        len(parts) != 3
-        or not _CATALOG_ID.fullmatch(parts[0])
-        or not re.fullmatch(r"[1-9][0-9]{0,8}", parts[1])
-        or not _HOOK.fullmatch(parts[2])
-    ):
+    selector = _parsed_selector(*parts) if len(parts) == 3 else None
+    if selector is None:
         raise HTTPException(status_code=400, detail="hook is <catalog_id>/<catalog_version>/<hook>")
-    return HookSelector(parts[0], int(parts[1]), parts[2])
+    return selector
 
 
 @router.get("/v1/apps/self/hooks/bindings", response_model=OwnHookBindingsResponse)
@@ -240,6 +246,8 @@ async def own_hook_bindings_route(
     db_infra: DatabaseInfra = Depends(get_db_infra),
 ) -> OwnHookBindingsResponse:
     """The caller's own bindings in the team, in every state, by ``binding_id`` or by ``hook``."""
+    as_of = _as_of()
+    db, credential, installed = await _caller(request, db_infra)
     if (binding_id is None) == (hook is None):
         raise HTTPException(status_code=400, detail="give exactly one of binding_id or hook")
     selector = _selector(hook) if hook is not None else None
@@ -249,7 +257,6 @@ async def own_hook_bindings_route(
             parsed_id = UUID(binding_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="binding_id is a UUID") from None
-    db, credential, installed = await _caller(request, db_infra)
     bindings = await own_bindings(
         db,
         team_id=credential.team_id,
@@ -272,7 +279,7 @@ async def own_hook_bindings_route(
             )
             for binding in bindings
         ],
-        as_of=_as_of(),
+        as_of=as_of,
         max_age_seconds=get_app_grant_max_age_seconds(),
     )
 

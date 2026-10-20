@@ -15,7 +15,9 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from nacl.signing import SigningKey
 
+from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
 from aweb.app_credentials import APP_GRANT_READ, HOOK_RESOLVE, PURPOSES
 from aweb.app_registry import install_app
@@ -28,6 +30,7 @@ from aweb.hook_bindings import (
 )
 from aweb.routes.app_hooks import router as app_hooks_router
 from tests.test_app_events_http import _build_events_app, _make_app_keypair, _seed_team_and_agent
+from tests.test_events_http import _encode_certificate, _make_certificate
 
 TEAM = "backend:acme.com"
 OTHER_TEAM = "frontend:acme.com"
@@ -344,9 +347,29 @@ async def test_a_member_envelope_is_refused_like_any_other_credential(team):
     await _activate(team["db"], team["production"].binding_id)
     await _activate(team["db"], team["registration"].binding_id)
     path = _resolution("registrations")
-    async with AsyncClient(transport=ASGITransport(app=team["app"]), base_url="http://test") as client:
-        response = await client.get(path, headers={"Authorization": "DIDKey did:key:z6Mkmember sig"})
-    assert response.status_code == 401
+    member_key = SigningKey.generate()
+    member_did = did_from_public_key(bytes(member_key.verify_key))
+    team_key = SigningKey.generate()
+    certificate = _make_certificate(
+        bytes(team_key), did_from_public_key(bytes(team_key.verify_key)), member_did, team_id=TEAM
+    )
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    signed = canonical_json_bytes(
+        {
+            "v": 2, "aud": "http://test", "method": "GET", "path": path, "team_id": TEAM,
+            "timestamp": timestamp, "body_sha256": hashlib.sha256(b"").hexdigest(),
+        }
+    )
+    headers = {
+        "Authorization": f"DIDKey {member_did} {sign_message(bytes(member_key), signed)}",
+        "X-AWEB-Timestamp": timestamp,
+        "X-AWEB-Signed-Payload": base64.urlsafe_b64encode(signed).decode().rstrip("="),
+        "X-AWID-Team-Certificate": _encode_certificate(certificate),
+    }
+    for route in (path, _resolution("productions"), f"/v1/apps/self/hooks/bindings?hook={HOOK_PATH}"):
+        async with AsyncClient(transport=ASGITransport(app=team["app"]), base_url="http://test") as client:
+            response = await client.get(route, headers={**headers})
+        assert response.status_code == 401, route
 
 
 @pytest.mark.asyncio
@@ -405,6 +428,64 @@ async def test_own_bindings_never_show_an_earlier_origins_history(team):
 
 
 @pytest.mark.asyncio
-async def test_a_catalog_version_out_of_range_is_refused_not_an_error(team):
-    response = await _get(team, LOGS, "logs_key", _resolution("registrations", f"aweb.hooks/{2**31}/{HOOK}"))
-    assert response.status_code == 422
+@pytest.mark.parametrize(
+    "hook_path",
+    [
+        f"aweb.hooks/{2**31}/{HOOK}",
+        f"aweb.hooks/99999999999/{HOOK}",
+        "aweb.hooks/01/post-secret-use-hook",
+        f"abc!!!/1/{HOOK}",
+        f"ABCa/1/{HOOK}",
+        f"{'a' * 200}/1/{HOOK}",
+        "aweb.hooks/1/Post-Secret",
+        f"aweb.hooks/1/{'h' * 200}",
+    ],
+)
+async def test_a_hook_no_binding_could_name_resolves_to_nothing(team, hook_path):
+    await _activate(team["db"], team["production"].binding_id)
+    await _activate(team["db"], team["registration"].binding_id)
+    response = await _get(team, LOGS, "logs_key", _resolution("registrations", hook_path))
+    assert response.status_code == 403
+    assert response.json()["detail"] == "hook_binding_required"
+
+
+@pytest.mark.asyncio
+async def test_own_bindings_authenticate_before_reading_the_query(team):
+    async with AsyncClient(transport=ASGITransport(app=team["app"]), base_url="http://test") as client:
+        response = await client.get("/v1/apps/self/hooks/bindings")
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_another_apps_or_teams_binding_authorizes_nothing(team):
+    db = team["db"]
+    await _activate(db, team["registration"].binding_id)
+    other_app = {"app_id": "relay", "origin": "https://relay.example", "digest": "sha256:" + "6" * 64}
+    relay = await _install(db, other_app, installation_id="inst-relay", declarations=[SECRET_USE])
+    await _activate(db, relay[PRODUCTION].binding_id)
+    other_team = await _install(db, SECRETS, team_id=OTHER_TEAM, installation_id="inst-secrets-other",
+                                declarations=[SECRET_USE])
+    await _activate(db, other_team[PRODUCTION].binding_id)
+    response = await _get(team, SECRETS, "secrets_key", _resolution("registrations"))
+    assert response.status_code == 403
+    assert response.json()["detail"] == "hook_binding_required"
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_binding_is_neither_listed_nor_authorizing(team):
+    db = team["db"]
+    await _activate(db, team["production"].binding_id)
+    await _activate(db, team["registration"].binding_id)
+    moved_logs = {**LOGS, "digest": "sha256:" + "7" * 64}
+    await _install(db, moved_logs, installation_id="inst-logs", declarations=[INGEST])
+    listed = await _get(team, SECRETS, "secrets_key", _resolution("registrations"))
+    assert listed.status_code == 200 and listed.json()["bindings"] == []
+    moved_secrets = {**SECRETS, "digest": "sha256:" + "8" * 64}
+    await _install(db, moved_secrets, installation_id="inst-secrets", declarations=[SECRET_USE])
+    await db.execute(
+        "UPDATE {{tables.team_app_keys}} SET digest = $1 WHERE app_id = 'secrets' AND key_id = 'resolve-1'",
+        moved_secrets["digest"],
+    )
+    refused = await _get(team, SECRETS, "secrets_key", _resolution("registrations"))
+    assert refused.status_code == 403
+    assert refused.json()["detail"] == "hook_binding_required"
