@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager, DatabaseConfig
 from pgdbm.testing import AsyncTestDatabase, DatabaseTestConfig
 from pydantic_settings import SettingsConfigDict
 
@@ -46,22 +47,72 @@ async def database_url() -> AsyncIterator[str]:
 def _migrations(tmp_path: Path) -> Path:
     path = tmp_path / "migrations"
     path.mkdir()
-    (path / "001_initial.sql").write_text("CREATE TABLE things (id integer PRIMARY KEY);\n")
+    (path / "001_initial.sql").write_text(
+        "CREATE TABLE {{tables.things}} ("
+        " id integer PRIMARY KEY,"
+        " team_id TEXT REFERENCES {{tables.teams}}(team_id));\n"
+    )
     return path
 
 
-async def test_connect_applies_the_app_migrations_under_its_module(
+def _applied(rows: list) -> list[tuple[str, str]]:
+    return [(row["module_name"], row["filename"]) for row in rows]
+
+
+_SHARED = ("aweb_naapp", "001_observed_principals.sql")
+
+
+async def test_connect_applies_the_shared_then_the_app_migrations(
     database_url: str, tmp_path: Path
 ) -> None:
+    # The app migration references the shared teams table, so it can only
+    # apply after the shared migrations.
     settings = ExampleSettings(_env_file=None, database_url=database_url)
     database = NaappDatabase(settings, module_name="example", migrations_path=_migrations(tmp_path))
     await database.connect()
     try:
-        assert await database.db.fetch_value("SELECT to_regclass('things') IS NOT NULL")
-        applied = await database.db.fetch_all("SELECT module_name, filename FROM schema_migrations")
-        assert [(row["module_name"], row["filename"]) for row in applied] == [
-            ("example", "001_initial.sql")
-        ]
+        for table in ("things", "teams", "agents"):
+            assert await database.db.fetch_value(f"SELECT to_regclass('{table}') IS NOT NULL")
+        applied = await database.db.fetch_all(
+            "SELECT module_name, filename FROM schema_migrations ORDER BY id"
+        )
+        assert _applied(applied) == [_SHARED, ("example", "001_initial.sql")]
+    finally:
+        await database.disconnect()
+
+
+async def test_an_app_that_already_created_the_shared_tables_keeps_its_rows(
+    database_url: str, tmp_path: Path
+) -> None:
+    app_migrations = tmp_path / "app-migrations"
+    app_migrations.mkdir()
+    (app_migrations / "001_initial.sql").write_text(
+        "CREATE TABLE IF NOT EXISTS {{tables.teams}} ("
+        " team_id TEXT PRIMARY KEY, team_did_key TEXT NOT NULL,"
+        " first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+        " last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW());\n"
+    )
+    existing = AsyncDatabaseManager(DatabaseConfig(connection_string=database_url))
+    await existing.connect()
+    try:
+        await AsyncMigrationManager(
+            existing, migrations_path=str(app_migrations), module_name="example"
+        ).apply_pending_migrations()
+        await existing.execute(
+            "INSERT INTO teams (team_id, team_did_key) VALUES ('team:example.test', 'did:key:z')"
+        )
+    finally:
+        await existing.disconnect()
+
+    settings = ExampleSettings(_env_file=None, database_url=database_url)
+    database = NaappDatabase(settings, module_name="example", migrations_path=app_migrations)
+    await database.connect()
+    try:
+        assert await database.db.fetch_value("SELECT team_id FROM teams") == "team:example.test"
+        applied = await database.db.fetch_all(
+            "SELECT module_name, filename FROM schema_migrations ORDER BY id"
+        )
+        assert _applied(applied) == [("example", "001_initial.sql"), _SHARED]
     finally:
         await database.disconnect()
 
@@ -74,7 +125,7 @@ async def test_reconnecting_applies_nothing_twice(database_url: str, tmp_path: P
         await database.connect()
         count = await database.db.fetch_value("SELECT count(*) FROM schema_migrations")
         await database.disconnect()
-        assert count == 1
+        assert count == 2
 
 
 async def test_pool_follows_the_settings(database_url: str, tmp_path: Path) -> None:
