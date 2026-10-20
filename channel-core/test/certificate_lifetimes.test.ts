@@ -50,9 +50,15 @@ describe("signed optional certificate expiry", () => {
 it("verifies the shared Python/Go/TypeScript signed v2 vectors", async () => {
   const { readFileSync } = await import("node:fs");
   const vectors = JSON.parse(readFileSync(new URL("../../docs/vectors/certificate-lifetimes-v2.json", import.meta.url), "utf8"));
-  for (const { certificate, canonical } of vectors.certificates) {
+  for (const { certificate, canonical, expected } of vectors.certificates) {
     const { signature, ...payload } = certificate;
     expect(canonicalJSONValue(payload, "invalid")).toBe(canonical);
-    await expect(verifyTeamCertificate(certificate, vectors.team_did_key)).resolves.toBeUndefined();
+    if (expected === 'valid') {
+      await expect(verifyTeamCertificate(certificate, vectors.team_did_key, Date.parse(vectors.now))).resolves.toBeUndefined();
+    } else if (expected === 'signature_invalid') {
+      await expect(verifyTeamCertificate(certificate, vectors.team_did_key, Date.parse(vectors.now))).rejects.toThrow('signature');
+    } else {
+      await expect(verifyTeamCertificate(certificate, vectors.team_did_key, Date.parse(vectors.now))).rejects.toMatchObject({ code: expected });
+    }
   }
 });

@@ -3,7 +3,9 @@ package awid
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestCredentialLifetimesCrossLanguageVectors(t *testing.T) {
@@ -12,8 +14,11 @@ func TestCredentialLifetimesCrossLanguageVectors(t *testing.T) {
 		t.Fatal(err)
 	}
 	var vector struct {
+		Now          string `json:"now"`
 		TeamDIDKey   string `json:"team_did_key"`
 		Certificates []struct {
+			Name        string          `json:"name"`
+			Expected    string          `json:"expected"`
 			Canonical   string          `json:"canonical"`
 			Certificate json.RawMessage `json:"certificate"`
 		} `json:"certificates"`
@@ -30,18 +35,39 @@ func TestCredentialLifetimesCrossLanguageVectors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	now, err := time.Parse(time.RFC3339, vector.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, item := range vector.Certificates {
-		var cert TeamCertificate
-		if err := json.Unmarshal(item.Certificate, &cert); err != nil {
-			t.Fatal(err)
-		}
-		if err := VerifyTeamCertificate(&cert, key); err != nil {
-			t.Fatal(err)
-		}
-		cert.ExpiresAt = "2098-01-01T00:00:00Z"
-		if VerifyTeamCertificate(&cert, key) == nil {
-			t.Fatal("accepted expiry tampering")
-		}
+		t.Run(item.Name, func(t *testing.T) {
+			var cert TeamCertificate
+			err := json.Unmarshal(item.Certificate, &cert)
+			if err == nil {
+				actual := canonicalCertificatePayload(cert.CertificateID, cert.Team, cert.TeamDIDKey, cert.MemberDIDKey, cert.MemberDIDAW, cert.MemberAddress, cert.Alias, cert.IdentityScope, cert.IssuedAt, false)
+				if cert.Version == 2 {
+					actual, err = certificateV2Payload(&cert)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if actual != item.Canonical && item.Expected != "certificate_malformed" {
+					t.Fatalf("canonical bytes mismatch: %s", actual)
+				}
+				err = verifyTeamCertificateAt(&cert, key, now)
+			}
+			if item.Expected == "valid" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if item.Expected == "signature_invalid" {
+				if err == nil || !strings.Contains(err.Error(), "signature") {
+					t.Fatalf("wanted signature refusal, got %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), item.Expected) {
+				t.Fatalf("wanted %s, got %v", item.Expected, err)
+			}
+		})
 	}
 	if err := VerifyTeamCredentialPolicy(vector.Policy.Record, vector.Policy.Signature, "ops:example.test", vector.TeamDIDKey); err != nil {
 		t.Fatal(err)

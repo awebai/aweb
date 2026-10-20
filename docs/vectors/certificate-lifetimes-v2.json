@@ -4,6 +4,8 @@
   "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
   "certificates": [
     {
+      "name": "v2-unbounded",
+      "expected": "valid",
       "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
       "certificate": {
         "version": 2,
@@ -19,6 +21,8 @@
       }
     },
     {
+      "name": "v2-future",
+      "expected": "valid",
       "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":\"2099-01-01T00:00:00Z\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
       "certificate": {
         "version": 2,
@@ -32,6 +36,167 @@
         "issued_at": "2026-01-01T00:00:00Z",
         "expires_at": "2099-01-01T00:00:00Z",
         "signature": "giKc19OcVGpBjV+BqfckO0hx/ctzrcDV+RzVtR1dvre+yNMyldItPM+z8ILcuiuaD2azerA53gFohaZ84L92Bw"
+      }
+    },
+    {
+      "name": "v2-expiry-boundary",
+      "expected": "certificate_expired",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":\"2026-02-01T00:00:00Z\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2026-02-01T00:00:00Z",
+        "signature": "fgXJ++KeJVIM/EXAlvbLQsgpG02nf6T9SWfH9KAQ/zYNvdXwNhx+g9jpdhOXyASw88fDYDhm031u6sdKFAYECA"
+      }
+    },
+    {
+      "name": "v2-expired",
+      "expected": "certificate_expired",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":\"2026-01-31T00:00:00Z\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2026-01-31T00:00:00Z",
+        "signature": "cDedrz7BHvU/j4TW8NPXJRysGvkbj10P5pVfAsiwCAu5e5+kVRzXah2EpnYGeN45wb8qDyIDjcuifzNfSDrxBw"
+      }
+    },
+    {
+      "name": "v2-tampered-expiry",
+      "expected": "signature_invalid",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":\"2098-01-01T00:00:00Z\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2098-01-01T00:00:00Z",
+        "signature": "giKc19OcVGpBjV+BqfckO0hx/ctzrcDV+RzVtR1dvre+yNMyldItPM+z8ILcuiuaD2azerA53gFohaZ84L92Bw"
+      }
+    },
+    {
+      "name": "v2-null",
+      "expected": "certificate_malformed",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":null,\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": null,
+        "signature": "3VmOmETJMG7ALJv/J2WHBpoBNVeCdBrA7Uhk/RzPo2Pd3TTlwD7CCWGSxnpvkoWnLophInFjpW+G2opgggbwBg"
+      }
+    },
+    {
+      "name": "v2-empty",
+      "expected": "certificate_malformed",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":\"\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "",
+        "signature": "XbiFGdjAvqbyUaFae7kWwfXuN27t7y/VIvyR74D9l/q/APFgljw2dZg90pyBKd85bhisGblJK7z+5lPIPAeyCA"
+      }
+    },
+    {
+      "name": "v2-impossible",
+      "expected": "certificate_malformed",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":\"2026-02-30T00:00:00Z\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2026-02-30T00:00:00Z",
+        "signature": "YeH4gxheRU3hmV7JSvvBdhQyRFiFdtFaaY7+JBx/b3/cy3MPSqsGPo8IKqtiw9yLyNy6ld3Zsf/CTf35hD9DBA"
+      }
+    },
+    {
+      "name": "v1-unbounded",
+      "expected": "valid",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"version\":1}",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "signature": "5F/MGRsdPXarKEpO2CJLvx6xL7M0G5OoTgwGFxPQW3CCLHnq5FSZ0GyG2CnkD35rpcONLmHzKpEIoAG+nVIfCg"
+      }
+    },
+    {
+      "name": "v1-unsigned-empty-class",
+      "expected": "certificate_malformed",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"\",\"version\":1}",
+      "certificate": {
+        "version": 1,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "signature": "TP4xfosbN+cfIwHA8sW5DUB6zV99Ir0OhybWIoeiAEZBRlmpGeBjNeYpF82W4EzV6KhvxXi/kBOV1Xb/ifbSBg"
+      }
+    },
+    {
+      "name": "v2-global",
+      "expected": "valid",
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":\"2099-01-01T00:00:00Z\",\"identity_scope\":\"global\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_address\":\"member@example.test\",\"member_did_aw\":\"did:aw:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "global",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "member_did_aw": "did:aw:aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        "member_address": "member@example.test",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "signature": "x0H995mmX5DwpsJe0I7Hd8hQPr0ty7GU4jOZiYoxpxW3RwxjhldqRjAd0Jp2OjlvcGUCmciAo+vC8NHKsB1hAQ"
       }
     }
   ],
@@ -50,5 +215,50 @@
     },
     "signature": "5sL1GsaABF0w7S1KEFjLXY4zwgJIGheoe/MsduzBADNIMRrL6CjP9Ou6iTfKmI8I3wrY/de8EZo7C9hZuFi4DQ",
     "signing_bytes": "aweb.team-credential-policy/1\n{\"ephemeral_certificate\":null,\"hosted_mcp_grant\":null,\"identity_grant\":3600,\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_certificate\":null,\"revision\":1,\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"type\":\"aweb.team-credential-policy\",\"v\":1}"
-  }
+  },
+  "now": "2026-02-01T00:00:00Z",
+  "issuer_projections": [
+    {
+      "name": "unbounded",
+      "expected": "active",
+      "status": {
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "status": "active",
+        "revoked_at": null,
+        "replaced_by_certificate_id": null,
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "certificate_team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "certificate_expires_at": null
+      }
+    },
+    {
+      "name": "future",
+      "expected": "active",
+      "status": {
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "status": "active",
+        "revoked_at": null,
+        "replaced_by_certificate_id": null,
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "certificate_team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "certificate_expires_at": "2099-01-01T00:00:00Z"
+      }
+    },
+    {
+      "name": "past",
+      "expected": "expired",
+      "status": {
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "status": "active",
+        "revoked_at": null,
+        "replaced_by_certificate_id": null,
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "certificate_team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "certificate_expires_at": "2026-01-31T00:00:00Z"
+      }
+    }
+  ]
 }

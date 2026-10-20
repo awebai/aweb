@@ -75,3 +75,44 @@ async def test_negative_status_cache_is_bounded_and_reuses_404(controller_app):
         assert ('old','local','base','0') not in client._certificate_status_cache
         assert not client._certificate_status_locks
     finally:await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_opt_in_issuer_projection_preserves_default_shape_and_signed_expiry(controller_app):
+    from pathlib import Path
+    from awid.certificates import CertificateValidationError
+    vector = json.loads((Path(__file__).parents[2] / 'docs' / 'vectors' / 'certificate-lifetimes-v2.json').read_text())
+    env = controller_app
+    sdk = RegistryClient(ORIGIN, transport=httpx.ASGITransport(app=env.app))
+    try:
+        for item in vector['issuer_projections']:
+            body = certificate_body(env, member=keypair())
+            cert = json.loads(base64.b64decode(body['certificate']))
+            cert.pop('signature')
+            cert.update(version=2, validity_class='member', issued_at='2026-01-01T00:00:00Z')
+            expiry = item['status']['certificate_expires_at']
+            if expiry is not None:
+                cert['expires_at'] = expiry
+            cert['signature'] = sign_message(env.team[0], canonical_json_bytes(cert))
+            blob = base64.b64encode(json.dumps(cert).encode()).decode()
+            # Historical signed artifacts may have expired since registration.
+            await env.db.execute('INSERT INTO {{tables.team_certificates}} (team_uuid, certificate_id, member_did_key, alias, identity_scope, certificate, expires_at) SELECT team_uuid,$1,$2,$3,$4,$5,$6 FROM {{tables.teams}}',
+                cert['certificate_id'], cert['member_did_key'], cert['alias'], cert['identity_scope'], blob,
+                datetime.fromisoformat(expiry.replace('Z','+00:00')) if expiry else None)
+            path='/v1/namespaces/local/teams/base/certificates/'+cert['certificate_id']+'/status'
+            default = await env.client.get(path)
+            assert default.status_code == 200
+            assert set(default.json()) == {'team_id','team_did_key','status','revoked_at'}
+            expanded = (await env.client.get(path+'?include_issuer=true')).json()
+            assert set(expanded) == set(default.json()) | {'member_did_key','certificate_team_did_key','certificate_expires_at'}
+            assert expanded['member_did_key'] == cert['member_did_key']
+            assert expanded['certificate_team_did_key'] == cert['team_did_key']
+            assert expanded['certificate_expires_at'] == expiry
+            if item['expected'] == 'expired':
+                with pytest.raises(CertificateValidationError) as error:
+                    await sdk.resolve_active_certificate('local','base',cert['certificate_id'])
+                assert error.value.code == 'certificate_expired'
+            else:
+                assert await sdk.resolve_active_certificate('local','base',cert['certificate_id'])
+    finally:
+        await sdk.aclose()

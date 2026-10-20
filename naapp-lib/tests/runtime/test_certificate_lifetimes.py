@@ -118,3 +118,23 @@ async def test_finite_member_proactively_fetches_controller_replacement(registry
             assert any(request.url.path.endswith('/members/' + member.alias) for request in registry.transport.calls)
     finally:
         await sdk.aclose()
+
+
+def test_shared_lifetime_vectors_at_relying_app():
+    from pathlib import Path
+    from fastapi import HTTPException
+    from awid.certificates import CertificateValidationError, validate_certificate_lifetime
+    from aweb_naapp.runtime.team_auth import _verify_certificate_signature
+    vector = json.loads((Path(__file__).parents[3] / "docs" / "vectors" / "certificate-lifetimes-v2.json").read_text())
+    for item in vector['certificates']:
+        cert = item['certificate']
+        assert canonical_json_bytes({k: v for k, v in cert.items() if k != 'signature'}).decode() == item['canonical']
+        outcome = 'valid'
+        try:
+            _verify_certificate_signature(cert, vector['team_did_key'])
+            validate_certificate_lifetime(cert, now=datetime.fromisoformat(vector['now']))
+        except HTTPException:
+            outcome = 'signature_invalid'
+        except CertificateValidationError as exc:
+            outcome = exc.code
+        assert outcome == item['expected'], item['name']
