@@ -1,10 +1,11 @@
 # secrets: credential use without credential holding
 
-Status: **design proposal, aweb-acgh.2 (epic aweb-acgh), awaiting the D1 lead's
-fit check, an independent review, Athena and Juan.** This is a design, not a claim
-that any interface here ships. Nothing in it exists yet, history included. Every
-default, cut or deferral below is a recommendation to Juan, who decides scope.
-No implementation, production probe or customer contact is part of this work.
+Status: **design accepted, aweb-acgh.2 (epic aweb-acgh).** The D1 lead's fit
+check, an independent review and Athena passed it. The secrets coordinator
+decided the open questions under Juan's delegation (2026-10-19); §18 records
+each decision. This is a design, not a claim that any interface here ships.
+Nothing in it exists yet, history included. The build plan is
+[secrets-build-plan.md](secrets-build-plan.md).
 
 The app lives in `aweb/naapp/secrets` (aweb-aauv), and its source is public. It
 builds on the generic naapp layer proposed by D1 without forking it. It also
@@ -27,8 +28,7 @@ native store sealed with KMS envelope encryption, and 1Password through a servic
 account narrowly scoped to its vault. Values enter only on secrets' own human
 console, which needs an owner passkey, or directly in the vault. No agent tool and
 no MCP tool ever carries a value in or out. The only exception would be the
-`--unsafe-inject` question, and this design recommends that the feature not exist
-(§13.4).
+`--unsafe-inject` question, and that feature does not exist (§13.4).
 
 Dispatch is a durable state machine. secrets records the intent and its audit
 outbox rows in one transaction before any network send. If it cannot enqueue, it
@@ -42,7 +42,7 @@ for one verified principal and one bounded action, and it leaves an auditable
 record, within the trust boundaries listed there. The design does not promise
 that nothing derived from a credential can ever end up with an agent.
 
-The decisions Juan needs to make are listed in §18.
+§18 records the decisions taken on the open questions.
 
 ## 1. Sources, baseline and governing model
 
@@ -163,10 +163,9 @@ flowchart LR
 ### 3.1 Placement: `aweb_naapp` or app-local
 
 This follows Juan's direction: no runtime code is repeated across naapps. Shared
-pieces live in the library `aweb_naapp` (`naapp-lib/`). The table applies Q16's
-recommended rule: a component becomes shared once a second consumer exists. Rows
-marked "app-local, under Q16's recommended rule" move to `aweb_naapp` under the
-alternative rule, which shares anything another naapp *could* use. Pieces marked
+pieces live in the library `aweb_naapp` (`naapp-lib/`). The table applies Q16: a component becomes shared once a second consumer exists. Rows
+marked "app-local, under Q16" move to `aweb_naapp` when a second consumer
+appears. Q16 is decided this way (§18). Pieces marked
 *proposed* are not yet in any `aweb_naapp` task. They go to the secrets coordinator for assignment, and their
 runtime dependencies sit behind an extra, following B1's packaging seam.
 
@@ -182,10 +181,10 @@ runtime dependencies sit behind an extra, following B1's packaging seam.
 | Idempotency-key store: request hash, `409` on conflict, `410` on expiry | `aweb_naapp`, *proposed* | D1 §3 states the same rule for pages. |
 | External-effect dispatch state machine: intent, fence, `dispatching`, `completed`, `not_sent`, `outcome_unknown`, reconcile before retry | `aweb_naapp`, *proposed* | D1's A2 enforcing adapter needs identical semantics (D1 §4). |
 | Egress guard: canonical URL, destination matching, DNS and address policy, pinned connection, redirects off, header policy, bounds | `aweb_naapp`, *proposed* | Any naapp calling an external API with its own credential needs it: pages' A2 adapter, and a Linear naapp. |
-| Auth-scheme injectors: bearer, basic, header, query, OAuth2 client credentials with a token cache, SigV4 | app-local, under Q16's recommended rule | No second consumer exists yet, and secrets' custody argument (below) says another naapp needing a customer credential should use secrets. They move to `aweb_naapp` under the alternative rule, or when a second consumer appears. |
-| Response handling: header filter, JSON-pointer projection, known-value redaction, credential-shape detector, log redactor | app-local, under Q16's recommended rule | Only secrets returns upstream responses to agents. Hook payload redaction is structural, through the strict allowlists, so it does not need this. They move to `aweb_naapp` under the alternative rule, or when a second consumer appears. |
-| KMS envelope sealing with bound context | app-local, under Q16's recommended rule | No second consumer is committed yet. Other naapps could seal their own operational credentials this way, and it moves to `aweb_naapp` under the alternative rule or when one does. |
-| Rate-limit buckets and time windows | app-local, under Q16's recommended rule | D1's safety throttles are a candidate second consumer but are not yet committed to this component. They move to `aweb_naapp` under the alternative rule, or when that consumer is confirmed. |
+| Auth-scheme injectors: bearer, basic, header, query, OAuth2 client credentials with a token cache, SigV4 | app-local, under Q16 | No second consumer exists yet, and secrets' custody argument (below) says another naapp needing a customer credential should use secrets. They move to `aweb_naapp` when a second consumer appears. |
+| Response handling: header filter, JSON-pointer projection, known-value redaction, credential-shape detector, log redactor | app-local, under Q16 | Only secrets returns upstream responses to agents. Hook payload redaction is structural, through the strict allowlists, so it does not need this. They move to `aweb_naapp` when a second consumer appears. |
+| KMS envelope sealing with bound context | app-local, under Q16 | No second consumer is committed yet. Other naapps could seal their own operational credentials this way, and it moves to `aweb_naapp` when one does. |
+| Rate-limit buckets and time windows | app-local, under Q16 | D1's safety throttles are a candidate second consumer but are not yet committed to this component. They move to `aweb_naapp` when that consumer is confirmed. |
 | Role assignments keyed by stable principal | `aweb_naapp`, *proposed* | Pages resolves role targets the same way (D1 §4). secrets only names its roles. |
 | Principal-attestation verifier (§4.6) | `aweb_naapp`, when the contract exists | Any relying app could require it. |
 | Secret, version, destination, operation, grant and policy records and their evaluation | app-local | They are secrets' domain model. They call the shared pieces above and contain no generic mechanism. |
@@ -347,7 +346,7 @@ secrets only consumes it.
 
 **Until the artifact ships, any policy with `requires_attestation` refuses every
 request with `attestation_unavailable`.** Owners can configure the field now, and
-it is honestly inert. Whether the artifact is a launch requirement is Q5.
+it is honestly inert. The artifact is a launch requirement (Q5, decided).
 
 ## 5. Custody backends
 
@@ -406,8 +405,8 @@ How a value is handled once opened:
   enters it through the console (§6), and it is sealed in the native store. The
   1Password backend therefore depends on KMS.
 - **Reads.** secrets reads the field at dispatch through the 1Password SDK. At
-  launch it does not cache values across dispatches. Whether vault rate limits
-  require a short in-memory cache of at most 60 s is Q4. 1Password's own activity
+  launch it does not cache values across dispatches. There is no read cache
+  at launch (Q4, decided). 1Password's own activity
   log is a second, independent record of every read.
 - **Ingress and replacement.** Both happen in the vault. `open()` returns the
   item version it read. secrets compares it at the dispatch fence (§11.3) with
@@ -431,7 +430,7 @@ Some vaults can mediate a call themselves. A third backend kind, `delegated`,
 could hand the frozen, policy-approved request to that mediator instead of
 opening a value. secrets would then never see plaintext. That is stronger custody,
 but secrets can enforce the egress guard (§7.3) and response handling (§7.6) only
-as far as the mediator exposes them. This is Q3. The interface already admits it,
+as far as the mediator exposes them. It is not at launch (Q3, decided). The interface already admits it,
 because `open()` is the only plaintext path.
 
 ## 6. Value ingress, replacement and the owner console
@@ -743,7 +742,7 @@ declare `token_issuing: true` and one `result_handling`:
 | `deny` (default) | The operation is refused before dispatch. |
 | `withhold` | secrets dispatches, records, and returns a projection that excludes the credential fields. |
 | `store_as_secret` | secrets captures the issued credential into custody as a **derived secret**. It is child-linked to the parent, given a TTL from the response expiry, and given a kind (for STS, `aws-sigv4` with a session token). Its grants are copied from a named grant template. The agent receives the derived ref, never the value. |
-| `return` | **Recommended: does not exist (Q8).** Returning the credential is a value release, like `--unsafe-inject`, and `store_as_secret` plus runner `short_lived` delivery covers the use cases. If Juan keeps it, it needs a separate owner passkey confirmation and is labelled everywhere as **outside the confidentiality guarantee**. It also refuses unless a verified attestation (§4.6) shows `channel != mcp_l2`. Even then it cannot claim that the agent is not backed by L2. |
+| `return` | **Does not exist (Q8, decided).** Returning the credential is a value release, like `--unsafe-inject`, and `store_as_secret` plus runner `short_lived` delivery covers the use cases. |
 
 When detection (§7.6) finds credential-shaped content in an operation that did not
 declare `token_issuing`, the result is withheld. The `completed` event then
@@ -1149,7 +1148,7 @@ SOT §2), reached through the hook.
   sense, secrets refuses every use with `audit_target_unavailable`. A
   registration still inside its activation pad therefore does not let a use
   through with zero deliveries. The recommended default is that owners cannot
-  turn this off. The alternative is Q11.
+  turn this off (Q11, decided).
 - **Backlog bound.** secrets refuses new admissions with
   `audit_delivery_stalled` when **no** active `post-secret-use-hook`
   registration is current, meaning its oldest undelivered event is older than
@@ -1202,8 +1201,9 @@ the `secret_*`, `request_sha256`/`params_sha256`, `approval_*`, `dispatch_*` and
   the raw response fills `upstream_response_hmac`.
 - **`refusal_code`.** It takes values from the §A2 enum. secrets proposed every
   code there, and each one is a refusal this design defines.
-- **`disposition`.** The value `returned_credential` appears only if Juan keeps
-  `return` (Q8).
+- **`disposition`.** secrets never emits `returned_credential`, because
+  `return` does not exist (Q8). The value should leave the §A2 enum before the
+  catalog vector freezes.
 
 **Governance acts** go on the generic `post-governance-hook` (audit-substrate §A2).
 The catalog fixes its act enum and fixes each act's direction:
@@ -1339,7 +1339,7 @@ collides with a built-in or another alias. This is generic aw-core work. The
 recommendation is to **not** add it at launch (YAGNI; `aw secrets request` is
 clear) and to revisit it if users ask (Q12).
 
-### 13.4 `--unsafe-inject`: the recommendation is that it not exist
+### 13.4 `--unsafe-inject` does not exist
 
 Injecting a value into a process the agent chooses is a value read under another
 name (secrets SOT §1). Offering it through an agent-context tool would contradict
@@ -1350,18 +1350,7 @@ better paths:
 - a pinned runner job with `delivery: short_lived` (§9.5);
 - a `store_as_secret` derived credential used through the broker.
 
-If Juan wants it anyway (Q8), the minimum shape is:
-
-- a distinct tool `secrets.release-for-injection` with `agent` context only;
-- never exposed through L2, refused when an attestation shows `mcp_l2`, and
-  otherwise unenforceable against L2 (§4.5);
-- a per-secret owner policy `unsafe_release: allowed`, confirmed by passkey and
-  requiring per-use passkey approval;
-- the value sealed to the requesting member's key;
-- an audit event `secret.value_released`, with the secret marked **exposed** in
-  the console until the owner replaces it;
-- every surface labelling it as outside the confidentiality guarantee
-  (secrets SOT §14).
+Q8 decided that neither `--unsafe-inject` nor `result_handling: return` exists.
 
 ## 14. Threat model and the defensible claim
 
@@ -1533,7 +1522,7 @@ rows.
 | `link_out` widget restricted to the installed app's pinned origin | D1 C1/R1, a *proposed* vocabulary addition that needs Juan's acceptance | §6.1. It shows the normalized domain, opens a new top-level context with no opener or referrer, and carries no token in the URL. |
 | Hook envelope, catalog, provenance purpose, producer outbox, delivery | hooks seat; B4 for the shared code | §11.5. secrets owns its payload fields and its enqueue points. |
 | Usage reporting `aweb.usage/1` | D1 C5 | secrets reports `uses_admitted`, `dispatches`, `approvals_requested` and `job_runs` under the same rules. |
-| The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Under Q16's recommended rule: the egress guard, dispatch state machine, idempotency store, console session and role assignments keyed by stable principal, each with pages as its second consumer (D1's A2 adapter, approval pages, and role-target resolution in D1 §4). |
+| The *proposed* `aweb_naapp` components in §3.1 | secrets coordinator to assign | Under Q16 (decided): the egress guard, dispatch state machine, idempotency store, console session and role assignments keyed by stable principal, each with pages as its second consumer (D1's A2 adapter, approval pages, and role-target resolution in D1 §4). |
 | Principal attestation (§4.6) | generic AWID/OSS work, with the custodial deployment as issuer | Q5. Policy that requires it refuses until it exists. |
 
 **Requirements on a hosted operator or custodial deployment.** These are stated
@@ -1551,77 +1540,60 @@ surface host must meet them:
 4. **Sign the team owner act only after fresh interactive step-up.** Where a
    custodial deployment holds a team's controller key, it signs
    `aweb.owner-act/1`, which secrets needs for bootstrap and re-designation
-   (§10.2), only after a fresh, interactive step-up by the human owner. A
-   session or a stored credential alone is never enough.
+   (§10.2), only for an organization owner and only after a fresh, interactive
+   step-up by that owner. A session or a stored credential alone is never
+   enough.
 
 No secrets-specific branch in aw-core is needed. Everything else is either
 secrets-local or generic.
 
-## 18. Recommendations and open questions for Juan
+## 18. Decisions
 
-These are recommendations; Juan decides. No item below removes scope.
+The secrets coordinator decided these on 2026-10-19 under Juan's delegation.
+Each follows the recommendation the authors and reviewers agreed, except where
+it says otherwise. Juan can revisit any of them.
 
-1. **Q1. Positioning and custody.** Both backends at launch, with
-   1Password recommended as the primary path for teams that have it. The native
-   store also seals the 1Password token.
-2. **Q2. KMS provider, hosting and egress controls.** Which KMS, and whether the
-   host offers workload identity and an egress allowlist. These are deployment
-   facts to decide with the operator.
-3. **Q3. Delegated vault mediation.** Add a `delegated` backend kind for
-   1Password's own mediation: now, later, or not at all.
-4. **Q4. 1Password read caching.** None at launch, unless rate limits force a
-   cache of at most 60 s in memory.
-5. **Q5. Principal attestation.** Adopt the §4.6 contract, with the custodial
-   deployment issuing it for L2 and dashboard calls (§17). Recommendation: make it a launch
-   requirement, because it is the only way for an owner to treat MCP use
-   differently. Until it ships, policy that requires it refuses.
+1. **Q1. Positioning and custody.** Both backends at launch: the native
+   KMS-sealed store and 1Password. The native store also seals the 1Password
+   token.
+2. **Q2. KMS provider, hosting and egress controls.** Not decided. These are
+   deployment facts for the operator, and the build plan treats them as an
+   input to the deploy and native-custody tasks.
+3. **Q3. Delegated vault mediation.** Not at launch. The interface keeps room
+   for it (§5.5).
+4. **Q4. 1Password read caching.** None at launch, as recommended.
+5. **Q5. Principal attestation.** A launch requirement. Policy that requires it
+   refuses until it ships (§4.6).
 6. **Q6. Launch auth schemes.** bearer, basic, header, query, OAuth2 client
-   credentials and SigV4. Named operations are required for
-   `sensitive` and `approve_only`.
-7. **Q7. Distinct approver.** The rule can separate the requesting *human* from
-   the approving human. It cannot separate a human from their own L2 agent,
-   which signs as that human (§10.2). The passkey already proves that a human,
-   not the agent, approved. Recommendation: `distinct_approver: not_required`
-   by default, with owners able to require four eyes per policy.
-8. **Q8. `--unsafe-inject` and `result_handling: return`.** Recommendation, with
-   Athena's agreement: neither exists. Both release a value to the agent.
-   `store_as_secret` and runner `short_lived` delivery cover the use cases. If
-   Juan keeps `return`, it requires a verified attestation of
-   `channel != mcp_l2` (§8.3).
-9. **Q9. `oauth2-refresh` and mTLS.** The interface supports both. Their timing
-   is Juan's call. The recommendation is mTLS later.
-10. **Q10. Passkey authenticator policy.** Accept any authenticator with user
-    verification, or restrict by AAGUID allow-list.
-11. **Q11. Audit fail-closed rules.** Refuse unless a registry view no older
-    than 60 s holds an active registration with `active_from` at or before the
-    event. Recommended: owners cannot turn this off. Also refuse when no active
-    registration is current, using a 1 h threshold.
-12. **Q12. Generic `cli_aliases`.** Recommend not at launch.
-13. **Q13. Approval notification channel.** Email at launch. Should approvals
-    also appear as an acah.4 task assigned to the approver? That needs C2, would
-    carry only an opaque reference, and would be team-visible metadata.
-14. **Q14. Approval TTL and lockout timings.** Recommended: a 15 min approval
-    TTL. The owner-lockout protection itself is mandatory (§10.2). Its timings
-    are for Juan to set: 24 h for a contact change and 72 h for re-designation
-    are proposed.
-15. **Q15. Launch order.** The hook contract lands first. aw-hooks delivery,
-    logs and secrets then build in parallel, and secrets does not launch until
-    logs ingests real events end to end. One runner job end to end is part of launch.
-16. **Q16. Which components become shared (§3.1).** There are two rules, and
-    Juan chooses between them.
-    - **This design's rule:** share whatever more than one naapp *could* use.
-      Under it, all the *proposed* components in §3.1 go to `aweb_naapp` now.
-    - **The reviewer's rule:** share a component once a second consumer exists.
-      Under it, the egress guard, the dispatch state machine, the idempotency
-      store, the console session and role assignments go shared now, because pages (D1) needs
-      them. The auth-scheme injectors, KMS envelope sealing, rate buckets and
-      the credential-shape detector stay app-local until a second consumer
-      appears. The reviewer notes that secrets' own custody argument weighs
-      against shared injectors.
+   credentials and SigV4. Named operations are required for `sensitive` and
+   `approve_only` secrets.
+7. **Q7. Distinct approver.** `not_required` by default. Owners may require
+   four eyes per policy.
+8. **Q8. `--unsafe-inject` and `result_handling: return`.** Neither exists.
+9. **Q9. `oauth2-refresh` and mTLS.** Later, through the existing interface.
+10. **Q10. Passkey authenticator policy.** Any authenticator with user
+    verification.
+11. **Q11. Audit fail-closed rules.** As recommended: refuse unless a registry
+    view no older than 60 s holds an active registration with `active_from` at
+    or before the event, and refuse when no active registration is current
+    (1 h threshold). Owners cannot turn this off.
+12. **Q12. Generic `cli_aliases`.** Not at launch, as recommended.
+13. **Q13. Approval notification channel.** Email at launch. Approvals as tasks
+    may come later through the existing seam.
+14. **Q14. Approval TTL and lockout timings.** These are policy parameters: a
+    15 min approval TTL, a 24 h contact-change delay and a 72 h re-designation
+    cooling-off.
+15. **Q15. Launch order.** The hook contract lands first. aw-hooks, logs and
+    secrets then build in parallel. secrets does not launch until logs ingests
+    real events end to end. One runner job end to end is part of launch.
+16. **Q16. Shared components.** A component becomes shared once a second
+    consumer uses it. Shared now: the egress guard, the dispatch state machine,
+    the idempotency store, the console session and role assignments.
+    App-local for now: the auth-scheme injectors, KMS sealing, rate buckets and
+    the credential-shape detector.
 
-    Recommendation: the reviewer's rule. It is the same rule §3.1 already
-    applies to the runner.
+The `link_out` widget (§17) is supported from the secrets side. Accepting it
+into the page vocabulary is D1's decision.
 
-Recommended for later, pending Juan: HSM custody, multi-party
-approval (quorum above 1), automated rotation, a runner fleet, and mTLS. Each of
-these fits the interfaces above without a contract break.
+Later, through the existing interfaces: HSM custody, multi-party approval
+(quorum above 1), automated rotation, a runner fleet, mTLS and `oauth2-refresh`.
