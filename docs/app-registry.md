@@ -145,8 +145,9 @@ aweb reseed-app-registrations --origin https://notes.example --manifest-file not
 ```
 
 An operator command, run against the server's database. It takes the exact
-manifest bytes the origin serves at `/.well-known/aweb-app.json` (a direct
-`200`, no redirects, at most 10 MiB), or a file of exact bytes. For every team
+manifest bytes the origin serves at `/.well-known/aweb-app.json` (over
+https, or plain http to a loopback host only; a direct `200`, no redirects, at
+most 10 MiB), or a file of exact bytes. For every team
 whose install of that app and origin pins the SHA-256 of those bytes, it
 recreates the team's event declarations, emit keys and version projection
 from the bytes alone. The bytes must name the installed app id and origin.

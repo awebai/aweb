@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
+from urllib.parse import urlparse
+
 import httpx
 
 from aweb.app_registry import normalize_origin
@@ -15,10 +18,15 @@ def fetch_app_manifest(origin: str, *, timeout: float = 30.0, max_bytes: int = M
     """Return the exact bytes an app origin serves at its well-known manifest path.
 
     Only a direct 200 is accepted: redirects are not followed, so the bytes come
-    from the named origin. Bodies over ``max_bytes`` are refused.
+    from the named origin. Plain http is fetched only from loopback hosts.
+    Bodies over ``max_bytes`` are refused.
     """
 
-    url = normalize_origin(origin) + MANIFEST_PATH
+    origin = normalize_origin(origin)
+    parsed = urlparse(origin)
+    if parsed.scheme == "http" and not _is_loopback(parsed.hostname or ""):
+        raise ValidationError("manifest fetch requires https outside loopback hosts")
+    url = origin + MANIFEST_PATH
     try:
         with httpx.Client(follow_redirects=False, timeout=timeout) as client:
             with client.stream("GET", url) as response:
@@ -32,3 +40,12 @@ def fetch_app_manifest(origin: str, *, timeout: float = 30.0, max_bytes: int = M
     except httpx.HTTPError as exc:
         raise ValidationError(f"manifest fetch failed: {exc}") from exc
     return bytes(body)
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False

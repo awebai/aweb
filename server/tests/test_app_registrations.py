@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+from pathlib import Path
 
 import pytest
+from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
+
+import aweb.app_registry as app_registry
 
 from aweb.app_registry import (
     AppEmitKey,
@@ -205,3 +210,88 @@ async def test_reseed_refuses_a_team_whose_key_id_holds_another_key(aweb_cloud_d
     assert report.reseeded == [TEAM_B]
     assert await get_active_app_emit_key(db, team_id=TEAM_A, app_id="notes", kid="notes:emit-1", did_key=did_key) is None
     assert await get_installed_app_event_type(db, team_id=TEAM_A, app_id="notes", local_event_type="note.saved") is None
+
+
+@pytest.mark.asyncio
+async def test_upgrade_from_registry_entry_rows_fails_closed_until_reseed(shared_test_pool, tmp_path):
+    schema_manager = AsyncDatabaseManager(pool=shared_test_pool, schema=None)
+    await schema_manager.execute("CREATE SCHEMA aweb")
+    upgrade_db = AsyncDatabaseManager(pool=shared_test_pool, schema="aweb")
+    migrations = Path(app_registry.__file__).parent / "migrations" / "aweb"
+    staged = tmp_path / "migrations"
+    staged.mkdir()
+    for migration in sorted(migrations.glob("*.sql")):
+        if migration.name <= "023_operator_audit.sql":
+            shutil.copy(migration, staged / migration.name)
+    manager = AsyncMigrationManager(
+        upgrade_db,
+        migrations_path=str(staged),
+        module_name="app-registrations-upgrade-test",
+        migrations_table="schema_migrations",
+    )
+    await manager.apply_pending_migrations()
+
+    _, did_key = _make_app_keypair()
+    manifest = _manifest(did_key=did_key)
+    digest = _digest(manifest)
+    await upgrade_db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ($1, 'acme.com', 'backend', 'did:key:z6Mkteam')
+        """,
+        TEAM_A,
+    )
+    await upgrade_db.execute(
+        "INSERT INTO {{tables.app_registry_apps}} (app_id, origin) VALUES ('notes', $1)",
+        ORIGIN,
+    )
+    await upgrade_db.execute(
+        """
+        INSERT INTO {{tables.app_registry_entries}} (app_id, origin, digest, app_version, manifest_version)
+        VALUES ('notes', $1, $2, '1.2.0', 1)
+        """,
+        ORIGIN,
+        digest,
+    )
+    await upgrade_db.execute(
+        """
+        INSERT INTO {{tables.team_app_installs}} (team_id, app_id, origin, digest, granted_scopes)
+        VALUES ($1, 'notes', $2, $3, ARRAY['notes:read'])
+        """,
+        TEAM_A,
+        ORIGIN,
+        digest,
+    )
+    await upgrade_db.execute(
+        """
+        INSERT INTO {{tables.app_registry_event_types}} (app_id, origin, digest, event_type, default_delivery_intent)
+        VALUES ('notes', $1, $2, 'note.saved', 'steer')
+        """,
+        ORIGIN,
+        digest,
+    )
+    await upgrade_db.execute(
+        """
+        INSERT INTO {{tables.app_registry_emit_keys}} (app_id, origin, digest, key_id, did_key)
+        VALUES ('notes', $1, $2, 'notes:emit-1', $3)
+        """,
+        ORIGIN,
+        digest,
+        did_key,
+    )
+
+    for migration in sorted(migrations.glob("*.sql")):
+        shutil.copy(migration, staged / migration.name)
+    await manager.apply_pending_migrations()
+
+    apps = await list_installed_apps(upgrade_db, team_id=TEAM_A)
+    assert [(app.app_version, app.manifest_version) for app in apps] == [("1.2.0", 1)]
+    assert await get_active_app_emit_key(upgrade_db, team_id=TEAM_A, app_id="notes", kid="notes:emit-1", did_key=did_key) is None
+    assert await get_installed_app_event_type(upgrade_db, team_id=TEAM_A, app_id="notes", local_event_type="note.saved") is None
+
+    report = await reseed_app_registrations(upgrade_db, origin=ORIGIN, manifest=manifest)
+
+    assert report.reseeded == [TEAM_A]
+    assert await get_active_app_emit_key(upgrade_db, team_id=TEAM_A, app_id="notes", kid="notes:emit-1", did_key=did_key) is not None
+    declared = await get_installed_app_event_type(upgrade_db, team_id=TEAM_A, app_id="notes", local_event_type="note.saved")
+    assert declared["default_delivery_intent"] == "wake"
