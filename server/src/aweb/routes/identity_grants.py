@@ -155,9 +155,9 @@ async def mint_identity_grant(
             """
             INSERT INTO {{tables.identity_session_grants}} (
                 team_id, subject_agent_id, subject_did_aw, grant_did_key,
-                scopes, label, issued_by_certificate_id, issued_at, expires_at, issued_by_certificate_expires_at
+                scopes, label, issued_by_certificate_id, issued_at, expires_at, issued_by_certificate_expires_at, issued_by_certificate_version
             )
-            VALUES ($1, $2::UUID, $3, $4, $5, $6, $7, $8, $9, $10)
+            VALUES ($1, $2::UUID, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING grant_id, issued_at, expires_at
             """,
             identity.team_id,
@@ -170,6 +170,7 @@ async def mint_identity_grant(
             now,
             expires_at,
             parent_expiry,
+            getattr(request.state, 'team_certificate_version', 1),
         )
     return GrantView(
         grant_id=str(row["grant_id"]),
@@ -243,7 +244,7 @@ async def identity_grant_status(
     row = await db.get_manager("aweb").fetch_one(
         """
         SELECT g.grant_id, g.team_id, g.subject_did_aw, g.grant_did_key, g.scopes, g.label,
-               g.issued_at, g.expires_at, g.revoked_at, g.issued_by_certificate_id, g.issued_by_certificate_expires_at,
+               g.issued_at, g.expires_at, g.revoked_at, g.issued_by_certificate_id, g.issued_by_certificate_expires_at, g.issued_by_certificate_version,
                a.status AS subject_status, a.deleted_at AS subject_deleted_at
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id

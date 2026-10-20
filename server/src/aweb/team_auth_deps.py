@@ -278,6 +278,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail=str(e))
 
     request.state.team_certificate_expires_at = cert_info.get('expires_at') or None
+    request.state.team_certificate_version = cert_data.get('version', 1)
 
     # -- Step 5b (staged, default OFF): require registry existence --
     # An unregistered certificate is unrevocable — the revocation set can

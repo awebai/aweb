@@ -150,7 +150,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.scopes, g.issued_at, g.expires_at, g.revoked_at,
-               g.issued_by_certificate_id, g.issued_by_certificate_expires_at,
+               g.issued_by_certificate_id, g.issued_by_certificate_expires_at, g.issued_by_certificate_version,
                a.did_key AS subject_did_key, a.did_aw, a.address, a.alias,
                a.agent_id, a.identity_scope, a.status, a.deleted_at
         FROM {{tables.identity_session_grants}} AS g
@@ -172,7 +172,11 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     # the same 503 the certificate-presenting path raises.
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(request, row["team_id"])
+        if row.get('issued_by_certificate_version', 1) == 2:
+            from aweb.credential_policy import v2_issuer_revoked
+            revoked_certs = {issuing_certificate_id} if await v2_issuer_revoked(request, row['team_id'], issuing_certificate_id) else set()
+        else:
+            revoked_certs = await _get_revoked_certificates(request, row["team_id"])
         if issuing_certificate_id in revoked_certs:
             raise HTTPException(status_code=403, detail="grant issuing certificate revoked")
         # Staged existence requirement (default OFF): an unregistered issuing
@@ -180,7 +184,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         # AWEB_REQUIRE_REGISTERED_CERTIFICATES on it must exist at the
         # registry or the delegation ends, mirroring the certificate paths.
         # Ordering preserved: revocation keeps its own distinct verdict above.
-        if require_registered_certificates():
+        if require_registered_certificates() and row.get('issued_by_certificate_version', 1) != 2:
             registered_certs = await _get_registered_certificates(request, row["team_id"])
             if issuing_certificate_id not in registered_certs:
                 raise HTTPException(

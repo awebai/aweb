@@ -62,7 +62,7 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,
-               g.issued_by_certificate_id, g.issued_by_certificate_expires_at,
+               g.issued_by_certificate_id, g.issued_by_certificate_expires_at, g.issued_by_certificate_version,
                a.agent_id, a.status, a.deleted_at
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
@@ -81,10 +81,14 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
 
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
-        revoked_certs = await _get_revoked_certificates(request, row["team_id"])
+        if row.get('issued_by_certificate_version', 1) == 2:
+            from aweb.credential_policy import v2_issuer_revoked
+            revoked_certs = {issuing_certificate_id} if await v2_issuer_revoked(request, row['team_id'], issuing_certificate_id) else set()
+        else:
+            revoked_certs = await _get_revoked_certificates(request, row["team_id"])
         if issuing_certificate_id in revoked_certs:
             return "grant_issuer_revoked"
-        if require_registered_certificates():
+        if require_registered_certificates() and row.get('issued_by_certificate_version', 1) != 2:
             registered_certs = await _get_registered_certificates(request, row["team_id"])
             if issuing_certificate_id not in registered_certs:
                 return "grant_issuer_revoked"
