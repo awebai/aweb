@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from awid.attestation_records import MEMBER_CUSTODY, MEMBER_PERSON, TEAM_CUSTODIAN, RecordError, verify_record
 from awid.signing import canonical_json_bytes
+from awid.team_server_record import TeamServerRecordError, verify_team_server_record
 
 DEFAULT_ROTATE_MAX_BODY_BYTES = 4 * 1024 * 1024
 MAX_FUTURE_ISSUED_AT = timedelta(minutes=5)
@@ -33,6 +34,7 @@ class SignedRecord(BaseModel):
 class ResignedRecords(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    team_server: SignedRecord | None = None
     team_custodians: list[SignedRecord] = Field(default_factory=list)
     member_custody: list[SignedRecord] = Field(default_factory=list)
     member_person: list[SignedRecord] = Field(default_factory=list)
@@ -81,6 +83,35 @@ def _verified(kind: str, entry: SignedRecord, *, team_id: str, new_team_did_key:
     return record
 
 
+async def _resigned_team_server(
+    tx, *, team_uuid, team_id: str, new_team_did_key: str, entry: SignedRecord | None, now: datetime,
+) -> tuple[bool, bool, bool, tuple[dict, str, str, datetime] | None]:
+    """Check the re-signed aweb.team-server/1 record against the stored one.
+
+    Returns (missing, extra, changed, update). The record must verify exactly as
+    PUT .../server would accept it under the new key, and be newer than the
+    stored record with the same server.
+    """
+    stored = await tx.fetch_one(
+        "SELECT record_json, issued_at FROM {{tables.team_server_records}} WHERE team_uuid = $1 FOR UPDATE",
+        team_uuid,
+    )
+    if entry is None:
+        return stored is not None, False, False, None
+    try:
+        verified = verify_team_server_record(
+            entry.record, entry.signature, team_id=team_id, current_team_did_key=new_team_did_key, now=now,
+        )
+    except TeamServerRecordError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": f"team_server: {exc}"}) from exc
+    if stored is None:
+        return False, True, False, None
+    unchanged = _comparable(entry.record) == _comparable(json.loads(stored["record_json"]))
+    if not unchanged or verified.issued_at <= stored["issued_at"]:
+        return False, False, True, None
+    return False, False, False, (entry.record, entry.signature, verified.server_url, verified.issued_at)
+
+
 async def apply_resigned_records(
     tx, *, team_uuid, team_id: str, new_team_did_key: str, resigned: ResignedRecords | None,
 ) -> None:
@@ -92,9 +123,13 @@ async def apply_resigned_records(
     if resigned is None:
         return
     now = datetime.now(timezone.utc)
-    missing: dict[str, list[str]] = {}
-    extra: dict[str, list[str]] = {}
-    changed: dict[str, list[str]] = {}
+    server_missing, server_extra, server_changed, server_update = await _resigned_team_server(
+        tx, team_uuid=team_uuid, team_id=team_id, new_team_did_key=new_team_did_key,
+        entry=resigned.team_server, now=now,
+    )
+    missing: dict[str, Any] = {"team_server": server_missing}
+    extra: dict[str, Any] = {"team_server": server_extra}
+    changed: dict[str, Any] = {"team_server": server_changed}
     updates: list[tuple[str, str, dict, str]] = []
     for kind, (_, table, key_field) in _KINDS.items():
         rows = await tx.fetch_all(
@@ -133,6 +168,18 @@ async def apply_resigned_records(
                 "message": "resigned_records must re-sign exactly every stored record",
                 "missing": missing, "extra": extra, "changed": changed,
             },
+        )
+    if server_update is not None:
+        record, signature, server_url, issued_at = server_update
+        await tx.execute(
+            """
+            UPDATE {{tables.team_server_records}}
+            SET record_json = $2, signature = $3, team_did_key = $4, server_url = $5, issued_at = $6,
+                updated_at = NOW()
+            WHERE team_uuid = $1
+            """,
+            team_uuid, canonical_json_bytes(record).decode("utf-8"), signature, new_team_did_key,
+            server_url, issued_at,
         )
     for table, key_field, record, signature in updates:
         await tx.execute(
