@@ -106,3 +106,16 @@ CREATE OR REPLACE TRIGGER grant_jobs_immutable
 CREATE OR REPLACE TRIGGER grants_only_revoked
     BEFORE UPDATE ON {{tables.grants}}
     FOR EACH ROW EXECUTE FUNCTION {{tables.secrets_grant_only_revoked}}();
+
+-- Token buckets of policies' rate limits (§4.4): one per (secret, principal) and
+-- one per secret, whose principal_did is ''. Charged in the admission transaction.
+CREATE TABLE IF NOT EXISTS {{tables.rate_buckets}} (
+    installation_id  TEXT NOT NULL,
+    secret_id        TEXT NOT NULL,
+    scope            TEXT NOT NULL CHECK (scope IN ('principal_secret', 'secret')),
+    principal_did    TEXT NOT NULL,
+    tokens           DOUBLE PRECISION NOT NULL,
+    refilled_at      TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (installation_id, secret_id, scope, principal_did),
+    CHECK ((scope = 'secret') = (principal_did = ''))
+);
