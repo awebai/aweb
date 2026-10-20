@@ -84,6 +84,10 @@ authority.
   recovery boundaries.
 - [Team-auth request envelope v2](team-auth-envelope-v2.md) — signed relying-party
   request contract.
+- [Principal attestation](principal-attestation.md) — custodian-signed
+  statement of custody and channel for a team-auth request (proposal).
+- [Member person declaration](member-person.md) — team controller's statement
+  that a certificate's member is one natural person (proposal).
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
 - [Agent health](agent-health.md) — status-host designation and the signed
@@ -173,6 +177,8 @@ presented as shipped.
   self-hosted/BYOT bridge surface.
 - [Mutation hook seam](aw-hooks-sot.md) — shipped experimental in-process
   `app.state.on_mutation` callback and exact current route call sites.
+- [aw-hooks: catalog, bindings and delivery](hook-events.md) — specified
+  experimental contract for owner-activated named hooks, not yet shipped.
 - [App manifest v1](app-manifest.md) — current experimental manifest and
   byte-identical CLI interpretation contract.
 - [App registry and team grants](app-registry.md) — current experimental install,

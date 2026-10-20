@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -65,12 +66,17 @@ func buildAwBinary(t *testing.T, ctx context.Context, outPath string) {
 		t.Fatal(err)
 	}
 	defer source.Close()
+	// A parallel fork must not inherit this executable's writable descriptor,
+	// even briefly before exec closes it (golang/go#22315).
+	syscall.ForkLock.RLock()
 	destination, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o755)
 	if err != nil {
+		syscall.ForkLock.RUnlock()
 		t.Fatal(err)
 	}
 	_, copyErr := io.Copy(destination, source)
 	closeErr := destination.Close()
+	syscall.ForkLock.RUnlock()
 	if copyErr != nil {
 		t.Fatal(copyErr)
 	}

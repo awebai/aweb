@@ -528,7 +528,7 @@ func TestSignArbitraryPayloadRoundtrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode signature: %v", err)
 	}
-	if !ed25519.Verify(pub, []byte(canonical), sigBytes) {
+	if !ed25519.Verify(pub, []byte(UserSignaturePrefix+canonical), sigBytes) {
 		t.Fatal("signature did not verify")
 	}
 }
