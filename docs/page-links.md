@@ -114,9 +114,12 @@ too.
 
 ## 2. Exchange: `POST /v1/links/{link_id}/session`
 
-The app's link page reads the secret from the fragment, removes it from the
-address bar (`history.replaceState`), generates a non-extractable Ed25519 key
-pair in the browser (WebCrypto), and exchanges the secret once:
+The app's link page reads the secret from the fragment and strips it from the
+address bar (`history.replaceState`) before any other script runs and before
+any fetch. The page loads no third-party script, and its Content Security
+Policy matches the host console's. It generates a non-extractable Ed25519 key
+pair with WebCrypto (a browser without Ed25519 fails closed with a message;
+there is no second key type), and exchanges the secret:
 
 ```json
 {"secret": "<43 chars>", "session_did_key": "did:key:z6Mk…"}
@@ -134,11 +137,19 @@ session:
 - A session lasts at most 15 minutes and never past the link's expiry. The
   holder renews it with a fresh exchange of the same secret while the link is
   usable. A link may have several live sessions; each is bound to its own key.
+- After the exchange the host page keeps the secret in memory only, to renew.
+  It never writes it to `localStorage` or IndexedDB and never passes it to the
+  renderer. After a reload the holder reopens the link.
+- The app never logs or traces request bodies on `/v1/links/*/session`, and
+  scrubs that route from error reports and performance capture. The verifier
+  is plain SHA-256, which suffices for 256 random bits.
 - The response carries `Cache-Control: no-store` and `Referrer-Policy:
   no-referrer`, as does every link response.
 - A wrong secret, an unusable link and an unknown `link_id` all get the same
   404 `link_unavailable`, after a constant-time comparison.
-- The exchange is rate-limited per link and per client address (§6).
+- The exchange is rate-limited (§6). Only successful exchanges count against
+  the link's bucket, so someone who knows a public `link_id` cannot lock its
+  holder out with wrong secrets. Failures count against the client address.
 
 ## 3. Using a session: `AWEB-Link-Request`
 
@@ -176,8 +187,12 @@ accepted encoding. The app verifies, in order, failing closed:
    401 `signature_invalid`.
 3. **Time.** `issued_at` is within 60 s of the app's clock, either way.
    Failure: 401 `authorization_expired`.
-4. **Nonce.** The `(session_id, nonce)` pair has not been seen; the app records
-   it for the session's lifetime. A replay: 409 `idempotency_conflict`.
+4. **Nonce.** The `(session_id, nonce)` pair has not been seen. The app records
+   it until the later of the session's expiry and `issued_at` plus 60 s, so a
+   nonce never ages out while its timestamp is still accepted. A replay: 409
+   `idempotency_conflict`. A client retrying after a lost response signs again
+   with a fresh nonce; the action's idempotency key carries the retry and
+   returns the stored receipt.
 5. **Origin.** A state-changing request carries an `Origin` header equal to the
    app's origin. Failure: 403 `action_denied`.
 6. **Link lifecycle and authority**, under the link's row lock: §4.
@@ -203,9 +218,10 @@ same transaction, requires:
 **Revocation race.** `POST /v1/pages/{page_id}/links/{link_id}/revoke` (team-auth,
 by the creator or an owner) sets `revoked_at` under the same lock. Whichever
 transaction commits first wins: an action admitted before the revocation
-commits keeps its receipt, and nothing is admitted after it. A revoked
-session's open stream is closed by the next lifecycle check, at most 15 s
-later.
+commits keeps its receipt, and nothing is admitted after it. An open stream
+re-runs the whole check above, the creator's current authority included, at
+least every 15 s, and closes on the first failure; a revocation therefore
+ends it within 15 s.
 
 **One use.** For a one-use link, the first admitted action sets `used_at` and
 records its operation ID in the same transaction. Competing submissions block
@@ -252,8 +268,8 @@ buckets that refill continuously:
 
 | Bucket | Limit |
 | --- | --- |
-| Exchange, per link | 10 per minute |
-| Exchange, per client address | 30 per minute |
+| Successful exchanges, per link | 10 per minute |
+| Exchanges (successful or not), per client address | 30 per minute |
 | Reads, per session | 120 per minute |
 | Writes (edit, intent, answer), per link | 20 per minute |
 | Writes, per client address | 60 per minute |
