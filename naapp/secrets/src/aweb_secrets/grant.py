@@ -36,7 +36,10 @@ FIELDS = frozenset(
     }
 )
 
+TEMPLATE_FIELDS = FIELDS - {"grant_id", "secret_id"} | {"grant_template_id"}
+
 GRANT_ID = re.compile(r"grt_[A-Za-z0-9_-]{4,64}")
+GRANT_TEMPLATE_ID = re.compile(r"gtp_[A-Za-z0-9_-]{4,64}")
 PRINCIPAL = re.compile(r"did:(aw|key):[A-Za-z0-9]{1,128}")
 SECRETS_ROLE = re.compile(r"secrets\.(owner|role\.[a-z0-9][a-z0-9_-]*)")
 
@@ -80,14 +83,9 @@ def _pinned(items: Any, id_field: str, what: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def _check(after: Any) -> None:
-    _require(
-        isinstance(after, Mapping) and set(after) == FIELDS,
-        f"a grant needs exactly {sorted(FIELDS)}",
-    )
-    _require(type(after["v"]) is int and after["v"] == 1, "this is grant record v1")
-    _require(_matches(GRANT_ID, after["grant_id"]), "grant_id is a minted grant id")
-    _require(_matches(SECRET_ID, after["secret_id"]), "secret_id is a minted secret id")
+def _check_terms(after: Mapping[str, Any]) -> None:
+    """The subject, capability, allowances and policy that a grant and a grant template share."""
+    _require(type(after["v"]) is int and after["v"] == 1, "this is version 1")
     subject = after["subject"]
     _require(
         isinstance(subject, Mapping)
@@ -118,6 +116,28 @@ def _check(after: Any) -> None:
     _require(
         _matches(DIGEST, after["policy_digest"]), "policy_digest is 64 lowercase hex characters"
     )
+
+
+def _check(after: Any) -> None:
+    _require(
+        isinstance(after, Mapping) and set(after) == FIELDS,
+        f"a grant needs exactly {sorted(FIELDS)}",
+    )
+    _require(_matches(GRANT_ID, after["grant_id"]), "grant_id is a minted grant id")
+    _require(_matches(SECRET_ID, after["secret_id"]), "secret_id is a minted secret id")
+    _check_terms(after)
+
+
+def _check_template(after: Any) -> None:
+    _require(
+        isinstance(after, Mapping) and set(after) == TEMPLATE_FIELDS,
+        f"a grant template needs exactly {sorted(TEMPLATE_FIELDS)}",
+    )
+    _require(
+        _matches(GRANT_TEMPLATE_ID, after["grant_template_id"]),
+        "grant_template_id is a grant template id",
+    )
+    _check_terms(after)
 
 
 @dataclass(frozen=True)
@@ -169,3 +189,26 @@ class GrantRecord:
             "jobs": [{"job_id": j, "digest": d} for j, d in self.jobs],
             "policy_digest": self.policy_digest,
         }
+
+
+@dataclass(frozen=True)
+class GrantTemplate:
+    """The terms a derived secret's grant is copied from (§8.3): a grant without its secret."""
+
+    grant_template_id: str
+    terms: Mapping[str, Any]
+
+    @classmethod
+    def from_after(cls, after: Mapping[str, Any]) -> GrantTemplate:
+        """The template for a change/1 ``after``, refused unless it is grant template v1."""
+        _check_template(after)
+        terms = {k: v for k, v in after.items() if k != "grant_template_id"}
+        return cls(grant_template_id=after["grant_template_id"], terms=terms)
+
+    def grant_for(self, secret_id: str, *, grant_id: str) -> GrantRecord:
+        """The grant of these terms on ``secret_id``."""
+        return GrantRecord.from_after({**self.terms, "grant_id": grant_id, "secret_id": secret_id})
+
+    @property
+    def after(self) -> dict[str, Any]:
+        return {**self.terms, "grant_template_id": self.grant_template_id}

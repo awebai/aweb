@@ -6,7 +6,7 @@ import copy
 
 import pytest
 
-from aweb_secrets.grant import GrantInvalid, GrantRecord, mint_grant_id
+from aweb_secrets.grant import GrantInvalid, GrantRecord, GrantTemplate, mint_grant_id
 
 OPERATION = {"operation_id": "refund", "digest": "a" * 64}
 JOB = {"job_id": "nightly-backup", "digest": "b" * 64}
@@ -94,3 +94,42 @@ def test_a_grant_covers_exactly_its_operation_digests() -> None:
 def test_minted_grant_ids_are_valid() -> None:
     grant_id = mint_grant_id()
     assert GrantRecord.from_after(_grant(grant_id=grant_id)).grant_id == grant_id
+
+
+TEMPLATE = {
+    "v": 1,
+    "grant_template_id": "gtp_sts-derived",
+    "subject": {"role": "secrets.role.deployers"},
+    "capability": "use",
+    "operations": [OPERATION],
+    "open_request": False,
+    "jobs": [],
+    "policy_digest": POLICY,
+}
+
+
+def test_a_grant_template_round_trips() -> None:
+    assert GrantTemplate.from_after(TEMPLATE).after == TEMPLATE
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"grant_template_id": "sts-derived"},
+        {"grant_id": "grt_77c1aa"},
+        {"secret_id": "sec_19ab42"},
+        {"operations": [], "open_request": False},
+        {"subject": {"role": "deployers"}},
+    ],
+)
+def test_a_malformed_grant_template_is_refused(change) -> None:
+    template = copy.deepcopy(TEMPLATE)
+    template.update(change)
+    with pytest.raises(GrantInvalid):
+        GrantTemplate.from_after(template)
+
+
+def test_a_template_makes_the_grant_it_describes_for_a_secret() -> None:
+    grant = GrantTemplate.from_after(TEMPLATE).grant_for("sec_derived01", grant_id="grt_derived01")
+    expected = {k: v for k, v in TEMPLATE.items() if k != "grant_template_id"}
+    assert grant.after == {**expected, "grant_id": "grt_derived01", "secret_id": "sec_derived01"}
