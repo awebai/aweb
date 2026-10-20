@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 import aweb.routes.apps as apps_routes
 from aweb.app_registry import install_app, reserved_app_ids
 from aweb.internal_auth import build_internal_auth_header_value
+from aweb.service_errors import ConflictError
 from aweb.routes.apps import router as apps_router
 from aweb.team_auth_deps import TeamIdentity
 
@@ -371,3 +372,56 @@ async def test_install_refuses_a_different_key_for_a_registered_emit_key_id(aweb
     assert first.status_code == 200, first.text
     assert conflicting.status_code == 409, conflicting.text
     assert listed.json()["apps"][0]["digest"] == DIGEST_1
+
+
+@pytest.mark.asyncio
+async def test_app_origin_bound_by_another_team_does_not_bind_this_team(aweb_cloud_db, monkeypatch):
+    monkeypatch.setattr(apps_routes, "get_team_identity", _fake_team_identity)
+    db = aweb_cloud_db.aweb_db
+    app = _build_apps_app(db)
+    await _seed_team_and_agent(db)
+    await db.execute(
+        """
+        INSERT INTO {{tables.teams}} (team_id, namespace, team_name, team_did_key)
+        VALUES ('frontend:other.example', 'other.example', 'frontend', 'did:key:z6Mkother')
+        """
+    )
+    await install_app(
+        db,
+        team_id="frontend:other.example",
+        app_id="folio",
+        origin="https://folio.other.example",
+        app_version="1.x",
+        manifest_version=1,
+        digest=DIGEST_2,
+        granted_scopes=["folio:read"],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        installed = await client.post(
+            "/v1/apps/install",
+            json={
+                "app_id": "folio",
+                "origin": "https://folio.aweb.ai",
+                "app_version": "1.x",
+                "manifest_version": 1,
+                "digest": DIGEST_1,
+                "granted_scopes": ["folio:read"],
+            },
+        )
+        listed = await client.get("/v1/apps/installed", params={"team_id": TEAM_ID})
+
+    assert installed.status_code == 200, installed.text
+    assert listed.json()["apps"][0]["origin"] == "https://folio.aweb.ai"
+
+    with pytest.raises(ConflictError):
+        await install_app(
+            db,
+            team_id="frontend:other.example",
+            app_id="folio",
+            origin="https://folio.aweb.ai",
+            app_version="1.x",
+            manifest_version=1,
+            digest=DIGEST_1,
+            granted_scopes=["folio:read"],
+        )

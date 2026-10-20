@@ -76,8 +76,9 @@ Current rules:
 - `app_id` is lower-case, path-safe, and cannot collide with a reserved `aw`
   top-level command id. The shared reserved set is
   `test-vectors/reserved-app-ids-v1.json`.
-- One app id has one origin across this registry. Reusing an app id for another
-  origin conflicts.
+- One app id has one origin per team, bound by that team's install. Reinstalling
+  an app id from another origin in the same team conflicts with `409`. Another
+  team's install of the same app id, from any origin, binds only that team.
 - An origin is an `http` or `https` origin only: no userinfo, path, query, or
   fragment. Production operators should require HTTPS at their policy boundary;
   the experimental OSS route permits HTTP for local deployments.

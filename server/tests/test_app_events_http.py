@@ -582,3 +582,33 @@ async def test_registry_entry_emit_keys_are_not_active_for_a_team(aweb_cloud_db)
         app, signing_key=entry_key, did_key=entry_did, team_id=TEAM_ID, kid="emit-entry"
     )
     assert resp.status_code == 403, resp.text
+
+
+def _folio_snapshot_digest() -> str:
+    manifest = (
+        Path(__file__).resolve().parents[2] / "test-vectors" / "app-manifests" / "folio" / "aweb-app.json"
+    ).read_bytes()
+    return "sha256:" + hashlib.sha256(manifest).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_another_team_cannot_replace_keys_at_a_public_folio_digest(aweb_cloud_db):
+    db = aweb_cloud_db.aweb_db
+    app = _build_events_app(db)
+    await _seed_team_and_agent(db)
+    await _seed_team_and_agent(db, team_id=OTHER_TEAM_ID)
+    digest = _folio_snapshot_digest()
+    team_key, team_did = _make_app_keypair()
+    other_key, other_did = _make_app_keypair()
+    await _install_folio(db, did_key=team_did, kid="folio:emit-1", digest=digest)
+    await _install_folio(db, team_id=OTHER_TEAM_ID, did_key=other_did, kid="folio:emit-1", digest=digest)
+
+    registered = await _emit_doc_changed(
+        app, signing_key=team_key, did_key=team_did, team_id=TEAM_ID, kid="folio:emit-1"
+    )
+    replacement = await _emit_doc_changed(
+        app, signing_key=other_key, did_key=other_did, team_id=TEAM_ID, kid="folio:emit-1"
+    )
+
+    assert registered.status_code == 200, registered.text
+    assert replacement.status_code == 403, replacement.text

@@ -279,16 +279,6 @@ async def install_app(
     event_types = normalize_event_types(event_types or [])
     emit_keys = normalize_emit_keys(emit_keys or [])
 
-    registered = await db.fetch_one(
-        """
-        SELECT origin FROM {{tables.app_registry_apps}}
-        WHERE app_id = $1
-        """,
-        app_id,
-    )
-    if registered and registered["origin"] != origin:
-        raise ConflictError("app_id is already registered from a different origin")
-
     existing = await db.fetch_one(
         """
         SELECT origin FROM {{tables.team_app_installs}}
@@ -305,7 +295,7 @@ async def install_app(
             """
             INSERT INTO {{tables.app_registry_apps}} (app_id, origin, updated_at)
             VALUES ($1, $2, NOW())
-            ON CONFLICT (app_id) DO NOTHING
+            ON CONFLICT (app_id, origin) DO NOTHING
             """,
             app_id,
             origin,
