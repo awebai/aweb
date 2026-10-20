@@ -24,7 +24,9 @@ design" is `docs/design/audit-substrate.md` on
   for the fault it targets.
 - **No secret values anywhere.** That covers fixtures, logs, evidence, task
   comments and mail. Test credentials live in the operator's secret store and
-  are referenced only by name.
+  are referenced only by name. A canary that a test generates at runtime (a
+  random string sealed as a secret, never a real credential) is not a secret
+  value. Leak tests search captured output for that canary itself.
 - **Schema changes** are new ordered pgdbm migrations. Existing migrations are
   never edited.
 - **Shared code is generic.** Nothing in `aweb_naapp` names secrets, pages or
@@ -98,9 +100,9 @@ These are owned elsewhere. secrets tasks list them by ID.
 | X2 | **Hook kit in `aweb_naapp`** behind its own extra: envelope signing, producer outbox with enqueue inside the effecting transaction and `event_id` minted once, drain and delivery client, hook-delivery credential. | hooks lane with B4 (aweb-acgh.6) | The generic outbox is on main. The hook kit is not. |
 | X3 | **Owner-act verifier** in `aweb_naapp`, and acgh.10: `Passkeys.designate()` accepts only the verifier's type. | hooks lane; aweb-acgh.10 | Open. No production app may expose owner-gated designation before it. |
 | X4 | **B1 verifier** with scope enforcement, the policy hook and `Principal.did_aw`. | aweb-acgh.3 | Closed. `did_aw` is in the principal output on main. |
-| X5 | **B2+B3**: admission inside the caller's transaction, `revoke_many`, lockout timings (24 h contact change, 72 h cooling-off) as policy parameters, and the last-owner protection. | aweb-acgh.4 | In progress. `revoke_many`, transactional admission and both timings are on its branch. S10 confirms the last-owner protection (`last_owner_protected`) is there, or asks acgh.4 for it. |
+| X5 | **B2+B3**: admission inside the caller's transaction, `revoke_many`, lockout timings (24 h contact change, 72 h cooling-off) as floors that policy can lengthen but never shorten, and the last-owner protection. | aweb-acgh.4 | In progress. `revoke_many`, transactional admission and both timings are on its branch. S10 confirms the last-owner protection (`last_owner_protected`) is there, or asks acgh.4 for it. |
 | X6 | **App → team-server API**: server discovery through the approved `aweb.team-server/1` record, purpose-split app auth, grant status with installation ID and generation, and hook resolution that reports `active_from` within the 60 s freshness bound. | aweb-acgh.7 | In progress. The custodial deployment backfills existing teams before any naapp depends on discovery (decision 3). |
-| X7 | **App keys**: the emit-key scoping fix (acgh.8) and the one app-key loader (decision 10: kid to key file, fail closed at startup, one 64-hex format). | aweb-acgh.8; loader owner to be assigned by the coordinator | acgh.8 in progress. The loader has no task yet. |
+| X7 | **App keys**: the emit-key scoping fix (acgh.8) and the one app-key loader (decision 10: kid to key file, fail closed at startup, one 64-hex format). | aweb-acgh.8; the loader is K0, `aweb_naapp.signing_key` behind the `signing-key` extra, built in aweb-acgh.6 (hooks build plan) | acgh.8 in progress; K0 open. |
 | X8 | **Manifest v2** (D1 C3): `invocation_contexts`, `hooks.productions`, `app_keys` with purposes, the Python serving helpers, and the Go interpreter in `aw` that renders open-request body parameters as flags. | D1 C3, aweb-acgg.9 | In progress. |
 | X9 | **Installation identity** (D1 F6): `installation_id`, generation, install state and the admission fence. | D1 F6, aweb-acgg.5 | Open. |
 | X10 | **Page format with `link_out`, and the shared renderer** (D1 C1, R1). Juan accepted `link_out`, restricted to the installed app's own origin. | D1 C1, aweb-acgg.7; R1, aweb-acgg.20 | C1 in progress; R1 open. |
@@ -158,7 +160,10 @@ through X6.
 - **Acceptance:** each vector has a test that consumes it. Negatives include a
   wrong domain prefix, a non-canonical encoding, a duplicate key, a float, an
   assignment for another runner and an expired assignment. The mapping table
-  names only actions and refusal codes that exist in the X1 catalog.
+  names only actions and refusal codes that exist in the X1 catalog. The
+  catalog's `disposition` values equal the set secrets emits (`returned`,
+  `withheld`, `stored_as_secret`), so a value for a returned credential can
+  never reappear unnoticed.
 - **Done-signal:** vectors frozen by a reviewed commit. Later changes are a new
   version.
 
@@ -187,7 +192,8 @@ through X6.
 
 ### S2. Idempotency store in `aweb_naapp`
 
-- **Seat:** E. **Review:** R, +D1.
+- **Seat:** E. **Review:** R+A, +D1 (it closes the team-auth v2 replay gap for
+  dispatch, §4.1 step 4).
 - **Repo/path:** `naapp-lib/src/aweb_naapp/idempotency/` with its migration.
 - **Depends on:** none.
 - **Scope:** keys scoped by an app-chosen tuple (secrets uses installation,
@@ -262,6 +268,15 @@ through X6.
   custodian's issuer key for a member; the `aweb.principal-attestation/1`
   canonical bytes, claims and `X-AWEB-Principal-Attestation` transport; a
   verifier that checks the issuer against AWID, expiry and the request binding.
+- **Shared with C3 (aweb-acgg.9):** the claim is `channel`, with values
+  `mcp_l2`, `dashboard` and `api`, as agreed with naapps. C3's call-time
+  validator reads the same field. It treats `api` like `mcp_l2`, refuses unknown
+  values, and lets a surface-only tool through only with a verified attestation
+  whose channel is `dashboard`. A missing attestation is never read as
+  `dashboard`. Known limit: only the hosted custodial path issues attestations,
+  so a self-hosted surface host cannot call surface-only tools until it can
+  sign `aweb.principal-attestation/1` from its own controller. That is a later
+  identity-path item, not part of S6.
 - **Acceptance:** vectors cover a valid attestation and each refusal: unknown
   issuer, issuer not registered for that member, expired, binding over other
   request bytes, wrong domain prefix, a custodian record not signed by the
@@ -270,9 +285,11 @@ through X6.
 
 ### S7. secrets app skeleton
 
-- **Seat:** E. **Review:** R.
+- **Seat:** E. **Review:** R+A (B1 admission wiring and the two-origin
+  authentication split).
 - **Repo/path:** `naapp/secrets/` (package `aweb_secrets`).
-- **Depends on:** X4, X6, X7, X8; the shared runtime from B4 (aweb-acgh.6).
+- **Depends on:** X4, X6, X7 (secrets loads every app key through K0), X8; the shared
+  runtime from B4 (aweb-acgh.6).
 - **Scope:** the service on the shared runtime: settings, pgdbm database and
   migrations directory, health reporting the full build commit plus DB, KMS
   canary and oldest-undelivered-outbox age, the manifest v2 document (tools from
@@ -317,8 +334,9 @@ through X6.
   copied to another secret or version fails to decrypt; a destroyed version
   cannot be opened; a KMS outage refuses admission and fails readiness; a
   1Password item version change is reported to the caller; no plaintext appears
-  in logs, exceptions or responses (checked by scanning captured output for the
-  test value's known name-addressed fingerprint, not the value).
+  in logs, exceptions or responses. The test checks this by sealing a random
+  canary that it generates at runtime and searching all captured output for
+  the canary itself.
 
 ### S10. Owner console, value ingress and change sets
 
@@ -330,10 +348,12 @@ through X6.
   replacing a value, which never echoes and shows no fingerprint; widening
   changes as `aweb.secrets.change/1` approved through B2/B3 with the rendering
   rules of §6.3; the bootstrap of the first owner and recovery through the owner
-  act; the last-owner protection, 24 h contact-change delay and 72 h cooling-off
-  as policy parameters (decision 8); freezing `approve_only` uses and widening
+  act; the last-owner protection; the 24 h contact-change delay and 72 h
+  cooling-off as floors (decision 8): app or owner policy may lengthen them,
+  never shorten them, and only deploy configuration sets the floor; freezing `approve_only` uses and widening
   changes during a cooling-off; email notifications.
-- **Acceptance:** a value enters only through the console with a passkey; a
+- **Acceptance:** a policy that sets either timing below its floor is refused;
+  a value enters only through the console with a passkey; a
   `propose-change` draft stays inert until confirmed; bootstrap with an admin or
   member signature is refused with `owner_required`; a valid owner act starts the
   cooling-off and notifies every earlier contact; IDNA hosts render as Unicode
@@ -444,7 +464,8 @@ through X6.
 
 ### S16. Tool surface for aw, MCP and the dashboard
 
-- **Seat:** E. **Review:** R, +D1.
+- **Seat:** E. **Review:** R+A, +D1 (which tools agents reach, and no value tool
+  in any context).
 - **Repo/path:** `naapp/secrets/` (tools, the `aweb.page/1` surface); no
   secrets-specific code in `aw`.
 - **Depends on:** S8–S14; X8, X10; HO3, HO4.
@@ -481,11 +502,15 @@ through X6.
   release record; KMS as a readiness dependency; the service signing key (KMS
   asymmetric where Ed25519 is supported, otherwise sealed at deploy) published in
   `app_keys`; two origins; core dumps off; request and response bodies never
-  logged; the restore procedure that reapplies the tombstone list before
+  logged; every telemetry sink (logs, error reporting, traces) configured with
+  no local variables, no request bodies, a header allowlist, and query strings
+  and token-bearing URLs stripped; the restore procedure that reapplies the tombstone list before
   serving; the replacement receipt stating when backups expire.
 - **Acceptance:** the ops scripts' tests pass; a topology that differs from the
   manifest is refused; readiness fails with KMS unavailable; a restored
-  database with a destroyed version does not serve it.
+  database with a destroyed version does not serve it; a regression test drives
+  errors carrying synthetic credential canaries through every telemetry sink
+  and finds none of them in the captured output.
 - **Done-signal:** in addition, the first production deploy happens only on
   Juan's go, after S21.
 
@@ -531,12 +556,12 @@ through X6.
 | --- | --- | --- | --- |
 | S0 contract vectors | P | R+A | `naapp/secrets/vectors` |
 | S1 egress guard | E | R+A, D1 | `aweb_naapp` |
-| S2 idempotency store | E | R, D1 | `aweb_naapp` |
+| S2 idempotency store | E | R+A, D1 | `aweb_naapp` |
 | S3 dispatch state machine | E | R+A, D1 | `aweb_naapp` |
 | S4 console session | E | R+A | `aweb_naapp` |
 | S5 role assignments | P | R+A, D1 | `aweb_naapp` |
 | S6 principal attestation | P | R+A, Juan identity approval | AWID, docs, `aweb_naapp` |
-| S7 app skeleton | E | R | `naapp/secrets` |
+| S7 app skeleton | E | R+A | `naapp/secrets` |
 | S8 records and admission | E | R+A | `naapp/secrets` |
 | S9 custody | E | R+A | `naapp/secrets` |
 | S10 console and change sets | E | R+A | `naapp/secrets` |
@@ -546,7 +571,7 @@ through X6.
 | S14 containment | E | R+A | `naapp/secrets` |
 | S15a runner protocol | P | R+A | `naapp/secrets` |
 | S15b runner binary | E | R+A | `naapp/secrets/runner` |
-| S16 tool surface | E | R, D1 | `naapp/secrets` |
+| S16 tool surface | E | R+A, D1 | `naapp/secrets` |
 | S17 usage | E | R | `naapp/secrets` |
 | S18 deploy | E | R+A, coordinator integrates | `naapp/secrets` ops |
 | S19 E2E target | E | R | `naapp/secrets/e2e` |

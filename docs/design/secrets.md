@@ -1580,9 +1580,10 @@ it says otherwise. Juan can revisit any of them.
 12. **Q12. Generic `cli_aliases`.** Not at launch, as recommended.
 13. **Q13. Approval notification channel.** Email at launch. Approvals as tasks
     may come later through the existing seam.
-14. **Q14. Approval TTL and lockout timings.** These are policy parameters: a
-    15 min approval TTL, a 24 h contact-change delay and a 72 h re-designation
-    cooling-off.
+14. **Q14. Approval TTL and lockout timings.** The approval TTL is a policy
+    parameter, 15 min by default. The 24 h contact-change delay and the 72 h
+    re-designation cooling-off are floors: app or owner policy may lengthen
+    them, never shorten them, and only deploy configuration sets the floor.
 15. **Q15. Launch order.** The hook contract lands first. aw-hooks, logs and
     secrets then build in parallel. secrets does not launch until logs ingests
     real events end to end. One runner job end to end is part of launch.
