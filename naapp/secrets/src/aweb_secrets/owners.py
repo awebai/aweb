@@ -1,9 +1,9 @@
 """secrets' owners and approvers as B3 scopes (decisions 40 and 41).
 
 B3 keeps one approver per scope, and a scope is unique across the database.
-So each owner has its own scope, named from the installation and the owner's
-stable principal (S5's principal_did), and each approver its own, named from
-the installation and the approver's reference. Hashing keeps the name inside
+So each owner has its own scope, named from the installation, its team and
+the owner's stable principal (S5's principal_did), and each approver its own,
+named from the installation, its team and the approver's reference. Hashing keeps the name inside
 the role token of an ``aweb.owner-act/1`` subject; the request that designates
 an owner carries the principal, and the app recomputes the scope from it.
 
@@ -37,18 +37,19 @@ OWNER_ROLE = "secrets.owner"
 _OWNER_SCOPE = re.compile(r"secrets\.owner\.[0-9a-f]{40}")
 
 
-def _segment(installation_id: str, name: str) -> str:
-    return hashlib.sha256(f"{installation_id}\n{name}".encode()).hexdigest()[:40]
+def _segment(installation_id: str, team_id: str, name: str) -> str:
+    named = f"{installation_id}\n{team_id}\n{name}"
+    return hashlib.sha256(named.encode()).hexdigest()[:40]
 
 
-def owner_scope(installation_id: str, principal_did: str) -> str:
-    """The B3 scope of ``principal_did`` as an owner of the installation."""
-    return f"secrets.owner.{_segment(installation_id, principal_did)}"
+def owner_scope(installation_id: str, team_id: str, principal_did: str) -> str:
+    """The B3 scope of ``principal_did`` of ``team_id`` as an owner of the installation."""
+    return f"secrets.owner.{_segment(installation_id, team_id, principal_did)}"
 
 
-def approver_scope(installation_id: str, approver_ref: str) -> str:
+def approver_scope(installation_id: str, team_id: str, approver_ref: str) -> str:
     """The B3 scope of the installation's approver ``approver_ref``."""
-    return f"secrets.approver.{_segment(installation_id, approver_ref)}"
+    return f"secrets.approver.{_segment(installation_id, team_id, approver_ref)}"
 
 
 def is_owner_scope(scope: str) -> bool:
@@ -72,19 +73,28 @@ async def record_owner(
 ) -> str:
     """Record, in the designating transaction, which principal an owner scope stands for.
 
-    Returns the scope."""
-    scope = owner_scope(installation_id, principal.principal_did)
-    await tx.execute(
+    Returns the scope. A scope already recorded for another installation, team
+    or principal is refused as ``owner_required``, never silently kept."""
+    scope = owner_scope(installation_id, principal.team_id, principal.principal_did)
+    recorded = await tx.fetch_one(
         """
         INSERT INTO {{tables.owner_principals}} (scope, installation_id, team_id, principal_did)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (scope) DO NOTHING
+        ON CONFLICT (scope) DO UPDATE SET scope = EXCLUDED.scope
+        RETURNING installation_id, team_id, principal_did
         """,
         scope,
         installation_id,
         principal.team_id,
         principal.principal_did,
     )
+    assert recorded is not None
+    if (recorded["installation_id"], recorded["team_id"], recorded["principal_did"]) != (
+        installation_id,
+        principal.team_id,
+        principal.principal_did,
+    ):
+        raise OwnerRequired("the owner scope is recorded for another owner")
     return scope
 
 
@@ -132,21 +142,27 @@ async def apply_owner_act(
     signature: str,
     app_id: str,
     installation_id: str,
+    installation_team_id: str,
     principal: PrincipalKey,
     contact: str,
 ) -> Designation:
     """Make ``principal`` an owner on the strength of the team owner act (design §10.2).
 
-    The act must be signed by the current controller key of the principal's
-    own team and name exactly this installation, this principal's owner scope
-    and this contact. ``app-role.designate`` makes the scope's first owner;
+    ``principal`` comes from the request body; the controller's act is the
+    only authority for it. The principal must be on the team the installation
+    belongs to: ``installation_team_id`` comes from the app's installation
+    record, never from the request. The act must be signed by the current
+    controller key of that team and name exactly this installation, this
+    principal's owner scope and this contact. ``app-role.designate`` makes the scope's first owner;
     ``app-credential.recover`` replaces it after the cooling-off. In one
     transaction the act's nonce is consumed, the principal is given
     secrets.owner and recorded as the scope's owner, and the scope is
     designated. Anything less is ``owner_required``, and nothing changes.
     Deliver the returned designation after this returns.
     """
-    scope = owner_scope(installation_id, principal.principal_did)
+    if principal.team_id != installation_team_id:
+        raise OwnerRequired("the principal is not on the installation's team")
+    scope = owner_scope(installation_id, principal.team_id, principal.principal_did)
     expected_subject = {
         "app_id": app_id,
         "installation_id": installation_id,
@@ -160,5 +176,5 @@ async def apply_owner_act(
             await record_owner(tx, installation_id=installation_id, principal=principal)
             await assign(tx, principal, OWNER_ROLE)
             return await passkeys.designate(tx, scope=scope, contact=contact, evidence=act)
-    except (Refused, DesignationRefused) as exc:
+    except (Refused, DesignationRefused, OwnerRequired) as exc:
         raise OwnerRequired(str(exc)) from None

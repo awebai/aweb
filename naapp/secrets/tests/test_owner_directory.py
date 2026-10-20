@@ -137,7 +137,7 @@ async def designate_owner(
     world: World, principal: PrincipalKey, contact: str, installation_id: str = INSTALLATION_ID
 ) -> str:
     """The team owner designates ``principal`` an owner; it enrols a passkey."""
-    scope = owner_scope(installation_id, principal.principal_did)
+    scope = owner_scope(installation_id, principal.team_id, principal.principal_did)
     subject = designation_subject(scope, contact)
     prepared = await world.owner.prepare("app-role.designate", subject)
     async with world.db.transaction() as tx:
@@ -189,7 +189,7 @@ async def test_the_role_on_another_team_does_not_count(world: World) -> None:
 
 
 async def test_an_owner_scope_without_a_recorded_owner_has_no_approver(world: World) -> None:
-    scope = owner_scope(INSTALLATION_ID, ALICE.principal_did)
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     subject = designation_subject(scope, "alice@acme.com")
     prepared = await world.owner.prepare("app-role.designate", subject)
     async with world.db.transaction() as tx:
@@ -211,7 +211,7 @@ async def test_one_principal_owns_independently_in_two_installations(world: Worl
 
 
 async def test_an_approver_scope_needs_no_owner_role(world: World) -> None:
-    scope = approver_scope(INSTALLATION_ID, "finance")
+    scope = approver_scope(INSTALLATION_ID, TEAM, "finance")
     subject = designation_subject(scope, "finance@acme.com")
     prepared = await world.owner.prepare("app-role.designate", subject)
     async with world.db.transaction() as tx:

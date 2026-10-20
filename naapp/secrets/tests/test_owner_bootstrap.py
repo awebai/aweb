@@ -7,11 +7,15 @@ principal secrets.owner and designates its B3 scope, in one transaction.
 
 from __future__ import annotations
 
+import base64
+import secrets
 from collections.abc import AsyncIterator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from aweb_naapp.hooks.owner_act import PREFIX
 from aweb_naapp.hooks.owner_act_nonces import apply_owner_act_migrations
+from aweb_naapp.hooks.strictjson import canonical
 from aweb_naapp.roles import PrincipalKey, apply_roles_migrations, has_role
 from aweb_naapp.runtime.approvals import (
     ActionPolicy,
@@ -20,8 +24,14 @@ from aweb_naapp.runtime.approvals import (
     PgApprovalStore,
 )
 from aweb_naapp.runtime.passkeys import Passkeys, RelyingParty, contact_sha256
-from aweb_naapp_testing import awid_registry
-from aweb_naapp_testing.owner_acts import APP_ID, INSTALLATION_ID, TeamOwner, team_owner
+from aweb_naapp_testing import awid_registry, did_key
+from aweb_naapp_testing.owner_acts import (
+    APP_ID,
+    AUDIENCE,
+    INSTALLATION_ID,
+    TeamOwner,
+    team_owner,
+)
 from aweb_naapp_testing.webauthn import SoftAuthenticator
 from nacl.signing import SigningKey
 
@@ -42,7 +52,8 @@ BOB = PrincipalKey(team_id=TEAM, principal_did="did:aw:2Uq51iFVLnqmgbVY3vLZtMD5P
 
 
 class World:
-    def __init__(self, db, passkeys, owner: TeamOwner, contacts: Contacts) -> None:
+    def __init__(self, db, passkeys, owner: TeamOwner, contacts: Contacts, registry) -> None:
+        self.registry = registry
         self.db = db
         self.passkeys = passkeys
         self.owner = owner
@@ -76,21 +87,53 @@ async def world(test_db_factory) -> AsyncIterator[World]:
     await apply_owner_act_migrations(db)
     await apply_owner_migrations(db)
     async with awid_registry(registry_db.config.get_dsn()) as registry:
-        yield World(db, passkeys, await team_owner(registry), contacts)
+        yield World(db, passkeys, await team_owner(registry), contacts, registry)
 
 
 def _subject(principal: PrincipalKey, contact: str, installation_id: str = INSTALLATION_ID):
     return {
         "app_id": APP_ID,
         "installation_id": installation_id,
-        "role": owner_scope(installation_id, principal.principal_did),
+        "role": owner_scope(installation_id, principal.team_id, principal.principal_did),
         "contact_sha256": contact_sha256(contact),
     }
 
 
-async def _apply(world: World, act: str, principal, contact, *, subject=None, signer=None):
+def _signed_by_team(key: SigningKey, team_id: str, act: str, subject: dict) -> tuple[bytes, str]:
+    """An owner act genuinely signed by ``team_id``'s controller ``key``, naming that team."""
+    issued = datetime.now(UTC).replace(microsecond=0)
+    fields = {
+        "v": 1,
+        "type": "aweb.owner-act",
+        "act": act,
+        "team_id": team_id,
+        "aud": AUDIENCE,
+        "team_key_did": did_key(key),
+        "subject": subject,
+        "issued_at": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "expires_at": (issued + timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "nonce": secrets.token_hex(16),
+    }
+    signing = PREFIX + canonical(fields)
+    return signing, base64.b64encode(key.sign(signing).signature).decode().rstrip("=")
+
+
+async def _apply(
+    world: World,
+    act: str,
+    principal,
+    contact,
+    *,
+    subject=None,
+    signer=None,
+    signed=None,
+    installation_team_id: str = TEAM,
+):
     signer = signer or world.owner
-    signing, signature = signer.sign(act, subject or _subject(principal, contact))
+    if signed is not None:
+        signing, signature = signed
+    else:
+        signing, signature = signer.sign(act, subject or _subject(principal, contact))
     designation = await apply_owner_act(
         world.db,
         world.passkeys,
@@ -99,6 +142,7 @@ async def _apply(world: World, act: str, principal, contact, *, subject=None, si
         signature=signature,
         app_id=APP_ID,
         installation_id=INSTALLATION_ID,
+        installation_team_id=installation_team_id,
         principal=principal,
         contact=contact,
     )
@@ -128,7 +172,7 @@ async def test_the_team_owner_act_makes_the_first_owner(world: World) -> None:
     await _apply(world, "app-role.designate", ALICE, "alice@example.com")
     assert await has_role(world.db, ALICE, OWNER_ROLE)
     await _enrol(world, "alice@example.com")
-    scope = owner_scope(INSTALLATION_ID, ALICE.principal_did)
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     approver = await world.directory.designated_approver(_policy(scope))
     assert approver is not None and approver.contact == "alice@example.com"
 
@@ -180,6 +224,81 @@ async def test_an_act_for_another_installation_designates_nobody(world: World) -
     assert not await has_role(world.db, ALICE, OWNER_ROLE)
 
 
+async def test_a_teams_own_act_cannot_make_an_owner_of_another_teams_installation(
+    world: World,
+) -> None:
+    with pytest.raises(OwnerRequired):
+        await _apply(
+            world,
+            "app-role.designate",
+            ALICE,
+            "alice@example.com",
+            installation_team_id="acme:other.com",
+        )
+    assert not await has_role(world.db, ALICE, OWNER_ROLE)
+    assert not await world.db.fetch_value("SELECT count(*) FROM {{tables.owner_principals}}")
+    assert world.contacts.inbox == {}
+
+
+OTHER_TEAM = "other:example.com"
+
+
+async def _other_team_key(world: World) -> SigningKey:
+    """The genuine controller key of another team, registered in AWID."""
+    key = SigningKey.generate()
+    await world.registry.add_team(OTHER_TEAM, did_key(key))
+    return key
+
+
+async def test_another_teams_controller_cannot_designate_this_teams_member(world: World) -> None:
+    other = TeamOwner(team_key=await _other_team_key(world), verifier=world.owner.verifier)
+    with pytest.raises(OwnerRequired):
+        await _apply(world, "app-role.designate", ALICE, "alice@example.com", signer=other)
+    assert not await has_role(world.db, ALICE, OWNER_ROLE)
+    assert not await world.db.fetch_value("SELECT count(*) FROM {{tables.owner_principals}}")
+    assert world.contacts.inbox == {}
+
+
+async def test_a_recovery_from_another_team_cannot_touch_an_owner(world: World) -> None:
+    await _apply(world, "app-role.designate", ALICE, "alice@example.com")
+    await _enrol(world, "alice@example.com")
+    # The other team's controller signs, as its own team, a recovery of the
+    # owner scope it names for its own principal with the victim's did:aw.
+    impostor = PrincipalKey(team_id=OTHER_TEAM, principal_did=ALICE.principal_did)
+    signed = _signed_by_team(
+        await _other_team_key(world),
+        OTHER_TEAM,
+        "app-credential.recover",
+        _subject(impostor, "attacker@example.com"),
+    )
+    with pytest.raises(OwnerRequired):
+        await _apply(
+            world, "app-credential.recover", impostor, "attacker@example.com", signed=signed
+        )
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    approver = await world.directory.designated_approver(_policy(scope))
+    assert approver is not None and approver.contact == "alice@example.com"
+    assert await world.passkeys.recovery_pending_until(scope) is None
+    assert world.contacts.notices == {}
+    assert not await has_role(world.db, impostor, OWNER_ROLE)
+
+
+async def test_a_scope_recorded_for_another_owner_is_refused(world: World) -> None:
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
+    await world.db.execute(
+        "INSERT INTO {{tables.owner_principals}} (scope, installation_id, team_id, principal_did)"
+        " VALUES ($1, $2, $3, $4)",
+        scope,
+        INSTALLATION_ID,
+        TEAM,
+        BOB.principal_did,
+    )
+    with pytest.raises(OwnerRequired):
+        await _apply(world, "app-role.designate", ALICE, "alice@example.com")
+    assert not await has_role(world.db, ALICE, OWNER_ROLE)
+    assert world.contacts.inbox == {}
+
+
 async def test_an_owner_is_designated_once_and_recovered_after_the_cooling_off(
     world: World,
 ) -> None:
@@ -191,6 +310,6 @@ async def test_an_owner_is_designated_once_and_recovered_after_the_cooling_off(
     assert [n.kind.value for n in world.contacts.notices["alice@example.com"]] == [
         "recovery_started"
     ]
-    scope = owner_scope(INSTALLATION_ID, ALICE.principal_did)
+    scope = owner_scope(INSTALLATION_ID, TEAM, ALICE.principal_did)
     assert await world.passkeys.recovery_pending_until(scope) == designation.effective_at
     assert await world.directory.designated_approver(_policy(scope)) is None
