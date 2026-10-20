@@ -34,6 +34,10 @@ runtime = [
 outbox = [
   "pgdbm>=0.5.0",
 ]
+# The shared dispatch state machine, aweb_naapp.dispatch: pgdbm only.
+dispatch = [
+  "pgdbm>=0.5.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/awebai/aweb-naapp"
