@@ -183,15 +183,6 @@ class OwnerDirectory:
             )
             return Drafter(principal_did=principal_did, scope=scope)
         return Drafter()
-        drafter = request.get("drafter") or {}
-        if drafter.get("via") == "team_auth":
-            return drafter.get("principal")
-        if drafter.get("via") == "console":
-            return await self._db.fetch_value(
-                "SELECT principal_did FROM {{tables.owner_principals}} WHERE scope = $1",
-                drafter.get("scope"),
-            )
-        return None
 
 
 async def apply_owner_act(
