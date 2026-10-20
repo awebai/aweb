@@ -30,14 +30,15 @@ async def parent(env, *, expires_at=None):
 
 
 @pytest.mark.asyncio
-async def test_renewal_keeps_grants_but_disciplinary_revoke_ends_them(privacy_app, monkeypatch):
+@pytest.mark.parametrize('renew', [False, True])
+async def test_renewal_keeps_grants_but_disciplinary_revoke_ends_them(privacy_app, monkeypatch, renew):
     env=privacy_app
     monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED','true')
     cert=await parent(env)
     key,did,grant=await _mint(env)
     registry=env.app.state.awid_registry_client
     assert (await _read(env,key,did,grant)).status_code==200
-    fresh=await _rollover(env,registry,cert)
+    fresh=await _rollover(env,registry,cert) if renew else cert
     assert (await _read(env,key,did,grant)).status_code==200
     await registry.revoke_team_certificate('example.test', TEAM.split(':')[0],
         team_controller_signing_key=env.team_sk, certificate_id=fresh['certificate_id'])
@@ -178,3 +179,18 @@ async def test_one_anonymous_verifier_admits_more_than_sixty_distinct_members(pr
     finally:
         env.app.state.awid_registry_client=original
         await registry.aclose()
+
+
+@pytest.mark.asyncio
+async def test_replacement_chain_accepts_eight_links_but_refuses_a_ninth(privacy_app, monkeypatch):
+    env=privacy_app
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED','true')
+    certificate=await parent(env)
+    key,did,grant=await _mint(env)
+    registry=env.app.state.awid_registry_client
+    for _ in range(8):
+        certificate=await _rollover(env,registry,certificate)
+    assert (await _read(env,key,did,grant)).status_code==200
+    await _rollover(env,registry,certificate)
+    refused=await _read(env,key,did,grant)
+    assert refused.status_code==403 and 'issuing certificate revoked' in refused.text

@@ -263,3 +263,9 @@ repairs an old-key record after a non-atomic rotation without trusting its
 values. A stranded policy otherwise causes `503 authority_unavailable`, never
 an absent-policy fallback. Cloud MCP, UI and scheduler remain the separately
 assigned Cloud part of aweb-acic.4.
+
+The new `grant_lifetime_exceeded` terminal reason is understood by updated aw
+and channel-core/Pi. Released clients keep the no-policy behavior; teams opting
+into a grant cap must update their stream consumers (including OATS's aw pin)
+first. A stream closes after this terminal event, so older clients cannot keep
+using a grant after the cap is enforced; they may lack the distinct diagnostic.
