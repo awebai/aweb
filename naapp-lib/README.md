@@ -46,7 +46,9 @@ shares import without it: the durable outbox, `aweb_naapp.outbox`
 
 An app's tables live in `<PREFIX>DB_SCHEMA` (default `public`). The runtime pins
 every connection's search_path to it, so the app works whatever its database
-role's default search_path is. A new app should set its own schema. If the app's
+role's default search_path is. A new app should set its own schema: apps that
+share one database also share the runtime's own tables (the outbox, observed
+principals) unless their schemas differ. If the app's
 migrations are recorded in another schema of the same database, the app refuses
 to start rather than create its tables a second time.
 
