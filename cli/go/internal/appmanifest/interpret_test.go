@@ -301,3 +301,29 @@ func TestInterpretObjectBodyParamRejectsMalformedJSON(t *testing.T) {
 		t.Fatalf("Interpret() error = %v, want a content body-param JSON error", err)
 	}
 }
+
+func TestInterpretRefusesDotSegmentPathParamValues(t *testing.T) {
+	manifest := Manifest{
+		ManifestVersion: 1,
+		App:             App{ID: "safe", Version: "1.0.0", Origin: "https://app.example"},
+		Tools: []Tool{{
+			Name:        "show",
+			Method:      "GET",
+			Path:        "/v1/workspaces/{page_id}/{a}/{b}/items",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{"page_id": map[string]any{"type": "string"}, "a": map[string]any{"type": "string"}, "b": map[string]any{"type": "string"}}},
+			Params:      []Param{{Name: "page_id", In: "path"}, {Name: "a", In: "path"}, {Name: "b", In: "path"}},
+			Body:        Body{Mode: "json"},
+		}},
+	}
+	for _, value := range []string{".", ".."} {
+		got, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "show", Args: map[string]any{"page_id": "P", "a": "x", "b": value}})
+		if err == nil {
+			t.Fatalf("path param value %q built %s; want refusal", value, got.PathQuery)
+		}
+	}
+	for _, value := range []string{"...", ".x", "x.", "%2e%2e"} {
+		if _, err := Interpret(InterpretRequest{Manifest: manifest, Verb: "show", Args: map[string]any{"page_id": "P", "a": "x", "b": value}}); err != nil {
+			t.Fatalf("path param value %q refused: %v", value, err)
+		}
+	}
+}

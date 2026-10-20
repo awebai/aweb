@@ -549,7 +549,13 @@ func substitutePath(path string, params []Param, args map[string]any) (string, e
 		if !ok || isEmpty(value) {
 			return "", fmt.Errorf("missing path param %q", name)
 		}
-		out = strings.ReplaceAll(out, placeholder, escapePathSegment(fmt.Sprint(value)))
+		segment := fmt.Sprint(value)
+		// A dot segment would let a value remove a path segment wherever
+		// the URL is normalized.
+		if segment == "." || segment == ".." {
+			return "", fmt.Errorf("path param %q must not be %q", name, segment)
+		}
+		out = strings.ReplaceAll(out, placeholder, escapePathSegment(segment))
 	}
 	if strings.Contains(out, "{") || strings.Contains(out, "}") {
 		return "", fmt.Errorf("tool.path contains placeholder without matching path param")

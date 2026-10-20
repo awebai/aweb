@@ -312,9 +312,23 @@ func TestGrantAppToolIgnoresLocalManifestDrift(t *testing.T) {
 
 func TestGrantAppToolRejectsDotSegmentParams(t *testing.T) {
 	f := setupAppCustodyFixture(t, []string{"get-thing"})
+	sessionKey, err := awid.LoadSigningKey(awconfig.GrantHomeSigningKeyPath(f.grantHome))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.serviceID = "svc"
 	for _, value := range []string{"..", "."} {
-		if _, err := runAppTool(t, "get-thing", "--thing_id", value); err == nil || !strings.Contains(err.Error(), "app_request_not_allowed") {
-			t.Fatalf("value %q: err=%v, want app_request_not_allowed", value, err)
+		// The worker refuses before asking custody.
+		if _, err := runAppTool(t, "get-thing", "--thing_id", value); err == nil {
+			t.Fatalf("value %q: worker sent the request", value)
+		}
+		// Custody refuses a session that asks for it directly.
+		req := &awid.AppRequestSignRequest{Version: 1, Operation: "sign_app_request", GrantID: appTestGrantID, TeamID: "backend:acme.com", SubjectDIDAW: f.grant.Subject.DIDAW, SubjectDIDKey: f.residentDID, Audience: "local-resident-custody:svc", AppID: "testapp", Verb: "get-thing", Args: map[string]any{"thing_id": value}}
+		if err := awid.SignAppRequestCustodyProof(sessionKey, req); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.svc.signAppRequest(context.Background(), req); err == nil || err.Error() != "app_request_not_allowed" {
+			t.Fatalf("value %q: custody err=%v, want app_request_not_allowed", value, err)
 		}
 	}
 	if seen, _ := f.app.requests(); len(seen) != 0 {

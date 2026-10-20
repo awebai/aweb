@@ -445,7 +445,8 @@ path is agent-visible is refused at install:
   uses the same method, ignores trailing and repeated slashes, and lets a
   caller segment holding a placeholder cover one or more segments, since its
   value may carry an encoded `/`. v2 tool paths carry no percent-encoding, so
-  literal segments compare as the server sees them. This is defence in
+  literal segments compare as the server sees them. Path parameter values
+  are never `.` or `..`, so a value cannot remove a segment. This is defence in
   depth; the guarantee is below;
 - another tool, the `invoke_tool` included, declares an `answer` input,
   top-level or inside an object body parameter (`answer_input_forbidden`).
