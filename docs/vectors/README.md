@@ -243,7 +243,8 @@ sequence is for the task service. See
 `proposal_sha256` for page proposals (aweb-acgg.8): canonical bytes and
 digests over a record's collection, id and value, a bundle built from item
 digests, and value refusals. The reference consumers are `aweb_naapp.pages` in
-`naapp-lib/tests/pages/` and `cli/go/awid/`. See [page actions](../page-actions.md) §4.
+`naapp-lib/tests/pages/` and `cli/go/awid/`. See
+[the page format](../page-format.md) §5.
 
 ### `approval-request-v1.json`
 

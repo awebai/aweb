@@ -16,10 +16,13 @@ from aweb_naapp.runtime.task_requests import (
     answer_sha256,
     app_request_credential,
     parse_json,
+    sign_stage_receipt,
     sign_task_authorization,
+    stage_receipt_signing_bytes,
     task_authorization_signing_bytes,
     task_body_sha256,
     validate_task,
+    verify_stage_receipt,
     verify_task_authorization,
 )
 
@@ -49,7 +52,7 @@ def expected_bindings(payload: dict) -> dict:
         "installation_generation",
         "external_request_id",
         "task_body_sha256",
-        "target_did",
+        "target_dids",
         "action_id",
         "proposal_rev",
         "proposal_sha256",
@@ -143,3 +146,28 @@ def test_app_request_credential():
 @pytest.mark.parametrize("case", ANSWERS["bodies"], ids=lambda case: case["name"])
 def test_answer_digest(case):
     assert answer_sha256(case["body_md"]) == case["answer_sha256"]
+
+
+STAGE = ANSWERS["stage_receipt"]
+
+
+def test_stage_receipt_signing_bytes_and_signature():
+    valid = STAGE["valid"]
+    key = SigningKey(bytes.fromhex(ANSWERS["keys"]["app"]["seed_hex"]))
+    assert stage_receipt_signing_bytes(valid["payload"]) == valid["signing_bytes"].encode("utf-8")
+    assert sign_stage_receipt(valid["payload"], key) == valid["signature"]
+
+
+@pytest.mark.parametrize("case", STAGE["verification_cases"], ids=lambda case: case["name"])
+def test_stage_receipt_verification_cases(case):
+    def verify():
+        verify_stage_receipt(
+            case["payload"], case["signature"], expected=case["expected"], now=at(case["now"])
+        )
+
+    if case["expect"] is None:
+        verify()
+        return
+    with pytest.raises(TaskRequestRefused) as refused:
+        verify()
+    assert refused.value.code == case["expect"]

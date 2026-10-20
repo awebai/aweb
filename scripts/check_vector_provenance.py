@@ -51,8 +51,11 @@ ROOT_CONSUMERS = {
         'Path(__file__).resolve().parents[2] / "docs" / "vectors"',
     ),
     PurePosixPath("cli/go/awid/app_task_authorization_test.go"): _consumer(
-        ("app-task-authorization-v1.json", "page-proposal-v1.json"),
+        "app-task-authorization-v1.json",
         '"../../../docs/vectors/app-task-authorization-v1.json"',
+    ),
+    PurePosixPath("cli/go/awid/page_proposal_test.go"): _consumer(
+        "page-proposal-v1.json",
         '"../../../docs/vectors/page-proposal-v1.json"',
     ),
     PurePosixPath("cli/go/cmd/aw/agent_status_test.go"): _consumer(

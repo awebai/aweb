@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "proposal_sha256 (docs/page-actions.md §4): sha256: plus the hex SHA-256 of aweb.page-proposal/1\\n followed by the canonical JSON of {collection, record_id, value}. The record revision is not hashed. `bundle` checks that item digests feed the C1 bundle digest (docs/page-format.md §5). Refusals are parsed values without one canonical form; duplicate keys and non-finite numbers are refused earlier, when the page is parsed (page-format limits).",
+  "description": "proposal_sha256 (docs/page-format.md §5): sha256: plus the hex SHA-256 of aweb.page-proposal/1\\n followed by the canonical JSON of {collection, record_id, value}. The record revision is not hashed. `bundle` checks that item digests feed the C1 bundle digest (docs/page-format.md §5). Refusals are parsed values without one canonical form; duplicate keys and non-finite numbers are refused earlier, when the page is parsed (page-format limits).",
   "prefix": "aweb.page-proposal/1\n",
   "cases": [
     {
@@ -73,6 +73,36 @@
       "proposal_sha256": "sha256:39697dc3d77a36800c4bb21b446cff82a98463f0120e06e6866bbbc179aa8f29"
     },
     {
+      "name": "line-and-paragraph-separators",
+      "collection": "drafts",
+      "record_id": "draft-2",
+      "value": {
+        "message": "First line second line next paragraph"
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"drafts\",\"record_id\":\"draft-2\",\"value\":{\"message\":\"First line second line next paragraph\"}}",
+      "proposal_sha256": "sha256:18cc0b2f79276a62657d12550a9fdb12dbec2550b0b93ffe95dbca842ffada84"
+    },
+    {
+      "name": "escaped-backslash-before-u2028-text",
+      "collection": "drafts",
+      "record_id": "draft-3",
+      "value": {
+        "message": "a literal \\u2028 is six characters, and   is one"
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"drafts\",\"record_id\":\"draft-3\",\"value\":{\"message\":\"a literal \\\\u2028 is six characters, and   is one\"}}",
+      "proposal_sha256": "sha256:82b1faaa78b6c7b74228af6fbbb5856d7fa9ad4cb2e11d060a4287917b1fa96c"
+    },
+    {
+      "name": "controls-escaped",
+      "collection": "drafts",
+      "record_id": "draft-4",
+      "value": {
+        "message": "tab\there\u0001\u001f end"
+      },
+      "canonical": "aweb.page-proposal/1\n{\"collection\":\"drafts\",\"record_id\":\"draft-4\",\"value\":{\"message\":\"tab\\there\\u0001\\u001f end\"}}",
+      "proposal_sha256": "sha256:6f3c29af9068595bfc6941992fb58e0c859019b47f3c72b2968a4da6269e9a2e"
+    },
+    {
       "name": "same-value-other-record",
       "collection": "proposals",
       "record_id": "week-45",
@@ -110,6 +140,18 @@
     {
       "name": "integer-beyond-safe",
       "value_json": "{\"price\":9007199254740992}"
+    },
+    {
+      "name": "negative-beyond-safe",
+      "value_json": "{\"price\":-9007199254740992}"
+    },
+    {
+      "name": "exponent",
+      "value_json": "{\"price\":1e2}"
+    },
+    {
+      "name": "negative-zero-float",
+      "value_json": "{\"price\":-0.0}"
     }
   ]
 }

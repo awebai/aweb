@@ -36,17 +36,23 @@ own stored definition, never on the copy a caller sends.
 ## 2. Targets
 
 A target is resolved once, when the naapp accepts the action, and is then
-frozen in the journal and in the task authorization's `target_did`:
+frozen in the journal and in the task authorization's `target_dids`:
 
 - **Absent:** the page owner's agent principal.
 - **`did:aw:…` or `did:key:…`:** that principal. It must be a current member of
   the team.
 - **Anything else:** a role name in the grammar of `aweb_naapp.roles`
-  (dot-separated, lowercase, at most 128 bytes). It resolves through the
-  app's current role assignments to exactly one principal.
+  (dot-separated, lowercase, at most 128 bytes), resolved through the app's
+  current role assignments:
+  - for an `intent`, to exactly one principal;
+  - for a decision (a proposal a person answers), to the role's current
+    designated holders, at most 16, frozen at acceptance as the task's
+    `eligible_dids` with the role name as its `role`. Each holder is one
+    individually designated person. The assignee is one of them, shown as the
+    task's owner.
 
-Zero or several principals is 422 `target_unresolved`. There is no fallback
-and no silent reassignment. A later retarget is a separate, audited
+No principal, or several for an `intent`, or more than 16 for a decision, is
+422 `target_unresolved`. There is no fallback and no silent reassignment. A later retarget is a separate, audited
 operation by an authorized member.
 
 ## 3. Submitting an action: `POST /v1/pages/{page_id}/actions`
@@ -91,7 +97,8 @@ committed.
 ## 4. Proposals and their digest
 
 A proposal is a record that a person decides on. Its digest binds the
-record's identity and exact value:
+record's identity and exact value, as [page-format.md](page-format.md) §5
+defines it:
 
 ```text
 proposal_sha256 = "sha256:" || hex(SHA-256("aweb.page-proposal/1\n" || C(proposal)))
@@ -125,18 +132,31 @@ the answer path stays a single surface-only tool that the manifest's
 answer-route checks cover:
 
 1. **Stage.** A body `{"stage": {expected_task_rev, choice, input,
-   proposal_rev, proposal_sha256, answer_key}}`. The naapp checks that the task
+   proposal_rev, proposal_sha256, answer_key}}`. `input` is only the
+   answer action's additional input, validated against its `input_schema`. It
+   never repeats `choice`, the proposal or the task revision, which the stage
+   body carries. An answer action with no additional input declares
+   `{"type": "object", "additionalProperties": false}` and stages `{}`; a
+   renderer fills only fields the person entered, and refuses visibly when the
+   schema requires input it has no control for. The naapp checks that the task
    is the card's and that the proposal is still current. It then stores the
    answer (choice and input) with the page, and returns
-   `{answer_key, body_md, answer_sha256, approval_id, challenge}`. `body_md`
+   `{answer_key, body_md, answer_sha256, approval_id, challenge, stage_receipt}`. `body_md`
    is the answer's full text as the naapp renders it from the choice and
    input, deterministically, and `answer_sha256` is the bare hex SHA-256 of its
    UTF-8 bytes. The task comment shows that text to the team
    ([app-task-requests.md](app-task-requests.md) §4).
 
-   `challenge` is the approval adapter's challenge (§7).
+   `challenge` is the approval adapter's challenge (§7). Before staging, the
+   naapp checks, in the same transaction, that the signed-in member's
+   principal is in the task's `eligible_dids`, still holds its `role` when it
+   has one (`aweb_naapp.roles.has_role`), and is a current approval candidate.
+   Only then does it sign `stage_receipt`, the `aweb.app-answer-stage/1` that
+   the task service requires for this one answer
+   ([app-task-requests.md](app-task-requests.md) §4). A member removed from
+   the role gets no receipt, so the others can still answer.
 2. **Answer the task.** The same member answers the task with that
-   `answer_key`, `body_md` and `answer_sha256` ([app-task-requests.md](app-task-requests.md)
+   `answer_key`, `body_md`, `answer_sha256` and `stage_receipt` ([app-task-requests.md](app-task-requests.md)
    §4). A host that embeds the task service calls `answer_task_on`; any other
    caller uses `POST /v1/tasks/{ref}/answer`. The result is the answer receipt.
 3. **Confirm.** A body `{"confirm": {answer_key, task_answer_ref, proof}}`,
@@ -196,8 +216,24 @@ record and `proposal_sha256` is the bundle digest. The request is fixed when
 the card is shown. Changing any covered value needs a new approval.
 
 - The approval is minted when the decision task is created, with
-  `presentation: task` and `requested_by` set to the proposing principal's
-  DID.
+  `presentation: task` and `requested_by` set to the proposing principal's key
+  (derived as below). Its candidates come only from the app's approver
+  directory (`ApproverDirectory.candidates`), which reads the stored task named
+  by the request's `task_id` and returns one candidate per principal in its
+  frozen `eligible_dids` who holds its `role` at mint. Each candidate is
+  `{scope, subject, subject_type, principal_did}` in the subject space the
+  policy's assurance needs: for `member_session`, `subject` is the principal's
+  `did_aw` (a `did:key`-only principal gives no candidate); for `passkey`, the
+  app-local designation the owner mapped to that principal. The primitive
+  freezes them at mint; they are not part of `request_sha256`, and they are an
+  upper bound only.
+- On decide, the primitive records `decided_by` (`{scope, subject, assurance,
+  evidence_ref}`), which every later check reads. For a page decision, the
+  caller names the deciding candidate, and the primitive requires all of: the
+  task receipt's `answered_by.principal_did` (derived from the answering
+  certificate, never a caller field) equals that candidate's `principal_did`;
+  the candidate is in the frozen set; and the directory still reports it
+  current (designated, a member, certificate valid). Decision 53b.
 - It is decided only at step 3 of §5, with the receipt's `task_answer_ref`.
 - It is executable only while that receipt is `current`. A reopen therefore
   invalidates it before dispatch.
@@ -205,11 +241,23 @@ the card is shown. Changing any covered value needs a new approval.
   external effect, under one stable operation ID. An unknown outcome
   reconciles before any retry, and a new dispatch needs a new approval.
 
-**Requester and approver.** The primitive refuses at mint when the approver's
-subject equals `requested_by`, unless the action policy sets
-`allow_requester_approval` for an internal reversible action. `requested_by`
-and member approver subjects are both principal DIDs, so the comparison is
-exact. This is a B2 follow-up change (aweb-acgh.4 lane). Until it lands, the
+**Requester and approver.** At mint the primitive excludes the requester from
+the candidates, unless the action policy sets `allow_requester_approval`
+(default false), which a policy may do only for an internal reversible action
+(aweb-acgh.25). A mint left with no candidate is refused with
+`no_eligible_approver`; for a page decision, that is a proposal whose only
+eligible answerer is its own proposer. At decide, the
+decider must be one of the frozen candidates, still designated, enrolled at
+the policy's assurance and not the requester; mint-time filtering alone is not
+enough (decision 53, approver sets in the B2 primitive).
+The comparison is of raw strings, so both sides are derived the same way,
+from the verified certificate, with `aweb_naapp.roles.principal_key`: the
+certificate's `member_did_aw` when it carries one, otherwise its
+`member_did_key`. A `member_session` approver always has a `did_aw` (§7), so a
+member whose certificate carries one cannot approve their own request under a
+different spelling of themselves. Test, on the real path: a member whose
+certificate carries a `did_aw` proposes, the designated `member_session`
+approver is that same member, and mint is refused. Until that change lands, the
 pages naapp makes the same refusal before minting.
 
 ## 7. Approval adapters and minimum assurance
@@ -222,8 +270,8 @@ pages naapp makes the same refusal before minting.
   policy allows.
 
 The action policy, held by the naapp, sets `min_assurance`. A caller cannot
-choose it. The approval record stores the verified `authenticator`, and
-admission rechecks it.
+choose it. The approval records the verified assurance as
+`decided_by.assurance`, and admission rechecks it.
 
 ### `member_session`
 
@@ -254,7 +302,8 @@ returns partial evidence:
 
 Evidence: `subject` is the member's `did_aw`, `subject_type` is `member`, and
 `evidence_ref` references the stored request and attestation. The approver
-directory returns the same pair for member approvers.
+directory returns the same pair for member approvers, so the candidate the
+primitive froze at mint and the `decided_by` it records match exactly.
 
 ### `passkey`
 
