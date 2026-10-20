@@ -25,6 +25,9 @@ branch and lands only after an exact-SHA ACK from a non-author reviewer.
   its contract lives in (`docs/awid-sot.md`, `docs/app-registry.md`,
   `docs/app-events.md`, the aw command reference) and passes
   `scripts/check_sot_source_inventories.py` and `scripts/check-extension-docs.py`.
+- **Vectors.** A task that adds a conformance vector or a consumer of one
+  registers both and passes `make test-vector-provenance`
+  (`scripts/check_vector_provenance.py`).
 - **Released clients.** Changes are additive. A narrowing names its consumers
   and waits for measurement (cross-repo-change skill).
 - **Heavy runs** go through the suite lock.
@@ -202,9 +205,10 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
   - nothing reactivates a revoked key.
 - **Done-signal:** SHA ACKed, landed.
 - **Depends on:** acgh.8 landed; F6's admin policy (aweb-acgg.5) for the
-  team route; aweb-acgh.1's core post-mutation-hook outbox for the event
-  (until it exists, the route lands without the event only if the hooks lane
-  agrees; otherwise this task waits).
+  team route; aweb-acgh.1's core post-mutation-hook outbox (S2) for the
+  event. The route and its event commit together, so this task waits for the
+  outbox; the operator command can land first only if it also writes the
+  event.
 - **Review:** reviewer plus Athena.
 
 ### G1-b4: grant status read
@@ -348,7 +352,9 @@ Hosted-side item H1, on the board as L6 (aweb-acgg.31).
   activated bindings.
 - **Done-signal:** SHA ACKed, landed.
 - **Depends on:** G1-d1, G1-c2, G1-c3.
-- **Review:** reviewer.
+- **Review:** reviewer plus Athena: it authenticates with the `hook-resolve`
+  credential, and its answers decide where a producer delivers and which keys
+  a target accepts.
 
 ## E. Real-stack acceptance
 
