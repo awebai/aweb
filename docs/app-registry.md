@@ -202,7 +202,6 @@ Response:
   "digest": "sha256:4f3c000000000000000000000000000000000000000000000000000000000000",
   "granted_scopes": ["folio:read", "folio:write"],
   "installation_id": null,
-  "installation_epoch": null,
   "generation": null,
   "origin_verified": null,
   "as_of": "2026-10-20T12:00:00Z",
@@ -213,13 +212,10 @@ Response:
 - The team and the app come from the verified credential, never from the
   query, so an app reads only its own grant in the team that signed for.
 - `state` is `active`. Any other state grants no normal use.
-- `installation_id`, `installation_epoch`, `generation` and `origin_verified`
-  are always present and `null` until installations carry them. A consumer
-  that binds them refuses `null`. `installation_epoch` strictly increases each
-  time the app is installed anew in the team and is never reused, so it orders
-  two installations; `generation` is monotone within one installation.
-  `origin_verified` says whether the server verified the pinned bytes against
-  the app's origin; bytes being present is not that.
+- `installation_id`, `generation` and `origin_verified` are always present and
+  `null` until installations carry them. A consumer that binds them refuses
+  `null`. `origin_verified` says whether the server verified the pinned bytes
+  against the app's origin; bytes being present is not that.
 - `as_of` is the server's time of the answer, in UTC seconds.
 - `max_age_seconds` is how long the app may reuse the answer, counted from
   when it received it. It is `AWEB_APP_GRANT_MAX_AGE_SECONDS`, from 1 to 60
