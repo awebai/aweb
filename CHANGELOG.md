@@ -4,6 +4,45 @@
 
 ## Release preparations
 
+### Release preparation: server 1.27.30
+
+Server changes are since `server-v1.27.29`.
+
+- **Operator-facing:** `POST /v1/apps/install` is an audited operator route
+  (`apps.install`). A successful install writes its audit row in the same
+  transaction as the registration, and an authenticated refusal is recorded
+  after rollback. Without a verified audit actor on the request, a successful
+  install is refused with 500 and nothing is written. Certificate callers get
+  one from the server's own authentication. Identity-grant callers are refused
+  with 403, and the refusal is attributed to the grant's subject. An embedding host that
+  authenticates callers itself must set one with `set_verified_audit_actor`
+  before the route runs. Do not pin this release into a host until that host's
+  actor bridge is proven for `apps.install`.
+- App installs may carry the exact manifest bytes (`manifest`, base64). When
+  present, they must hash to the install's `digest`, and the app's emit keys,
+  event declarations and requested scopes come from those bytes. The install's
+  version, events and emitters must match the bytes, and its `granted_scopes`
+  must be a subset of the scopes the bytes request; otherwise the install is
+  refused with 422 and nothing is written. Installs without bytes behave as
+  before. Migration `028_team_app_install_bytes` records, per install, whether
+  it was registered from bytes, so operators can measure when every client
+  sends them.
+- The install body is bounded before it is parsed. A manifest over 10 MiB
+  (its padded base64 length), or an install body over that base64 length
+  plus 1 MiB, is refused with 413.
+- App request credentials are verified by purpose through one verifier. App
+  event emission keeps its credential and behaviour. Migration
+  `027_team_app_keys` adds the installing team's app keys and the purposes each
+  may sign. No route accepts the new read purposes in this release.
+
+### Release preparation: aw 1.36.45
+
+CLI changes are since `aw-v1.36.44`.
+
+- `aw plugin install` and `aw plugin update` send the exact fetched manifest
+  bytes with the install, for v1 manifests whose declared origin is the
+  install origin. Other installs are sent without bytes, as before.
+
 ### Release preparation: AWID 0.5.30
 
 Changes are since `awid-v0.5.29` / `awid-service-v0.5.29`.
