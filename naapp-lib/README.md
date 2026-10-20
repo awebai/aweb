@@ -119,5 +119,10 @@ the approval, decision, policy and the app's own origin.
 - Assertions are bound to one approval, purpose, task answer, request digest
   and policy version through `challenge_binding`. They need user verification, are
   single-use, and the authenticator counter must advance.
+- Designation is the owner's attestation of one natural person. The primitive
+  cannot detect sharing: a passkey or contact that several people share makes
+  every approval attributable only to the group. Every `Authenticator` must
+  likewise refuse non-individual principals; a `member_session` adapter needs a
+  per-member principal from the identity layer or a custody attestation.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.

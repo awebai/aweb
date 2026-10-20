@@ -15,6 +15,10 @@ every contact previously recorded for the scope is told. A contact change
 needs the approver's own passkey, takes effect after a delay, and is told to
 both the old and the new contact.
 
+Designation is the owner's attestation of one natural person. The primitive
+cannot detect sharing: a passkey or contact that several people share makes
+every approval attributable only to the group.
+
 A passkey proves an app-local human holds the enrolled authenticator. It says
 nothing about AWID membership, team identity or key custody.
 """

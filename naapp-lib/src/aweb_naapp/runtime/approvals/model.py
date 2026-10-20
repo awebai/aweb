@@ -294,6 +294,11 @@ class Authenticator(Protocol):
 
     Its challenge binds the approval, the purpose and, for a task presentation,
     the task answer reference, through `challenge_binding`.
+
+    The evidence subject must identify one natural person. Adapters must refuse
+    non-individual principals, such as a shared dashboard account: a
+    member_session adapter needs a per-member principal from the identity layer
+    or a custody attestation.
     """
 
     assurance: Assurance
