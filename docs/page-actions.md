@@ -111,8 +111,10 @@ action gets (policy, input, revisions):
    authorization exactly as received, as the request's first evidence, and the
    receipt. Mark the preparation accepted.
 
-**A replay** is the same key with the same identity after acceptance. It
-re-checks the caller's current read permission, then returns the stored
+**A replay** is the same key with the same identity after acceptance. The
+naapp recognizes it before any other check, so a revision that the request
+itself moved does not refuse it ([agent-pages.md §3](design/agent-pages.md)).
+It re-checks the caller's current read permission, then returns the stored
 receipt and admits nothing new. When it carries an authorization not yet
 stored and the request's `delivery` is still `pending`, the naapp verifies it
 as in step 2, against the caller's current certificate and authority, and
@@ -198,9 +200,10 @@ pending.
 
 **The signer** completes the payload with `v`, `type`, its own
 `actor_did_key` and current `certificate_id`, `issued_at`, `expires_at` and a
-fresh `nonce`, and signs it (app-task-requests.md §1). Before signing it runs
-`check_prepared_intent`. That checks that `task_body_sha256` is the digest of
-`task`, and that the bindings agree with the task as §3 step 5 requires:
+fresh `nonce`, and signs it (app-task-requests.md §1). Before signing it
+checks, as the reference `check_prepared_intent` does, that `task_body_sha256`
+is the digest of `task`, and that the bindings agree with the task as §3 step
+5 requires:
 `target_dids`, `external_request_id`, `action_id` against `action_ref`, and
 the proposal pair. The signer also checks that `aud` is the task service it
 expects, and that the app and installation are those of the page the member
