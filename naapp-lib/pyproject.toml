@@ -79,6 +79,12 @@ hooks = [
   "pynacl>=1.6.2",
 ]
 
+# Persistent pages need PostgreSQL and the frozen validator, not HTTP/auth deps.
+page-store = [
+  "pgdbm>=0.5.0",
+  "jsonschema>=4.23",
+]
+
 [project.urls]
 Homepage = "https://github.com/awebai/aweb/tree/main/naapp-lib"
 Repository = "https://github.com/awebai/aweb"
