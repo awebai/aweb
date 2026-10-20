@@ -84,6 +84,8 @@ authority.
   recovery boundaries.
 - [Team-auth request envelope v2](team-auth-envelope-v2.md) — signed relying-party
   request contract.
+- [Principal attestation](principal-attestation.md) — custodian-signed
+  statement of custody and channel for a team-auth request (proposal).
 - [AWID A2A publication contract](a2a-awid-publication-contract.md) — publication
   and bridge-delegation assertions.
 - [Agent health](agent-health.md) — status-host designation and the signed
