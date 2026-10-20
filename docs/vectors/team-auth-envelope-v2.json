@@ -57,6 +57,26 @@
       "canonical_payload": "{\"aud\":\"https://coordination.example.com\",\"body_sha256\":\"6968ffb71df7a14c4ec20c9bb266013dc0d5ff280ab6740239fd2628d3eaab63\",\"method\":\"POST\",\"path\":\"/v1/tasks\",\"team_id\":\"engineering:example.com\",\"timestamp\":\"2026-06-12T10:00:00Z\",\"v\":2}",
       "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2Nvb3JkaW5hdGlvbi5leGFtcGxlLmNvbSIsImJvZHlfc2hhMjU2IjoiNjk2OGZmYjcxZGY3YTE0YzRlYzIwYzliYjI2NjAxM2RjMGQ1ZmYyODBhYjY3NDAyMzlmZDI2MjhkM2VhYWI2MyIsIm1ldGhvZCI6IlBPU1QiLCJwYXRoIjoiL3YxL3Rhc2tzIiwidGVhbV9pZCI6ImVuZ2luZWVyaW5nOmV4YW1wbGUuY29tIiwidGltZXN0YW1wIjoiMjAyNi0wNi0xMlQxMDowMDowMFoiLCJ2IjoyfQ",
       "signature_b64": "enoVKTfWvAx5cGUujH1T+icPcuFgHzfPu2d7bJvnxdKuLartB67dJXXBexYOlg1KS4TSA2jwvjEKq9ZTnh2DAg"
+    },
+    {
+      "name": "oss_task_create_with_trace_id",
+      "seed_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+      "did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+      "body": "{\"title\":\"prepare review\"}",
+      "payload": {
+        "aud": "https://coordination.example.com",
+        "body_sha256": "6968ffb71df7a14c4ec20c9bb266013dc0d5ff280ab6740239fd2628d3eaab63",
+        "method": "POST",
+        "operation": "task.create",
+        "path": "/v1/tasks",
+        "team_id": "engineering:example.com",
+        "timestamp": "2026-06-12T10:00:00Z",
+        "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+        "v": 2
+      },
+      "canonical_payload": "{\"aud\":\"https://coordination.example.com\",\"body_sha256\":\"6968ffb71df7a14c4ec20c9bb266013dc0d5ff280ab6740239fd2628d3eaab63\",\"method\":\"POST\",\"operation\":\"task.create\",\"path\":\"/v1/tasks\",\"team_id\":\"engineering:example.com\",\"timestamp\":\"2026-06-12T10:00:00Z\",\"trace_id\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"v\":2}",
+      "signed_payload_b64url": "eyJhdWQiOiJodHRwczovL2Nvb3JkaW5hdGlvbi5leGFtcGxlLmNvbSIsImJvZHlfc2hhMjU2IjoiNjk2OGZmYjcxZGY3YTE0YzRlYzIwYzliYjI2NjAxM2RjMGQ1ZmYyODBhYjY3NDAyMzlmZDI2MjhkM2VhYWI2MyIsIm1ldGhvZCI6IlBPU1QiLCJvcGVyYXRpb24iOiJ0YXNrLmNyZWF0ZSIsInBhdGgiOiIvdjEvdGFza3MiLCJ0ZWFtX2lkIjoiZW5naW5lZXJpbmc6ZXhhbXBsZS5jb20iLCJ0aW1lc3RhbXAiOiIyMDI2LTA2LTEyVDEwOjAwOjAwWiIsInRyYWNlX2lkIjoiNGJmOTJmMzU3N2IzNGRhNmEzY2U5MjlkMGUwZTQ3MzYiLCJ2IjoyfQ",
+      "signature_b64": "3YYUCllNhvT1AM9V+ZyVKMnciQHCKdTRcJW1rS/pROPLn3Rr7iNvklW97qDFkt5WWPfHeBaor4Fgjb1fqpvgCg"
     }
   ],
   "negative_cases": [

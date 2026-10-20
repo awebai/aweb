@@ -160,8 +160,10 @@ tests.
 ### `team-auth-envelope-v2.json`
 
 Current request-bound team-auth canonical bytes and Ed25519 signatures. It
-includes a neutral OSS task request and a hosted-route interoperability case;
-negative cases cover cross-endpoint/origin replay, body tampering, and a missing
+includes a neutral OSS task request, the same request carrying a signed
+`trace_id` member (an additive case: extra signed members are signed and
+ignored by the auth layer, which is how aw-hooks carries its trace), and a
+hosted-route interoperability case; negative cases cover cross-endpoint/origin replay, body tampering, and a missing
 protocol version. The aweb server, Go conformance suite, and public naapp
 verifiers consume it. See
 [`team-auth-envelope-v2.md`](../team-auth-envelope-v2.md).
@@ -286,6 +288,66 @@ supersedes and never inherits activation, revocation's final entry and
 cancelled backlog, uninstall, and the order for switching targets. A model of
 the scheme in the naapp-lib tests replays every case, and the core binding
 registry consumes the same cases.
+
+### `hook-event-envelope-v1.json`
+
+The signed `aweb.hook-event/1` envelope (aweb-acgh.16.2; contract in
+[`hook-events.md`](../hook-events.md)). Positive cases pin, for fixed seeds,
+the envelope, its signing bytes (the prefix and canonical JSON) and the
+detached Ed25519 signature: a core mutation, a core registry fact with a system
+actor, an app secret use by an identity-grant actor, and a client command
+signed by its own actor. Each negative carries its signing bytes and signature
+and one expected refusal. The `envelope` layer covers a wrong prefix,
+non-canonical bytes (including `-0`), a float, a duplicate key (plain or
+escaped), a leading zero or plus sign, an out-of-range integer, an integer
+too long to parse, nesting deeper
+than eight, a non-ASCII string, null, unknown and missing fields, an impossible
+or imprecise time, more than four or non-strict attestations, a client
+producer with a `seq`, a non-Ed25519 `did:key`, three respellings of the
+signature (padded, URL alphabet, nonzero trailing bits), an unknown catalog or hook, a zero trace id, a
+fired time before the occurred time, the actor rules, a nested payload value, a
+producer kind the hook does not allow, a client actor that is not its signer, a
+team mismatch and a wrong signature. The `catalog` layer passes the envelope
+checks and is refused by the catalog reader. A digest construction case shows
+`request_sha256` taken before credential injection. The Go authority in
+`cli/go/hookevent` regenerates every case byte for byte.
+
+### `hook-delivery-credential-v1.json`
+
+The `AWEB-Hook DIDKey` request credential that carries an event to one binding
+(aweb-acgh.16.2; contract in [`hook-events.md`](../hook-events.md)). Positive
+cases pin the headers, the canonical signed payload and the body for a core
+producer and for a client producer carrying its team certificate. Negatives
+refuse a client delivery without its certificate or with one for another key,
+team or certificate id, or not signed by the team's current key; three
+respellings of the credential signature; a padded signed payload; an empty
+team id; a timestamp with a fraction; an app-event or `hook-resolve` credential at
+a hook target, either purpose's payload under the hook scheme, a payload altered
+after signing, a cross-audience or cross-endpoint request, a tampered body, a
+stale or future timestamp, a wrong binding, a credential naming another event
+or team, and a signer that is not the event's producer. Each negative is a full
+request with the receiver's own options and one expected refusal.
+
+### `owner-act-v1.json`
+
+The `aweb.owner-act/1` artifact, signed by a team's current controller key
+(aweb-acgh.16.3; contract in [`owner-act.md`](../owner-act.md)). Positive cases
+cover every act in the three vocabularies (core, app and logs) with their
+subjects, including registration and production bindings. Each case carries the
+verifier's own facts: its team, the current team key, its audience and
+vocabulary, its clock, the stored subject and the nonce state. Negatives refuse
+an admin signer and a rotated-out team key (`owner_required`), a claimed team
+key that an admin signed, expiry, an act issued in the future, a lifetime over
+ten minutes, a reused nonce, a subject whose generation or digest differs, a
+designation for another contact or naming a subject, an act
+outside the verifier's vocabulary or audience, another team, a team
+certificate presented as an owner act, an unknown act, kind-specific subject
+fields on the wrong kind, a missing conditional field, a reversed erase range,
+a duplicate key, a float, null, a non-ASCII string, a wrong version or type,
+an impossible date, an act that expires when issued, a malformed nonce, three
+respellings of the signature, and non-canonical bytes. A positive pins the
+inclusive 60-second lead. The Go authority in
+`cli/go/awid/owneract.go` regenerates the vector byte for byte.
 
 ## Experimental and compatibility A2A fixtures
 
