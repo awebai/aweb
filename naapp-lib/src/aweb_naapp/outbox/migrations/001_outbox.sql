@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS {{tables.outbox_deliveries}} (
     last_error_class TEXT,
     cancel_reason    TEXT,
     receipt          BYTEA,
+    -- When the target acknowledged the delivery: its arrival order at the target.
+    acked_at         TIMESTAMPTZ,
+    -- When an operator accepted a dead letter as lost, releasing its bytes.
+    acknowledged_at  TIMESTAMPTZ,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (event_id, target_id)

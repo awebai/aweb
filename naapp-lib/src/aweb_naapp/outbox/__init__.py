@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 MIGRATIONS_PATH = Path(__file__).resolve().parent / "migrations"
 MIGRATIONS_MODULE = "aweb_naapp_outbox"
+MAX_CALL_TIMEOUT_SECONDS = 30.0
 
 
 class OutboxConflict(Exception):
@@ -106,12 +107,21 @@ class Cancelled:
 
 Outcome = Acked | Retryable | Permanent | Conflict | Cancelled
 
-# The event's targets, or None when they cannot be resolved now.
+# The event's targets, or None when they cannot be resolved now. It runs inside
+# the drain's transaction, so it must bound its own network calls; the drain
+# also abandons it after RetryPolicy.call_timeout_seconds (at most 30 s).
 Resolver = Callable[[StoredEvent], Awaitable[Sequence[Target] | None]]
 
 
 class Transport(Protocol):
-    async def deliver(self, event: StoredEvent, target: Target) -> Outcome: ...
+    async def deliver(self, event: StoredEvent, target: Target) -> Outcome:
+        """Send one delivery and classify the result.
+
+        It runs holding the delivery's row lock and a database connection, so
+        it must bound its own network calls; the drain also abandons it after
+        ``RetryPolicy.call_timeout_seconds`` (at most 30 s) and retries it.
+        """
+        ...
 
 
 @dataclass(frozen=True)
@@ -122,12 +132,19 @@ class RetryPolicy:
     ``max_seconds``. A delivery still failing ``stalled_after`` its event was
     enqueued becomes ``stalled`` and keeps being retried. A ``Permanent``
     failure becomes ``rejected`` on its ``rejected_after_attempts``-th attempt.
+    A resolver or transport call still running after ``call_timeout_seconds``
+    is abandoned: the event stays unmaterialized, or the delivery is retried.
     """
 
     stalled_after: timedelta
     base_seconds: int = 5
     max_seconds: int = 300
     rejected_after_attempts: int = 8
+    call_timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        if not 0 < self.call_timeout_seconds <= MAX_CALL_TIMEOUT_SECONDS:
+            raise ValueError(f"call_timeout_seconds must be in (0, {MAX_CALL_TIMEOUT_SECONDS}]")
 
 
 @dataclass(frozen=True)
@@ -249,7 +266,9 @@ def _meta(value: Any) -> Mapping[str, Any]:
     return json.loads(value) if isinstance(value, str) else value
 
 
-async def _materialize(db: AsyncDatabaseManager, resolver: Resolver, limit: int) -> int:
+async def _materialize(
+    db: AsyncDatabaseManager, resolver: Resolver, policy: RetryPolicy, limit: int
+) -> int:
     materialized = 0
     async with db.transaction() as tx:
         rows = await tx.fetch_all(
@@ -266,7 +285,7 @@ async def _materialize(db: AsyncDatabaseManager, resolver: Resolver, limit: int)
         for row in rows:
             event = _stored(row)
             try:
-                targets = await resolver(event)
+                targets = await asyncio.wait_for(resolver(event), policy.call_timeout_seconds)
             except Exception:
                 logger.exception("Outbox resolver failed for event %s", event.event_id)
                 continue
@@ -314,7 +333,12 @@ async def _deliver_one(
         event = _stored(row)
         target = Target(row["target_id"], _meta(row["target_meta"]))
         try:
-            outcome = await transport.deliver(event, target)
+            outcome = await asyncio.wait_for(
+                transport.deliver(event, target), policy.call_timeout_seconds
+            )
+        except TimeoutError:
+            logger.warning("Outbox delivery of %s to %s timed out", event.event_id, target.id)
+            outcome = Retryable("timeout")
         except Exception as exc:
             logger.warning(
                 "Outbox delivery of %s to %s raised %s",
@@ -336,7 +360,7 @@ async def _record(
             """
             UPDATE {{tables.outbox_deliveries}}
             SET state = $3, receipt = $4, attempts = attempts + 1, last_error_class = NULL,
-                updated_at = NOW()
+                acked_at = clock_timestamp(), updated_at = NOW()
             WHERE event_id = $1 AND target_id = $2
             """,
             *key,
@@ -396,7 +420,11 @@ async def _finish_drained(db: AsyncDatabaseManager) -> int:
         WHERE e.materialized_at IS NOT NULL AND e.drained_at IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM {{tables.outbox_deliveries}} d
-            WHERE d.event_id = e.event_id AND d.state IN ('pending', 'stalled')
+            WHERE d.event_id = e.event_id
+              AND (
+                d.state IN ('pending', 'stalled')
+                OR (d.state IN ('rejected', 'conflict') AND d.acknowledged_at IS NULL)
+              )
           )
         RETURNING e.event_id
         """
@@ -418,7 +446,7 @@ async def drain(
     event. Each delivery is sent and recorded in its own transaction, holding
     its row lock, so a crash mid-send leaves it pending for the next drain.
     """
-    materialized = await _materialize(db, resolver, limit)
+    materialized = await _materialize(db, resolver, policy, limit)
     delivered = failed = 0
     for _ in range(limit):
         outcome = await _deliver_one(db, transport, policy)
@@ -488,16 +516,62 @@ async def cancel(
     return [row["event_id"] for row in rows]
 
 
+async def redrive(
+    db: AsyncDatabaseManager, target_id: str, event_ids: Sequence[UUID]
+) -> list[UUID]:
+    """Send the named rejected deliveries to the target again, from a fresh
+    attempt count, and return the redriven event ids. A conflict is never
+    redriven: the target holds other bytes under that event id."""
+    rows = await db.fetch_all(
+        """
+        UPDATE {{tables.outbox_deliveries}}
+        SET state = 'pending', attempts = 0, next_attempt_at = NOW(), last_error_class = NULL,
+            updated_at = NOW()
+        WHERE target_id = $1 AND state = 'rejected' AND acknowledged_at IS NULL
+          AND event_id = ANY($2::uuid[])
+        RETURNING event_id
+        """,
+        target_id,
+        list(event_ids),
+    )
+    return [row["event_id"] for row in rows]
+
+
+async def acknowledge_dead_letters(
+    db: AsyncDatabaseManager, target_id: str, event_ids: Sequence[UUID]
+) -> list[UUID]:
+    """Accept the named rejected or conflicting deliveries as lost, and return
+    their event ids. Until then a dead letter keeps its event's bytes, so it can
+    be inspected and redriven; once acknowledged, the event can be tombstoned."""
+    rows = await db.fetch_all(
+        """
+        UPDATE {{tables.outbox_deliveries}}
+        SET acknowledged_at = NOW(), updated_at = NOW()
+        WHERE target_id = $1 AND state IN ('rejected', 'conflict') AND acknowledged_at IS NULL
+          AND event_id = ANY($2::uuid[])
+        RETURNING event_id
+        """,
+        target_id,
+        list(event_ids),
+    )
+    return [row["event_id"] for row in rows]
+
+
 async def latest_receipt(db: AsyncDatabaseManager, target_id: str) -> bytes | None:
-    """The receipt of the last-enqueued event the target acknowledged with one.
-    Delivery rows, with their receipts, are kept after their event drains."""
+    """The receipt the target gave last, in arrival order.
+
+    A target appends in the order deliveries arrive, not in enqueue order, so
+    its newest receipt commits to its longest prefix. Receipts of first
+    appends (``delivered``) are preferred; a ``duplicate`` ack's receipt is
+    returned only when the target appended nothing. Delivery rows, with their
+    receipts, are kept after their event drains.
+    """
     value = await db.fetch_value(
         """
-        SELECT d.receipt
-        FROM {{tables.outbox_deliveries}} d
-        JOIN {{tables.outbox_events}} e ON e.event_id = d.event_id
-        WHERE d.target_id = $1 AND d.state IN ('delivered', 'duplicate') AND d.receipt IS NOT NULL
-        ORDER BY e.position DESC
+        SELECT receipt
+        FROM {{tables.outbox_deliveries}}
+        WHERE target_id = $1 AND state IN ('delivered', 'duplicate') AND receipt IS NOT NULL
+        ORDER BY (state = 'delivered') DESC, acked_at DESC
         LIMIT 1
         """,
         target_id,
@@ -506,8 +580,8 @@ async def latest_receipt(db: AsyncDatabaseManager, target_id: str) -> bytes | No
 
 
 async def outbox_status(db: AsyncDatabaseManager) -> OutboxStatus:
-    """Per target: undelivered, stalled, dead-letter (conflict or rejected) and
-    cancelled counts, and the age of the oldest undelivered event. Per team: the
+    """Per target: undelivered, stalled, dead-letter (conflict or rejected, not
+    yet acknowledged) and cancelled counts, and the age of the oldest undelivered event. Per team: the
     events not yet materialized, and the oldest one's age. Faults: critical
     events left with no delivery pending or acknowledged."""
     target_rows = await db.fetch_all(
@@ -515,7 +589,9 @@ async def outbox_status(db: AsyncDatabaseManager) -> OutboxStatus:
         SELECT d.target_id,
                count(*) FILTER (WHERE d.state = 'pending') AS pending,
                count(*) FILTER (WHERE d.state = 'stalled') AS stalled,
-               count(*) FILTER (WHERE d.state IN ('conflict', 'rejected')) AS dead_letter,
+               count(*) FILTER (
+                   WHERE d.state IN ('conflict', 'rejected') AND d.acknowledged_at IS NULL
+               ) AS dead_letter,
                count(*) FILTER (WHERE d.state = 'cancelled') AS cancelled,
                EXTRACT(EPOCH FROM NOW() - min(e.created_at)
                        FILTER (WHERE d.state IN ('pending', 'stalled'))) AS oldest
