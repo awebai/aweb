@@ -350,3 +350,29 @@ async def test_registrations_carry_no_keys(team):
     response = await _get(team, SECRETS, "secrets_key", _resolution("registrations"))
     [binding] = response.json()["bindings"]
     assert "keys" not in binding
+
+
+@pytest.mark.asyncio
+async def test_a_key_of_an_earlier_digest_reads_nothing(team):
+    db = team["db"]
+    await _activate(db, team["production"].binding_id)
+    await _activate(db, team["registration"].binding_id)
+    moved = {**SECRETS, "digest": "sha256:" + "3" * 64}
+    await _install(db, moved, installation_id="inst-secrets", declarations=[SECRET_USE])
+    response = await _get(team, SECRETS, "secrets_key", _resolution("registrations"))
+    assert response.status_code == 403
+    assert response.json()["detail"] == "app_key_not_registered"
+
+
+@pytest.mark.asyncio
+async def test_a_productions_keys_are_only_those_of_its_own_installed_digest(team):
+    db = team["db"]
+    await _activate(db, team["production"].binding_id)
+    await _activate(db, team["registration"].binding_id)
+    other_digest = {**SECRETS, "digest": "sha256:" + "4" * 64}
+    await _install(db, other_digest, team_id=OTHER_TEAM, installation_id="inst-elsewhere", declarations=[SECRET_USE])
+    await _register_key(db, other_digest, kid="hook-other-digest", purposes=["hook-event"])
+    _, own_did = await _register_key(db, SECRETS, kid="hook-own", purposes=["hook-event"])
+    response = await _get(team, LOGS, "logs_key", _resolution("productions"))
+    [binding] = response.json()["bindings"]
+    assert binding["keys"] == [{"kid": "hook-own", "did_key": own_did, "purposes": ["hook-event"]}]
