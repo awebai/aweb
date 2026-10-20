@@ -99,7 +99,8 @@ exactly one dispatch of that exact request.
   approver, a contact or a delivery. The requester sees only `RequesterView`
   (`request_id`, state, delivery status, outcome): never a link, token or
   capability. The requester rule compares `requested_by` with each approver's
-  subject, so the app names both the same way.
+  subject and, when set, their `principal_did`, at mint and again at decide,
+  so the app names the requester the same way.
 - **One decision.** Any one candidate decides, and the first approve or reject
   is the only one: it is recorded as `decided_by` (scope, subject, assurance,
   evidence ref) and every other candidate's link is revoked. A failed ceremony
