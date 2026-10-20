@@ -75,6 +75,31 @@ async def test_admission_records_identity_and_check_only_uses_sql(db, setup):
     assert source.calls == 0
 
 
+async def test_bound_admission_observes_before_its_lock_free_check_phase(db, setup):
+    fence, source = setup
+    bound = fence.for_admission(source.current)
+    async with db.transaction() as tx:
+        await bound.prepare(tx)
+        await bound.check(tx, object())
+    assert bound.admitted.installation_id == "installation-1"
+    source.current = AssertionError("dispatch phases must be SQL only")
+    dispatch_fence = fence.for_installation(bound.admitted)
+    async with db.transaction() as tx:
+        await dispatch_fence.prepare(tx)
+        await dispatch_fence.check(tx, object())
+    assert source.calls == 0
+
+
+async def test_bound_check_refuses_if_s3_did_not_prepare_its_transaction(db, setup):
+    fence, source = setup
+    admitted = await admit(db, fence, source.current)
+    bound = fence.for_installation(admitted)
+    async with db.transaction() as tx:
+        with pytest.raises(InstallationRefused) as exc:
+            await bound.check(tx, object())
+    assert exc.value.code == "authority_unavailable"
+
+
 @pytest.mark.parametrize("current", [grant(None, 1), grant("installation-1", None)])
 async def test_missing_identity_is_never_synthesized(db, setup, current):
     fence, _ = setup
@@ -249,11 +274,37 @@ async def test_dispatch_share_lock_serializes_with_observed_generation(db, setup
     assert exc.value.code == "generation_superseded"
 
 
+async def test_expiry_is_rechecked_after_waiting_for_the_fence_lock(db, setup):
+    fence, source = setup
+    admitted = await admit(db, fence, source.current)
+    await db.execute(
+        "UPDATE {{tables.installation_fences}} SET fresh_until = clock_timestamp() + interval '200 milliseconds'"
+    )
+    started = asyncio.Event()
+
+    async def blocked_check():
+        started.set()
+        await check(db, fence, admitted)
+
+    async with db.transaction() as tx:
+        # Lock without changing the tuple: a projection in the locking query
+        # can otherwise retain the pre-wait clock result (the review finding).
+        await tx.fetch_one("SELECT * FROM {{tables.installation_fences}} FOR UPDATE")
+        contender = asyncio.create_task(blocked_check())
+        await started.wait()
+        await asyncio.sleep(0.35)
+        assert not contender.done()
+    with pytest.raises(InstallationRefused) as exc:
+        await asyncio.wait_for(contender, 2)
+    assert exc.value.code == "authority_unavailable"
+
+
 async def test_app_fences_do_not_share_installations(db, setup):
     fence, source = setup
     admitted = await admit(db, fence, source.current)
     other = InstallationFence(db, app_id="unrelated", grants=source)
-    await admit(db, other, grant("other-installation"))
+    # Isolate app identity: IDs and generations deliberately match.
+    await admit(db, other, source.current)
     await check(db, fence, admitted)
     with pytest.raises(InstallationRefused):
         await check(db, other, admitted)
