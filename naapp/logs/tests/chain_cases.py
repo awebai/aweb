@@ -241,6 +241,39 @@ def cases() -> list[ChainCase]:
         chain[1], link=other_link, event_hash=other_link.event_hash()
     )
 
+    def rehashed(event: StoredEvent, **link_changes: Any) -> StoredEvent:
+        link = dataclasses.replace(event.link, **link_changes)
+        return dataclasses.replace(event, link=link, event_hash=link.event_hash())
+
+    # The normative break order, pinned pair by pair: each case puts two
+    # adjacent faults on one event, so the earlier check is the one reported.
+    # content_missing and commitment_mismatch never meet: without content
+    # there is no commitment to check.
+    duplicate_of_another_team = [
+        chain[0],
+        chain[1],
+        rehashed(chain[1], team_id="other:example.com"),
+        chain[2],
+    ]
+    another_team_unlinked = copy.copy(chain)
+    another_team_unlinked[1] = rehashed(
+        chain[1], team_id="other:example.com", prev_event_hash=chain[2].event_hash
+    )
+    wrong_hash_without_content = copy.copy(chain)
+    wrong_hash_without_content[2] = dataclasses.replace(
+        chain[2], content=None, event_hash=chain[1].event_hash
+    )
+    wrong_key_and_skeleton = copy.copy(chain)
+    wrong_key_and_skeleton[0] = rehashed(
+        dataclasses.replace(
+            chain[0],
+            content=dataclasses.replace(contents[0], producer_did_key=did_key(SECRETS_SEED[::-1])),
+        ),
+        hook="post-governance-hook",
+    )
+    skeleton_only = copy.copy(chain)
+    skeleton_only[0] = rehashed(chain[0], hook="post-governance-hook")
+
     forged_by_other_key = checkpoint(1, 3, chain[-1].event_hash, key_seed=OTHER_LOGS_SEED)
     claimed_logs_key = (
         head[0],
@@ -349,6 +382,36 @@ def cases() -> list[ChainCase]:
         ),
         ChainCase("duplicate_sequence", start, duplicate, _broken(2, "sequence_duplicate")),
         ChainCase("event_of_another_team", start, other_team, _broken(2, "wrong_chain")),
+        ChainCase(
+            "duplicate_comes_before_wrong_chain",
+            start,
+            duplicate_of_another_team,
+            _broken(2, "sequence_duplicate"),
+        ),
+        ChainCase(
+            "wrong_chain_comes_before_a_broken_link",
+            start,
+            another_team_unlinked,
+            _broken(2, "wrong_chain"),
+        ),
+        ChainCase(
+            "wrong_event_hash_comes_before_missing_content",
+            start,
+            wrong_hash_without_content,
+            _broken(3, "event_hash_mismatch"),
+        ),
+        ChainCase(
+            "provenance_comes_before_the_skeleton",
+            start,
+            wrong_key_and_skeleton,
+            _broken(1, "provenance_invalid"),
+        ),
+        ChainCase(
+            "skeleton_that_disagrees_with_its_envelope",
+            start,
+            skeleton_only,
+            _broken(1, "skeleton_mismatch"),
+        ),
         ChainCase(
             "forged_checkpoints",
             start,
