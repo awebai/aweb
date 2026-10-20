@@ -2,33 +2,23 @@
 
 from __future__ import annotations
 
-import base64
 import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import HTTPException, Request
+from fastapi import Request
 
-from awid.dns_auth import enforce_timestamp_skew, require_timestamp
-from awid.log import canonical_server_origin
-from awid.signing import canonical_json_bytes, verify_did_key_signature
-
+from aweb.app_credentials import APP_EVENT, verify_app_credential
 from aweb.app_registry import (
-    get_active_app_emit_key,
     get_installed_app_event_type,
     normalize_app_event_type,
     normalize_delivery_intent,
     normalize_local_event_type,
     validate_team_id,
 )
-from aweb.config import get_settings
 from aweb.service_errors import ForbiddenError, ValidationError
-from aweb.team_auth_envelope import decode_signed_payload_header, raw_request_target
 
-APP_EVENT_AUTH_PREFIX = "AWEB-App DIDKey "
-APP_EVENT_AUTH_VERSION = 1
-APP_EVENT_AUTH_KIND = "app-event"
 APP_EVENT_LOOKBACK_SECONDS = 300
 
 INTENT_RANK = {"ambient": 0, "wake": 1, "steer": 2}
@@ -67,91 +57,14 @@ class AppEventSubscription:
     updated_at: str
 
 
-def _b64decode_signature(value: str) -> bytes:
-    try:
-        return base64.b64decode(value)
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid app event signature") from exc
-
-
-def _app_event_allowed_audiences(request: Request) -> set[str]:
-    configured = str(getattr(request.app.state, "public_origin", "") or "").strip()
-    return {canonical_server_origin(configured or get_settings().public_origin)}
-
-
 async def verify_app_event_auth(request: Request, db) -> AppEventAuth:
-    auth = (request.headers.get("Authorization") or "").strip()
-    if not auth.startswith(APP_EVENT_AUTH_PREFIX):
-        raise HTTPException(status_code=401, detail="Missing app event Authorization header")
-    rest = auth[len(APP_EVENT_AUTH_PREFIX):].strip()
-    parts = rest.split()
-    if len(parts) != 2:
-        raise HTTPException(status_code=401, detail="Malformed app event Authorization header")
-    did_key, signature_b64 = parts
-
-    app_id = (request.headers.get("X-AWEB-App-ID") or "").strip().lower()
-    kid = (request.headers.get("X-AWEB-App-Key-ID") or "").strip()
-    team_id = validate_team_id((request.headers.get("X-AWEB-Team-ID") or "").strip())
-    timestamp = require_timestamp(request)
-    try:
-        enforce_timestamp_skew(timestamp)
-    except HTTPException:
-        raise
-
-    body_sha256 = getattr(request.state, "body_sha256", None)
-    if body_sha256 is None:
-        import hashlib as _hashlib
-        body_sha256 = _hashlib.sha256(getattr(request.state, "cached_body", b"") or b"").hexdigest()
-
-    try:
-        canonical = decode_signed_payload_header(str(request.headers.get("X-AWEB-Signed-Payload") or "").strip())
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid app event signed payload") from exc
-    try:
-        payload = json.loads(canonical)
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="Invalid app event signed payload") from exc
-    if not isinstance(payload, dict) or canonical_json_bytes(payload) != canonical:
-        raise HTTPException(status_code=401, detail="Invalid app event signed payload")
-
-    expected = {
-        "v": APP_EVENT_AUTH_VERSION,
-        "auth": APP_EVENT_AUTH_KIND,
-        "method": request.method.upper(),
-        "path": raw_request_target(request),
-        "team_id": team_id,
-        "app_id": app_id,
-        "kid": kid,
-        "did_key": did_key,
-        "body_sha256": body_sha256,
-        "timestamp": timestamp,
-    }
-    for field, expected_value in expected.items():
-        if payload.get(field) != expected_value:
-            raise HTTPException(status_code=401, detail="App event signed payload does not match request")
-
-    aud = str(payload.get("aud") or "").strip()
-    try:
-        canonical_aud = canonical_server_origin(aud)
-    except Exception as exc:
-        raise HTTPException(status_code=401, detail="App event signed payload audience is invalid") from exc
-    if canonical_aud not in _app_event_allowed_audiences(request):
-        raise HTTPException(status_code=401, detail="App event signed payload audience is not allowed")
-
-    try:
-        verify_did_key_signature(
-            did_key=did_key,
-            payload=canonical,
-            signature_b64=signature_b64,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail="Invalid app event signature") from exc
-
-    row = await get_active_app_emit_key(db, team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
-    if row is None:
-        raise HTTPException(status_code=403, detail="App emit key is not registered")
-
-    return AppEventAuth(team_id=team_id, app_id=app_id, kid=kid, did_key=did_key)
+    credential = await verify_app_credential(request, db, APP_EVENT)
+    return AppEventAuth(
+        team_id=credential.team_id,
+        app_id=credential.app_id,
+        kid=credential.kid,
+        did_key=credential.did_key,
+    )
 
 
 def _to_jsonable_payload(payload: dict[str, Any] | None) -> str:

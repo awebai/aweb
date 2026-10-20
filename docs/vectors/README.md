@@ -67,7 +67,8 @@ coordination server URL. Signing bytes are the `aweb.team-server/1` domain
 prefix and a newline, followed by canonical JSON of the record. Valid cases
 carry their exact signing bytes; refused cases carry the stable refusal code
 and AWID status (missing prefix, non-current key, team mismatch, far-future
-`issued_at`, not newer than the stored record, plain http outside loopback).
+`issued_at`, `issued_at` with non-ASCII digits or an impossible date, not newer
+than the stored record, plain http outside loopback).
 Seeds are public test material. The AWID real-route tests consume these
 bytes. See [the team contract](../awid-sot.md#teams).
 
@@ -210,6 +211,20 @@ transfer. These bytes authorize no storage, ingress, migration, or activation
 behavior by themselves.
 
 ## Agreed fixtures ahead of implementation
+
+### `page-format-v1.json`
+
+The frozen `aweb.page/1` page format (aweb-acgg.7): the host limits, named base
+pages, and positive and negative cases, each given as a base page plus a small
+patch, raw bytes, or a generated tree. Every case expects a verdict and, when
+invalid, at least the listed errors, each a layer (`limits`, `schema`, `lint`),
+a stable code and a JSON pointer. Limits run before the schema and the schema
+before lint, so a case reports only its first failing layer. Hostile-corpus
+cases that are structurally valid carry a `render` expectation for the shared
+renderer, which this file names but does not test. `bundle_hash` pins the
+bundle decision-card digest across languages. The reference consumer is
+`aweb_naapp.pages` in `naapp-lib/tests/pages/`. See
+[the page format](../page-format.md).
 
 ### `agent-status-v1.json`
 

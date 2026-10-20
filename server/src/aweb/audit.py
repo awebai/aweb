@@ -24,6 +24,7 @@ _ACTIONS = {
     'reset_team_roles_to_default_endpoint': 'roles.reset',
     'deactivate_team_roles_endpoint': 'roles.deactivate',
     'delete_repo': 'repos.delete',
+    'install_app_route': 'apps.install',
 }
 
 
@@ -95,6 +96,8 @@ def _target(request: Request, action: str, actor: AuditActor) -> str:
             return f'repo:{UUID(str(value))}'
         except ValueError:
             return 'repo:invalid'
+    if action == 'apps.install':
+        return getattr(request.state, 'operator_audit_target', None) or 'app:invalid'
     return f'roles:{actor.team_id}'
 
 
@@ -113,7 +116,7 @@ class OperatorAuditRoute(APIRoute):
     """Record authenticated refusals after the mutation transaction rolls back.
 
     Success is recorded explicitly inside each route's write transaction. Only
-    the five named operator routes are covered; ordinary reads are unchanged.
+    the named operator routes are covered; ordinary reads are unchanged.
     """
     def get_route_handler(self):
         handler = super().get_route_handler()

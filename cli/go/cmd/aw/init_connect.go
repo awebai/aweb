@@ -1,12 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"crypto/ed25519"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -253,37 +249,12 @@ func loadCertificateForConnectAt(workingDir, identityHome string) (*awid.TeamCer
 var maxConnectResponseBytes int64 = awid.MaxResponseSize
 
 func postConnect(ctx context.Context, awebURL string, signingKey ed25519.PrivateKey, cert *awid.TeamCertificate, body connectRequest) (*connectResponse, error) {
-	bodyJSON, err := json.Marshal(body)
+	client, err := awid.NewWithCertificate(awebURL, signingKey, cert)
 	if err != nil {
 		return nil, err
 	}
-
-	url := strings.TrimRight(awebURL, "/") + "/v1/connect"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(bodyJSON))
-	if err != nil {
-		return nil, err
-	}
-
-	// DIDKey signature over {body_sha256, team_id, timestamp}
-	timestamp := time.Now().UTC().Format(time.RFC3339)
-	did := awid.ComputeDIDKey(signingKey.Public().(ed25519.PublicKey))
-	bodyHash := sha256.Sum256(bodyJSON)
-	bodyHashHex := hex.EncodeToString(bodyHash[:])
-	sigPayload := fmt.Sprintf(`{"body_sha256":%q,"team_id":%q,"timestamp":%q}`, bodyHashHex, cert.Team, timestamp)
-	sig := ed25519.Sign(signingKey, []byte(sigPayload))
-	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", did, base64.RawStdEncoding.EncodeToString(sig)))
-	req.Header.Set("X-AWEB-Timestamp", timestamp)
-
-	// Team certificate header
-	certEncoded, err := awid.EncodeTeamCertificateHeader(cert)
-	if err != nil {
-		return nil, fmt.Errorf("encode certificate header: %w", err)
-	}
-	req.Header.Set("X-AWID-Team-Certificate", certEncoded)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 30 * time.Second, Transport: awid.NewAPITransport()}
-	resp, err := awid.DoServerRequest(client, req, awebURL)
+	client.SetHTTPClient(&http.Client{Timeout: 30 * time.Second, Transport: awid.NewAPITransport()})
+	resp, err := client.DoRaw(ctx, http.MethodPost, "/v1/connect", "application/json", body)
 	if err != nil {
 		return nil, err
 	}

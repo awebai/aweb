@@ -14,7 +14,8 @@ from starlette.routing import Mount
 
 from awid.registry import CachedRegistryClient, RegistryClient
 from awid.federation_errors import FederationAuthorityError
-from .config import get_settings
+from .config import get_public_origin, get_settings
+from awid.log import canonical_server_origin
 from .db import DatabaseInfra
 from .db import db_infra as default_db_infra
 from awid.log_config import configure_logging
@@ -260,7 +261,7 @@ def _make_standalone_lifespan():
             app.state.awid_registry_client = _build_awid_registry_client(app, redis)
             app.state.federation_authority = build_federation_authority_activation(
                 default_db_infra,
-                public_origin=settings.public_origin,
+                public_origin=app.state.public_origin,
             )
             await _validate_awid_registry_client(app.state.awid_registry_client)
             await _mount_mcp_app(
@@ -320,7 +321,7 @@ def _make_library_lifespan(db_infra: DatabaseInfra, redis: Redis):
         app.state.awid_registry_client = _build_awid_registry_client(app, redis)
         app.state.federation_authority = build_federation_authority_activation(
             db_infra,
-            public_origin=get_settings().public_origin,
+            public_origin=app.state.public_origin,
         )
         await _validate_awid_registry_client(app.state.awid_registry_client)
         await _mount_mcp_app(
@@ -352,6 +353,7 @@ def create_app(
     db_infra: Optional[DatabaseInfra] = None,
     redis: Optional[Redis] = None,
     attachment_backend=None,
+    public_origin: str | None = None,
 ) -> FastAPI:
     """Create the aweb coordination FastAPI application.
 
@@ -360,6 +362,8 @@ def create_app(
                   If None, creates own connections (standalone mode).
         redis: External async Redis client (library mode).
                If None, creates own connection (standalone mode).
+        public_origin: Configured external origin for request signature checks.
+                       Defaults to public-origin settings captured at construction.
 
     Library mode requires both db_infra and redis to be provided.
     Standalone mode requires neither (will create its own).
@@ -412,6 +416,9 @@ def create_app(
 
     app = RequestDecompressionFastAPI(title="aweb coordination core", version="0.1.0", lifespan=lifespan)
     app.state.attachment_backend = attachment_backend
+    app.state.public_origin = (
+        canonical_server_origin(public_origin) if public_origin is not None else get_public_origin()
+    )
     app.include_router(attachment_router)
     app.add_middleware(NormalizeMountedMCPPathMiddleware, mount_path="/mcp")
 

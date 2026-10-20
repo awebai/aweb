@@ -114,25 +114,22 @@ func TestClientRequestCompressionSignsDecodedBytes(t *testing.T) {
 				bodyHash := hex.EncodeToString(hash[:])
 				var signed []byte
 				auth := strings.Fields(r.Header.Get("Authorization"))
+				signed, _ = base64.RawURLEncoding.DecodeString(r.Header.Get("X-AWEB-Signed-Payload"))
+				var fields map[string]any
+				if err := json.Unmarshal(signed, &fields); err != nil {
+					t.Error(err)
+				}
+				if fields["body_sha256"] != bodyHash || fields["path"] != r.URL.RequestURI() || fields["timestamp"] != timestamp {
+					t.Errorf("request binding = %v", fields)
+				}
 				if kind == "grant" {
-					signed, _ = base64.RawURLEncoding.DecodeString(r.Header.Get("X-AWEB-Signed-Payload"))
-					var fields map[string]any
-					if err := json.Unmarshal(signed, &fields); err != nil {
-						t.Error(err)
-					}
-					if fields["body_sha256"] != bodyHash || fields["path"] != r.URL.Path || fields["grant_id"] != "test-grant" {
+					if fields["grant_id"] != "test-grant" {
 						t.Errorf("grant binding = %v", fields)
 					}
-				} else {
-					fields := map[string]string{"body_sha256": bodyHash, "timestamp": timestamp}
-					if kind == "identity" {
-						fields["did_aw"] = ""
-					}
-					if kind == "certificate" {
-						fields["team_id"] = "core:example.test"
-					}
-					signed, _ = json.Marshal(fields)
+				} else if fields["v"] != float64(2) {
+					t.Errorf("root auth is not v2: %v", fields)
 				}
+
 				signature, err := base64.RawStdEncoding.DecodeString(auth[len(auth)-1])
 				if err != nil || !ed25519.Verify(pub, signed, signature) {
 					t.Error("signature does not verify against decoded bytes")

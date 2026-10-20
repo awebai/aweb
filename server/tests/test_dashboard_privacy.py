@@ -125,6 +125,7 @@ async def privacy_app(shared_test_pool, monkeypatch):
                 )
             sock = socket.socket()
             sock.bind(("127.0.0.1", 0))
+            app.state.public_origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
             server = uvicorn.Server(uvicorn.Config(app, lifespan="off", log_level="error"))
             serving = asyncio.create_task(server.serve(sockets=[sock]))
             try:
