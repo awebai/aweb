@@ -1269,8 +1269,8 @@ def test_route_grant_scope_declarations_are_known_and_reviewable():
 
 def test_direct_team_identity_calls_are_reviewed_root_only_sites():
     assert _direct_team_identity_calls() == [
-        ("server/src/aweb/routes/apps.py", "_authorized_team_id", 79),
-        ("server/src/aweb/routes/apps.py", "install_app_route", 111),
+        ("server/src/aweb/routes/apps.py", "_authorized_team_id", 101),
+        ("server/src/aweb/routes/apps.py", "install_app_route", 161),
         ("server/src/aweb/routes/connect.py", "get_team_info", 483),
         ("server/src/aweb/routes/events.py", "_subscription_read_identity", 145),
         ("server/src/aweb/routes/events.py", "delete_app_event_subscription_route", 652),

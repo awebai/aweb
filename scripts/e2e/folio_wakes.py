@@ -105,6 +105,8 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     apps = get('alice', '/v1/apps/installed?team_id=' + team)['apps']
     assert len(apps) == 1, f'install did not register Folio: {apps}'
     assert apps[0]['digest'] == 'sha256:' + hashlib.sha256(raw).hexdigest()
+    from_bytes = run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', "SELECT registered_from_manifest_bytes FROM aweb.team_app_installs WHERE team_id='" + team + "'"]).strip()
+    assert from_bytes == 't', f'aw install did not register from the fetched manifest bytes: {from_bytes!r}'
     subscriptions = get('alice', '/v1/events/subscriptions')['subscriptions']
     assert len(subscriptions) == 1 and subscriptions[0]['delivery_intent'] == 'wake', subscriptions
     assert get('bob', '/v1/events/subscriptions')['subscriptions'] == []
