@@ -247,7 +247,8 @@ only `(team_id, app_id)`
 until F6 adds them. Logs trusts a production's keys to accept events, so
 owner activation of a **production** also refuses until the server derives
 its registered keys from manifest bytes that hash to the pinned digest. That
-is acgh.7's key-registration fix, which needs F6 first.
+is acgh.7's key-registration fix, built after step 1 of aweb-acgh.8 (today's
+install-time app keys are global and installer-controlled).
 
 **Binding state.** Install or update creates each declared binding as `pending`.
 An owner act moves it to `active`. Revocation, uninstall or a new generation
