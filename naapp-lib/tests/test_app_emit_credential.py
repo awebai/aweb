@@ -8,10 +8,18 @@ from awid.signing import canonical_json_bytes
 
 from aweb_naapp.runtime.app_emit import sign_app_emit_credential
 
-_VECTOR_PATH = Path(__file__).parent / "vectors" / "app-emit-credential-v1.json"
-# Digest-pinned snapshot of cli/go/internal/conformance/vectors/app-emit-credential-v1.json
-# at aweb 2f45b2f1 (frozen wire ed1b8ef2). aw-coordinator hands new bytes + sha if it bumps;
-# it never moves silently. This is a vendored copy, so the pin is checked against these bytes.
+AWEB_ROOT = Path(__file__).resolve().parents[2]
+# The Go consumer authority for the app-emit credential (frozen wire ed1b8ef2), read in
+# place rather than copied. Its digest is pinned so the wire never moves silently.
+_VECTOR_PATH = (
+    AWEB_ROOT
+    / "cli"
+    / "go"
+    / "internal"
+    / "conformance"
+    / "vectors"
+    / "app-emit-credential-v1.json"
+)
 _VECTOR_SHA256 = "56f9fcd34f3d63c56da8bddb41e25659c30d2931631c7021602ee8d554f52f24"
 
 _PAYLOAD_KEYS = (
@@ -71,7 +79,9 @@ def test_signer_is_byte_identical_to_frozen_go_vector() -> None:
         assert credential.headers["X-AWEB-App-Key-ID"] == payload["kid"], case["name"]
         assert credential.headers["X-AWEB-Team-ID"] == payload["team_id"], case["name"]
         assert credential.headers["X-AWEB-Timestamp"] == payload["timestamp"], case["name"]
-        assert credential.headers["X-AWEB-Signed-Payload"] == case["signed_payload_b64url"], case["name"]
+        assert credential.headers["X-AWEB-Signed-Payload"] == case["signed_payload_b64url"], case[
+            "name"
+        ]
 
 
 def test_signer_reuses_the_shared_canonical_json_primitive() -> None:
