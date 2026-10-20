@@ -255,7 +255,7 @@ test-server:
 # The naapp packages the candidate gate covers. Each provides `make lint` and
 # `make test`: the checks stage lints them, and the isolated unit stage runs
 # their suites against its Postgres. A package joins by being added here.
-NAAPP_PACKAGES := naapp-lib
+NAAPP_PACKAGES := naapp-lib naapp/folio naapp/library
 
 # Installs each package's locked dependencies, for a runner that then goes offline.
 naapp-sync:
