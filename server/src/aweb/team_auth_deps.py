@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request
 
 from aweb.auth_metrics import count_legacy_request_auth
+from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 
 from aweb.deps import get_db
@@ -258,6 +259,11 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
     cert_info["verified_team_did_key"] = team_did_key
     if envelope.version == 1:
         count_legacy_request_auth(request, "certificate")
+    set_verified_audit_actor(request, AuditActor(
+        team_id=cert_info["team_id"], principal_type="c",
+        auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",
+        did_key=cert_info["did_key"], did_aw=cert_info.get("member_did_aw") or None,
+    ))
     return cert_info
 
 
@@ -268,9 +274,20 @@ async def _get_team_identity_with_grant_scope(
     grant_scope: str | None,
 ) -> TeamIdentity:
     if (request.headers.get("Authorization") or "").lstrip().startswith("AWEB-Grant "):
-        if grant_scope is None:
-            raise HTTPException(status_code=403, detail="outside grant scope")
         from aweb.identity_grant_auth import verify_identity_grant_team_identity
+
+        if grant_scope is None:
+            if is_operator_audit_request(request):
+                # Verify solely to attribute the refusal, never to grant the
+                # operation. The subject, not the session key, is the actor.
+                identity = await verify_identity_grant_team_identity(request, db, required_scope=GRANT_SCOPE_ANY)
+                assert identity.grant is not None
+                set_verified_audit_actor(request, AuditActor(
+                    team_id=identity.team_id, principal_type="c", auth_mode="identity_grant",
+                    did_key=identity.did_key, did_aw=identity.did_aw or None,
+                    grant_id=identity.grant.grant_id,
+                ))
+            raise HTTPException(status_code=403, detail="outside grant scope")
 
         return await verify_identity_grant_team_identity(request, db, required_scope=grant_scope)
 
