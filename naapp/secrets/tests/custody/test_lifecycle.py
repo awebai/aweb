@@ -37,17 +37,21 @@ def custody(db: AsyncDatabaseManager, provider: LocalKeyFileProvider) -> Custody
     return Custody(provider, db)
 
 
-async def _ingest(custody: Custody, db: AsyncDatabaseManager, secret_id: str, value: bytes) -> int:
+async def _ingest(
+    custody: Custody, db: AsyncDatabaseManager, secret_id: str, value: bytes, team_id: str = TEAM
+) -> int:
     async with db.transaction() as tx:
-        return await custody.sealer.ingest(
-            tx, installation_id=INSTALLATION, team_id=TEAM, secret_id=secret_id, value=value
-        )
+        return await custody.sealer.ingest(tx, **_secret(secret_id, team_id), value=value)
 
 
-def _context(secret_id: str, version: int) -> SealContext:
+def _context(secret_id: str, version: int, team_id: str = TEAM) -> SealContext:
     return SealContext(
-        installation_id=INSTALLATION, team_id=TEAM, secret_id=secret_id, version=version
+        installation_id=INSTALLATION, team_id=team_id, secret_id=secret_id, version=version
     )
+
+
+def _secret(secret_id: str, team_id: str = TEAM) -> dict[str, str]:
+    return {"installation_id": INSTALLATION, "team_id": team_id, "secret_id": secret_id}
 
 
 async def test_describe_names_the_latest_version_and_never_the_value(
@@ -55,14 +59,14 @@ async def test_describe_names_the_latest_version_and_never_the_value(
 ) -> None:
     await _ingest(custody, db, "secret-1", b"first")
     await _ingest(custody, db, "secret-1", canary)
-    description = await custody.describe("secret-1")
+    description = await custody.describe(**_secret("secret-1"))
     assert description.version == 2
     assert description.state == "active"
     assert canary.decode() not in repr(description)
 
 
 async def test_describe_of_an_unknown_secret_is_none(custody: Custody) -> None:
-    assert await custody.describe("secret-1") is None
+    assert await custody.describe(**_secret("secret-1")) is None
 
 
 async def test_a_disabled_secret_does_not_open(
@@ -70,10 +74,10 @@ async def test_a_disabled_secret_does_not_open(
 ) -> None:
     version = await _ingest(custody, db, "secret-1", canary)
     async with db.transaction() as tx:
-        await custody.disable(tx, "secret-1")
+        await custody.disable(tx, **_secret("secret-1"))
     with pytest.raises(CustodyUnavailable):
         await custody.opener.open(_context("secret-1", version))
-    description = await custody.describe("secret-1")
+    description = await custody.describe(**_secret("secret-1"))
     assert description is not None and description.state == "disabled"
 
 
@@ -83,7 +87,7 @@ async def test_disabling_one_secret_leaves_another_usable(
     await _ingest(custody, db, "secret-1", b"a")
     version = await _ingest(custody, db, "secret-2", canary)
     async with db.transaction() as tx:
-        await custody.disable(tx, "secret-1")
+        await custody.disable(tx, **_secret("secret-1"))
     assert (await custody.opener.open(_context("secret-2", version))).reveal() == canary
 
 
@@ -92,7 +96,7 @@ async def test_a_disabled_secret_takes_no_new_value(
 ) -> None:
     await _ingest(custody, db, "secret-1", b"a")
     async with db.transaction() as tx:
-        await custody.disable(tx, "secret-1")
+        await custody.disable(tx, **_secret("secret-1"))
     with pytest.raises(CustodyUnavailable):
         await _ingest(custody, db, "secret-1", b"b")
 
@@ -102,7 +106,7 @@ async def test_a_destroyed_version_cannot_be_opened(
 ) -> None:
     version = await _ingest(custody, db, "secret-1", canary)
     async with db.transaction() as tx:
-        await custody.destroy(tx, "secret-1", version)
+        await custody.destroy(tx, _context("secret-1", version))
     with pytest.raises(CustodyUnavailable):
         await custody.opener.open(_context("secret-1", version))
 
@@ -113,7 +117,7 @@ async def test_destroying_a_version_keeps_the_others(
     first = await _ingest(custody, db, "secret-1", b"old")
     second = await _ingest(custody, db, "secret-1", canary)
     async with db.transaction() as tx:
-        await custody.destroy(tx, "secret-1", first)
+        await custody.destroy(tx, _context("secret-1", first))
     assert (await custody.opener.open(_context("secret-1", second))).reveal() == canary
 
 
@@ -122,7 +126,7 @@ async def test_a_destroyed_version_number_is_never_reused(
 ) -> None:
     first = await _ingest(custody, db, "secret-1", b"old")
     async with db.transaction() as tx:
-        await custody.destroy(tx, "secret-1", first)
+        await custody.destroy(tx, _context("secret-1", first))
     assert await _ingest(custody, db, "secret-1", b"new") == first + 1
 
 
@@ -134,10 +138,25 @@ async def test_a_replacement_destroys_the_old_version_in_the_same_transaction(
         new = await custody.sealer.ingest(
             tx, installation_id=INSTALLATION, team_id=TEAM, secret_id="secret-1", value=canary
         )
-        await custody.destroy(tx, "secret-1", old)
+        await custody.destroy(tx, _context("secret-1", old))
     with pytest.raises(CustodyUnavailable):
         await custody.opener.open(_context("secret-1", old))
     assert (await custody.opener.open(_context("secret-1", new))).reveal() == canary
+
+
+async def test_the_same_secret_id_under_two_teams_is_independent(
+    custody: Custody, db: AsyncDatabaseManager, canary: bytes
+) -> None:
+    assert await _ingest(custody, db, "secret-1", b"team one", team_id="team-1") == 1
+    assert await _ingest(custody, db, "secret-1", canary, team_id="team-2") == 1
+    async with db.transaction() as tx:
+        await custody.disable(tx, **_secret("secret-1", "team-1"))
+        await custody.destroy(tx, _context("secret-1", 1, "team-1"))
+    opened = await custody.opener.open(_context("secret-1", 1, "team-2"))
+    assert opened.reveal() == canary
+    described = await custody.describe(**_secret("secret-1", "team-2"))
+    assert described is not None and (described.version, described.state) == (1, "active")
+    assert await _ingest(custody, db, "secret-1", b"next", team_id="team-2") == 2
 
 
 async def test_health_is_ok_with_a_working_key(custody: Custody) -> None:
@@ -177,11 +196,11 @@ async def test_no_path_leaks_the_value_into_logs_output_or_errors(
             await custody.opener.open(wrong)
         errors += [str(refused.value), repr(refused.value)]
     async with db.transaction() as tx:
-        await custody.disable(tx, "secret-1")
+        await custody.disable(tx, **_secret("secret-1"))
     with pytest.raises(CustodyUnavailable) as refused:
         await custody.opener.open(_context("secret-1", version))
     errors += [str(refused.value), repr(refused.value)]
-    errors.append(repr(await custody.describe("secret-1")))
+    errors.append(repr(await custody.describe(**_secret("secret-1"))))
     captured = capfd.readouterr()
     everything = "\n".join([caplog.text, captured.out, captured.err, *errors])
     assert canary.decode() not in everything

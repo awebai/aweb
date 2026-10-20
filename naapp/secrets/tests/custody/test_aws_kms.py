@@ -49,3 +49,11 @@ def test_sealing_refuses_when_kms_is_unreachable(
 def test_the_canary_fails_when_kms_is_unreachable(unreachable_kms: AwsKmsProvider) -> None:
     with pytest.raises(CustodyUnavailable):
         seal_canary(unreachable_kms)
+
+
+def test_the_default_kms_client_bounds_every_call() -> None:
+    # Ingest calls KMS while it holds a row lock, so each call must end promptly.
+    config = AwsKmsProvider(key_id="alias/secrets-test", region_name="eu-west-1").client.meta.config
+    assert config.connect_timeout <= 2
+    assert config.read_timeout <= 5
+    assert config.retries["total_max_attempts"] <= 3

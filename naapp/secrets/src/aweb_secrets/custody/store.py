@@ -57,14 +57,20 @@ class SecretSealer:
 
         Returns the version number. Allocating it locks the secret's row until
         the transaction ends, so concurrent ingests take turns. A disabled
-        secret takes no new value."""
+        secret takes no new value. Sealing makes one call to the key provider
+        while that lock is held, so with KMS the transaction's latency includes
+        one KMS round trip, bounded by the client's timeouts."""
         allocated = await tx.fetch_one(
             """
-            INSERT INTO {{tables.custody_secrets}} (secret_id, last_version) VALUES ($1, 1)
-            ON CONFLICT (secret_id) DO UPDATE
+            INSERT INTO {{tables.custody_secrets}}
+                (installation_id, team_id, secret_id, last_version)
+            VALUES ($1, $2, $3, 1)
+            ON CONFLICT (installation_id, team_id, secret_id) DO UPDATE
                 SET last_version = {{tables.custody_secrets}}.last_version + 1
             RETURNING last_version, disabled_at
             """,
+            installation_id,
+            team_id,
             secret_id,
         )
         assert allocated is not None
@@ -78,9 +84,11 @@ class SecretSealer:
         await tx.execute(
             """
             INSERT INTO {{tables.sealed_versions}}
-                (secret_id, version, key_id, wrapped_key, nonce, ciphertext)
-            VALUES ($1, $2, $3, $4, $5, $6)
+                (installation_id, team_id, secret_id, version, key_id, wrapped_key, nonce, ciphertext)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             """,
+            installation_id,
+            team_id,
             secret_id,
             version,
             sealed.key_id,
@@ -103,9 +111,12 @@ class SecretOpener:
             """
             SELECT v.key_id, v.wrapped_key, v.nonce, v.ciphertext
             FROM {{tables.sealed_versions}} v
-            JOIN {{tables.custody_secrets}} s USING (secret_id)
-            WHERE v.secret_id = $1 AND v.version = $2 AND s.disabled_at IS NULL
+            JOIN {{tables.custody_secrets}} s USING (installation_id, team_id, secret_id)
+            WHERE v.installation_id = $1 AND v.team_id = $2 AND v.secret_id = $3
+                AND v.version = $4 AND s.disabled_at IS NULL
             """,
+            context.installation_id,
+            context.team_id,
             context.secret_id,
             context.version,
         )
@@ -144,17 +155,23 @@ class Custody:
         self.sealer = SecretSealer(provider)
         self.opener = SecretOpener(provider, db)
 
-    async def describe(self, secret_id: str) -> Description | None:
+    async def describe(
+        self, *, installation_id: str, team_id: str, secret_id: str
+    ) -> Description | None:
         row = await self._db.fetch_one(
             """
             SELECT s.disabled_at, v.version, v.created_at
             FROM {{tables.custody_secrets}} s
             LEFT JOIN LATERAL (
                 SELECT version, created_at FROM {{tables.sealed_versions}}
-                WHERE secret_id = s.secret_id ORDER BY version DESC LIMIT 1
+                WHERE installation_id = s.installation_id AND team_id = s.team_id
+                    AND secret_id = s.secret_id
+                ORDER BY version DESC LIMIT 1
             ) v ON TRUE
-            WHERE s.secret_id = $1
+            WHERE s.installation_id = $1 AND s.team_id = $2 AND s.secret_id = $3
             """,
+            installation_id,
+            team_id,
             secret_id,
         )
         if row is None:
@@ -165,20 +182,31 @@ class Custody:
             state="disabled" if row["disabled_at"] is not None else "active",
         )
 
-    async def disable(self, tx: TransactionManager, secret_id: str) -> None:
+    async def disable(
+        self, tx: TransactionManager, *, installation_id: str, team_id: str, secret_id: str
+    ) -> None:
         """Refuse every open and ingest of the secret from now on."""
         await tx.execute(
             "UPDATE {{tables.custody_secrets}} SET disabled_at = NOW()"
-            " WHERE secret_id = $1 AND disabled_at IS NULL",
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3"
+            " AND disabled_at IS NULL",
+            installation_id,
+            team_id,
             secret_id,
         )
 
-    async def destroy(self, tx: TransactionManager, secret_id: str, version: int) -> None:
-        """Crypto-shred one version: its wrapped data key and ciphertext are deleted."""
+    async def destroy(self, tx: TransactionManager, context: SealContext) -> None:
+        """Delete one version's wrapped data key and ciphertext from the live store.
+
+        Copies in backups and the write-ahead log stay decryptable until they
+        expire or the key-encryption key is retired."""
         await tx.execute(
-            "DELETE FROM {{tables.sealed_versions}} WHERE secret_id = $1 AND version = $2",
-            secret_id,
-            version,
+            "DELETE FROM {{tables.sealed_versions}}"
+            " WHERE installation_id = $1 AND team_id = $2 AND secret_id = $3 AND version = $4",
+            context.installation_id,
+            context.team_id,
+            context.secret_id,
+            context.version,
         )
 
     async def health(self) -> Health:

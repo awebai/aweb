@@ -58,19 +58,32 @@ class AwsKmsProvider:
     unwrap a data key under any other context, and its audit trail records
     the context of every unwrap."""
 
-    def __init__(self, key_id: str, client: Any | None = None) -> None:
+    def __init__(
+        self, key_id: str, client: Any | None = None, region_name: str | None = None
+    ) -> None:
         if client is None:
             import boto3
+            from botocore.config import Config
 
-            client = boto3.client("kms")
+            # Sealing runs while the ingest transaction holds a row lock, so every
+            # KMS call is bounded: one attempt plus at most two retries.
+            client = boto3.client(
+                "kms",
+                region_name=region_name,
+                config=Config(
+                    connect_timeout=2,
+                    read_timeout=5,
+                    retries={"total_max_attempts": 3, "mode": "standard"},
+                ),
+            )
         self.key_id = key_id
-        self._client = client
+        self.client = client
 
     def __repr__(self) -> str:
         return f"AwsKmsProvider(key_id={self.key_id!r})"
 
     def generate_data_key(self, context: Mapping[str, str]) -> DataKey:
-        response = self._client.generate_data_key(
+        response = self.client.generate_data_key(
             KeyId=self.key_id, KeySpec="AES_256", EncryptionContext=dict(context)
         )
         return DataKey(
@@ -80,7 +93,7 @@ class AwsKmsProvider:
         )
 
     def decrypt_data_key(self, wrapped: bytes, key_id: str, context: Mapping[str, str]) -> bytes:
-        response = self._client.decrypt(
+        response = self.client.decrypt(
             CiphertextBlob=wrapped, KeyId=key_id, EncryptionContext=dict(context)
         )
         return bytes(response["Plaintext"])

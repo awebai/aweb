@@ -91,15 +91,17 @@ async def test_a_row_copied_to_another_secret_or_version_does_not_open(
 ) -> None:
     await _ingest(db, SecretSealer(provider), "secret-1", canary)
     await db.execute(
-        "INSERT INTO {{tables.custody_secrets}} (secret_id, last_version) VALUES ($1, $2)"
-        " ON CONFLICT (secret_id) DO NOTHING",
+        "INSERT INTO {{tables.custody_secrets}} (installation_id, team_id, secret_id, last_version)"
+        " VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+        INSTALLATION,
+        TEAM,
         *target,
     )
     await db.execute(
         """
         INSERT INTO {{tables.sealed_versions}}
-            (secret_id, version, key_id, wrapped_key, nonce, ciphertext)
-        SELECT $1, $2, key_id, wrapped_key, nonce, ciphertext
+            (installation_id, team_id, secret_id, version, key_id, wrapped_key, nonce, ciphertext)
+        SELECT installation_id, team_id, $1, $2, key_id, wrapped_key, nonce, ciphertext
         FROM {{tables.sealed_versions}} WHERE secret_id = 'secret-1' AND version = 1
         """,
         *target,

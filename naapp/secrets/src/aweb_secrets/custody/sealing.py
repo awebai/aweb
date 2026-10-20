@@ -83,7 +83,11 @@ class SealedValue:
 
 
 class Plaintext:
-    """An unsealed value. It does not show itself in reprs, strings or logs."""
+    """An unsealed value. It does not show itself in reprs, strings or logs.
+
+    Python cannot zero memory, so the value's bytes, and a data key's, live
+    until garbage collection. The controls are this redacting wrapper and never
+    logging, persisting or returning a value."""
 
     __slots__ = ("_value",)
 
