@@ -154,6 +154,8 @@ class Dispatches:
             action,
             retry_exempt,
         )
+        if row is None:
+            raise LookupError("the dispatch row was not returned")
         dispatch = _dispatch(row)
         await self._notify(tx, dispatch, None, row["occurred_at"])
         return dispatch
@@ -305,6 +307,8 @@ class Dispatches:
             state.value,
             *args,
         )
+        if row is None:
+            raise LookupError("the dispatch row was not returned")
         dispatch = _dispatch(row)
         await self._notify(tx, dispatch, current.state, row["occurred_at"])
         return dispatch
