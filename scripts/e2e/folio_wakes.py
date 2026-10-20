@@ -38,17 +38,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 m=json.loads(json.dumps(MANIFEST))
 m['app']['origin']='http://127.0.0.1:38765'
-m['app']['version']=VERSION
-if not EVENTS: m['events']=[]
+m['app']['version']=__APP_VERSION__
+if not __EVENTS__: m['events']=[]
 key=Ed25519PrivateKey.from_private_bytes(bytes.fromhex('01'*32))
 m['event_emitters']=[{'kid':'folio:emit-test','did_key':did_from_public_key(key.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw))}]
-if MANIFEST_VERSION == 2:
+if __MANIFEST_VERSION__ == 2:
     m['manifest_version']=2
     m['app_keys']=[dict(m.pop('event_emitters')[0], purposes=['app-event'])]
     m['tools'].append({'name':'audit-ingest','description':'Hook-only audit ingest.','method':'POST','path':'/v1/hooks/audit','input_schema':{'type':'object','properties':{}},'params':[],'body':{'mode':'json'},'scopes':['folio:hook-ingest'],'mutation':True,'invocation_contexts':['hook']})
     m['hooks']={'registration_version':1,'registrations':[{'catalog':{'id':'folio.hooks','version':1},'hook':'folio.after-write','tool':'audit-ingest','scopes':['folio:hook-ingest']}]}
 MANIFEST_PATH.write_text(json.dumps(m))
-'''.replace('VERSION', repr(version)).replace('EVENTS', repr(events)).replace('MANIFEST_VERSION', repr(manifest_version))
+'''.replace('__APP_VERSION__', repr(version)).replace('__EVENTS__', repr(events)).replace('__MANIFEST_VERSION__', repr(manifest_version))
     run(COMPOSE + ['exec', '-T', '-u', 'root', 'folio', '/app/.venv/bin/python', '-c', code])
 
 with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
