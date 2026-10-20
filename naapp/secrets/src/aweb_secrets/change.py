@@ -29,19 +29,21 @@ MAX_REASON_CHARS = 1000
 MAX_TEXT_CHARS = 256
 MAX_CONTACT_CHARS = 320
 
-# The widening items of design §6.3, each with the ops that widen it.
+# The widening items of design §6.3, each with the ops that widen it. Destinations,
+# operations, grants and policies are immutable records: broadening one creates a
+# new record, and removing the old one is a narrowing act outside change sets.
 KINDS: Mapping[str, frozenset[str]] = {
     "secret": frozenset({"create", "update"}),
     "secret_value": frozenset({"create"}),
-    "destination": frozenset({"create", "update"}),
-    "operation": frozenset({"create", "update"}),
+    "destination": frozenset({"create"}),
+    "operation": frozenset({"create"}),
     "job": frozenset({"create", "update"}),
     "runner": frozenset({"create", "update"}),
-    "grant": frozenset({"create", "update"}),
+    "grant": frozenset({"create"}),
     "role": frozenset({"create"}),
     "approver": frozenset({"create"}),
     "approver_contact": frozenset({"update"}),
-    "policy": frozenset({"create", "update"}),
+    "policy": frozenset({"create"}),
     "reenable": frozenset({"enable"}),
 }
 
@@ -51,6 +53,11 @@ REENABLE_TARGETS = frozenset(
 )
 
 _TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+# The owner role, or an owner-defined user role named in S5's segment charset.
+_ROLE = re.compile(r"secrets\.(owner|role\.[a-z0-9][a-z0-9_-]*)")
+MAX_ROLE_CHARS = 128
+# A principal is S5's stable principal key: a did:aw, or a did:key without one.
+_PRINCIPAL = re.compile(r"did:(aw|key):\S+")
 
 
 class ChangeRefused(ValueError):
@@ -100,6 +107,16 @@ def _one_of(values: frozenset[str]) -> Check:
     def check(value: Any, where: str) -> None:
         if value not in values:
             raise ChangeRefused(f"{where} must be one of {sorted(values)}")
+
+    return check
+
+
+def _matching(pattern: re.Pattern[str], limit: int = MAX_TEXT_CHARS) -> Check:
+    def check(value: Any, where: str) -> None:
+        if not isinstance(value, str) or len(value) > limit or not pattern.fullmatch(value):
+            raise ChangeRefused(
+                f"{where} must match {pattern.pattern} in at most {limit} characters"
+            )
 
     return check
 
@@ -165,7 +182,7 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
             "approver_ref": _text(),
             "contact": _text(MAX_CONTACT_CHARS),
             "covers": _text_list,
-            "principal": _optional(_text()),
+            "principal": _optional(_matching(_PRINCIPAL)),
         },
         ref_field="approver_ref",
         identity=("approver_ref",),
@@ -176,7 +193,11 @@ AFTER_SHAPES: dict[tuple[str, int], AfterShape] = {
         identity=("approver_ref",),
     ),
     ("role", 1): AfterShape(
-        fields={"v": _V1, "role": _text(), "principal": _text()},
+        fields={
+            "v": _V1,
+            "role": _matching(_ROLE, MAX_ROLE_CHARS),
+            "principal": _matching(_PRINCIPAL),
+        },
         ref_field="role",
         identity=("role", "principal"),
     ),

@@ -273,3 +273,69 @@ def test_an_expired_change_is_refused() -> None:
             _change(), current_revision=7, now=datetime(2026, 10, 20, 12, 15, tzinfo=UTC)
         )
     assert refused.value.code == "change_expired"
+
+
+def test_only_a_secret_is_widened_by_update() -> None:
+    assert {kind: set(ops) for kind, ops in KINDS.items()} == {
+        "secret": {"create", "update"},
+        "secret_value": {"create"},
+        "destination": {"create"},
+        "operation": {"create"},
+        "job": {"create", "update"},
+        "runner": {"create", "update"},
+        "grant": {"create"},
+        "role": {"create"},
+        "approver": {"create"},
+        "approver_contact": {"update"},
+        "policy": {"create"},
+        "reenable": {"enable"},
+    }
+
+
+@pytest.mark.parametrize("role", ["secrets.owner", "secrets.role.deployers", "secrets.role.a_1-b"])
+def test_a_role_is_the_owner_or_a_named_user_role(role: str) -> None:
+    item = _item("role", "create", role, {"v": 1, "role": role, "principal": "did:key:z6Mk"})
+    validate_change(_change(changes=[item]))
+
+
+@pytest.mark.parametrize(
+    "role",
+    [
+        "owner",
+        "secrets.approver",
+        "secrets.role.",
+        "secrets.role.Deployers",
+        "secrets.role._x",
+        "secrets.role." + "a" * 116,
+    ],
+)
+def test_any_other_role_name_is_refused(role: str) -> None:
+    item = _item("role", "create", role, {"v": 1, "role": role, "principal": "did:key:z6Mk"})
+    with pytest.raises(ChangeRefused):
+        validate_change(_change(changes=[item]))
+
+
+@pytest.mark.parametrize("principal", ["alice", "did:web:acme.com", "did:aw:", "did:key:"])
+def test_a_role_goes_only_to_a_did_aw_or_did_key_principal(principal: str) -> None:
+    item = _item(
+        "role", "create", "secrets.owner", {"v": 1, "role": "secrets.owner", "principal": principal}
+    )
+    with pytest.raises(ChangeRefused):
+        validate_change(_change(changes=[item]))
+
+
+@pytest.mark.parametrize("principal", [None, "did:aw:2rMeyRyvQbWUZYjT8Jx6Kq", "alice"])
+def test_an_approver_links_to_no_principal_or_a_did(principal: str | None) -> None:
+    after = {
+        "v": 1,
+        "approver_ref": "ops",
+        "contact": "ops@acme.com",
+        "covers": ["payments-live"],
+        "principal": principal,
+    }
+    item = _item("approver", "create", "ops", after)
+    if principal == "alice":
+        with pytest.raises(ChangeRefused):
+            validate_change(_change(changes=[item]))
+    else:
+        validate_change(_change(changes=[item]))
