@@ -17,7 +17,9 @@ docker build -f naapp/folio/Dockerfile .    # from the aweb repository root
 
 The Dockerfile copies only the paths the service needs (`awid/`,
 `naapp-lib/`, and folio's `pyproject.toml`, `uv.lock`, `README.md`, `src/` and
-`skills/`), so nothing local to a checkout enters the image. `/app` mirrors the
+`skills/`). Those trees are copied whole, so `naapp/folio/Dockerfile.dockerignore`
+is what keeps files local to a checkout (`.env` files, virtualenvs, bytecode,
+tool caches, keys) out of the build context and the image. `/app` mirrors the
 repository layout (`/app/naapp/folio`, `/app/awid`, `/app/naapp-lib`), so the
 path sources resolve in the image as they do in a checkout.
 
