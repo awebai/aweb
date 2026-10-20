@@ -394,3 +394,62 @@ async def test_the_service_token_is_exempt_from_the_team_publish_limit(controlle
             assert (await publish_custodian(env, _custodian(env, issued_at=_now(offset)))).status_code == 200
     finally:
         env.client.headers = original
+
+
+def _team_server(key_pair, *, issued_at):
+    from awid.signing import sign_message
+    from awid.team_server_record import record_signing_bytes
+
+    record = {"v": 1, "type": "aweb.team-server", "team_id": TEAM_ID, "team_did_key": key_pair[1],
+              "server_url": "https://coord.example/api", "issued_at": issued_at}
+    return {"record": record, "signature": sign_message(key_pair[0], record_signing_bytes(record))}
+
+
+async def _publish_team_server(env, signed):
+    response = await env.client.put(f"{BASE}/server", json=signed)
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.asyncio
+async def test_rotation_swaps_the_team_server_record_with_the_other_records(controller_app):
+    env = controller_app
+    custodian, custody, person = await _team_with_records(env)
+    await _publish_team_server(env, _team_server(env.team, issued_at=_now(-30)))
+    new = keypair()
+    resigned = {
+        "team_server": _team_server(new, issued_at=_now()),
+        "team_custodians": [_signed(new[0], _resign(custodian, new))],
+        "member_custody": [_signed(new[0], _resign(custody, new))],
+        "member_person": [_signed(new[0], _resign(person, new))],
+    }
+    response = await _rotate(env, new[1], resigned)
+    assert response.status_code == 200, response.text
+    assert (await env.client.get(f"{BASE}/server")).json() == resigned["team_server"]
+
+
+@pytest.mark.asyncio
+async def test_a_stored_team_server_record_must_be_re_signed_unchanged(controller_app):
+    env = controller_app
+    await _publish_team_server(env, _team_server(env.team, issued_at=_now(-30)))
+    new = keypair()
+    missing = await _rotate(env, new[1], {})
+    assert missing.status_code == 409, missing.text
+    assert missing.json()["detail"]["missing"]["team_server"] is True
+    moved = _team_server(new, issued_at=_now())
+    moved["record"]["server_url"] = "https://elsewhere.example/api"
+    from awid.signing import sign_message
+    from awid.team_server_record import record_signing_bytes
+    moved["signature"] = sign_message(new[0], record_signing_bytes(moved["record"]))
+    changed = await _rotate(env, new[1], {"team_server": moved})
+    assert changed.status_code == 409, changed.text
+    assert changed.json()["detail"]["changed"]["team_server"] is True
+    assert await _team_key(env) == env.team[1]
+
+
+@pytest.mark.asyncio
+async def test_a_team_server_record_without_a_stored_one_is_extra(controller_app):
+    env = controller_app
+    new = keypair()
+    extra = await _rotate(env, new[1], {"team_server": _team_server(new, issued_at=_now())})
+    assert extra.status_code == 409, extra.text
+    assert extra.json()["detail"]["extra"]["team_server"] is True
