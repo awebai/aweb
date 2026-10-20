@@ -310,7 +310,11 @@ its own team at once, without waiting for a new digest:
 the team row's `revoked_at`, which is one-way, and enqueues the
 post-mutation-hook event `app_key.revoked` (`team_id`, `app_id`, `kid`,
 `purposes`, actor) in the same transaction, because which events a target
-accepts is audit-relevant (audit-substrate §A6). Key rows are the team's own, so
+accepts is audit-relevant (audit-substrate §A6). The hooks catalog is a strict
+allowlist, so this depends on `app_key.revoked`, with that payload, joining
+audit-substrate §A10's v1 mutation types and the hook-catalog and
+post-mutation-hook-sites vectors before they freeze; until then logs would
+refuse the event. Key rows are the team's own, so
 one team can never disable an app for another. Revocation for every team is
 the app's own act: it publishes new bytes, and each team installs the new
 digest.
