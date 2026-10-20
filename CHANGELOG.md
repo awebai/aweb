@@ -33,7 +33,17 @@ Server changes are since `server-v1.27.29`.
 - App request credentials are verified by purpose through one verifier. App
   event emission keeps its credential and behaviour. Migration
   `027_team_app_keys` adds the installing team's app keys and the purposes each
-  may sign. No route accepts the new read purposes in this release.
+  may sign.
+- `GET /v1/apps/self/grant`: an app reads its own grant in a team, signed with
+  an `app-grant-read` credential. The team and app come only from the
+  credential, and the answer is read under the digest the key is registered
+  for. `installation_id`, `generation` and `origin_verified` are `null` until
+  installations carry them. `AWEB_APP_GRANT_MAX_AGE_SECONDS` (1 to 60,
+  default 60) sets `max_age_seconds`; any other value stops the server at
+  startup. Conformance: `test-vectors/app-read-credential-v1.json`.
+- **Security:** read-purpose credentials (`app-grant-read`, `hook-resolve`)
+  accept one signature encoding only: unpadded standard base64 with zero
+  spare bits. App-event credentials are unchanged.
 
 ### Release preparation: aw 1.36.45
 
