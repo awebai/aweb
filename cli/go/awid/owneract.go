@@ -180,6 +180,17 @@ type OwnerAct struct {
 	Audience string
 	Subject  map[string]any
 	Nonce    string
+
+	issuedAt, expiresAt time.Time
+}
+
+// ownerActTime parses a time that must be in its one canonical spelling.
+func ownerActTime(value string) (time.Time, error) {
+	parsed, err := time.Parse(ownerActTimeLayout, value)
+	if err != nil || parsed.UTC().Format(ownerActTimeLayout) != value {
+		return time.Time{}, strictjson.Refuse("invalid_value", "time")
+	}
+	return parsed, nil
 }
 
 // OwnerActSigningBytes validates an owner act and returns the bytes the team
@@ -212,10 +223,10 @@ func SignOwnerAct(teamKey ed25519.PrivateKey, act map[string]any) ([]byte, strin
 	return signing, base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, signing)), nil
 }
 
-// OwnerActVerifyOptions are the verifier's own facts. CurrentTeamKeyDID is
-// the team key read fresh from the team's registry; Acts is the verifier's
-// closed vocabulary; NonceUsed reports a nonce already consumed; and
-// ExpectedSubject, when set, is the stored row the act must name exactly.
+// OwnerActVerifyOptions are the verifier's own facts, all required.
+// CurrentTeamKeyDID is the team key read fresh from the team's registry;
+// Acts is the verifier's closed vocabulary; ExpectedSubject is the stored row
+// the act must name exactly; and NonceUsed reports a nonce already consumed.
 type OwnerActVerifyOptions struct {
 	TeamID            string
 	CurrentTeamKeyDID string
@@ -227,9 +238,19 @@ type OwnerActVerifyOptions struct {
 }
 
 // VerifyOwnerAct checks an owner act in the contract's order and returns it,
-// or the first refusal. The caller records the nonce as used only after the
-// act's effect commits.
+// or the first refusal.
+//
+// It proves that the act was signed by the team's current controller key, for
+// this verifier, within its lifetime, naming the expected subject. It cannot
+// tell who held the key: that only the organization owner signs, after a
+// fresh step-up, is the signing deployment's obligation. The caller inserts
+// the nonce under a unique constraint in the act's effect transaction, so two
+// concurrent uses of one act cannot both commit.
 func VerifyOwnerAct(signing []byte, signature string, opts OwnerActVerifyOptions) (*OwnerAct, error) {
+	if opts.TeamID == "" || opts.CurrentTeamKeyDID == "" || opts.Audience == "" || len(opts.Acts) == 0 ||
+		opts.Now.IsZero() || opts.ExpectedSubject == nil || opts.NonceUsed == nil {
+		return nil, strictjson.Refuse("verifier_misconfigured", "every verifier option is required")
+	}
 	if !bytes.HasPrefix(signing, []byte(OwnerActPrefix)) {
 		return nil, strictjson.Refuse("wrong_prefix", "signing bytes do not start with %q", OwnerActPrefix)
 	}
@@ -250,9 +271,8 @@ func VerifyOwnerAct(signing []byte, signature string, opts OwnerActVerifyOptions
 	if !containsString(opts.Acts, act.Act) {
 		return nil, strictjson.Refuse("act_not_allowed", "%s is not in this verifier's vocabulary", act.Act)
 	}
-	issued, _ := time.Parse(ownerActTimeLayout, fields["issued_at"].(string))
-	expires, _ := time.Parse(ownerActTimeLayout, fields["expires_at"].(string))
-	if !expires.After(issued) || expires.Sub(issued) > OwnerActMaxLifetime {
+	issued, expires := act.issuedAt, act.expiresAt
+	if expires.Sub(issued) > OwnerActMaxLifetime {
 		return nil, strictjson.Refuse("lifetime_too_long", "an owner act lives at most %s", OwnerActMaxLifetime)
 	}
 	if issued.After(opts.Now.Add(OwnerActClockSkew)) {
@@ -268,22 +288,23 @@ func VerifyOwnerAct(signing []byte, signature string, opts OwnerActVerifyOptions
 	if err != nil {
 		return nil, strictjson.Refuse("bad_signature", "current team key does not decode")
 	}
-	sig, err := base64.RawStdEncoding.DecodeString(signature)
-	if err != nil || len(sig) != ed25519.SignatureSize || !ed25519.Verify(public, signing, sig) {
+	sig, err := strictjson.DecodeSignature(signature)
+	if err != nil {
+		return nil, err
+	}
+	if !ed25519.Verify(public, signing, sig) {
 		return nil, strictjson.Refuse("bad_signature", "signature does not verify under the team key")
 	}
-	if opts.NonceUsed != nil && opts.NonceUsed(act.Nonce) {
+	if opts.NonceUsed(act.Nonce) {
 		return nil, strictjson.Refuse("nonce_reused", "%s", act.Nonce)
 	}
-	if opts.ExpectedSubject != nil {
-		want, err := strictjson.Canonical(opts.ExpectedSubject)
-		if err != nil {
-			return nil, err
-		}
-		got, _ := strictjson.Canonical(act.Subject)
-		if !bytes.Equal(want, got) {
-			return nil, strictjson.Refuse("subject_mismatch", "the act names a different subject")
-		}
+	want, err := strictjson.Canonical(opts.ExpectedSubject)
+	if err != nil {
+		return nil, err
+	}
+	got, _ := strictjson.Canonical(act.Subject)
+	if !bytes.Equal(want, got) {
+		return nil, strictjson.Refuse("subject_mismatch", "the act names a different subject")
 	}
 	return act, nil
 }
@@ -303,13 +324,30 @@ func checkOwnerAct(f map[string]any) (*OwnerAct, error) {
 	if !known {
 		return nil, strictjson.Refuse("unknown_act", "%v", f["act"])
 	}
-	for name, pattern := range map[string]*regexp.Regexp{
-		"team_id": ownerTeamID, "aud": ownerOrigin, "team_key_did": ownerDIDKey,
-		"issued_at": ownerTime, "expires_at": ownerTime, "nonce": ownerNonce,
+	for _, check := range []struct {
+		name    string
+		pattern *regexp.Regexp
+	}{
+		{"aud", ownerOrigin}, {"expires_at", ownerTime}, {"issued_at", ownerTime},
+		{"nonce", ownerNonce}, {"team_id", ownerTeamID}, {"team_key_did", ownerDIDKey},
 	} {
-		if value, ok := f[name].(string); !ok || !pattern.MatchString(value) {
-			return nil, strictjson.Refuse("invalid_value", "%s", name)
+		if value, ok := f[check.name].(string); !ok || !check.pattern.MatchString(value) {
+			return nil, strictjson.Refuse("invalid_value", "%s", check.name)
 		}
+	}
+	issued, err := ownerActTime(f["issued_at"].(string))
+	if err != nil {
+		return nil, strictjson.Refuse("invalid_value", "issued_at")
+	}
+	expires, err := ownerActTime(f["expires_at"].(string))
+	if err != nil {
+		return nil, strictjson.Refuse("invalid_value", "expires_at")
+	}
+	if !expires.After(issued) {
+		return nil, strictjson.Refuse("invalid_value", "expires_at must follow issued_at")
+	}
+	if _, err := ExtractPublicKey(f["team_key_did"].(string)); err != nil {
+		return nil, strictjson.Refuse("invalid_value", "team_key_did is not an Ed25519 did:key")
 	}
 	subject, ok := f["subject"].(map[string]any)
 	if !ok {
@@ -318,9 +356,12 @@ func checkOwnerAct(f map[string]any) (*OwnerAct, error) {
 	if err := checkOwnerSubject(spec, subject); err != nil {
 		return nil, err
 	}
+	if first, ok := subject["team_seq_first"].(int64); ok && first > subject["team_seq_last"].(int64) {
+		return nil, strictjson.Refuse("invalid_value", "subject.team_seq_last precedes team_seq_first")
+	}
 	return &OwnerAct{
 		Fields: f, Act: actName, TeamID: f["team_id"].(string), Audience: f["aud"].(string),
-		Subject: subject, Nonce: f["nonce"].(string),
+		Subject: subject, Nonce: f["nonce"].(string), issuedAt: issued, expiresAt: expires,
 	}, nil
 }
 

@@ -364,6 +364,24 @@
         ],
         "audience": "https://secrets.example.com",
         "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
         "nonce_used": false,
         "now": "2026-10-20T12:01:00Z",
         "team_id": "demo:example.com"
@@ -651,6 +669,491 @@
         ],
         "audience": "https://secrets.example.com",
         "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "secrets",
+          "contact_sha256": "c8cd3c6427301eaf6665bccacd65ddb614527acc843a15463e3faba57124c351",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "role": "secrets.owner"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "duplicate_key",
+      "name": "duplicate_key",
+      "signature_b64": "Gqgvml1znhF7dvKmrhed6QA2Tun2nYY41IuwWKGpRU8uDqgrBV55i2DCZDEKu0ZjDjKdZfjsiJvW0pkOWswMBg",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7InYiOjEsImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "float_value",
+      "name": "float_value",
+      "signature_b64": "PFWWJfQzYLf3keRu3N18g0sn08A+zxcMGmqC0dE3BkEOsF7Gnd3q7UBUvgk9VU98LsxuksSCeP6XjDCD7SCQBA",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLjAsImhvb2siOiJwb3N0LXNlY3JldC11c2UtaG9vayIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsImtpbmQiOiJyZWdpc3RyYXRpb24iLCJtZXRob2QiOiJQT1NUIiwib3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwicGF0aCI6Ii9ob29rcy9pbmdlc3QiLCJzY29wZXMiOlsibG9nczppbmdlc3QiXSwidG9vbCI6ImluZ2VzdCJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "null_value",
+      "name": "null_value",
+      "signature_b64": "WamjzTjIxu5b34R5sCu/RehYk6Bq3VFP6hqmmzPeQWWI+XVMTjaqcdQAjtvRAs9b0JyZzQIWFPzbszHqtB99Dg",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOm51bGx9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "string_not_ascii",
+      "name": "non_ascii_string",
+      "signature_b64": "buyPzpEb8EoS8olM6sACjCb5MVQMDxuBwW/sNuxVVALDhVDtLcMx90FcEru76yeGkAeclGWITSgK2KBRB8M9Dw",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3TDqSJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "invalid_value",
+      "name": "wrong_version",
+      "signature_b64": "FMNVp0y3MO7Hc0Lv5lnZ3nCrKAMM9AJ6Fb2LmV//KB5wB0378QhpcGmXYzq/KMMrOam7dCzWYseWDRT4VOLXCg",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjJ9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "invalid_value",
+      "name": "wrong_type",
+      "signature_b64": "nwdxvbL4EsjAehBNccaT/MpiBY2HYQR8to2PSPBLsoQwVZoYnudc1guGC8+JaARXjM/+JD/jto2ove5tsFkzCg",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLnRlYW0tY2VydGlmaWNhdGUiLCJ2IjoxfQ",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "invalid_value",
+      "name": "impossible_date",
+      "signature_b64": "nBDfmfq5AHESJlTUX31EObsUVuZbrhvn59eaOReARWg3mN+vTO/Gnqe+yBUqUQ7ApId3ZKym3bd3DfgELehmAg",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMDItMzBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "invalid_value",
+      "name": "expires_when_issued",
+      "signature_b64": "6uRp2mimCbf1OCB6bjxPdp7igurwhSMXoQvdGgY0bFb5A4V/sC+6HVH7OAdwYv+ct4sfU8KGtTDoeZTVcntvCQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjAwOjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "invalid_value",
+      "name": "malformed_nonce",
+      "signature_b64": "SW/SIvC4axCJhWsCakY/KCMUB7MYXaJ/78zAj+AJndl/9eH4AI+qm635UmEhVmK3WZ94nGd+2I9AzOLo6GLJAQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIwMTAxIiwic3ViamVjdCI6eyJhcHBfaWQiOiJsb2dzIiwiYmluZGluZ19pZCI6IjZmOTYxOWZmLThiODYtNDAxMS1iNDJkLTAwYzA0ZmM5NjRmZiIsImNhdGFsb2dfaWQiOiJhd2ViLmhvb2tzIiwiY2F0YWxvZ192ZXJzaW9uIjoxLCJkaWdlc3QiOiJzaGEyNTY6OWY4NmQwODE4ODRjN2Q2NTlhMmZlYWEwYzU1YWQwMTVhM2JmNGYxYjJiMGI4MjJjZDE1ZDZjMTViMGYwMGEwOCIsImdlbmVyYXRpb24iOjIsImhvb2siOiJwb3N0LXNlY3JldC11c2UtaG9vayIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsImtpbmQiOiJyZWdpc3RyYXRpb24iLCJtZXRob2QiOiJQT1NUIiwib3JpZ2luIjoiaHR0cHM6Ly9sb2dzLmV4YW1wbGUuY29tIiwicGF0aCI6Ii9ob29rcy9pbmdlc3QiLCJzY29wZXMiOlsibG9nczppbmdlc3QiXSwidG9vbCI6ImluZ2VzdCJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "missing_field",
+      "name": "retention_days_without_count",
+      "signature_b64": "mxnMUesjN35yBrE4117247wP4sP2knQqc24WrXGPnq5TE5wUOLC+4bQw1rCgOOnRMFVO3J9OaJNSyIoFxTJeCQ",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImxvZ3MucmV0ZW50aW9uLnNldCIsImF1ZCI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyYzJjMmMyYzJjMmMyYzJjMmMyYzJjMmMyYzJjMmMyYyIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImV2ZW50X2NsYXNzIjoiYWxsIiwiaW5zdGFsbGF0aW9uX2lkIjoiMWI0ZTI4YmEtMmZhMS00ZDNiLWEzZjUtZWYxOWI1YTc2MzNiIiwicmV0ZW50aW9uIjoiZGF5cyJ9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "app-role.designate",
+          "app-role.revoke",
+          "app-credential.recover",
+          "logs.retention.set",
+          "logs.erase",
+          "logs.legal-hold.set",
+          "logs.legal-hold.release"
+        ],
+        "audience": "https://logs.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "event_class": "all",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "retention": "days"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "invalid_value",
+      "name": "erase_range_reversed",
+      "signature_b64": "IZ0llzADzV3JByS/GGCeENWjq1uXQo6pE2KOEHXAYZw0oDGSaFs/DgLkVPtFt/J+8KNrGsSJUvJ5NzYeVmbfAw",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6ImxvZ3MuZXJhc2UiLCJhdWQiOiJodHRwczovL2xvZ3MuZXhhbXBsZS5jb20iLCJleHBpcmVzX2F0IjoiMjAyNi0xMC0yMFQxMjowNTowMFoiLCJpc3N1ZWRfYXQiOiIyMDI2LTEwLTIwVDEyOjAwOjAwWiIsIm5vbmNlIjoiMmQyZDJkMmQyZDJkMmQyZDJkMmQyZDJkMmQyZDJkMmQiLCJzdWJqZWN0Ijp7ImFwcF9pZCI6ImxvZ3MiLCJjaGFpbl9lcG9jaCI6MSwiZXJhc2Vfc2NvcGUiOiJyYW5nZSIsImluc3RhbGxhdGlvbl9pZCI6IjFiNGUyOGJhLTJmYTEtNGQzYi1hM2Y1LWVmMTliNWE3NjMzYiIsInJlYXNvbl9jb2RlIjoib3duZXJfcmVxdWVzdCIsInRlYW1fc2VxX2ZpcnN0IjoyMCwidGVhbV9zZXFfbGFzdCI6MTB9LCJ0ZWFtX2lkIjoiZGVtbzpleGFtcGxlLmNvbSIsInRlYW1fa2V5X2RpZCI6ImRpZDprZXk6ejZNa3RGb3Z6Y2FwTlp5WkJXekZKcENYZjI2QjhYTEtkWHR3ZnduWFhGZWJQZ3pNIiwidHlwZSI6ImF3ZWIub3duZXItYWN0IiwidiI6MX0",
+      "verify": {
+        "acts": [
+          "app-role.designate",
+          "app-role.revoke",
+          "app-credential.recover",
+          "logs.retention.set",
+          "logs.erase",
+          "logs.legal-hold.set",
+          "logs.legal-hold.release"
+        ],
+        "audience": "https://logs.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "chain_epoch": 1,
+          "erase_scope": "range",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "reason_code": "owner_request",
+          "team_seq_first": 20,
+          "team_seq_last": 10
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "signature_encoding",
+      "name": "signature_padded",
+      "signature_b64": "PVavmCjPbbMMPOeSP6GTxxPmIPQuH1wArKTxwEPnQzBIt5+mf+gF7BlS30q2GsvnAXDMTXhcoZRc+Xm4XsHmCw==",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "signature_encoding",
+      "name": "signature_url_alphabet",
+      "signature_b64": "PVavmCjPbbMMPOeSP6GTxxPmIPQuH1wArKTxwEPnQzBIt5-mf-gF7BlS30q2GsvnAXDMTXhcoZRc-Xm4XsHmCw",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T12:01:00Z",
+        "team_id": "demo:example.com"
+      }
+    },
+    {
+      "error": "signature_encoding",
+      "name": "signature_nonzero_trailing_bits",
+      "signature_b64": "PVavmCjPbbMMPOeSP6GTxxPmIPQuH1wArKTxwEPnQzBIt5+mf+gF7BlS30q2GsvnAXDMTXhcoZRc+Xm4XsHmCx",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOSIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
         "nonce_used": false,
         "now": "2026-10-20T12:01:00Z",
         "team_id": "demo:example.com"
@@ -1273,16 +1776,79 @@
         "now": "2026-10-20T12:01:00Z",
         "team_id": "demo:example.com"
       }
+    },
+    {
+      "act": {
+        "act": "hook-binding.activate",
+        "aud": "https://aweb.example.com",
+        "expires_at": "2026-10-20T12:05:00Z",
+        "issued_at": "2026-10-20T12:00:00Z",
+        "nonce": "28282828282828282828282828282828",
+        "subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "team_id": "demo:example.com",
+        "team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "type": "aweb.owner-act",
+        "v": 1
+      },
+      "name": "issued_sixty_seconds_ahead",
+      "signature_b64": "M+kMHGCpjIWl/LwSKLURyPviRazkO+0brhL3HWA6Y+Wpo011gaQKrVq5j6ciqyziWhfySYduOA9V6x3CprK9DA",
+      "signing_bytes_b64url": "YXdlYi5vd25lci1hY3QvMQp7ImFjdCI6Imhvb2stYmluZGluZy5hY3RpdmF0ZSIsImF1ZCI6Imh0dHBzOi8vYXdlYi5leGFtcGxlLmNvbSIsImV4cGlyZXNfYXQiOiIyMDI2LTEwLTIwVDEyOjA1OjAwWiIsImlzc3VlZF9hdCI6IjIwMjYtMTAtMjBUMTI6MDA6MDBaIiwibm9uY2UiOiIyODI4MjgyODI4MjgyODI4MjgyODI4MjgyODI4MjgyOCIsInN1YmplY3QiOnsiYXBwX2lkIjoibG9ncyIsImJpbmRpbmdfaWQiOiI2Zjk2MTlmZi04Yjg2LTQwMTEtYjQyZC0wMGMwNGZjOTY0ZmYiLCJjYXRhbG9nX2lkIjoiYXdlYi5ob29rcyIsImNhdGFsb2dfdmVyc2lvbiI6MSwiZGlnZXN0Ijoic2hhMjU2OjlmODZkMDgxODg0YzdkNjU5YTJmZWFhMGM1NWFkMDE1YTNiZjRmMWIyYjBiODIyY2QxNWQ2YzE1YjBmMDBhMDgiLCJnZW5lcmF0aW9uIjoyLCJob29rIjoicG9zdC1zZWNyZXQtdXNlLWhvb2siLCJpbnN0YWxsYXRpb25faWQiOiIxYjRlMjhiYS0yZmExLTRkM2ItYTNmNS1lZjE5YjVhNzYzM2IiLCJraW5kIjoicmVnaXN0cmF0aW9uIiwibWV0aG9kIjoiUE9TVCIsIm9yaWdpbiI6Imh0dHBzOi8vbG9ncy5leGFtcGxlLmNvbSIsInBhdGgiOiIvaG9va3MvaW5nZXN0Iiwic2NvcGVzIjpbImxvZ3M6aW5nZXN0Il0sInRvb2wiOiJpbmdlc3QifSwidGVhbV9pZCI6ImRlbW86ZXhhbXBsZS5jb20iLCJ0ZWFtX2tleV9kaWQiOiJkaWQ6a2V5Ono2TWt0Rm92emNhcE5aeVpCV3pGSnBDWGYyNkI4WExLZFh0d2Z3blhYRmViUGd6TSIsInR5cGUiOiJhd2ViLm93bmVyLWFjdCIsInYiOjF9",
+      "verify": {
+        "acts": [
+          "hook-binding.activate",
+          "hook-binding.revoke"
+        ],
+        "audience": "https://aweb.example.com",
+        "current_team_key_did": "did:key:z6MktFovzcapNZyZBWzFJpCXf26B8XLKdXtwfwnXXFebPgzM",
+        "expected_subject": {
+          "app_id": "logs",
+          "binding_id": "6f9619ff-8b86-4011-b42d-00c04fc964ff",
+          "catalog_id": "aweb.hooks",
+          "catalog_version": 1,
+          "digest": "sha256:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "generation": 2,
+          "hook": "post-secret-use-hook",
+          "installation_id": "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b",
+          "kind": "registration",
+          "method": "POST",
+          "origin": "https://logs.example.com",
+          "path": "/hooks/ingest",
+          "scopes": [
+            "logs:ingest"
+          ],
+          "tool": "ingest"
+        },
+        "nonce_used": false,
+        "now": "2026-10-20T11:59:00Z",
+        "team_id": "demo:example.com"
+      }
     }
   ],
   "scheme": {
     "authority": "docs/owner-act.md",
-    "nonce": "16 random bytes as 32 lowercase hex characters, single use per verifier; recorded only when the act's effect commits",
-    "order": "prefix; strict parse; canonical bytes; fields; known act; field values; subject; team; audience; vocabulary; lifetime; not yet valid; expired; the current team key; the signature; the nonce; the expected subject",
-    "signature": "detached Ed25519 by the team's current controller key, raw standard base64 without padding",
+    "nonce": "16 random bytes as 32 lowercase hex characters, single use per verifier: inserted under a unique constraint in the act's effect transaction, so a second use rolls back with nonce_reused",
+    "order": "every verifier option present; prefix; strict parse; canonical bytes; field names; v and type; known act; field formats (aud, expires_at, issued_at, nonce, team_id, team_key_did), real times, expires after issued; subject; team; audience; vocabulary; lifetime; not yet valid; expired; the current team key; the signature's spelling; the signature; the nonce; the expected subject",
+    "signature": "detached Ed25519 by the team's current controller key: exactly 86 characters of the standard base64 alphabet, no padding, zero trailing bits",
     "signing_bytes": "the ASCII prefix 'aweb.owner-act/1' and a newline, then the act's strict canonical JSON (the hook event rules: sorted keys, printable ASCII, no floats, no null)",
-    "times": "issued_at and expires_at are UTC to the second; expires_at - issued_at is at most 600 seconds; issued_at may lead the verifier by at most 60 seconds",
-    "verify": "each case's verify object is what the verifier knows independently: its team, the team key read fresh from the registry, its own audience and vocabulary, its clock, the stored subject when it has one, and whether the nonce was used",
+    "times": "issued_at and expires_at are UTC to the second in their one canonical spelling; expires_at follows issued_at by at most 600 seconds; issued_at may lead the verifier by at most 60 seconds, inclusive",
+    "verify": "each case's verify object is what the verifier knows independently, and every field is required: its team, the team key read fresh from the registry, its own audience and vocabulary, its clock, the stored subject, and whether the nonce was used",
     "vocabularies": {
       "app": [
         "app-role.designate",

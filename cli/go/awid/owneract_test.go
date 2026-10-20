@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,6 +177,17 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 			"signature_b64": signature, "verify": ownerOptions(p.aud, p.acts, p.act["subject"].(map[string]any)),
 		})
 	}
+	lead := ownerAct("hook-binding.activate", ownerCoreAud, registrationSubject(), nonceFor(39))
+	leadSigning, leadSignature, err := SignOwnerAct(ownerKey(ownerTeamSeed), lead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leadOptions := ownerOptions(ownerCoreAud, CoreOwnerActs, registrationSubject())
+	leadOptions["now"] = "2026-10-20T11:59:00Z"
+	positives = append(positives, map[string]any{
+		"name": "issued_sixty_seconds_ahead", "act": lead, "signing_bytes_b64url": base64.RawURLEncoding.EncodeToString(leadSigning),
+		"signature_b64": leadSignature, "verify": leadOptions,
+	})
 
 	base := ownerAct("hook-binding.activate", ownerCoreAud, registrationSubject(), nonceFor(40))
 	baseOptions := func() map[string]any { return ownerOptions(ownerCoreAud, CoreOwnerActs, registrationSubject()) }
@@ -209,7 +221,18 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 		act       map[string]any
 		raw       []byte
 		options   map[string]any
+		signature func(string) string
 	}
+	baseText := mustOwnerCanonical(t, base)
+	edit := func(old, new string) []byte {
+		if !bytes.Contains(baseText, []byte(old)) {
+			t.Fatalf("base act lacks %s", old)
+		}
+		return append([]byte(OwnerActPrefix), bytes.Replace(baseText, []byte(old), []byte(new), 1)...)
+	}
+	retention := ownerAct("logs.retention.set", ownerLogsAud, map[string]any{"app_id": "logs", "installation_id": ownerInstall, "event_class": "all", "retention": "days"}, nonceFor(43))
+	reversed := map[string]any{"app_id": "logs", "installation_id": ownerInstall, "erase_scope": "range", "chain_epoch": int64(1), "team_seq_first": int64(20), "team_seq_last": int64(10), "reason_code": "owner_request"}
+	logsVocabulary := append(append([]string{}, AppOwnerActs...), LogsOwnerActs...)
 	designation := map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "secrets.owner", "contact_sha256": contactSHA256("owner@example.com")}
 	designate := ownerAct("app-role.designate", ownerAppAud, designation, nonceFor(42))
 	otherContact := map[string]any{"app_id": "secrets", "installation_id": ownerInstall, "role": "secrets.owner", "contact_sha256": contactSHA256("someone-else@example.com")}
@@ -228,7 +251,7 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 		{name: "subject_digest_mismatch", err: "subject_mismatch", seed: ownerTeamSeed, act: base, options: withOption("expected_subject", subjectWith("digest", "sha256:"+hex.EncodeToString(make([]byte, 32))))},
 		{name: "logs_act_at_core", err: "act_not_allowed", seed: ownerTeamSeed, act: logsAtCore},
 		{name: "core_act_at_an_app", err: "act_not_allowed", seed: ownerTeamSeed, act: ownerSet(base, "aud", ownerAppAud),
-			options: ownerOptions(ownerAppAud, AppOwnerActs, nil)},
+			options: ownerOptions(ownerAppAud, AppOwnerActs, registrationSubject())},
 		{name: "wrong_audience", err: "audience_mismatch", seed: ownerTeamSeed, act: ownerSet(base, "aud", ownerLogsAud)},
 		{name: "wrong_team", err: "team_mismatch", seed: ownerTeamSeed, act: ownerSet(base, "team_id", "other:example.com")},
 		{name: "team_certificate_presented_as_owner_act", err: "wrong_prefix", seed: ownerTeamSeed, raw: certBytes},
@@ -239,7 +262,23 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 		{name: "designation_for_another_contact", err: "subject_mismatch", seed: ownerTeamSeed, act: designate,
 			options: ownerOptions(ownerAppAud, AppOwnerActs, otherContact)},
 		{name: "designation_naming_a_subject", err: "unknown_field", seed: ownerTeamSeed, act: ownerSet(designate, "subject", designationWithRef),
-			options: ownerOptions(ownerAppAud, AppOwnerActs, nil)},
+			options: ownerOptions(ownerAppAud, AppOwnerActs, designation)},
+		{name: "duplicate_key", err: "duplicate_key", seed: ownerTeamSeed, raw: edit(`{"act"`, `{"v":1,"act"`)},
+		{name: "float_value", err: "float_value", seed: ownerTeamSeed, raw: edit(`"generation":2`, `"generation":2.0`)},
+		{name: "null_value", err: "null_value", seed: ownerTeamSeed, raw: edit(`"tool":"ingest"`, `"tool":null`)},
+		{name: "non_ascii_string", err: "string_not_ascii", seed: ownerTeamSeed, raw: edit(`"tool":"ingest"`, `"tool":"ingest`+"\u00e9"+`"`)},
+		{name: "wrong_version", err: "invalid_value", seed: ownerTeamSeed, act: ownerSet(base, "v", int64(2))},
+		{name: "wrong_type", err: "invalid_value", seed: ownerTeamSeed, act: ownerSet(base, "type", "aweb.team-certificate")},
+		{name: "impossible_date", err: "invalid_value", seed: ownerTeamSeed, act: ownerSet(base, "issued_at", "2026-02-30T12:00:00Z")},
+		{name: "expires_when_issued", err: "invalid_value", seed: ownerTeamSeed, act: ownerSet(base, "expires_at", ownerIssuedAt)},
+		{name: "malformed_nonce", err: "invalid_value", seed: ownerTeamSeed, act: ownerSet(base, "nonce", "0101")},
+		{name: "retention_days_without_count", err: "missing_field", seed: ownerTeamSeed, act: retention,
+			options: ownerOptions(ownerLogsAud, logsVocabulary, retention["subject"].(map[string]any))},
+		{name: "erase_range_reversed", err: "invalid_value", seed: ownerTeamSeed, act: ownerAct("logs.erase", ownerLogsAud, reversed, nonceFor(44)),
+			options: ownerOptions(ownerLogsAud, logsVocabulary, reversed)},
+		{name: "signature_padded", err: "signature_encoding", seed: ownerTeamSeed, act: base, signature: func(sig string) string { return sig + "==" }},
+		{name: "signature_url_alphabet", err: "signature_encoding", seed: ownerTeamSeed, act: base, signature: urlAlphabetRespelling(t)},
+		{name: "signature_nonzero_trailing_bits", err: "signature_encoding", seed: ownerTeamSeed, act: base, signature: trailingBitsRespelling},
 		{name: "non_canonical_bytes", err: "not_canonical", seed: ownerTeamSeed,
 			raw: append([]byte(OwnerActPrefix), bytes.Replace(mustOwnerCanonical(t, base), []byte(`{"act"`), []byte(`{ "act"`), 1)...)},
 	}
@@ -254,10 +293,13 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 		if options == nil {
 			options = baseOptions()
 		}
+		signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(ownerKey(n.seed), signing))
+		if n.signature != nil {
+			signature = n.signature(signature)
+		}
 		out = append(out, map[string]any{
 			"name": n.name, "signing_bytes_b64url": base64.RawURLEncoding.EncodeToString(signing),
-			"signature_b64": base64.RawStdEncoding.EncodeToString(ed25519.Sign(ownerKey(n.seed), signing)),
-			"verify":        options, "error": n.err,
+			"signature_b64": signature, "verify": options, "error": n.err,
 		})
 	}
 
@@ -267,16 +309,34 @@ func buildOwnerActVector(t *testing.T) map[string]any {
 		"scheme": map[string]any{
 			"authority":     "docs/owner-act.md",
 			"signing_bytes": "the ASCII prefix 'aweb.owner-act/1' and a newline, then the act's strict canonical JSON (the hook event rules: sorted keys, printable ASCII, no floats, no null)",
-			"signature":     "detached Ed25519 by the team's current controller key, raw standard base64 without padding",
-			"times":         "issued_at and expires_at are UTC to the second; expires_at - issued_at is at most 600 seconds; issued_at may lead the verifier by at most 60 seconds",
-			"nonce":         "16 random bytes as 32 lowercase hex characters, single use per verifier; recorded only when the act's effect commits",
+			"signature":     "detached Ed25519 by the team's current controller key: exactly 86 characters of the standard base64 alphabet, no padding, zero trailing bits",
+			"times":         "issued_at and expires_at are UTC to the second in their one canonical spelling; expires_at follows issued_at by at most 600 seconds; issued_at may lead the verifier by at most 60 seconds, inclusive",
+			"nonce":         "16 random bytes as 32 lowercase hex characters, single use per verifier: inserted under a unique constraint in the act's effect transaction, so a second use rolls back with nonce_reused",
 			"vocabularies":  map[string]any{"core": CoreOwnerActs, "app": AppOwnerActs, "logs": LogsOwnerActs},
-			"verify":        "each case's verify object is what the verifier knows independently: its team, the team key read fresh from the registry, its own audience and vocabulary, its clock, the stored subject when it has one, and whether the nonce was used",
-			"order":         "prefix; strict parse; canonical bytes; fields; known act; field values; subject; team; audience; vocabulary; lifetime; not yet valid; expired; the current team key; the signature; the nonce; the expected subject",
+			"verify":        "each case's verify object is what the verifier knows independently, and every field is required: its team, the team key read fresh from the registry, its own audience and vocabulary, its clock, the stored subject, and whether the nonce was used",
+			"order":         "every verifier option present; prefix; strict parse; canonical bytes; field names; v and type; known act; field formats (aud, expires_at, issued_at, nonce, team_id, team_key_did), real times, expires after issued; subject; team; audience; vocabulary; lifetime; not yet valid; expired; the current team key; the signature's spelling; the signature; the nonce; the expected subject",
 		},
 		"positive_cases": positives,
 		"negative_cases": out,
 	}
+}
+
+const ownerStandardAlphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// urlAlphabetRespelling and trailingBitsRespelling give a second spelling of
+// the same 64 signature bytes, which a strict verifier refuses.
+func urlAlphabetRespelling(t *testing.T) func(string) string {
+	return func(sig string) string {
+		if !strings.ContainsAny(sig, "+/") {
+			t.Fatal("the fixture signature has no + or / to respell")
+		}
+		return strings.NewReplacer("+", "-", "/", "_").Replace(sig)
+	}
+}
+
+func trailingBitsRespelling(sig string) string {
+	last := strings.IndexByte(ownerStandardAlphabet, sig[len(sig)-1])
+	return sig[:len(sig)-1] + string(ownerStandardAlphabet[last|1])
 }
 
 func mustOwnerCanonical(t *testing.T, value map[string]any) []byte {
@@ -395,5 +455,45 @@ func TestSignOwnerActRefusesAKeyThatIsNotTheTeamKey(t *testing.T) {
 	act := ownerAct("hook-binding.activate", ownerCoreAud, registrationSubject(), nonceFor(0))
 	if _, _, err := SignOwnerAct(ownerKey(ownerAdminSeed), act); strictjson.Code(err) != "owner_required" {
 		t.Fatalf("got %v, want owner_required", err)
+	}
+}
+
+func TestVerifyOwnerActRefusesWithoutEveryOption(t *testing.T) {
+	act := ownerAct("hook-binding.activate", ownerCoreAud, registrationSubject(), nonceFor(0))
+	signing, signature, err := SignOwnerAct(ownerKey(ownerTeamSeed), act)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now, _ := time.Parse(ownerActTimeLayout, ownerNow)
+	full := func() OwnerActVerifyOptions {
+		return OwnerActVerifyOptions{
+			TeamID: ownerTeamIDValue, CurrentTeamKeyDID: ownerDID(ownerTeamSeed), Audience: ownerCoreAud,
+			Acts: CoreOwnerActs, Now: now, ExpectedSubject: registrationSubject(), NonceUsed: func(string) bool { return false },
+		}
+	}
+	if _, err := VerifyOwnerAct(signing, signature, full()); err != nil {
+		t.Fatal(err)
+	}
+	for name, strip := range map[string]func(*OwnerActVerifyOptions){
+		"team":             func(o *OwnerActVerifyOptions) { o.TeamID = "" },
+		"team key":         func(o *OwnerActVerifyOptions) { o.CurrentTeamKeyDID = "" },
+		"audience":         func(o *OwnerActVerifyOptions) { o.Audience = "" },
+		"vocabulary":       func(o *OwnerActVerifyOptions) { o.Acts = nil },
+		"clock":            func(o *OwnerActVerifyOptions) { o.Now = time.Time{} },
+		"expected subject": func(o *OwnerActVerifyOptions) { o.ExpectedSubject = nil },
+		"nonce check":      func(o *OwnerActVerifyOptions) { o.NonceUsed = nil },
+	} {
+		opts := full()
+		strip(&opts)
+		if _, err := VerifyOwnerAct(signing, signature, opts); strictjson.Code(err) != "verifier_misconfigured" {
+			t.Errorf("without %s: got %v", name, err)
+		}
+	}
+}
+
+func TestSignOwnerActRefusesAnImpossibleTime(t *testing.T) {
+	act := ownerSet(ownerAct("hook-binding.activate", ownerCoreAud, registrationSubject(), nonceFor(0)), "issued_at", "2026-99-99T99:99:99Z")
+	if _, _, err := SignOwnerAct(ownerKey(ownerTeamSeed), act); strictjson.Code(err) != "invalid_value" {
+		t.Fatalf("got %v, want invalid_value", err)
 	}
 }

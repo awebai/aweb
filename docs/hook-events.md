@@ -239,8 +239,11 @@ installation and its generation.
 - **Install never activates.** An install or update by an admin creates its
   bindings as `pending`.
 - **Only the team owner activates or revokes**, with an `aweb.owner-act/1`
-  signed by the team's controller authority ([owner act](owner-act.md)). Any
-  other signer is refused with `owner_required`. Activation
+  signed by the team's current controller key ([owner act](owner-act.md)). An
+  act signed by any other key, an admin's or a rotated-out team key, is refused
+  with `owner_required`. The verifier proves the key, not the person holding
+  it; signing only for the organization owner after a fresh step-up is the
+  signing deployment's obligation. Activation
   compares the act's subject, including the manifest digest the owner's client
   fetched, with the stored pending row.
 - **A new generation supersedes.** Every binding of the old generation becomes

@@ -307,7 +307,11 @@ ten minutes, a reused nonce, a subject whose generation or digest differs, a
 designation for another contact or naming a subject, an act
 outside the verifier's vocabulary or audience, another team, a team
 certificate presented as an owner act, an unknown act, kind-specific subject
-fields on the wrong kind, and non-canonical bytes. The Go authority in
+fields on the wrong kind, a missing conditional field, a reversed erase range,
+a duplicate key, a float, null, a non-ASCII string, a wrong version or type,
+an impossible date, an act that expires when issued, a malformed nonce, three
+respellings of the signature, and non-canonical bytes. A positive pins the
+inclusive 60-second lead. The Go authority in
 `cli/go/awid/owneract.go` regenerates the vector byte for byte.
 
 ## Experimental and compatibility A2A fixtures
