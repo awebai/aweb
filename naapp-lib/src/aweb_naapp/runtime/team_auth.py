@@ -5,7 +5,12 @@ HTTP request (docs/team-auth-envelope-v2.md): the DIDKey header, the timestamp
 window, the canonical v2 payload bound to audience, method, raw path and query,
 team and body, the member's signature, and the certificate against AWID's
 current team key and revocation state. A certificate's ``member_did_aw`` is
-checked under the relying app's :class:`DidAwProfile`. Authentication proves who
+checked under the relying app's :class:`DidAwProfile`.
+
+A did:aw resolution, current key or unregistered, is reused for at most 60
+seconds, so a key just rotated in, or a DID just registered, can be refused for
+up to that long. A mismatch is never re-resolved early, so a stolen old key
+cannot drive registry calls. Authentication proves who
 signed the request, not that the signer may perform it; see
 :mod:`aweb_naapp.runtime.authorization`.
 """
@@ -92,7 +97,8 @@ class CachedTeamFacts:
 
 @dataclass(frozen=True)
 class CachedDidKey:
-    current_did_key: str
+    # None when the registry answered that it has no such DID.
+    current_did_key: str | None
     expires_at: float
 
 
@@ -308,16 +314,18 @@ class AWIDTeamCache:
                 response = await client.get(
                     f"{self.registry_url}/v1/did/{quote(did_aw, safe=':')}/key", headers=self._headers
                 )
+            current_did_key: str | None
             if response.status_code == 404:
-                return None
-            response.raise_for_status()
-            payload = response.json()
-            if not isinstance(payload, dict) or payload.get("did_aw") != did_aw:
-                raise ValueError("AWID key resolution names another did:aw")
-            current_did_key = payload.get("current_did_key")
-            if not isinstance(current_did_key, str):
-                raise ValueError("AWID key resolution missing current_did_key")
-            public_key_from_did(current_did_key)
+                current_did_key = None
+            else:
+                response.raise_for_status()
+                payload = response.json()
+                if not isinstance(payload, dict) or payload.get("did_aw") != did_aw:
+                    raise ValueError("AWID key resolution names another did:aw")
+                current_did_key = payload.get("current_did_key")
+                if not isinstance(current_did_key, str):
+                    raise ValueError("AWID key resolution missing current_did_key")
+                public_key_from_did(current_did_key)
         except Exception as exc:
             logger.warning("AWID did:aw resolution failed for %s", did_aw, exc_info=True)
             raise HTTPException(status_code=503, detail="AWID did:aw resolution unavailable") from exc

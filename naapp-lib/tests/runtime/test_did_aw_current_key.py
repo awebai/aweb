@@ -167,6 +167,24 @@ async def test_a_rotation_is_seen_once_the_cached_resolution_expires(registry, t
         assert (await client.get("/v1/items", headers=get_items(old_member))).status_code == 401
 
 
+async def test_an_unregistered_answer_is_reused_until_it_expires_then_a_new_registration_resolves(registry, team_key):
+    key = SigningKey.generate()
+    did_aw = stable_id_from_did_key(did_key(key))
+    member = await certified(registry, member_key=key, did_aw=did_aw, team_key=team_key)
+    async with relying_app(registry, public_origin=ORIGIN) as (client, cache):
+        assert (await client.get("/v1/items", headers=get_items(member))).status_code == 401
+        await registry.register_did(key)
+        lookups = len(did_lookups(registry))
+        assert (await client.get("/v1/items", headers=get_items(member))).status_code == 401
+        assert len(did_lookups(registry)) == lookups
+        cache_key = (canonical_server_origin(REGISTRY_URL), did_aw)
+        assert 0 < cache._did_keys[cache_key].expires_at - time.monotonic() <= 60
+        cache._did_keys[cache_key] = replace(cache._did_keys[cache_key], expires_at=-1)
+        response = await client.get("/v1/items", headers=get_items(member))
+    assert response.status_code == 200, response.text
+    assert response.json()["did_aw_registry_verified"] is True
+
+
 # --- Observe: measure without refusing ---------------------------------------------
 
 
