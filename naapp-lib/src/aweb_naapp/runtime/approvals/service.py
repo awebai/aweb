@@ -204,6 +204,10 @@ class Approvals:
         approver = await self._approvers.designated_approver(policy)
         if approver is None:
             raise ApprovalRefused(Refusal.NO_APPROVER)
+        # The approver is fixed here and decide accepts only that approver, so
+        # refusing at mint keeps a requester from approving their own request.
+        if approver.subject == requested_by and not policy.allow_requester_approval:
+            raise ApprovalRefused(Refusal.REQUESTER_IS_APPROVER)
 
         now = self._clock()
         canonical = _covered(request, policy.policy_ref, policy.version)

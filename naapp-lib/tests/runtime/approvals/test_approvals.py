@@ -103,6 +103,24 @@ async def test_mint_refuses_an_unknown_policy_or_a_missing_approver(world: World
     assert world.mailbox.sent == []
 
 
+async def test_mint_refuses_a_requester_who_is_the_approver(world: World):
+    minted = world.approvals.mint(
+        request=REQUEST, policy_ref="send-charge", requested_by=APPROVER.subject
+    )
+    assert await refusal(minted) is Refusal.REQUESTER_IS_APPROVER
+    assert world.mailbox.sent == []
+    assert await world.audit.rows() == []
+
+
+async def test_a_policy_can_let_the_requester_approve(world: World):
+    world.policies.set(policy(allow_requester_approval=True))
+    view = await world.approvals.mint(
+        request=REQUEST, policy_ref="send-charge", requested_by=APPROVER.subject
+    )
+    approval = await world.approvals.for_request(view.request_id)
+    assert (await decide(world, approval)).state is ApprovalState.APPROVED
+
+
 async def test_a_failed_delivery_is_visible_to_the_requester(world: World):
     world.mailbox.status = DeliveryStatus.FAILED
     view, _ = await mint(world)

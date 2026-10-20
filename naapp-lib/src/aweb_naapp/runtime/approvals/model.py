@@ -91,6 +91,7 @@ class Refusal(StrEnum):
     NOT_FOUND = "not_found"
     POLICY_UNKNOWN = "policy_unknown"
     NO_APPROVER = "no_approver"
+    REQUESTER_IS_APPROVER = "requester_is_approver"
     LINK_UNAVAILABLE = "link_unavailable"
     NOT_PENDING = "not_pending"
     NOT_APPROVED = "not_approved"
@@ -127,6 +128,10 @@ class ActionPolicy:
     long an approval and its link stay usable. `link_reveals_request` says
     whether opening the link shows the request before the approver
     authenticates; by default it does only below passkey assurance.
+    `allow_requester_approval` lets the approver approve their own request;
+    by default a request whose requester is the designated approver is
+    refused. The comparison is between `requested_by` and the approver's
+    subject, so it holds only when the app names both the same way.
     """
 
     policy_ref: str
@@ -135,6 +140,7 @@ class ActionPolicy:
     ttl: timedelta
     approver_scope: str
     link_reveals_request: bool | None = None
+    allow_requester_approval: bool = False
 
     def reveals_request_on_link(self) -> bool:
         if self.link_reveals_request is not None:

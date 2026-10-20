@@ -54,7 +54,10 @@ that exact request.
   approver for the policy; the requester never chooses the approver, the
   contact or the delivery. The requester sees only `RequesterView`
   (`request_id`, state, delivery status, outcome): never a link, token or
-  capability.
+  capability. A request whose `requested_by` is the designated approver's
+  subject is refused at mint with `requester_is_approver`, unless the policy
+  sets `allow_requester_approval`. The app names requesters and approvers the
+  same way for this check to hold.
 - **Presentation.** A link presentation sends a one-use link to the approver's
   registered contact through the app's `ApprovalDelivery`; only its SHA-256
   verifier is stored. The link only locates the request. Opening it consumes
