@@ -536,3 +536,25 @@ async def test_lower_generation_observation_has_no_shared_effects(db, hooked, st
     assert await db.fetch_value("SELECT count(*) FROM fixture_authority") == 1
     assert await db.fetch_value("SELECT count(*) FROM fixture_retirements") == 0
     await check(db, fence, admitted)
+
+
+async def test_admission_lock_wait_deducts_freshness_only_once(db, setup):
+    fence, source = setup
+    await admit(db, fence, source.current)
+    async with db.transaction() as holder:
+        await holder.fetch_one("SELECT * FROM {{tables.installation_fences}} FOR UPDATE")
+        current = grant(generation=2, ttl=1.2)
+        admission = asyncio.create_task(admit(db, fence, current))
+        # The grant stays fresh, but a clock projected before this wait plus
+        # the post-wait remaining lifetime would already be in the past.
+        await asyncio.sleep(0.75)
+        assert not admission.done()
+    admitted = await asyncio.wait_for(admission, 2)
+    remaining = current.fresh_until - time.monotonic()
+    stored = await db.fetch_value(
+        "SELECT extract(epoch FROM fresh_until - clock_timestamp()) FROM {{tables.installation_fences}}"
+    )
+    assert remaining > 0
+    assert stored > 0
+    assert abs(float(stored) - remaining) < 0.15
+    await check(db, fence, admitted)

@@ -174,8 +174,7 @@ class InstallationFence:
             self.app_id, team_id,
         )
         return await tx.fetch_one(
-            """SELECT installation_id, generation, active_installation_id, state,
-                      clock_timestamp() AS observed_at
+            """SELECT installation_id, generation, active_installation_id, state
                FROM {{tables.installation_fences}}
                WHERE app_id = $1 AND team_id = $2 FOR UPDATE""",
             self.app_id, team_id,
@@ -220,7 +219,9 @@ class InstallationFence:
         if row["active_installation_id"] != grant.installation_id:
             await self._retire(tx, grant.team_id, row["active_installation_id"])
         # Re-evaluate after waiting for the row lock: lock waits never extend
-        # the source's freshness. The DB deadline survives process restarts.
+        # the source's freshness. Read the DB clock after all lock waits too:
+        # a pre-wait SQL projection would deduct the wait a second time.
+        observed_at = await tx.fetch_value("SELECT clock_timestamp()")
         remaining = self._remaining(grant)
         await tx.execute(
             """UPDATE {{tables.installation_fences}}
@@ -229,7 +230,7 @@ class InstallationFence:
                    fresh_until = $5::timestamptz + $6 * interval '1 second'
                WHERE app_id = $1 AND team_id = $2""",
             self.app_id, grant.team_id, grant.installation_id, grant.generation,
-            row["observed_at"], remaining,
+            observed_at, remaining,
         )
         return self._identity(grant)
 
