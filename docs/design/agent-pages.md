@@ -1068,8 +1068,9 @@ are frozen with Athena at C4. These action links are in first delivery.
 The prompt-injection control is structural, not instructional. External
 effects need member or passkey approval, consumed at an enforcing adapter
 (§4). A link payload reaches the agent only as bounded structured fields
-labelled anonymous and untrusted, never copied into team-visible task titles or
-comments; the sponsor's task carries opaque references only. For the rental
+labelled anonymous and untrusted, and it stays labelled so wherever it appears,
+a sponsor task's title or comment included. Like every task field, it never
+carries a capability, token or link (§4). For the rental
 pilot, external execution stays draft-only until the credential sits behind
 the adapter.
 
