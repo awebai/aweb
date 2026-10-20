@@ -1,14 +1,14 @@
 """Signed expiry at a relying app, backed by the actual AWID routes and PG."""
-from datetime import UTC, datetime, timedelta
 import base64
 import json
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import pytest
 from awid.registry import RegistryClient
 from awid.signing import canonical_json_bytes, sign_message
-from aweb_naapp.runtime.certificate_client import TeamCertificateHTTPClient
 
+from aweb_naapp.runtime.certificate_client import TeamCertificateHTTPClient
 from tests.runtime.conftest import Member, relying_app, utc_timestamp
 
 ORIGIN = 'https://app.example.com'
@@ -122,8 +122,10 @@ async def test_finite_member_proactively_fetches_controller_replacement(registry
 
 def test_shared_lifetime_vectors_at_relying_app():
     from pathlib import Path
-    from fastapi import HTTPException
+
     from awid.certificates import CertificateValidationError, validate_certificate_lifetime
+    from fastapi import HTTPException
+
     from aweb_naapp.runtime.team_auth import _verify_certificate_signature
     vector = json.loads((Path(__file__).parents[3] / "docs" / "vectors" / "certificate-lifetimes-v2.json").read_text())
     for item in vector['certificates']:
@@ -142,6 +144,7 @@ def test_shared_lifetime_vectors_at_relying_app():
 
 async def test_proactive_outage_keeps_valid_certificate_and_bounds_attempts(registry, caplog):
     import asyncio
+
     from awid.certificates import CertificateValidationError
     now = datetime.now(UTC)
     member = Member(team_id='ops:example.com', extra_cert_fields={

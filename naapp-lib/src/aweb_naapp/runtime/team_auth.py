@@ -17,25 +17,26 @@ signed the request, not that the signer may perform it; see
 
 from __future__ import annotations
 
-import base64
 import asyncio
-import weakref
-from collections import OrderedDict
+import base64
 import hashlib
 import json
 import logging
 import re
 import time
+import weakref
+from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from urllib.parse import quote
 
 import httpx
-from awid.did import public_key_from_did, validate_stable_id
 from awid.certificates import CertificateValidationError, validate_certificate_lifetime
+from awid.did import public_key_from_did, validate_stable_id
 from awid.log import canonical_server_origin
 from awid.registry import RegistryClient, RegistryError
 from awid.signing import (
@@ -98,7 +99,7 @@ class CachedTeamFacts:
     published_certificate_ids: frozenset[str]
     revoked_certificate_ids: frozenset[str]
     expires_at: float
-    replacement_ids: dict[str, str] = field(default_factory=dict)
+    replacement_ids: dict[str, str] = dataclass_field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -146,10 +147,10 @@ class AWIDTeamCache:
             else {}
         )
         self._cache: dict[str, CachedTeamFacts] = {}
-        self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = OrderedDict()
-        self._unknown_certificates = OrderedDict()
-        self._current_team_keys = OrderedDict()
-        self._key_locks = weakref.WeakValueDictionary()
+        self._certificate_cache: OrderedDict[tuple[str, str], CachedTeamFacts] = OrderedDict()
+        self._unknown_certificates: OrderedDict[tuple[str, str], float] = OrderedDict()
+        self._current_team_keys: OrderedDict[str, tuple[str | None, float]] = OrderedDict()
+        self._key_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
         self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
 
@@ -294,7 +295,8 @@ class AWIDTeamCache:
                 try:
                     active = await registry.resolve_active_certificate(domain, team_name, certificate_id) if payload.get('replaced_by_certificate_id') else None
                 except CertificateValidationError as exc:
-                    if exc.code != 'certificate_expired': raise
+                    if exc.code != 'certificate_expired':
+                        raise
                     active = None
             except RegistryError as exc:
                 if exc.status_code == 404:

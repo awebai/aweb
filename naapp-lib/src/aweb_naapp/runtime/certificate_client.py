@@ -13,11 +13,11 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
-from awid.contract import normalize_identity_scope
 from awid.certificates import certificate_timestamp, validate_certificate_lifetime
+from awid.contract import normalize_identity_scope
 from awid.did import did_from_public_key
 from awid.log import canonical_server_origin
 from awid.registry import RegistryClient
@@ -44,7 +44,7 @@ class TeamCertificateHTTPClient:
         for attempt in range(2):
             sent = self.certificate
             request = self.http.build_request(method, self.origin + path, content=content)
-            timestamp = datetime.now(timezone.utc).isoformat()
+            timestamp = datetime.now(UTC).isoformat()
             payload = canonical_json_bytes(dict(v=2, aud=self.origin, method=method.upper(),
                 path=request.url.raw_path.decode('ascii'), team_id=self.certificate['team_id'],
                 timestamp=timestamp, body_sha256=hashlib.sha256(content).hexdigest()))
@@ -81,7 +81,7 @@ class TeamCertificateHTTPClient:
             return
         issued = certificate_timestamp(self.certificate.get('issued_at'), 'issued_at')
         expires = certificate_timestamp(self.certificate['expires_at'], 'expires_at')
-        if datetime.now(timezone.utc) < expires - (expires - issued) / 3:
+        if datetime.now(UTC) < expires - (expires - issued) / 3:
             return
         if time.monotonic() - self._proactive_checked_at < 3600:
             return
@@ -92,7 +92,7 @@ class TeamCertificateHTTPClient:
                 fresh = await self.registry.fetch_current_member_certificate(domain, name, self.certificate['alias'], self.key)
                 await self._install_verified_membership(fresh)
         except Exception:
-            if datetime.now(timezone.utc) >= expires:
+            if datetime.now(UTC) >= expires:
                 raise
             logging.getLogger(__name__).warning('Proactive certificate refresh unavailable; using the still-valid certificate', exc_info=True)
 
@@ -100,7 +100,8 @@ class TeamCertificateHTTPClient:
         for field in ('member_did_key', 'team_id', 'alias', 'member_did_aw', 'member_address'):
             if (fresh.get(field) or '') != (self.certificate.get(field) or ''):
                 raise ValueError('Replacement certificate changes membership')
-        scope = lambda cert: normalize_identity_scope(cert.get('identity_scope') or cert.get('lifetime'))
+        def scope(cert):
+            return normalize_identity_scope(cert.get('identity_scope') or cert.get('lifetime'))
         if scope(fresh) != scope(self.certificate):
             raise ValueError('Replacement certificate changes membership')
         await self.install(fresh)
