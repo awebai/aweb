@@ -267,8 +267,10 @@ def _run_git(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[Any]
 
 
 def verify_git_target(repo_root: Path, commit: str, *, expected_repo: str, branch: str) -> None:
+    """Require commit to be the branch tip on the configured remote, read from the remote
+    itself now rather than from a remote-tracking ref only as fresh as the last fetch."""
     require_commit(commit)
-    remote_ref = f"origin/{branch}"
+    remote_ref = f"refs/heads/{branch}"
     try:
         origin_url = _run_git(
             ["-C", str(repo_root), "remote", "get-url", "origin"],
@@ -276,18 +278,23 @@ def verify_git_target(repo_root: Path, commit: str, *, expected_repo: str, branc
             text=True,
             capture_output=True,
         ).stdout.strip()
-        remote_commit = _run_git(
-            ["-C", str(repo_root), "rev-parse", remote_ref],
+    except subprocess.CalledProcessError as exc:
+        raise OpsError("failed to read the local origin remote") from exc
+    if canonical_git_repo(origin_url) != canonical_git_repo(expected_repo):
+        raise OpsError("local origin remote is not the configured production repository")
+    try:
+        listed = _run_git(
+            ["-C", str(repo_root), "ls-remote", "--exit-code", origin_url, remote_ref],
             check=True,
             text=True,
             capture_output=True,
-        ).stdout.strip()
+        ).stdout.split()
     except subprocess.CalledProcessError as exc:
-        raise OpsError("failed to verify the local Git target") from exc
-    if canonical_git_repo(origin_url) != canonical_git_repo(expected_repo):
-        raise OpsError("local origin remote is not the configured production repository")
-    if remote_commit != commit:
-        raise OpsError(f"{remote_ref} is {remote_commit}, not the approved target {commit}")
+        raise OpsError(f"failed to read {remote_ref} from the configured remote") from exc
+    if len(listed) != 2 or listed[1] != remote_ref:
+        raise OpsError(f"unexpected ls-remote answer for {remote_ref}")
+    if listed[0] != commit:
+        raise OpsError(f"remote {branch} is {listed[0]}, not the approved target {commit}")
 
 
 def current_live(deploys: list[dict[str, Any]]) -> dict[str, Any]:

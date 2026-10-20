@@ -295,9 +295,46 @@ def test_deploy_refuses_a_commit_that_is_not_the_remote_branch_tip(fake, checkou
     work, _commit = checkout
     config = replace(config, repo=str(work.parent / "aweb.git"))
     state.service["repo"] = config.repo
-    with pytest.raises(OpsError, match="origin/main"):
+    with pytest.raises(OpsError, match="not the approved target"):
         render.deploy(
             client, config, commit="d" * 40, rollback_deploy_id=LIVE_DEPLOY, rollback_commit=LIVE_COMMIT,
+            repo_root=work, timeout_seconds=10, interval_seconds=0,
+        )
+    assert state.posts() == []
+
+
+def test_deploy_refuses_a_commit_the_remote_has_moved_past_without_a_local_fetch(fake, checkout, tmp_path) -> None:
+    state, config, client = _ready(fake)
+    work, stale = checkout
+    remote = work.parent / "aweb.git"
+    config = replace(config, repo=str(remote))
+    state.service["repo"] = config.repo
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", str(remote), str(other))
+    _git(other, "-c", "user.email=t@example.test", "-c", "user.name=t", "commit", "--allow-empty", "-m", "newer")
+    _git(other, "push", "origin", "HEAD:main")
+    # work has not fetched, so its origin/main still names the stale commit.
+    assert _git(work, "rev-parse", "origin/main") == stale
+    with pytest.raises(OpsError, match="not the approved target"):
+        render.deploy(
+            client, config, commit=stale, rollback_deploy_id=LIVE_DEPLOY, rollback_commit=LIVE_COMMIT,
+            repo_root=work, timeout_seconds=10, interval_seconds=0,
+        )
+    assert state.posts() == []
+
+
+def test_deploy_fails_closed_when_the_remote_cannot_be_read(fake, checkout) -> None:
+    import shutil
+
+    state, config, client = _ready(fake)
+    work, commit = checkout
+    remote = work.parent / "aweb.git"
+    config = replace(config, repo=str(remote))
+    state.service["repo"] = config.repo
+    shutil.rmtree(remote)
+    with pytest.raises(OpsError, match="configured remote"):
+        render.deploy(
+            client, config, commit=commit, rollback_deploy_id=LIVE_DEPLOY, rollback_commit=LIVE_COMMIT,
             repo_root=work, timeout_seconds=10, interval_seconds=0,
         )
     assert state.posts() == []
