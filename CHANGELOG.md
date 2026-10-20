@@ -2,11 +2,23 @@
 
 ## Unreleased
 
+## Release preparations
+
+### Release preparation: aw 1.36.44
+
+CLI changes are since `aw-v1.36.43`. Prepared alongside server 1.27.29 and AWID 0.5.29.
+
+- **Security:** `aw id sign` now signs only domain-separated user data, using
+  `aweb.user-signature/1\n` before canonical JSON. Its signatures cannot authorize
+  protocol operations. Internal protocol credentials retain their established
+  bytes. `aw id request --team-auth` remains target-bound v2; non-team requests
+  temporarily sign only fixed v1 identity claims and refuse caller JSON.
+  **Known residual:** compact-v1 identity requests remain retargetable until
+  identity-v2 verification deploys and the subsequent client release emits v2.
+
 - `aw chat history <recipient>` applies its limit and unread filter before
   custody decryption, skips unrelated pending previews during session lookup,
   and uses individual request timeouts rather than one budget for the whole page.
-
-## Release preparations
 
 ### Release preparation: AWID 0.5.29
 
@@ -25,8 +37,14 @@ Publishes PyPI `awid-service` 0.5.29 and the `awid` image 0.5.29.
 
 ### Release preparation: server 1.27.29
 
-Server changes are since `server-v1.27.28`. No CLI change; aw stays 1.36.43.
+Server changes are since `server-v1.27.28`. Prepared alongside aw 1.36.44.
 
+- **Security:** a caller-supplied chat `session_id` is a locator, never
+  membership. Reusing an existing session requires the caller to be an active
+  stored participant; an id that names a mail conversation, or a chat the caller
+  is not in, is refused with 409 and nothing is written. Participants are never
+  added through session create, and a concurrent create that collides is a 409,
+  never a silent join. Fresh signed session ids remain supported.
 - Add an operator audit trail for role publication and repo deletion: verified
   actor, principal, authentication mode, target, outcome and request ID, without
   message or playbook content. Successful writes and audit records commit

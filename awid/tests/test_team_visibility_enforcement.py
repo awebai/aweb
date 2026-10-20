@@ -25,6 +25,7 @@ from awid_service.deps import get_domain_verifier
 from awid_service.main import create_app
 
 from conftest import build_signed_headers as _sign
+from test_certificates import _signed_certificate_blob
 
 SERVICE_TOKEN = "trusted-service-token-with-at-least-32-bytes"
 
@@ -74,6 +75,11 @@ async def _register_member(client, team_key, team_did, domain, team_name, alias)
             "member_did_key": member_did_key,
             "alias": alias,
             "identity_scope": "local",
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id=cert_id, team_id=f"{team_name}:{domain}",
+                team_did_key=team_did, member_did_key=member_did_key,
+                alias=alias, lifetime="local",
+            ),
         },
         headers=headers,
     )
