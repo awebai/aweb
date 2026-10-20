@@ -45,6 +45,7 @@ artifacts() {
   run _candidate-artifact-server
   run _candidate-artifact-awid-package
   run _candidate-artifact-awid-image
+  run _candidate-artifact-naapp-package
   run _candidate-artifact-channel
   run _candidate-artifact-pi
   run _candidate-artifact-skills
