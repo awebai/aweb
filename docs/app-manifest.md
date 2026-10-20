@@ -413,7 +413,10 @@ declares none; an empty array is refused, so "none" has one spelling.
   dot-separated lowercase segments, at least two (`[a-z0-9][a-z0-9_-]*` each),
   no `:`, at most 128 bytes, unique within the array and compared exactly,
   never trimmed. A name is not tied to `app.id`: a role is scoped by the
-  installation that declares it.
+  installation that declares it. So every surface that shows a role (the
+  install diff, the designation UI, audit records and member views) shows
+  it as the pair of app and name, never the bare name; otherwise an app
+  declaring `secrets.owner` could pass for another app's owner role.
 - `label` is 1 to 128 characters (runes), and the optional `description` is
   1 to 512. The host shows both in its own chrome, in the install diff and
   the designation UI, so neither may carry a C0 or C1 control character or a
