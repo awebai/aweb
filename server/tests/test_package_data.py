@@ -124,6 +124,9 @@ def test_canonical_chain_starts_with_reset_baseline_then_forward_migrations():
         "020_agent_status_hosts.sql",
         "021_agent_status.sql",
         "022_message_attachments.sql",
+        "023_team_app_emit_keys.sql",
+        "024_team_scoped_app_origin.sql",
+        "025_team_app_event_types.sql",
     ]
 
 
