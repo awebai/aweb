@@ -309,9 +309,16 @@ pass `aweb_naapp.roles.purge_team`, composed with any other authority cleanup.
 The hook runs inside the transaction that records a confirmed uninstall or
 retires an old ID before admitting a replacement. It also covers an app that
 was down during uninstall and first observes the replacement on admission.
-Hook failure rolls back retirement and new admission together. Acquire the
-fence before role-assignment and other app resource locks. App content follows
-its retention policy; authority cleanup is separate from content deletion.
+Hook failure rolls back retirement and new admission together. The withdrawal
+lock order in the caller's transaction is **installation fence, role DELETE or
+`purge_team`, `approver_retired` with approval IDs locked in order, then writes**.
+Compose the hook in that order: remove roles before retiring approvals.
+Staging takes the installation fence, `hold_role`, then approval and candidate
+locks before writes. Retiring approvals before removing roles creates a lock
+cycle with a concurrent stage. The same fence-before-role order applies to
+unassign, team purge and owner revoke whenever they also require the fence.
+App content follows its retention policy; authority cleanup is separate from
+content deletion.
 
 `InstallationRefused` carries `code` and HTTP-compatible `status`:
 
