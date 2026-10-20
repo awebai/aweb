@@ -176,7 +176,7 @@ Per-hook payloads, beyond the common envelope:
 | Hook | Payload fields |
 | --- | --- |
 | `post-secret-use-hook` | Defined here, and the secrets design cites it. See the flat allowlist below. |
-| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`); optional `owner_act_sha256`, `approval_id`, `policy_digest`, `reason_code`. |
+| `post-governance-hook` | `act` (catalog enum: `role.designated`, `role.revoked`, `credential.enrolled`, `credential.recovered`, `credential.revoked`, `grant.created`, `grant.changed`, `grant.revoked`, `resource.created`, `resource.version_added`, `resource.disabled`, `resource.enabled`, `resource.replaced`, `policy.changed`, `runner.registered`, `runner.deregistered`, `installation.disabled`, `installation.enabled`); `direction` (`widening` or `narrowing`, fixed per act by the catalog and checked at ingest); `role`, `resource_type` (bounded app-local tokens matching `^[a-z][a-z0-9_.-]{0,63}$`); `subject_ref`, `resource_ref`, optional `before_ref`/`after_ref` (opaque); `authority` (`owner_act`, `passkey_session`, `team_cert`); optional `owner_act_sha256` (owner-act-rooted acts), `approval_evidence_sha256` (passkey-confirmed acts), `approval_id`, `policy_digest`, `reason_code`. A governance act that cannot enqueue does not commit. |
 
 **`post-secret-use-hook` payload, v1** (one flat allowlist, with no nested
 objects and no free text). The hooks catalog vector records it.
@@ -191,12 +191,13 @@ objects and no free text). The hooks catalog vector records it.
 | `runner_id`, `job_id`, `job_digest` | Runner jobs. |
 | `request_sha256`, `params_sha256` | The agent's frozen request and parameters, **before credential injection**. |
 | `grant_id`, `policy_digest` | The secrets grant and the policy evaluated. |
-| `approval_id`, `approval_assurance`, `approver_id`, `approval_credential_id`, `approval_assertion_sha256`, `approval_decision` | Present only when there is an approval. |
+| `approval_id`, `approval_assurance`, `approver_id`, `approval_credential_id`, `approval_evidence_sha256`, `approval_decision` | Present only when there is an approval. |
 | `dispatch_id`, `dispatch_state` | |
 | `upstream_status_code`, `upstream_bytes`, `upstream_truncated`, `upstream_response_hmac` | The HMAC is producer-keyed and optional. There is no unsalted response digest. |
+| `returned_hmac` | A producer-keyed HMAC of the bytes returned to the agent, after projection and redaction. It is absent when the result is `withheld`. It is an HMAC and not a plain hash, because returned bytes may still carry a credential (`returned_credential`, or one that redaction missed). |
 | `disposition`, `derived_secret_id` | `returned`, `withheld`, `stored_as_secret` or `returned_credential`, on `completed`. |
 | `undeclared_credential` | Boolean, on `completed`: the response carried a credential that was not declared. |
-| `redaction_count`, `refusal_code` | |
+| `redaction_count`, `refusal_code` | `refusal_code` is a fixed enum that the secrets design supplies, recorded in the catalog vector. |
 
 A withheld value and an undeclared credential are properties of the
 `completed` event, not separate events: one effect, one event.
@@ -630,7 +631,7 @@ Python tests:
 
 | Vector | Covers |
 | --- | --- |
-| `hook-catalog-v1.json` | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook` and the `post-governance-hook` act/direction table), client command classes. |
+| `docs/vectors/hook-catalog-v1.json` | Hooks, class, producer kinds, audit-critical flag, precedence, the flat payload allowlists (including `post-secret-use-hook` and the `post-governance-hook` act/direction table), client command classes. |
 | `hook-event-envelope-v1.json` | Seeds, canonical bytes, signatures. Negatives: wrong prefix, non-canonical bytes, float, duplicate key, unknown payload field, team mismatch, client-signed server hook, a client event whose actor is not its signer, unknown catalog version. Secret digests: `request_sha256` over the pre-injection request, with a negative where the digest covers injected credential bytes. |
 | `hook-delivery-credential-v1.json` | `hook-delivery`. Negatives: an app-event or `hook-resolve` credential at a hook target, cross-audience, tampered body, wrong binding, stale timestamp. (`hook-resolve` vectors belong to acgh.7.) |
 | `owner-act-v1.json` | Activate and revoke, plus each logs act. Negatives: admin signer, rotated-out team key, expired, nonce reuse, subject/generation mismatch, a valid act of the wrong type or audience, a team certificate presented as an owner act. |
