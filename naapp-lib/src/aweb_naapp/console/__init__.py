@@ -157,6 +157,122 @@ class ConsoleSessions:
         )
 
 
+@dataclass(frozen=True)
+class ClientIdentity:
+    """How the deployment identifies the client behind a request.
+
+    By default it is the peer address, and any forwarded header is ignored,
+    because a client can set one. Behind a proxy, the deployment names the
+    header that proxy sets as ``trusted_header``; its last comma-separated
+    entry is the address the proxy saw. A request without the header is keyed
+    on its peer.
+    """
+
+    trusted_header: str | None = None
+
+    def of(self, request: Request) -> str:
+        if self.trusted_header is not None:
+            value = request.headers.get(self.trusted_header, "")
+            last = value.rsplit(",", 1)[-1].strip()
+            if last:
+                return last
+        return request.client.host if request.client is not None else ""
+
+
+@dataclass(frozen=True)
+class LoginVolume:
+    requests: int
+    throttled: int
+
+
+class LoginLimiter:
+    """A fixed-window limit on login requests per client, metered per scope.
+
+    A client's window starts at its first request and lasts ``window``.
+
+    Login needs no prior authentication, so without it a flood of login
+    requests could keep evicting the real person's challenge. ``admit`` raises
+    429 with ``Retry-After`` once a client has made ``limit`` requests in the
+    current window. Every request, throttled or not, is counted for its scope.
+    """
+
+    def __init__(
+        self,
+        db: AsyncDatabaseManager,
+        *,
+        client_identity: ClientIdentity,
+        limit: int,
+        window: timedelta,
+    ) -> None:
+        if limit <= 0 or window <= timedelta(0):
+            raise ValueError("a login limit and its window must be positive")
+        self._db = db
+        self._identity = client_identity
+        self._limit = limit
+        self._window = window
+
+    async def admit(self, request: Request, scope: str) -> None:
+        client = self._identity.of(request)
+        async with self._db.transaction() as tx:
+            # Windows that have ended no longer limit anyone; dropping them bounds the table.
+            await tx.execute(
+                """
+                DELETE FROM {{tables.console_login_attempts}}
+                WHERE window_start + $1 <= NOW()
+                """,
+                self._window,
+            )
+            row = await tx.fetch_one(
+                """
+                INSERT INTO {{tables.console_login_attempts}} AS a
+                    (client_key, window_start, attempts)
+                VALUES ($1, NOW(), 1)
+                ON CONFLICT (client_key) DO UPDATE SET attempts = a.attempts + 1
+                RETURNING attempts,
+                    ceil(extract(epoch FROM window_start + $2 - NOW()))::int AS retry_after
+                """,
+                client,
+                self._window,
+            )
+            if row is None:
+                raise RuntimeError("the login attempt was not counted")
+            throttled = row["attempts"] > self._limit
+            await tx.execute(
+                """
+                INSERT INTO {{tables.console_login_volume}} AS v
+                    (scope, window_start, requests, throttled)
+                VALUES ($1, to_timestamp(floor(extract(epoch FROM NOW()) / $2) * $2), 1, $3)
+                ON CONFLICT (scope, window_start) DO UPDATE
+                    SET requests = v.requests + 1, throttled = v.throttled + $3
+                """,
+                scope,
+                self._window.total_seconds(),
+                int(throttled),
+            )
+        if throttled:
+            raise HTTPException(
+                status_code=429,
+                detail="login_rate_limited",
+                headers={"Retry-After": str(max(1, row["retry_after"]))},
+            )
+
+    async def volume(self, scope: str, *, since: timedelta) -> LoginVolume:
+        """Login requests for ``scope`` in the buckets that began within ``since``."""
+        row = await self._db.fetch_one(
+            """
+            SELECT coalesce(sum(requests), 0) AS requests,
+                   coalesce(sum(throttled), 0) AS throttled
+            FROM {{tables.console_login_volume}}
+            WHERE scope = $1 AND window_start > NOW() - $2::interval
+            """,
+            scope,
+            since,
+        )
+        if row is None:
+            return LoginVolume(0, 0)
+        return LoginVolume(int(row["requests"]), int(row["throttled"]))
+
+
 def _carries_team_auth(request: Request) -> bool:
     return any(
         name in TEAM_AUTH_HEADERS or name.startswith(TEAM_AUTH_PREFIX)

@@ -41,7 +41,7 @@ def _app(sessions: ConsoleSessions) -> FastAPI:
 
     @router.post("/test-login")
     async def login(response: Response, subject: str = "did:aw:owner") -> dict[str, str]:
-        issued = await sessions.open(subject=subject, scope="app:owner", evidence_ref="ev-1")
+        issued = await sessions.open(subject=subject, scope="app.owner", evidence_ref="ev-1")
         sessions.set_cookie(response, issued)
         return {"csrf": issued.csrf_token}
 
@@ -105,7 +105,7 @@ async def test_a_session_identifies_its_subject(db: AsyncDatabaseManager) -> Non
         missing = await client.get("/whoami")
         forged = await client.get("/whoami", headers={"Cookie": cookie[:-4] + "AAAA"})
     assert response.status_code == 200
-    assert response.json() == {"subject": "did:aw:owner", "scope": "app:owner"}
+    assert response.json() == {"subject": "did:aw:owner", "scope": "app.owner"}
     assert missing.status_code == 401
     assert forged.status_code == 401
 
