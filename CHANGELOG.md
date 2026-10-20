@@ -10,6 +10,8 @@
   surface-only and hook-only verbs (`tool_context_denied`), and grant
   snapshots hold only agent tools.
 - aw refuses to install a manifest whose answer path is agent-visible.
+- aw and `aweb_naapp.manifest` refuse v1 manifests nested deeper than 512
+  levels, as they do for v2.
 - `aweb_naapp.manifest.load_manifest` reads manifest bytes of either
   version and passes the same vectors as aw.
 
