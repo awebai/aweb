@@ -36,7 +36,16 @@ from aweb_naapp.hooks.strictjson import (
     parse_canonical_object,
 )
 
-__all__ = ["APP_ACTS", "CORE_ACTS", "LOGS_ACTS", "PREFIX", "Refused", "VerifiedOwnerAct"]
+__all__ = [
+    "APP_ACTS",
+    "CORE_ACTS",
+    "LOGS_ACTS",
+    "PREFIX",
+    "Refused",
+    "VerifiedOwnerAct",
+    "hook_binding_subject",
+    "owner_act_signing_bytes",
+]
 
 PREFIX = b"aweb.owner-act/1\n"
 MAX_LIFETIME = timedelta(minutes=10)
@@ -260,6 +269,68 @@ class VerifiedOwnerAct:
     nonce: str
     issued_at: datetime
     expires_at: datetime
+
+
+def owner_act_signing_bytes(act: Mapping[str, Any]) -> bytes:
+    """The bytes a team's controller key signs for ``act``: the prefix followed
+    by the act's canonical JSON.
+
+    The act is checked first, every field and its act's subject, with the
+    verifier's own refusal codes, so a signer never produces bytes a verifier
+    would refuse for their content. What only a verifier knows (its team,
+    audience, vocabulary, clock, current key and nonces) is not checked.
+    """
+    text = canonical(dict(act))
+    checked = _check_fields(parse_canonical_object(text))
+    if checked.expires_at - checked.issued_at > MAX_LIFETIME:
+        raise Refused("lifetime_too_long", "an owner act lives at most ten minutes")
+    return PREFIX + text
+
+
+def hook_binding_subject(
+    *,
+    binding_id: str,
+    installation_id: str,
+    generation: int,
+    app_id: str,
+    origin: str,
+    digest: str,
+    kind: str,
+    catalog_id: str,
+    catalog_version: int,
+    hook: str,
+    tool: str | None = None,
+    method: str | None = None,
+    path: str | None = None,
+    scopes: Sequence[str] | None = None,
+    reads: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """The subject of a ``hook-binding.*`` act for one binding.
+
+    ``scopes`` and ``reads`` come out sorted by code point and distinct, the
+    order the contract fixes, so every client signs the same bytes for the same
+    binding. Fields left as None are omitted; ``owner_act_signing_bytes``
+    refuses a subject whose fields do not fit its ``kind``.
+    """
+    subject: dict[str, Any] = {
+        "binding_id": binding_id,
+        "installation_id": installation_id,
+        "generation": generation,
+        "app_id": app_id,
+        "origin": origin,
+        "digest": digest,
+        "kind": kind,
+        "catalog_id": catalog_id,
+        "catalog_version": catalog_version,
+        "hook": hook,
+    }
+    for name, value in (("tool", tool), ("method", method), ("path", path)):
+        if value is not None:
+            subject[name] = value
+    for name, values in (("scopes", scopes), ("reads", reads)):
+        if values is not None:
+            subject[name] = sorted(set(values))
+    return subject
 
 
 def _check_owner_act(

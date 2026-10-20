@@ -16,8 +16,14 @@ verified type, `VerifiedOwnerAct`. It refuses an act prepared more than 60
 seconds earlier (`owner_required`). The key `prepare` used may itself come
 from the verifier's registry cache, at most 60 seconds old, so after a team
 key rotation an act signed with the old key can still be consumed for at most
-the cache lifetime plus 60 seconds, about two minutes, and never later. The design and its rationale are
-in [the audit substrate design](design/audit-substrate.md), §2 and §A3.
+the cache lifetime plus 60 seconds, about two minutes, and never later. A
+signer builds the bytes with `OwnerActSigningBytes` in Go or
+`aweb_naapp.hooks.owner_act.owner_act_signing_bytes` in Python. Both refuse an
+act whose fields, subject or lifetime a verifier would refuse, with the
+verifier's code. Python's `hook_binding_subject` builds a `hook-binding.*`
+subject with `scopes` and `reads` in the order this contract fixes. The design
+and its rationale are in [the audit substrate design](design/audit-substrate.md),
+§2 and §A3.
 
 This is an identity-path change. Juan approved `aweb.owner-act/1` explicitly,
 with the ruling below on who may sign one.

@@ -194,7 +194,9 @@ func ownerActTime(value string) (time.Time, error) {
 }
 
 // OwnerActSigningBytes validates an owner act and returns the bytes the team
-// key signs: the prefix followed by the act's canonical JSON.
+// key signs: the prefix followed by the act's canonical JSON. It refuses what
+// the act itself gets wrong, its fields, subject and lifetime, so a signer
+// never produces bytes a verifier refuses for their content.
 func OwnerActSigningBytes(act map[string]any) ([]byte, error) {
 	canonical, err := strictjson.Canonical(act)
 	if err != nil {
@@ -204,8 +206,12 @@ func OwnerActSigningBytes(act map[string]any) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := checkOwnerAct(parsed); err != nil {
+	checked, err := checkOwnerAct(parsed)
+	if err != nil {
 		return nil, err
+	}
+	if checked.expiresAt.Sub(checked.issuedAt) > OwnerActMaxLifetime {
+		return nil, strictjson.Refuse("lifetime_too_long", "an owner act lives at most %s", OwnerActMaxLifetime)
 	}
 	return append([]byte(OwnerActPrefix), canonical...), nil
 }
