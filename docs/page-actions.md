@@ -119,8 +119,10 @@ receipt and admits nothing new. When it carries an authorization not yet
 stored and the request's `delivery` is still `pending`, the naapp verifies it
 as in step 2, against the caller's current certificate and authority, and
 then appends it to the request's evidence, never overwriting earlier
-evidence. The outbox delivers with the newest stored authorization that is
-still in its time window. A failure is that check's error, and nothing is
+evidence. A request stores at most 8 authorizations: once it holds 8, a
+replay carrying a new one is 409 `evidence_limit` and stores nothing. The
+outbox delivers with the newest stored authorization that is still in its
+time window and binds the installation's current generation. A failure is that check's error, and nothing is
 stored. Once `delivery` is `queued`, a replay stores nothing. An expired
 authorization never creates a missing task. It can only take part in a
 matching replay at the task service (app-task-requests.md §3 step 7).
@@ -143,16 +145,21 @@ submit's body minus `task_authorization`:
 }
 ```
 
-The naapp runs the submit's checks (policy, input, revisions, §2's target)
+The naapp first authenticates the caller and looks up the key. An accepted
+request with this identity is answered as "After acceptance" below, after the
+caller's current read permission is re-checked and before any check that
+would admit new work, since the acceptance itself moved the page's revision.
+Otherwise it runs the submit's checks (policy, input, revisions, §2's target)
 for an `intent` action. Any other kind is 422 `schema_invalid`. Then, by the
 key and the identity (§3):
 
 - **No preparation:** it allocates `external_request_id`, an opaque
   `act_` followed by 32 lowercase hex characters (128 random bits), never
   derived from or equal to the idempotency key. It builds the task
-  ([app-task-requests.md](app-task-requests.md) §3) and stores the
+  ([app-task-requests.md](app-task-requests.md) §3), whose `resource_ref` is
+  the `page_id` and whose `action_ref` is the `action_id`, and stores the
   preparation durably: the identity, `external_request_id`, the task bytes,
-  `task_body_sha256` and the bindings. This record is separate from the
+  `task_body_sha256`, the bindings and the context fingerprint (below). This record is separate from the
   action's receipt, and the key is not consumed: the submit later consumes it
   under the same identity.
 - **A preparation with this identity:** it returns the stored preparation
@@ -164,11 +171,14 @@ key and the identity (§3):
 
 Preparing creates no task, journal entry, outbox row or page revision.
 
-Re-deriving rebuilds the task and bindings from the current stored action,
-its policy, §2's target resolution and the installation's active state and
-current generation. The result must equal the stored preparation byte for
-byte. The prepared facts are never silently updated, because the member's
-signature binds them.
+Re-deriving rebuilds the task, the bindings and the context fingerprint from
+current state: the stored action, its policy, §2's target resolution, and the
+installation's active state and current generation. The result must equal the
+stored preparation byte for byte. The context fingerprint is internal, never
+in a response or a signature. It is the stored action definition with its
+effective `policy_ref` and policy version, so a policy change that leaves the
+task bytes unchanged still makes the preparation stale. The prepared facts are
+never silently updated, because the member's signature binds them.
 
 Response 200:
 
@@ -190,13 +200,34 @@ Response 200:
 ```
 
 `bindings` holds exactly the twelve `TASK_AUTHORIZATION_BINDINGS`
-(`aweb_naapp.runtime.task_requests`). After acceptance, a prepare with the
-same key and identity skips re-deriving, which the accepted request's own
-page revision would fail. It re-checks the caller's read permission and
-returns `"status": "accepted"` with the same `request_id`, `task`,
-`task_body_sha256` and `bindings`, plus `receipt`, the submit's 202 body.
-Those let a member renew an authorization for a request whose delivery is
-pending.
+(`aweb_naapp.runtime.task_requests`).
+
+**After acceptance**, a prepare with the same key and identity is recognized
+before the revision check, as a replay is, and re-checks the caller's read
+permission. It returns `"status": "accepted"` with the same `request_id`,
+`task` and `task_body_sha256`, the current `bindings`, and `receipt`, the
+submit's 202 body with the current `delivery`. While `delivery` is `pending`,
+the naapp first re-derives the preparation:
+
+- **Unchanged:** the stored bindings, so the member can renew an expired
+  authorization.
+- **Only `installation_generation` differs,** because the installation is
+  active at a newer generation: the naapp **rebinds**. It stores bindings
+  carrying the current generation, keeping the earlier ones, and returns them.
+  `installation_generation` is the only transport binding. The task bytes,
+  `external_request_id`, the context fingerprint, the stored evidence and
+  every other binding never change: `aud`, `app_origin`, `team_id`, `app_id`,
+  `installation_id`, `external_request_id`, `task_body_sha256`,
+  `target_dids`, `action_id` and the proposal pair. The member then signs a
+  new authorization over the rebound bindings, which a replay verifies against
+  the current authority and the current bindings (§3). An authorization over
+  an earlier generation stays stored and is never delivered.
+- **Anything else differs:** 409 `preparation_stale`. The naapp sets
+  `delivery` to `failed`, the request ends there, and the person starts again
+  with a new key.
+
+Once `delivery` is `queued` or `failed`, a prepare returns the stored
+bindings without re-deriving.
 
 **The signer** completes the payload with `v`, `type`, its own
 `actor_did_key` and current `certificate_id`, `issued_at`, `expires_at` and a
@@ -205,9 +236,12 @@ checks, as the reference `check_prepared_intent` does, that `task_body_sha256`
 is the digest of `task`, and that the bindings agree with the task as §3 step
 5 requires:
 `target_dids`, `external_request_id`, `action_id` against `action_ref`, and
-the proposal pair. The signer also checks that `aud` is the task service it
-expects, and that the app and installation are those of the page the member
-acts on. A hosted signer shows the person the task's title, description,
+the proposal pair. It also checks values from its own context, never echoed
+back from the response: `aud` is the task service it expects; the app and
+installation are those of the page the member acts on; and the task's
+`resource_ref` and `action_ref` are the `page_id` and `action_id` it asked to
+prepare. A response for another page or action is refused, even when it is
+self-consistent. A hosted signer shows the person the task's title, description,
 choices and fields before signing. Renewal is the same step again: prepare,
 which returns the same preparation, then sign anew.
 
@@ -223,7 +257,8 @@ Responses:
 - `intent`: 202 `{request_id, page_rev, delivery: "pending", execution:
   "not_started"}`. `request_id` is the task request's
   `external_request_id`. `delivery` becomes `queued` only once the naapp has
-  stored a verified task receipt.
+  stored a verified task receipt, and `failed` only when the request can no
+  longer be delivered (§3.1, "After acceptance").
 
 A stale revision is 409 `revision_conflict`, and nothing is partially
 committed.
@@ -540,7 +575,8 @@ The codes of [app-task-requests.md](app-task-requests.md) "Errors" apply, plus:
 | 403 | `action_denied` | The action's policy refuses this member, or a requester tries to approve. |
 | 409 | `approval_changed` | The proposal digest or revision on the card is no longer current. |
 | 409 | `preparation_required` | An `intent` submit has no preparation for its key and identity (§3.1). |
-| 409 | `preparation_stale` | Current state no longer re-derives the stored preparation: the action, its policy, the target or the installation changed (§3.1). |
+| 409 | `evidence_limit` | A replay carries a new authorization for a request that already stores 8 (§3). |
+| 409 | `preparation_stale` | Current state no longer re-derives the stored preparation: the action, its policy, the target or the installation changed (§3.1). Only a generation change of an accepted, pending request is rebound instead. |
 
 ## Conformance vectors
 

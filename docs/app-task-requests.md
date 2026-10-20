@@ -194,7 +194,8 @@ current generation.
 | `choices` | `null`, or 1–10 objects `{value, label}` that an answer may choose from, in display order: `value` matches `^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$`, `label` is 1–4,096 runes with no control or bidi character, and both are distinct across the list. They are a decision card's options ([page-format.md](page-format.md) §5), copied unchanged. Signed through `task_body_sha256`, they are what the person is shown, so a page cannot relabel an option. |
 | `fields` | On a decision request, 1–32 objects `{field, label, format}` in display order, and `null` otherwise: `field` is the record property shown (1–128 characters, the same literal name as a page binding), `label` what the person reads (1–200 runes, the `title` character rule), `format` one of `text`, `date`, `number`, `money_minor`. `field` and `label` are each distinct. Signed through `task_body_sha256`, they bind what the person reads next to each value ([page-actions.md](page-actions.md) §5). |
 
-Unknown fields are refused at every level. `task_body_sha256` is the hex
+Unknown fields are refused at every level, and so is a task with no canonical
+form, such as one with a lone surrogate in any string. `task_body_sha256` is the hex
 SHA-256 of `canonical_json(task)`.
 
 **Content rule.** A task is team-visible, like everything else the team works
