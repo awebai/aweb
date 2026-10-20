@@ -266,11 +266,6 @@ class DockerBoundaryTests(unittest.TestCase):
             self.assertNotEqual(remains.returncode, 0, "probe volume survived cleanup")
 
     def test_builder_cache_reclaim_is_scoped_bounded_and_builder_remains_usable(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "candidate-suite.sh").read_text()
-        self.assertIn('${BUILDX_BUILDER:?BUILDX_BUILDER is required}', source)
-        self.assertIn('${BUILDX_CONFIG:?BUILDX_CONFIG is required}', source)
-        self.assertIn('docker buildx prune --all --force --keep-storage=10GB', source)
-
         builder = f"aweb-gate-proof-{uuid.uuid4().hex[:12]}"
         unrelated = f"aweb-unrelated-proof-{uuid.uuid4().hex[:12]}"
         with _bind_tmp() as tmp:

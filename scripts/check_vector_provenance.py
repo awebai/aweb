@@ -66,6 +66,10 @@ ROOT_CONSUMERS = {
         "agent-activity-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "agent-activity-v1.json"',
     ),
+    PurePosixPath("awid/tests/test_controller_request_v2_http.py"): _consumer(
+        "awid-controller-request-v2.json",
+        "Path(__file__).resolve().parents[2] / 'docs' / 'vectors' / 'awid-controller-request-v2.json'",
+    ),
     PurePosixPath("awid/tests/test_certificate_status.py"): _consumer(
         "team-certificate-status-v1.json",
         'Path(__file__).parents[2] / "docs" / "vectors" / "team-certificate-status-v1.json"',

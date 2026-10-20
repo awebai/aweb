@@ -328,8 +328,12 @@ var chatHistoryCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx, cancel := commandAPIContext(cmd)
-		defer cancel()
+		// Each HTTP/custody request has its own timeout. A replay must not
+		// spend one shared API budget decrypting an entire history page.
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
 
 		c, sel, err := resolveClientSelection()
 		if err != nil {
@@ -340,7 +344,7 @@ var chatHistoryCmd = &cobra.Command{
 		if strings.TrimSpace(chatHistorySessionID) != "" {
 			result, err = chat.HistoryBySession(ctx, c.Client, chatHistorySessionID, chatHistoryMessageID, chatHistoryUnreadOnly, chatHistoryLimit)
 		} else {
-			result, err = chat.History(ctx, c.Client, args[0])
+			result, err = chat.HistoryWithOptions(ctx, c.Client, args[0], chatHistoryUnreadOnly, chatHistoryLimit)
 		}
 		if err != nil {
 			return err

@@ -2,7 +2,26 @@
 
 ## Unreleased
 
+- `aw chat history <recipient>` applies its limit and unread filter before
+  custody decryption, skips unrelated pending previews during session lookup,
+  and uses individual request timeouts rather than one budget for the whole page.
+
 ## Release preparations
+
+### Release preparation: AWID 0.5.29
+
+Changes are since `awid-v0.5.28` / `awid-service-v0.5.28`.
+Publishes PyPI `awid-service` 0.5.29 and the `awid` image 0.5.29.
+
+- Accept controller request envelopes binding the operation, configured public
+  audience, HTTP method, external raw path/query and exact body hash, with a
+  distinct AWID protocol type and a separate covering parent authorization.
+- Keep legacy controller envelopes accepted with per-operation usage counts;
+  their retirement requires a separate cutoff.
+- Require a matching team-signed certificate blob for every new registration;
+  historical blob-free records remain readable.
+- Configure `AWID_PUBLIC_ORIGINS` before clients emit v2. Deploy this accepting
+  AWID first; current clients remain on the legacy form until that deployment.
 
 ### Release preparation: server 1.27.29
 
