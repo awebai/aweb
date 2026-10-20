@@ -219,6 +219,38 @@ are compatibility constraints. App installation is not required for mail, chat,
 events from built-in coordination mutations, or self-hosting the core
 communication service.
 
+## Host installation policy interface
+
+`aweb.install_authority.require_install_admin(tx, request, identity, team_id,
+*, action, app_id)` is the shared administration check for installation
+mutations and team app-key revocation. Certificate ingress passes its verified
+`TeamIdentity`; authenticated internal ingress may pass `None`. Internal context
+is verified through the existing proxy trust/HMAC verifier.
+
+The serving application's `app.state.install_admin_policy` implements
+`InstallAdminPolicy`: `async __call__(tx, subject, *, action, app_id) -> bool`.
+It reads current authority inside the passed mutation transaction. A standalone
+operator configures authority rooted in its team controller and explicit
+delegations; an embedding host supplies its authoritative policy. No policy,
+or a result other than `True`, produces `403` with code `admin_required`.
+Membership, custody, audit attribution and role strings confer no installation
+administration authority. Identity session grants cannot acquire it through
+their coordination scopes.
+
+The immutable `InstallAdminSubject` union has two verified variants:
+
+| `kind` | Verified fields |
+| --- | --- |
+| `certificate` | `team_id`, `agent_id`, `certificate_id`, `did_key` |
+| `internal` | `team_id`, `principal_type`, `principal_id`, `actor_id` |
+
+Internal principal type remains distinct from the attributed actor; the host
+decides which authenticated principal kinds may administer. Policy exceptions
+fail the mutation. Decisions are not cached. Install the policy on the actual
+serving/mounted application so certificate and internal ingress use the same
+check. The helper alone does not change the legacy install ingress described
+above; route enforcement and its product request flow are separate F6 work.
+
 ## App-side installation admission and dispatch fence (X9)
 
 `aweb_naapp.runtime.installation` supplies the shared PostgreSQL fence. Apply
