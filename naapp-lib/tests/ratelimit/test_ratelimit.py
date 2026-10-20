@@ -111,6 +111,16 @@ async def test_time_running_backwards_adds_no_tokens(db: AsyncDatabaseManager) -
     assert (await _take(db, charge(), now=at(0))).allowed is False
 
 
+async def test_a_lagging_clock_never_regrants_a_refill(db: AsyncDatabaseManager) -> None:
+    """A worker whose clock is behind must not move the refill time backwards."""
+    bucket = charge(capacity=5, window_s=20)
+    await _admitted(db, bucket, now=T0, tries=5)
+    assert (await _take(db, bucket, now=at(10))).allowed is True  # 2.5 tokens, 1.5 left
+    assert (await _take(db, bucket, now=at(5))).allowed is True  # lagging: 0.5 left
+    assert (await _take(db, bucket, now=at(10))).allowed is False  # still 0.5
+    assert (await _peek(db, bucket, now=at(5))).retry_after_s == 2  # as of 10 s, not 5 s
+
+
 async def test_a_multi_bucket_take_is_all_or_none(db: AsyncDatabaseManager) -> None:
     shared = charge(key="secret", capacity=5, bucket="test.shared")
     alice = charge(key="alice", capacity=1, bucket="test.principal")

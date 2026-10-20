@@ -17,6 +17,13 @@ bucket another transaction holds. Callers run it after their request commits,
 or from a periodic job, so attacker-chosen keys stay bounded.
 
 Time is the caller's ``now`` on every call; the limiter never reads a clock.
+A bucket's refill time never moves backwards: a worker whose clock lags sees
+the bucket as of its last refill, so skew between workers never grants the
+same refill twice. Deleting a full bucket loses nothing at the capacity it
+was written with; if a later call raises the capacity, the bucket reaches the
+new one sooner, an over-grant of at most the increase, once, after it went
+idle.
+
 A refusal is a :class:`Decision`, not an exception, and the limiter meters
 nothing: each caller maps it to its own refusal. The table lives in the
 calling app's own schema, through its own migration module, so two apps never
@@ -100,12 +107,15 @@ def _ordered(charges: Sequence[Charge], now: datetime) -> list[Charge]:
     return ordered
 
 
-def _level(charge: Charge, tokens: float, refilled_at: datetime, now: datetime) -> float:
-    elapsed = max((now - refilled_at).total_seconds(), 0.0)
+def _level(
+    charge: Charge, tokens: float, refilled_at: datetime, now: datetime
+) -> tuple[float, datetime]:
+    """The bucket's tokens and the time they are counted at, never before ``refilled_at``."""
+    at = max(now, refilled_at)
+    elapsed = (at - refilled_at).total_seconds()
     # Rounded to a nanotoken, so float noise never withholds a refilled token.
-    return round(
-        min(float(charge.capacity), tokens + elapsed * charge.capacity / charge.window_s), 9
-    )
+    level = min(float(charge.capacity), tokens + elapsed * charge.capacity / charge.window_s)
+    return round(level, 9), at
 
 
 def _decide(levels: list[tuple[Charge, float]]) -> Decision:
@@ -127,6 +137,7 @@ async def take(tx: TransactionManager, charges: Sequence[Charge], *, now: dateti
     it ends. Never deletes rows; see :func:`sweep`.
     """
     levels: list[tuple[Charge, float]] = []
+    counted_at: list[datetime] = []
     for c in _ordered(charges, now):
         # The upsert creates a missing bucket full and locks it in one statement.
         row = await tx.fetch_one(
@@ -143,12 +154,14 @@ async def take(tx: TransactionManager, charges: Sequence[Charge], *, now: dateti
         )
         if row is None:
             raise RuntimeError("a rate bucket was upserted but returned no row")
-        levels.append((c, _level(c, row["tokens"], row["refilled_at"], now)))
+        tokens, at = _level(c, row["tokens"], row["refilled_at"], now)
+        levels.append((c, tokens))
+        counted_at.append(at)
     decision = _decide(levels)
     if decision.allowed:
-        for c, tokens in levels:
+        for (c, tokens), at in zip(levels, counted_at, strict=True):
             left = tokens - 1
-            full_at = now + timedelta(seconds=(c.capacity - left) * c.window_s / c.capacity)
+            full_at = at + timedelta(seconds=(c.capacity - left) * c.window_s / c.capacity)
             await tx.execute(
                 """
                 UPDATE {{tables.rate_buckets}}
@@ -158,7 +171,7 @@ async def take(tx: TransactionManager, charges: Sequence[Charge], *, now: dateti
                 c.bucket,
                 c.key,
                 left,
-                now,
+                at,
                 full_at,
             )
     return decision
@@ -179,7 +192,7 @@ async def peek(tx: TransactionManager, charges: Sequence[Charge], *, now: dateti
         if row is None:
             levels.append((c, float(c.capacity)))
         else:
-            levels.append((c, _level(c, row["tokens"], row["refilled_at"], now)))
+            levels.append((c, _level(c, row["tokens"], row["refilled_at"], now)[0]))
     return _decide(levels)
 
 
