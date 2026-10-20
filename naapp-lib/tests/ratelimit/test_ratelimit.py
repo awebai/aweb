@@ -92,7 +92,9 @@ async def test_retry_after_is_whole_seconds_and_at_least_one(db: AsyncDatabaseMa
     refused = await _take(db, slow, now=at(1.4))
     assert refused.allowed is False
     assert refused.retry_after_s == 1  # ceil((1 - 0.98) * 10 / 7)
-    assert (await _take(db, slow, now=at(0))).retry_after_s == 2  # ceil(10 / 7)
+    drained = charge(key="client-2", capacity=7, window_s=10)
+    await _admitted(db, drained, now=T0, tries=7)
+    assert (await _take(db, drained, now=T0)).retry_after_s == 2  # ceil(10 / 7)
 
 
 async def test_a_shrunk_capacity_caps_immediately(db: AsyncDatabaseManager) -> None:
@@ -247,6 +249,18 @@ async def test_sweep_deletes_only_full_rows(db: AsyncDatabaseManager) -> None:
     assert await sweep(db, now=at(60)) == 1  # idle is full at 20 s, busy only at 70 s
     assert await _rows(db) == 1
     assert await sweep(db, now=at(60)) == 0
+
+
+async def test_sweep_never_undoes_a_tightened_window(db: AsyncDatabaseManager) -> None:
+    """A refused call under a longer window keeps the bucket until it is full under it."""
+    fast = charge(capacity=1, window_s=1)
+    slow = charge(capacity=1, window_s=60)
+    assert (await _take(db, fast, now=T0)).allowed is True  # full again at 1 s under fast
+    assert (await _take(db, slow, now=at(0.5))).allowed is False
+    assert await sweep(db, now=at(1)) == 0  # under slow it holds 1/60 of a token
+    assert (await _take(db, slow, now=at(1))).allowed is False
+    assert await sweep(db, now=at(60)) == 1
+    assert (await _take(db, slow, now=at(60))).allowed is True
 
 
 async def test_sweep_is_bounded_by_its_limit(db: AsyncDatabaseManager) -> None:

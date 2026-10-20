@@ -3,7 +3,9 @@
 A bucket holds up to ``capacity`` tokens and refills continuously at
 ``capacity`` tokens per ``window_s`` seconds. A request takes one token from
 each bucket it charges, or from none: if any bucket is empty, nothing is
-charged and the decision names the empty buckets. Capacity and window come
+charged and the decision names the empty buckets. Either way each charged
+bucket is recounted under the call's policy, so a later sweep judges it by the
+policy last applied. Capacity and window come
 with every call, so a policy that changes takes effect at once, and a shrunk
 capacity caps a bucket immediately.
 
@@ -158,22 +160,24 @@ async def take(tx: TransactionManager, charges: Sequence[Charge], *, now: dateti
         levels.append((c, tokens))
         counted_at.append(at)
     decision = _decide(levels)
-    if decision.allowed:
-        for (c, tokens), at in zip(levels, counted_at, strict=True):
-            left = tokens - 1
-            full_at = at + timedelta(seconds=(c.capacity - left) * c.window_s / c.capacity)
-            await tx.execute(
-                """
-                UPDATE {{tables.rate_buckets}}
-                SET tokens = $3, refilled_at = $4, full_at = $5
-                WHERE bucket = $1 AND key = $2
-                """,
-                c.bucket,
-                c.key,
-                left,
-                at,
-                full_at,
-            )
+    # Every charged bucket is rewritten as of its counted time under this call's
+    # policy, less the token when admitted, so full_at always follows the policy
+    # last applied and a sweep never deletes a bucket a tightened policy keeps.
+    for (c, tokens), at in zip(levels, counted_at, strict=True):
+        left = tokens - 1 if decision.allowed else tokens
+        full_at = at + timedelta(seconds=(c.capacity - left) * c.window_s / c.capacity)
+        await tx.execute(
+            """
+            UPDATE {{tables.rate_buckets}}
+            SET tokens = $3, refilled_at = $4, full_at = $5
+            WHERE bucket = $1 AND key = $2
+            """,
+            c.bucket,
+            c.key,
+            left,
+            at,
+            full_at,
+        )
     return decision
 
 
