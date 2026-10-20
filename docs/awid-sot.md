@@ -547,7 +547,7 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
                "member_address": "acme.com/alice",
                "alias": "alice",
                "identity_scope": "global",
-               "certificate": "<optional base64 certificate JSON>" }
+               "certificate": "<required base64 team-signed certificate JSON>" }
        The canonical product term for the per-team routing key is member name;
        the current wire/schema field is still "alias" until the scheduled
        compatibility rename. Compatibility clients may send "lifetime"
@@ -555,7 +555,13 @@ POST   /v1/namespaces/{domain}/teams/{name}/certificates
        before storage and never emits it in normal certificate responses.
        The certificate is signed externally by whoever holds the
        team controller private key (CLI for BYOD, hosted deployment for
-       managed). awid records the issuance but does not sign.
+       managed). awid records the issuance but does not sign. New
+       registrations require this signed blob, with certificate_id, team and team key,
+       member_did_key, optional member_did_aw and member_address, alias and
+       identity scope matching the registration;
+       a missing or mismatched blob is refused with 422. Historical records
+       without a stored blob remain readable; this does not permit new
+       blob-free registrations.
        member_address is the address selected for this specific team
        membership. A did:aw may have many awid addresses; the team
        certificate chooses which one is used when acting as this team
@@ -924,8 +930,9 @@ the CLI (BYOD) or the hosted deployment (managed namespaces).
 - Serve team public keys so verifiers can validate presented certs
 - Record certificate revocation events (`revoked_at` on the cert row)
 - Serve revocation lists for services to cache
-- Optionally publish cert blobs (per aala) for cross-machine fetch and
-  recovery — not load-bearing for authorization
+- Require matching team-signed cert blobs for new registrations and publish
+  them for cross-machine fetch and recovery; historical blob-free records
+  remain readable. Registry row existence is not authorization.
 - Serve cert listings for optional dashboard / audit / discovery
 
 **Does not:**
