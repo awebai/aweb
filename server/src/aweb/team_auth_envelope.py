@@ -105,6 +105,9 @@ def team_auth_signature_payload(
     if canonical_json_bytes(payload) != canonical:
         raise ValueError("invalid X-AWEB-Signed-Payload header")
 
+    if payload.get("type") == "aweb.awid-controller-request":
+        raise ValueError("wrong request envelope type")
+
     if payload.get("v") != TEAM_AUTH_ENVELOPE_V2:
         raise ValueError("unsupported team-auth envelope version")
 

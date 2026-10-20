@@ -944,3 +944,13 @@ the CLI (BYOD) or the hosted deployment (managed namespaces).
 - Coordinate agents (aweb does this)
 - Manage billing (the hosted deployment does this)
 - Manage human accounts (the hosted deployment does this)
+
+## Controller HTTP mutation envelopes
+
+Header-authenticated controller mutations accept the additive covering wire in
+[AWID controller requests](awid-controller-requests.md), with explicit protocol
+type and configured audience, method, external target and exact request-body
+hash. Legacy acceptance remains measured until the operator's separate cutoff.
+New certificate records require a matching complete team-signed blob;
+historical records remain readable. Identity custody and controller authority
+remain separate, and existing signed body-artifact protocols are unchanged.

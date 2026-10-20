@@ -13,7 +13,7 @@ semantics are governed by the [aweb implementation SOT](../aweb-sot.md) and
 
 ## Authority and repository inventory
 
-`docs/vectors/*.json` is the only public protocol-vector authority for the 22
+`docs/vectors/*.json` is the only public protocol-vector authority for the 23
 fixtures indexed here. Python, Go, TypeScript, package references, and generated
 references consume these root bytes directly or through the one classified
 package copy below. An unclassified hand-maintained copy is forbidden even when
@@ -35,6 +35,17 @@ repository-root authority. `test-vectors/app-manifests/` contains
 digest-pinned experimental app-manifest snapshots documented by
 [`app-manifest.md`](../app-manifest.md); they are not silently promoted into the
 identity/trust vector family.
+
+## Accepting protocols awaiting client rollout
+
+### `awid-controller-request-v2.json`
+
+Controller HTTP envelopes bind the configured registry audience, protocol type,
+method, external path/query and exact body, retaining the operation discriminator.
+The real AWID route consumes this vector, including wrong-audience and team-auth
+purpose refusals. Legacy forms remain accepted and measured until the operator's
+cutoff; clients emit this shape only after the accepting registry is deployed.
+See [AWID controller requests](../awid-controller-requests.md).
 
 ## Current protocol fixtures
 
