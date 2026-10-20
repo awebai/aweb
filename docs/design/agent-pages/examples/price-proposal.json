@@ -1,0 +1,201 @@
+{
+  "page_format": "aweb.page/1",
+  "page_id": "price-fixture",
+  "locale": "ca",
+  "title": "Proposta de preus — dades fictícies",
+  "rev": 1,
+  "layout_version": 1,
+  "owner": "agent-fixture",
+  "policy_ref": "staff-read",
+  "layout": [
+    {
+      "id": "title",
+      "type": "heading",
+      "props": {
+        "text": "Revisió de preus",
+        "level": 1
+      }
+    },
+    {
+      "id": "summary",
+      "type": "cards",
+      "props": {
+        "fields": {
+          "title": "channel",
+          "body": "reason",
+          "amount": "price_minor"
+        }
+      },
+      "bind": {
+        "collection": "proposals",
+        "limit": 1
+      }
+    },
+    {
+      "id": "dates",
+      "type": "table",
+      "props": {
+        "columns": [
+          {
+            "field": "start",
+            "label": "Des de",
+            "format": "date"
+          },
+          {
+            "field": "end",
+            "label": "Fins a",
+            "format": "date"
+          },
+          {
+            "field": "price_minor",
+            "label": "Preu per nit (EUR)",
+            "format": "money_minor"
+          }
+        ]
+      },
+      "bind": {
+        "collection": "proposals",
+        "limit": 1
+      }
+    },
+    {
+      "id": "price-decision",
+      "type": "decision_card",
+      "props": {
+        "task_id": "task-price-1",
+        "task_rev": 1,
+        "collection": "proposals",
+        "record_id": "price-1",
+        "record_rev": 1,
+        "options": [
+          {
+            "value": "approve",
+            "label": "Aprovar"
+          },
+          {
+            "value": "reject",
+            "label": "Rebutjar"
+          }
+        ],
+        "recommendation": "approve",
+        "answer_action": "answer-price",
+        "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "operation": {
+          "kind": "pms.price.set",
+          "destination": "PMS · tarifa canal Airbnb",
+          "summary": "Synthetic: exact values shown in the bound record."
+        },
+        "source_version": "pms-v7",
+        "expires_at": "2026-10-21T10:00:00Z"
+      }
+    },
+    {
+      "id": "agent",
+      "type": "agent_presence",
+      "props": {
+        "subject": "agent-fixture"
+      }
+    }
+  ],
+  "collections": [
+    {
+      "id": "proposals",
+      "schema_version": 1,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "end": {
+            "type": "string",
+            "format": "date"
+          },
+          "price_minor": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "currency": {
+            "const": "EUR"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "channel": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "source_version": {
+            "type": "string",
+            "maxLength": 4096
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "price_minor",
+          "currency",
+          "reason",
+          "channel",
+          "source_version"
+        ],
+        "additionalProperties": false
+      },
+      "mode": "owned",
+      "records": [
+        {
+          "id": "price-1",
+          "rev": 1,
+          "value": {
+            "start": "2026-11-01",
+            "end": "2026-11-08",
+            "price_minor": 18500,
+            "currency": "EUR",
+            "reason": "Proposta de prova per a dates disponibles.",
+            "channel": "pms-fixture",
+            "source_version": "pms-v7"
+          }
+        }
+      ]
+    }
+  ],
+  "widget_state": {},
+  "actions": [
+    {
+      "id": "answer-price",
+      "kind": "answer",
+      "label": "Respondre a la proposta",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "choice": {
+            "enum": [
+              "approve",
+              "reject"
+            ]
+          },
+          "proposal_digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "expected_task_rev": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "choice",
+          "proposal_digest",
+          "expected_task_rev"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "manager-approve",
+      "operation": "pms.price.set",
+      "requires_approval": true
+    }
+  ]
+}

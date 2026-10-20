@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 
@@ -5,7 +6,11 @@ import httpx
 import typer
 import uvicorn
 
+from .app_manifests import fetch_app_manifest
+from .app_registry import reseed_app_registrations
 from .config import get_settings
+from .db import DatabaseInfra
+from .service_errors import ServiceError
 from .workspace_config import get_workspace_id
 
 app = typer.Typer(help="aweb coordination core CLI")
@@ -149,6 +154,45 @@ def status(
             )
     else:
         typer.echo("Agents: (none)")
+
+@app.command("reseed-app-registrations")
+def reseed_app_registrations_command(
+    origin: str = typer.Option(..., "--origin", help="App origin whose installs are reseeded"),
+    manifest_file: str | None = typer.Option(
+        None,
+        "--manifest-file",
+        help="Exact manifest bytes to use instead of fetching them from the origin",
+    ),
+) -> None:
+    """
+    Recreate every team's app event declarations and emit keys from manifest bytes.
+
+    Applies to each team whose install pins the digest of those bytes. Never
+    changes subscriptions. Exits 1 when any team was left unchanged.
+    """
+    async def _reseed(manifest: bytes):
+        infra = DatabaseInfra()
+        await infra.initialize(run_migrations=False)
+        try:
+            return await reseed_app_registrations(infra.get_manager(), origin=origin, manifest=manifest)
+        finally:
+            await infra.close()
+
+    try:
+        if manifest_file:
+            with open(manifest_file, "rb") as handle:
+                manifest = handle.read()
+        else:
+            manifest = fetch_app_manifest(origin)
+        report = asyncio.run(_reseed(manifest))
+    except (OSError, ServiceError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(json.dumps(report.__dict__, indent=2))
+    if report.digest_mismatch or report.key_conflict:
+        raise typer.Exit(1)
+
 
 def _get_api_base() -> str:
     return os.getenv("AWEB_API_URL", "http://localhost:8000")

@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
 
+from aweb.auth_metrics import count_legacy_request_auth
+from aweb.audit import AuditActor, is_operator_audit_request, set_verified_audit_actor
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 
 from aweb.deps import get_db
@@ -160,9 +162,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
     did_key, signature_b64 = parse_didkey_auth(auth_header)
 
-    # -- Step 2: Verify DIDKey signature over {team_id, timestamp} --
-    # The signature proves the caller holds the private key for the did:key.
-    # We sign headers only (not the body) to avoid ASGI body-stream conflicts.
+    # -- Step 2: Verify the request envelope using the cached body hash. --
     timestamp = require_timestamp(request)
     enforce_timestamp_skew(timestamp)
 
@@ -179,8 +179,7 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
 
     # Verify Ed25519 signature over the team-auth request envelope.
     # Legacy clients sign compact v1: {team_id, timestamp, body_sha256}.
-    # `aw id request --team-auth` signs request-bound v2 bytes in
-    # X-AWEB-Signed-Payload and the verifier binds those claims below.
+    # Current clients sign request-bound v2 in X-AWEB-Signed-Payload.
     body_sha256 = getattr(request.state, "body_sha256", None)
     if body_sha256 is None:
         import hashlib as _hashlib
@@ -258,6 +257,13 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
 
     # Include the registry-resolved team key (not the certificate's claim)
     cert_info["verified_team_did_key"] = team_did_key
+    if envelope.version == 1:
+        count_legacy_request_auth(request, "certificate")
+    set_verified_audit_actor(request, AuditActor(
+        team_id=cert_info["team_id"], principal_type="c",
+        auth_mode="team_auth_v2" if envelope.version == 2 else "team_auth_v1",
+        did_key=cert_info["did_key"], did_aw=cert_info.get("member_did_aw") or None,
+    ))
     return cert_info
 
 
@@ -268,9 +274,20 @@ async def _get_team_identity_with_grant_scope(
     grant_scope: str | None,
 ) -> TeamIdentity:
     if (request.headers.get("Authorization") or "").lstrip().startswith("AWEB-Grant "):
-        if grant_scope is None:
-            raise HTTPException(status_code=403, detail="outside grant scope")
         from aweb.identity_grant_auth import verify_identity_grant_team_identity
+
+        if grant_scope is None:
+            if is_operator_audit_request(request):
+                # Verify solely to attribute the refusal, never to grant the
+                # operation. The subject, not the session key, is the actor.
+                identity = await verify_identity_grant_team_identity(request, db, required_scope=GRANT_SCOPE_ANY)
+                assert identity.grant is not None
+                set_verified_audit_actor(request, AuditActor(
+                    team_id=identity.team_id, principal_type="c", auth_mode="identity_grant",
+                    did_key=identity.did_key, did_aw=identity.did_aw or None,
+                    grant_id=identity.grant.grant_id,
+                ))
+            raise HTTPException(status_code=403, detail="outside grant scope")
 
         return await verify_identity_grant_team_identity(request, db, required_scope=grant_scope)
 

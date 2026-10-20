@@ -12,7 +12,11 @@ from typing import Self
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from aweb_naapp.runtime.team_auth import MAX_TEAM_FACTS_TTL_SECONDS, MAX_TIMESTAMP_SKEW_SECONDS
+from aweb_naapp.runtime.team_auth import (
+    MAX_TEAM_FACTS_TTL_SECONDS,
+    MAX_TIMESTAMP_SKEW_SECONDS,
+    DidAwProfile,
+)
 
 
 class NaappSettings(BaseSettings):
@@ -30,6 +34,8 @@ class NaappSettings(BaseSettings):
     timestamp_skew_seconds: int = Field(
         default=MAX_TIMESTAMP_SKEW_SECONDS, ge=1, le=MAX_TIMESTAMP_SKEW_SECONDS
     )
+    # An app already serving released callers observes before it requires.
+    did_aw_profile: DidAwProfile = DidAwProfile.REQUIRE
     db_pool_min_connections: int = Field(default=1, ge=1)
     db_pool_max_connections: int = Field(default=5, ge=1)
     db_statement_cache_size: int = Field(default=0, ge=0)

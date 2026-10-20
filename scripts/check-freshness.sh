@@ -32,14 +32,14 @@ status=0
 section() { printf '\n=== %s ===\n' "$1"; }
 
 # 1. Python locks: an AWID version bump (or any dependency change) that the
-#    editable server/awid lock records must be reflected in the committed lock.
+#    awid, server and naapp-lib locks record must be reflected in the committed lock.
 #    --check is deliberately non-mutating: a verification gate must not repair
 #    the evidence before reporting it, and a clean run must leave git clean.
-section "python locks (awid, server)"
+section "python locks (awid, server, naapp-lib)"
 if scripts/check-python-locks.sh; then
   echo "locks are up to date"
 else
-  echo "FAIL: uv.lock drift — run 'cd awid && uv lock' and 'cd server && uv lock', then commit"
+  echo "FAIL: uv.lock drift — run 'uv lock' in awid, server and naapp-lib, then commit"
   status=1
 fi
 
