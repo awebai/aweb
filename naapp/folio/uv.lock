@@ -145,6 +145,7 @@ provides-extras = ["runtime", "outbox", "signing-key", "idempotency", "roles", "
 [package.metadata.requires-dev]
 dev = [
     { name = "aweb-naapp", extras = ["runtime", "pages"] },
+    { name = "aweb-naapp-testing", editable = "../../naapp-lib/testing" },
     { name = "httpx2", specifier = ">=2.9.1" },
     { name = "mypy", specifier = ">=1.18.0" },
     { name = "pytest", specifier = ">=9.0.0" },

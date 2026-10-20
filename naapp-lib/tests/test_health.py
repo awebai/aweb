@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -9,7 +11,7 @@ from aweb_naapp.runtime.build_identity import (
     resolve_build_identity,
     resolve_render_deployment_identity,
 )
-from aweb_naapp.runtime.health import mount_health
+from aweb_naapp.runtime.health import CheckResult, mount_health
 from aweb_naapp.runtime.settings import NaappSettings
 
 _SHA_A = "a" * 40
@@ -146,3 +148,79 @@ def test_build_identity_rejects_invalid_nonempty_values(monkeypatch, name, value
 
 def test_build_identity_is_null_when_no_source_is_injected() -> None:
     assert resolve_build_identity(_FALLBACK) == {"git_sha": None}
+
+
+# --- Dependency checks --------------------------------------------------------
+
+
+def _checked(checks: dict) -> TestClient:
+    app = FastAPI()
+    mount_health(app, ExampleSettings(_env_file=None), checks=checks)
+    return TestClient(app)
+
+
+def _check(ok: bool, **detail: object):
+    async def check() -> CheckResult:
+        return CheckResult(ok=ok, detail=detail)
+
+    return check
+
+
+def test_health_and_ready_report_each_check_and_ready_is_200_when_all_pass() -> None:
+    client = _checked({"database": _check(True), "queue": _check(True, oldest_age_seconds=None)})
+    expected_checks = {"database": {"ok": True}, "queue": {"ok": True, "oldest_age_seconds": None}}
+    for path in ("/health", "/ready"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json()["status"] == "ok"
+        assert response.json()["checks"] == expected_checks
+
+
+def test_ready_is_503_and_health_reports_unavailable_when_a_check_fails() -> None:
+    client = _checked({"database": _check(True), "kms": _check(False)})
+    ready = client.get("/ready")
+    health = client.get("/health")
+    assert ready.status_code == 503
+    assert health.status_code == 200
+    for response in (ready, health):
+        assert response.json()["status"] == "unavailable"
+        assert response.json()["checks"]["kms"] == {"ok": False}
+        assert response.json()["build"] == {"git_sha": None}
+
+
+def test_live_runs_no_check() -> None:
+    calls: list[str] = []
+
+    async def counted() -> CheckResult:
+        calls.append("called")
+        return CheckResult(ok=False)
+
+    response = _checked({"kms": counted}).get("/live")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "service": "example", "build": {"git_sha": None}}
+    assert calls == []
+
+
+def test_a_check_that_raises_fails_without_reporting_the_error(caplog) -> None:
+    async def broken() -> CheckResult:
+        raise RuntimeError("detail-that-must-not-be-served")
+
+    response = _checked({"kms": broken}).get("/ready")
+    assert response.status_code == 503
+    assert response.json()["checks"]["kms"] == {"ok": False}
+    assert "detail-that-must-not-be-served" not in response.text
+    assert any(record.levelname == "ERROR" for record in caplog.records)
+
+
+def test_a_check_that_does_not_answer_in_time_fails(monkeypatch) -> None:
+    import aweb_naapp.runtime.health as health
+
+    monkeypatch.setattr(health, "HEALTH_CHECK_TIMEOUT_SECONDS", 0.01)
+
+    async def hangs() -> CheckResult:
+        await asyncio.sleep(10)
+        return CheckResult(ok=True)
+
+    response = _checked({"database": hangs}).get("/ready")
+    assert response.status_code == 503
+    assert response.json()["checks"]["database"] == {"ok": False}

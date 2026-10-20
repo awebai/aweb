@@ -54,6 +54,31 @@ configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
 `<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
 app events only.
 
+### Health
+
+`/live` reports the app's id and build commit. `/health` and `/ready` also run
+the app's dependency checks and report each by name: `ready` is 503 when any
+check fails, and `health` always answers 200. The runtime checks its database
+and reports the age of its oldest undelivered outbox event
+(`NaappRuntime.health_checks()`). An app adds its own as async callables that
+return a `CheckResult`. A check that raises, or does not answer within 5 s,
+fails, and its error is logged, never served.
+
+### Agent and human origins
+
+An app with pages for people in a browser serves them on their own origin.
+`aweb_naapp.runtime.origins.split_origins(agent_app, human_app, agent_origin=...,
+human_origin=...)` is one ASGI app that dispatches on `Host`:
+
+- the agent origin serves the runtime's app, with no cookies in either
+  direction, so its only authority is the team-auth signature;
+- the human origin refuses any request carrying `Authorization`, `X-AWEB-*` or
+  `X-AWID-*` (`403 team_auth_refused`);
+- any other host is `421 unknown_origin`.
+
+A route exists on one origin because it is declared in one of the two apps. The
+lifespan is the agent app's.
+
 ## Approvals and passkeys
 
 `aweb_naapp.runtime.approvals` is the single-use human approval primitive that
