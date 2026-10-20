@@ -397,12 +397,14 @@ alternative, not a claim that existing event durability improved.
 
 Task metadata is team-visible today. Use generic titles, opaque page/action
 references and no guest message, booking details, capability or private proposal
-in title/comment/mail. The agent re-reads using its own certificate and page ACL;
-assignment does not grant page access. A restricted page can leak its existence
-through a task reference: disclose that boundary and use unguessable references.
-Until task visibility changes under its own owner, do not promise a private task
-or copy confidential answer values into a team comment. The acah.4 decision about
-team-visible answers remains with Juan/Athena; pages do not decide it by accident.
+in the title and description. A task's answer is team-visible too: every answer,
+a page answer included, is written in full as the task's comment (Juan's ruling
+of 2026-10-20), as dashboard answers already are. No capability, token or link
+appears in a title, description, comment or mail. The agent re-reads using its
+own certificate and page ACL; assignment does not grant page access. A
+restricted page can leak its existence through a task reference: disclose that
+boundary and use unguessable references. Until task visibility changes under its
+own owner, do not promise a private task.
 
 Two stores cannot share a transaction. Required new generic task integration:
 
@@ -578,7 +580,7 @@ is represented as protected by a not-yet-approved assurance policy.
 | --- | --- |
 | Dashboard member | Existing custodial member signs exact task answer; current app policy, member proof and authoritative conditional task-answer receipt remain mandatory for page decisions. Session proof alone meets only policy-permitted internal reversible assurance under the recommendation. |
 | App-local passkey | Naapp verifies a registered human credential and transaction-bound challenge at its own origin. It produces app-local subject/assertion evidence, never a fabricated AWID member/custody claim. Owner designates the approver and controls credential enrolment/recovery through the approver's registered contact, outside agent control. |
-| Task presentation | Pages keep the exact acah.4 task/answer ledger. Card and waiting-on-you hold only opaque approval reference/commitment and safe outcome, never token/link or private proposal. External passkey step-up returns evidence bound to the same task, proposal and owner-designated person. |
+| Task presentation | Pages keep the exact acah.4 task/answer ledger. The task comment carries the answer's text; card and waiting-on-you never hold an approval token, link or capability. External passkey step-up returns evidence bound to the same task, proposal and owner-designated person. |
 | Link presentation | A secrets approve_only flow can use a one-use, request-bound link without task/chat coupling or any dashboard account. Link possession alone does not authenticate its approver. |
 
 An approver subject is exactly one person. Approver subject types admit only
@@ -1395,7 +1397,7 @@ The coordinator lands the reviewed cross-repository combination only after Juan'
   expiry/revocation race and replay vectors, plus implementation-delta reviews.
   Athena recommends approval of the owner-act and team-server identity-path
   items (once G1 derives keys from manifest bytes) and of B1b; Juan decides.
-- **Await Juan/coordinator:** acah.4 team-visible answer decision A; concrete
+- **Await Juan/coordinator:** concrete
   retention/backup policy; treatment of actual answer mail in message allowance;
   v20 marketplace pause versus this explicit assignment (coordinator is
   resolving it); customer-confirmed workflow, PMS and Microsoft 365 position.
