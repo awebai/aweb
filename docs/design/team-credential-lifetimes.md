@@ -21,7 +21,8 @@ accepts only the covering v2 controller envelope. The policy is a team-key-signe
 exact-team GET is anonymously readable on public and private teams, following S6
 and team-server records. Readers verify it against the CURRENT team key, so a
 self-hosted verifier needs neither a service token nor a member's private key.
-Policy reads use an origin/team-scoped cache for at most 60 seconds, with no
+Policy reads use an origin/team-scoped cache for at most 60 seconds (the Python
+SDK uses 30 seconds to leave room for stream rechecks), with no
 expired fallback. Fetch failure refuses as `authority_unavailable`. An older registry
 without the endpoint has no configurable policy and retains existing defaults.
 An absent record means no policy; malformed, wrong-key or unavailable records
@@ -195,7 +196,8 @@ the OATS lead. The coordinator integrates cross-repository releases.
 
 Python registry methods are `get_team_credential_policy`,
 `set_team_credential_policy`, `rollover_team_certificate`,
-`get_team_certificate_status` and `fetch_team_certificate`. Mutations accept a
+`get_team_certificate_status`, `fetch_team_certificate` and
+`fetch_current_member_certificate`. Mutations accept a
 local signing key or the public covering-controller signing callback; Cloud
 must use that public seam. Go exposes the corresponding policy/status/rollover
 methods and verifies policy records under the current team key. The optional

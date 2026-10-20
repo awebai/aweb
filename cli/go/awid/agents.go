@@ -179,7 +179,7 @@ func (r *TeamRosterResolver) resolve(ctx context.Context, identifier string, for
 	if strings.TrimSpace(r.Client.teamID) != teamID || len(r.Client.signingKey) == 0 {
 		return nil, errors.New("TeamRosterResolver: authenticated team access is required")
 	}
-	if strings.TrimSpace(r.Client.teamCertHeader) == "" && strings.TrimSpace(r.Client.grantID) == "" {
+	if !r.Client.HasTeamCertificateAuth() && strings.TrimSpace(r.Client.grantID) == "" {
 		return nil, errors.New("TeamRosterResolver: authenticated team access is required")
 	}
 	var out ListAgentsResponse
