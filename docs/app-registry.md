@@ -251,3 +251,14 @@ Task ingress, authorized receipt reads and lifecycle mutations pass
 with task admission; both services use this reader. Generations change on
 updates or scope changes; reinstall uses a new ID. Neither an absent row nor
 a non-active state confers normal app authority.
+
+
+Generation is strictly increasing per `(team_id, app_id)`, across installation
+IDs. A new installation ID continues the order rather than resetting it.
+`next_installation_generation_on(tx, team_id=..., app_id=...)` allocates the next
+value in the same registry transaction. Existing-installation writers hold the
+installation row lock and validate the caller's expected generation first.
+`team_app_install_counters` survives uninstall and removal of the installation
+row; only deletion of the whole team cascades to its counter. Every install,
+update and scope change uses the allocator. A rolled-back transaction issues
+no generation. Migrated current installations and their counters start at 1.
