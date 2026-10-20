@@ -293,8 +293,9 @@ declarations and keys from digest-pinned bytes. App keys follow the same rules.
   origin, so agents in that team do not read such events as the real app's.
   This is acceptable once install is admin-only (F6).
 - **Transition.** While `manifest` is optional, an install that carries it is
-  refused when separately supplied `event_emitters`, `events` or
-  `granted_scopes` disagree with the bytes. Requiring the bytes on every
+  refused when separately supplied `event_emitters` or `events` differ from
+  the bytes' declarations, or when `granted_scopes` is not a subset of the
+  scopes the bytes' tools request. Requiring the bytes on every
   install is the end state (acgh.8 step 2), after it is measured that released
   clients send them, per the released-client rule.
 - **No interim path.** v1 manifests declare no `app_keys` (strict v1 rejects
