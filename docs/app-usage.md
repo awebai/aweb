@@ -160,12 +160,13 @@ and nothing else:
   `records_deleted`. A batch may carry a terminal inventory snapshot. The
   collector refuses any other entry from a retired installation, and the
   whole batch with it (403 `scope_denied`).
-- **When it ends.** At the earlier of 7 days after the installation's
-  lifecycle status reports its deletion and export work complete, so that a
-  report still in retry at completion lands, and 30 days after the
+- **When it ends.** At the earlier of the installation's lifecycle status
+  reporting its deletion and export work complete, and 30 days after the
   installation was retired, so that a disposal that never completes cannot
-  keep a credential alive. After that the collector refuses the
-  installation's reports (403 `scope_denied`).
+  keep a credential alive. The app sends its terminal report, and holds the
+  collector's ack, before its lifecycle status reports completion. After the
+  grant ends the collector refuses the installation's reports (403
+  `scope_denied`).
 - It never restores normal app, event or request authority.
 
 ## 5. Collector: `POST /v1/apps/usage/reports`
