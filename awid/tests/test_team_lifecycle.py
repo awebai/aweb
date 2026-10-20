@@ -16,6 +16,7 @@ from awid.log import identity_state_hash, log_entry_payload
 from awid.signing import sign_message
 
 from conftest import build_signed_headers as _sign
+from test_certificates import _signed_certificate_blob
 
 
 async def _register_identity(client, signing_key, did_key):
@@ -132,6 +133,11 @@ async def test_full_team_lifecycle(client, controller_identity):
             "member_address": f"{domain}/alice",
             "alias": "alice",
             "identity_scope": "global",
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id=alice_cert_id, team_id=f"platform:{domain}",
+                team_did_key=team_did, member_did_key=alice_did_key,
+                member_did_aw=alice_did_aw, member_address=f"{domain}/alice", alias="alice",
+            ),
         },
         headers=headers,
     )
@@ -153,6 +159,11 @@ async def test_full_team_lifecycle(client, controller_identity):
             "member_did_key": bob_did_key,
             "alias": "bob",
             "identity_scope": "local",
+            "certificate": _signed_certificate_blob(
+                team_key, certificate_id=bob_cert_id, team_id=f"platform:{domain}",
+                team_did_key=team_did, member_did_key=bob_did_key,
+                alias="bob", lifetime="local",
+            ),
         },
         headers=headers,
     )
