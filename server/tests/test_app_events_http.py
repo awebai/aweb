@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from nacl.signing import SigningKey
 
-import aweb.app_events as app_events
+import aweb.app_credentials as app_credentials
 import aweb.routes.events as events_routes
 from awid.did import did_from_public_key
 from awid.signing import canonical_json_bytes, sign_message
@@ -219,7 +219,7 @@ async def test_app_event_emit_accepts_shared_conformance_vector(aweb_cloud_db, m
     # The vector timestamp is fixed for byte parity; this test exercises the
     # verifier bytes/signature path and separately leaves freshness covered by
     # the dedicated stale-timestamp negative vector and route checks.
-    monkeypatch.setattr(app_events, "enforce_timestamp_skew", lambda _timestamp: None)
+    monkeypatch.setattr(app_credentials, "enforce_timestamp_skew", lambda _timestamp: None)
     app = _build_events_app(aweb_cloud_db.aweb_db, public_origin=payload["aud"])
     await _seed_team_and_agent(aweb_cloud_db.aweb_db, team_id=payload["team_id"])
     await _install_folio(

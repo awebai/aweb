@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 // local resident approval. A receipt is saved only after every requested write
 // succeeds. Failed registration can be retried with update; a partial initial
 // subscription failure is retried by repeating install.
-func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, previous, next *pluginProvenance, update bool) error {
+func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string, fetchedBytes []byte, previous, next *pluginProvenance, update bool) error {
 	manifest := resolved.Manifest
 	client, selection, err := resolveClientSelection()
 	if err != nil {
@@ -22,10 +23,10 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 		next.RegisteredDigest, next.RegisteredTeam, next.RegisteredServer = previous.RegisteredDigest, previous.RegisteredTeam, previous.RegisteredServer
 		return nil
 	}
-	body := manifestRegistrationBody(resolved, fetchedDigest)
-	events := body["events"].([]appmanifest.Event)
+	events := installRegistrationEvents(manifest)
 	ctx, cancel := commandAPIContext(nil)
 	defer cancel()
+	body := installRegistrationBody(resolved, fetchedDigest, fetchedBytes)
 	if err := client.Post(ctx, "/v1/apps/install", body, nil); err != nil {
 		return fmt.Errorf("register app events (local approval retained; retry install/update): %w", err)
 	}
@@ -45,28 +46,58 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 	return nil
 }
 
-// manifestRegistrationBody is the registry install request for a resolved
-// manifest. It grants the scopes of the agent and surface tools install
-// activates; a hook-only tool's scopes wait for owner activation. Its event
-// emitters are the manifest's app-event keys, from event_emitters in version 1
-// and app_keys in version 2.
-func manifestRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string) map[string]any {
-	manifest := resolved.Manifest
+func installRegistrationEvents(manifest appmanifest.Manifest) []appmanifest.Event {
 	events := make([]appmanifest.Event, len(manifest.Events))
 	copy(events, manifest.Events)
 	for i := range events {
 		events[i].Type = strings.TrimPrefix(strings.TrimSpace(events[i].Type), manifest.App.ID+"/")
 	}
+	return events
+}
+
+// installRegistrationBody is the team install request for a resolved
+// manifest. It grants the scopes of the agent and surface tools install
+// activates; a hook-only tool's scopes wait for owner activation. Its event
+// emitters are the manifest's app-event keys, from event_emitters in version 1
+// and app_keys in version 2. fetchedBytes, when present, are the exact bytes
+// that hash to fetchedDigest; the server then takes declarations and keys from
+// them and refuses fields that disagree.
+func installRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string, fetchedBytes []byte) map[string]any {
+	manifest := resolved.Manifest
 	emitters := []appmanifest.EventEmitter{}
 	for _, key := range resolved.AppKeysFor("app-event") {
 		emitters = append(emitters, appmanifest.EventEmitter{KID: key.KID, DIDKey: key.DIDKey})
 	}
-	return map[string]any{
+	body := map[string]any{
 		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
 		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
 		"digest": fetchedDigest, "granted_scopes": append([]string{}, resolved.InstallScopes...),
-		"events": events, "event_emitters": emitters,
+		"events": installRegistrationEvents(manifest), "event_emitters": emitters,
 	}
+	if fetchedBytes != nil {
+		body["manifest"] = base64.StdEncoding.EncodeToString(fetchedBytes)
+	}
+	return body
+}
+
+// registrationManifestBytesFor returns the fetched bytes when the server reads
+// that manifest version and the bytes name the origin being registered. It
+// returns nil for a version the server does not read from bytes yet, and when a
+// dev-origin override registers the app at an origin its bytes do not declare;
+// the install then registers its supplied fields as before.
+func registrationManifestBytesFor(fetchedBytes []byte, manifestVersion int, declaredOrigin, registeredOrigin string) []byte {
+	if manifestVersion != 1 {
+		return nil
+	}
+	declared, err := canonicalAppOrigin(declaredOrigin)
+	if err != nil {
+		return nil
+	}
+	registered, err := canonicalAppOrigin(registeredOrigin)
+	if err != nil || declared != registered {
+		return nil
+	}
+	return fetchedBytes
 }
 
 func init() {

@@ -543,7 +543,9 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 	if err != nil {
 		return nil, manifestError(err)
 	}
+	fetchedBytes := manifestBytes
 	manifest := resolved.Manifest
+	declaredOrigin := manifest.App.Origin
 	if devOrigin != "" {
 		// Operator override: point the app at this base URL regardless of the
 		// origin the manifest declares. Rewrite the stored manifest so dispatch
@@ -638,7 +640,7 @@ func installManagedManifestPlugin(source, dir string, update bool, devOrigin str
 		}
 	}
 	if policy.registerEvents && policy.residentHome != "" && (len(manifest.Events) > 0 || (update && previous != nil && previous.RegisteredDigest != "")) {
-		if err := registerManifestEvents(resolved, fetchedDigest, previous, &provenance, update); err != nil {
+		if err := registerManifestEvents(resolved, fetchedDigest, registrationManifestBytesFor(fetchedBytes, manifest.ManifestVersion, declaredOrigin, manifest.App.Origin), previous, &provenance, update); err != nil {
 			return nil, err
 		}
 	}

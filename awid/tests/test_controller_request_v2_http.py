@@ -247,7 +247,7 @@ async def test_exact_raw_query_mount_and_host_is_not_audience_configuration(cont
     env = controller_app
     mounted = FastAPI()
     mounted.mount('/registry', env.app)
-    transport = httpx.ASGITransport(app=mounted)
+    transport = httpx.ASGITransport(app=mounted, client=env.client._transport.client)
     async with httpx.AsyncClient(transport=transport, base_url=ORIGIN) as client:
         path = '/registry/v1/namespaces/local/teams?q=a%2Fb&b=2&a=1'
         body = json.dumps({'name': 'mounted', 'team_did_key': keypair()[1]}).encode()

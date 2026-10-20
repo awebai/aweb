@@ -353,6 +353,21 @@ def folio_origin(folio: RunningFolio) -> str:
     return folio.origin
 
 
+def aw_workspace_env(*, home: Path) -> dict[str, str]:
+    """Environment for a disposable aw workspace, free of the caller's own aw identity
+    and config selection."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("AWEB_", "AW_"))}
+    env.update(
+        {
+            "HOME": str(home),
+            "AWEB_URL": "http://127.0.0.1:1",
+            "AWID_REGISTRY_URL": AWID_URL,
+            "NO_COLOR": "1",
+        }
+    )
+    return env
+
+
 @pytest.fixture()
 def aw_workspace_factory(tmp_path: Path) -> Callable[[str], AWWorkspace]:
     _require_e2e_enabled()
@@ -362,16 +377,7 @@ def aw_workspace_factory(tmp_path: Path) -> Callable[[str], AWWorkspace]:
         home = tmp_path / name / "home"
         workspace.mkdir(parents=True)
         home.mkdir(parents=True)
-        env = os.environ.copy()
-        env.update(
-            {
-                "HOME": str(home),
-                "AWEB_URL": "http://127.0.0.1:1",
-                "AWID_REGISTRY_URL": AWID_URL,
-                "NO_COLOR": "1",
-            }
-        )
-        return AWWorkspace(path=workspace, env=env)
+        return AWWorkspace(path=workspace, env=aw_workspace_env(home=home))
 
     return make
 

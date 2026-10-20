@@ -396,7 +396,7 @@ func TestManifestRegistrationSendsOnlyAppEventKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := manifestRegistrationBody(resolved, "sha256:"+strings.Repeat("0", 64))
+	body := installRegistrationBody(resolved, "sha256:"+strings.Repeat("0", 64), nil)
 	emitters, ok := body["event_emitters"].([]appmanifest.EventEmitter)
 	if !ok || len(emitters) != 1 || emitters[0].KID != "events" {
 		t.Fatalf("event_emitters = %#v, want only the app-event key", body["event_emitters"])
