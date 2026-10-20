@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS {{tables.app_hook_bindings}} (
     state                 TEXT NOT NULL DEFAULT 'pending'
                           CHECK (state IN ('pending', 'active', 'revoked', 'superseded')),
     ended_by              TEXT CHECK (ended_by IN ('owner_act', 'uninstall', 'generation')),
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT date_trunc('milliseconds', NOW()),
     activated_at          TIMESTAMPTZ,
     active_from           TIMESTAMPTZ,
     revoked_at            TIMESTAMPTZ,
