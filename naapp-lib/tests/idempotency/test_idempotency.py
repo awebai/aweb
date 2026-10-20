@@ -15,6 +15,7 @@ from aweb_naapp.idempotency import (
     IdempotencyExpired,
     apply_idempotency_migrations,
     claim,
+    expire_keys,
 )
 
 KEY = ("installation-1", "did:aw:member", "request-1")
@@ -62,8 +63,12 @@ async def test_same_key_with_different_bytes_is_a_conflict(db: AsyncDatabaseMana
     assert (conflict.value.code, conflict.value.status) == ("idempotency_conflict", 409)
 
 
+SHORT = timedelta(milliseconds=100)
+
+
 async def test_an_expired_key_is_gone_and_never_re_executes(db: AsyncDatabaseManager) -> None:
-    await _claim(db, "dispatch-1", retention=timedelta(0))
+    await _claim(db, "dispatch-1", retention=SHORT)
+    await asyncio.sleep(0.2)
     for body in (b"a", b"b"):
         with pytest.raises(IdempotencyExpired) as expired:
             await _claim(db, "dispatch-2", body=body)
@@ -145,6 +150,24 @@ async def test_a_contender_wins_when_the_first_claim_rolls_back(db: AsyncDatabas
     assert (results[1].receipt_ref, results[1].created) == ("dispatch-2", True)  # type: ignore[union-attr]
 
 
+async def test_expiring_keys_leaves_content_free_tombstones(db: AsyncDatabaseManager) -> None:
+    await _claim(db, "dispatch-1", retention=SHORT)
+    await _claim(db, "dispatch-2", key=("live",))
+    await asyncio.sleep(0.2)
+    assert await expire_keys(db) == 1
+    assert await expire_keys(db) == 0
+    expired = await db.fetch_one(
+        "SELECT request_hash, receipt_ref FROM {{tables.idempotency_keys}} WHERE key = $1",
+        list(KEY),
+    )
+    assert expired is not None
+    assert (expired["request_hash"], expired["receipt_ref"]) == (None, None)
+    with pytest.raises(IdempotencyExpired):
+        await _claim(db, "dispatch-3")
+    assert (await _claim(db, "dispatch-4", key=("live",))).receipt_ref == "dispatch-2"
+    assert await _rows(db) == 2
+
+
 @pytest.mark.parametrize(
     "changes",
     [
@@ -152,6 +175,7 @@ async def test_a_contender_wins_when_the_first_claim_rolls_back(db: AsyncDatabas
         {"request_hash": b""},
         {"receipt_ref": ""},
         {"retention": timedelta(seconds=-1)},
+        {"retention": timedelta(0)},
     ],
 )
 async def test_malformed_claims_are_refused(db: AsyncDatabaseManager, changes: dict) -> None:
