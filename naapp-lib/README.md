@@ -37,7 +37,47 @@ css_bytes = naapp.aweb_css()
 
 The docs surface is pure standard library. Request-time runtime code (the
 team-auth verifier, approvals, passkeys) lives under `aweb_naapp.runtime` and
-needs the `runtime` extra: `aweb-naapp[runtime]`.
+needs the `runtime` extra: `aweb-naapp[runtime]`. Two parts the core server
+shares import without it: the durable outbox, `aweb_naapp.outbox`
+(`aweb-naapp[outbox]`), and the signing-key reader, `aweb_naapp.signing_key`
+(`aweb-naapp[signing-key]`).
+
+### App keys
+
+An app names its signing keys by kid, as key files:
+`<PREFIX>APP_KEY_FILES='{"<kid>": "/run/secrets/<file>"}'`. A key file holds the
+32-byte Ed25519 seed as 64 hex characters, with one trailing newline allowed. It
+must be a regular file of at most 1 KiB, and must not be group- or world-writable. The manifest
+declares which kid signs which purpose, and the app does not start unless the
+configured key is the declared one. An app with `<PREFIX>APP_EVENTS_ORIGIN` set
+(https, or http on loopback) must hold its declared app-event key. That key may instead be given as
+`<PREFIX>APP_EMIT_KEY_SEED_HEX` with `<PREFIX>APP_EMIT_KID`, a form that signs
+app events only.
+
+### Health
+
+`/live` reports the app's id and build commit. `/health` and `/ready` also run
+the app's dependency checks and report each by name: `ready` is 503 when any
+check fails, and `health` always answers 200. The runtime checks its database
+and reports the age of its oldest undelivered outbox event
+(`NaappRuntime.health_checks()`). An app adds its own as async callables that
+return a `CheckResult`. A check that raises, or does not answer within 5 s,
+fails, and its error is logged, never served.
+
+### Agent and human origins
+
+An app with pages for people in a browser serves them on their own origin.
+`aweb_naapp.runtime.origins.split_origins(agent_app, human_app, agent_origin=...,
+human_origin=...)` is one ASGI app that dispatches on `Host`:
+
+- the agent origin serves the runtime's app, with no cookies in either
+  direction, so its only authority is the team-auth signature;
+- the human origin refuses any request carrying `Authorization`, `X-AWEB-*` or
+  `X-AWID-*` (`403 team_auth_refused`);
+- any other host is `421 unknown_origin`.
+
+A route exists on one origin because it is declared in one of the two apps. The
+lifespan is the agent app's.
 
 ## Approvals and passkeys
 

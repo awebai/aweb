@@ -17,6 +17,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
+from aweb_naapp_testing import REGISTRY_URL, SERVICE_TOKEN, did_key
 from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager
 
@@ -29,7 +30,6 @@ from aweb_naapp.hooks.owner_act_nonces import (
 )
 from aweb_naapp.hooks.strictjson import canonical
 from aweb_naapp.runtime.team_auth import AWIDTeamCache
-from tests.runtime.conftest import REGISTRY_URL, SERVICE_TOKEN, did_key
 
 TEAM_ID = "demo:example.com"
 AUDIENCE = "https://aweb.example.com"

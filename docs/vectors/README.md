@@ -27,6 +27,7 @@ The other tracked vector directories have disjoint, explicit purposes:
 | `cli/go/internal/conformance/vectors/` | Consumer-local Go fixtures plus the byte-enforced `team-auth-envelope-v2.json` package copy linked by the currently pinned naapp reference generator. |
 | `naapp/folio/tests/vectors/` | App test snapshots; `app-emit-credential-v1.json` is byte-checked against its Go consumer authority. |
 | `naapp/library/tests/vectors/` | App snapshots plus Library blueprint input/output goldens; the app-emit snapshot is byte-checked. |
+| `naapp/secrets/vectors/` | secrets' app-internal contracts: the `aweb.secrets.use-approval/1` request object under B2's prefix, and the transition-to-hook-action table checked against `hook-catalog-v1.json`. Each file is consumed by a test in `naapp/secrets/tests/`. |
 | `test-vectors/` | Repository-level policy, blueprint, app-manifest, and packaging fixtures governed by their own indexes. |
 
 There is deliberately no server-local public-vector package copy. Server wheels
@@ -66,7 +67,8 @@ coordination server URL. Signing bytes are the `aweb.team-server/1` domain
 prefix and a newline, followed by canonical JSON of the record. Valid cases
 carry their exact signing bytes; refused cases carry the stable refusal code
 and AWID status (missing prefix, non-current key, team mismatch, far-future
-`issued_at`, not newer than the stored record, plain http outside loopback).
+`issued_at`, `issued_at` with non-ASCII digits or an impossible date, not newer
+than the stored record, plain http outside loopback).
 Seeds are public test material. The AWID real-route tests consume these
 bytes. See [the team contract](../awid-sot.md#teams).
 
@@ -78,6 +80,18 @@ Signed bytes and signatures of the team-key-signed `aweb.team-custodian/1`,
 [principal attestation](../principal-attestation.md) §4 with their refusal
 codes. Keys are fixed seeds, so every signature can be recomputed. The AWID
 codec and the `aweb_naapp` verifier consume these bytes.
+
+### `secrets-runner-protocol-v1.json`
+
+The secrets runner protocol of
+[secrets-runner-protocol.md](../secrets-runner-protocol.md): signed
+`aweb.secrets.runner-request/1` headers and `aweb.secrets.runner-assignment/1`
+bodies with their exact signing bytes, credentials sealed with HPKE
+(X25519, HKDF-SHA256, ChaCha20-Poly1305, `dispatch_id` as `info`), and a
+refusal case for every verification step on either side. Signing keys are
+fixed seeds; sealed values were generated once and are checked by opening them.
+Credential plaintexts are fixtures. secrets' `test_runner_protocol_vectors.py`
+consumes every case.
 
 ### `message-signing-v1.json`
 
@@ -274,7 +288,8 @@ effect outside its command class. A payload that this file may not hold, such
 as a float, is given as JSON text in `payload_json`. The strict reader in
 `aweb_naapp.hooks.catalog` refuses the whole file on any unknown key, duplicate
 key, float or unresolved reference. Any payload change, including an addition,
-is a new catalog version.
+is a new catalog version. secrets' `test_hook_actions_vector.py` checks its
+transition-to-action table against it.
 
 ### `hook-binding-cases-v1.json`
 
@@ -450,6 +465,7 @@ reference duplication are mutation-tested failures.
 | `pin-store-raw-wire-v1.json` | Go shared `pin_store_raw_wire_test.go`; TypeScript channel-core `pin_store_raw_wire.test.ts` |
 | `rotation-announcements-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
 | `stable-id-v1.json` | Python AWID and aweb conformance tests; Go shared `conformance_test.go` |
+| `secrets-runner-protocol-v1.json` | secrets `test_runner_protocol_vectors.py` |
 | `team-auth-envelope-v2.json` | Python aweb `test_team_auth_envelope.py`; folio `test_auth_v2_envelope.py`; naapp-lib `test_team_auth_vectors.py`; Go shared `conformance_test.go`, including its root-equality check for the managed embedded copy |
 | `federation-origin-ip-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |
 | `federation-discovery-v1.json` | Python AWID `test_federation_authority_vectors.py` and `test_external_authority.py`; Python aweb pre-activation federation harness; Go AWID `federation_authority_test.go`; Go shared `federation_authority_vectors_test.go` |

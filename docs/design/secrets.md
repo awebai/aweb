@@ -361,10 +361,10 @@ CustodyBackend
   kind                                  "native-kms" | "1password"
   bind(secret_id, config)  -> backend_ref     # native: allocate; 1P: validate vault/item/field reference
   ingest(backend_ref, value) -> version_ref   # native only; console-only caller (§6)
-  open(version_ref, purpose) -> Plaintext     # one dispatch; purpose = {dispatch_id, secret_id, version}
+  open(version_ref) -> Plaintext              # one dispatch, under the version's bound context
   describe(backend_ref) -> {version_ref, updated_at, state}   # never the value
   disable(backend_ref)                        # refuse open() from now on
-  destroy(version_ref)                        # native: crypto-shred; 1P: forget reference only
+  destroy(version_ref)                        # native: delete from the live store; 1P: forget reference only
   health() -> ok | degraded(reason)
 ```
 
@@ -390,14 +390,17 @@ How a value is handled once opened:
   to another secret or version fails to decrypt.
 - **Decryption.** Every dispatch calls KMS `Decrypt` with that context. There is
   no long-lived cache of plaintext data keys. KMS's own audit trail is a second,
-  independent record of every unseal, correlated by `dispatch_id` in the
-  context.
+  independent record of every unseal. Decrypt needs exactly the context given
+  when the data key was generated, so the context cannot carry a per-dispatch
+  `dispatch_id`. A KMS record is correlated with a dispatch through the
+  dispatch's audit row instead: its timestamp and the secret version it names.
 - **Key policy.** Only the secrets service role can decrypt or generate keys. No
   human operator role has decrypt rights in production. Break-glass access is an
   explicit, audited KMS policy change outside the app.
-- **Destroy.** Deleting the wrapped data key and ciphertext row crypto-shreds the
-  version in the live database. Backups that still hold the old rows are covered
-  by §15, item 5.
+- **Destroy.** Destroying a version deletes its wrapped data key and
+  ciphertext from the live database. Copies in backups and the write-ahead log
+  stay decryptable until they expire or the key-encryption key is retired
+  (§15, item 5), so destroy is not an irreversible erasure.
 
 ### 5.3 1Password backend
 
@@ -1012,19 +1015,34 @@ A denial or expiry is final for that `request_id`.
 
 ### 10.4 The frozen canonical request
 
-`aweb.secrets.use-approval/1` is secrets' payload type for B2's frozen request.
-It uses B2's canonical-bytes rules, with integer minor-unit amounts. It contains:
+`aweb.secrets.use-approval/1` is the typed request object secrets hands B2 to
+freeze. It carries `type` (`aweb.secrets.use-approval`) and `v` (1) inside. B2
+covers it under its single prefix: the approval binds
+`"aweb.approval-request/1\n" || canonical_json({policy, request})`, with B2's
+canonical-bytes rules (integers only, so amounts are integer minor units). It
+contains:
 
 ```text
-v, type, approval_id, installation_id, install_generation, team_id,
+v, type, installation_id, install_generation, team_id,
 requester: {principal, member_did_key, certificate_id, did_aw?, alias},
 secret: {secret_id, secret_ref, version, kind, backend},
 action: broker | run_job,
-broker: {operation_id@digest, params}  |  {method, canonical_url, header_names, body_sha256, body_preview}
-run_job: {runner_id, job_id@digest, params, credential_delivery},
+broker: {operation_id, operation_digest, params}  |  {method, canonical_url, header_names, body_sha256, body_preview}
+run_job: {runner_id, job_id, job_digest, params, credential_delivery},
 policy_digest, grant_id, request_id, reason (untrusted, bounded),
 issued_at, expires_at
 ```
+
+- **No approval id inside.** B2 mints the approval id after it freezes and hashes
+  the request, so the request cannot carry it. B2's record binds the two
+  (`request_sha256` with `approval_id`), admission compares the hash, and the
+  hook event takes `approval_id` from that record. `request_id` is secrets'
+  re-submission key.
+- **Shape.** `requester.principal` is `did_aw` when the certificate carries
+  `member_did_aw`, otherwise `member_did_key` (§4.1); `did_aw` is omitted, never
+  null, when absent. Exactly one of `broker` and `run_job` is present, named by
+  `action`. `naapp/secrets/vectors/use-approval-v1.json` freezes the fields and
+  bytes, and its test checks them against B2's real mint.
 
 - **Evidence.** B3 binds the assertion to the request hash. secrets keeps B2's
   `auth_evidence_ref` and puts the hash of the evidence in the hook event
@@ -1187,12 +1205,17 @@ action:
 | refusal at admission or at the fence | `refused`, with `refusal_code` |
 | `awaiting_approval` | `approval_requested` |
 | approval decided (approve, deny, expire, revoke) | `approval_decided`, with `approval_evidence_sha256` when a passkey decided |
+| `cancelled`: the requester withdraws, or containment revokes the pending approval through B2 | `approval_decided`, with `approval_decision: revoked` |
 | `admitted` | `admitted` |
 | `dispatching`, enqueued in the fence transaction before any byte is sent | `dispatching` |
 | `completed`, including a withheld result or an undeclared credential | `completed`, with `disposition`, `returned_hmac`, and `undeclared_credential: true` (with disposition `withheld`) when §8.3 detects an undeclared credential |
 | `not_sent` | `not_sent` |
 | `outcome_unknown` | `outcome_unknown` |
 | `reconciled_*` | `reconciled` |
+
+`naapp/secrets/vectors/hook-actions-v1.json` freezes this table and the
+governance table below as data, with an example event per row that the catalog
+validates. S13's tests read it.
 
 secrets fills every field of the §A2 allowlist that applies to the event. The
 list below highlights fields with secrets-specific rules and is not exhaustive:
@@ -1273,7 +1296,7 @@ availability, only for a failed local commit (§11.5).
 | **Revoke an approver passkey or contact** | That approver's pending decisions are voided. If no approver can decide anymore, `approve_only` uses refuse. Through team-auth, revoking the last owner's passkey or contact is refused (`last_owner_protected`, §10.2). |
 
 Installation uninstall (D1 §5) fences all normal calls. Deletion of secrets data
-follows D1's lifecycle jobs, with every native version crypto-shredded.
+follows D1's lifecycle jobs, with every native version destroyed as §5.2 describes.
 
 ## 13. Manifest v2 tool surface
 

@@ -34,10 +34,25 @@ Server changes are since `server-v1.27.29`.
   event emission keeps its credential and behaviour. Migration
   `027_team_app_keys` adds the installing team's app keys and the purposes each
   may sign. No route accepts the new read purposes in this release.
+- **Security:** signed agent-status and agent-activity documents accept their
+  times only as `YYYY-MM-DDTHH:MM:SSZ` in ASCII digits. A time written with
+  other scripts' digits, such as a fullwidth year, was parsed as that instant.
+  It is now refused as `invalid_value`, as other verifiers already refuse it.
+- **Deploy order:** this server requires `awid-service>=0.5.30`. Publish
+  AWID 0.5.30 before server 1.27.30.
 
 ### Release preparation: aw 1.36.45
 
 CLI changes are since `aw-v1.36.44`.
+
+- **Security:** all root-authenticated SDK and CLI requests now sign
+  target-bound v2 envelopes, including identity-only `aw id request`.
+  Certificate and identity claims share one signer; grants keep their separate
+  target-bound protocol. This closes the interim identity-v1 retargeting
+  residual. The client does not fall back to v1 after a refusal.
+- **Upgrade requirement:** self-hosted aweb servers must run **1.27.29 or later
+  before users upgrade aw to 1.36.45**. Embedding hosts must also deploy the v2
+  certificate and identity verifiers before their users upgrade the client.
 
 - `aw plugin install` and `aw plugin update` send the exact fetched manifest
   bytes with the install, for v1 manifests whose declared origin is the
