@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from enum import StrEnum
 from typing import Any, Protocol
 
+from pgdbm.core import TransactionManager
+
 
 class Assurance(StrEnum):
     """How strongly the approving human was authenticated, weakest first."""
@@ -29,9 +31,22 @@ class ApprovalState(StrEnum):
     EXPIRED = "expired"
 
 
+class Purpose(StrEnum):
+    """What an authenticator proof is for. A proof made for one purpose cannot
+    serve another."""
+
+    APPROVE = "approve"
+    REJECT = "reject"
+    VIEW = "view"
+
+
 class Decision(StrEnum):
     APPROVE = "approve"
     REJECT = "reject"
+
+    @property
+    def purpose(self) -> Purpose:
+        return Purpose(self.value)
 
 
 class PresentationKind(StrEnum):
@@ -84,6 +99,8 @@ class Refusal(StrEnum):
     REQUEST_MISMATCH = "request_mismatch"
     POLICY_CHANGED = "policy_changed"
     ASSURANCE_INSUFFICIENT = "assurance_insufficient"
+    TASK_ANSWER_UNVERIFIED = "task_answer_unverified"
+    PRESENTATION_UNSUPPORTED = "presentation_unsupported"
     AUTHENTICATOR_UNAVAILABLE = "authenticator_unavailable"
     AUTHENTICATION_FAILED = "authentication_failed"
     APPROVER_MISMATCH = "approver_mismatch"
@@ -107,7 +124,9 @@ class ActionPolicy:
     """Owner-controlled policy for one kind of action.
 
     `approver_scope` names whose designated approver decides; `ttl` bounds how
-    long an approval and its link stay usable.
+    long an approval and its link stay usable. `link_reveals_request` says
+    whether opening the link shows the request before the approver
+    authenticates; by default it does only below passkey assurance.
     """
 
     policy_ref: str
@@ -115,6 +134,12 @@ class ActionPolicy:
     min_assurance: Assurance
     ttl: timedelta
     approver_scope: str
+    link_reveals_request: bool | None = None
+
+    def reveals_request_on_link(self) -> bool:
+        if self.link_reveals_request is not None:
+            return self.link_reveals_request
+        return self.min_assurance is not Assurance.PASSKEY
 
 
 @dataclass(frozen=True)
@@ -184,10 +209,33 @@ class RequesterView:
 
 @dataclass(frozen=True)
 class LinkedApproval:
-    """The approver-facing read behind an approval link; it consumes nothing."""
+    """The approver-facing read behind an approval link; it consumes nothing.
+    `request` is None until the approver authenticates, unless the policy lets
+    the link reveal it."""
 
     approval: Approval
-    request: Mapping[str, Any]
+    request: Mapping[str, Any] | None
+
+
+@dataclass(frozen=True)
+class TaskAnswerEvidence:
+    """What the app verified about a task answer: the member-signed answer and
+    its authoritative receipt, for this approval and decision."""
+
+    task_answer_ref: str
+    approval_id: str
+    decision: Decision
+    request_sha256: str
+
+
+class TaskAnswerRejected(Exception):
+    """The task answer or its receipt did not verify."""
+
+
+class TaskAnswerVerifier(Protocol):
+    async def verify(
+        self, approval: Approval, decision: Decision, task_answer_ref: str
+    ) -> TaskAnswerEvidence: ...
 
 
 @dataclass(frozen=True)
@@ -221,6 +269,14 @@ class ApproverDirectory(Protocol):
         ...
 
 
+class ApproverRetirement(Protocol):
+    """Told when the owner retires an approver, inside the retiring transaction."""
+
+    async def approver_retired(
+        self, approver_subject: str, *, retired_by: str, tx: TransactionManager
+    ) -> None: ...
+
+
 class ApprovalDelivery(Protocol):
     """Sends an approval link to the designated approver's registered contact.
 
@@ -234,14 +290,24 @@ class ApprovalDelivery(Protocol):
 
 
 class Authenticator(Protocol):
-    """An adapter that proves which human decided, at one assurance level."""
+    """An adapter that proves which human acted, at one assurance level.
+
+    Its challenge binds the approval, the purpose and, for a task presentation,
+    the task answer reference, through `challenge_binding`.
+    """
 
     assurance: Assurance
 
-    async def challenge(self, approval: Approval, decision: Decision) -> Mapping[str, Any]: ...
+    async def challenge(
+        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+    ) -> Mapping[str, Any]: ...
 
     async def verify(
-        self, approval: Approval, decision: Decision, proof: Mapping[str, Any]
+        self,
+        approval: Approval,
+        purpose: Purpose,
+        proof: Mapping[str, Any],
+        task_answer_ref: str | None,
     ) -> Evidence: ...
 
 

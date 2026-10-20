@@ -10,6 +10,7 @@ from aweb_naapp.runtime.approvals.model import (
     ApprovalState,
     Approver,
     ApproverDirectory,
+    ApproverRetirement,
     Assurance,
     AuthenticationFailed,
     Authenticator,
@@ -20,8 +21,12 @@ from aweb_naapp.runtime.approvals.model import (
     LinkedApproval,
     PolicySource,
     PresentationKind,
+    Purpose,
     Refusal,
     RequesterView,
+    TaskAnswerEvidence,
+    TaskAnswerRejected,
+    TaskAnswerVerifier,
 )
 from aweb_naapp.runtime.approvals.request import (
     RequestNotCanonical,
@@ -29,7 +34,7 @@ from aweb_naapp.runtime.approvals.request import (
     parse_request_json,
     request_sha256,
 )
-from aweb_naapp.runtime.approvals.service import Approvals
+from aweb_naapp.runtime.approvals.service import ApprovalRevocation, Approvals
 from aweb_naapp.runtime.approvals.store import ApprovalStore, LinkAlreadyUsed, PgApprovalStore
 
 __all__ = [
@@ -38,11 +43,13 @@ __all__ = [
     "Approval",
     "ApprovalDelivery",
     "ApprovalRefused",
+    "ApprovalRevocation",
     "ApprovalState",
     "ApprovalStore",
     "Approvals",
     "Approver",
     "ApproverDirectory",
+    "ApproverRetirement",
     "Assurance",
     "AuthenticationFailed",
     "Authenticator",
@@ -55,9 +62,13 @@ __all__ = [
     "PgApprovalStore",
     "PolicySource",
     "PresentationKind",
+    "Purpose",
     "Refusal",
     "RequestNotCanonical",
     "RequesterView",
+    "TaskAnswerEvidence",
+    "TaskAnswerRejected",
+    "TaskAnswerVerifier",
     "canonical_request",
     "challenge_binding",
     "parse_request_json",

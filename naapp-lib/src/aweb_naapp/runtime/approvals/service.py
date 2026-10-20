@@ -43,11 +43,15 @@ from aweb_naapp.runtime.approvals.model import (
     Decision,
     DeliveryStatus,
     DispatchOutcome,
+    Evidence,
     LinkedApproval,
     PolicySource,
     PresentationKind,
+    Purpose,
     Refusal,
     RequesterView,
+    TaskAnswerRejected,
+    TaskAnswerVerifier,
 )
 from aweb_naapp.runtime.approvals.request import DOMAIN_PREFIX, canonical_request
 from aweb_naapp.runtime.approvals.store import (
@@ -76,6 +80,84 @@ def _sha256(canonical: bytes) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+async def _emit(
+    audit: AuditSink,
+    kind: AuditKind,
+    actor: str,
+    approval: Approval,
+    at: datetime,
+    tx: TransactionManager,
+    **details: str,
+) -> None:
+    await audit.emit(
+        AuditEvent(
+            kind=kind,
+            actor=actor,
+            subject=approval.approver_subject,
+            occurred_at=at,
+            approval_id=approval.approval_id,
+            details={
+                "policy_ref": approval.policy_ref,
+                "policy_version": str(approval.policy_version),
+                "request_sha256": approval.request_sha256,
+                **details,
+            },
+        ),
+        tx,
+    )
+
+
+class ApprovalRevocation:
+    """Revokes live approvals, auditing each. `Approvals` uses it for
+    `revoke_many`; an approver directory uses it as its `ApproverRetirement`,
+    so a retired approver's approvals are revoked as it is retired."""
+
+    def __init__(
+        self,
+        store: ApprovalStore,
+        audit: AuditSink,
+        clock: Callable[[], datetime] = _utcnow,
+    ) -> None:
+        self._store = store
+        self._audit = audit
+        self._clock = clock
+
+    async def revoke_many(
+        self,
+        approval_ids: Sequence[str],
+        *,
+        revoked_by: str,
+        reason: str = "",
+        tx: TransactionManager | None = None,
+    ) -> list[Approval]:
+        async with self._store.transaction(tx) as t:
+            now = self._clock()
+            revoked = await self._store.revoke_many(approval_ids, now, t)
+            await self._audit_all(revoked, revoked_by, reason, now, t)
+        return revoked
+
+    async def approver_retired(
+        self, approver_subject: str, *, retired_by: str, tx: TransactionManager
+    ) -> None:
+        async with self._store.transaction(tx) as t:
+            now = self._clock()
+            revoked = await self._store.revoke_approver(approver_subject, now, t)
+            await self._audit_all(revoked, retired_by, "approver_retired", now, t)
+
+    async def _audit_all(
+        self,
+        revoked: list[Approval],
+        revoked_by: str,
+        reason: str,
+        at: datetime,
+        tx: TransactionManager,
+    ) -> None:
+        for approval in revoked:
+            await _emit(
+                self._audit, AuditKind.APPROVAL_REVOKED, revoked_by, approval, at, tx, reason=reason
+            )
+
+
 class Approvals:
     def __init__(
         self,
@@ -86,6 +168,7 @@ class Approvals:
         delivery: ApprovalDelivery,
         authenticators: Sequence[Authenticator],
         audit: AuditSink,
+        task_answers: TaskAnswerVerifier | None = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self._store = store
@@ -93,6 +176,8 @@ class Approvals:
         self._approvers = approvers
         self._delivery = delivery
         self._authenticators = {a.assurance: a for a in authenticators}
+        self._task_answers = task_answers
+        self._revocation = ApprovalRevocation(store, audit, clock)
         self._audit = audit
         self._clock = clock
 
@@ -114,6 +199,8 @@ class Approvals:
             raise ApprovalRefused(Refusal.POLICY_UNKNOWN)
         if (presentation is PresentationKind.TASK) != (presentation_ref is not None):
             raise ApprovalRefused(Refusal.PRESENTATION_MISMATCH)
+        if presentation is PresentationKind.TASK and self._task_answers is None:
+            raise ApprovalRefused(Refusal.PRESENTATION_UNSUPPORTED)
         approver = await self._approvers.designated_approver(policy)
         if approver is None:
             raise ApprovalRefused(Refusal.NO_APPROVER)
@@ -204,14 +291,22 @@ class Approvals:
     # The approver
 
     async def open_link(self, link_token: str) -> LinkedApproval:
-        """What the approver sees behind the link. Reading consumes nothing."""
+        """What the link locates. Reading consumes nothing. The request itself
+        is included only when the policy lets link possession reveal it;
+        otherwise the approver authenticates first with `view`."""
         link = await self._usable_link(link_token)
         approval = await self._store.get(link.approval_id)
         if approval is None or approval.state_at(self._clock()) is not ApprovalState.PENDING:
             raise ApprovalRefused(Refusal.LINK_UNAVAILABLE)
+        policy = await self._policies.current(approval.policy_ref)
+        revealed = policy is not None and policy.reveals_request_on_link()
+        return LinkedApproval(
+            approval=approval, request=await self._request(approval) if revealed else None
+        )
+
+    async def _request(self, approval: Approval) -> Mapping[str, Any]:
         canonical = await self._store.request_canonical(approval.request_ref)
-        covered = json.loads(canonical[len(DOMAIN_PREFIX) :])
-        return LinkedApproval(approval=approval, request=covered["request"])
+        return json.loads(canonical[len(DOMAIN_PREFIX) :])["request"]
 
     async def _usable_link(self, link_token: str) -> ApprovalLink:
         link = await self._store.find_link(link_verifier(link_token))
@@ -220,12 +315,18 @@ class Approvals:
         return link
 
     async def _presented(
-        self, approval: Approval, link_token: str | None, task_answer_ref: str | None
+        self,
+        approval: Approval,
+        link_token: str | None,
+        task_answer_ref: str | None,
+        *,
+        deciding: bool,
     ) -> str | None:
-        """Check the decision arrives through the approval's own presentation;
-        return the link it uses, if any."""
+        """Check the call arrives through the approval's own presentation:
+        its link, or for a task its task answer when deciding. Return the link
+        it uses, if any."""
         if approval.presentation_kind is PresentationKind.TASK:
-            if link_token is not None:
+            if link_token is not None or deciding != (task_answer_ref is not None):
                 raise ApprovalRefused(Refusal.PRESENTATION_MISMATCH)
             return None
         if task_answer_ref is not None or link_token is None:
@@ -279,15 +380,89 @@ class Approvals:
         assurance: Assurance,
         *,
         link_token: str | None = None,
+        task_answer_ref: str | None = None,
     ) -> Mapping[str, Any]:
-        """Start the authenticator ceremony for one decision. Consumes nothing."""
+        """Start the authenticator ceremony for one decision. Consumes nothing.
+        A task presentation binds the task answer the decision will carry."""
         approval = self._check_pending(await self._store.get(approval_id))
-        await self._presented(approval, link_token, None)
+        await self._presented(approval, link_token, task_answer_ref, deciding=True)
+        return await self._challenge(approval, decision.purpose, assurance, task_answer_ref)
+
+    async def _challenge(
+        self,
+        approval: Approval,
+        purpose: Purpose,
+        assurance: Assurance,
+        task_answer_ref: str | None,
+    ) -> Mapping[str, Any]:
         authenticator = await self._authenticator(approval, assurance)
         try:
-            return await authenticator.challenge(approval, decision)
+            return await authenticator.challenge(approval, purpose, task_answer_ref)
         except AuthenticationFailed as exc:
             raise ApprovalRefused(Refusal.AUTHENTICATION_FAILED) from exc
+
+    async def _verified(
+        self,
+        approval: Approval,
+        purpose: Purpose,
+        assurance: Assurance,
+        proof: Mapping[str, Any],
+        task_answer_ref: str | None,
+    ) -> Evidence:
+        """The authenticator's evidence that the designated approver made this proof."""
+        authenticator = await self._authenticator(approval, assurance)
+        try:
+            evidence = await authenticator.verify(approval, purpose, proof, task_answer_ref)
+        except AuthenticationFailed as exc:
+            raise ApprovalRefused(Refusal.AUTHENTICATION_FAILED) from exc
+        if evidence.assurance is not authenticator.assurance:
+            raise ApprovalRefused(Refusal.AUTHENTICATION_FAILED)
+        if (evidence.subject, evidence.subject_type) != (
+            approval.approver_subject,
+            approval.approver_subject_type,
+        ):
+            raise ApprovalRefused(Refusal.APPROVER_MISMATCH)
+        return evidence
+
+    async def _verify_task_answer(
+        self, approval: Approval, decision: Decision, task_answer_ref: str
+    ) -> None:
+        if self._task_answers is None:
+            raise ApprovalRefused(Refusal.PRESENTATION_UNSUPPORTED)
+        try:
+            answer = await self._task_answers.verify(approval, decision, task_answer_ref)
+        except TaskAnswerRejected as exc:
+            raise ApprovalRefused(Refusal.TASK_ANSWER_UNVERIFIED) from exc
+        if (answer.task_answer_ref, answer.approval_id, answer.decision, answer.request_sha256) != (
+            task_answer_ref,
+            approval.approval_id,
+            decision,
+            approval.request_sha256,
+        ):
+            raise ApprovalRefused(Refusal.TASK_ANSWER_UNVERIFIED)
+
+    async def view_challenge(
+        self, approval_id: str, assurance: Assurance, *, link_token: str | None = None
+    ) -> Mapping[str, Any]:
+        """Start the ceremony that shows the approver the request. Consumes nothing."""
+        approval = self._check_pending(await self._store.get(approval_id))
+        await self._presented(approval, link_token, None, deciding=False)
+        return await self._challenge(approval, Purpose.VIEW, assurance, None)
+
+    async def view(
+        self,
+        approval_id: str,
+        assurance: Assurance,
+        proof: Mapping[str, Any],
+        *,
+        link_token: str | None = None,
+    ) -> LinkedApproval:
+        """The request, for the designated approver once authenticated. A view
+        proof consumes nothing and cannot decide."""
+        approval = self._check_pending(await self._store.get(approval_id))
+        await self._presented(approval, link_token, None, deciding=False)
+        await self._verified(approval, Purpose.VIEW, assurance, proof, None)
+        return LinkedApproval(approval=approval, request=await self._request(approval))
 
     async def decide(
         self,
@@ -301,24 +476,16 @@ class Approvals:
         tx: TransactionManager | None = None,
     ) -> Approval:
         """Record the designated approver's verified decision, once. A link
-        presentation uses its link for this; a task presentation records the
-        task answer it came with."""
+        presentation uses its link for this. A task presentation needs both the
+        app's verification of its task answer and the authenticator proof bound
+        to that answer; until both verify the approval stays pending."""
         approval = self._check_pending(await self._store.get(approval_id))
-        link_id = await self._presented(approval, link_token, task_answer_ref)
-        if approval.presentation_kind is PresentationKind.TASK and task_answer_ref is None:
-            raise ApprovalRefused(Refusal.PRESENTATION_MISMATCH)
-        authenticator = await self._authenticator(approval, assurance)
-        try:
-            evidence = await authenticator.verify(approval, decision, proof)
-        except AuthenticationFailed as exc:
-            raise ApprovalRefused(Refusal.AUTHENTICATION_FAILED) from exc
-        if evidence.assurance is not authenticator.assurance:
-            raise ApprovalRefused(Refusal.AUTHENTICATION_FAILED)
-        if (evidence.subject, evidence.subject_type) != (
-            approval.approver_subject,
-            approval.approver_subject_type,
-        ):
-            raise ApprovalRefused(Refusal.APPROVER_MISMATCH)
+        link_id = await self._presented(approval, link_token, task_answer_ref, deciding=True)
+        if task_answer_ref is not None:
+            await self._verify_task_answer(approval, decision, task_answer_ref)
+        evidence = await self._verified(
+            approval, decision.purpose, assurance, proof, task_answer_ref
+        )
 
         async with self._store.locked(approval_id, tx) as locked:
             self._check_pending(locked.approval)
@@ -391,14 +558,9 @@ class Approvals:
         own predicate, are still pending or approved, and stop the transport
         retry of those consumed but never sent. Other consumed approvals are
         left as they are. Returns the approvals revoked."""
-        async with self._store.transaction(tx) as t:
-            now = self._clock()
-            revoked = await self._store.revoke_many(approval_ids, now, t)
-            for approval in revoked:
-                await self._emit(
-                    AuditKind.APPROVAL_REVOKED, revoked_by, approval, now, t, reason=reason
-                )
-        return revoked
+        return await self._revocation.revoke_many(
+            approval_ids, revoked_by=revoked_by, reason=reason, tx=tx
+        )
 
     # The trusted dispatcher
 
@@ -585,19 +747,4 @@ class Approvals:
         tx: TransactionManager,
         **details: str,
     ) -> None:
-        await self._audit.emit(
-            AuditEvent(
-                kind=kind,
-                actor=actor,
-                subject=approval.approver_subject,
-                occurred_at=at,
-                approval_id=approval.approval_id,
-                details={
-                    "policy_ref": approval.policy_ref,
-                    "policy_version": str(approval.policy_version),
-                    "request_sha256": approval.request_sha256,
-                    **details,
-                },
-            ),
-            tx,
-        )
+        await _emit(self._audit, kind, actor, approval, at, tx, **details)

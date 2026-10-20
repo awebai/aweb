@@ -57,15 +57,27 @@ that exact request.
   capability.
 - **Presentation.** A link presentation sends a one-use link to the approver's
   registered contact through the app's `ApprovalDelivery`; only its SHA-256
-  verifier is stored. Opening it consumes nothing; a successful decision uses it.
-  A task presentation records the task answer reference with the decision.
+  verifier is stored. The link only locates the request. Opening it consumes
+  nothing; a successful decision uses it. Under a passkey-minimum policy the
+  request is shown only after a `view` assertion, which consumes nothing;
+  otherwise, or when the policy sets `link_reveals_request`, link possession
+  alone reveals the request. A task presentation needs the app's
+  `TaskAnswerVerifier` to verify the member-signed answer and its receipt, and
+  the authenticator proof is bound to that task answer; the approval stays
+  pending until both verify.
 - **Assurance.** Each `ActionPolicy` sets a minimum of `member_session` or
   `passkey`. An `Authenticator` adapter derives the evidence from a verified
   proof; a caller cannot claim an assurance by naming it. The passkey adapter is
   below; `member_session` is an adapter seam for apps that have member sessions.
+  Every proof is bound by `challenge_binding` to one approval, purpose
+  (approve, reject or view) and task answer.
+- **Current approver.** An approval is only as good as its approver's current
+  designation: challenge, decide and admit refuse with `approver_retired` once
+  the `ApproverDirectory` no longer names the approver.
 - **Admission.** `admit()` is a compare-and-set under a row lock and a lock per
   request digest. A retry under the same operation ID retrieves the admission
-  and is not a new dispatch. The outcome lives on the consumption:
+  and is not a new dispatch; after `not_sent` it allows a transport retry while
+  the approval is unexpired and unrevoked. The outcome lives on the consumption:
   `dispatching → completed | not_sent | outcome_unknown`, and the owner
   reconciles `outcome_unknown`. While a dispatch of the same request digest is
   dispatching or unknown, no other approval of it is admitted. No outcome rearms
@@ -87,17 +99,25 @@ user-verification requirement as explicit arguments, which this module binds to
 the approval, decision, policy and the app's own origin.
 
 - The relying party is the app's own origin (`RelyingParty`).
-- The owner designates the approver for a scope and registers the approver's
-  contact (`designate`). The enrolment link goes only to that contact. Whoever
-  first completes enrolment through the link registers the passkey: this is
-  **trust on first use**, and the audit event records it as such. The link is
-  as strong as the contact channel it travels through.
-- Recovery from a lost device is the owner designating the approver again,
-  which retires the previous approver's passkeys and unused enrolment links.
-  Approvals already approved stay admissible; revoke them with `revoke_many` if
-  that is wrong for the app.
-- Assertions are bound to one approval, decision, request digest and policy
-  version through `challenge_binding`. They need user verification, are
+- Only a verified team owner act designates (`designate(owner_act=...)`):
+  `app-role.designate` for a scope's first approver, `app-credential.recover`
+  to replace one. The act names the scope, commits to the contact by hash and
+  is used once. `OwnerActEvidence` is the seam the owner-act verifier fills.
+- The enrolment link goes only to the designated contact. Whoever first
+  completes enrolment through the link registers the passkey: this is **trust
+  on first use**, and the audit event records it as such. The link is as strong
+  as the contact channel it travels through.
+- Recovery from a lockout retires the previous approver at once, with its
+  passkeys, unused enrolment links and live approvals (through
+  `ApprovalRevocation`, in the same transaction). The new approver takes effect
+  after a cooling-off period (`LockoutPolicy`, 72 h by default), during which
+  the scope has no approver, and every contact previously recorded for the
+  scope is notified. `recovery_pending_until` tells the app to freeze its own
+  widening changes meanwhile.
+- A contact change needs the approver's own passkey, takes effect after a delay
+  (24 h by default) and is notified to the old and the new contact.
+- Assertions are bound to one approval, purpose, task answer, request digest
+  and policy version through `challenge_binding`. They need user verification, are
   single-use, and the authenticator counter must advance.
 - A passkey proves that an app-local human holds the enrolled authenticator. It
   is not AWID membership, team identity or key custody.

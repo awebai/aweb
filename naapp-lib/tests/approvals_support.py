@@ -28,6 +28,9 @@ from aweb_naapp.runtime.approvals import (
     DeliveryStatus,
     Evidence,
     PgApprovalStore,
+    Purpose,
+    TaskAnswerEvidence,
+    TaskAnswerRejected,
     challenge_binding,
 )
 from aweb_naapp.runtime.audit import AuditEvent
@@ -134,33 +137,41 @@ class Clock:
 
 class KeyAuthenticator:
     """Verifies an Ed25519 signature by a registered human over a challenge the
-    adapter issued for exactly this approval and decision."""
+    adapter issued for exactly this approval, purpose and task answer."""
 
     def __init__(self, assurance: Assurance) -> None:
         self.assurance = assurance
         self.keys: dict[str, VerifyKey] = {}
-        self.issued: dict[bytes, tuple[str, Decision, bytes]] = {}
+        self.issued: dict[bytes, tuple[str, Purpose, str | None, bytes]] = {}
 
     def register(self, subject: str) -> SigningKey:
         key = SigningKey.generate()
         self.keys[subject] = key.verify_key
         return key
 
-    async def challenge(self, approval: Approval, decision: Decision) -> dict:
+    async def challenge(
+        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+    ) -> dict:
         nonce = uuid.uuid4().bytes
-        binding = challenge_binding(approval, decision, nonce)
-        self.issued[binding] = (approval.approval_id, decision, nonce)
+        binding = challenge_binding(approval, purpose, nonce, task_answer_ref)
+        self.issued[binding] = (approval.approval_id, purpose, task_answer_ref, nonce)
         return {"challenge": binding.hex()}
 
-    async def verify(self, approval: Approval, decision: Decision, proof) -> Evidence:
+    async def verify(
+        self, approval: Approval, purpose: Purpose, proof, task_answer_ref: str | None
+    ) -> Evidence:
         binding = bytes.fromhex(proof["challenge"])
         issued = self.issued.pop(binding, None)
         if issued is None:
             raise AuthenticationFailed("unknown challenge")
-        approval_id, issued_decision, nonce = issued
-        if approval_id != approval.approval_id or issued_decision != decision:
-            raise AuthenticationFailed("challenge issued for another decision")
-        if challenge_binding(approval, decision, nonce) != binding:
+        approval_id, issued_purpose, issued_answer, nonce = issued
+        if (approval_id, issued_purpose, issued_answer) != (
+            approval.approval_id,
+            purpose,
+            task_answer_ref,
+        ):
+            raise AuthenticationFailed("challenge issued for another purpose")
+        if challenge_binding(approval, purpose, nonce, task_answer_ref) != binding:
             raise AuthenticationFailed("approval changed since the challenge")
         key = self.keys.get(proof["subject"])
         if key is None:
@@ -175,6 +186,30 @@ class KeyAuthenticator:
             subject_type="app_local",
             evidence_ref=f"evidence-{uuid.uuid4()}",
         )
+
+
+class TaskAnswers:
+    """Stands in for the app's verification of a member-signed task answer and
+    its authoritative receipt: answers it has verified, by reference."""
+
+    def __init__(self) -> None:
+        self.verified: dict[str, TaskAnswerEvidence] = {}
+
+    def record(self, ref: str, approval: Approval, decision: Decision) -> None:
+        self.verified[ref] = TaskAnswerEvidence(
+            task_answer_ref=ref,
+            approval_id=approval.approval_id,
+            decision=decision,
+            request_sha256=approval.request_sha256,
+        )
+
+    async def verify(
+        self, approval: Approval, decision: Decision, task_answer_ref: str
+    ) -> TaskAnswerEvidence:
+        evidence = self.verified.get(task_answer_ref)
+        if evidence is None:
+            raise TaskAnswerRejected(task_answer_ref)
+        return evidence
 
 
 def sign(key: SigningKey, subject: str, challenge: dict) -> dict:
@@ -199,6 +234,7 @@ class World:
     session: KeyAuthenticator
     approver_key: SigningKey
     approver_session_key: SigningKey
+    task_answers: TaskAnswers
 
 
 async def build_world(db) -> World:
@@ -222,6 +258,7 @@ async def build_world(db) -> World:
         session=session,
         approver_key=passkey.register(APPROVER.subject),
         approver_session_key=session.register(APPROVER.subject),
+        task_answers=TaskAnswers(),
     )
     world.approvals = Approvals(
         store=store,
@@ -229,6 +266,7 @@ async def build_world(db) -> World:
         approvers=world.directory,
         delivery=world.mailbox,
         authenticators=[passkey, session],
+        task_answers=world.task_answers,
         audit=world.audit,
         clock=world.clock,
     )

@@ -113,6 +113,10 @@ class ApprovalStore(Protocol):
         self, approval_ids: Sequence[str], at: datetime, tx: TransactionManager
     ) -> list[Approval]: ...
 
+    async def revoke_approver(
+        self, approver_subject: str, at: datetime, tx: TransactionManager
+    ) -> list[Approval]: ...
+
 
 _APPROVAL_COLUMNS = (
     "approval_id, request_sha256, request_ref, policy_ref, policy_version, requested_by, "
@@ -410,14 +414,25 @@ class PgApprovalStore:
     ) -> list[Approval]:
         """Revoke those of the given approvals that are still pending or approved,
         and stop the transport retry of those consumed but never sent."""
+        return await self._revoke_live(tx, "approval_id = ANY($1::text[])", list(approval_ids), at)
+
+    async def revoke_approver(
+        self, approver_subject: str, at: datetime, tx: TransactionManager
+    ) -> list[Approval]:
+        """The same, for every approval this approver was designated to decide."""
+        return await self._revoke_live(tx, "approver_subject = $1", approver_subject, at)
+
+    async def _revoke_live(
+        self, tx: TransactionManager, selection: str, argument: Any, at: datetime
+    ) -> list[Approval]:
         rows = await tx.fetch_all(
             f"UPDATE {{{{tables.approvals}}}} SET revoked_at = $2, "
             "state = CASE WHEN state = 'consumed' THEN state ELSE 'revoked' END "
-            "WHERE approval_id = ANY($1::text[]) AND revoked_at IS NULL "
+            f"WHERE {selection} AND revoked_at IS NULL "
             "AND (state IN ('pending', 'approved') "
             "OR (state = 'consumed' AND dispatch_outcome = 'not_sent')) "
             f"RETURNING {_APPROVAL_COLUMNS}",
-            list(approval_ids),
+            argument,
             at,
         )
         revoked = [a for a in (_approval(row) for row in rows) if a is not None]

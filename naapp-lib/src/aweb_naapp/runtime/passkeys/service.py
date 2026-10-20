@@ -1,10 +1,19 @@
 """App-local passkey approvers, verified with py_webauthn at the app's own origin.
 
-The owner designates the approver for a scope and registers the approver's
-contact. The enrolment link goes only to that contact, and whoever first
+Only a verified team owner act designates an approver: `app-role.designate`
+for the first approver of a scope, `app-credential.recover` to replace one.
+The act names the scope and commits to the approver's contact by hash, and it
+is used once. The enrolment link goes only to that contact, and whoever first
 completes enrolment through it registers the passkey: trust on first use,
-recorded as such in the audit event. Recovery is the owner designating the
-approver again, which retires the previous approver's passkeys and links.
+recorded as such in the audit event.
+
+Recovery replaces the approver after a lockout. It retires the previous
+approver at once, with its passkeys, unused enrolment links and live
+approvals. The new approver takes effect only after the cooling-off period,
+during which no approver of the scope can request or give approvals, and
+every contact previously recorded for the scope is told. A contact change
+needs the approver's own passkey, takes effect after a delay, and is told to
+both the old and the new contact.
 
 A passkey proves an app-local human holds the enrolled authenticator. It says
 nothing about AWID membership, team identity or key custody.
@@ -19,9 +28,11 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
+import asyncpg
 from awid.signing import canonical_json_bytes
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 from pgdbm.core import TransactionManager
@@ -49,11 +60,12 @@ from aweb_naapp.runtime.approvals import (
     ActionPolicy,
     Approval,
     Approver,
+    ApproverRetirement,
     Assurance,
     AuthenticationFailed,
-    Decision,
     DeliveryStatus,
     Evidence,
+    Purpose,
     challenge_binding,
 )
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
@@ -66,6 +78,7 @@ MIGRATIONS = Path(__file__).parent / "migrations"
 MIGRATION_MODULE = "aweb_naapp_passkeys"
 SUBJECT_TYPE = "app_local"
 ENROLMENT_PREFIX = b"aweb.passkey-enrolment/1\n"
+CONTACT_CHANGE_PREFIX = b"aweb.passkey-contact-change/1\n"
 TRUST_ON_FIRST_USE = "trust_on_first_use"
 
 
@@ -73,38 +86,90 @@ class EnrolmentRefused(Exception):
     """The enrolment link or registration could not be accepted."""
 
 
-class EnrolmentDelivery(Protocol):
-    """Sends an enrolment link to the approver's registered contact, and nowhere else."""
+class DesignationRefused(Exception):
+    """The owner act does not authorise this designation."""
+
+
+class OwnerActKind(StrEnum):
+    DESIGNATE = "app-role.designate"
+    RECOVER = "app-credential.recover"
+
+
+@runtime_checkable
+class OwnerActEvidence(Protocol):
+    """A verified team owner act (`aweb.owner-act/1`).
+
+    Only the owner-act verifier produces these; until it exists this protocol
+    is the seam it will fill. Member or admin authority never satisfies it.
+    """
+
+    act_id: str
+    kind: OwnerActKind
+    signer: str
+    scope: str
+    contact_sha256: str
+
+
+@dataclass(frozen=True)
+class LockoutPolicy:
+    """Protections around replacing an approver or its contact."""
+
+    recovery_cooling_off: timedelta = timedelta(hours=72)
+    contact_change_delay: timedelta = timedelta(hours=24)
+
+
+class NoticeKind(StrEnum):
+    RECOVERY_STARTED = "recovery_started"
+    CONTACT_CHANGE_SCHEDULED = "contact_change_scheduled"
+
+
+@dataclass(frozen=True)
+class Notice:
+    kind: NoticeKind
+    scope: str
+    effective_at: datetime
+
+
+class PasskeyDelivery(Protocol):
+    """Sends links and notices to registered contacts, and nowhere else."""
 
     async def deliver_enrolment_link(
         self, approver: Approver, link_token: str
     ) -> DeliveryStatus: ...
+
+    async def deliver_notice(self, contact: str, notice: Notice) -> DeliveryStatus: ...
 
 
 @dataclass(frozen=True)
 class Designation:
     approver: Approver
     delivery_status: DeliveryStatus
+    effective_at: datetime
 
 
 @dataclass(frozen=True)
 class PasskeyEvidence:
-    """The restricted record behind an approval's `auth_evidence_ref`."""
+    """The restricted record behind an `auth_evidence_ref`."""
 
     evidence_ref: str
     subject: str
     credential_id: bytes
-    approval_id: str
-    decision: Decision
-    request_sha256: str
-    policy_ref: str
-    policy_version: int
+    purpose: str
+    approval_id: str | None
+    request_sha256: str | None
+    policy_ref: str | None
+    policy_version: int | None
+    task_answer_ref: str | None
     sign_count: int
     verified_at: datetime
 
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def contact_sha256(contact: str) -> str:
+    return hashlib.sha256(contact.encode("utf-8")).hexdigest()
 
 
 def _client_challenge(credential: Mapping[str, Any]) -> bytes:
@@ -117,11 +182,24 @@ def _enrolment_challenge(enrolment_id: str, subject: str, nonce: bytes) -> bytes
     return hashlib.sha256(ENROLMENT_PREFIX + canonical_json_bytes(fields)).digest()
 
 
+def _contact_change_challenge(subject: str, new_contact_sha256: str, nonce: bytes) -> bytes:
+    fields = {"contact_sha256": new_contact_sha256, "nonce": nonce.hex(), "subject": subject}
+    return hashlib.sha256(CONTACT_CHANGE_PREFIX + canonical_json_bytes(fields)).digest()
+
+
+_CURRENT = "superseded_at IS NULL AND effective_at <= $2"
+_EFFECTIVE_CONTACT = (
+    "CASE WHEN pending_contact_at IS NOT NULL AND pending_contact_at <= $2 "
+    "THEN pending_contact ELSE contact END"
+)
+
+
 class Passkeys:
     """Approver designation, enrolment and passkey assertions for one app.
 
     It is the app's `ApproverDirectory`, and `authenticator()` is its passkey
-    `Authenticator` for the approval primitive.
+    `Authenticator` for the approval primitive. `retirement` revokes a retired
+    approver's live approvals inside the retiring transaction.
     """
 
     def __init__(
@@ -129,18 +207,22 @@ class Passkeys:
         db: AsyncDatabaseManager,
         *,
         rp: RelyingParty,
-        delivery: EnrolmentDelivery,
+        delivery: PasskeyDelivery,
         audit: AuditSink,
+        retirement: ApproverRetirement,
         enrolment_ttl: timedelta,
         challenge_ttl: timedelta,
+        lockout: LockoutPolicy | None = None,
         clock: Callable[[], datetime] = _utcnow,
     ) -> None:
         self.db = db
         self.rp = rp
         self._delivery = delivery
         self._audit = audit
+        self._retirement = retirement
         self._enrolment_ttl = enrolment_ttl
         self._challenge_ttl = challenge_ttl
+        self._lockout = lockout or LockoutPolicy()
         self._clock = clock
 
     async def migrate(self) -> None:
@@ -153,64 +235,128 @@ class Passkeys:
 
     # The owner
 
-    async def designate(self, *, scope: str, contact: str, designated_by: str) -> Designation:
-        """Make a new approver current for `scope` and send its enrolment link
-        to `contact`. A previous approver of the scope is retired with its
-        passkeys and unused enrolment links: this is also how the owner
-        recovers from a lost device."""
+    async def designate(
+        self, *, scope: str, contact: str, owner_act: OwnerActEvidence
+    ) -> Designation:
+        """Designate the approver of `scope` on the strength of a verified owner
+        act, and send its enrolment link to `contact`.
+
+        `app-role.designate` designates the first approver; it takes effect at
+        once. `app-credential.recover` replaces the current one after a
+        lockout; it takes effect after the cooling-off period.
+        """
+        if not isinstance(owner_act, OwnerActEvidence):
+            raise TypeError("designation needs verified owner-act evidence")
+        if owner_act.scope != scope or owner_act.contact_sha256 != contact_sha256(contact):
+            raise DesignationRefused("owner act names another scope or contact")
         now = self._clock()
         approver = Approver(subject=str(uuid.uuid4()), subject_type=SUBJECT_TYPE, contact=contact)
         token, verifier = new_link_token()
-        async with self.db.transaction() as tx:
-            previous = await tx.fetch_value(
-                "SELECT subject FROM {{tables.passkey_approvers}} "
-                "WHERE scope = $1 AND superseded_at IS NULL FOR UPDATE",
-                scope,
-            )
-            if previous is not None:
-                await self._retire(tx, previous, now)
-            await tx.execute(
-                "INSERT INTO {{tables.passkey_approvers}} "
-                "(subject, scope, contact, designated_by, designated_at) VALUES ($1, $2, $3, $4, $5)",
-                approver.subject,
-                scope,
-                contact,
-                designated_by,
-                now,
-            )
-            await tx.execute(
-                "INSERT INTO {{tables.passkey_enrolments}} "
-                "(enrolment_id, subject, verifier_sha256, created_at, expires_at) "
-                "VALUES ($1, $2, $3, $4, $5)",
-                str(uuid.uuid4()),
-                approver.subject,
-                verifier,
-                now,
-                now + self._enrolment_ttl,
-            )
-            details = {"scope": scope}
-            if previous is not None:
-                details["previous_subject"] = previous
-            await self._audit.emit(
-                AuditEvent(
-                    kind=AuditKind.APPROVER_REDESIGNATED
-                    if previous is not None
-                    else AuditKind.APPROVER_DESIGNATED,
-                    actor=designated_by,
-                    subject=approver.subject,
-                    occurred_at=now,
-                    details=details,
-                ),
-                tx,
-            )
         try:
-            status = await self._delivery.deliver_enrolment_link(approver, token)
-        except Exception:
-            logger.exception("enrolment link delivery failed for approver %s", approver.subject)
-            status = DeliveryStatus.FAILED
-        return Designation(approver=approver, delivery_status=status)
+            async with self.db.transaction() as tx:
+                previous = await tx.fetch_one(
+                    "SELECT subject FROM {{tables.passkey_approvers}} "
+                    "WHERE scope = $1 AND superseded_at IS NULL FOR UPDATE",
+                    scope,
+                )
+                if previous is None and owner_act.kind is not OwnerActKind.DESIGNATE:
+                    raise DesignationRefused("the first approver needs app-role.designate")
+                if previous is not None and owner_act.kind is not OwnerActKind.RECOVER:
+                    raise DesignationRefused("replacing an approver needs app-credential.recover")
+                effective_at = now
+                notified: list[str] = []
+                if previous is not None:
+                    effective_at = now + self._lockout.recovery_cooling_off
+                    notified = await self._recorded_contacts(tx, scope)
+                    await self._retire(tx, previous["subject"], owner_act.signer, now)
+                await tx.execute(
+                    "INSERT INTO {{tables.passkey_approvers}} (subject, scope, contact, "
+                    "designated_by, designated_at, effective_at) VALUES ($1, $2, $3, $4, $5, $6)",
+                    approver.subject,
+                    scope,
+                    contact,
+                    owner_act.signer,
+                    now,
+                    effective_at,
+                )
+                await tx.execute(
+                    "INSERT INTO {{tables.passkey_owner_acts}} "
+                    "(act_id, kind, signer, scope, subject, used_at) "
+                    "VALUES ($1, $2, $3, $4, $5, $6)",
+                    owner_act.act_id,
+                    owner_act.kind.value,
+                    owner_act.signer,
+                    scope,
+                    approver.subject,
+                    now,
+                )
+                await tx.execute(
+                    "INSERT INTO {{tables.passkey_enrolments}} "
+                    "(enrolment_id, subject, verifier_sha256, created_at, expires_at) "
+                    "VALUES ($1, $2, $3, $4, $5)",
+                    str(uuid.uuid4()),
+                    approver.subject,
+                    verifier,
+                    now,
+                    now + self._enrolment_ttl,
+                )
+                details = {
+                    "scope": scope,
+                    "owner_act_id": owner_act.act_id,
+                    "owner_act_kind": owner_act.kind.value,
+                    "effective_at": effective_at.isoformat(),
+                }
+                if previous is not None:
+                    details["previous_subject"] = previous["subject"]
+                await self._audit.emit(
+                    AuditEvent(
+                        kind=AuditKind.APPROVER_REDESIGNATED
+                        if previous is not None
+                        else AuditKind.APPROVER_DESIGNATED,
+                        actor=owner_act.signer,
+                        subject=approver.subject,
+                        occurred_at=now,
+                        details=details,
+                    ),
+                    tx,
+                )
+        except asyncpg.exceptions.UniqueViolationError as exc:
+            if await self._act_used(owner_act.act_id):
+                raise DesignationRefused("owner act already used") from exc
+            raise
+        status = await self._send(self._delivery.deliver_enrolment_link(approver, token))
+        notice = Notice(NoticeKind.RECOVERY_STARTED, scope, effective_at)
+        for recorded in notified:
+            await self._send(self._delivery.deliver_notice(recorded, notice))
+        return Designation(approver=approver, delivery_status=status, effective_at=effective_at)
 
-    async def _retire(self, tx: TransactionManager, subject: str, now: datetime) -> None:
+    async def _act_used(self, act_id: str) -> bool:
+        return bool(
+            await self.db.fetch_value(
+                "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_owner_acts}} WHERE act_id = $1)",
+                act_id,
+            )
+        )
+
+    async def _send(self, sending: Any) -> DeliveryStatus:
+        try:
+            return await sending
+        except Exception:
+            logger.exception("passkey delivery failed")
+            return DeliveryStatus.FAILED
+
+    async def _recorded_contacts(self, tx: TransactionManager, scope: str) -> list[str]:
+        rows = await tx.fetch_all(
+            "SELECT contact FROM {{tables.passkey_approvers}} WHERE scope = $1 "
+            "UNION SELECT pending_contact FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 AND pending_contact IS NOT NULL",
+            scope,
+        )
+        return sorted({row["contact"] for row in rows})
+
+    async def _retire(
+        self, tx: TransactionManager, subject: str, retired_by: str, now: datetime
+    ) -> None:
         await tx.execute(
             "UPDATE {{tables.passkey_approvers}} SET superseded_at = $2 WHERE subject = $1",
             subject,
@@ -228,15 +374,30 @@ class Passkeys:
             subject,
             now,
         )
+        await self._retirement.approver_retired(subject, retired_by=retired_by, tx=tx)
+
+    async def recovery_pending_until(self, scope: str) -> datetime | None:
+        """When a recovery's cooling-off ends, while it runs. Apps freeze their
+        own widening changes for the scope until then."""
+        return await self.db.fetch_value(
+            "SELECT effective_at FROM {{tables.passkey_approvers}} "
+            "WHERE scope = $1 AND superseded_at IS NULL AND effective_at > $2",
+            scope,
+            self._clock(),
+        )
+
+    # The directory
 
     async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
-        """The current approver for the policy's scope, once it has a passkey."""
+        """The current approver for the policy's scope, once in effect and enrolled."""
         row = await self.db.fetch_one(
-            "SELECT a.subject, a.contact FROM {{tables.passkey_approvers}} a "
-            "WHERE a.scope = $1 AND a.superseded_at IS NULL AND EXISTS ("
+            f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact "
+            "FROM {{tables.passkey_approvers}} a "
+            f"WHERE scope = $1 AND {_CURRENT} AND EXISTS ("
             "SELECT 1 FROM {{tables.passkey_credentials}} c "
             "WHERE c.subject = a.subject AND c.revoked_at IS NULL)",
             policy.approver_scope,
+            self._clock(),
         )
         if row is None:
             return None
@@ -246,8 +407,9 @@ class Passkeys:
         return bool(
             await self.db.fetch_value(
                 "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_approvers}} "
-                "WHERE subject = $1 AND scope = $2 AND superseded_at IS NULL)",
+                f"WHERE subject = $1 AND {_CURRENT} AND scope = $3)",
                 approver_subject,
+                self._clock(),
                 policy.approver_scope,
             )
         )
@@ -269,22 +431,61 @@ class Passkeys:
             raise EnrolmentRefused("enrolment link unavailable")
         return row
 
-    async def enrolment_options(self, link_token: str) -> Mapping[str, Any]:
-        """Registration options for the approver opening the enrolment link."""
-        enrolment = await self._usable_enrolment(link_token)
+    async def _issue_challenge(
+        self,
+        challenge: bytes,
+        purpose: str,
+        subject: str,
+        nonce: bytes,
+        *,
+        enrolment_id: str | None = None,
+        approval_id: str | None = None,
+        task_answer_ref: str | None = None,
+        new_contact_sha256: str | None = None,
+    ) -> None:
         now = self._clock()
-        nonce = secrets.token_bytes(32)
-        challenge = _enrolment_challenge(enrolment["enrolment_id"], enrolment["subject"], nonce)
         await self.db.execute(
-            "INSERT INTO {{tables.passkey_challenges}} "
-            "(challenge, purpose, subject, enrolment_id, nonce, created_at, expires_at) "
-            "VALUES ($1, 'enrolment', $2, $3, $4, $5, $6)",
+            "INSERT INTO {{tables.passkey_challenges}} (challenge, purpose, subject, "
+            "enrolment_id, approval_id, task_answer_ref, contact_sha256, nonce, created_at, "
+            "expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             challenge,
-            enrolment["subject"],
-            enrolment["enrolment_id"],
+            purpose,
+            subject,
+            enrolment_id,
+            approval_id,
+            task_answer_ref,
+            new_contact_sha256,
             nonce,
             now,
             now + self._challenge_ttl,
+        )
+
+    async def _take_challenge(self, challenge: bytes, purpose: str) -> dict[str, Any] | None:
+        """Use up a challenge, whether or not the ceremony then verifies."""
+        row = await self.db.fetch_one(
+            "UPDATE {{tables.passkey_challenges}} SET used_at = $3 "
+            "WHERE challenge = $1 AND purpose = $2 AND used_at IS NULL "
+            "RETURNING subject, enrolment_id, approval_id, task_answer_ref, contact_sha256, "
+            "nonce, expires_at",
+            challenge,
+            purpose,
+            self._clock(),
+        )
+        if row is None or self._clock() >= row["expires_at"]:
+            return None
+        return row
+
+    async def enrolment_options(self, link_token: str) -> Mapping[str, Any]:
+        """Registration options for the approver opening the enrolment link."""
+        enrolment = await self._usable_enrolment(link_token)
+        nonce = secrets.token_bytes(32)
+        challenge = _enrolment_challenge(enrolment["enrolment_id"], enrolment["subject"], nonce)
+        await self._issue_challenge(
+            challenge,
+            "enrolment",
+            enrolment["subject"],
+            nonce,
+            enrolment_id=enrolment["enrolment_id"],
         )
         options = generate_registration_options(
             rp_id=self.rp.rp_id,
@@ -300,20 +501,6 @@ class Passkeys:
             ),
         )
         return options_to_json_dict(options)
-
-    async def _take_challenge(self, challenge: bytes, purpose: str) -> dict[str, Any] | None:
-        """Use up a challenge, whether or not the ceremony then verifies."""
-        row = await self.db.fetch_one(
-            "UPDATE {{tables.passkey_challenges}} SET used_at = $3 "
-            "WHERE challenge = $1 AND purpose = $2 AND used_at IS NULL "
-            "RETURNING subject, enrolment_id, approval_id, decision, nonce, expires_at",
-            challenge,
-            purpose,
-            self._clock(),
-        )
-        if row is None or self._clock() >= row["expires_at"]:
-            return None
-        return row
 
     async def complete_enrolment(self, link_token: str, credential: Mapping[str, Any]) -> Approver:
         """Verify the registration answering this enrolment's challenge and
@@ -383,7 +570,7 @@ class Passkeys:
             subject=enrolment["subject"], subject_type=SUBJECT_TYPE, contact=enrolment["contact"]
         )
 
-    # Assertions for approval decisions
+    # Assertions
 
     async def _active_credentials(self, subject: str) -> list[dict[str, Any]]:
         return await self.db.fetch_all(
@@ -394,27 +581,8 @@ class Passkeys:
             subject,
         )
 
-    async def assertion_options(self, approval: Approval, decision: Decision) -> Mapping[str, Any]:
-        if approval.approver_subject_type != SUBJECT_TYPE:
-            raise AuthenticationFailed("approver is not an app-local passkey holder")
-        credentials = await self._active_credentials(approval.approver_subject)
-        if not credentials:
-            raise AuthenticationFailed("approver has no current passkey")
-        now = self._clock()
-        nonce = secrets.token_bytes(32)
-        challenge = challenge_binding(approval, decision, nonce)
-        await self.db.execute(
-            "INSERT INTO {{tables.passkey_challenges}} "
-            "(challenge, purpose, subject, approval_id, decision, nonce, created_at, expires_at) "
-            "VALUES ($1, 'assertion', $2, $3, $4, $5, $6, $7)",
-            challenge,
-            approval.approver_subject,
-            approval.approval_id,
-            decision.value,
-            nonce,
-            now,
-            now + self._challenge_ttl,
-        )
+    async def _assertion_options(self, subject: str, challenge: bytes) -> Mapping[str, Any]:
+        credentials = await self._active_credentials(subject)
         options = generate_authentication_options(
             rp_id=self.rp.rp_id,
             challenge=challenge,
@@ -426,27 +594,25 @@ class Passkeys:
         )
         return options_to_json_dict(options)
 
-    async def verify_assertion(
-        self, approval: Approval, decision: Decision, proof: Mapping[str, Any]
-    ) -> Evidence:
+    async def _verify_assertion(
+        self,
+        subject: str,
+        challenge: bytes,
+        proof: Mapping[str, Any],
+        purpose: Purpose | str,
+        approval: Approval | None = None,
+        task_answer_ref: str | None = None,
+    ) -> str:
+        """Verify an assertion of `subject`'s current passkey over `challenge`,
+        advance its counter and record the evidence. Return the evidence ref."""
         try:
-            challenge = _client_challenge(proof)
             credential_id = base64url_to_bytes(proof["rawId"])
-        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
+        except (KeyError, TypeError, ValueError) as exc:
             raise AuthenticationFailed("malformed assertion") from exc
-        issued = await self._take_challenge(challenge, "assertion")
-        if (
-            issued is None
-            or issued["approval_id"] != approval.approval_id
-            or issued["decision"] != decision.value
-            or issued["subject"] != approval.approver_subject
-            or challenge_binding(approval, decision, issued["nonce"]) != challenge
-        ):
-            raise AuthenticationFailed("assertion does not answer this decision's challenge")
         credential = next(
             (
                 c
-                for c in await self._active_credentials(approval.approver_subject)
+                for c in await self._active_credentials(subject)
                 if c["credential_id"] == credential_id
             ),
             None,
@@ -466,7 +632,6 @@ class Passkeys:
         except WebAuthnException as exc:
             raise AuthenticationFailed("assertion did not verify") from exc
 
-        now = self._clock()
         evidence_ref = str(uuid.uuid4())
         async with self.db.transaction() as tx:
             advanced = await tx.fetch_value(
@@ -480,19 +645,65 @@ class Passkeys:
                 raise AuthenticationFailed("authenticator counter did not advance")
             await tx.execute(
                 "INSERT INTO {{tables.passkey_assertions}} (evidence_ref, subject, credential_id, "
-                "approval_id, decision, request_sha256, policy_ref, policy_version, sign_count, "
-                "verified_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                "purpose, approval_id, request_sha256, policy_ref, policy_version, "
+                "task_answer_ref, sign_count, verified_at) "
+                "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 evidence_ref,
-                approval.approver_subject,
+                subject,
                 credential_id,
-                approval.approval_id,
-                decision.value,
-                approval.request_sha256,
-                approval.policy_ref,
-                approval.policy_version,
+                str(purpose),
+                approval.approval_id if approval else None,
+                approval.request_sha256 if approval else None,
+                approval.policy_ref if approval else None,
+                approval.policy_version if approval else None,
+                task_answer_ref,
                 verified.new_sign_count,
-                now,
+                self._clock(),
             )
+        return evidence_ref
+
+    async def approval_options(
+        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+    ) -> Mapping[str, Any]:
+        if approval.approver_subject_type != SUBJECT_TYPE:
+            raise AuthenticationFailed("approver is not an app-local passkey holder")
+        if not await self._active_credentials(approval.approver_subject):
+            raise AuthenticationFailed("approver has no current passkey")
+        nonce = secrets.token_bytes(32)
+        challenge = challenge_binding(approval, purpose, nonce, task_answer_ref)
+        await self._issue_challenge(
+            challenge,
+            purpose.value,
+            approval.approver_subject,
+            nonce,
+            approval_id=approval.approval_id,
+            task_answer_ref=task_answer_ref,
+        )
+        return await self._assertion_options(approval.approver_subject, challenge)
+
+    async def verify_approval_assertion(
+        self,
+        approval: Approval,
+        purpose: Purpose,
+        proof: Mapping[str, Any],
+        task_answer_ref: str | None,
+    ) -> Evidence:
+        try:
+            challenge = _client_challenge(proof)
+        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
+            raise AuthenticationFailed("malformed assertion") from exc
+        issued = await self._take_challenge(challenge, purpose.value)
+        if (
+            issued is None
+            or issued["approval_id"] != approval.approval_id
+            or issued["subject"] != approval.approver_subject
+            or issued["task_answer_ref"] != task_answer_ref
+            or challenge_binding(approval, purpose, issued["nonce"], task_answer_ref) != challenge
+        ):
+            raise AuthenticationFailed("assertion does not answer this challenge")
+        evidence_ref = await self._verify_assertion(
+            approval.approver_subject, challenge, proof, purpose, approval, task_answer_ref
+        )
         return Evidence(
             assurance=Assurance.PASSKEY,
             subject=approval.approver_subject,
@@ -500,13 +711,88 @@ class Passkeys:
             evidence_ref=evidence_ref,
         )
 
+    # The approver's own contact
+
+    async def _current_approver(self, scope: str) -> dict[str, Any]:
+        row = await self.db.fetch_one(
+            f"SELECT subject, {_EFFECTIVE_CONTACT} AS contact "
+            f"FROM {{{{tables.passkey_approvers}}}} WHERE scope = $1 AND {_CURRENT}",
+            scope,
+            self._clock(),
+        )
+        if row is None:
+            raise AuthenticationFailed("no approver in effect for this scope")
+        return row
+
+    async def contact_change_options(self, scope: str, new_contact: str) -> Mapping[str, Any]:
+        """Assertion options for the current approver to change its own contact."""
+        approver = await self._current_approver(scope)
+        nonce = secrets.token_bytes(32)
+        digest = contact_sha256(new_contact)
+        challenge = _contact_change_challenge(approver["subject"], digest, nonce)
+        await self._issue_challenge(
+            challenge, "contact_change", approver["subject"], nonce, new_contact_sha256=digest
+        )
+        return await self._assertion_options(approver["subject"], challenge)
+
+    async def change_contact(
+        self, scope: str, new_contact: str, proof: Mapping[str, Any]
+    ) -> datetime:
+        """Schedule the approver's new contact, proven with its own passkey.
+        It takes effect after the contact-change delay; both contacts are told.
+        Returns when it takes effect."""
+        approver = await self._current_approver(scope)
+        digest = contact_sha256(new_contact)
+        try:
+            challenge = _client_challenge(proof)
+        except (KeyError, TypeError, ValueError, WebAuthnException) as exc:
+            raise AuthenticationFailed("malformed assertion") from exc
+        issued = await self._take_challenge(challenge, "contact_change")
+        if (
+            issued is None
+            or issued["subject"] != approver["subject"]
+            or issued["contact_sha256"] != digest
+            or _contact_change_challenge(approver["subject"], digest, issued["nonce"]) != challenge
+        ):
+            raise AuthenticationFailed("assertion does not answer this contact change")
+        evidence_ref = await self._verify_assertion(
+            approver["subject"], challenge, proof, "contact_change"
+        )
+        now = self._clock()
+        effective_at = now + self._lockout.contact_change_delay
+        async with self.db.transaction() as tx:
+            await tx.execute(
+                "UPDATE {{tables.passkey_approvers}} SET contact = $2, pending_contact = $3, "
+                "pending_contact_at = $4 WHERE subject = $1 AND superseded_at IS NULL",
+                approver["subject"],
+                approver["contact"],
+                new_contact,
+                effective_at,
+            )
+            await self._audit.emit(
+                AuditEvent(
+                    kind=AuditKind.APPROVER_CONTACT_CHANGE_SCHEDULED,
+                    actor=approver["subject"],
+                    subject=approver["subject"],
+                    occurred_at=now,
+                    details={
+                        "scope": scope,
+                        "evidence_ref": evidence_ref,
+                        "effective_at": effective_at.isoformat(),
+                    },
+                ),
+                tx,
+            )
+        notice = Notice(NoticeKind.CONTACT_CHANGE_SCHEDULED, scope, effective_at)
+        for contact in sorted({approver["contact"], new_contact}):
+            await self._send(self._delivery.deliver_notice(contact, notice))
+        return effective_at
+
     async def evidence(self, evidence_ref: str) -> PasskeyEvidence | None:
         row = await self.db.fetch_one(
             "SELECT * FROM {{tables.passkey_assertions}} WHERE evidence_ref = $1", evidence_ref
         )
-        if row is None:
-            return None
-        return PasskeyEvidence(**{**row, "decision": Decision(row["decision"])})
+        return PasskeyEvidence(**row) if row else None
 
 
 class PasskeyAuthenticator:
@@ -517,10 +803,18 @@ class PasskeyAuthenticator:
     def __init__(self, passkeys: Passkeys) -> None:
         self._passkeys = passkeys
 
-    async def challenge(self, approval: Approval, decision: Decision) -> Mapping[str, Any]:
-        return await self._passkeys.assertion_options(approval, decision)
+    async def challenge(
+        self, approval: Approval, purpose: Purpose, task_answer_ref: str | None
+    ) -> Mapping[str, Any]:
+        return await self._passkeys.approval_options(approval, purpose, task_answer_ref)
 
     async def verify(
-        self, approval: Approval, decision: Decision, proof: Mapping[str, Any]
+        self,
+        approval: Approval,
+        purpose: Purpose,
+        proof: Mapping[str, Any],
+        task_answer_ref: str | None,
     ) -> Evidence:
-        return await self._passkeys.verify_assertion(approval, decision, proof)
+        return await self._passkeys.verify_approval_assertion(
+            approval, purpose, proof, task_answer_ref
+        )

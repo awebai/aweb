@@ -14,6 +14,7 @@ from pgdbm.errors import QueryError
 
 from aweb_naapp.runtime.approvals import (
     ApprovalRefused,
+    Approvals,
     ApprovalState,
     Assurance,
     Decision,
@@ -22,6 +23,7 @@ from aweb_naapp.runtime.approvals import (
     Evidence,
     LinkAlreadyUsed,
     PresentationKind,
+    Purpose,
     Refusal,
 )
 from aweb_naapp.runtime.links import link_verifier
@@ -47,15 +49,22 @@ def link_of(w: World, approval) -> str | None:
     return w.mailbox.by_approval.get(approval.approval_id)
 
 
-async def challenge(w: World, approval, decision=Decision.APPROVE, assurance=Assurance.PASSKEY):
+async def challenge(
+    w: World, approval, decision=Decision.APPROVE, assurance=Assurance.PASSKEY, task_answer_ref=None
+):
     return await w.approvals.challenge(
-        approval.approval_id, decision, assurance, link_token=link_of(w, approval)
+        approval.approval_id,
+        decision,
+        assurance,
+        link_token=link_of(w, approval),
+        task_answer_ref=task_answer_ref,
     )
 
 
 async def decide(w: World, approval, decision=Decision.APPROVE, assurance=Assurance.PASSKEY, **kw):
     key = w.approver_key if assurance is Assurance.PASSKEY else w.approver_session_key
-    proof = sign(key, APPROVER.subject, await challenge(w, approval, decision, assurance))
+    issued = await challenge(w, approval, decision, assurance, kw.get("task_answer_ref"))
+    proof = sign(key, APPROVER.subject, issued)
     kw.setdefault("link_token", link_of(w, approval))
     return await w.approvals.decide(approval.approval_id, decision, assurance, proof, **kw)
 
@@ -105,7 +114,7 @@ async def test_a_failed_delivery_is_visible_to_the_requester(world: World):
 
 async def test_the_request_is_frozen_at_mint(world: World):
     request = {**REQUEST, "constraints": {"max_amount_cents": 500}}
-    _, approval = await mint(world, request)
+    _, approval = await mint(world, request, policy_ref="internal-edit")
     request["constraints"]["max_amount_cents"] = 9999
     linked = await world.approvals.open_link(world.mailbox.last_token())
     assert linked.request == REQUEST
@@ -169,7 +178,7 @@ async def test_a_weaker_assurance_than_the_policy_minimum_is_refused(world: Worl
     assert await refusal(challenge(world, approval, assurance=Assurance.MEMBER_SESSION)) is (
         Refusal.ASSURANCE_INSUFFICIENT
     )
-    issued = await world.session.challenge(approval, Decision.APPROVE)
+    issued = await world.session.challenge(approval, Purpose.APPROVE, None)
     proof = sign(world.approver_session_key, APPROVER.subject, issued)
     assert (
         await refusal(
@@ -275,6 +284,7 @@ async def test_task_presentation_needs_the_task_answer_and_sends_no_link(world: 
     assert view.delivery_status is DeliveryStatus.NOT_REQUIRED
     assert world.mailbox.sent == []
     assert await refusal(decide(world, approval)) is Refusal.PRESENTATION_MISMATCH
+    world.task_answers.record("answer-1", approval, Decision.APPROVE)
     decided = await decide(world, approval, task_answer_ref="answer-1")
     assert decided.task_answer_ref == "answer-1"
     _, linked = await mint(world)
@@ -850,3 +860,141 @@ async def test_a_used_link_cannot_record_a_decision_even_through_the_store(world
                 world.clock(),
             )
     assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.APPROVED
+
+
+# Task answers
+
+
+async def task_approval(w: World):
+    _, approval = await mint(w, presentation=PresentationKind.TASK, presentation_ref="task-1")
+    return approval
+
+
+async def test_a_task_decision_needs_its_task_answer_verified(world: World):
+    approval = await task_approval(world)
+    assert await refusal(decide(world, approval, task_answer_ref="unverified")) is (
+        Refusal.TASK_ANSWER_UNVERIFIED
+    )
+    world.task_answers.record("answer-reject", approval, Decision.REJECT)
+    assert await refusal(decide(world, approval, task_answer_ref="answer-reject")) is (
+        Refusal.TASK_ANSWER_UNVERIFIED
+    )
+    _, other = await mint(
+        world,
+        {**REQUEST, "executor": "runner"},
+        presentation=PresentationKind.TASK,
+        presentation_ref="task-2",
+    )
+    world.task_answers.record("answer-other", other, Decision.APPROVE)
+    assert await refusal(decide(world, approval, task_answer_ref="answer-other")) is (
+        Refusal.TASK_ANSWER_UNVERIFIED
+    )
+    assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.PENDING
+
+
+async def test_an_authenticator_proof_is_bound_to_its_task_answer(world: World):
+    approval = await task_approval(world)
+    world.task_answers.record("answer-1", approval, Decision.APPROVE)
+    world.task_answers.record("answer-2", approval, Decision.APPROVE)
+    issued = await challenge(world, approval, task_answer_ref="answer-1")
+    proof = sign(world.approver_key, APPROVER.subject, issued)
+    assert (
+        await refusal(
+            world.approvals.decide(
+                approval.approval_id,
+                Decision.APPROVE,
+                Assurance.PASSKEY,
+                proof,
+                task_answer_ref="answer-2",
+            )
+        )
+        is Refusal.AUTHENTICATION_FAILED
+    )
+    assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.PENDING
+
+
+async def test_task_presentation_needs_an_app_that_verifies_task_answers(world: World):
+    approvals = Approvals(
+        store=world.store,
+        policies=world.policies,
+        approvers=world.directory,
+        delivery=world.mailbox,
+        authenticators=[world.passkey],
+        audit=world.audit,
+        clock=world.clock,
+    )
+    with pytest.raises(ApprovalRefused) as raised:
+        await approvals.mint(
+            request=REQUEST,
+            policy_ref="send-charge",
+            requested_by="agent-1",
+            presentation=PresentationKind.TASK,
+            presentation_ref="task-1",
+        )
+    assert raised.value.reason is Refusal.PRESENTATION_UNSUPPORTED
+
+
+# Viewing the request behind a link
+
+
+async def test_a_passkey_policy_shows_the_request_only_after_a_view_assertion(world: World):
+    _, approval = await mint(world)
+    token = link_of(world, approval)
+    assert (await world.approvals.open_link(token)).request is None
+    issued = await world.approvals.view_challenge(
+        approval.approval_id, Assurance.PASSKEY, link_token=token
+    )
+    viewed = await world.approvals.view(
+        approval.approval_id,
+        Assurance.PASSKEY,
+        sign(world.approver_key, APPROVER.subject, issued),
+        link_token=token,
+    )
+    assert viewed.request == REQUEST
+    assert viewed.approval.state is ApprovalState.PENDING
+    assert (await decide(world, approval)).state is ApprovalState.APPROVED
+
+
+async def test_a_view_assertion_cannot_decide(world: World):
+    _, approval = await mint(world)
+    token = link_of(world, approval)
+    issued = await world.approvals.view_challenge(
+        approval.approval_id, Assurance.PASSKEY, link_token=token
+    )
+    proof = sign(world.approver_key, APPROVER.subject, issued)
+    assert (
+        await refusal(
+            world.approvals.decide(
+                approval.approval_id, Decision.APPROVE, Assurance.PASSKEY, proof, link_token=token
+            )
+        )
+        is Refusal.AUTHENTICATION_FAILED
+    )
+
+
+async def test_only_the_approver_can_view(world: World):
+    _, approval = await mint(world)
+    token = link_of(world, approval)
+    intruder = world.passkey.register("someone-else")
+    issued = await world.approvals.view_challenge(
+        approval.approval_id, Assurance.PASSKEY, link_token=token
+    )
+    assert (
+        await refusal(
+            world.approvals.view(
+                approval.approval_id,
+                Assurance.PASSKEY,
+                sign(intruder, "someone-else", issued),
+                link_token=token,
+            )
+        )
+        is Refusal.APPROVER_MISMATCH
+    )
+
+
+async def test_link_possession_reveals_the_request_when_the_policy_allows_it(world: World):
+    _, internal = await mint(world, policy_ref="internal-edit")
+    assert (await world.approvals.open_link(link_of(world, internal))).request == REQUEST
+    world.policies.set(policy(policy_ref="open-passkey", link_reveals_request=True))
+    _, revealed = await mint(world, policy_ref="open-passkey")
+    assert (await world.approvals.open_link(link_of(world, revealed))).request == REQUEST
