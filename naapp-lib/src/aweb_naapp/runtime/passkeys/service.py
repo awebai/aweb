@@ -242,6 +242,16 @@ class Passkeys:
             return None
         return Approver(subject=row["subject"], subject_type=SUBJECT_TYPE, contact=row["contact"])
 
+    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
+        return bool(
+            await self.db.fetch_value(
+                "SELECT EXISTS (SELECT 1 FROM {{tables.passkey_approvers}} "
+                "WHERE subject = $1 AND scope = $2 AND superseded_at IS NULL)",
+                approver_subject,
+                policy.approver_scope,
+            )
+        )
+
     # Enrolment through the link
 
     async def _usable_enrolment(self, link_token: str) -> dict[str, Any]:

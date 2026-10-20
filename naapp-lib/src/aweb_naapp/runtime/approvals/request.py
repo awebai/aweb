@@ -16,6 +16,9 @@ from typing import Any
 from awid.signing import canonical_json_bytes
 
 DOMAIN_PREFIX = b"aweb.approval-request/1\n"
+# Integers beyond this cannot round-trip through a JavaScript number, so another
+# runtime could not reproduce the digest.
+SAFE_INTEGER = 2**53 - 1
 
 
 class RequestNotCanonical(ValueError):
@@ -23,7 +26,11 @@ class RequestNotCanonical(ValueError):
 
 
 def _check(value: Any, where: str) -> None:
-    if value is None or isinstance(value, (str, bool, int)):
+    if value is None or isinstance(value, (str, bool)):
+        return
+    if isinstance(value, int):
+        if abs(value) > SAFE_INTEGER:
+            raise RequestNotCanonical(f"{where}: integer outside the safe range")
         return
     if isinstance(value, Mapping):
         for key, item in value.items():

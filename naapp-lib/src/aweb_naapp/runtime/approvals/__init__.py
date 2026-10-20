@@ -30,7 +30,7 @@ from aweb_naapp.runtime.approvals.request import (
     request_sha256,
 )
 from aweb_naapp.runtime.approvals.service import Approvals
-from aweb_naapp.runtime.approvals.store import ApprovalStore, PgApprovalStore
+from aweb_naapp.runtime.approvals.store import ApprovalStore, LinkAlreadyUsed, PgApprovalStore
 
 __all__ = [
     "ActionPolicy",
@@ -50,6 +50,7 @@ __all__ = [
     "DeliveryStatus",
     "DispatchOutcome",
     "Evidence",
+    "LinkAlreadyUsed",
     "LinkedApproval",
     "PgApprovalStore",
     "PolicySource",

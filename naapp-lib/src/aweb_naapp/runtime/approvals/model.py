@@ -87,6 +87,7 @@ class Refusal(StrEnum):
     AUTHENTICATOR_UNAVAILABLE = "authenticator_unavailable"
     AUTHENTICATION_FAILED = "authentication_failed"
     APPROVER_MISMATCH = "approver_mismatch"
+    APPROVER_RETIRED = "approver_retired"
     PRESENTATION_MISMATCH = "presentation_mismatch"
     CONSUMED = "consumed"
     UNRECONCILED_DISPATCH = "unreconciled_dispatch"
@@ -161,6 +162,10 @@ class Approval:
     response_status: str | None
 
     def state_at(self, now: datetime) -> ApprovalState:
+        """The effective state. A consumed approval whose dispatch was never
+        sent can still be revoked, which stops its transport retry."""
+        if self.revoked_at is not None:
+            return ApprovalState.REVOKED
         undecided_or_unused = self.state in (ApprovalState.PENDING, ApprovalState.APPROVED)
         if undecided_or_unused and now >= self.expires_at:
             return ApprovalState.EXPIRED
@@ -209,6 +214,11 @@ class PolicySource(Protocol):
 
 class ApproverDirectory(Protocol):
     async def designated_approver(self, policy: ActionPolicy) -> Approver | None: ...
+
+    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
+        """Whether this approver is still the current designation for the policy.
+        An approval is only as good as its approver's current designation."""
+        ...
 
 
 class ApprovalDelivery(Protocol):

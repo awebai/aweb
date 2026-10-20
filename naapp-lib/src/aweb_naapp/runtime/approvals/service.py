@@ -5,6 +5,11 @@ the one the owner designated for the policy, the link goes only to that
 approver's registered contact, and the decision needs an authenticator's
 verified evidence at the policy's minimum assurance. A trusted dispatcher then
 admits exactly one dispatch of the exact approved request.
+
+An approval is only as good as its approver's current designation: challenge,
+decide and admit refuse with `approver_retired` once the directory no longer
+names the approver. The check reads the directory, so an admission that commits
+just before a re-designation still dispatches; that is an ordering, not a gap.
 """
 
 from __future__ import annotations
@@ -45,7 +50,12 @@ from aweb_naapp.runtime.approvals.model import (
     RequesterView,
 )
 from aweb_naapp.runtime.approvals.request import DOMAIN_PREFIX, canonical_request
-from aweb_naapp.runtime.approvals.store import ApprovalLink, ApprovalStore, StoredRequest
+from aweb_naapp.runtime.approvals.store import (
+    ApprovalLink,
+    ApprovalStore,
+    LinkAlreadyUsed,
+    StoredRequest,
+)
 from aweb_naapp.runtime.audit import AuditEvent, AuditKind, AuditSink
 from aweb_naapp.runtime.links import LinkLifetime, link_verifier, new_link_token
 
@@ -167,9 +177,11 @@ class Approvals:
             logger.exception("approval link delivery failed for approval %s", approval.approval_id)
             return DeliveryStatus.FAILED
 
-    async def requester_view(self, request_id: str) -> RequesterView:
+    async def requester_view(self, request_id: str, requested_by: str) -> RequesterView:
+        """The requester's own view. Another caller gets `not_found`, as for an
+        unknown request."""
         approval = await self._store.get_by_request(request_id)
-        if approval is None:
+        if approval is None or approval.requested_by != requested_by:
             raise ApprovalRefused(Refusal.NOT_FOUND)
         return self._view(approval, self._clock())
 
@@ -246,8 +258,13 @@ class Approvals:
             raise ApprovalRefused(Refusal.POLICY_CHANGED)
         return policy
 
+    async def _check_current_approver(self, approval: Approval, policy: ActionPolicy) -> None:
+        if not await self._approvers.is_current(approval.approver_subject, policy):
+            raise ApprovalRefused(Refusal.APPROVER_RETIRED)
+
     async def _authenticator(self, approval: Approval, assurance: Assurance) -> Authenticator:
         policy = await self._current_policy(approval)
+        await self._check_current_approver(approval, policy)
         if not assurance.satisfies(policy.min_assurance):
             raise ApprovalRefused(Refusal.ASSURANCE_INSUFFICIENT)
         authenticator = self._authenticators.get(assurance)
@@ -309,7 +326,10 @@ class Approvals:
             state = (
                 ApprovalState.APPROVED if decision is Decision.APPROVE else ApprovalState.REJECTED
             )
-            decided = await locked.set_decision(state, evidence, task_answer_ref, link_id, now)
+            try:
+                decided = await locked.set_decision(state, evidence, task_answer_ref, link_id, now)
+            except LinkAlreadyUsed as exc:
+                raise ApprovalRefused(Refusal.LINK_UNAVAILABLE) from exc
             await self._emit(
                 AuditKind.APPROVAL_DECIDED,
                 evidence.subject,
@@ -332,15 +352,19 @@ class Approvals:
         reason: str = "",
         tx: TransactionManager | None = None,
     ) -> Approval:
-        """Revoke one pending or approved approval. Revocation before dispatch wins."""
+        """Revoke one pending or approved approval, or stop the transport retry
+        of one consumed but never sent. Revocation before dispatch wins."""
         async with self._store.locked(approval_id, tx) as locked:
             approval = locked.approval
             if approval is None:
                 raise ApprovalRefused(Refusal.NOT_FOUND)
-            if approval.state is ApprovalState.CONSUMED:
-                raise ApprovalRefused(Refusal.CONSUMED)
-            if approval.state is ApprovalState.REVOKED:
+            if approval.revoked_at is not None:
                 raise ApprovalRefused(Refusal.REVOKED)
+            if (
+                approval.state is ApprovalState.CONSUMED
+                and approval.dispatch_outcome is not DispatchOutcome.NOT_SENT
+            ):
+                raise ApprovalRefused(Refusal.CONSUMED)
             if approval.state is ApprovalState.REJECTED:
                 raise ApprovalRefused(Refusal.NOT_PENDING)
             now = self._clock()
@@ -364,8 +388,9 @@ class Approvals:
         tx: TransactionManager | None = None,
     ) -> list[Approval]:
         """Containment: revoke whichever of these approvals, chosen by the app's
-        own predicate, are still pending or approved. Consumed ones stay
-        consumed. Returns the approvals revoked."""
+        own predicate, are still pending or approved, and stop the transport
+        retry of those consumed but never sent. Other consumed approvals are
+        left as they are. Returns the approvals revoked."""
         async with self._store.transaction(tx) as t:
             now = self._clock()
             revoked = await self._store.revoke_many(approval_ids, now, t)
@@ -404,6 +429,11 @@ class Approvals:
                     raise ApprovalRefused(Refusal.CONSUMED)
                 if approval.dispatch_outcome is not DispatchOutcome.NOT_SENT:
                     return self._admission(approval, first=False, may_send=False)
+                if approval.revoked_at is not None:
+                    raise ApprovalRefused(Refusal.REVOKED)
+                if self._clock() >= approval.expires_at:
+                    raise ApprovalRefused(Refusal.EXPIRED)
+                await self._check_current_approver(approval, await self._current_policy(approval))
                 if await locked.unreconciled_dispatch_exists():
                     raise ApprovalRefused(Refusal.UNRECONCILED_DISPATCH)
                 now = self._clock()
@@ -426,6 +456,7 @@ class Approvals:
             if approval.state_at(now) is ApprovalState.EXPIRED:
                 raise ApprovalRefused(Refusal.EXPIRED)
             policy = await self._current_policy(approval)
+            await self._check_current_approver(approval, policy)
             if approval.authenticator is None or not approval.authenticator.satisfies(
                 policy.min_assurance
             ):

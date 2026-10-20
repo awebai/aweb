@@ -62,6 +62,8 @@ def test_changing_any_covered_value_changes_the_digest(path, value):
         {1: "non-string key"},
         {"value": b"bytes"},
         {"value": {"a", "set"}},
+        {"amount": 2**53},
+        {"nested": [-(2**53)]},
     ],
 )
 def test_values_without_one_canonical_form_are_refused(bad):
@@ -102,3 +104,8 @@ def test_parsed_json_without_one_canonical_form_is_refused(raw):
 
     with pytest.raises(RequestNotCanonical):
         parse_request_json(raw)
+
+
+def test_integers_up_to_the_javascript_safe_range_are_canonical():
+    limit = 2**53 - 1
+    assert request_sha256({"max": limit, "min": -limit})

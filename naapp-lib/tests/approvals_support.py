@@ -34,6 +34,7 @@ from aweb_naapp.runtime.audit import AuditEvent
 
 SCOPE = "installation-1"
 APPROVER = Approver(subject="human-1", subject_type="app_local", contact="owner@example.com")
+SUCCESSOR = Approver(subject="human-2", subject_type="app_local", contact="new@example.com")
 
 
 def policy(**changes) -> ActionPolicy:
@@ -65,6 +66,10 @@ class Directory:
 
     async def designated_approver(self, policy: ActionPolicy) -> Approver | None:
         return self.approver if policy.approver_scope == SCOPE else None
+
+    async def is_current(self, approver_subject: str, policy: ActionPolicy) -> bool:
+        current = await self.designated_approver(policy)
+        return current is not None and current.subject == approver_subject
 
 
 @dataclass

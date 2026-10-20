@@ -9,7 +9,7 @@ from datetime import timedelta
 
 import asyncpg
 import pytest
-from approvals_support import APPROVER, World, policy, sign
+from approvals_support import APPROVER, SUCCESSOR, World, policy, sign
 from pgdbm.errors import QueryError
 
 from aweb_naapp.runtime.approvals import (
@@ -19,9 +19,12 @@ from aweb_naapp.runtime.approvals import (
     Decision,
     DeliveryStatus,
     DispatchOutcome,
+    Evidence,
+    LinkAlreadyUsed,
     PresentationKind,
     Refusal,
 )
+from aweb_naapp.runtime.links import link_verifier
 
 REQUEST = {
     "operation": "charge",
@@ -95,7 +98,7 @@ async def test_a_failed_delivery_is_visible_to_the_requester(world: World):
     world.mailbox.status = DeliveryStatus.FAILED
     view, _ = await mint(world)
     assert view.delivery_status is DeliveryStatus.FAILED
-    assert (await world.approvals.requester_view(view.request_id)).delivery_status is (
+    assert (await world.approvals.requester_view(view.request_id, "agent-1")).delivery_status is (
         DeliveryStatus.FAILED
     )
 
@@ -526,7 +529,7 @@ async def test_a_final_outcome_stays_final(world: World):
         )
         is Refusal.OUTCOME_FINAL
     )
-    view = await world.approvals.requester_view(approval.request_ref)
+    view = await world.approvals.requester_view(approval.request_ref, "agent-1")
     assert view.approval_state is ApprovalState.CONSUMED
     assert view.dispatch_outcome is DispatchOutcome.COMPLETED
 
@@ -723,3 +726,127 @@ async def test_revoke_many_in_a_rolled_back_caller_transaction_revokes_nothing(w
             raise RuntimeError("containment step failed")
     assert (await world.approvals.get(pending.approval_id)).state is ApprovalState.PENDING
     assert "approval_revoked" not in await world.audit.kinds()
+
+
+# A retired approver
+
+
+async def test_a_retired_approvers_pending_approval_cannot_be_decided(world: World):
+    _, approval = await mint(world)
+    issued = await challenge(world, approval)
+    world.directory.approver = SUCCESSOR
+    proof = sign(world.approver_key, APPROVER.subject, issued)
+    assert (
+        await refusal(
+            world.approvals.decide(
+                approval.approval_id,
+                Decision.APPROVE,
+                Assurance.PASSKEY,
+                proof,
+                link_token=link_of(world, approval),
+            )
+        )
+        is Refusal.APPROVER_RETIRED
+    )
+    assert await refusal(challenge(world, approval)) is Refusal.APPROVER_RETIRED
+    assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.PENDING
+
+
+async def test_a_retired_approvers_approval_is_not_admitted_and_keeps_its_history(world: World):
+    approval = await approved(world)
+    world.directory.approver = SUCCESSOR
+    assert await refusal(world.approvals.admit(approval.approval_id, REQUEST, "op-1")) is (
+        Refusal.APPROVER_RETIRED
+    )
+    record = await world.approvals.get(approval.approval_id)
+    assert record.state is ApprovalState.APPROVED
+    assert record.approver_subject == APPROVER.subject
+
+
+async def test_retirement_stops_a_transport_retry_but_not_retrieval(world: World):
+    other = {**REQUEST, "source_version": 2}
+    unsent, sent = await approved(world), await approved(world, other)
+    await world.approvals.admit(unsent.approval_id, REQUEST, "op-1")
+    await world.approvals.record_outcome(unsent.approval_id, "op-1", DispatchOutcome.NOT_SENT)
+    await world.approvals.admit(sent.approval_id, other, "op-2")
+    world.directory.approver = SUCCESSOR
+    assert await refusal(world.approvals.admit(unsent.approval_id, REQUEST, "op-1")) is (
+        Refusal.APPROVER_RETIRED
+    )
+    retrieved = await world.approvals.admit(sent.approval_id, other, "op-2")
+    assert not retrieved.first and not retrieved.may_send
+    await world.approvals.record_outcome(
+        sent.approval_id, "op-2", DispatchOutcome.COMPLETED, response_status="200"
+    )
+
+
+async def test_the_requester_view_is_only_for_the_requester(world: World):
+    view, _ = await mint(world)
+    assert (await world.approvals.requester_view(view.request_id, "agent-1")).request_id == (
+        view.request_id
+    )
+    assert await refusal(world.approvals.requester_view(view.request_id, "agent-2")) is (
+        Refusal.NOT_FOUND
+    )
+
+
+# Stopping a transport retry
+
+
+async def not_sent(w: World):
+    approval = await approved(w)
+    await w.approvals.admit(approval.approval_id, REQUEST, "op-1")
+    await w.approvals.record_outcome(approval.approval_id, "op-1", DispatchOutcome.NOT_SENT)
+    return approval
+
+
+async def test_a_not_sent_retry_is_refused_after_the_approval_expires(world: World):
+    approval = await not_sent(world)
+    world.clock.advance(timedelta(minutes=10))
+    assert await refusal(world.approvals.admit(approval.approval_id, REQUEST, "op-1")) is (
+        Refusal.EXPIRED
+    )
+
+
+async def test_revoking_a_not_sent_approval_stops_its_retry(world: World):
+    approval = await not_sent(world)
+    revoked = await world.approvals.revoke(approval.approval_id, revoked_by="owner-1")
+    assert revoked.state is ApprovalState.CONSUMED and revoked.revoked_at is not None
+    assert revoked.state_at(world.clock()) is ApprovalState.REVOKED
+    assert await refusal(world.approvals.admit(approval.approval_id, REQUEST, "op-1")) is (
+        Refusal.REVOKED
+    )
+    assert await refusal(world.approvals.revoke(approval.approval_id, revoked_by="owner-1")) is (
+        Refusal.REVOKED
+    )
+
+
+async def test_revoke_many_stops_not_sent_retries_but_leaves_other_consumptions(world: World):
+    stopped = await not_sent(world)
+    other = {**REQUEST, "source_version": 2}
+    dispatched = await approved(world, other)
+    await world.approvals.admit(dispatched.approval_id, other, "op-2")
+    revoked = await world.approvals.revoke_many(
+        [stopped.approval_id, dispatched.approval_id], revoked_by="owner-1"
+    )
+    assert [a.approval_id for a in revoked] == [stopped.approval_id]
+    assert await refusal(world.approvals.admit(stopped.approval_id, REQUEST, "op-1")) is (
+        Refusal.REVOKED
+    )
+    assert (await world.approvals.get(dispatched.approval_id)).revoked_at is None
+
+
+async def test_a_used_link_cannot_record_a_decision_even_through_the_store(world: World):
+    _, approval = await mint(world)
+    await decide(world, approval)
+    link = await world.store.find_link(link_verifier(link_of(world, approval)))
+    with pytest.raises(LinkAlreadyUsed):
+        async with world.store.locked(approval.approval_id, None) as locked:
+            await locked.set_decision(
+                ApprovalState.REJECTED,
+                Evidence(Assurance.PASSKEY, APPROVER.subject, "app_local", "e"),
+                None,
+                link.link_id,
+                world.clock(),
+            )
+    assert (await world.approvals.get(approval.approval_id)).state is ApprovalState.APPROVED

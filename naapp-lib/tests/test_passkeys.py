@@ -348,7 +348,7 @@ async def test_recovery_is_the_owner_redesignating_the_approver(pw):
     assert new.subject != old.subject
     assert await pw.passkeys.designated_approver(policy()) == new
     assert "approver_redesignated" in await pw.audit.kinds()
-    assert await refusal(ceremony(pw, pending, old_device)) is Refusal.AUTHENTICATION_FAILED
+    assert await refusal(ceremony(pw, pending, old_device)) is Refusal.APPROVER_RETIRED
     fresh = await mint(pw, {**REQUEST, "executor": "runner"})
     assert fresh.approver_subject == new.subject
     assert (await decide(pw, fresh, await ceremony(pw, fresh, new_device))).state is (
@@ -362,3 +362,14 @@ async def test_redesignation_invalidates_the_previous_enrolment_link(pw):
     await pw.passkeys.designate(scope=SCOPE, contact="human@example.com", designated_by="owner-1")
     with pytest.raises(EnrolmentRefused):
         await pw.passkeys.enrolment_options(stale)
+
+
+async def test_approvals_given_by_a_retired_approver_are_void(pw):
+    _, old_device = await enrol(pw, "human@example.com")
+    approval = await mint(pw)
+    await decide(pw, approval, await ceremony(pw, approval, old_device))
+    await enrol(pw, "new-phone@example.com")
+    assert await refusal(pw.approvals.admit(approval.approval_id, REQUEST, "op-1")) is (
+        Refusal.APPROVER_RETIRED
+    )
+    assert (await pw.approvals.get(approval.approval_id)).state is ApprovalState.APPROVED

@@ -54,6 +54,10 @@ class ApprovalLink:
     lifetime: LinkLifetime
 
 
+class LinkAlreadyUsed(Exception):
+    """The decision's link was already used or revoked."""
+
+
 class LockedApproval(Protocol):
     approval: Approval | None
     transaction: TransactionManager
@@ -225,17 +229,23 @@ class _PgLockedApproval:
             at,
         )
         if link_id is not None:
-            await self.transaction.execute(
+            used = await self.transaction.fetch_value(
                 "UPDATE {{tables.approval_links}} SET used_at = $2 "
-                "WHERE link_id = $1 AND approval_id = $3",
+                "WHERE link_id = $1 AND approval_id = $3 AND used_at IS NULL "
+                "AND revoked_at IS NULL RETURNING link_id",
                 link_id,
                 at,
                 approval.approval_id,
             )
+            if used is None:
+                raise LinkAlreadyUsed(link_id)
         return approval
 
     async def revoke(self, at: datetime) -> Approval:
-        approval = await self._update("state = 'revoked', revoked_at = $2", at)
+        approval = await self._update(
+            "state = CASE WHEN state = 'consumed' THEN state ELSE 'revoked' END, revoked_at = $2",
+            at,
+        )
         await _revoke_links(self.transaction, [approval.approval_id], at)
         return approval
 
@@ -398,10 +408,14 @@ class PgApprovalStore:
     async def revoke_many(
         self, approval_ids: Sequence[str], at: datetime, tx: TransactionManager
     ) -> list[Approval]:
-        """Revoke those of the given approvals that are still pending or approved."""
+        """Revoke those of the given approvals that are still pending or approved,
+        and stop the transport retry of those consumed but never sent."""
         rows = await tx.fetch_all(
-            f"UPDATE {{{{tables.approvals}}}} SET state = 'revoked', revoked_at = $2 "
-            "WHERE approval_id = ANY($1::text[]) AND state IN ('pending', 'approved') "
+            f"UPDATE {{{{tables.approvals}}}} SET revoked_at = $2, "
+            "state = CASE WHEN state = 'consumed' THEN state ELSE 'revoked' END "
+            "WHERE approval_id = ANY($1::text[]) AND revoked_at IS NULL "
+            "AND (state IN ('pending', 'approved') "
+            "OR (state = 'consumed' AND dispatch_outcome = 'not_sent')) "
             f"RETURNING {_APPROVAL_COLUMNS}",
             list(approval_ids),
             at,
