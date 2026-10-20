@@ -38,7 +38,7 @@ async def _mint(env, ttl='never'):
 
 
 async def _read(env, key, did, grant):
-    path = '/v1/messages'
+    path = '/v1/messages/inbox'
     origin = str(env.client.base_url).rstrip('/')
     env.app.state.public_origin = origin
     timestamp = datetime.now(timezone.utc).isoformat()

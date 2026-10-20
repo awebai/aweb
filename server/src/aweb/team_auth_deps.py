@@ -210,15 +210,40 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
         raise HTTPException(status_code=401, detail="Invalid DIDKey signature")
 
     # -- Step 4: Resolve team public key from awid --
-    team_did_key = await _resolve_team_key(request, cert_team_id)
+    certificate_status = None
+    unregistered_v2 = False
+    if cert_data.get('version') == 2:
+        try:
+            domain, name = parse_team_id(cert_team_id)
+            certificate_status = await request.app.state.awid_registry_client.get_team_certificate_status(domain, name, cert_data.get('certificate_id', ''))
+            team_did_key = certificate_status['team_did_key']
+        except Exception as exc:
+            if getattr(exc, 'status_code', None) == 404:
+                if require_registered_certificates():
+                    raise HTTPException(status_code=401, detail={'code': 'certificate_not_registered'}) from exc
+                # Preserve the explicitly staged registration requirement. An
+                # unpublished ID has no revocation row; its controller signature
+                # still needs the current team key from authenticated AWID state.
+                unregistered_v2 = True
+                try:
+                    domain, name = parse_team_id(cert_team_id)
+                    team_did_key = await request.app.state.awid_registry_client.get_team_current_public_key(domain, name)
+                except Exception as key_exc:
+                    logger.warning('AWID current team key unavailable', exc_info=True)
+                    raise HTTPException(status_code=503, detail={'code': 'authority_unavailable'}) from key_exc
+            else:
+                logger.warning('AWID v2 certificate status unavailable', exc_info=True)
+                raise HTTPException(status_code=503, detail={'code': 'authority_unavailable'}) from exc
+    else:
+        team_did_key = await _resolve_team_key(request, cert_team_id)
     if not team_did_key:
         raise HTTPException(status_code=401, detail=f"Unknown team: {cert_team_id}")
 
     # -- Step 5: Check revocation --
-    revoked_certs = await _get_revoked_certificates(request, cert_team_id)
-    replacement_id = None
+    revoked_certs = set() if unregistered_v2 else (({cert_data.get('certificate_id')} if certificate_status['status'] == 'revoked' else set()) if certificate_status else await _get_revoked_certificates(request, cert_team_id))
+    replacement_id = certificate_status.get('replaced_by_certificate_id') if certificate_status else None
     cert_id = cert_data.get('certificate_id')
-    if cert_id in revoked_certs:
+    if cert_id in revoked_certs and certificate_status is None:
         try:
             domain, name = parse_team_id(cert_team_id)
             status = await request.app.state.awid_registry_client.get_team_certificate_status(domain, name, cert_id)

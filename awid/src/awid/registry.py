@@ -466,8 +466,19 @@ class RegistryClient:
                 value = None
             else:
                 value = verify_credential_policy(data['record'], data.get('signature'), team_id=f'{name}:{domain}', team_did_key=data['team_did_key'])
-            self._credential_policy_cache[cache_key] = (started, value)
+            from awid.did import public_key_from_did
+            public_key_from_did(data['team_did_key'])
+            self._credential_policy_cache[cache_key] = (started, value, data['team_did_key'])
             return None if value is None else dict(value)
+
+    async def get_team_current_public_key(self, domain: str, name: str) -> str | None:
+        """Use the anonymous signed-record read's authoritative current key."""
+        await self.get_team_credential_policy(domain, name)
+        origin = await self._registry_url_for_domain(domain)
+        cached = self._credential_policy_cache.get((origin, domain, name))
+        if cached and len(cached) > 2:
+            return cached[2]
+        return await self.get_team_public_key(domain, name)  # Recognized old registry only.
 
     async def set_team_credential_policy(self, domain: str, name: str, record: dict[str, Any], signature: str, *,
                                          signing_key: bytes | None = None, controller_did_key: str | None = None,
