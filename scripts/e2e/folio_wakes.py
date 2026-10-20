@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import urllib.error
 import urllib.request
 import uuid
 
@@ -115,6 +116,35 @@ with tempfile.TemporaryDirectory(prefix='awfw-', dir='/tmp') as td:
     assert any(e['kind'] == 'app' and e['deliveryIntent'] == 'wake' and e['meta']['resource_ref'] == 'wake-proof' for e in received), received
     assert absent == [], absent
     print('PASS Folio write wakes installer through channel-core; unsubscribed peer receives nothing', flush=True)
+    def emitted(slug):
+        # The events the real aweb server verified and stored for this document.
+        rows = run(COMPOSE + ['exec', '-T', 'postgres', 'psql', '-U', 'aweb', '-d', 'aweb', '-Atc', "SELECT payload::text FROM aweb.app_events WHERE team_id='" + team + "' AND resource_ref='" + slug + "' ORDER BY created_at, event_id"])
+        return [json.loads(line) for line in rows.splitlines()]
+    def folio_request(who, method, path, body):
+        return json.loads(aw(who, 'id', 'request', method, FOLIO + path, '--team-auth', '--raw', '--header', 'Content-Type: application/json', '--body', json.dumps(body)).stdout)
+    def human_edit(url, body, base_version):
+        request = urllib.request.Request(url + '/edit', data=json.dumps({'body': body, 'base_version': base_version, 'editor_name': 'Hana'}).encode(), headers={'Content-Type': 'application/json'}, method='POST')
+        try:
+            with urllib.request.urlopen(request, timeout=10) as response:
+                return response.status, json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            return exc.code, json.loads(exc.read())
+    aw('alice', 'folio', 'create', '--slug', 'every-change', '--title', 'Every change', '--body', 'one')
+    assert emitted('every-change') == [{'version': '1', 'source': 'api'}], emitted('every-change')
+    aw('alice', 'folio', 'append', '--slug', 'every-change', '--body', 'two')
+    folio_request('alice', 'POST', '/v1/documents/every-change/versions/template', {'name': 'memo', 'slots': {'cover': {'title': 'Three'}}})
+    assert emitted('every-change')[1:] == [{'version': '2', 'source': 'api'}, {'version': '3', 'source': 'api'}], emitted('every-change')
+    print('PASS create, append and append-template each emit exactly one metadata-only event', flush=True)
+    link = folio_request('alice', 'POST', '/v1/present', {'slug': 'every-change', 'editable': True})
+    a = stream('alice')
+    assert human_edit(link['url'], 'four, by a human', 3) == (200, {'version_number': 4})
+    assert human_edit(link['url'], 'stale', 3)[0] == 409
+    assert emitted('every-change')[3:] == [{'version': '4', 'source': 'present-link'}], emitted('every-change')
+    # The stream replays its lookback window, so earlier api events arrive too; the
+    # stored rows above prove exactly-one, this proves the human edit wakes the agent.
+    woken = [e for e in events(a) if e['kind'] == 'app' and e['meta']['resource_ref'] == 'every-change' and json.loads(e['meta']['payload']) == {'version': '4', 'source': 'present-link'}]
+    assert len(woken) == 1 and woken[0]['deliveryIntent'] == 'wake', woken
+    print('PASS human edit through an editable link wakes the subscribed agent once; rejected edit emits nothing', flush=True)
     data('bob', 'events', 'subscribe', 'folio/doc.changed', '--intent', 'steer', '--resource', 'wake-proof')
     b = stream('bob')
     aw('alice', 'folio', 'append', '--slug', 'wake-proof', '--body', 'third')
