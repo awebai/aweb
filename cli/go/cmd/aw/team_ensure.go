@@ -438,10 +438,14 @@ func postWorkspaceTeamEnroll(ctx context.Context, cfg cliAuthConfig, ensure *wor
 		"identity_scope":       material.IdentityScope,
 		"alias":                material.Alias,
 	}
-	_, signature, _, err := awid.SignArbitraryPayload(material.SigningKey, payload, timestamp)
+	// This fixed enrollment proof has its own wire contract, distinct from
+	// domain-separated user-data signatures.
+	payload["timestamp"] = timestamp
+	canonical, err := awid.CanonicalJSONValue(payload)
 	if err != nil {
 		return nil, err
 	}
+	signature := base64.RawStdEncoding.EncodeToString(ed25519.Sign(material.SigningKey, []byte(canonical)))
 	req := workspaceTeamEnrollRequest{
 		WorkspaceKeyFormat: workspaceTeamKeyFormat,
 		WorkspaceKeySHA256: digest,
