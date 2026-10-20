@@ -4,6 +4,21 @@
 
 ## Release preparations
 
+### Release preparation: AWID 0.5.29
+
+Changes are since `awid-v0.5.28` / `awid-service-v0.5.28`.
+Publishes PyPI `awid-service` 0.5.29 and the `awid` image 0.5.29.
+
+- Accept controller request envelopes binding the operation, configured public
+  audience, HTTP method, external raw path/query and exact body hash, with a
+  distinct AWID protocol type and a separate covering parent authorization.
+- Keep legacy controller envelopes accepted with per-operation usage counts;
+  their retirement requires a separate cutoff.
+- Require a matching team-signed certificate blob for every new registration;
+  historical blob-free records remain readable.
+- Configure `AWID_PUBLIC_ORIGINS` before clients emit v2. Deploy this accepting
+  AWID first; current clients remain on the legacy form until that deployment.
+
 ### Release preparation: server 1.27.29
 
 Server changes are since `server-v1.27.28`. No CLI change; aw stays 1.36.43.
