@@ -1,4 +1,4 @@
--- 023_team_app_emit_keys.sql
+-- 024_team_app_emit_keys.sql
 -- App emit keys belong to the team whose install registered them. A key is
 -- active only for that team's currently installed digest, a registered key id
 -- keeps its did_key, and revocation is one-way.

@@ -1,10 +1,10 @@
--- 025_team_app_event_types.sql
+-- 026_team_app_event_types.sql
 -- An app's event declarations and its version projection belong to the team
 -- whose install supplied them, so one team's install cannot change another
 -- team's declared types, default delivery intents or descriptions.
 --
 -- Rows of app_registry_event_types are not copied, for the same reason as the
--- emit keys of 023: they record no installing team. The operator command
+-- emit keys of 024: they record no installing team. The operator command
 -- `aweb reseed-app-registrations` recreates every team's declarations and
 -- keys from the app's manifest bytes. The version projection is copied from
 -- the registry entry so listings stay complete until that reseed rewrites it

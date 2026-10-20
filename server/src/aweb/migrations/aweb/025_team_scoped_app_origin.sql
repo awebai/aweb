@@ -1,4 +1,4 @@
--- 024_team_scoped_app_origin.sql
+-- 025_team_scoped_app_origin.sql
 -- An app id's origin is bound per team by that team's install, not across the
 -- registry: one team's install cannot claim an app id's origin for another
 -- team. app_registry_apps keeps one row per (app_id, origin) for the registry
