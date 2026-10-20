@@ -118,6 +118,11 @@ def create_app(
 
     app = FastAPI(title="awid.ai registry", version=service_version, lifespan=lifespan)
 
+    # Covering controller signatures use configuration, never Host/forwarded headers.
+    app.state.awid_public_origins = tuple(
+        value.strip() for value in os.getenv("AWID_PUBLIC_ORIGINS", "").split(",") if value.strip()
+    )
+
     @app.get("/", tags=["ops"])
     async def root() -> dict:
         return {"service": "awid", "version": service_version, "status": "ok"}

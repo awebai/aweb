@@ -1,0 +1,211 @@
+[
+  {
+    "case": "unknown-widget",
+    "base": "examples/fixture-page.json",
+    "expect": "accept and inert fallback"
+  },
+  {
+    "case": "raw-html",
+    "expect": "Markdown rendered as text/removed; no active DOM"
+  },
+  {
+    "case": "duplicate-widget-id",
+    "expect": "semantic lint rejects"
+  },
+  {
+    "case": "missing-collection",
+    "expect": "semantic lint rejects"
+  },
+  {
+    "case": "password-input",
+    "expect": "schema rejects"
+  },
+  {
+    "case": "stale-record",
+    "expect": "409 revision_conflict, no partial resolve"
+  },
+  {
+    "case": "same-key-same-request",
+    "expect": "original authorized receipt; no mutation"
+  },
+  {
+    "case": "same-key-other-request",
+    "expect": "409 idempotency_conflict"
+  },
+  {
+    "case": "wrong-target-resolve",
+    "expect": "403 target_mismatch"
+  },
+  {
+    "case": "changed-proposal-after-answer",
+    "expect": "approval invalid; fresh answer required"
+  },
+  {
+    "case": "team-comment-claims-approve",
+    "expect": "coordination only; no external approval"
+  },
+  {
+    "case": "member-event-credential-as-task-auth",
+    "expect": "reject wrong purpose"
+  },
+  {
+    "case": "app-transport-without-member-authorization",
+    "expect": "reject member-attributed task"
+  },
+  {
+    "case": "outsider-edit-other-row",
+    "expect": "deny outside capability"
+  },
+  {
+    "case": "revoked-link-open-stream",
+    "expect": "close watch and deny read/action"
+  },
+  {
+    "case": "reconnect-after-lookback",
+    "expect": "authorized snapshot repairs all revisions"
+  },
+  {
+    "case": "report-duplicate",
+    "expect": "same ack; no double count"
+  },
+  {
+    "case": "report-gap",
+    "expect": "incomplete visible; inventory reconciliation separate"
+  },
+  {
+    "case": "hook-tool-cached-MCP-call",
+    "expect": "tool_context_denied even if a stale client knows its name"
+  },
+  {
+    "case": "surface-only-tool-MCP-call",
+    "expect": "not listed and call denied; no params/results logged"
+  },
+  {
+    "case": "admin-installs-hook-target",
+    "expect": "normal install allowed; hook registration pending owner confirmation"
+  },
+  {
+    "case": "global-key-rotated-local-cert-neighbor",
+    "expect": "profile rejects superseded global signer; valid local did:key requires no did:aw/address"
+  },
+  {
+    "case": "single-use-two-consumers",
+    "expect": "one authorized atomic admission; other cannot dispatch"
+  },
+  {
+    "case": "approval-link-in-agent-result",
+    "expect": "deny capability disclosure; opaque ID/status only"
+  },
+  {
+    "case": "member-session-external-approval",
+    "expect": "under proposed policy, insufficient assurance until app-origin passkey and task binding verified"
+  },
+  {
+    "case": "passkey-link-no-dashboard-account",
+    "expect": "policy-designated app-local human can approve without task/chat/account coupling"
+  },
+  {
+    "case": "custody-string-without-proof",
+    "expect": "cannot satisfy custody-dependent policy"
+  },
+  {
+    "case": "unknown-outcome-new-dispatch",
+    "expect": "reconcile first; consumed approval never authorizes new dispatch"
+  },
+  {
+    "case": "unactivated-producer-event",
+    "expect": "hook event from an app whose production entry is pending or absent is refused at ingest"
+  },
+  {
+    "case": "read-not-listed-in-production",
+    "expect": "no read event fires for a read tool absent from reads; a listed read fires"
+  },
+  {
+    "case": "new-generation-hook-state",
+    "expect": "registrations and productions return to pending until owner reactivation; uninstall revokes both"
+  },
+  {
+    "case": "event-before-active-from",
+    "expect": "never delivered to a target activated later"
+  },
+  {
+    "case": "key-used-for-undeclared-purpose",
+    "expect": "refused by that purpose's verifier; the same key passes for a declared purpose"
+  },
+  {
+    "case": "grant-unavailable-or-stale",
+    "expect": "503 authority_unavailable, no last-known-grant fallback; fresh grant without scope is 403 scope_denied"
+  },
+  {
+    "case": "grant-without-installation-generation",
+    "expect": "generation-bound operations refuse; ordinary scoped reads still verify"
+  },
+  {
+    "case": "approval-digest-domain-prefix",
+    "expect": "same canonical JSON without aweb.approval-request/1 prefix yields a different digest and never matches"
+  },
+  {
+    "case": "approved-revoked-before-dispatch",
+    "expect": "revoked state wins; consume fails closed"
+  },
+  {
+    "case": "not-sent-transport-retry",
+    "expect": "same operation ID retried after definite not_sent; no second consume, no new approval; outcome_unknown instead blocks until reconciled"
+  },
+  {
+    "case": "answer-via-invoke-tool",
+    "expect": "refused; answers go only through the surface answer_tool"
+  },
+  {
+    "case": "answer-tool-agent-visible",
+    "expect": "manifest refused at install; L2 never lists or calls a surface-only answer tool, including cached names"
+  },
+  {
+    "case": "widget-depth-9",
+    "expect": "refused by the host before schema validation; depth 8 accepted"
+  },
+  {
+    "case": "widget-count-2001",
+    "expect": "refused by the host before schema validation; 2000 accepted"
+  },
+  {
+    "case": "decision-recommendation-not-an-option",
+    "expect": "lint error"
+  },
+  {
+    "case": "decision-answer-action-not-answer-kind",
+    "expect": "lint error"
+  },
+  {
+    "case": "stat-fractional-number",
+    "expect": "schema rejects 0.1; decimal string \"0.1\" accepted"
+  },
+  {
+    "case": "link-out-before-c1",
+    "expect": "validates only through the unknown branch and renders as an inert placeholder until C1 adds it"
+  },
+  {
+    "case": "approval-from-non-individual",
+    "expect": "member_session without the host's single-person attestation fails authentication; approver subject types admit no group, role or shared subject"
+  },
+  {
+    "case": "bundle-card-partial-answer",
+    "expect": "no partial approval of a hashed bundle; changing an item makes a new bundle and needs a new approval"
+  },
+  {
+    "case": "bundle-item-revised-after-hashing",
+    "expect": "item record_rev or proposal_sha256 no longer matches the bundle; host refuses the card and the old approval cannot be answered; a new bundle and approval are needed"
+  },
+  {
+    "case": "answer-payload-via-invoke-handler",
+    "expect": "naapp invoke handler refuses an answer payload even if manifest validation and host filtering were bypassed"
+  },
+  {
+    "case": "installer-submitted-bytes-provenance",
+    "expect": "events from an installation whose bytes were not origin-verified carry the digest and unverified flag; host never shows them simply as the app name"
+  },
+  {
+    "case": "present-bytes-disagreeing-fields",
+    "expect": "install refused when separately supplied keys, tools, hooks or scopes disagree with the submitted bytes"
+  }
+]

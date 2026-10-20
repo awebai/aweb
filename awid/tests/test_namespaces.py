@@ -356,26 +356,17 @@ async def _register_persistent_certificate_for_address(
     address_resp = await client.get(f"/v1/namespaces/{address_domain}/addresses/{address_name}")
     assert address_resp.status_code == 200, address_resp.text
     address_body = address_resp.json()
-    member_did_key = address_body["current_did_key"]
-    member_did_aw = address_body["did_aw"]
-    headers = _sign(
-        team_key, team_did,
-        domain=domain, operation="register_certificate",
-        team_name=team_name, certificate_id=certificate_id,
+    await _register_certificate(
+        client,
+        team_key,
+        team_did,
+        domain,
+        team_name,
+        certificate_id,
+        member_did_key=address_body["current_did_key"],
+        member_did_aw=address_body["did_aw"],
+        member_address=member_address,
     )
-    resp = await client.post(
-        f"/v1/namespaces/{domain}/teams/{team_name}/certificates",
-        json={
-            "certificate_id": certificate_id,
-            "member_did_key": member_did_key,
-            "member_did_aw": member_did_aw,
-            "member_address": member_address,
-            "alias": "alice",
-            "identity_scope": "global",
-        },
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
 
 
 async def _revoke_certificate(client, team_key, team_did, domain, team_name, certificate_id):
