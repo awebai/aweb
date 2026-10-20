@@ -32,6 +32,7 @@ from aweb_naapp.runtime.approvals import (
 )
 from aweb_naapp.runtime.passkeys import (
     CONTACT_CHANGE_DELAY_FLOOR,
+    MAX_OUTSTANDING_CHALLENGES,
     RECOVERY_COOLING_OFF_FLOOR,
     DesignationRefused,
     EnrolmentRefused,
@@ -776,3 +777,35 @@ async def test_an_approval_assertion_cannot_log_in(pw):
     proof = await ceremony(pw, approval, device)
     with pytest.raises(AuthenticationFailed):
         await pw.passkeys.verify_login(SCOPE, proof)
+
+
+async def outstanding_challenges(pw, purpose: str) -> int:
+    return await pw.passkeys.db.fetch_value(
+        "SELECT COUNT(*) FROM {{tables.passkey_challenges}} WHERE purpose = $1", purpose
+    )
+
+
+async def test_unauthenticated_login_requests_cannot_grow_the_challenge_store(pw):
+    _, device = await enrol(pw)
+    for _ in range(MAX_OUTSTANDING_CHALLENGES * 3):
+        await pw.passkeys.login_options(SCOPE)
+    assert await outstanding_challenges(pw, "login") == MAX_OUTSTANDING_CHALLENGES
+    assert (await login(pw, device)).subject
+
+
+async def test_an_evicted_challenge_is_refused_and_the_newest_still_works(pw):
+    _, device = await enrol(pw)
+    oldest = dict(await pw.passkeys.login_options(SCOPE))
+    for _ in range(MAX_OUTSTANDING_CHALLENGES):
+        await pw.passkeys.login_options(SCOPE)
+    with pytest.raises(AuthenticationFailed):
+        await pw.passkeys.verify_login(SCOPE, device.get(oldest))
+    assert (await login(pw, device)).subject
+
+
+async def test_expired_challenges_are_removed_when_new_ones_are_issued(pw):
+    await enrol(pw)
+    await pw.passkeys.login_options(SCOPE)
+    pw.clock.advance(timedelta(minutes=5))
+    await pw.passkeys.login_options(SCOPE)
+    assert await outstanding_challenges(pw, "login") == 1

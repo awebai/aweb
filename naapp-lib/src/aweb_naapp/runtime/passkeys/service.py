@@ -85,6 +85,10 @@ ENROLMENT_PREFIX = b"aweb.passkey-enrolment/1\n"
 CONTACT_CHANGE_PREFIX = b"aweb.passkey-contact-change/1\n"
 LOGIN_PREFIX = b"aweb.passkey-login/1\n"
 TRUST_ON_FIRST_USE = "trust_on_first_use"
+# Outstanding unused challenges kept per subject and purpose; issuing another
+# evicts the oldest, so requests that need no authentication, such as a login,
+# cannot grow the challenge store without bound.
+MAX_OUTSTANDING_CHALLENGES = 8
 
 
 class EnrolmentRefused(Exception):
@@ -496,21 +500,34 @@ class Passkeys:
         new_contact_sha256: str | None = None,
     ) -> None:
         now = self._clock()
-        await self.db.execute(
-            "INSERT INTO {{tables.passkey_challenges}} (challenge, purpose, subject, "
-            "enrolment_id, approval_id, task_answer_ref, contact_sha256, nonce, created_at, "
-            "expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
-            challenge,
-            purpose,
-            subject,
-            enrolment_id,
-            approval_id,
-            task_answer_ref,
-            new_contact_sha256,
-            nonce,
-            now,
-            now + self._challenge_ttl,
-        )
+        async with self.db.transaction() as tx:
+            await tx.execute(
+                "DELETE FROM {{tables.passkey_challenges}} WHERE expires_at <= $1", now
+            )
+            await tx.execute(
+                "INSERT INTO {{tables.passkey_challenges}} (challenge, purpose, subject, "
+                "enrolment_id, approval_id, task_answer_ref, contact_sha256, nonce, created_at, "
+                "expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                challenge,
+                purpose,
+                subject,
+                enrolment_id,
+                approval_id,
+                task_answer_ref,
+                new_contact_sha256,
+                nonce,
+                now,
+                now + self._challenge_ttl,
+            )
+            await tx.execute(
+                "DELETE FROM {{tables.passkey_challenges}} WHERE challenge IN ("
+                "SELECT challenge FROM {{tables.passkey_challenges}} "
+                "WHERE subject = $1 AND purpose = $2 AND used_at IS NULL "
+                "ORDER BY issued_seq DESC OFFSET $3)",
+                subject,
+                purpose,
+                MAX_OUTSTANDING_CHALLENGES,
+            )
 
     async def _take_challenge(self, challenge: bytes, purpose: str) -> dict[str, Any] | None:
         """Use up a challenge, whether or not the ceremony then verifies."""
@@ -780,7 +797,11 @@ class Passkeys:
     # Login
 
     async def login_options(self, scope: str) -> Mapping[str, Any]:
-        """Assertion options for the scope's in-effect approver to log in."""
+        """Assertion options for the scope's in-effect approver to log in.
+
+        It needs no prior authentication. A scope without an enrolled, in-effect
+        approver is refused, which tells the caller so; scope names are fixed by
+        the app, so that is deliberate."""
         approver = await self._current_approver(scope)
         if not await self._active_credentials(approver["subject"]):
             raise AuthenticationFailed("approver has no current passkey")

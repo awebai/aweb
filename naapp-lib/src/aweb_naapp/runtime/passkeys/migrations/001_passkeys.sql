@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS {{tables.passkey_credentials}} (
 -- login challenge binds the scope and subject it was issued for.
 CREATE TABLE IF NOT EXISTS {{tables.passkey_challenges}} (
     challenge BYTEA PRIMARY KEY,
+    issued_seq BIGSERIAL NOT NULL,
     purpose TEXT NOT NULL
         CHECK (purpose IN ('enrolment', 'approve', 'reject', 'view', 'contact_change', 'login')),
     subject TEXT NOT NULL REFERENCES {{tables.passkey_approvers}}(subject),
@@ -69,6 +70,13 @@ CREATE TABLE IF NOT EXISTS {{tables.passkey_challenges}} (
     CHECK ((purpose IN ('approve', 'reject', 'view')) = (approval_id IS NOT NULL)),
     CHECK ((purpose = 'contact_change') = (contact_sha256 IS NOT NULL))
 );
+
+-- Issuance removes expired challenges and keeps a bounded number outstanding
+-- per subject and purpose, so unauthenticated requests cannot grow the table.
+CREATE INDEX IF NOT EXISTS idx_passkey_challenges_expiry
+    ON {{tables.passkey_challenges}}(expires_at);
+CREATE INDEX IF NOT EXISTS idx_passkey_challenges_outstanding
+    ON {{tables.passkey_challenges}}(subject, purpose, issued_seq) WHERE used_at IS NULL;
 
 -- Restricted evidence behind an approval's auth_evidence_ref, and behind each
 -- other passkey-authenticated act.
