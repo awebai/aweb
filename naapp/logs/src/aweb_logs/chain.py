@@ -1,7 +1,6 @@
 """The bytes logs commits to and signs: genesis, commitments, links, receipts and checkpoints.
 
-``docs/logs-chain.md`` is the contract and ``docs/vectors/logs-chain-v1.json``
-pins the bytes. Objects are strict canonical JSON under the hook event rules
+``docs/logs-chain.md`` is the contract, and its vector pins the bytes. Objects are strict canonical JSON under the hook event rules
 (:mod:`aweb_naapp.hooks.strictjson`), each behind its own domain prefix.
 """
 

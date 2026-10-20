@@ -2,50 +2,51 @@
 # Check Python lock freshness without rewriting the worktree. The self-test uses
 # the real uv checker against an isolated copy, in both the clean and stale-AWID
 # directions (default-aajc.5). Every lock that takes the in-repo awid as a source
-# is checked: awid, server, naapp-lib, naapp/folio and naapp/secrets.
+# is checked: awid, server, naapp-lib, naapp/folio, naapp/secrets and naapp/logs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 export PYTHONPYCACHEPREFIX="${PYTHONPYCACHEPREFIX:-/tmp/pycache}"
 
+# Every lock that takes the in-repo awid as a source, with the path its
+# awid-service entry records.
+LOCKS=(awid server naapp-lib naapp/folio naapp/secrets naapp/logs)
+
 # Each check returns on failure itself: the self-test calls this with errexit
 # off, where only the last command's status would otherwise be reported.
 check_locks() {
-  local root="$1"
-  (cd "$root/awid" && uv lock --check) || return
-  (cd "$root/server" && uv lock --check) || return
-  (cd "$root/naapp-lib" && uv lock --check) || return
-  (cd "$root/naapp/folio" && uv lock --check) || return
-  (cd "$root/naapp/secrets" && uv lock --check) || return
+  local root="$1" lock
+  for lock in "${LOCKS[@]}"; do
+    (cd "$root/$lock" && uv lock --check) || return
+  done
 }
 
-self_test() (
-  local tmp out status
-  tmp="$(mktemp -d "${TMPDIR:-/tmp}/aweb-lock-freshness.XXXXXX")"
-  trap 'rm -rf "$tmp"' EXIT
-  mkdir -p "$tmp/awid" "$tmp/server" "$tmp/naapp-lib" "$tmp/naapp/folio" "$tmp/naapp/secrets"
-  cp "$ROOT/awid/pyproject.toml" "$ROOT/awid/uv.lock" "$ROOT/awid/README.md" "$tmp/awid/"
-  cp "$ROOT/server/pyproject.toml" "$ROOT/server/uv.lock" "$ROOT/server/README.md" "$tmp/server/"
-  cp "$ROOT/naapp-lib/pyproject.toml" "$ROOT/naapp-lib/uv.lock" "$ROOT/naapp-lib/README.md" "$tmp/naapp-lib/"
-  cp "$ROOT/naapp/folio/pyproject.toml" "$ROOT/naapp/folio/uv.lock" "$ROOT/naapp/folio/README.md" "$tmp/naapp/folio/"
-  cp "$ROOT/naapp/secrets/pyproject.toml" "$ROOT/naapp/secrets/uv.lock" "$ROOT/naapp/secrets/README.md" "$tmp/naapp/secrets/"
-
-  if ! check_locks "$tmp" >/dev/null; then
-    echo "SELF-TEST FAIL: clean copied locks were rejected" >&2
-    return 1
+# The awid source path a package's lock records: ../awid or ../../awid.
+awid_source() {
+  local lock="$1"
+  if [[ "$lock" == */* ]]; then
+    printf '../../awid'
+  else
+    printf '../awid'
   fi
+}
 
-  python3 - "$tmp/server/uv.lock" <<'PY'
+# Rewrite one package's locked AWID version to 0.0.0, require the check to
+# refuse it for that reason, then relock and require it to pass again.
+stale_awid_self_test() {
+  local tmp="$1" lock="$2" out status
+  python3 - "$tmp/$lock/uv.lock" "$(awid_source "$lock")" <<'PY'
 import re
 import sys
 from pathlib import Path
 
 path = Path(sys.argv[1])
+source = re.escape(sys.argv[2])
 text = path.read_text(encoding="utf-8")
 pattern = re.compile(
     r'(?ms)(^\[\[package\]\]\nname = "awid-service"\nversion = ")[^"]+'
-    r'("\nsource = \{ editable = "\.\./awid" \})'
+    r'("\nsource = \{ editable = "' + source + r'" \})'
 )
 stale, count = pattern.subn(r'\g<1>0.0.0\2', text)
 if count != 1:
@@ -59,19 +60,36 @@ PY
   set -e
 
   if [ "$status" -eq 0 ]; then
-    echo "SELF-TEST FAIL: a stale server lock accepted AWID version 0.0.0" >&2
+    echo "SELF-TEST FAIL: a stale $lock lock accepted AWID version 0.0.0" >&2
     return 1
   fi
   if ! grep -Fq "needs to be updated" <<<"$out"; then
-    printf 'SELF-TEST INCONCLUSIVE: stale fixture failed for the wrong reason:\n%s\n' "$out" >&2
+    printf 'SELF-TEST INCONCLUSIVE: stale %s fixture failed for the wrong reason:\n%s\n' "$lock" "$out" >&2
     return 1
   fi
 
-  (cd "$tmp/server" && uv lock >/dev/null)
+  (cd "$tmp/$lock" && uv lock >/dev/null)
   if ! check_locks "$tmp" >/dev/null; then
-    echo "SELF-TEST FAIL: the regenerated stale lock did not pass" >&2
+    echo "SELF-TEST FAIL: the regenerated stale $lock lock did not pass" >&2
     return 1
   fi
+}
+
+self_test() (
+  local tmp out status lock
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/aweb-lock-freshness.XXXXXX")"
+  trap 'rm -rf "$tmp"' EXIT
+  for lock in "${LOCKS[@]}"; do
+    mkdir -p "$tmp/$lock"
+    cp "$ROOT/$lock/pyproject.toml" "$ROOT/$lock/uv.lock" "$ROOT/$lock/README.md" "$tmp/$lock/"
+  done
+
+  if ! check_locks "$tmp" >/dev/null; then
+    echo "SELF-TEST FAIL: clean copied locks were rejected" >&2
+    return 1
+  fi
+
+  stale_awid_self_test "$tmp" server
 
   python3 - "$tmp/server/uv.lock" <<'PY'
 import sys
@@ -105,118 +123,11 @@ PY
     return 1
   fi
 
-  python3 - "$tmp/naapp-lib/uv.lock" <<'PY'
-import re
-import sys
-from pathlib import Path
+  for lock in naapp-lib naapp/folio naapp/secrets naapp/logs; do
+    stale_awid_self_test "$tmp" "$lock"
+  done
 
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-pattern = re.compile(
-    r'(?ms)(^\[\[package\]\]\nname = "awid-service"\nversion = ")[^"]+'
-    r'("\nsource = \{ editable = "\.\./awid" \})'
-)
-stale, count = pattern.subn(r'\g<1>0.0.0\2', text)
-if count != 1:
-    raise SystemExit(f"expected one editable awid-service lock entry, found {count}")
-path.write_text(stale, encoding="utf-8")
-PY
-
-  set +e
-  out="$(check_locks "$tmp" 2>&1)"
-  status=$?
-  set -e
-
-  if [ "$status" -eq 0 ]; then
-    echo "SELF-TEST FAIL: a stale naapp-lib lock accepted AWID version 0.0.0" >&2
-    return 1
-  fi
-  if ! grep -Fq "needs to be updated" <<<"$out"; then
-    printf 'SELF-TEST INCONCLUSIVE: stale naapp-lib fixture failed for the wrong reason:\n%s\n' "$out" >&2
-    return 1
-  fi
-
-  (cd "$tmp/naapp-lib" && uv lock >/dev/null)
-  if ! check_locks "$tmp" >/dev/null; then
-    echo "SELF-TEST FAIL: the regenerated stale naapp-lib lock did not pass" >&2
-    return 1
-  fi
-
-  python3 - "$tmp/naapp/folio/uv.lock" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-pattern = re.compile(
-    r'(?ms)(^\[\[package\]\]\nname = "awid-service"\nversion = ")[^"]+'
-    r'("\nsource = \{ editable = "\.\./\.\./awid" \})'
-)
-stale, count = pattern.subn(r'\g<1>0.0.0\2', text)
-if count != 1:
-    raise SystemExit(f"expected one editable awid-service lock entry, found {count}")
-path.write_text(stale, encoding="utf-8")
-PY
-
-  set +e
-  out="$(check_locks "$tmp" 2>&1)"
-  status=$?
-  set -e
-
-  if [ "$status" -eq 0 ]; then
-    echo "SELF-TEST FAIL: a stale naapp/folio lock accepted AWID version 0.0.0" >&2
-    return 1
-  fi
-  if ! grep -Fq "needs to be updated" <<<"$out"; then
-    printf 'SELF-TEST INCONCLUSIVE: stale naapp/folio fixture failed for the wrong reason:\n%s\n' "$out" >&2
-    return 1
-  fi
-
-  (cd "$tmp/naapp/folio" && uv lock >/dev/null)
-  if ! check_locks "$tmp" >/dev/null; then
-    echo "SELF-TEST FAIL: the regenerated stale naapp/folio lock did not pass" >&2
-    return 1
-  fi
-
-  python3 - "$tmp/naapp/secrets/uv.lock" <<'PY'
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-text = path.read_text(encoding="utf-8")
-pattern = re.compile(
-    r'(?ms)(^\[\[package\]\]\nname = "awid-service"\nversion = ")[^"]+'
-    r'("\nsource = \{ editable = "\.\./\.\./awid" \})'
-)
-stale, count = pattern.subn(r'\g<1>0.0.0\2', text)
-if count != 1:
-    raise SystemExit(f"expected one editable awid-service lock entry, found {count}")
-path.write_text(stale, encoding="utf-8")
-PY
-
-  set +e
-  out="$(check_locks "$tmp" 2>&1)"
-  status=$?
-  set -e
-
-  if [ "$status" -eq 0 ]; then
-    echo "SELF-TEST FAIL: a stale naapp/secrets lock accepted AWID version 0.0.0" >&2
-    return 1
-  fi
-  if ! grep -Fq "needs to be updated" <<<"$out"; then
-    printf 'SELF-TEST INCONCLUSIVE: stale naapp/secrets fixture failed for the wrong reason:\n%s\n' "$out" >&2
-    return 1
-  fi
-
-  (cd "$tmp/naapp/secrets" && uv lock >/dev/null)
-  if ! check_locks "$tmp" >/dev/null; then
-    echo "SELF-TEST FAIL: the regenerated stale naapp/secrets lock did not pass" >&2
-    return 1
-  fi
-
-  echo "self-test passed: clean locks pass; stale AWID versions in server, naapp-lib, naapp/folio and naapp/secrets and a missing dependent-lock dependency fail"
+  echo "self-test passed: clean locks pass; stale AWID versions in server, naapp-lib, naapp/folio, naapp/secrets and naapp/logs and a missing dependent-lock dependency fail"
 )
 
 case "${1:-}" in

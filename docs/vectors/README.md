@@ -342,6 +342,25 @@ stale or future timestamp, a wrong binding, a credential naming another event
 or team, and a signer that is not the event's producer. Each negative is a full
 request with the receiver's own options and one expected refusal.
 
+### `logs-chain-v1.json`
+
+The bytes logs commits to and signs (aweb-acgh.16.21; contract in
+[`logs-chain.md`](../logs-chain.md)): two epoch geneses, three content
+commitments over real core, app and client envelopes, and the
+`aweb.logs-receipt/1` and `aweb.logs-checkpoint/1` artefacts. Artefact
+negatives refuse one artefact's bytes presented as the other, a signature by
+another key, bytes altered after signing, a padded signature, non-canonical
+bytes, an unknown or missing field, a receipt for sequence zero, a time in
+seconds, a wrong type, a float and an uppercase digest. Chain cases give the
+stored events, receipts and checkpoints with the keys the verifier knows, and
+the report `verify` must return: an intact chain, an empty epoch, a second
+epoch recording the first, a purged stub that still verifies, altered content,
+an altered skeleton, a reorder, a rehashed reorder that its receipts and
+checkpoint contradict, a gap, a rewritten envelope and wrong key evidence
+failing provenance, content gone without an act, a duplicate sequence, an
+event of another team, forged checkpoints and a receipt for another team. The
+Python implementation in `naapp/logs` regenerates it byte for byte.
+
 ### `owner-act-v1.json`
 
 The `aweb.owner-act/1` artifact, signed by a team's current controller key
