@@ -76,15 +76,25 @@ Current rules:
 - `app_id` is lower-case, path-safe, and cannot collide with a reserved `aw`
   top-level command id. The shared reserved set is
   `test-vectors/reserved-app-ids-v1.json`.
-- One app id has one origin across this registry. Reusing an app id for another
-  origin conflicts.
+- One app id has one origin per team, bound by that team's install. Reinstalling
+  an app id from another origin in the same team conflicts with `409`. Another
+  team's install of the same app id, from any origin, binds only that team.
 - An origin is an `http` or `https` origin only: no userinfo, path, query, or
   fragment. Production operators should require HTTPS at their policy boundary;
   the experimental OSS route permits HTTP for local deployments.
 - Reinstalling the same team/app/origin explicitly replaces its digest,
-  app-version projection, scopes, event declarations, and active emit-key rows
-  supplied for the new digest. Publishing new bytes at the origin does not
-  silently update an installation.
+  app-version projection, scopes and event declarations, and registers the
+  supplied emit keys for the new digest. Publishing new bytes at the origin
+  does not silently update an installation.
+- Event declarations, emit keys and the app-version projection belong to the
+  installing team. Another team's install of the same app and digest never
+  changes this team's declared types, default delivery intents or
+  descriptions, and a key registered by one team is never active for another
+  team. Within
+  a team, a key id keeps the `did_key` it was first registered with: an install
+  supplying a different `did_key` for a registered key id is refused with
+  `409`, and the install is not applied. Rotate a key under a new key id.
+  Reinstalling never reactivates a revoked key.
 - Scopes are normalized and stored. The server does not fetch the manifest to
   prove that the requested scopes are the union of `tools[].scopes`.
 - Event declarations are app-local names. Emit keys are public `did:key`
@@ -126,6 +136,36 @@ Response:
 - V1 has no pagination.
 - `400` means invalid `team_id`; `401`/`403` means the caller cannot read that
   team; storage failures are server errors.
+
+## Operator reseed from manifest bytes
+
+```sh
+aweb reseed-app-registrations --origin https://notes.example
+aweb reseed-app-registrations --origin https://notes.example --manifest-file notes-1.2.0.json
+```
+
+An operator command, run against the server's database. It takes the exact
+manifest bytes the origin serves at `/.well-known/aweb-app.json` (over
+https, or plain http to a loopback host only; a direct `200`, no redirects, at
+most 10 MiB), or a file of exact bytes. For every team
+whose install of that app and origin pins the SHA-256 of those bytes, it
+recreates the team's event declarations, emit keys and version projection
+from the bytes alone. The bytes must name the installed app id and origin.
+
+- Subscriptions are never changed.
+- Teams pinned to another digest are reported as `digest_mismatch` and left
+  unchanged; reseed them with their own pinned bytes through
+  `--manifest-file`.
+- A team whose key id already holds a different `did_key` is reported as
+  `key_conflict` and left unchanged.
+- Running it again changes nothing further. It exits `1` when any team was
+  left unchanged, and prints the report as JSON.
+
+Upgrading a server to team-scoped registrations: the migrations do not carry
+registry-entry keys or declarations over, because those rows record no
+installing team. App events for existing installs are refused until either
+the operator reseeds each installed app or the team installs the app again.
+Run the migrations, then reseed every installed app origin.
 
 ## Cache and consumer boundary
 

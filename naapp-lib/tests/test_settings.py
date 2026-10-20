@@ -7,7 +7,11 @@ from pydantic import Field, ValidationError
 from pydantic_settings import SettingsConfigDict
 
 from aweb_naapp.runtime.settings import NaappSettings
-from aweb_naapp.runtime.team_auth import MAX_TEAM_FACTS_TTL_SECONDS, MAX_TIMESTAMP_SKEW_SECONDS
+from aweb_naapp.runtime.team_auth import (
+    MAX_TEAM_FACTS_TTL_SECONDS,
+    MAX_TIMESTAMP_SKEW_SECONDS,
+    DidAwProfile,
+)
 
 
 class ExampleSettings(NaappSettings):
@@ -50,6 +54,14 @@ def test_shared_settings_need_the_app_specific_values(monkeypatch: pytest.Monkey
         NaappSettings(_env_file=None)
     missing = {error["loc"][0] for error in caught.value.errors()}
     assert missing == {"database_url", "public_origin", "app_id"}
+
+
+def test_the_did_aw_current_key_is_required_unless_the_app_observes(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _settings().did_aw_profile is DidAwProfile.REQUIRE
+    monkeypatch.setenv("EXAMPLE_DID_AW_PROFILE", "observe")
+    assert _settings().did_aw_profile is DidAwProfile.OBSERVE
+    with pytest.raises(ValidationError):
+        _settings(did_aw_profile="certificate")
 
 
 def test_db_pool_is_modest_by_default() -> None:

@@ -159,6 +159,7 @@ async def test_register_certificate(client, controller_identity):
     resp = await client.post(
         "/v1/namespaces/cert.com/teams/backend/certificates",
         json={
+            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='backend:cert.com', team_did_key=team_did, member_did_key=member_did_key, alias="alice", lifetime="global", member_did_aw=member_did_aw, member_address="cert.com/alice"),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "member_did_aw": member_did_aw,
@@ -190,6 +191,7 @@ async def test_register_certificate_accepts_legacy_lifetime_input_but_outputs_id
     resp = await client.post(
         "/v1/namespaces/legacy-lifetime.cert.com/teams/backend/certificates",
         json={
+            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='backend:legacy-lifetime.cert.com', team_did_key=team_did, member_did_key=member_did_key, alias="alice", lifetime="persistent"),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
@@ -373,7 +375,7 @@ async def test_fetch_certificate_rejects_revoked_certificate(client, controller_
 
 
 @pytest.mark.asyncio
-async def test_fetch_certificate_metadata_only_record_has_explicit_error(client, controller_identity):
+async def test_fetch_certificate_metadata_only_record_has_explicit_error(client, controller_identity, awid_db_infra):
     ns_key, ns_did = controller_identity
     team_key, team_did, _ = await _setup_team(client, ns_key, ns_did, "legacyfetch.cert.com", "backend")
 
@@ -381,22 +383,12 @@ async def test_fetch_certificate_metadata_only_record_has_explicit_error(client,
     member_did_key = did_from_public_key(member_pub)
     cert_id = str(uuid4())
 
-    headers = _sign(
-        team_key, team_did,
-        domain="legacyfetch.cert.com", operation="register_certificate",
-        team_name="backend", certificate_id=cert_id,
+    # Historical evidence is seeded, not a new blob-free registration.
+    await awid_db_infra.get_manager().execute(
+        "INSERT INTO {{tables.team_certificates}} (team_uuid,certificate_id,member_did_key,alias,identity_scope) "
+        "SELECT team_uuid,$1,$2,'alice','local' FROM {{tables.teams}} WHERE domain='legacyfetch.cert.com' AND name='backend'",
+        cert_id, member_did_key,
     )
-    resp = await client.post(
-        "/v1/namespaces/legacyfetch.cert.com/teams/backend/certificates",
-        json={
-            "certificate_id": cert_id,
-            "member_did_key": member_did_key,
-            "alias": "alice",
-            "identity_scope": "local",
-        },
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
 
     path = f"/v1/namespaces/legacyfetch.cert.com/teams/backend/certificates/{cert_id}"
     resp = await client.get(
@@ -488,6 +480,7 @@ async def test_register_certificate_ephemeral(client, controller_identity):
     resp = await client.post(
         "/v1/namespaces/eph.com/teams/ops/certificates",
         json={
+            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='ops:eph.com', team_did_key=team_did, member_did_key=member_did_key, alias="bot1", lifetime="local"),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "bot1",
@@ -517,6 +510,7 @@ async def test_register_certificate_duplicate_returns_409(client, controller_ide
     resp = await client.post(
         "/v1/namespaces/dup.cert.com/teams/infra/certificates",
         json={
+            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='infra:dup.cert.com', team_did_key=team_did, member_did_key=member_did_key, alias="alice", lifetime='persistent'),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
@@ -534,6 +528,7 @@ async def test_register_certificate_duplicate_returns_409(client, controller_ide
     resp = await client.post(
         "/v1/namespaces/dup.cert.com/teams/infra/certificates",
         json={
+            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='infra:dup.cert.com', team_did_key=team_did, member_did_key=member_did_key, alias="alice", lifetime='persistent'),
             "certificate_id": cert_id,
             "member_did_key": member_did_key,
             "alias": "alice",
@@ -749,6 +744,7 @@ async def test_certificate_listing_serves_a_whole_small_team_in_one_page(client,
         resp = await client.post(
             "/v1/namespaces/small.cert.com/teams/backend/certificates",
             json={
+            "certificate": _signed_certificate_blob(team_key, certificate_id=cert_id, team_id='backend:small.cert.com', team_did_key=team_did, member_did_key=did_from_public_key(member_pub), alias=f"member-{index:03d}", lifetime="local"),
                 "certificate_id": cert_id,
                 "member_did_key": did_from_public_key(member_pub),
                 "alias": f"member-{index:03d}",

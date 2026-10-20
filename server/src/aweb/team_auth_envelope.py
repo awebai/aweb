@@ -86,13 +86,32 @@ def team_auth_signature_payload(
     body_sha256: str,
     allowed_audiences: Iterable[str],
 ) -> TeamAuthEnvelope:
+    return _request_auth_signature_payload(
+        request, claims={"team_id": team_id}, timestamp=timestamp,
+        body_sha256=body_sha256, allowed_audiences=allowed_audiences,
+    )
+
+
+def identity_auth_signature_payload(
+    request: Request, *, did_aw: str, timestamp: str, body_sha256: str,
+    allowed_audiences: Iterable[str],
+) -> TeamAuthEnvelope:
+    """Identity possession only; this envelope confers no team membership."""
+    return _request_auth_signature_payload(
+        request, claims={"did_aw": did_aw}, timestamp=timestamp,
+        body_sha256=body_sha256, allowed_audiences=allowed_audiences,
+    )
+
+
+def _request_auth_signature_payload(
+    request: Request, *, claims: dict[str, str], timestamp: str,
+    body_sha256: str, allowed_audiences: Iterable[str],
+) -> TeamAuthEnvelope:
     signed_payload_header = str(request.headers.get("X-AWEB-Signed-Payload") or "").strip()
     if not signed_payload_header:
-        canonical = compact_team_auth_payload(
-            team_id=team_id,
-            timestamp=timestamp,
-            body_sha256=body_sha256,
-        )
+        canonical = canonical_json_bytes({
+            **claims, "timestamp": timestamp, "body_sha256": body_sha256,
+        })
         return TeamAuthEnvelope(version=1, canonical_payload=canonical, payload={})
 
     canonical = decode_signed_payload_header(signed_payload_header)
@@ -105,6 +124,9 @@ def team_auth_signature_payload(
     if canonical_json_bytes(payload) != canonical:
         raise ValueError("invalid X-AWEB-Signed-Payload header")
 
+    if payload.get("type") == "aweb.awid-controller-request":
+        raise ValueError("wrong request envelope type")
+
     if payload.get("v") != TEAM_AUTH_ENVELOPE_V2:
         raise ValueError("unsupported team-auth envelope version")
 
@@ -115,12 +137,12 @@ def team_auth_signature_payload(
     expected = {
         "method": request.method.upper(),
         "path": raw_request_target(request),
-        "team_id": team_id,
+        **claims,
         "body_sha256": body_sha256,
         "timestamp": timestamp,
     }
     for field, expected_value in expected.items():
-        if str(payload.get(field) or "").strip() != expected_value:
+        if field not in payload or str(payload[field]).strip() != expected_value:
             raise ValueError("signed request payload does not match request")
 
     aud = str(payload.get("aud") or "").strip()
