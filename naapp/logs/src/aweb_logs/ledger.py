@@ -311,15 +311,20 @@ async def _locked_head(tx: Any, signer: LogsSigner, team_id: str, at: datetime) 
 
 async def _existing_head(tx: Any, team_id: str) -> _Head | None:
     row = await tx.fetch_one(
-        "SELECT h.chain_epoch, h.team_seq, h.event_hash, e.logs_origin"
-        " FROM {{tables.chain_heads}} AS h JOIN {{tables.chain_epochs}} AS e"
-        " ON e.team_id = h.team_id AND e.chain_epoch = h.chain_epoch"
-        " WHERE h.team_id = $1 FOR UPDATE OF h",
+        "SELECT chain_epoch, team_seq, event_hash FROM {{tables.chain_heads}}"
+        " WHERE team_id = $1 FOR UPDATE",
         team_id,
     )
     if row is None:
         return None
-    return _Head(row["chain_epoch"], row["team_seq"], row["event_hash"], row["logs_origin"])
+    # Read only once the head is locked: a join locked with it could pair a
+    # head another writer just moved with the epoch row it replaced.
+    logs_origin = await tx.fetch_value(
+        "SELECT logs_origin FROM {{tables.chain_epochs}} WHERE team_id = $1 AND chain_epoch = $2",
+        team_id,
+        row["chain_epoch"],
+    )
+    return _Head(row["chain_epoch"], row["team_seq"], row["event_hash"], logs_origin)
 
 
 async def _insert_epoch(tx: Any, genesis: Genesis) -> None:

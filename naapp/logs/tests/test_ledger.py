@@ -13,7 +13,7 @@ from nacl.signing import SigningKey
 from pgdbm import AsyncDatabaseManager, AsyncMigrationManager
 
 from aweb_logs import MIGRATIONS_MODULE, MIGRATIONS_PATH
-from aweb_logs.chain import artefact_sha256, open_checkpoint, open_receipt
+from aweb_logs.chain import Genesis, artefact_sha256, format_time, open_checkpoint, open_receipt
 from aweb_logs.ledger import (
     Appended,
     Conflicted,
@@ -245,3 +245,43 @@ async def test_a_purged_event_still_conflicts_on_what_its_skeleton_keeps(
     )
     other_producer = await _append(db, "app", event_id=event_id)
     assert other_producer == Conflicted(event_id=uuid.UUID(event_id))
+
+
+async def test_a_checkpoint_waiting_on_an_epoch_move_witnesses_the_new_epoch(
+    db: AsyncDatabaseManager,
+) -> None:
+    await _append(db)
+    moved_genesis_at = START + timedelta(minutes=1)
+    async with db.transaction() as tx:
+        await tx.fetch_one(
+            "SELECT team_id FROM {{tables.chain_heads}} WHERE team_id = $1 FOR UPDATE", TEAM_ID
+        )
+        waiting = asyncio.create_task(
+            issue_checkpoint(db, SIGNER, TEAM_ID, issued_at=START + timedelta(minutes=2))
+        )
+        await asyncio.sleep(0.3)
+        assert not waiting.done()
+        genesis = Genesis(
+            team_id=TEAM_ID,
+            chain_epoch=2,
+            logs_origin=LOGS_ORIGIN,
+            created_at=format_time(moved_genesis_at),
+            previous_checkpoint_sha256="00" * 32,
+        )
+        await tx.execute(
+            "INSERT INTO {{tables.chain_epochs}} (team_id, chain_epoch, logs_origin, created_at,"
+            " previous_checkpoint_sha256, genesis_hash) VALUES ($1, 2, $2, $3, $4, $5)",
+            TEAM_ID,
+            LOGS_ORIGIN,
+            genesis.created_at,
+            genesis.previous_checkpoint_sha256,
+            genesis.hash(),
+        )
+        await tx.execute(
+            "UPDATE {{tables.chain_heads}} SET chain_epoch = 2, team_seq = 0, event_hash = $2"
+            " WHERE team_id = $1",
+            TEAM_ID,
+            genesis.hash(),
+        )
+    checkpoint = open_checkpoint(*await waiting)
+    assert (checkpoint.chain_epoch, checkpoint.team_seq) == (2, 0)
