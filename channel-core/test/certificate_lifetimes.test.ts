@@ -46,3 +46,13 @@ describe("signed optional certificate expiry", () => {
     await expect(verifyTeamCertificate(cert, did)).rejects.toMatchObject({ code: "certificate_malformed" });
   });
 });
+
+it("verifies the shared Python/Go/TypeScript signed v2 vectors", async () => {
+  const { readFileSync } = await import("node:fs");
+  const vectors = JSON.parse(readFileSync(new URL("../../test-vectors/certificate-lifetimes-v2.json", import.meta.url), "utf8"));
+  for (const { certificate, canonical } of vectors.certificates) {
+    const { signature, ...payload } = certificate;
+    expect(canonicalJSONValue(payload, "invalid")).toBe(canonical);
+    await expect(verifyTeamCertificate(certificate, vectors.team_did_key)).resolves.toBeUndefined();
+  }
+});

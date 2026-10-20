@@ -96,7 +96,7 @@ replacement concurrency; never retire the old artifact on a failed registration.
 Revoking an issuing certificate still ends its old grants; renewal does not
 silently transfer or broaden them.
 
-## Atomic certificate rollover (review requested)
+## Atomic certificate rollover
 
 Existing AWID has one active alias per team and a plain registration INSERT
 (`awid/src/awid_service/migrations/001_registry.sql:142`,
@@ -150,7 +150,7 @@ atomic replacement, duplicate/reordered retries, parallel differing renewals,
 cross-team/non-controller refusal, body swapping, revoked tombstones and policy.
 AWID0.5.31 is allocated by the coordinator; it must be
 published and pinned before Cloud invokes rollover. aw1.36.46 is allocated for
-the client integration. This section needs Athena review before route building.
+the client integration. Athena approved this operation and the signed-policy/recovery delta at ab4bbefa (d6d2ffe0).
 
 ## Grant minting and verification
 
@@ -186,7 +186,45 @@ remain supported throughout. New storage uses ordered migrations.
 
 Real-stack boundary tests cover unset defaults and finite neighbors; signed
 expiry at the boundary; tampering; admin and cross-team policy refusal; policy
-changes; parent clamp; safe renewal failures; and revocation. The covering gate
-runs once with `SUITE_LOCK_PRIORITY=release`; code review plus Athena precedes
-integration. Cloud implementation belongs to its assigned seat; OATS belongs to
+changes; parent clamp; safe renewal failures; and revocation. The covering gate runs once through the ordinary shared suite queue; release priority
+is reserved for release candidates and direct release blockers (coordinator a1a108e0).
+Code review plus Athena precedes integration. Cloud implementation belongs to its assigned seat; OATS belongs to
 the OATS lead. The coordinator integrates cross-repository releases.
+
+## Implementation seams and adoption
+
+Python registry methods are `get_team_credential_policy`,
+`set_team_credential_policy`, `rollover_team_certificate`,
+`get_team_certificate_status` and `fetch_team_certificate`. Mutations accept a
+local signing key or the public covering-controller signing callback; Cloud
+must use that public seam. Go exposes the corresponding policy/status/rollover
+methods and verifies policy records under the current team key. The optional
+status query `include_replacement=true` adds the rollover link; default status
+responses retain their released shape. The list query `include_lifetimes=true`
+adds signed expiry/class and uses signed issuance time for renewal calculations.
+
+New ordered AWID migrations 010 and 011 add the same-team replacement link and
+the signed policy plus audit storage. Server migration 029 records the issuing
+certificate's optional expiry and version on each grant. Embedding hosts must
+apply these before consuming the corresponding routes. No signed artifact is
+rewritten by a migration.
+
+`AWID_CERTIFICATE_V2_ISSUANCE_ENABLED` defaults off. It blocks both v2
+registration/rollover and setting certificate maxima until the operator enables
+it after measured verifier adoption. The setting is an operator rollout switch,
+not an authorization credential. Keep it off while any peer/member verifier
+cannot verify v2; older Go consumers lose the additional signed fields.
+
+The server exports `aweb_certificate_auth_accepted_total` by certificate version,
+aw client version (or unknown), and declared v2 support. Updated team clients
+send `X-AWEB-Certificate-Versions: 1,2`; naapp verifiers emit the analogous
+structured `certificate_auth_accepted` event. These are adoption observations,
+never authorization input: a caller's declaration alone cannot establish the
+fleet's support. The operator also inventories the deployed server, AWID,
+Cloud, channel-core/Pi, naapp-lib, aw and OATS verifier versions, including idle
+members and federation peers, before opening issuance. Hosted enablement remains
+blocked until its owner has that measured inventory. The default no-policy path
+keeps accepting released v1 certificates and never grants throughout.
+
+Cross-language signing examples are additive in
+`test-vectors/certificate-lifetimes-v2.json`; existing v1 vectors remain intact.

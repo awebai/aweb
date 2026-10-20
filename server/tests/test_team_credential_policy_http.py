@@ -130,18 +130,18 @@ async def test_registered_private_v2_issuer_remains_revocable_without_service_to
     monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED', 'true')
     monkeypatch.setenv('AWEB_REQUIRE_REGISTERED_CERTIFICATES', 'true')
     await env.registry_db.execute("UPDATE {{tables.teams}} SET visibility='private'")
-    registry = env.app.state.awid_registry_client
-    registry.service_token = None
-    env.registry_app.state.awid_public_origins = ('http://registry.test',)
-    actor = env.actors['alice']
-    cert = json.loads(base64.b64decode(actor.certificate))
-    cert.pop('signature')
-    cert.update(version=2, validity_class='member')
-    cert['signature'] = sign_message(env.team_sk, canonical_json_bytes(cert))
-    actor.certificate = base64.b64encode(json.dumps(cert).encode()).decode()
-    await _register(env, registry, cert)
-    key, did, grant = await _mint(env)
-    assert (await _read(env, key, did, grant)).status_code == 200
-    await _rollover(env, registry, cert)
-    refused = await _read(env, key, did, grant)
-    assert refused.status_code == 403 and 'issuing certificate revoked' in refused.text, refused.text
+    from test_cli_never_grants import registry_listener
+    async with registry_listener(env, service_token=False) as (registry, origin):
+        env.registry_app.state.awid_public_origins = (origin,)
+        actor = env.actors['alice']
+        cert = json.loads(base64.b64decode(actor.certificate))
+        cert.pop('signature')
+        cert.update(version=2, validity_class='member')
+        cert['signature'] = sign_message(env.team_sk, canonical_json_bytes(cert))
+        actor.certificate = base64.b64encode(json.dumps(cert).encode()).decode()
+        await _register(env, registry, cert)
+        key, did, grant = await _mint(env)
+        assert (await _read(env, key, did, grant)).status_code == 200
+        await _rollover(env, registry, cert)
+        refused = await _read(env, key, did, grant)
+        assert refused.status_code == 403 and 'issuing certificate revoked' in refused.text, refused.text

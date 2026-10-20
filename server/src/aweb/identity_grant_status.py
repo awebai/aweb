@@ -31,14 +31,15 @@ async def effective_grant_status(request: Request, row, now: datetime) -> tuple[
         return "subject_inactive", "grant subject identity is not active"
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
-        if row.get('issued_by_certificate_version', 1) == 2:
+        public_status = row.get('issued_by_certificate_version', 1) == 2 or not getattr(request.app.state.awid_registry_client, 'service_token', None)
+        if public_status:
             from aweb.credential_policy import v2_issuer_revoked
             revoked_certs = {issuing_certificate_id} if await v2_issuer_revoked(request, row['team_id'], issuing_certificate_id) else set()
         else:
             revoked_certs = await _get_revoked_certificates(request, row["team_id"])
         if issuing_certificate_id in revoked_certs:
             return "issuer_revoked", "grant issuing certificate revoked"
-        if require_registered_certificates() and row.get('issued_by_certificate_version', 1) != 2:
+        if require_registered_certificates() and not public_status:
             registered_certs = await _get_registered_certificates(request, row["team_id"])
             if issuing_certificate_id not in registered_certs:
                 return "issuer_not_registered", "grant issuing certificate not registered"

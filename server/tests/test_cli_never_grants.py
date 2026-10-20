@@ -32,7 +32,7 @@ from test_messages_http import _make_certificate, _make_keypair
 
 
 @asynccontextmanager
-async def registry_listener(env):
+async def registry_listener(env, *, service_token=True):
     existing = env.app.state.awid_registry_client
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
@@ -46,7 +46,7 @@ async def registry_listener(env):
             await asyncio.sleep(.02)
         assert server.started
         origin = f"http://127.0.0.1:{sock.getsockname()[1]}"
-        client = RegistryClient(origin, service_token=existing.service_token)
+        client = RegistryClient(origin, service_token=existing.service_token if service_token else None)
         env.app.state.awid_registry_client = client
         yield client, origin
     finally:

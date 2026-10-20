@@ -49,7 +49,7 @@ async def require_valid_stream_grant(request: Request, db, identity: TeamIdentit
     reason = await grant_terminal_reason(request, db, identity)
     if reason:
         status = 401 if reason in ("grant_expired", "grant_lifetime_exceeded") else 403
-        raise HTTPException(status_code=status, detail={"code": reason, "message": GRANT_TERMINAL_DETAILS[reason]})
+        raise HTTPException(status_code=status, detail={"code": reason, "message": GRANT_TERMINAL_DETAILS[reason]} if status == 401 else GRANT_TERMINAL_DETAILS[reason])
 
 
 async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) -> str | None:
@@ -78,14 +78,15 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
 
     issuing_certificate_id = (row.get("issued_by_certificate_id") or "").strip()
     if issuing_certificate_id:
-        if row.get('issued_by_certificate_version', 1) == 2:
+        public_status = row.get('issued_by_certificate_version', 1) == 2 or not getattr(request.app.state.awid_registry_client, 'service_token', None)
+        if public_status:
             from aweb.credential_policy import v2_issuer_revoked
             revoked_certs = {issuing_certificate_id} if await v2_issuer_revoked(request, row['team_id'], issuing_certificate_id) else set()
         else:
             revoked_certs = await _get_revoked_certificates(request, row["team_id"])
         if issuing_certificate_id in revoked_certs:
             return "grant_issuer_revoked"
-        if require_registered_certificates() and row.get('issued_by_certificate_version', 1) != 2:
+        if require_registered_certificates() and not public_status:
             registered_certs = await _get_registered_certificates(request, row["team_id"])
             if issuing_certificate_id not in registered_certs:
                 return "grant_issuer_revoked"

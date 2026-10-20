@@ -1082,3 +1082,43 @@ hash. Legacy acceptance remains measured until the operator's separate cutoff.
 New certificate records require a matching complete team-signed blob;
 historical records remain readable. Identity custody and controller authority
 remain separate, and existing signed body-artifact protocols are unchanged.
+
+
+## Optional credential policy and atomic certificate rollover
+
+The controller publishes `aweb.team-credential-policy/1` through covering-v2-only
+`POST /v1/namespaces/{domain}/teams/{name}/credential-lifetimes`, operation
+`set_credential_lifetimes`, with `{record, signature}`. Four nullable maxima
+(member_certificate, ephemeral_certificate, identity_grant, hosted_mcp_grant)
+default to null. The signature prefix is `aweb.team-credential-policy/1\n` plus
+canonical record JSON. Revision starts at 1 and increments for each policy
+change. The registry audits old/new records in the same transaction. An exact
+anonymous GET returns the current team key and signed record, or explicit null
+when absent, for public and private teams. Readers verify under that current
+key, cache at most 60 seconds, and never turn a failed/malformed read into absence.
+Atomic rotation re-signs the policy with every stored signed record, preserving
+revision and maxima; it is part of the complete-set check.
+
+Certificate v2 adds signed validity_class (member or ephemeral) and optional
+expires_at. No expiry remains valid by default. Present deadlines follow
+issued_at and are enforced without grace; registration over a configured class
+maximum refuses 422 certificate_lifetime_exceeded. V2 issuance and enabling a
+certificate maximum are disabled until measured verifier adoption opens the
+operator rollout switch. No global legacy-certificate cutoff exists.
+
+Covering-v2-only `POST .../certificates/{old_id}/rollover`, operation
+`rollover_certificate`, binds old and replacement IDs plus the full replacement
+registration. Only the current team controller may invoke it. The registry
+locks the team and old active certificate, verifies unchanged key, alias, scope,
+stable identity and address, and transactionally revokes old, inserts new and
+sets replaced_by_certificate_id. Failure preserves old active state; IDs and
+revoked tombstones are never reactivated. Identical retries are read-only while
+the replacement remains active; competing replacements refuse 409. The public
+SDK invalidates both cached certificate statuses. Other verifiers converge
+within their at-most-60-second status cache. Relying services distinguish
+401 certificate_replaced from disciplinary certificate_revoked, permitting one
+verified same-member fetch/install/retry. Default status response shape stays
+unchanged; opt-in include_replacement=true exposes the link.
+
+See [the full policy, renewal, SDK and hosted integration contract](design/team-credential-lifetimes.md)
+and [the additive cross-language vectors](../test-vectors/certificate-lifetimes-v2.json).

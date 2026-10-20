@@ -810,6 +810,7 @@ Subcommands:
 - `register` Protocol/admin: register or sync a customer-controlled team with a service
 - `reissue-cert` Protocol/admin: mint and register a fresh certificate for the same member key
 - `remove-member` Protocol/admin: remove a member by revoking a team certificate
+- `renew-certs` Controller: safely renew certificates due under the team's lifetime policy
 - `request` Protocol/admin bridge: print the add-member command the team owner should run
 - `set-server` Publish the team's coordination server at AWID, signed by the team controller key
 - `show-server` Show and verify the team's published coordination server
@@ -1123,6 +1124,22 @@ Flags:
 - `--member string Member address (e.g. acme.com/alice)`
 - `--namespace string Namespace domain`
 - `--registry string Registry origin override`
+- `--team string Team name`
+
+## `id team renew-certs`
+
+### `id team renew-certs`
+
+Reissue due memberships with the same key, alias, identity and address, using atomic AWID rollover.
+Finite policies renew in the final third, or when the old certificate has no expiry or exceeds the limit.
+Removing a limit replaces finite certificates with certificates without expiry. Revoked members are excluded.
+Requires the team's controller key; a member or session grant cannot renew membership.
+Certificate v2 issuance remains gated at the registry until verifier adoption is measured.
+
+Flags:
+- `-h, --help help for renew-certs`
+- `--namespace string Namespace domain`
+- `--registry string AWID registry origin`
 - `--team string Team name`
 
 ## `id team request`

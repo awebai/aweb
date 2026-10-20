@@ -1,0 +1,54 @@
+{
+  "description": "Public deterministic conformance seeds; not credentials. Additive v2 vectors, v1 vectors unchanged.",
+  "team_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+  "certificates": [
+    {
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "signature": "Pexs4YeJy1+i9jFQZ99IUqZfYzthWsXCdaK4hCWJMvgoGTyE+FlIUd8n9EI5slrqDVtlDxHTAvlB2xm5mADmCQ"
+      }
+    },
+    {
+      "canonical": "{\"alias\":\"member\",\"certificate_id\":\"b0574fc4-2ca7-40c2-a527-46da749f2657\",\"expires_at\":\"2099-01-01T00:00:00Z\",\"identity_scope\":\"local\",\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"validity_class\":\"member\",\"version\":2}",
+      "certificate": {
+        "version": 2,
+        "certificate_id": "b0574fc4-2ca7-40c2-a527-46da749f2657",
+        "team_id": "ops:example.test",
+        "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+        "member_did_key": "did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2",
+        "alias": "member",
+        "identity_scope": "local",
+        "validity_class": "member",
+        "issued_at": "2026-01-01T00:00:00Z",
+        "expires_at": "2099-01-01T00:00:00Z",
+        "signature": "giKc19OcVGpBjV+BqfckO0hx/ctzrcDV+RzVtR1dvre+yNMyldItPM+z8ILcuiuaD2azerA53gFohaZ84L92Bw"
+      }
+    }
+  ],
+  "policy": {
+    "record": {
+      "v": 1,
+      "type": "aweb.team-credential-policy",
+      "team_id": "ops:example.test",
+      "team_did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+      "revision": 1,
+      "issued_at": "2026-01-01T00:00:00Z",
+      "member_certificate": null,
+      "ephemeral_certificate": null,
+      "identity_grant": 3600,
+      "hosted_mcp_grant": null
+    },
+    "signature": "5sL1GsaABF0w7S1KEFjLXY4zwgJIGheoe/MsduzBADNIMRrL6CjP9Ou6iTfKmI8I3wrY/de8EZo7C9hZuFi4DQ",
+    "signing_bytes": "aweb.team-credential-policy/1\n{\"ephemeral_certificate\":null,\"hosted_mcp_grant\":null,\"identity_grant\":3600,\"issued_at\":\"2026-01-01T00:00:00Z\",\"member_certificate\":null,\"revision\":1,\"team_did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"team_id\":\"ops:example.test\",\"type\":\"aweb.team-credential-policy\",\"v\":1}"
+  }
+}

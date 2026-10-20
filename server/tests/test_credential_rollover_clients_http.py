@@ -74,8 +74,7 @@ async def test_aw_recovers_replaced_certificate_installs_and_retries(privacy_app
     await env.registry_db.execute("UPDATE {{tables.teams}} SET visibility='private'")
     # This server has no privileged AWID token; public current-key/status suffice.
     monkeypatch.setenv('AWEB_REQUIRE_REGISTERED_CERTIFICATES', 'true')
-    async with registry_listener(env) as (registry, origin):
-        registry.service_token = None
+    async with registry_listener(env, service_token=False) as (registry, origin):
         env.registry_app.state.awid_public_origins = (origin,)
         await _register(env, registry, old)
         fresh = await _rollover(env, registry, old)
@@ -127,3 +126,57 @@ console.log('recovered');
             MEMBER_SEED=base64.b64encode(actor.sk).decode(), REGISTRY=origin,
             ORIGIN=str(env.client.base_url).rstrip('/'), INSTALL=str(tmp_path / 'installed.json'), NEW_ID=fresh['certificate_id'])
         assert 'recovered' in await _process('node', script, cwd=tmp_path, env=child_env)
+
+
+@pytest.mark.usefixtures('source_cli_binary')
+@pytest.mark.asyncio
+async def test_controller_batch_renewal_obeys_policy_and_preserves_revoked_tombstones(privacy_app, tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from awid.credential_policy import POLICY_FIELDS, policy_signing_bytes
+    env = privacy_app
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED', 'true')
+    name = TEAM.split(':')[0]
+    key_path = tmp_path / '.awid' / 'team-keys' / 'example.test' / (name + '.key')
+    key_path.parent.mkdir(parents=True)
+    _pem(key_path, 'ED25519 PRIVATE KEY', env.team_sk)
+    home = tmp_path / 'controller'
+    home.mkdir()
+    async with registry_listener(env) as (registry, origin):
+        env.registry_app.state.awid_public_origins = (origin,)
+        for actor in env.actors.values():
+            await _register(env, registry, json.loads(base64.b64decode(actor.certificate)))
+        await registry.revoke_team_certificate('example.test', name, team_controller_signing_key=env.team_sk,
+            certificate_id='privacy-carol')
+        async def renew():
+            data = await _process(os.environ['AW_TEST_CLI_BINARY'], '--identity-home', home,
+                'id', 'team', 'renew-certs', '--team', name, '--namespace', 'example.test',
+                '--registry', origin, '--json', cwd=tmp_path, env=_child_env(tmp_path, origin))
+            return json.loads(data)['renewed']
+        async def policy(maximum, revision):
+            record = dict(v=1, type='aweb.team-credential-policy', team_id=TEAM, team_did_key=env.team_did,
+                revision=revision, issued_at=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
+            record.update(dict.fromkeys(POLICY_FIELDS))
+            record['member_certificate'] = maximum
+            await registry.set_team_credential_policy('example.test', name, record,
+                sign_message(env.team_sk, policy_signing_bytes(record)), signing_key=env.team_sk)
+        assert await renew() == []  # No policy: existing members need no renewal.
+        await policy(1200, 1)
+        assert sorted(await renew()) == ['alice', 'bob']  # Missing-expiry certificates become due.
+        rows = await env.registry_db.fetch_all('SELECT certificate,certificate_id FROM {{tables.team_certificates}} WHERE revoked_at IS NULL')
+        signed = [json.loads(base64.b64decode(row['certificate'])) for row in rows]
+        for cert in signed:
+            assert cert['version'] == 2
+            assert (datetime.fromisoformat(cert['expires_at'].replace('Z', '+00:00')) - datetime.fromisoformat(cert['issued_at'].replace('Z', '+00:00'))).total_seconds() == 1200
+        assert await renew() == []  # A fresh bounded certificate is outside its renewal window.
+        await policy(600, 2)
+        assert sorted(await renew()) == ['alice', 'bob']  # Lowering makes over-limit members due.
+        await policy(None, 3)
+        assert sorted(await renew()) == ['alice', 'bob']  # Disabling issues unbounded new artifacts.
+        for row in await env.registry_db.fetch_all('SELECT certificate FROM {{tables.team_certificates}} WHERE revoked_at IS NULL'):
+            assert 'expires_at' not in json.loads(base64.b64decode(row['certificate']))
+        # Signed history stays immutable; no delayed old ID can become active.
+        for cert in signed:
+            stored = await env.registry_db.fetch_one('SELECT certificate,revoked_at,replaced_by_certificate_id FROM {{tables.team_certificates}} WHERE certificate_id=$1', cert['certificate_id'])
+            assert json.loads(base64.b64decode(stored['certificate'])) == cert
+            assert stored['revoked_at'] and stored['replaced_by_certificate_id']
+        assert await env.registry_db.fetch_value("SELECT count(*) FROM {{tables.team_certificates}} WHERE alias='carol'") == 1

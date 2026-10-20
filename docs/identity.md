@@ -434,7 +434,9 @@ all of those scopes for ordinary worker operation; old grants keep exactly the
 scopes they were minted with. Grant requests outside their scopes, and root or
 admin surfaces such as team lifecycle, session leases, reservation revoke, and
 minting further grants, are refused server-side. A
-grant minted with `--ttl never` (the default) does not expire. Explicit finite
+grant minted with `--ttl never` (the default) does not expire when the team and
+issuing certificate impose no bound. If either imposes one, mint succeeds with
+the earliest finite deadline and returns that deadline in `expires_at`. Explicit finite
 TTLs from 60 seconds through 720 hours retain their expiry. Grants can be revoked
 idempotently with
 `aw id grant revoke <grant-id>`; `aw id grant list` shows each grant as
@@ -442,7 +444,8 @@ active, revoked, or expired. Root-authority commands refuse to run from a
 grant home, and `aw whoami` there reports the subject identity plus the
 grant's status, scopes, and expiry.
 
-The mint API accepts `ttl_seconds: "never"`, null, or omission for no expiry;
+The mint API accepts `ttl_seconds: "never"`, null, or omission as an unbounded
+request, subject to the team policy and issuing-certificate clamp;
 existing finite integer requests remain supported. Mint/list/status responses and
 `grant.yaml` use `expires_at: "never"` for this case. The server stores a non-null
 expiry 100 calendar years after issuance (February 29 maps to February 28 if
@@ -523,3 +526,34 @@ and high-impact handoff behavior.
 
 For CLI folder precedence and the identity/workspace/user trust-store boundary,
 see [CLI identity selection](cli-identity-selection.md).
+
+
+## Optional team credential lifetimes
+
+The team controller may publish four nullable maxima for member certificates,
+ephemeral certificates, identity grants and hosted MCP grants. All are unset by
+default: no expiry is the supported default, and revocation remains binding.
+The signed policy is anonymously readable at the exact AWID team path and
+verified under its current key. Readers reuse it for at most 60 seconds and
+refuse unavailable or malformed authority responses instead of assuming no cap.
+Changing a grant cap takes effect within a minute against original issuance;
+existing never/over-cap grants then refuse `401 grant_lifetime_exceeded`.
+Removing a cap never extends an already finite deadline. Expired grants refuse
+`401 grant_expired`. Grants cannot renew themselves or mint successors.
+
+Certificate v2 signs a separate `validity_class=member|ephemeral` and optional
+`expires_at`; the class does not change identity scope. Expiry is enforced with
+`401 certificate_expired`, including at the exact deadline, without grace.
+Certificates without expiry remain valid. V2 issuance and certificate-policy
+enablement require measured adoption by verifiers first; old v1 verifiers
+cannot verify the v2 signed wire format.
+
+Controllers renew with `aw id team renew-certs --team NAME --namespace DOMAIN`.
+The batch includes missing-expiry and over-limit certificates under a finite
+policy, and ordinary renewal in the final third. It excludes revoked members.
+Atomic AWID rollover preserves membership, commits the replacement with the old
+revoked tombstone, and rolls back on failure. Members presenting the old ID get
+`401 certificate_replaced`, follow the same-team link, verify the current
+controller signature and unchanged member key, install and retry once. Neither
+an expired certificate nor its member key authorizes controller renewal.
+See [the complete signed-policy and rollover contract](design/team-credential-lifetimes.md).
