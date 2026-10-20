@@ -4,8 +4,9 @@ Verifies that a member holding a valid team certificate signed one concrete
 HTTP request (docs/team-auth-envelope-v2.md): the DIDKey header, the timestamp
 window, the canonical v2 payload bound to audience, method, raw path and query,
 team and body, the member's signature, and the certificate against AWID's
-current team key and revocation state. Authentication proves who signed the
-request, not that the signer may perform it; see
+current team key and revocation state. A certificate's ``member_did_aw`` is
+checked under the relying app's :class:`DidAwProfile`. Authentication proves who
+signed the request, not that the signer may perform it; see
 :mod:`aweb_naapp.runtime.authorization`.
 """
 
@@ -20,11 +21,12 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 from urllib.parse import quote
 
 import httpx
-from awid.did import public_key_from_did
+from awid.did import public_key_from_did, validate_stable_id
 from awid.log import canonical_server_origin
 from awid.signing import (
     VerifyResult,
@@ -50,6 +52,22 @@ MAX_TEAM_FACTS_TTL_SECONDS = 60
 _B64URL_NO_PADDING = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
+class DidAwProfile(StrEnum):
+    """How a relying app treats the ``member_did_aw`` a certificate carries.
+
+    The team controller's signature makes that binding team-asserted. Under
+    either profile the DID's current key is resolved at the configured registry
+    and compared with the signer. ``REQUIRE`` refuses a request whose DID is
+    unregistered or has another current key, and refuses with 503 when the
+    registry cannot answer. ``OBSERVE`` logs the outcome and admits the request
+    anyway, so an app can measure what its released callers send before it
+    requires the check. Members without a ``member_did_aw`` are never looked up.
+    """
+
+    OBSERVE = "observe"
+    REQUIRE = "require"
+
+
 @dataclass(frozen=True)
 class Principal:
     team_id: str
@@ -59,6 +77,9 @@ class Principal:
     alias: str
     certificate_id: str
     team_did_key: str
+    # True only when the registry named did_aw's current key as this signer.
+    # Policies relying on the did:aw check this flag, not did_aw's presence.
+    did_aw_registry_verified: bool = False
 
 
 @dataclass(frozen=True)
@@ -66,6 +87,12 @@ class CachedTeamFacts:
     team_did_key: str
     published_certificate_ids: frozenset[str]
     revoked_certificate_ids: frozenset[str]
+    expires_at: float
+
+
+@dataclass(frozen=True)
+class CachedDidKey:
+    current_did_key: str
     expires_at: float
 
 
@@ -99,6 +126,7 @@ class AWIDTeamCache:
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.registry_url = registry_url.rstrip("/")
+        self.registry_origin = canonical_server_origin(self.registry_url)
         self.ttl_seconds = min(ttl_seconds, MAX_TEAM_FACTS_TTL_SECONDS)
         self._headers = (
             {"X-AWID-Service-Token": service_token.strip()}
@@ -107,6 +135,7 @@ class AWIDTeamCache:
         )
         self._cache: dict[str, CachedTeamFacts] = {}
         self._certificate_cache: dict[tuple[str, str], CachedTeamFacts] = {}
+        self._did_keys: dict[tuple[str, str], CachedDidKey] = {}
         self._transport = transport
 
     def _client(self) -> httpx.AsyncClient:
@@ -258,6 +287,74 @@ class AWIDTeamCache:
         self._certificate_cache[cache_key] = facts
         return facts
 
+    async def current_did_key(self, did_aw: str) -> str | None:
+        """The did:aw's current did:key at this registry, or None when the
+        registry has no such DID.
+
+        A resolution is reused for at most the cache TTL and never after it
+        expires: a failed refresh raises 503.
+        """
+        try:
+            did_aw = validate_stable_id(did_aw)
+        except ValueError:
+            return None
+        now = time.monotonic()
+        cache_key = (self.registry_origin, did_aw)
+        cached = self._did_keys.get(cache_key)
+        if cached and cached.expires_at > now:
+            return cached.current_did_key
+        try:
+            async with self._client() as client:
+                response = await client.get(
+                    f"{self.registry_url}/v1/did/{quote(did_aw, safe=':')}/key", headers=self._headers
+                )
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict) or payload.get("did_aw") != did_aw:
+                raise ValueError("AWID key resolution names another did:aw")
+            current_did_key = payload.get("current_did_key")
+            if not isinstance(current_did_key, str):
+                raise ValueError("AWID key resolution missing current_did_key")
+            public_key_from_did(current_did_key)
+        except Exception as exc:
+            logger.warning("AWID did:aw resolution failed for %s", did_aw, exc_info=True)
+            raise HTTPException(status_code=503, detail="AWID did:aw resolution unavailable") from exc
+        self._did_keys[cache_key] = CachedDidKey(
+            current_did_key=current_did_key, expires_at=now + self.ttl_seconds
+        )
+        return current_did_key
+
+
+async def _did_aw_registry_verified(
+    team_cache: AWIDTeamCache, *, did_aw: str, did_key: str, profile: DidAwProfile
+) -> bool:
+    try:
+        current_did_key = await team_cache.current_did_key(did_aw)
+    except HTTPException:
+        outcome = "unavailable"
+        if profile is DidAwProfile.REQUIRE:
+            raise
+    else:
+        if current_did_key == did_key:
+            outcome = "match"
+        elif current_did_key is None:
+            outcome = "unregistered"
+        else:
+            outcome = "key_mismatch"
+        if outcome != "match" and profile is DidAwProfile.REQUIRE:
+            raise HTTPException(status_code=401, detail="did:aw current key does not match the signer")
+    if profile is DidAwProfile.OBSERVE:
+        # The measurement before an app requires the check: a stable outcome
+        # and the DID, nothing from the request.
+        logger.log(
+            logging.INFO if outcome == "match" else logging.WARNING,
+            "did:aw current-key check %s for %s", outcome, did_aw,
+            extra={"did_aw_outcome": outcome, "did_aw": did_aw},
+        )
+    return outcome == "match"
+
 
 def _parse_didkey_auth(header: str) -> tuple[str, str]:
     parts = header.strip().split()
@@ -406,6 +503,7 @@ async def authenticate_request(
     public_origin: str,
     team_cache: AWIDTeamCache,
     timestamp_skew_seconds: int = MAX_TIMESTAMP_SKEW_SECONDS,
+    did_aw_profile: DidAwProfile = DidAwProfile.REQUIRE,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Principal:
     auth_header = request.headers.get("Authorization") or request.headers.get("authorization") or ""
@@ -456,14 +554,20 @@ async def authenticate_request(
         raise HTTPException(status_code=401, detail="Team certificate has been revoked")
     _verify_certificate_signature(cert, facts.team_did_key)
 
+    did_aw = str(cert.get("member_did_aw") or "").strip() or None
+    did_aw_registry_verified = did_aw is not None and await _did_aw_registry_verified(
+        team_cache, did_aw=did_aw, did_key=did_key, profile=did_aw_profile
+    )
+
     return Principal(
         team_id=team_id,
         did_key=did_key,
-        did_aw=(str(cert.get("member_did_aw") or "").strip() or None),
+        did_aw=did_aw,
         address=(str(cert.get("member_address") or "").strip() or None),
         alias=alias,
         certificate_id=certificate_id,
         team_did_key=facts.team_did_key,
+        did_aw_registry_verified=did_aw_registry_verified,
     )
 
 
