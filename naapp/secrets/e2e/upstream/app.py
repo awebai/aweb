@@ -135,12 +135,17 @@ def _sigv4_valid(
 
 
 def create_upstream(
-    creds: UpstreamCredentials, *, now: Callable[[], datetime] = lambda: datetime.now(UTC)
+    creds: UpstreamCredentials,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    token_lifetime_seconds: int = TOKEN_LIFETIME_SECONDS,
 ) -> FastAPI:
-    """The upstream. ``now`` is its clock, against which SigV4 dates are checked."""
+    """The upstream. ``now`` is its clock, against which SigV4 dates are
+    checked; ``token_lifetime_seconds`` is the ``expires_in`` it issues."""
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     issued: set[str] = set()
     stats = {"issued": 0}
+    app.state.stats = stats
 
     async def bearer(request: Request, body: bytes) -> bool:
         return _equal(request.headers.get("authorization"), f"Bearer {creds.bearer}")
@@ -191,7 +196,7 @@ def create_upstream(
         issued.add(access_token)
         stats["issued"] += 1
         return JSONResponse(
-            {"access_token": access_token, "token_type": "Bearer", "expires_in": TOKEN_LIFETIME_SECONDS},
+            {"access_token": access_token, "token_type": "Bearer", "expires_in": token_lifetime_seconds},
             headers={"Cache-Control": "no-store"},
         )
 
