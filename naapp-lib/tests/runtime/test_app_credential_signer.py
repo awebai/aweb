@@ -69,6 +69,14 @@ def _purpose_of(case: dict) -> str | None:
     return None
 
 
+def test_the_signers_purpose_table_equals_the_vectors():
+    # The vector is the one list of app credential purposes; the server and this
+    # signer each assert equality with it, so neither can add one alone.
+    assert {
+        purpose: {"prefix": spec.prefix, "auth": spec.auth} for purpose, spec in PURPOSES.items()
+    } == VECTOR["purposes"]
+
+
 @pytest.mark.parametrize("case", VECTOR["cases"], ids=lambda case: case["name"])
 def test_grant_read_credentials_are_byte_identical_to_the_vector(case):
     credential = _sign(case, case["purpose"])
