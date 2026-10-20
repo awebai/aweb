@@ -51,6 +51,8 @@ type RegistryCertificate struct {
 	IdentityScope string `json:"identity_scope"`
 	IssuedAt      string `json:"issued_at"`
 	RevokedAt     string `json:"revoked_at,omitempty"`
+	ExpiresAt     string `json:"expires_at,omitempty"`
+	ValidityClass string `json:"validity_class,omitempty"`
 }
 
 type registryCertificateFetchResponse struct {
@@ -416,6 +418,14 @@ func (c *RegistryClient) ListCertificates(
 	activeOnly bool,
 	signingKey ed25519.PrivateKey,
 ) ([]RegistryCertificate, error) {
+	return c.listCertificates(ctx, registryURL, domain, name, activeOnly, signingKey, false)
+}
+
+func (c *RegistryClient) ListCertificatesWithLifetimes(ctx context.Context, registryURL, domain, name string, activeOnly bool, signingKey ed25519.PrivateKey) ([]RegistryCertificate, error) {
+	return c.listCertificates(ctx, registryURL, domain, name, activeOnly, signingKey, true)
+}
+
+func (c *RegistryClient) listCertificates(ctx context.Context, registryURL, domain, name string, activeOnly bool, signingKey ed25519.PrivateKey, lifetimes bool) ([]RegistryCertificate, error) {
 	domain = canonicalizeDomain(domain)
 	name = strings.TrimSpace(name)
 	teamID := BuildTeamID(domain, name)
@@ -423,6 +433,9 @@ func (c *RegistryClient) ListCertificates(
 		"/certificates?limit=" + itoa(certificateListPageLimit)
 	if activeOnly {
 		basePath += "&active_only=true"
+	}
+	if lifetimes {
+		basePath += "&include_lifetimes=true"
 	}
 
 	var certificates []RegistryCertificate

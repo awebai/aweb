@@ -33,6 +33,8 @@ _ROUTE_CLAIMS = {
     'set_team_visibility': ({'domain', 'team_name', 'visibility'}, set()),
     'register_certificate': ({'domain', 'team_name', 'certificate_id'}, set()),
     'revoke_certificate': ({'domain', 'team_name', 'certificate_id'}, set()),
+    'set_credential_lifetimes': ({'domain', 'team_name'}, set()),
+    'rollover_certificate': ({'domain', 'team_name', 'certificate_id', 'replacement_certificate_id'}, set()),
     'register_address': ({'domain', 'name'}, set()),
     'update_address': ({'domain', 'name'}, set()),
     'delete_address': ({'domain', 'name'}, {'expected_address_id', 'expected_did_aw', 'expected_current_did_key'}),

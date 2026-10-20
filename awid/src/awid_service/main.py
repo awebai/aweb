@@ -20,6 +20,8 @@ from .routes.did import router as did_router
 from .routes.dns_addresses import router as dns_addresses_router
 from .routes.dns_namespaces import router as dns_namespaces_router
 from .routes.teams import router as teams_router
+from .routes.credential_policy import router as credential_policy_router
+from .routes.certificate_rollover import router as certificate_rollover_router
 from .db import AwidDatabaseInfra
 
 logger = logging.getLogger(__name__)
@@ -169,6 +171,8 @@ def create_app(
     app.include_router(a2a_publications_router)
     app.include_router(teams_router)
     app.include_router(attestation_records_router)
+    app.include_router(credential_policy_router)
+    app.include_router(certificate_rollover_router)
     return app
 
 

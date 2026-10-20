@@ -192,13 +192,13 @@ def _verify_certificate_blob(
     team_id: str,
     team_did_key: str,
     body: "CertificateRegisterRequest",
+    max_lifetime_seconds: int | None = None,
 ) -> None:
     cert = _parse_certificate_blob(certificate)
     if cert is None:
         raise HTTPException(status_code=422, detail="team-signed certificate blob is required")
 
     expected = {
-        "version": 1,
         "certificate_id": body.certificate_id,
         "team_id": team_id,
         "team_did_key": team_did_key,
@@ -235,6 +235,15 @@ def _verify_certificate_blob(
         raise HTTPException(status_code=422, detail="team_did_key is invalid") from exc
     if verify_signature_with_public_key(public_key, canonical_json_bytes(payload), signature) != VerifyResult.VERIFIED:
         raise HTTPException(status_code=422, detail="certificate signature verification failed")
+
+    from awid.certificates import CertificateValidationError, validate_certificate_lifetime
+    try:
+        expiry = validate_certificate_lifetime(cert, max_lifetime_seconds=max_lifetime_seconds)
+        if max_lifetime_seconds is not None and expiry is None:
+            raise CertificateValidationError('certificate_lifetime_exceeded', 'Team policy requires certificate expiry')
+    except CertificateValidationError as exc:
+        status = 401 if exc.code == "certificate_expired" else 422
+        raise HTTPException(status_code=status, detail={"code": exc.code, "message": str(exc)}) from exc
 
 
 def _verify_path_signature(request: Request, authorization: str | None) -> str:
@@ -457,6 +466,7 @@ class CertificateStatusResponse(BaseModel):
     team_did_key: str
     status: Literal["active", "revoked"]
     revoked_at: str | None
+    replaced_by_certificate_id: str | None = None
 
 
 class CertificateResponse(BaseModel):
@@ -469,6 +479,8 @@ class CertificateResponse(BaseModel):
     identity_scope: str
     issued_at: str
     revoked_at: str | None = None
+    expires_at: str | None = None
+    validity_class: str | None = None
 
 
 class CertificateFetchResponse(CertificateResponse):
@@ -858,31 +870,30 @@ async def register_certificate(
         member_address=body.member_address,
         member_did_aw=body.member_did_aw,
     )
-    team_id = build_team_id(domain, name)
-    _verify_certificate_blob(
-        body.certificate,
-        team_id=team_id,
-        team_did_key=team_row["team_did_key"],
-        body=body,
-    )
-
+    from awid_service.routes.certificate_rollover import certificate_policy_limit
     try:
-        await db.execute(
-            """
-            INSERT INTO {{tables.team_certificates}}
-                (team_uuid, certificate_id, member_did_key, member_did_aw,
-                 member_address, alias, identity_scope, certificate)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            """,
-            team_row["team_uuid"],
-            body.certificate_id,
-            body.member_did_key,
-            body.member_did_aw,
-            body.member_address,
-            body.alias,
-            body.identity_scope,
-            body.certificate,
-        )
+        async with db.transaction() as tx:
+            locked = await tx.fetch_one('SELECT team_did_key FROM {{tables.teams}} WHERE team_uuid=$1 AND deleted_at IS NULL FOR UPDATE', team_row['team_uuid'])
+            if not locked or locked['team_did_key'] != team_row['team_did_key']:
+                raise HTTPException(status_code=409, detail='Team controller changed')
+            maximum = await certificate_policy_limit(tx, team_row, body.certificate)
+            _verify_certificate_blob(body.certificate, team_id=build_team_id(domain, name), team_did_key=team_row['team_did_key'], body=body, max_lifetime_seconds=maximum)
+            await tx.execute(
+                """
+                INSERT INTO {{tables.team_certificates}}
+                    (team_uuid, certificate_id, member_did_key, member_did_aw,
+                     member_address, alias, identity_scope, certificate)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                """,
+                team_row["team_uuid"],
+                body.certificate_id,
+                body.member_did_key,
+                body.member_did_aw,
+                body.member_address,
+                body.alias,
+                body.identity_scope,
+                body.certificate,
+            )
     except QueryError as exc:
         cause = exc.__cause__
         if not isinstance(cause, asyncpg.UniqueViolationError):
@@ -938,6 +949,7 @@ async def set_team_visibility(
 @router.get(
     "/{name}/certificates",
     response_model=CertificateListResponse,
+    response_model_exclude_unset=True,
     dependencies=[Depends(rate_limit_dep("certificate_list", allow_trusted_service=True))],
 )
 async def list_certificates(
@@ -945,6 +957,7 @@ async def list_certificates(
     domain: str,
     name: str,
     active_only: bool = Query(default=False),
+    include_lifetimes: bool = False,
     since: str | None = Query(default=None),
     limit: int | None = Query(default=None, ge=1),
     cursor: str | None = Query(default=None),
@@ -1006,7 +1019,7 @@ async def list_certificates(
     params.append(validated_limit + 1)
     query = (
         "SELECT tc.id, tc.certificate_id, tc.member_did_key, tc.member_did_aw, tc.member_address,"
-        " tc.alias, tc.identity_scope, tc.issued_at, tc.revoked_at, t.domain, t.name"
+        " tc.alias, tc.identity_scope, tc.issued_at, tc.revoked_at, tc.certificate, t.domain, t.name"
         " FROM {{tables.team_certificates}} tc"
         " JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid"
         " WHERE " + " AND ".join(where_clauses)
@@ -1025,7 +1038,7 @@ async def list_certificates(
         })
 
     return CertificateListResponse(
-        certificates=[_cert_response(r) for r in page_rows],
+        certificates=[_cert_response(r, include_lifetimes=include_lifetimes) for r in page_rows],
         has_more=has_more,
         next_cursor=next_cursor,
     )
@@ -1092,12 +1105,14 @@ async def get_team_member(
 @router.get(
     "/{name}/certificates/{certificate_id}/status",
     response_model=CertificateStatusResponse,
+    response_model_exclude_unset=True,
     dependencies=[Depends(rate_limit_dep("certificate_status", allow_trusted_service=True))],
 )
 async def certificate_status(
     domain: str,
     name: str,
     certificate_id: str,
+    include_replacement: bool = False,
     db_infra=Depends(get_db),
 ) -> CertificateStatusResponse:
     """Public facts for one published certificate, including on private teams.
@@ -1108,7 +1123,7 @@ async def certificate_status(
     db = db_infra.get_manager("aweb")
     row = await db.fetch_one(
         """
-        SELECT t.team_did_key, tc.revoked_at
+        SELECT t.team_did_key, tc.revoked_at, tc.replaced_by_certificate_id
         FROM {{tables.team_certificates}} tc
         JOIN {{tables.teams}} t ON t.team_uuid = tc.team_uuid
         WHERE t.domain = $1 AND t.name = $2 AND t.deleted_at IS NULL
@@ -1124,6 +1139,7 @@ async def certificate_status(
         team_did_key=row["team_did_key"],
         status="revoked" if revoked_at is not None else "active",
         revoked_at=revoked_at.isoformat() if revoked_at is not None else None,
+        **({'replaced_by_certificate_id': row['replaced_by_certificate_id']} if include_replacement else {}),
     )
 
 
@@ -1510,7 +1526,8 @@ def _team_response(row) -> TeamResponse:
     )
 
 
-def _cert_response(row) -> CertificateResponse:
+def _cert_response(row, *, include_lifetimes=False) -> CertificateResponse:
+    cert = _parse_certificate_blob(row['certificate']) or {} if include_lifetimes else {}
     return CertificateResponse(
         team_id=build_team_id(row["domain"], row["name"]),
         certificate_id=row["certificate_id"],
@@ -1519,6 +1536,7 @@ def _cert_response(row) -> CertificateResponse:
         member_address=row["member_address"],
         alias=row["alias"],
         identity_scope=row["identity_scope"],
-        issued_at=row["issued_at"].isoformat(),
+        issued_at=cert.get('issued_at') or row["issued_at"].isoformat(),
         revoked_at=row["revoked_at"].isoformat() if row["revoked_at"] else None,
+        **({'expires_at': cert.get('expires_at'), 'validity_class': cert.get('validity_class', 'member')} if include_lifetimes else {}),
     )

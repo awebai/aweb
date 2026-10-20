@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from aweb.grant_expiry import add_years, expiry_label, never_expires
+from aweb.credential_policy import team_credential_policy
 from aweb.deps import get_db
 from aweb.identity_grant_auth import GRANT_AUTH_SCHEME, GRANT_SCOPES
 from aweb.identity_grant_status import effective_grant_status, grant_status
@@ -114,6 +115,16 @@ async def mint_identity_grant(
 
     now = datetime.now(timezone.utc)
     expires_at = add_years(now, 100) if payload.ttl_seconds in (None, "never") else now + timedelta(seconds=payload.ttl_seconds)
+    policy = await team_credential_policy(request, identity.team_id)
+    maximum = policy['identity_grant'] if policy else None
+    if maximum is not None:
+        expires_at = min(expires_at, now + timedelta(seconds=maximum))
+    parent_expiry = getattr(request.state, 'team_certificate_expires_at', None)
+    parent_expiry = datetime.fromisoformat(parent_expiry.replace('Z', '+00:00')) if parent_expiry else None
+    if parent_expiry is not None:
+        if parent_expiry <= now:
+            raise HTTPException(status_code=401, detail={'code': 'certificate_expired'})
+        expires_at = min(expires_at, parent_expiry)
     async with manager.transaction() as tx:
         await tx.fetch_value(
             "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -144,9 +155,9 @@ async def mint_identity_grant(
             """
             INSERT INTO {{tables.identity_session_grants}} (
                 team_id, subject_agent_id, subject_did_aw, grant_did_key,
-                scopes, label, issued_by_certificate_id, issued_at, expires_at
+                scopes, label, issued_by_certificate_id, issued_at, expires_at, issued_by_certificate_expires_at
             )
-            VALUES ($1, $2::UUID, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2::UUID, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING grant_id, issued_at, expires_at
             """,
             identity.team_id,
@@ -158,6 +169,7 @@ async def mint_identity_grant(
             issuing_certificate_id,
             now,
             expires_at,
+            parent_expiry,
         )
     return GrantView(
         grant_id=str(row["grant_id"]),
@@ -231,7 +243,7 @@ async def identity_grant_status(
     row = await db.get_manager("aweb").fetch_one(
         """
         SELECT g.grant_id, g.team_id, g.subject_did_aw, g.grant_did_key, g.scopes, g.label,
-               g.issued_at, g.expires_at, g.revoked_at, g.issued_by_certificate_id,
+               g.issued_at, g.expires_at, g.revoked_at, g.issued_by_certificate_id, g.issued_by_certificate_expires_at,
                a.status AS subject_status, a.deleted_at AS subject_deleted_at
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id

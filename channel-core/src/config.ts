@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, normalize, parse, relative, resolve, sep } f
 import * as ed from "@noble/ed25519";
 import { sha512 } from "@noble/hashes/sha2.js";
 import yaml from "js-yaml";
-import { loadTeamCertificate, encodeTeamCertificateHeader, type TeamCertificate } from "./identity/certificate.js";
+import { loadTeamCertificate, encodeTeamCertificateHeader, fetchReplacementCertificate, installTeamCertificate, type TeamCertificate } from "./identity/certificate.js";
 import { computeDIDKey } from "./identity/did.js";
 import { loadSigningKey } from "./identity/keys.js";
 
@@ -22,6 +22,7 @@ export interface AgentConfig {
   registryURL: string;
   signingKey: Uint8Array;
   teamCertificateHeader: string;
+  refreshCertificate?: (id: string) => Promise<{ certificate: TeamCertificate; teamDIDKey: string }>;
   authMode?: "team" | "grant";
   grantID?: string;
   grantSessionDID?: string;
@@ -199,7 +200,8 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
 
   if (identityHome.external) preflightFile(signingKeyPath, "signing key");
   const signingKey = await loadSigningKey(signingKeyPath);
-  const certificate = await loadConfiguredTeamCertificate(identityHome, teamID, certPath);
+  const loadedCertificate = await loadConfiguredTeamCertificate(identityHome, teamID, certPath);
+  let certificate = loadedCertificate.certificate;
   if (identityHome.external) preflightFile(identityPath, "identity config");
   const identity = await readYAML<IdentityConfig>(identityPath);
   const did = computeDIDKey(ed.getPublicKey(signingKey));
@@ -222,6 +224,17 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
     throw new Error("active membership alias does not match the team certificate");
   }
 
+  const refreshCertificate = async (id: string) => {
+    const fresh = await fetchReplacementCertificate(certificate, id, signingKey, (process.env.AWID_REGISTRY_URL || registryURL).trim());
+    if (identityHome.external) preflightFile(loadedCertificate.path, "team certificate");
+    await installTeamCertificate(loadedCertificate.path, fresh.certificate);
+    certificate = fresh.certificate;
+    return fresh;
+  };
+  if (certificate.expires_at) {
+    const expires = Date.parse(certificate.expires_at), issued = Date.parse(certificate.issued_at);
+    if (Date.now() >= expires - (expires - issued) / 3) await refreshCertificate("");
+  }
   return {
     baseURL,
     identityHome: identityHome.root,
@@ -233,6 +246,7 @@ export async function resolveConfig(workdir: string, options: ResolveConfigOptio
     registryURL,
     signingKey,
     teamCertificateHeader: encodeTeamCertificateHeader(certificate),
+    refreshCertificate,
   };
 }
 
@@ -279,12 +293,12 @@ async function loadConfiguredTeamCertificate(
   identityHome: IdentityHomeSelection,
   activeTeam: string,
   certPath: string,
-): Promise<TeamCertificate> {
+): Promise<{ certificate: TeamCertificate; path: string }> {
   const path = identityHome.external
     ? resolveExternalCertificatePath(identityHome.root, certPath)
     : join(identityHome.root, certPath);
   try {
-    return await loadTeamCertificate(path);
+    return { certificate: await loadTeamCertificate(path, true), path };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
@@ -293,7 +307,7 @@ async function loadConfiguredTeamCertificate(
   }
 }
 
-async function loadActiveTeamCertificate(identityHome: IdentityHomeSelection, activeTeam: string): Promise<TeamCertificate> {
+async function loadActiveTeamCertificate(identityHome: IdentityHomeSelection, activeTeam: string): Promise<{ certificate: TeamCertificate; path: string }> {
   const certsDir = join(identityHome.root, "team-certs");
   if (identityHome.external) preflightDirectory(certsDir, "team certificate directory");
   let files: string[];
@@ -311,9 +325,9 @@ async function loadActiveTeamCertificate(identityHome: IdentityHomeSelection, ac
     if (!file.endsWith(".pem")) continue;
     const path = join(certsDir, file);
     if (identityHome.external) preflightFile(path, "team certificate");
-    const cert = await loadTeamCertificate(path);
+    const cert = await loadTeamCertificate(path, true);
     if ((cert.team_id || "").trim() === activeTeam) {
-      return cert;
+      return { certificate: cert, path };
     }
   }
   throw new Error(`No team certificate found for active team ${activeTeam} in ${certsDir}`);

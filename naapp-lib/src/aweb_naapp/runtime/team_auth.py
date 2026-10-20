@@ -24,7 +24,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
@@ -32,6 +32,7 @@ from urllib.parse import quote
 
 import httpx
 from awid.did import public_key_from_did, validate_stable_id
+from awid.certificates import CertificateValidationError, validate_certificate_lifetime
 from awid.log import canonical_server_origin
 from awid.signing import (
     VerifyResult,
@@ -93,6 +94,7 @@ class CachedTeamFacts:
     published_certificate_ids: frozenset[str]
     revoked_certificate_ids: frozenset[str]
     expires_at: float
+    replacement_ids: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -250,7 +252,7 @@ class AWIDTeamCache:
             async with self._client() as client:
                 response = await client.get(
                     f"{self.registry_url}/v1/namespaces/{quote(domain, safe='')}/teams/"
-                    f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status"
+                    f"{quote(team_name, safe='')}/certificates/{quote(certificate_id, safe='')}/status?include_replacement=true"
                 )
                 if response.status_code == 404:
                     raise HTTPException(status_code=401, detail="Unknown AWID certificate")
@@ -258,7 +260,8 @@ class AWIDTeamCache:
                 payload = response.json()
             if (
                 not isinstance(payload, dict)
-                or set(payload) != {"team_id", "team_did_key", "status", "revoked_at"}
+                or not {"team_id", "team_did_key", "status", "revoked_at"} <= set(payload)
+                or set(payload) - {"team_id", "team_did_key", "status", "revoked_at", "replaced_by_certificate_id"}
                 or payload["team_id"] != team_id
                 or payload["status"] not in ("active", "revoked")
                 or not isinstance(payload["team_did_key"], str)
@@ -289,6 +292,7 @@ class AWIDTeamCache:
             published_certificate_ids=frozenset({certificate_id}),
             revoked_certificate_ids=revoked,
             expires_at=now + self.ttl_seconds,
+            replacement_ids={certificate_id: payload['replaced_by_certificate_id']} if payload.get('replaced_by_certificate_id') else {},
         )
         self._certificate_cache[cache_key] = facts
         return facts
@@ -559,8 +563,15 @@ async def authenticate_request(
     if certificate_id not in facts.published_certificate_ids:
         raise HTTPException(status_code=401, detail="Unknown AWID certificate")
     if certificate_id in facts.revoked_certificate_ids:
+        if replacement_id := facts.replacement_ids.get(certificate_id):
+            raise HTTPException(status_code=401, detail={'code': 'certificate_replaced', 'replacement_certificate_id': replacement_id})
         raise HTTPException(status_code=401, detail="Team certificate has been revoked")
     _verify_certificate_signature(cert, facts.team_did_key)
+
+    try:
+        validate_certificate_lifetime(cert, now=now())
+    except CertificateValidationError as exc:
+        raise HTTPException(status_code=401, detail={"code": exc.code, "message": str(exc)}) from exc
 
     did_aw = str(cert.get("member_did_aw") or "").strip() or None
     did_aw_registry_verified = did_aw is not None and await _did_aw_registry_verified(

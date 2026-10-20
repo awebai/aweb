@@ -258,6 +258,8 @@ type Client struct {
 	signingKey              ed25519.PrivateKey // nil for legacy/custodial
 	did                     string             // empty for legacy/custodial
 	teamCertHeader          string             // base64-encoded team certificate for X-AWID-Team-Certificate
+	certificateMu           sync.RWMutex
+	certificateRefresher    func(context.Context, string) (*TeamCertificate, ed25519.PublicKey, error)
 	teamID                  string             // team identifier from certificate, used in auth signature
 	grantID                 string             // identity-grant id; non-empty selects grant auth with the session signing key
 	disableMessageSigning   bool               // true for grant auth: the session key may sign requests, never root message envelopes
@@ -474,7 +476,7 @@ func (c *Client) signedPayloadFrom(identityTarget, preferAlias bool) string {
 		return from
 	}
 	if preferAlias {
-		if c.teamCertHeader != "" {
+		if c.HasTeamCertificateAuth() {
 			if alias := c.certAlias; alias != "" {
 				return alias
 			}
@@ -520,7 +522,12 @@ func (c *Client) Resolver() IdentityResolver { return c.resolver }
 // team certificate — the credential TeamRosterResolver requires for
 // certificate-authenticated roster reads.
 func (c *Client) HasTeamCertificateAuth() bool {
-	return c != nil && strings.TrimSpace(c.teamCertHeader) != "" && len(c.signingKey) != 0
+	if c == nil {
+		return false
+	}
+	c.certificateMu.RLock()
+	defer c.certificateMu.RUnlock()
+	return strings.TrimSpace(c.teamCertHeader) != "" && len(c.signingKey) != 0
 }
 
 func (c *Client) custodyAudience(ctx context.Context) (string, error) {
@@ -1418,6 +1425,7 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 		return req, nil
 	}
 
+	certificateRetried := false
 	for attempt := 0; ; attempt++ {
 		req, err := buildRequest()
 		if err != nil {
@@ -1434,6 +1442,16 @@ func (c *Client) DoRawWithHeaders(ctx context.Context, method, path, accept stri
 				continue
 			}
 			return nil, decorated
+		}
+		if !certificateRetried && resp.StatusCode == http.StatusUnauthorized {
+			recovered, recoverErr := c.recoverReplacedCertificate(ctx, resp)
+			if recoverErr != nil {
+				return nil, recoverErr
+			}
+			if recovered {
+				certificateRetried = true
+				continue
+			}
 		}
 		if resp.Request == nil && isAttachmentFetchPath(req.URL.Path) {
 			resp.Request = req
@@ -1731,7 +1749,10 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 		return nil
 	}
 	claim, value := "did_aw", c.stableID
-	if c.teamCertHeader != "" {
+	c.certificateMu.RLock()
+	certificateHeader := c.teamCertHeader
+	c.certificateMu.RUnlock()
+	if certificateHeader != "" {
 		claim, value = "team_id", c.teamID
 	}
 	didKey, signature, canonical, err := SignRequestCredential(c.signingKey, req.Method, req.URL, claim, value, timestamp, body, nil)
@@ -1741,8 +1762,8 @@ func (c *Client) signRequest(req *http.Request, body []byte) error {
 	req.Header.Set("Authorization", fmt.Sprintf("DIDKey %s %s", didKey, signature))
 	req.Header.Set("X-AWEB-Timestamp", timestamp)
 	req.Header.Set("X-AWEB-Signed-Payload", base64.RawURLEncoding.EncodeToString([]byte(canonical)))
-	if c.teamCertHeader != "" {
-		req.Header.Set("X-AWID-Team-Certificate", c.teamCertHeader)
+	if certificateHeader != "" {
+		req.Header.Set("X-AWID-Team-Certificate", certificateHeader)
 	} else if c.stableID != "" {
 		req.Header.Set("X-AWEB-DID-AW", c.stableID)
 	}

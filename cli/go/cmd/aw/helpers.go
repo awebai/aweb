@@ -743,7 +743,62 @@ func resolveCertificateClient(sel *awconfig.Selection, baseURL string) (*aweb.Cl
 	if err != nil {
 		return nil, fmt.Errorf("team certificate found but signing key missing: %w", err)
 	}
-	return aweb.NewWithCertificate(baseURL, signingKey, cert)
+	client, err := aweb.NewWithCertificate(baseURL, signingKey, cert)
+	if err != nil {
+		return nil, err
+	}
+	refresh := func(ctx context.Context, id string) (*awid.TeamCertificate, ed25519.PublicKey, error) {
+		registry, err := newConfiguredRegistryClient(nil, baseURL)
+		if err != nil {
+			return nil, nil, err
+		}
+		domain, name, err := awid.ParseTeamID(cert.Team)
+		if err != nil {
+			return nil, nil, err
+		}
+		registryURL := firstNonEmpty(sel.RegistryURL, registry.DefaultRegistryURL)
+		if id == "" {
+			ref, err := registry.ResolveTeamMember(ctx, registryURL, domain, name, cert.Alias, signingKey)
+			if err != nil {
+				return nil, nil, err
+			}
+			id = ref.CertificateID
+		}
+		fresh, err := registry.FetchCurrentCertificate(ctx, registryURL, domain, name, id, signingKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		if fresh.Team != cert.Team || fresh.MemberDIDKey != cert.MemberDIDKey || fresh.Alias != cert.Alias || fresh.IdentityScope != cert.IdentityScope || fresh.MemberDIDAW != cert.MemberDIDAW || fresh.MemberAddress != cert.MemberAddress {
+			return nil, nil, fmt.Errorf("replacement certificate changes membership")
+		}
+		key, err := awid.ExtractPublicKey(fresh.TeamDIDKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		if err := awid.SaveTeamCertificate(certPath, fresh); err != nil {
+			return nil, nil, err
+		}
+		return fresh, key, nil
+	}
+	client.SetCertificateRefresher(refresh)
+	// Only finite credentials cause proactive registry reads. A no-expiry team
+	// continues to work offline from its existing certificate as before.
+	if cert.ExpiresAt != "" {
+		issued, issuedErr := time.Parse(time.RFC3339Nano, cert.IssuedAt)
+		expires, expiresErr := time.Parse(time.RFC3339Nano, cert.ExpiresAt)
+		if issuedErr == nil && expiresErr == nil && !time.Now().Before(expires.Add(-expires.Sub(issued)/3)) {
+			fresh, _, refreshErr := refresh(context.Background(), "")
+			if refreshErr != nil {
+				return nil, refreshErr
+			}
+			client, err = aweb.NewWithCertificate(baseURL, signingKey, fresh)
+			if err != nil {
+				return nil, err
+			}
+			client.SetCertificateRefresher(refresh)
+		}
+	}
+	return client, nil
 }
 
 func configureResolvedClient(c *aweb.Client, sel *awconfig.Selection, baseURL string) error {

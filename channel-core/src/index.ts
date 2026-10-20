@@ -29,7 +29,7 @@ export {
   type TerminalReadinessState,
   type TerminalSession,
 } from "./terminal.js";
-export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader, type CertificateIdentityScope, type LegacyCertificateLifetime, type TeamCertificate } from "./identity/certificate.js";
+export { certificateIdentityScope, loadTeamCertificate, encodeTeamCertificateHeader, validateCertificateLifetime, verifyTeamCertificate, CertificateValidityError, type CertificateIdentityScope, type LegacyCertificateLifetime, type TeamCertificate } from "./identity/certificate.js";
 export { verifyMessage, verifySignedPayload, type VerificationStatus } from "./identity/signing.js";
 export {
   createLocalAWDecryptProvider,

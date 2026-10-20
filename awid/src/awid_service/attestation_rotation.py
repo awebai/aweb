@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from awid.attestation_records import MEMBER_CUSTODY, MEMBER_PERSON, TEAM_CUSTODIAN, RecordError, verify_record
 from awid.signing import canonical_json_bytes
 from awid.team_server_record import TeamServerRecordError, verify_team_server_record
+from awid.credential_policy import CredentialPolicyError, verify_credential_policy
 
 DEFAULT_ROTATE_MAX_BODY_BYTES = 4 * 1024 * 1024
 MAX_FUTURE_ISSUED_AT = timedelta(minutes=5)
@@ -35,6 +36,7 @@ class ResignedRecords(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     team_server: SignedRecord | None = None
+    team_credential_policy: SignedRecord | None = None
     team_custodians: list[SignedRecord] = Field(default_factory=list)
     member_custody: list[SignedRecord] = Field(default_factory=list)
     member_person: list[SignedRecord] = Field(default_factory=list)
@@ -130,6 +132,21 @@ async def apply_resigned_records(
     missing: dict[str, Any] = {"team_server": server_missing}
     extra: dict[str, Any] = {"team_server": server_extra}
     changed: dict[str, Any] = {"team_server": server_changed}
+    policy = await tx.fetch_one('SELECT record_json,issued_at FROM {{tables.team_credential_policies}} WHERE team_uuid=$1 FOR UPDATE', team_uuid)
+    policy_entry = resigned.team_credential_policy
+    missing['team_credential_policy'] = policy is not None and policy_entry is None
+    extra['team_credential_policy'] = policy is None and policy_entry is not None
+    changed['team_credential_policy'] = False
+    if policy_entry is not None:
+        try:
+            verify_credential_policy(policy_entry.record, policy_entry.signature, team_id=team_id, team_did_key=new_team_did_key)
+        except CredentialPolicyError as exc:
+            raise HTTPException(status_code=422, detail={'code': 'policy_invalid', 'message': str(exc)}) from exc
+        if policy is not None:
+            changed['team_credential_policy'] = (
+                _comparable(policy_entry.record) != _comparable(json.loads(policy['record_json']))
+                or issued_at_of(policy_entry.record) <= policy['issued_at']
+            )
     updates: list[tuple[str, str, dict, str]] = []
     for kind, (_, table, key_field) in _KINDS.items():
         rows = await tx.fetch_all(
@@ -168,6 +185,11 @@ async def apply_resigned_records(
                 "message": "resigned_records must re-sign exactly every stored record",
                 "missing": missing, "extra": extra, "changed": changed,
             },
+        )
+    if policy_entry is not None:
+        await tx.execute(
+            'UPDATE {{tables.team_credential_policies}} SET record_json=$2,signature=$3,team_did_key=$4,issued_at=$5,updated_at=NOW() WHERE team_uuid=$1',
+            team_uuid, canonical_json_bytes(policy_entry.record).decode(), policy_entry.signature, new_team_did_key, issued_at_of(policy_entry.record),
         )
     if server_update is not None:
         record, signature, server_url, issued_at = server_update

@@ -140,7 +140,7 @@ func (c *Client) EventStream(ctx context.Context, deadline time.Time) (*AgentEve
 		return nil, err
 	}
 
-	resp, err := DoNoRedirect(c.sseClient, req)
+	resp, err := c.sendSSEWithCertificateRecovery(req)
 	if err != nil {
 		return nil, err
 	}

@@ -957,7 +957,7 @@ func (c *Client) ChatStream(ctx context.Context, sessionID string, deadline time
 		return nil, err
 	}
 
-	resp, err := DoNoRedirect(c.sseClient, req)
+	resp, err := c.sendSSEWithCertificateRecovery(req)
 	if err != nil {
 		return nil, err
 	}

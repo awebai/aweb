@@ -290,6 +290,9 @@ class RegistryClient:
     domain_registry_resolver: DomainRegistryResolver | None = None
     service_token: str | None = field(default=None, repr=False, compare=False)
     _http_client: httpx.AsyncClient = field(init=False, repr=False, compare=False)
+    _credential_policy_cache: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+    _credential_policy_locks: dict = field(default_factory=dict, init=False, repr=False, compare=False)
+    _certificate_status_cache: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "service_token", normalize_service_token(self.service_token))
@@ -426,6 +429,118 @@ class RegistryClient:
 
     async def health(self) -> dict[str, Any]:
         return await self._request_json("GET", "/health")
+
+    async def get_team_credential_policy(self, domain: str, name: str) -> dict[str, Any] | None:
+        """Verify the public signed policy, caching by origin/team for at most 60s.
+
+        Expired values are never served on a failed refresh. Absence and a
+        recognized pre-policy registry are distinct from invalid authority.
+        """
+        from awid.credential_policy import verify_credential_policy
+        import re
+        origin = await self._registry_url_for_domain(domain)
+        cache_key = (origin, domain, name)
+        async with self._credential_policy_locks.setdefault(cache_key, asyncio.Lock()):
+            cached = self._credential_policy_cache.get(cache_key)
+            if cached is not None and time.monotonic() - cached[0] < 60:
+                return None if cached[1] is None else dict(cached[1])
+            started = time.monotonic()
+            try:
+                data = await self._request_json('GET', f'/v1/namespaces/{domain}/teams/{name}/credential-lifetimes', registry_url=origin)
+            except RegistryError as exc:
+                if exc.status_code != 404:
+                    raise
+                # Old registries never had a policy-setting capability. Do not
+                # treat a generic 404 from a current registry as absent policy.
+                info = await self._request_json('GET', '/', registry_url=origin)
+                match = re.fullmatch(r'0\.5\.(\d+)', str(info.get('version', '')))
+                if info.get('service') != 'awid' or not match or int(match[1]) >= 31:
+                    raise
+                self._credential_policy_cache[cache_key] = (started, None)
+                return None
+            if not isinstance(data, dict) or data.get('team_id') != f'{name}:{domain}' or not isinstance(data.get('team_did_key'), str):
+                raise ValueError('Malformed credential policy authority response')
+            if data.get('record') is None:
+                if 'record' not in data or data.get('signature') is not None:
+                    raise ValueError('Malformed absent credential policy')
+                value = None
+            else:
+                value = verify_credential_policy(data['record'], data.get('signature'), team_id=f'{name}:{domain}', team_did_key=data['team_did_key'])
+            self._credential_policy_cache[cache_key] = (started, value)
+            return None if value is None else dict(value)
+
+    async def set_team_credential_policy(self, domain: str, name: str, record: dict[str, Any], signature: str, *,
+                                         signing_key: bytes | None = None, controller_did_key: str | None = None,
+                                         signer: ControllerSigner | None = None) -> dict[str, Any]:
+        """Publish a signed record using the public covering controller seam."""
+        origin = await self._registry_url_for_domain(domain)
+        result = await self.controller_request(
+            'POST', f'/v1/namespaces/{domain}/teams/{name}/credential-lifetimes',
+            claims={'operation': 'set_credential_lifetimes', 'domain': domain, 'team_name': name},
+            body={'record': record, 'signature': signature}, registry_url=origin,
+            signing_key=signing_key, controller_did_key=controller_did_key, signer=signer,
+        )
+        self._credential_policy_cache.pop((origin, domain, name), None)
+        return result
+
+    async def get_team_certificate_status(self, domain: str, name: str, certificate_id: str) -> dict[str, Any]:
+        """Public current-key facts, with replacement links, for at most 60s."""
+        origin = await self._registry_url_for_domain(domain)
+        key = (origin, domain, name, certificate_id)
+        cached = self._certificate_status_cache.get(key)
+        if cached and time.monotonic() - cached[0] < 60:
+            return dict(cached[1])
+        started = time.monotonic()
+        data = await self._request_json('GET', f'/v1/namespaces/{domain}/teams/{name}/certificates/{quote(certificate_id, safe="")}/status?include_replacement=true', registry_url=origin)
+        if not isinstance(data, dict) or data.get('team_id') != f'{name}:{domain}' or data.get('status') not in ('active', 'revoked') or not isinstance(data.get('team_did_key'), str):
+            raise ValueError('Malformed certificate status')
+        from awid.did import public_key_from_did
+        public_key_from_did(data['team_did_key'])
+        replacement = data.get('replaced_by_certificate_id')
+        if replacement is not None and (not isinstance(replacement, str) or not replacement or data['status'] != 'revoked'):
+            raise ValueError('Malformed certificate replacement link')
+        if (data['status'] == 'active' and data.get('revoked_at') is not None) or (data['status'] == 'revoked' and not isinstance(data.get('revoked_at'), str)):
+            raise ValueError('Malformed certificate revocation status')
+        self._certificate_status_cache[key] = (started, dict(data))
+        return dict(data)
+
+    async def rollover_team_certificate(self, domain: str, name: str, old_certificate_id: str, replacement: dict[str, Any], *,
+                                        signing_key: bytes | None = None, controller_did_key: str | None = None,
+                                        signer: ControllerSigner | None = None) -> dict[str, Any]:
+        origin = await self._registry_url_for_domain(domain)
+        new_id = replacement['certificate_id']
+        result = await self.controller_request(
+            'POST', f'/v1/namespaces/{domain}/teams/{name}/certificates/{quote(old_certificate_id, safe="")}/rollover',
+            claims={'operation': 'rollover_certificate', 'domain': domain, 'team_name': name,
+                    'certificate_id': old_certificate_id, 'replacement_certificate_id': new_id},
+            body={'replacement': replacement}, registry_url=origin, signing_key=signing_key,
+            controller_did_key=controller_did_key, signer=signer,
+        )
+        for cert_id in (old_certificate_id, new_id):
+            self._certificate_status_cache.pop((origin, domain, name, cert_id), None)
+        await self.invalidate_team_certificate_cache(domain, name)
+        return result
+
+    async def fetch_team_certificate(self, domain: str, name: str, certificate_id: str, member_signing_key: bytes) -> dict[str, Any]:
+        """Fetch an own-key artifact and verify the current registry team key."""
+        import base64
+        from awid.certificates import validate_certificate_lifetime
+        from awid.did import public_key_from_did
+        from awid.signing import VerifyResult, verify_signature_with_public_key
+        status = await self.get_team_certificate_status(domain, name, certificate_id)
+        if status['status'] != 'active':
+            raise ValueError('Replacement certificate is not active')
+        origin = await self._registry_url_for_domain(domain)
+        path = f'/v1/namespaces/{domain}/teams/{name}/certificates/{quote(certificate_id, safe="")}'
+        data = await self._request_json('GET', path, headers=self._signed_path_headers('GET', path, member_signing_key), registry_url=origin)
+        cert = json_loads(base64.b64decode(data['certificate'], validate=True))
+        if not isinstance(cert, dict) or cert.get('certificate_id') != certificate_id or cert.get('team_id') != f'{name}:{domain}' or cert.get('member_did_key') != _did_key_from_signing_key(member_signing_key) or cert.get('team_did_key') != status['team_did_key']:
+            raise ValueError('Replacement certificate binding mismatch')
+        payload = {key: value for key, value in cert.items() if key != 'signature'}
+        if verify_signature_with_public_key(public_key_from_did(status['team_did_key']), canonical_json_bytes(payload), cert.get('signature')) != VerifyResult.VERIFIED:
+            raise ValueError('Replacement certificate signature invalid')
+        validate_certificate_lifetime(cert)
+        return cert
 
     async def _request_optional_json(
         self,

@@ -17,12 +17,13 @@ from typing import Any, Callable, Optional
 import jwt as pyjwt
 
 from awid.did import public_key_from_did
+from awid.certificates import validate_certificate_lifetime
 from awid.signing import canonical_json_bytes, verify_signature_with_public_key, VerifyResult
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 
 logger = logging.getLogger(__name__)
 
-_CERTIFICATE_VERSION = 1
+_CERTIFICATE_VERSIONS = (1, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +85,10 @@ def parse_and_verify_certificate(
     except Exception:
         raise ValueError("Malformed certificate: invalid base64 or JSON")
 
+    if not isinstance(cert, dict):
+        raise ValueError("Malformed certificate: expected an object")
     version = cert.get("version")
-    if version != _CERTIFICATE_VERSION:
+    if type(version) is not int or version not in _CERTIFICATE_VERSIONS:
         raise ValueError(f"Unsupported certificate version: {version}")
 
     team_id = cert.get("team_id")
@@ -112,6 +115,8 @@ def parse_and_verify_certificate(
     if revocation_checker(team_id, certificate_id):
         raise ValueError(f"Certificate {certificate_id} has been revoked")
 
+    validate_certificate_lifetime(cert)
+
     identity_scope = normalize_identity_scope(cert.get("identity_scope") or cert.get("lifetime"))
     return {
         "team_id": team_id,
@@ -122,6 +127,7 @@ def parse_and_verify_certificate(
         "certificate_id": certificate_id,
         "member_did_aw": cert.get("member_did_aw", ""),
         "member_address": cert.get("member_address", ""),
+        "expires_at": cert.get("expires_at", ""),
     }
 
 

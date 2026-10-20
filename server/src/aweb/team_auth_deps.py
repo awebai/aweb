@@ -32,6 +32,7 @@ from aweb.awid_error_handling import (
 from aweb.config import get_settings, require_registered_certificates
 from aweb.identity_scope import legacy_lifetime_for_scope, normalize_identity_scope
 from aweb.team_auth import parse_and_verify_certificate
+from awid.certificates import CertificateValidationError
 from aweb.team_auth_envelope import team_auth_signature_payload
 
 logger = logging.getLogger(__name__)
@@ -215,11 +216,25 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
 
     # -- Step 5: Check revocation --
     revoked_certs = await _get_revoked_certificates(request, cert_team_id)
+    replacement_id = None
+    cert_id = cert_data.get('certificate_id')
+    if cert_id in revoked_certs:
+        try:
+            domain, name = parse_team_id(cert_team_id)
+            status = await request.app.state.awid_registry_client.get_team_certificate_status(domain, name, cert_id)
+            replacement_id = status.get('replaced_by_certificate_id')
+        except Exception as exc:
+            logger.warning('AWID replacement status unavailable', exc_info=True)
+            raise HTTPException(status_code=503, detail={'code': 'authority_unavailable'}) from exc
 
     def team_key_resolver(_team_id: str) -> str:
         return team_did_key
 
     def revocation_checker(_team_id: str, certificate_id: str) -> bool:
+        if certificate_id in revoked_certs:
+            if replacement_id:
+                raise CertificateValidationError('certificate_replaced', 'Certificate replaced', replacement_id)
+            raise CertificateValidationError('certificate_revoked', 'Certificate revoked')
         return certificate_id in revoked_certs
 
     try:
@@ -229,8 +244,15 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
             team_public_key_resolver=team_key_resolver,
             revocation_checker=revocation_checker,
         )
+    except CertificateValidationError as e:
+        detail = {'code': e.code, 'message': str(e)}
+        if e.replacement_certificate_id:
+            detail['replacement_certificate_id'] = e.replacement_certificate_id
+        raise HTTPException(status_code=401, detail=detail) from e
     except ValueError as e:
         raise HTTPException(status_code=401, detail=str(e))
+
+    request.state.team_certificate_expires_at = cert_info.get('expires_at') or None
 
     # -- Step 5b (staged, default OFF): require registry existence --
     # An unregistered certificate is unrevocable — the revocation set can

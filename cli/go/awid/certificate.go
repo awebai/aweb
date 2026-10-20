@@ -25,10 +25,13 @@ type TeamCertificate struct {
 	Alias         string `json:"alias"`
 	IdentityScope string `json:"identity_scope"`
 	IssuedAt      string `json:"issued_at"`
+	ExpiresAt     string `json:"expires_at,omitempty"`
+	ValidityClass string `json:"validity_class,omitempty"`
 	Signature     string `json:"signature"`
 
 	scopeWireKey   string
 	legacyLifetime string
+	v2WireFields   map[string]json.RawMessage
 }
 
 // TeamCertificateFields are the inputs for signing a certificate.
@@ -39,6 +42,9 @@ type TeamCertificateFields struct {
 	MemberAddress string // optional; from identity.yaml, empty for local
 	Alias         string
 	IdentityScope string
+	Version       int // zero preserves v1 issuance; v2 must be enabled deliberately
+	ValidityClass string
+	ExpiresAt     string
 }
 
 // SignTeamCertificate creates and signs a team membership certificate
@@ -78,7 +84,7 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 	payload := canonicalCertificatePayload(certID, fields.Team, teamDIDKey, fields.MemberDIDKey, memberDIDAW, memberAddress, fields.Alias, identityScope, issuedAt, false)
 	sig := ed25519.Sign(teamKey, []byte(payload))
 
-	return &TeamCertificate{
+	cert := &TeamCertificate{
 		Version:       1,
 		CertificateID: certID,
 		Team:          fields.Team,
@@ -90,12 +96,30 @@ func SignTeamCertificate(teamKey ed25519.PrivateKey, fields TeamCertificateField
 		IdentityScope: identityScope,
 		IssuedAt:      issuedAt,
 		Signature:     base64.RawStdEncoding.EncodeToString(sig),
-	}, nil
+	}
+	if fields.Version == 2 {
+		cert.Version, cert.ValidityClass, cert.ExpiresAt = 2, fields.ValidityClass, fields.ExpiresAt
+		if err := validateCertificateLifetime(cert, time.Now()); err != nil {
+			return nil, err
+		}
+		payload, err := certificateV2Payload(cert)
+		if err != nil {
+			return nil, err
+		}
+		cert.Signature = base64.RawStdEncoding.EncodeToString(ed25519.Sign(teamKey, []byte(payload)))
+	} else if fields.Version != 0 && fields.Version != 1 || fields.ExpiresAt != "" || fields.ValidityClass != "" {
+		return nil, fmt.Errorf("v2 is required for certificate lifetime fields")
+	}
+	return cert, nil
 }
 
 // VerifyTeamCertificate checks the certificate signature against the team's
 // public key. Returns nil if valid, an error describing the failure otherwise.
 func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) error {
+	return verifyTeamCertificateAt(cert, teamPub, time.Now())
+}
+
+func verifyTeamCertificateAt(cert *TeamCertificate, teamPub ed25519.PublicKey, now time.Time) error {
 	if cert == nil {
 		return fmt.Errorf("nil certificate")
 	}
@@ -103,6 +127,9 @@ func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) err
 		return fmt.Errorf("nil team public key")
 	}
 
+	if cert.Version != 1 && cert.Version != 2 {
+		return fmt.Errorf("certificate_malformed: unsupported certificate version %d", cert.Version)
+	}
 	sig, err := base64.RawStdEncoding.DecodeString(cert.Signature)
 	if err != nil {
 		return fmt.Errorf("decode certificate signature: %w", err)
@@ -127,6 +154,19 @@ func VerifyTeamCertificate(cert *TeamCertificate, teamPub ed25519.PublicKey) err
 		false,
 	)
 
+	if cert.Version == 2 {
+		payload, err = certificateV2Payload(cert)
+		if err != nil {
+			return err
+		}
+		if !ed25519.Verify(teamPub, []byte(payload), sig) {
+			return fmt.Errorf("certificate signature verification failed")
+		}
+		return validateCertificateLifetime(cert, now)
+	}
+	if cert.ExpiresAt != "" || cert.ValidityClass != "" {
+		return fmt.Errorf("certificate_malformed: lifetime fields require version 2")
+	}
 	if !ed25519.Verify(teamPub, []byte(payload), sig) {
 		legacyPayload := canonicalCertificatePayload(
 			cert.CertificateID,
@@ -197,6 +237,11 @@ func DecodeTeamCertificateHeader(encoded string) (*TeamCertificate, error) {
 }
 
 func (c TeamCertificate) MarshalJSON() ([]byte, error) {
+	if c.Version == 2 {
+		payload := certificateV2Fields(&c)
+		payload["signature"] = c.Signature
+		return json.Marshal(payload)
+	}
 	type canonicalWire struct {
 		Version       int    `json:"version"`
 		CertificateID string `json:"certificate_id"`
@@ -208,6 +253,8 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 		Alias         string `json:"alias"`
 		IdentityScope string `json:"identity_scope"`
 		IssuedAt      string `json:"issued_at"`
+		ExpiresAt     string `json:"expires_at,omitempty"`
+		ValidityClass string `json:"validity_class,omitempty"`
 		Signature     string `json:"signature"`
 	}
 	identityScope := NormalizeIdentityScope(c.IdentityScope)
@@ -223,6 +270,8 @@ func (c TeamCertificate) MarshalJSON() ([]byte, error) {
 			Alias         string `json:"alias"`
 			Lifetime      string `json:"lifetime"`
 			IssuedAt      string `json:"issued_at"`
+			ExpiresAt     string `json:"expires_at,omitempty"`
+			ValidityClass string `json:"validity_class,omitempty"`
 			Signature     string `json:"signature"`
 		}
 		return json.Marshal(legacyWire{
@@ -267,7 +316,16 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 		IdentityScope string `json:"identity_scope"`
 		Lifetime      string `json:"lifetime"`
 		IssuedAt      string `json:"issued_at"`
+		ExpiresAt     string `json:"expires_at,omitempty"`
+		ValidityClass string `json:"validity_class,omitempty"`
 		Signature     string `json:"signature"`
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if value, ok := raw["expires_at"]; ok && (string(value) == "null" || string(value) == `""`) {
+		return fmt.Errorf("certificate_malformed: expires_at must be a timestamp when present")
 	}
 	var w wire
 	if err := json.Unmarshal(data, &w); err != nil {
@@ -290,9 +348,14 @@ func (c *TeamCertificate) UnmarshalJSON(data []byte) error {
 		Alias:          w.Alias,
 		IdentityScope:  identityScope,
 		IssuedAt:       w.IssuedAt,
+		ExpiresAt:      w.ExpiresAt,
+		ValidityClass:  w.ValidityClass,
 		Signature:      w.Signature,
 		scopeWireKey:   scopeWireKey,
 		legacyLifetime: strings.TrimSpace(w.Lifetime),
+	}
+	if w.Version == 2 {
+		c.v2WireFields = raw
 	}
 	return nil
 }
@@ -364,4 +427,71 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// v2 uses an independent signed validity class, never the legacy scope field.
+func certificateV2Fields(c *TeamCertificate) map[string]any {
+	fields := map[string]any{
+		"version": c.Version, "certificate_id": c.CertificateID, "team_id": c.Team,
+		"team_did_key": c.TeamDIDKey, "member_did_key": c.MemberDIDKey,
+		"alias": c.Alias, "identity_scope": c.IdentityScope, "issued_at": c.IssuedAt,
+		"validity_class": c.ValidityClass,
+	}
+	if c.MemberDIDAW != "" {
+		fields["member_did_aw"] = c.MemberDIDAW
+	}
+	if c.MemberAddress != "" {
+		fields["member_address"] = c.MemberAddress
+	}
+	if c.ExpiresAt != "" {
+		fields["expires_at"] = c.ExpiresAt
+	}
+	// Preserve signed extension fields and explicit empty optional fields when
+	// transporting a received artifact. Changes to known fields still change
+	// the reconstructed payload, so callers cannot mutate a verified binding.
+	for name, raw := range c.v2WireFields {
+		if name == "signature" {
+			continue
+		}
+		if _, known := fields[name]; !known {
+			fields[name] = raw
+		}
+	}
+	for name, value := range map[string]string{
+		"member_did_aw": c.MemberDIDAW, "member_address": c.MemberAddress, "expires_at": c.ExpiresAt,
+	} {
+		if raw, present := c.v2WireFields[name]; present {
+			var original string
+			_ = json.Unmarshal(raw, &original)
+			if original != value {
+				fields[name] = value
+			}
+		}
+	}
+	return fields
+}
+
+func certificateV2Payload(c *TeamCertificate) (string, error) {
+	return CanonicalJSONValue(certificateV2Fields(c))
+}
+
+func validateCertificateLifetime(c *TeamCertificate, now time.Time) error {
+	if c.ValidityClass != "member" && c.ValidityClass != "ephemeral" {
+		return fmt.Errorf("certificate_malformed: invalid validity_class")
+	}
+	issued, err := time.Parse(time.RFC3339Nano, c.IssuedAt)
+	if err != nil {
+		return fmt.Errorf("certificate_malformed: invalid issued_at")
+	}
+	if c.ExpiresAt == "" {
+		return nil
+	}
+	expires, err := time.Parse(time.RFC3339Nano, c.ExpiresAt)
+	if err != nil || !expires.After(issued) {
+		return fmt.Errorf("certificate_malformed: invalid expires_at")
+	}
+	if !expires.After(now) {
+		return fmt.Errorf("certificate_expired: team certificate expired")
+	}
+	return nil
 }

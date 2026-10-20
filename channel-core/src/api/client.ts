@@ -48,6 +48,7 @@ export interface APIClientAuth {
   teamCertificateHeader: string;
   authMode?: "team" | "grant";
   grantID?: string;
+  refreshCertificate?: (id: string) => Promise<{ certificate: import("../identity/certificate.js").TeamCertificate; teamDIDKey: string }>;
 }
 
 export class APIClient {
@@ -105,6 +106,7 @@ export class APIClient {
     path: string,
     body?: unknown,
     noCache: boolean = false,
+    certificateRetried = false,
   ): Promise<Response> {
     const url = this.baseURL + path;
     const bodyText = body === undefined ? "" : JSON.stringify(body);
@@ -128,6 +130,7 @@ export class APIClient {
     const resp = await fetch(url, init);
     if (!resp.ok) {
       const text = await readSafeErrorExcerpt(resp).catch(() => "");
+      if (!certificateRetried && await this.recoverCertificate(resp.status, text)) return this.send(method, path, body, noCache, true);
       throw new APIError(resp.status, text, retryAfterSeconds(resp.headers.get("Retry-After")));
     }
 
@@ -135,7 +138,7 @@ export class APIClient {
   }
 
   /** Open an SSE stream. Returns the raw Response for streaming. */
-  async openSSE(path: string, signal?: AbortSignal): Promise<Response> {
+  async openSSE(path: string, signal?: AbortSignal, certificateRetried = false): Promise<Response> {
     const url = this.baseURL + path;
     const resp = await fetch(url, {
       signal,
@@ -149,6 +152,7 @@ export class APIClient {
 
     if (!resp.ok) {
       const text = await readSafeErrorExcerpt(resp).catch(() => "");
+      if (!certificateRetried && await this.recoverCertificate(resp.status, text)) return this.openSSE(path, signal, true);
       throw new APIError(resp.status, text);
     }
 
@@ -199,6 +203,21 @@ export class APIClient {
       headers["X-AWEB-DID-AW"] = this.auth.stableID;
     }
     return headers;
+  }
+
+  private async recoverCertificate(status: number, text: string): Promise<boolean> {
+    if (status !== 401 || this.auth.authMode === "grant" || !this.auth.refreshCertificate) return false;
+    let detail: { code?: string; replacement_certificate_id?: string };
+    try { detail = JSON.parse(text).detail; } catch { return false; }
+    if (detail?.code !== "certificate_replaced" || typeof detail.replacement_certificate_id !== "string" || !detail.replacement_certificate_id) return false;
+    const old = JSON.parse(Buffer.from(this.auth.teamCertificateHeader, "base64").toString("utf8"));
+    const fresh = await this.auth.refreshCertificate(detail.replacement_certificate_id);
+    const { verifyTeamCertificate, encodeTeamCertificateHeader, certificateIdentityScope } = await import("../identity/certificate.js");
+    const cert = fresh.certificate;
+    if (cert.certificate_id !== detail.replacement_certificate_id || cert.certificate_id === old.certificate_id || cert.team_id !== this.auth.teamID || cert.member_did_key !== this.auth.did || cert.alias !== old.alias || certificateIdentityScope(cert) !== certificateIdentityScope(old) || (cert.member_did_aw || "") !== (old.member_did_aw || "") || (cert.member_address || "") !== (old.member_address || "")) throw new Error("Replacement certificate binding mismatch");
+    await verifyTeamCertificate(cert, fresh.teamDIDKey);
+    this.auth.teamCertificateHeader = encodeTeamCertificateHeader(cert);
+    return true;
   }
 
   private teamAuthHeaders(bodyText: string): Record<string, string> {

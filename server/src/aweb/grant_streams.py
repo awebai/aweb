@@ -62,7 +62,7 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.issued_at, g.expires_at, g.revoked_at,
-               g.issued_by_certificate_id,
+               g.issued_by_certificate_id, g.issued_by_certificate_expires_at,
                a.agent_id, a.status, a.deleted_at
         FROM {{tables.identity_session_grants}} AS g
         JOIN {{tables.agents}} AS a ON a.agent_id = g.subject_agent_id
@@ -88,6 +88,14 @@ async def grant_terminal_reason(request: Request, db, identity: TeamIdentity) ->
             registered_certs = await _get_registered_certificates(request, row["team_id"])
             if issuing_certificate_id not in registered_certs:
                 return "grant_issuer_revoked"
+    from aweb.credential_policy import team_credential_policy
+    parent_expiry = row.get('issued_by_certificate_expires_at')
+    if parent_expiry is not None and parent_expiry <= now:
+        return 'grant_expired'
+    policy = await team_credential_policy(request, row['team_id'])
+    maximum = policy['identity_grant'] if policy else None
+    if maximum is not None and (never_expires(row.get('issued_at'), row['expires_at']) or (row['expires_at'] - row['issued_at']).total_seconds() > maximum):
+        return 'grant_expired'
     return None
 
 

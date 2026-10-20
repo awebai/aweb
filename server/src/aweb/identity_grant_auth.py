@@ -20,6 +20,7 @@ from awid.log import canonical_server_origin
 from awid.signing import canonical_json_bytes, verify_did_key_signature
 
 from aweb.grant_expiry import never_expires
+from aweb.credential_policy import team_credential_policy
 from aweb.auth_context import GRANT_SCOPE_ANY, GRANT_SCOPES, GrantContext
 from aweb.config import get_settings, require_registered_certificates
 from aweb.identity_auth_deps import MessagingAuth
@@ -149,7 +150,7 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
     row = await aweb_db.fetch_one(
         """
         SELECT g.team_id, g.grant_did_key, g.scopes, g.issued_at, g.expires_at, g.revoked_at,
-               g.issued_by_certificate_id,
+               g.issued_by_certificate_id, g.issued_by_certificate_expires_at,
                a.did_key AS subject_did_key, a.did_aw, a.address, a.alias,
                a.agent_id, a.identity_scope, a.status, a.deleted_at
         FROM {{tables.identity_session_grants}} AS g
@@ -162,8 +163,6 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
     if row["revoked_at"] is not None:
         raise HTTPException(status_code=403, detail="grant revoked")
-    if not never_expires(row.get("issued_at"), row["expires_at"]) and row["expires_at"] <= datetime.now(timezone.utc):
-        raise HTTPException(status_code=403, detail="grant expired")
     if row["status"] != "active" or row["deleted_at"] is not None:
         raise HTTPException(status_code=403, detail=_GENERIC_DETAIL)
     # A grant is a delegation from a membership; revoking the issuing
@@ -187,6 +186,19 @@ async def _verify_identity_grant_row(request: Request, db, *, required_scope=_US
                 raise HTTPException(
                     status_code=403, detail="grant issuing certificate not registered"
                 )
+
+    now = datetime.now(timezone.utc)
+    parent_expiry = row.get('issued_by_certificate_expires_at')
+    if (parent_expiry is not None and parent_expiry <= now) or (
+        not never_expires(row.get('issued_at'), row['expires_at']) and row['expires_at'] <= now
+    ):
+        raise HTTPException(status_code=401, detail={'code': 'grant_expired', 'message': 'Grant expired'})
+    policy = await team_credential_policy(request, row['team_id'])
+    maximum = policy['identity_grant'] if policy else None
+    if maximum is not None and (never_expires(row.get('issued_at'), row['expires_at']) or (row['expires_at'] - row['issued_at']).total_seconds() > maximum):
+        raise HTTPException(status_code=401, detail={'code': 'grant_lifetime_exceeded', 'message': 'Grant exceeds current team lifetime policy'})
+    if parent_expiry is not None and row['expires_at'] > parent_expiry:
+        raise HTTPException(status_code=401, detail={'code': 'grant_lifetime_exceeded', 'message': 'Grant exceeds issuing certificate expiry'})
 
     required = (
         required_grant_scope(request.method, _app_relative_path(request))
