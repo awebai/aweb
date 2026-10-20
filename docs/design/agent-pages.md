@@ -190,7 +190,9 @@ Ordinary page/tool operations do not gain a new custody-proof prerequisite.
 
 ## 2. Portable page format
 
-Draft artifacts: [JSON Schema](agent-pages/page.schema.json),
+The frozen contract is [`aweb.page/1`](../page-format.md), with its schema,
+vectors and reference validator; where it and this section differ, the
+contract governs. Draft artifacts: [JSON Schema](agent-pages/page.schema.json),
 [wire sketches](agent-pages/contracts.md), and [examples](agent-pages/examples/).
 They are review material under `docs/design/`,
 not frozen conformance vectors. C1 promotes reviewed contracts next to
@@ -498,7 +500,7 @@ source-system version and expiry. Re-editing a proposed price/reply produces a
 new proposal hash and requires a fresh answer.
 
 A `decision_card` may instead declare `bundle: true` and reference a bundle
-record. The bundle record's value is an ordered list of items, each
+record. The bundle record's value is `{"items": [...]}`, an ordered list of items, each
 `{record_id, record_rev, proposal_sha256}`, so every item binds an exact record
 revision and that proposal's own digest. The card's `proposal_sha256` is then
 SHA-256 over UTF-8 `aweb.page-bundle/1\n` (a literal newline) followed by the

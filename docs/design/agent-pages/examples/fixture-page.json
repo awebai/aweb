@@ -87,7 +87,8 @@
         "properties": {
           "record_id": {
             "type": "string",
-            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            "minLength": 1,
+            "maxLength": 128
           },
           "checked": {
             "type": "boolean"
@@ -111,7 +112,8 @@
         "properties": {
           "record_id": {
             "type": "string",
-            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+            "minLength": 1,
+            "maxLength": 128
           }
         },
         "required": [
