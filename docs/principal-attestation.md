@@ -227,9 +227,10 @@ outage apart.
 ## 5. Team-key rotation
 
 A team-key rotation invalidates every record signed with the old key: the
-team's custodian records, one member-custody record per custodial
-certificate, and the member-person records of [member-person.md](member-person.md).
-The batch grows with the number of custodial members.
+team's `aweb.team-server/1` record ([app-team-server-api.md](design/app-team-server-api.md)),
+its custodian records, one member-custody record per custodial certificate,
+and the member-person records of [member-person.md](member-person.md). The
+batch grows with the number of custodial members.
 
 **Atomic path.** The rotate request
 (`POST /v1/namespaces/{domain}/teams/{name}/rotate`, namespace-controller
@@ -240,6 +241,7 @@ authority) takes an optional `resigned_records` object alongside
 {
   "new_team_did_key": "did:key:z6Mk…",
   "resigned_records": {
+    "team_server":     {"record": {…}, "signature": "…"},
     "team_custodians": [{"record": {…}, "signature": "…"}],
     "member_custody":  [{"record": {…}, "signature": "…"}],
     "member_person":   [{"record": {…}, "signature": "…"}]
@@ -252,23 +254,40 @@ authority) takes an optional `resigned_records` object alongside
 - Each re-signed record carries the same fields as the record it replaces,
   apart from `team_did_key` and `issued_at`. `issued_at` is newer than the
   stored one.
-- The set is complete: exactly one re-signed record for every record the team
-  has stored, of each kind. A missing, extra, duplicated or changed record
-  refuses the whole request with `409`, and nothing changes.
+- **The set is complete.** There is exactly one re-signed record for every
+  record the team has stored, of each kind, and `team_server` is required
+  whenever the team has a stored server record. A missing, extra, duplicated
+  or changed record refuses the whole request with `409`, and nothing changes.
+  The `409` body names the offending keys per kind, as
+  `{"missing": {…}, "extra": {…}, "changed": {…}}`: `team_server` as a boolean,
+  `custodian_id` for custodian records, and `certificate_id` for custody and
+  person records. The request is already authenticated by the namespace
+  controller, so this exposes nothing new.
 - AWID swaps the team key and replaces every listed record in one
   transaction. Verifiers therefore never see the new key next to an old-key
   record.
-- A team with no stored records sends no `resigned_records`. The request size
-  is bounded by AWID's configured body limit.
+- A team with no stored records sends no `resigned_records`.
+- **Size.** The limit is deploy-configurable. Its default accepts one server
+  record, up to two custodian records, 1,000 member-custody records and 1,000
+  member-person records per team, which covers 1,000 custodial certificates.
+  The default assumes each record with its signature is at most 2 KiB, so the
+  route's default body limit is 4 MiB. A batch over the configured limit is
+  refused with `413`, which is distinct from `409`. Chunked rotation is future
+  work.
+- The controller builds the set from its own records of what it published.
+  The `409` names anything it missed, so a failed rotation is diagnosable.
 
-**Requirement.** Hosted rotation must use the atomic path (HO2,
-aweb-acgg.21). `aw`'s rotate flow uses it whenever the team has records.
+**Requirement.** Any hosted team-key rotation must use the atomic path (HO2);
+building hosted rotation is not part of L1. `aw`'s rotate flow uses the atomic
+path whenever the team has stored records, including the team-server record
+(G1-a2).
 
 **Non-atomic path.** A rotation without `resigned_records`, as released
 clients send it, still succeeds, because released clients are a permanent
 constraint. The controller then re-publishes each record with the new key.
-In the window between, verifiers refuse with `attestation_record_stale`. That
-fails closed. A stale record during a rotation is never read as forgery.
+In the window between, verifiers refuse with `attestation_record_stale`, and
+team-server discovery refuses with `team_server_key_mismatch`. That fails
+closed. A stale record during a rotation is never read as forgery.
 
 ## What this does not do
 
