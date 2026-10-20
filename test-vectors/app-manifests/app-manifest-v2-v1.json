@@ -4943,7 +4943,7 @@
           "value": [
             {
               "name": "fixture.prices",
-              "label": "Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de p"
+              "label": "Approve price changes — café ✓ Approve price changes — café ✓ Approve price changes — café ✓ Approve price changes — café ✓ Appr"
             }
           ]
         }
@@ -5052,7 +5052,7 @@
           "roles": [
             {
               "name": "fixture.prices",
-              "label": "Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de p",
+              "label": "Approve price changes — café ✓ Approve price changes — café ✓ Approve price changes — café ✓ Approve price changes — café ✓ Appr",
               "description": null
             }
           ]
@@ -5070,8 +5070,8 @@
           "value": [
             {
               "name": "fixture.prices",
-              "label": "Preus",
-              "description": "Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. "
+              "label": "Prices",
+              "description": "May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve "
             }
           ]
         }
@@ -5180,8 +5180,8 @@
           "roles": [
             {
               "name": "fixture.prices",
-              "label": "Preus",
-              "description": "Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. "
+              "label": "Prices",
+              "description": "May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve "
             }
           ]
         }
@@ -5632,7 +5632,7 @@
           "value": [
             {
               "name": "fixture.prices",
-              "label": "Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de preus Aprovació de ps"
+              "label": "Approve price changes — café ✓ Approve price changes — café ✓ Approve price changes — café ✓ Approve price changes — café ✓ Apprs"
             }
           ]
         }
@@ -5888,8 +5888,8 @@
           "value": [
             {
               "name": "fixture.prices",
-              "label": "Preus",
-              "description": "Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. Pot aprovar preus i descomptes. s"
+              "label": "Prices",
+              "description": "May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve price changes and discounts — café ✓. May approve s"
             }
           ]
         }
@@ -5910,7 +5910,7 @@
           "value": [
             {
               "name": "fixture.prices",
-              "label": "Preus",
+              "label": "Prices",
               "description": ""
             }
           ]
@@ -5932,8 +5932,8 @@
           "value": [
             {
               "name": "fixture.prices",
-              "label": "Preus",
-              "description": "Aprova ‮preus"
+              "label": "Prices",
+              "description": "Approves ‮prices"
             }
           ]
         }
