@@ -8,13 +8,15 @@ retrying until the core accepts or finally refuses it. Each attempt is signed
 afresh with the app-event key over the stored body, through
 ``app_emit.sign_app_emit_credential``.
 
-An app without an app-events origin emits nothing. One with an origin must hold
-the app-event key its manifest declares, or it does not start. Event bodies
+An app without an app-events origin emits nothing. One with an origin, which
+must be https (or http on loopback), must hold the app-event key its manifest
+declares, or it does not start. Event bodies
 carry metadata only, never secrets.
 """
 
 from __future__ import annotations
 
+import ipaddress
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any, TypedDict
@@ -118,6 +120,16 @@ async def _resolve(event: StoredEvent) -> Sequence[Target]:
     return [_TARGET]
 
 
+def _is_loopback(host: str) -> bool:
+    host = host.lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 class DrainOptions(TypedDict):
     channel: str
     resolver: Resolver
@@ -151,8 +163,13 @@ class AppEvents:
                 )
             return cls(app_id=settings.app_id, origin=None, key=None, policy=policy)
         parts = urlsplit(origin)
-        if parts.scheme not in ("http", "https") or not parts.netloc:
-            raise ValueError(f"{prefix}APP_EVENTS_ORIGIN must be an http or https origin")
+        secure = parts.scheme == "https" or (
+            parts.scheme == "http" and _is_loopback(parts.hostname or "")
+        )
+        if not parts.netloc or not secure:
+            raise ValueError(
+                f"{prefix}APP_EVENTS_ORIGIN must be an https origin, or http on loopback"
+            )
         key = load_app_key(settings, manifest, APP_EVENT)
         return cls(app_id=settings.app_id, origin=origin, key=key, policy=policy)
 

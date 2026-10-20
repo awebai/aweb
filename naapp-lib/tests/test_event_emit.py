@@ -246,10 +246,33 @@ def test_an_app_event_key_without_an_origin_refuses_to_start(
         AppEvents.from_settings(settings, _manifest(seed))
 
 
-@pytest.mark.parametrize("origin", ["not-a-valid-origin", "ftp://core.example.test"])
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "not-a-valid-origin",
+        "ftp://core.example.test",
+        "http://core.example.test",
+        "http://10.0.0.5:8000",
+        "http://localhost.example.test",
+    ],
+)
 def test_an_invalid_app_events_origin_refuses_to_start(seed: str, origin: str) -> None:
     with pytest.raises(ValueError, match="APP_EVENTS_ORIGIN"):
         _app_events(seed, origin)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "https://core.example.test",
+        "http://127.0.0.1:8000",
+        "http://[::1]:8000",
+        "http://localhost:8000",
+        "http://core.localhost",
+    ],
+)
+def test_https_or_loopback_http_app_events_origins_are_accepted(seed: str, origin: str) -> None:
+    assert _app_events(seed, origin).key is not None
 
 
 async def test_an_emit_commits_with_the_callers_transaction(

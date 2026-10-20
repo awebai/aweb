@@ -3,6 +3,7 @@ from __future__ import annotations
 import secrets
 import subprocess
 import sys
+import tracemalloc
 from pathlib import Path
 
 import pytest
@@ -79,6 +80,30 @@ def test_a_missing_file_is_refused(tmp_path: Path) -> None:
     missing = tmp_path / "absent.key"
     with pytest.raises(SigningKeyError, match=str(missing)):
         read_signing_key_file(missing)
+
+
+def test_a_large_file_is_refused_without_echoing_it(tmp_path: Path) -> None:
+    seed = secrets.token_hex(32)
+    path = _key_file(tmp_path, seed + "\n" + "0" * 4096)
+    with pytest.raises(SigningKeyError, match=str(path)) as refused:
+        read_signing_key_file(path)
+    assert seed not in str(refused.value)
+
+
+def test_a_large_file_is_refused_without_reading_it(tmp_path: Path) -> None:
+    # A misconfigured path to a large file fails fast instead of being read whole.
+    path = tmp_path / "large.key"
+    with path.open("wb") as large:
+        large.truncate(256 * 1024 * 1024)
+    path.chmod(0o600)
+    tracemalloc.start()
+    try:
+        with pytest.raises(SigningKeyError, match=str(path)):
+            read_signing_key_file(path)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 1024 * 1024
 
 
 def test_a_malformed_file_is_refused_without_echoing_it(tmp_path: Path) -> None:
