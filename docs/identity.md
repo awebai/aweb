@@ -418,6 +418,15 @@ and grant scopes. Restart custody after upgrading: an already-running process
 keeps its old capabilities. Upgrade with the services stopped, as in
 [Upgrading aw under running services](terminal-wake-broker.md#upgrading-aw-under-running-services). The marker is advertised starting with aw 1.36.31.
 
+Before unwrapping, custody independently fetches the stored message as the
+resident and compares its encrypted envelope with the requested one. This
+readability and message-binding check prevents custody from decrypting arbitrary
+caller-supplied ciphertext; a grant seat does not replace it with its own read.
+`aw chat history` applies `--limit` and `--unread-only` before decrypting messages,
+and recipient lookup does not decrypt unrelated pending-chat previews. HTTP and
+custody requests retain their individual timeouts; a history page does not share
+one cumulative API timeout. Explicit caller cancellation still stops the work.
+
 Scopes are `mail.read`, `mail.send`, `chat.read`, `chat.send`,
 `events.read`, `coord.read`, `coord.write`, `presence.write`,
 `contacts.read`, and `contacts.write`. The `normal-agent` bundle expands to

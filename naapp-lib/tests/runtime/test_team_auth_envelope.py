@@ -216,11 +216,11 @@ async def test_revoked_certificate_is_refused_once_the_cache_expires(registry, m
 
 
 async def test_mounted_app_verifies_the_external_path(registry, member):
-    async with relying_app(registry, public_origin=ORIGIN, root_path="/api") as (client, _):
-        external = member.headers(aud=ORIGIN, method="GET", path="/api/v1/items")
-        assert (await client.get("/api/v1/items", headers=external)).status_code == 200
+    async with relying_app(registry, public_origin=ORIGIN, root_path="/mounted") as (client, _):
+        external = member.headers(aud=ORIGIN, method="GET", path="/mounted/v1/items")
+        assert (await client.get("/mounted/v1/items", headers=external)).status_code == 200
         internal = member.headers(aud=ORIGIN, method="GET", path="/v1/items")
-        assert (await client.get("/api/v1/items", headers=internal)).status_code == 401
+        assert (await client.get("/mounted/v1/items", headers=internal)).status_code == 401
 
 
 async def test_raw_percent_encoding_is_what_is_signed(registry, member):

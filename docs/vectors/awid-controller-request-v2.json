@@ -1,0 +1,58 @@
+{
+  "description": "AWID covering controller HTTP request v2; exact UTF-8 body, operation and configured audience.",
+  "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+  "body_utf8": "{\"name\":\"vector\",\"display_name\":\"Review — safe\",\"team_did_key\":\"did:key:z6MkhFwXNFWosLeugvSf4wcL9t3uuRXueGSFTRgSvHhWj5G2\",\"visibility\":\"private\"}",
+  "payload": {
+    "v": 2,
+    "type": "aweb.awid-controller-request",
+    "aud": "http://registry.test",
+    "method": "POST",
+    "path": "/v1/namespaces/local/teams",
+    "body_sha256": "ae9ffd65a75fdbd01265acde35212712588c8dd6ca823595e2f8161b193916ae",
+    "domain": "local",
+    "operation": "create_team",
+    "name": "vector",
+    "timestamp": "2026-06-12T10:00:00Z"
+  },
+  "canonical_payload": "{\"aud\":\"http://registry.test\",\"body_sha256\":\"ae9ffd65a75fdbd01265acde35212712588c8dd6ca823595e2f8161b193916ae\",\"domain\":\"local\",\"method\":\"POST\",\"name\":\"vector\",\"operation\":\"create_team\",\"path\":\"/v1/namespaces/local/teams\",\"timestamp\":\"2026-06-12T10:00:00Z\",\"type\":\"aweb.awid-controller-request\",\"v\":2}",
+  "signature_b64": "noOvqEkZ4FyZGCmJe+EBFHi2JSnshu1phL36kVuwh1yrKceL7f7VCdrFSc0+c082QtAEWG5dVR0tOBhyf8uICQ",
+  "negative_cases": [
+    {
+      "name": "wrong-audience",
+      "overrides": {
+        "aud": "https://other-registry.test"
+      }
+    },
+    {
+      "name": "wrong-purpose",
+      "overrides": {
+        "type": "aweb.team-auth-request"
+      }
+    },
+    {
+      "name": "wrong-method",
+      "overrides": {
+        "method": "DELETE"
+      }
+    },
+    {
+      "name": "wrong-body",
+      "overrides": {
+        "body_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "team-auth-v2-at-awid",
+      "remove": [
+        "type",
+        "domain",
+        "operation",
+        "name"
+      ],
+      "overrides": {
+        "team_id": "base:local"
+      }
+    }
+  ]
+}
