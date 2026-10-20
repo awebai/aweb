@@ -48,11 +48,11 @@ Every `A path:line` below refers to that commit, not a moving branch.
 
 | Observation at A | Evidence |
 | --- | --- |
-| Team-auth v2 binds one request to its member certificate; the relying app applies permissions. Replay within the skew window remains possible. | `docs/team-auth-envelope-v2.md:3`, `:40`, `:95`; `naapp/folio/src/folio/auth.py:310`–`:367` |
+| Team-auth v2 binds one request to its member certificate; the relying app applies permissions. Replay within the skew window remains possible. | `docs/team-auth-envelope-v2.md:3`, `:40`, `:95`; `naapp/folio/src/folio/auth.py:304`–`:367` |
 | Mixed custody works without transferring controller authority to the app. | `docs/product-authority-sot.md:104`–`:130` |
 | v1 manifests are strict and versioned; parameters and canonical request mapping are explicit. | `docs/app-manifest.md:46`, `:106`, `:179`, `:281`; `cli/go/internal/appmanifest/interpret.go:28`, `:53`, `:196` |
 | Install currently authenticates a member, records the supplied digest and scopes, and does not independently fetch bytes or require an admin. | `server/src/aweb/routes/apps.py:104`–`:132`; `docs/app-manifest.md:100`–`:104`; `docs/app-events.md:61`–`:68` |
-| Folio verifies membership but has no install/scope check in that authentication path. | `naapp/folio/src/folio/auth.py:310`–`:367` |
+| Folio verifies membership but has no install/scope check in that authentication path. | `naapp/folio/src/folio/auth.py:304`–`:367` |
 | App events are metadata wakes; no durable cursor/ack, five-minute lookback, 300-second connection. | `docs/app-events.md:16`–`:35`; polling interval `server/src/aweb/routes/events.py:49`–`:53` |
 | App-event ingress verifies, inserts and returns; no embedding observer yet. | `server/src/aweb/routes/events.py:589`–`:608` |
 | Folio append and append-template emit; create returns without emitting there. Emit errors are swallowed. | `naapp/folio/src/folio/api.py:252`–`:259`, `:276`–`:314`; `naapp/folio/src/folio/event_emit.py:73`–`:106` |
@@ -60,7 +60,7 @@ Every `A path:line` below refers to that commit, not a moving branch.
 | Folio enforces document/version caps today. | `naapp/folio/src/folio/repository.py:23`–`:43`, `:105`–`:157` |
 | Task creation is member-authenticated, strict, assigned by alias, and fires mutation hooks. Structured action metadata/idempotent creation are new work. | `server/src/aweb/coordination/routes/tasks.py:33`–`:43`, `:98`–`:133`; `server/src/aweb/coordination/tasks_service.py:181`–`:291` |
 | Health is host-published evidence, with explicit fallback, not inferred runtime presence. | `docs/agent-health.md:19`–`:57` |
-| Shared naapp-lib currently exports documentation/chrome helpers, while Folio and Library have separate member-auth implementations. | `naapp-lib/README.md:3`–`:17`; `naapp-lib/src/aweb_naapp/__init__.py:34`–`:56`; `naapp/folio/src/folio/auth.py:310`–`:367`; `naapp/library/src/library/auth.py:368`–`:431` |
+| Shared naapp-lib currently exports documentation/chrome helpers, while Folio and Library have separate member-auth implementations. | `naapp-lib/README.md:3`–`:17`; `naapp-lib/src/aweb_naapp/__init__.py:34`–`:56`; `naapp/folio/src/folio/auth.py:304`–`:367`; `naapp/library/src/library/auth.py:368`–`:431` |
 | Only one experimental in-process mutation callback ships; a named hook registry/catalog does not. | `docs/aw-hooks-sot.md:17`–`:19`, `:42`–`:63`; `server/src/aweb/hooks.py:12`–`:27` |
 | Current Folio present tokens are stored directly, without a single-use/request-hash contract. | `naapp/folio/src/folio/repository.py:362`–`:380`; `naapp/folio/src/folio/migrations/001_initial.sql:70`–`:82` |
 | Folio's old doctrine explicitly excludes dashboard write paths. | `naapp/folio/docs/agent-first.md:109` |
@@ -203,12 +203,16 @@ action definitions. IDs are opaque within `(team, app, page)`, never names or
 capabilities. Layout version is immutable; every successful local transaction
 increments a monotonic page `rev`, even if it changes only state, action progress,
 ACL or deletion. Each record has its own `rev`. Revisions are decimal integers
-bounded to JavaScript's safe integer range; schema drafts enforce that range.
+bounded to JavaScript's safe integer range; the draft schema enforces that
+range on every revision and version field.
 Deletion preserves a tombstone revision for authorized sync. Signed numeric
 values use safe integers; fractional quantities use schema-declared decimal
 strings until C3 freezes any wider numeric canonicalization. A `number` form
 field emits the schema's integer or decimal-string type, independent of locale.
-Bound the entire response and validation work (initial 10 MiB snapshot ceiling);
+Bound the entire response and validation work (initial 10 MiB snapshot ceiling,
+widget nesting depth at most 8 and at most 2,000 widgets per page). The host
+checks depth and widget count before running schema validation, so a hostile
+tree cannot exhaust the validator; lint reports the same limits;
 large collections paginate and legacy Markdown may use bounded text chunks.
 
 Three independently writable parts:
@@ -233,7 +237,7 @@ The initial vocabulary is complete in this delivery:
 | `cards`, `list` | Bound collection with field mappings; stable record keys and named actions. |
 | `form` | Labeled `text`, `number`, `date`, `select`, `checkbox`, `file` fields; required/description/options, inline validation and named submit action. No password fields. |
 | `button` | Label and named action reference; confirmation for consequential actions. |
-| `decision_card` | Reference to an acah.4 task and exact proposal record/revision, options, recommendation and a named answer action. Task answer/status is authoritative. |
+| `decision_card` | Reference to an acah.4 task and exact proposal record/revision, the canonical `proposal_sha256`, the external operation (kind, destination and a summary), the source-system version, `expires_at`, options, a recommendation that must be one of the options, and an answer action that must be `answer`-kind (lint checks both). Task answer/status is authoritative. |
 | `chart` | Bound numeric series and field mappings, finite bar/line/pie kinds, textual/table alternative; no expression engine. |
 | `file_drop` | Named upload action, allowed MIME types and byte bound; attachment IDs rather than user URLs. |
 | `image`, `video` | Folio asset ID, alt text/caption, controlled playback; no agent iframe/HTML. |
@@ -255,7 +259,9 @@ to transfer all data. Large pages use independently paginated widget projections
 with one snapshot revision; a changed revision causes restart, not mixed data.
 
 Unknown widget types render an inert, localized placeholder using a bounded
-plain-text fallback and no props, children, network or actions. Unknown major
+plain-text fallback, ignoring its props (accepted for forward compatibility,
+bounded to 32 properties and never read), with no children, network or
+actions. Unknown major
 page format refuses with a safe whole-page fallback. Known invalid widgets
 produce validation errors rather than silently turning into unknown widgets.
 Unknown fields in known contract objects are rejected. Authors can validate
@@ -539,8 +545,11 @@ custody may hold, authorized the request, but not that a person acted just
 then. The naapp therefore cannot tell a hosted human from that member's own
 hosted agent: both sign as the same custodial member. A `member_session`
 approval is safe only because the custodian honors `invocation_contexts`. Answer
-and approve tools are surface-only, L2 never lists or calls them, and the
-member-approval endpoint is never an MCP tool (§5). The naapp also refuses a
+and approve tools are surface-only (the surface's `answer_tool`), L2 never
+lists or calls them, and the member-approval endpoint is never an MCP tool
+(§5). The approver≠requester refusal below is an additional check, not a
+substitute: it does not stop a member's own agent answering a task another
+principal raised. The naapp also refuses a
 `member_session` approval when the approver principal equals the requesting
 principal, unless app policy explicitly allows it for an internal reversible
 action. Passkey remains the bar for external or irreversible effects. This
@@ -646,6 +655,7 @@ Draft [second-app manifest](agent-pages/examples/fixture-manifest.json):
   "list_tool": "workspace-list",
   "read_tool": "workspace-read",
   "invoke_tool": "workspace-invoke",
+  "answer_tool": "workspace-answer",
   "inputs": {"resource": "page_id", "invocation": "request"},
   "events": [{"type": "fixture/workspace.changed", "resource_field": "resource_ref", "revision_field": "rev"}]
 }
@@ -656,12 +666,17 @@ This is one entry of manifest `surfaces`. List tool returns bounded
 snapshot. `inputs.resource` names each read/invoke tool's declared resource
 argument; `inputs.invocation` names the invoke tool's JSON object argument.
 List/read/invoke still use the same explicit `params` mapping, schema validation,
-relative targets and canonical bytes as other tools. Invoke gets the structured
-edit/intent/answer request in §4. Every reference must resolve to a tool in that
+relative targets and canonical bytes as other tools. `answer_tool` names the only tool that carries an `answer`; it must declare
+`invocation_contexts` exactly `["surface"]`, and `invoke_tool` never carries an
+`answer`. C3 rejects a manifest whose answer path is agent-visible, so hosted
+agents acting as the same custodial member cannot list or call it. Invoke gets the structured
+edit or intent request in §4. Every reference must resolve to a tool in that
 same manifest; list/read are member-authenticated GETs, invoke is a
 member-authenticated mutation. Public/unsigned tools cannot serve member pages
 or approve actions. Event binding selects an app-declared type and fixed opaque
-resource/revision fields, not executable JSONPath. A manifest cannot provide
+resource/revision fields, not executable JSONPath. `resource_field` names a
+top-level event field and `revision_field` names a field of the event
+`payload`, matching the event shape in §6. A manifest cannot provide
 network destinations inside page data. Unknown formats are unavailable safely.
 
 Cloud has no `folio` branch, page storage, collection query engine, or rental
@@ -893,7 +908,9 @@ layout, state, ACL, action progress, resolve, deletion and human edits):
 No title, records, actor names, proposal or link token. Opaque IDs/revision and
 traffic timing are still metadata visible to subscribed team agents; do not
 claim they reveal nothing. `resource_ref` and payload page must agree. The
-naapp's transaction outbox survives emit failure; successful emit is not the
+naapp's transaction outbox survives emit failure. The emit signer, emitter and
+durable outbox are one shared primitive in `aweb_naapp` (aweb-acgh.6, B4),
+also used for aw-hooks producer delivery; no app builds its own; successful emit is not the
 business commit. Duplicate emits and reordering are harmless: readers compare
 revision, never replay a patch from a wake. Revision includes all changes; no-op
 idempotent retries create no new revision or changed event.
@@ -1149,7 +1166,9 @@ maintenance, keys or payouts; link-local `mark_cleaned` is a generic capability
 example, not a claim about Nactiva's workflow.
 
 The [independent fixture](agent-pages/examples/fixture-page.json) is an independent
-inventory/checklist app, not another Folio implementation. Its manifest uses
+inventory/checklist app, not another Folio implementation. It has an edit and an
+intent (so its key declares `app-request`), and its manifest declares a
+surface-only answer tool; E1 exercises the answer path through it. Its manifest uses
 different paths, tool names and event local type. With the same published host,
 install it, list/call tools, render/edit its surface, receive wakes, export/delete
 and collect usage **without a Cloud source or configuration branch for that app**.
@@ -1212,23 +1231,25 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 | F1 aweb-acgg.2 source/provenance | operator evidence | Confirm monorepo build/reproducibility and intended source SHA; resolve the stale standalone assumption without unnecessary redeploy. |
 | F2 aweb-abpt Folio CI | F1 | Folio build/auth/migration/e2e checks cover the actual source and block regressions. |
 | F3 aweb-abps cert pagination | current | Beyond-page-one revocation enforced, unavailable/incomplete authority fails closed; preserve valid neighboring certificates. Source presence is not deployment evidence. |
-| F4 aweb-abrg + aweb-acgg.3 emit foundation | F1,F2,F3 | Installed emitter/digest registered, all current legacy mutation paths emit, failure observable; remove swallowed-loss dependency via retryable outbox. |
-| F5 install/scopes at naapp | F0,F3,F6,B1,G1 | CLI/MCP/member/link paths cannot bypass current install/scope/ACL; bounded grant freshness, lifecycle lane and admission fence tested. |
-| F6 admin/digest/update/uninstall | C3 | Generic authoritative admin policy, exact bytes, conditional generation, mounted-route bypass denial; old CLI compatibility transition enumerated. Owns installation identity: a new ordered registry migration adds `installation_id`, a monotone generation and install state, which G1 grant status reports; uninstall revokes through it. |
+| F4 aweb-acgg.3 Folio emits on every change | done | Landed in main (02bc1968): create, append, append-template and editable-link edits emit. |
+| F4a aweb-abrg Folio emit key registered per team | F1,F3,aweb-acgh.8 step 1 | Emit key registered through a supported install path on team-scoped or first-writer-immutable key rows; no 403 noise. |
+| F4b durable emit outbox | aweb-acgh.6 | The shared `aweb_naapp` emitter and outbox (one primitive for app events and hook producer delivery) replace Folio's swallowed emit loss; failure observable and retried. |
+| F5 aweb-acgg.4 Folio onto shared `aweb_naapp` runtime | F0,F3,F6,B1,B4,G1 | Folio switches to each extracted `aweb_naapp` piece and deletes its copy, behaviour unchanged except deliberate improvements. Through B1, CLI/MCP/member/link paths cannot bypass current install/scope/ACL; bounded grant freshness, lifecycle lane and admission fence tested. |
+| F6 aweb-acgg.5 admin/digest/update/uninstall | C3 | Generic authoritative admin policy, exact bytes, conditional generation, mounted-route bypass denial; old CLI compatibility transition enumerated. Owns installation identity: a new ordered registry migration adds `installation_id`, a monotone generation and install state, which G1 grant status reports; uninstall revokes through it. |
 | B1 aweb-acgh.3 shared verifier (secrets lane) | F3 | In `aweb_naapp`: today's team-auth v2 acceptance unchanged, plus explicit grant source, declared-tool route mapping, scope and app policy enforcement with the codes in §1; no copied auth or custody selector. D1 lead checks fit. |
 | B1b did:aw current-key profile | B1, Juan identity approval, Athena | The §1 global current-key profile and its compatibility rollout; local `did:key` members stay valid. Separate from B1. |
 | B2/B3 aweb-acgh.4 approval primitive and WebAuthn verifier (secrets lane) | D1 C2/C4 drafts | In `aweb_naapp`: §4 record, digest, states, atomic one-use consume and hashed one-use links; app-local passkey verifier. Generic, no app names. D1 lead checks fit. |
 | G1 aweb-acgh.7 generic app→team-server contract (secrets lane) | D1 §5 requirements; Juan's identity-path approval and Athena for its signed team-server record; F6 and the hooks binding table for hook resolution | Team-server discovery checked against AWID for hosted and BYOT, purpose-split app authentication, grant status meeting the §5 pages requirements, hook resolution. D1 lead reviews fit. |
-| C1 format/schema/vectors | D1 | Full vocabulary, typed binding/state, fallback, lint and positive/negative vectors frozen; examples validate. Hostile-content corpus: encoded `javascript:`/`data:`/`vbscript:` URLs, SVG, Markdown link and autolink tricks, bidi/homoglyph labels and oversized trees. |
+| C1 format/schema/vectors | D1 | Full vocabulary, typed binding/state, fallback, lint and positive/negative vectors frozen; examples validate. Hostile-content corpus: encoded `javascript:`/`data:`/`vbscript:` URLs, SVG, Markdown link and autolink tricks, bidi/homoglyph labels and oversized trees. Settles the recorded C1 schema items: depth/widget-count limits, typed values, decision-card fields, MIME/byte bounds, select options, widget-state key pattern, `link_out` and inline-schema `$ref`/regex limits. |
 | C2 actions/task integration/approval | D1,B2, acah.4 | Signed task authorization/app transport, idempotent task create, conditional answer receipt and safe content redaction; wrong actor/revision/destination denied; request/execution stores reconcile; common approval task/link and member/passkey adapters, requester cannot mint/read/consume capability, minimum assurance decision recorded. |
-| C3 manifest v2 + discovery | D1 | Strict v1 preserved, negotiated immutable v1/v2 variants, shared interpreter vectors, surfaces/lifecycle/usage references and versioned hooks slot resolved; hook-only/surface-only tools filtered and denied at call, owner-gated generation/digest targets; no hook catalog freeze. |
+| C3 manifest v2 + discovery | D1 | Strict v1 preserved, negotiated immutable v1/v2 variants, shared interpreter vectors, surfaces/lifecycle/usage references and versioned hooks slot resolved; hook-only/surface-only tools filtered and denied at call, owner-gated generation/digest targets; no hook catalog freeze. Answer tool exactly `["surface"]`, `invoke_tool` never carries `answer`, agent-visible answer paths rejected at install. |
 | C4 link capability contract | C1,C2,B2,Athena | Explicit delegation, allowed actions/projections, key/nonce, revoke/expiry/rate limits; anonymous intent approval rule and hashed request-bound atomic one-use options frozen; authenticated approver adapter separate from possession. |
 | C5 usage contract | C3 | Every metric/unit, dedicated auth, batch dedup/gaps/snapshots/terminal reporting; admin export; no economic enforcement. |
-| C6 new generic app-event observer | D1,F4 | Post-commit verified metadata only; host failure cannot corrupt mutation, catch-up/reconciliation demonstrated without synthetic member. |
+| C6 new generic app-event observer | D1,F4b,aweb-acgh.8 step 1 | Post-commit verified metadata only; host failure cannot corrupt mutation, catch-up/reconciliation demonstrated without synthetic member. |
 | N1 collections/records/data lifecycle | C1,F2,F3 | Owned/synced schemas, revisions, atomic audit/outbox, export/delete/retention/backup restore-tombstone proof. |
 | N2 layout/state/lint | C1,N1 | Stable widget IDs, immutable layout, safe state allowlist, text lint, unknown widget; unrelated draft/focus preserved. |
 | N3 actions | C2,N1,F5 | Durable acceptance through browser/client crash, target/policy/idempotency, atomic resolve plus outbox; stale patches cause no partial success. |
-| N4 all-mutation wakes | F4,N1,N2,N3,C6 | Every mutation including human/ACL/delete/action emits content-free revision; duplicate/reorder/retry correct. |
+| N4 all-mutation wakes | F4b,N1,N2,N3,C6 | Every mutation including human/ACL/delete/action emits content-free revision; duplicate/reorder/retry correct. |
 | N5 action links/link stream | C4,B2,N3,N4 | First-delivery action links on the `aweb_naapp` capability-link module, scoped reads/assets/stream, anonymous provenance and sponsor recovery; revoked/expired links cannot act. |
 | N6 skill and rental examples | N2,N3 | Released-CLI and hosted-MCP recipes + agent text lint; synthetic rental approval, no external calls without approved adapter. |
 | N7 Folio migration/doctrine | N1,N2,N5 | Old document/version/links round-trip intact, additive reader rollback, doctrine and all agent guidance updated. |
@@ -1247,9 +1268,10 @@ No estimates. “Depends” includes contract readiness, not merely deploy order
 
 Foundations F0–F4 precede expanded feature delivery; design/contracts may be
 reviewed alongside them. B1–B3 and G1 are built and owned in the secrets lane
-(epic aweb-acgh), and pages consumes them; no pages task builds a second
-verifier, approval primitive, link store or grant API. Library's move onto the
-shared runtime is aweb-acgh.5. F6's narrowing of install authority and emitter
+(epic aweb-acgh), as is B4 (aweb-acgh.6: emit signer, emitter and durable
+outbox), and pages consumes them; no pages task builds a second verifier,
+approval primitive, link store, emitter, outbox or grant API. Folio's move onto
+the shared runtime is F5 (aweb-acgg.4); Library's is aweb-acgh.5. F6's narrowing of install authority and emitter
 registration must be coordinated so it does not undo a working foundation.
 Every schema change in future implementation is a new ordered migration.
 The coordinator lands the reviewed cross-repository combination only after Juan's approval.

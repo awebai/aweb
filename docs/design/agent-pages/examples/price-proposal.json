@@ -78,7 +78,15 @@
           }
         ],
         "recommendation": "approve",
-        "answer_action": "answer-price"
+        "answer_action": "answer-price",
+        "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "operation": {
+          "kind": "pms.price.set",
+          "destination": "PMS · tarifa canal Airbnb",
+          "summary": "Synthetic: exact values shown in the bound record."
+        },
+        "source_version": "pms-v7",
+        "expires_at": "2026-10-21T10:00:00Z"
       }
     },
     {

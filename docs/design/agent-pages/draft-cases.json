@@ -151,5 +151,37 @@
   {
     "case": "not-sent-transport-retry",
     "expect": "same operation ID retried after definite not_sent; no second consume, no new approval; outcome_unknown instead blocks until reconciled"
+  },
+  {
+    "case": "answer-via-invoke-tool",
+    "expect": "refused; answers go only through the surface answer_tool"
+  },
+  {
+    "case": "answer-tool-agent-visible",
+    "expect": "manifest refused at install; L2 never lists or calls a surface-only answer tool, including cached names"
+  },
+  {
+    "case": "widget-depth-9",
+    "expect": "refused by the host before schema validation; depth 8 accepted"
+  },
+  {
+    "case": "widget-count-2001",
+    "expect": "refused by the host before schema validation; 2000 accepted"
+  },
+  {
+    "case": "decision-recommendation-not-an-option",
+    "expect": "lint error"
+  },
+  {
+    "case": "decision-answer-action-not-answer-kind",
+    "expect": "lint error"
+  },
+  {
+    "case": "stat-fractional-number",
+    "expect": "schema rejects 0.1; decimal string \"0.1\" accepted"
+  },
+  {
+    "case": "link-out-before-c1",
+    "expect": "validates only through the unknown branch and renders as an inert placeholder until C1 adds it"
   }
 ]

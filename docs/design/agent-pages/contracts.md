@@ -204,7 +204,8 @@ are neutral placeholders; no hook catalog is frozen by these drafts.
 
 Tool `invocation_contexts` is a nonempty unique array of `agent`, `surface`,
 `hook`; absent means `agent,surface` for normal backward-compatible tools.
-Registrable hook targets require exactly `hook`. L2/CLI expose only `agent`,
+Registrable hook targets require exactly `hook`. A surface's `answer_tool` requires exactly `surface`; `invoke_tool` never
+carries an `answer`, and an agent-visible answer path refuses the manifest. L2/CLI expose only `agent`,
 surfaces reference only `surface`, and both list/call enforce current context
 including cached tools. The endpoint requires verified caller-context authority;
 context labels and informational team-auth metadata do not create that proof.

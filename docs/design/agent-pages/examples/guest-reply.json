@@ -51,7 +51,15 @@
           }
         ],
         "recommendation": "approve",
-        "answer_action": "answer-reply"
+        "answer_action": "answer-reply",
+        "proposal_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "operation": {
+          "kind": "pms.message.send",
+          "destination": "PMS · missatge al client per Booking.com",
+          "summary": "Synthetic: exact values shown in the bound record."
+        },
+        "source_version": "enquiry-v3",
+        "expires_at": "2026-10-21T10:00:00Z"
       }
     },
     {

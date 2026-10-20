@@ -2,7 +2,7 @@
   "draft": true,
   "submit": {
     "action_id": "propose-accept",
-    "idempotency_key": "fixture-op-1",
+    "idempotency_key": "folio-op-1",
     "expected_page_rev": 1,
     "expected_records": {
       "bookings:booking-1": 1
@@ -15,12 +15,12 @@
         "v": 1,
         "type": "aweb.app-task-authorization",
         "aud": "https://tasks.example",
-        "app_origin": "https://fixture.example",
+        "app_origin": "https://folio.example",
         "team_id": "demo:example.com",
-        "app_id": "fixture",
+        "app_id": "folio",
         "installation_id": "installation-1",
         "install_generation": 1,
-        "external_request_id": "fixture-op-1",
+        "external_request_id": "folio-op-1",
         "actor_did_key": "<member DID>",
         "certificate_id": "<member certificate id>",
         "target": "agent-fixture",
@@ -37,20 +37,20 @@
     }
   },
   "receipt": {
-    "action_id": "action-1",
+    "action_instance_id": "action-1",
     "page_rev": 2,
     "delivery": "pending",
     "execution": "not_started"
   },
   "queued_receipt": {
-    "action_id": "action-1",
+    "action_instance_id": "action-1",
     "page_rev": 3,
     "task_id": "task-1",
     "delivery": "queued",
     "execution": "not_started"
   },
   "resolve": {
-    "action_id": "action-1",
+    "action_instance_id": "action-1",
     "idempotency_key": "resolve-1",
     "expected_page_rev": 3,
     "expected_action_rev": 1,

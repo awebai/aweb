@@ -59,6 +59,18 @@
       "props": {
         "fields": [
           {
+            "id": "booking_id",
+            "kind": "select",
+            "label": "Reserva",
+            "required": true,
+            "options": [
+              {
+                "value": "booking-1",
+                "label": "2026-11-02"
+              }
+            ]
+          },
+          {
             "id": "note",
             "kind": "text",
             "label": "Nota interna",
@@ -66,6 +78,20 @@
           }
         ],
         "submit_action": "edit-note"
+      }
+    },
+    {
+      "id": "annotations-list",
+      "type": "list",
+      "props": {
+        "fields": {
+          "title": "booking_id",
+          "body": "note"
+        }
+      },
+      "bind": {
+        "collection": "annotations",
+        "limit": 50
       }
     }
   ],
@@ -214,9 +240,14 @@
           "note": {
             "type": "string",
             "maxLength": 4096
+          },
+          "booking_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
           }
         },
         "required": [
+          "booking_id",
           "note"
         ],
         "additionalProperties": false

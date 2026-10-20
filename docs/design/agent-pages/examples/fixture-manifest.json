@@ -90,7 +90,54 @@
       "mutation": true,
       "body": {
         "mode": "json"
-      }
+      },
+      "invocation_contexts": [
+        "agent",
+        "surface"
+      ]
+    },
+    {
+      "name": "workspace-answer",
+      "description": "Synthetic fixture workspace-answer (human answers only)",
+      "method": "POST",
+      "path": "/v1/workspaces/{page_id}/answers",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "page_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          },
+          "request": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "page_id",
+          "request"
+        ],
+        "additionalProperties": false
+      },
+      "params": [
+        {
+          "name": "page_id",
+          "in": "path"
+        },
+        {
+          "name": "request",
+          "in": "body"
+        }
+      ],
+      "scopes": [
+        "fixture:write"
+      ],
+      "mutation": true,
+      "body": {
+        "mode": "json"
+      },
+      "invocation_contexts": [
+        "surface"
+      ]
     },
     {
       "name": "usage-snapshot",
@@ -293,6 +340,7 @@
       "did_key": "did:key:z6Mk...",
       "purposes": [
         "app-event",
+        "app-request",
         "app-usage"
       ]
     }
@@ -305,6 +353,7 @@
       "list_tool": "workspace-list",
       "read_tool": "workspace-read",
       "invoke_tool": "workspace-invoke",
+      "answer_tool": "workspace-answer",
       "inputs": {
         "resource": "page_id",
         "invocation": "request"

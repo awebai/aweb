@@ -25,7 +25,8 @@
           }
         ],
         "row_actions": [
-          "check"
+          "check",
+          "request-restock"
         ]
       },
       "bind": {
@@ -100,6 +101,27 @@
       },
       "policy_ref": "fixture-edit",
       "operation": "item.check"
+    },
+    {
+      "id": "request-restock",
+      "kind": "intent",
+      "label": "Ask the agent to restock",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "record_id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$"
+          }
+        },
+        "required": [
+          "record_id"
+        ],
+        "additionalProperties": false
+      },
+      "policy_ref": "fixture-request",
+      "target": "agent-fixture",
+      "operation": "item.restock"
     }
   ]
 }
