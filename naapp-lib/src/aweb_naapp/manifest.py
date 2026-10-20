@@ -613,6 +613,9 @@ def _refuse(code: str, message: str) -> ManifestError:
 def _validate_v2(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) -> None:
     if "event_emitters" in d["present"]:
         raise _invalid("event_emitters is replaced by app_keys in manifest_version 2")
+    names = [_go_trim(tool.name) for tool in d["tools"]]
+    if len(set(names)) != len(names):
+        raise _invalid("tool names must be unique")
     for tool in d["tools"]:
         if tool.contexts is None:
             continue
@@ -622,6 +625,7 @@ def _validate_v2(d: dict[str, Any], app_id: str, tools: dict[str, _Tool]) -> Non
             raise _refuse("tool_contexts_invalid", f"tool {tool.name!r} invocation_contexts are invalid")
     _validate_app_keys(d["app_keys"])
     _validate_surfaces(d, app_id, tools)
+    _validate_answer_inputs(d)
     _validate_usage(d["usage"], tools)
     _validate_lifecycle(d["lifecycle"], tools)
     _validate_hooks(d["hooks"], tools)
@@ -731,13 +735,27 @@ def _validate_surface_tools(s: dict[str, Any], tools: dict[str, _Tool]) -> None:
     if not s["invoke_tool"]:
         return
     if s["invoke_tool"] == s["answer_tool"]:
-        raise _refuse("invoke_answer_forbidden", f"surface {sid!r} invoke_tool cannot be its answer_tool")
-    properties = _schema_properties(tools[s["invoke_tool"]].input_schema)
-    if "answer" in properties:
-        raise _refuse("invoke_answer_forbidden", f"surface {sid!r} invoke_tool declares an answer input")
-    invocation = properties.get(s["invocation"])
-    if invocation is not None and "answer" in _schema_properties(invocation):
-        raise _refuse("invoke_answer_forbidden", f"surface {sid!r} invoke_tool invocation declares an answer")
+        raise _refuse("answer_input_forbidden", f"surface {sid!r} invoke_tool cannot be its answer_tool")
+
+
+def _answer_tools(surfaces: list[dict[str, Any]] | tuple[Mapping[str, Any], ...]) -> set[str]:
+    return {s["answer_tool"] for s in surfaces if s["answer_tool"]}
+
+
+def _validate_answer_inputs(d: dict[str, Any]) -> None:
+    """Only a surface answer_tool may declare an answer input, top-level or
+    inside an object body parameter."""
+    answers = _answer_tools(d["surfaces"])
+    for tool in d["tools"]:
+        name = _go_trim(tool.name)
+        if name in answers:
+            continue
+        properties = _schema_properties(tool.input_schema)
+        if "answer" in properties:
+            raise _refuse("answer_input_forbidden", f"tool {name!r} declares an answer input")
+        for param, placement in tool.params:
+            if _go_trim(placement) == "body" and "answer" in _schema_properties(properties.get(_go_trim(param))):
+                raise _refuse("answer_input_forbidden", f"tool {name!r} declares an answer inside {param!r}")
 
 
 def _validate_surface_inputs(s: dict[str, Any], tools: dict[str, _Tool]) -> None:
@@ -873,6 +891,7 @@ class Manifest:
     agent_tools: tuple[str, ...]
     surface_tools: tuple[str, ...]
     hook_tools: tuple[str, ...]
+    install_scopes: tuple[str, ...]
     app_keys: tuple[tuple[str, str, tuple[str, ...]], ...]
     surfaces: tuple[Mapping[str, Any], ...]
     usage: Mapping[str, str] | None
@@ -888,6 +907,7 @@ class Manifest:
             "agent_tools": list(self.agent_tools),
             "surface_tools": list(self.surface_tools),
             "hook_tools": list(self.hook_tools),
+            "install_scopes": list(self.install_scopes),
             "app_keys": [{"kid": k, "did_key": d, "purposes": list(p)} for k, d, p in self.app_keys],
             "surfaces": [copy.deepcopy(dict(s)) for s in self.surfaces],
             "usage": None if self.usage is None else dict(self.usage),
@@ -919,18 +939,15 @@ class Manifest:
             raise _refuse("tool_context_denied", f"tool {tool!r} is not available to {caller} callers")
 
     def check_answer_payload(self, tool: str, body: Any) -> None:
-        """Refuse a body for a surface invoke_tool that carries a top-level
-        ``answer``, directly or in its invocation object. Answers reach an app
-        only through its surface answer_tool."""
+        """Refuse a version 2 body that carries an ``answer`` member, top-level
+        or in a top-level object member, for any tool except a surface
+        answer_tool. Answers reach an app only through that tool."""
+        if self.manifest_version != 2 or _go_trim(tool) in _answer_tools(self.surfaces):
+            return
         if not isinstance(body, dict):
             return
-        name = _go_trim(tool)
-        for surface in self.surfaces:
-            if surface["invoke_tool"] != name:
-                continue
-            invocation = body.get(surface["invocation_param"]) if surface["invocation_param"] else None
-            if "answer" in body or (isinstance(invocation, dict) and "answer" in invocation):
-                raise _refuse("answer_payload_refused", f"tool {tool!r} is an invoke tool and cannot carry an answer")
+        if "answer" in body or any(isinstance(v, dict) and "answer" in v for v in body.values()):
+            raise _refuse("answer_payload_refused", f"tool {tool!r} cannot carry an answer")
 
 
 def load_manifest(data: bytes, *, reserved_names: frozenset[str] = frozenset()) -> Manifest:
@@ -973,6 +990,8 @@ def load_manifest(data: bytes, *, reserved_names: frozenset[str] = frozenset()) 
     if d["lifecycle"] is not None:
         lifecycle = {role: d["lifecycle"][role] or None for role in ("export_tool", "delete_tool", "status_tool")}
     names = [(_go_trim(tool.name), tool.effective_contexts) for tool in d["tools"]]
+    install_scopes = sorted({scope for tool in d["tools"] if tool.effective_contexts & _DEFAULT_CONTEXTS
+                             for scope in tool.scopes})
     return Manifest(
         document=document,
         manifest_version=d["version"],
@@ -980,6 +999,7 @@ def load_manifest(data: bytes, *, reserved_names: frozenset[str] = frozenset()) 
         agent_tools=tuple(n for n, c in names if AGENT in c),
         surface_tools=tuple(n for n, c in names if SURFACE in c),
         hook_tools=tuple(n for n, c in names if HOOK in c),
+        install_scopes=tuple(install_scopes),
         app_keys=tuple(app_keys),
         surfaces=tuple(surfaces),
         usage=d["usage"],
@@ -1037,11 +1057,19 @@ def _identity(data: bytes) -> tuple[int, str]:
 
 
 def _valid_variant_path(path: str) -> bool:
+    """An absolute path that resolves under the install base: no scheme, host,
+    query, fragment, backslash, encoded slash or backslash, or dot segment,
+    encoded or not."""
     if not path or len(path) > 512 or not path.startswith("/") or path.startswith("//"):
         return False
     if any(c in path for c in "?#\\") or any(ord(c) <= 0x20 or ord(c) == 0x7F for c in path):
         return False
-    return not any(segment in (".", "..") for segment in path[1:].split("/"))
+    if "%2f" in path.lower() or "%5c" in path.lower():
+        return False
+    for segment in path[1:].split("/"):
+        if re.search(r"%(?![0-9A-Fa-f]{2})", segment) or unquote(segment) in (".", ".."):
+            return False
+    return True
 
 
 def _parse_catalog(data: bytes) -> tuple[str, list[tuple[int, str, str]]]:
@@ -1071,7 +1099,7 @@ def _parse_catalog(data: bytes) -> tuple[str, list[tuple[int, str, str]]]:
         if isinstance(mv, bool) or not isinstance(mv, int) or mv < 1 or any(mv == v for v, _, _ in out):
             raise invalid("manifest catalog variant versions must be distinct and positive")
         if not isinstance(url, str) or not _valid_variant_path(url):
-            raise invalid("manifest catalog variant url must be a same-origin absolute path")
+            raise invalid("manifest catalog variant url must be an absolute path under the install base")
         if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
             raise invalid("manifest catalog variant digest is invalid")
         out.append((mv, url, digest))
@@ -1115,6 +1143,20 @@ def select_variant(origin: str, supported: tuple[int, ...] | list[int], fetch: F
     return Variant("catalog", version, origin + path, digest, data)
 
 
+_MISSING = object()
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Type-exact JSON equality: false is not 0, and 1.0 is not 1."""
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    if isinstance(a, list):
+        return len(a) == len(b) and all(_same(x, y) for x, y in zip(a, b, strict=True))
+    return bool(a == b)
+
+
 _MAPPED_TOOL_FIELDS = ("method", "path", "params", "input_schema", "body", "scopes", "auth", "mutation")
 
 
@@ -1128,9 +1170,9 @@ def check_v1_variant(v1: bytes, v2: bytes) -> None:
     old, new = load_manifest(v1), load_manifest(v2)
     if old.manifest_version != 1 or new.manifest_version != 2:
         raise incompatible("variants must be manifest versions 1 and 2")
-    if old.document.get("app") != new.document.get("app"):
+    if not _same(old.document.get("app"), new.document.get("app")):
         raise incompatible("the variants declare different apps")
-    if old.document.get("events") != new.document.get("events"):
+    if not _same(old.document.get("events"), new.document.get("events")):
         raise incompatible("the variants declare different events")
     v2_tools = {_go_trim(t.get("name", "")): t for t in new.document.get("tools") or []}
     for tool in old.document.get("tools") or []:
@@ -1138,8 +1180,7 @@ def check_v1_variant(v1: bytes, v2: bytes) -> None:
         twin = v2_tools.get(name)
         if twin is None:
             raise incompatible(f"v1 tool {name!r} is not a v2 tool")
-        missing = object()
-        if any(tool.get(f, missing) != twin.get(f, missing) for f in _MAPPED_TOOL_FIELDS):
+        if any(not _same(tool.get(f, _MISSING), twin.get(f, _MISSING)) for f in _MAPPED_TOOL_FIELDS):
             raise incompatible(f"v1 tool {name!r} maps differently in v2")
         if AGENT not in (new.tool_contexts(name) or frozenset()):
             raise incompatible(f"v1 tool {name!r} is not an agent tool in v2")

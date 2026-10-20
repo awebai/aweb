@@ -389,7 +389,9 @@ unchanged, removes `event_emitters`, and adds:
 | `hooks` | The versioned hooks slot: `registration_version: 1`, `registrations` and `productions` (at most 64 each). |
 
 A v2 member is never `null`, and unknown fields are refused at every level.
-v1 decoding is unchanged, and a v2 field in a v1 manifest is refused.
+Keys match exactly: `Surfaces` is not `surfaces`. v2 tool names are unique,
+so every lookup by name finds the same tool. v1 decoding is unchanged, and a
+v2 field in a v1 manifest is refused.
 
 ### Tool invocation contexts
 
@@ -430,12 +432,12 @@ names, never a path expression.
 Answers reach an app only through a surface's `answer_tool`, which must
 declare `invocation_contexts` exactly `["surface"]`. A manifest whose answer
 path is agent-visible is refused at install (`answer_tool_contexts_invalid`).
-An `invoke_tool` never carries an answer: it may not declare an `answer`
-input, top-level or inside its invocation object
-(`invoke_answer_forbidden`). An invoke request body that carries a top-level
-`answer` member, directly or in its invocation object, is refused
-(`answer_payload_refused`), whatever the manifest validation and host
-filtering did.
+No other tool carries an answer, whatever its contexts, the `invoke_tool`
+included. It may not declare an `answer` input, top-level or inside an object
+body parameter (`answer_input_forbidden`). A request body for any other v2
+tool that carries an `answer` member, top-level or in a top-level object
+member, is refused (`answer_payload_refused`), whatever manifest validation
+and host filtering did.
 
 ### Hooks slot
 
@@ -450,7 +452,9 @@ contract.
 Every registration and production is **pending** when installed. Only the
 team owner activates one, bound to the installation's generation and
 manifest digest. A new generation returns them to pending, and uninstall
-revokes them.
+revokes them. An ordinary install grants the scopes of the agent and surface
+tools it activates (`install_scopes` in the resolved view). A hook-only
+tool's scopes are granted only at owner activation.
 
 ### App keys
 
@@ -479,8 +483,14 @@ An app that publishes more than one manifest version serves a catalog at
 ```
 
 A consumer GETs the catalog and selects the highest `manifest_version` it
-supports. It then GETs that variant on the same origin and checks three
-things: the bytes hash to the catalog digest, they declare that version, and
+supports. A variant `url` is an absolute path resolved against the install
+base, path prefix included: an app installed from
+`https://apps.example/notes` serves its catalog at
+`https://apps.example/notes/.well-known/aweb-app-versions.json` and a variant
+`/manifests/v2.json` at `https://apps.example/notes/manifests/v2.json`. A
+path that could escape the base is refused: dot segments, encoded or not,
+and encoded slashes or backslashes. The consumer GETs that variant and checks
+three things: the bytes hash to the catalog digest, they declare that version, and
 they name the catalog's app id. Each variant is immutable: new bytes mean a
 new digest. Only a missing catalog (404) permits the legacy
 `/.well-known/aweb-app.json`. Any other catalog failure, and any failure of

@@ -30,6 +30,13 @@ func notesManifestV2(t *testing.T, origin string, answerContexts []string) []byt
 			"name": name, "method": method, "path": path, "mutation": mutation,
 			"input_schema": map[string]any{"type": "object", "properties": props},
 			"params":       params, "body": map[string]any{"mode": "json"},
+			"scopes": []string{"notes:read"},
+		}
+		if mutation {
+			out["scopes"] = []string{"notes:write"}
+		}
+		if name == "ingest" {
+			out["scopes"] = []string{"notes:ingest"}
 		}
 		if contexts != nil {
 			out["invocation_contexts"] = contexts
@@ -396,5 +403,9 @@ func TestManifestRegistrationSendsOnlyAppEventKeys(t *testing.T) {
 	}
 	if body["manifest_version"] != 2 {
 		t.Fatalf("manifest_version = %v", body["manifest_version"])
+	}
+	scopes, _ := body["granted_scopes"].([]string)
+	if strings.Join(scopes, ",") != "notes:read,notes:write" {
+		t.Fatalf("granted_scopes = %v, want the agent and surface tools' scopes without the hook-only notes:ingest", scopes)
 	}
 }

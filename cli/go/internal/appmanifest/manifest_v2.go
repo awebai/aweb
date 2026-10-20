@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -23,7 +25,7 @@ const (
 	CodeSurfaceInvalid             = "surface_invalid"
 	CodeSurfaceToolInvalid         = "surface_tool_invalid"
 	CodeAnswerToolContextsInvalid  = "answer_tool_contexts_invalid"
-	CodeInvokeAnswerForbidden      = "invoke_answer_forbidden"
+	CodeAnswerInputForbidden       = "answer_input_forbidden"
 	CodeUsageInvalid               = "usage_invalid"
 	CodeLifecycleInvalid           = "lifecycle_invalid"
 	CodeHooksInvalid               = "hooks_invalid"
@@ -111,6 +113,9 @@ func (m *Manifest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &members); err != nil {
 		return err
 	}
+	if err := checkManifestKeys(members); err != nil {
+		return err
+	}
 	for _, name := range v2TopLevelMembers {
 		if value, ok := members[name]; ok && isJSONNull(value) {
 			return fmt.Errorf("%s must not be null", name)
@@ -122,6 +127,97 @@ func (m *Manifest) UnmarshalJSON(data []byte) error {
 		m.members[name] = true
 	}
 	return nil
+}
+
+// Go's decoder matches object keys case-insensitively. The contract matches
+// them exactly, so every modeled object's keys are checked against the field
+// names of the type it decodes into.
+
+func jsonFieldNames(t reflect.Type) map[string]bool {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	names := map[string]bool{}
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			names[name] = true
+		}
+	}
+	return names
+}
+
+func checkExactKeys(members map[string]json.RawMessage, t reflect.Type, what string) error {
+	allowed := jsonFieldNames(t)
+	for name := range members {
+		if !allowed[name] {
+			return fmt.Errorf("%s has unknown field %q", what, name)
+		}
+	}
+	return nil
+}
+
+// checkObjectKeys checks one raw value's keys when it is an object; other
+// values are left to the decoder's type checks.
+func checkObjectKeys(raw json.RawMessage, t reflect.Type, what string) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &members); err != nil {
+		return err
+	}
+	return checkExactKeys(members, t, what)
+}
+
+func checkArrayKeys(raw json.RawMessage, t reflect.Type, what string, each func(json.RawMessage) error) error {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(trimmed, &items); err != nil {
+		return err
+	}
+	for _, item := range items {
+		if err := checkObjectKeys(item, t, what); err != nil {
+			return err
+		}
+		if each != nil {
+			if err := each(item); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkManifestKeys checks the manifest's own keys and those of its v1
+// levels; the v2 levels check theirs as they decode.
+func checkManifestKeys(members map[string]json.RawMessage) error {
+	if err := checkExactKeys(members, reflect.TypeOf(Manifest{}), "manifest"); err != nil {
+		return err
+	}
+	if err := checkObjectKeys(members["app"], reflect.TypeOf(App{}), "app"); err != nil {
+		return err
+	}
+	if err := checkArrayKeys(members["event_emitters"], reflect.TypeOf(EventEmitter{}), "event_emitters[]", nil); err != nil {
+		return err
+	}
+	if err := checkArrayKeys(members["events"], reflect.TypeOf(Event{}), "events[]", nil); err != nil {
+		return err
+	}
+	return checkArrayKeys(members["tools"], reflect.TypeOf(Tool{}), "tools[]", func(raw json.RawMessage) error {
+		var tool map[string]json.RawMessage
+		if err := json.Unmarshal(bytes.TrimSpace(raw), &tool); err != nil {
+			return nil
+		}
+		if err := checkObjectKeys(tool["body"], reflect.TypeOf(Body{}), "tools[].body"); err != nil {
+			return err
+		}
+		return checkArrayKeys(tool["params"], reflect.TypeOf(Param{}), "tools[].params[]", nil)
+	})
 }
 
 func isJSONNull(raw json.RawMessage) bool {
@@ -143,6 +239,9 @@ func decodeStrictObject(data []byte, v any, what string) error {
 		if isJSONNull(value) {
 			return fmt.Errorf("%s.%s must not be null", what, name)
 		}
+	}
+	if err := checkExactKeys(members, reflect.TypeOf(v), what); err != nil {
+		return err
 	}
 	if err := DecodeSingleJSONStrict(trimmed, v); err != nil {
 		return fmt.Errorf("%s: %w", what, err)
@@ -455,6 +554,14 @@ func validateV2(m Manifest) error {
 	if m.hasMember("event_emitters", m.EventEmitters != nil) {
 		return codedf(CodeManifestInvalid, "event_emitters is replaced by app_keys in manifest_version 2")
 	}
+	names := map[string]bool{}
+	for _, tool := range m.Tools {
+		name := strings.TrimSpace(tool.Name)
+		if names[name] {
+			return codedf(CodeManifestInvalid, "duplicate tool name %q", name)
+		}
+		names[name] = true
+	}
 	tools := toolIndex(m.Tools)
 	for _, tool := range m.Tools {
 		if err := validateContexts(tool); err != nil {
@@ -465,6 +572,9 @@ func validateV2(m Manifest) error {
 		return err
 	}
 	if err := validateSurfaces(m, tools); err != nil {
+		return err
+	}
+	if err := validateAnswerInputs(m); err != nil {
 		return err
 	}
 	if err := validateUsage(m.Usage, tools); err != nil {
@@ -671,15 +781,41 @@ func validateSurfaceTools(surface Surface, tools map[string]*Tool) error {
 		return nil
 	}
 	if surface.InvokeTool == surface.AnswerTool {
-		return codedf(CodeInvokeAnswerForbidden, "surface %q invoke_tool cannot be its answer_tool", surface.ID)
+		return codedf(CodeAnswerInputForbidden, "surface %q invoke_tool cannot be its answer_tool", surface.ID)
 	}
-	invoke := tools[surface.InvokeTool]
-	if _, ok := schemaProperties(invoke.InputSchema)["answer"]; ok {
-		return codedf(CodeInvokeAnswerForbidden, "surface %q invoke_tool %q declares an answer input", surface.ID, surface.InvokeTool)
+	return nil
+}
+
+func answerTools(surfaces Surfaces) map[string]bool {
+	out := map[string]bool{}
+	for _, surface := range surfaces {
+		if surface.AnswerTool != "" {
+			out[surface.AnswerTool] = true
+		}
 	}
-	if invocation, ok := schemaProperties(invoke.InputSchema)[surface.Inputs.Invocation]; ok {
-		if _, carries := schemaProperties(invocation)["answer"]; carries {
-			return codedf(CodeInvokeAnswerForbidden, "surface %q invoke_tool %q invocation declares an answer", surface.ID, surface.InvokeTool)
+	return out
+}
+
+// validateAnswerInputs refuses an answer input on every tool except a surface
+// answer_tool: top-level, or inside an object body parameter.
+func validateAnswerInputs(m Manifest) error {
+	answers := answerTools(m.Surfaces)
+	for _, tool := range m.Tools {
+		name := strings.TrimSpace(tool.Name)
+		if answers[name] {
+			continue
+		}
+		properties := schemaProperties(tool.InputSchema)
+		if _, ok := properties["answer"]; ok {
+			return codedf(CodeAnswerInputForbidden, "tool %q declares an answer input; only a surface answer_tool carries one", name)
+		}
+		for _, param := range tool.Params {
+			if strings.TrimSpace(param.In) != "body" {
+				continue
+			}
+			if _, ok := schemaProperties(properties[strings.TrimSpace(param.Name)])["answer"]; ok {
+				return codedf(CodeAnswerInputForbidden, "tool %q declares an answer inside %q; only a surface answer_tool carries one", name, param.Name)
+			}
 		}
 	}
 	return nil
@@ -879,6 +1015,7 @@ type Resolved struct {
 	AgentTools      []string           `json:"agent_tools"`
 	SurfaceTools    []string           `json:"surface_tools"`
 	HookTools       []string           `json:"hook_tools"`
+	InstallScopes   []string           `json:"install_scopes"`
 	AppKeys         []ResolvedAppKey   `json:"app_keys"`
 	Surfaces        []ResolvedSurface  `json:"surfaces"`
 	Usage           *Usage             `json:"usage"`
@@ -965,13 +1102,20 @@ func Resolve(manifest Manifest, reservedNames map[string]bool) (*Resolved, error
 		AgentTools:      []string{},
 		SurfaceTools:    []string{},
 		HookTools:       []string{},
+		InstallScopes:   []string{},
 		AppKeys:         []ResolvedAppKey{},
 		Surfaces:        []ResolvedSurface{},
 		tools:           toolIndex(manifest.Tools),
 	}
+	installScopes := map[string]bool{}
 	for i := range manifest.Tools {
 		name := strings.TrimSpace(manifest.Tools[i].Name)
 		contexts := toolContexts(&manifest.Tools[i])
+		if contexts[ContextAgent] || contexts[ContextSurface] {
+			for _, scope := range manifest.Tools[i].Scopes {
+				installScopes[scope] = true
+			}
+		}
 		if contexts[ContextAgent] {
 			r.AgentTools = append(r.AgentTools, name)
 		}
@@ -982,6 +1126,10 @@ func Resolve(manifest Manifest, reservedNames map[string]bool) (*Resolved, error
 			r.HookTools = append(r.HookTools, name)
 		}
 	}
+	for scope := range installScopes {
+		r.InstallScopes = append(r.InstallScopes, scope)
+	}
+	sort.Strings(r.InstallScopes)
 	for _, emitter := range manifest.EventEmitters {
 		r.AppKeys = append(r.AppKeys, ResolvedAppKey{KID: strings.TrimSpace(emitter.KID), DIDKey: strings.TrimSpace(emitter.DIDKey), Purposes: []string{"app-event"}})
 	}
@@ -1122,26 +1270,24 @@ func (r *Resolved) CheckInvocationContext(toolName string, attestation *Attestat
 	return nil
 }
 
-// CheckAnswerPayload refuses a request body for a surface invoke_tool that
-// carries a top-level answer member, directly or in its invocation object.
-// Answers reach an app only through its surface answer_tool.
+// CheckAnswerPayload refuses a version 2 request body that carries an answer
+// member, top-level or in a top-level object member, for any tool except a
+// surface answer_tool. Answers reach an app only through that tool.
 func (r *Resolved) CheckAnswerPayload(toolName string, body any) error {
+	if r.ManifestVersion != 2 || answerTools(r.Manifest.Surfaces)[strings.TrimSpace(toolName)] {
+		return nil
+	}
 	object, ok := body.(map[string]any)
 	if !ok {
 		return nil
 	}
-	for _, surface := range r.Surfaces {
-		if surface.InvokeTool == nil || *surface.InvokeTool != strings.TrimSpace(toolName) {
-			continue
-		}
-		if _, carries := object["answer"]; carries {
-			return codedf(CodeAnswerPayloadRefused, "tool %q is an invoke tool and cannot carry an answer", toolName)
-		}
-		if surface.InvocationParam != nil {
-			if invocation, ok := object[*surface.InvocationParam].(map[string]any); ok {
-				if _, carries := invocation["answer"]; carries {
-					return codedf(CodeAnswerPayloadRefused, "tool %q is an invoke tool and cannot carry an answer", toolName)
-				}
+	if _, carries := object["answer"]; carries {
+		return codedf(CodeAnswerPayloadRefused, "tool %q cannot carry an answer", toolName)
+	}
+	for _, value := range object {
+		if member, ok := value.(map[string]any); ok {
+			if _, carries := member["answer"]; carries {
+				return codedf(CodeAnswerPayloadRefused, "tool %q cannot carry an answer", toolName)
 			}
 		}
 	}

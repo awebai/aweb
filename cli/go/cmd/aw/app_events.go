@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/awebai/aw/internal/appmanifest"
@@ -47,8 +46,10 @@ func registerManifestEvents(resolved *appmanifest.Resolved, fetchedDigest string
 }
 
 // manifestRegistrationBody is the registry install request for a resolved
-// manifest. Its event emitters are the manifest's app-event keys, from
-// event_emitters in version 1 and app_keys in version 2.
+// manifest. It grants the scopes of the agent and surface tools install
+// activates; a hook-only tool's scopes wait for owner activation. Its event
+// emitters are the manifest's app-event keys, from event_emitters in version 1
+// and app_keys in version 2.
 func manifestRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest string) map[string]any {
 	manifest := resolved.Manifest
 	events := make([]appmanifest.Event, len(manifest.Events))
@@ -56,17 +57,6 @@ func manifestRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest stri
 	for i := range events {
 		events[i].Type = strings.TrimPrefix(strings.TrimSpace(events[i].Type), manifest.App.ID+"/")
 	}
-	scopes := []string{}
-	seen := map[string]bool{}
-	for _, tool := range manifest.Tools {
-		for _, scope := range tool.Scopes {
-			if !seen[scope] {
-				seen[scope] = true
-				scopes = append(scopes, scope)
-			}
-		}
-	}
-	sort.Strings(scopes)
 	emitters := []appmanifest.EventEmitter{}
 	for _, key := range resolved.AppKeysFor("app-event") {
 		emitters = append(emitters, appmanifest.EventEmitter{KID: key.KID, DIDKey: key.DIDKey})
@@ -74,7 +64,7 @@ func manifestRegistrationBody(resolved *appmanifest.Resolved, fetchedDigest stri
 	return map[string]any{
 		"app_id": manifest.App.ID, "origin": manifest.App.Origin,
 		"app_version": manifest.App.Version, "manifest_version": manifest.ManifestVersion,
-		"digest": fetchedDigest, "granted_scopes": scopes,
+		"digest": fetchedDigest, "granted_scopes": append([]string{}, resolved.InstallScopes...),
 		"events": events, "event_emitters": emitters,
 	}
 }

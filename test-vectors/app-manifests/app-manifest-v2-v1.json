@@ -15,7 +15,7 @@
     "surface_invalid": "A surface field value, bound, input binding or event binding is invalid.",
     "surface_tool_invalid": "A surface tool is unresolved, lacks the surface context, is public, or has the wrong method or mutation flag.",
     "answer_tool_contexts_invalid": "A surface answer_tool does not declare invocation_contexts exactly [\"surface\"]. Checked before surface_tool_invalid for the answer tool.",
-    "invoke_answer_forbidden": "A surface invoke_tool declares an answer property, top-level or in its invocation object schema.",
+    "answer_input_forbidden": "A v2 tool other than a surface answer_tool declares an answer property, top-level or in an object body parameter's schema; or a surface names its invoke_tool as its answer_tool.",
     "usage_invalid": "usage format is missing or invalid, or its snapshot tool is unresolved, public or a mutation.",
     "lifecycle_invalid": "lifecycle is empty, or a lifecycle tool is unresolved, public, or has the wrong mutation flag.",
     "hooks_invalid": "The hooks slot has an unsupported registration_version, a bound, name, version, scope or duplicate violation.",
@@ -25,7 +25,7 @@
     "tool_context_denied": "Call-time: the caller context is not in the tool's invocation_contexts.",
     "channel_invalid": "Call-time: a principal attestation is present but its channel is missing, not a string or unknown.",
     "tool_not_found": "Call-time: the tool is not declared.",
-    "answer_payload_refused": "Call-time: a surface invoke_tool request body carries a top-level answer member, directly or in its invocation object."
+    "answer_payload_refused": "Call-time: a request body for a v2 tool other than a surface answer_tool carries an answer member, top-level or in a top-level object member."
   },
   "resolved_shape": "agent_tools, surface_tools and hook_tools list tool names in manifest order. app_keys lists keys in manifest order with purposes as declared; a v1 event_emitters entry resolves to purposes [\"app-event\"]. Surface event types resolve to <app.id>/<type>. Absent optional references resolve to null; absent usage, lifecycle and hooks resolve to null, absent registrations, productions and reads to [].",
   "call_semantics": "attestation is null when the request carries no aweb.principal-attestation/1, else {verified, payload}: verified is the outcome of the attestation verifier (secrets.md §4.6), which this check does not implement, and payload is the attestation payload. A present attestation that did not verify is attestation_invalid, never treated as absent. A verified payload's top-level channel claim maps dashboard to caller context surface, and mcp_l2 or api to agent; no attestation means agent. Any other channel fails closed. The tool is allowed when the caller context is in its invocation_contexts (context_allowed). A hook-only tool is never callable through this check. The check only refuses: context_allowed grants nothing, and the call still faces the app's grants, roles, policy and any attestation requirement of its own.",
@@ -700,6 +700,15 @@
           "hook_tools": [
             "audit-ingest"
           ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
           "app_keys": [
             {
               "kid": "app-2026-10",
@@ -796,6 +805,14 @@
             "lifecycle-status"
           ],
           "hook_tools": [],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
           "app_keys": [
             {
               "kid": "app-2026-10",
@@ -888,6 +905,16 @@
             "human-input"
           ],
           "hook_tools": [],
+          "install_scopes": [
+            "fixture:audit-ingest",
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
           "app_keys": [],
           "surfaces": [],
           "usage": null,
@@ -934,6 +961,15 @@
           ],
           "hook_tools": [
             "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
           ],
           "app_keys": [
             {
@@ -1048,6 +1084,15 @@
           "hook_tools": [
             "audit-ingest"
           ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
           "app_keys": [
             {
               "kid": "app-2026-10",
@@ -1153,6 +1198,15 @@
           ],
           "hook_tools": [
             "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
           ],
           "app_keys": [
             {
@@ -1263,6 +1317,15 @@
           "hook_tools": [
             "audit-ingest"
           ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
           "app_keys": [
             {
               "kid": "app-2026-10",
@@ -1368,6 +1431,15 @@
           "hook_tools": [
             "audit-ingest"
           ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
           "app_keys": [
             {
               "kid": "app-2026-10",
@@ -1466,6 +1538,15 @@
           ],
           "hook_tools": [
             "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
           ],
           "app_keys": [
             {
@@ -1579,6 +1660,15 @@
           "hook_tools": [
             "audit-ingest"
           ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
           "app_keys": [
             {
               "kid": "app-2026-10",
@@ -1691,6 +1781,15 @@
           "hook_tools": [
             "audit-ingest"
           ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
           "app_keys": [
             {
               "kid": "app-2026-10",
@@ -1786,6 +1885,15 @@
           ],
           "hook_tools": [
             "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
           ],
           "app_keys": [
             {
@@ -2051,6 +2159,55 @@
           "op": "set",
           "path": "/surface",
           "value": []
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_duplicate_tool_name",
+      "description": "Every lookup of a v2 tool by name must find the same tool, so names are unique.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/-",
+          "value": {
+            "name": "workspace-list",
+            "description": "Synthetic fixture human-input",
+            "method": "POST",
+            "path": "/v1/human-input",
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "request": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "request"
+              ],
+              "additionalProperties": false
+            },
+            "params": [
+              {
+                "name": "request",
+                "in": "body"
+              }
+            ],
+            "scopes": [
+              "fixture:human-input"
+            ],
+            "mutation": true,
+            "body": {
+              "mode": "json"
+            },
+            "invocation_contexts": [
+              "agent"
+            ]
+          }
         }
       ],
       "expected": {
@@ -2383,7 +2540,7 @@
       ],
       "expected": {
         "accepted": false,
-        "error": "invoke_answer_forbidden"
+        "error": "answer_input_forbidden"
       }
     },
     {
@@ -2403,7 +2560,172 @@
       ],
       "expected": {
         "accepted": false,
-        "error": "invoke_answer_forbidden"
+        "error": "answer_input_forbidden"
+      }
+    },
+    {
+      "name": "agent_tool_declares_answer",
+      "description": "Only a surface answer_tool carries an answer, whatever the other tool's contexts.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/5/input_schema/properties/answer",
+          "value": {
+            "type": "object"
+          }
+        },
+        {
+          "op": "set",
+          "path": "/tools/5/params/-",
+          "value": {
+            "name": "answer",
+            "in": "body"
+          }
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "answer_input_forbidden"
+      }
+    },
+    {
+      "name": "surface_only_tool_declares_answer_in_body_object",
+      "description": "",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/9/input_schema/properties/request/properties",
+          "value": {
+            "answer": {
+              "type": "string"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "accepted": false,
+        "error": "answer_input_forbidden"
+      }
+    },
+    {
+      "name": "answer_tool_declares_answer",
+      "description": "The surface answer_tool is the one tool that may declare an answer.",
+      "base": "v2",
+      "mutations": [
+        {
+          "op": "set",
+          "path": "/tools/3/input_schema/properties/request/properties",
+          "value": {
+            "answer": {
+              "type": "object"
+            }
+          }
+        }
+      ],
+      "expected": {
+        "accepted": true,
+        "resolved": {
+          "manifest_version": 2,
+          "app_id": "fixture",
+          "agent_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status"
+          ],
+          "surface_tools": [
+            "workspace-list",
+            "workspace-read",
+            "workspace-invoke",
+            "workspace-answer",
+            "usage-snapshot",
+            "workspace-export",
+            "workspace-delete",
+            "lifecycle-status",
+            "human-input"
+          ],
+          "hook_tools": [
+            "audit-ingest"
+          ],
+          "install_scopes": [
+            "fixture:delete",
+            "fixture:export",
+            "fixture:human-input",
+            "fixture:lifecycle",
+            "fixture:read",
+            "fixture:usage",
+            "fixture:write"
+          ],
+          "app_keys": [
+            {
+              "kid": "app-2026-10",
+              "did_key": "did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd",
+              "purposes": [
+                "app-event",
+                "app-request",
+                "app-usage"
+              ]
+            }
+          ],
+          "surfaces": [
+            {
+              "id": "workbench",
+              "label": "Workspace",
+              "format": "aweb.page/1",
+              "list_tool": "workspace-list",
+              "read_tool": "workspace-read",
+              "invoke_tool": "workspace-invoke",
+              "answer_tool": "workspace-answer",
+              "resource_param": "page_id",
+              "invocation_param": "request",
+              "events": [
+                {
+                  "type": "fixture/workspace.changed",
+                  "resource_field": "resource_ref",
+                  "revision_field": "rev"
+                }
+              ]
+            }
+          ],
+          "usage": {
+            "format": "aweb.usage/1",
+            "snapshot_tool": "usage-snapshot"
+          },
+          "lifecycle": {
+            "export_tool": "workspace-export",
+            "delete_tool": "workspace-delete",
+            "status_tool": "lifecycle-status"
+          },
+          "hooks": {
+            "registration_version": 1,
+            "registrations": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-operation",
+                "tool": "audit-ingest",
+                "scopes": [
+                  "fixture:audit-ingest"
+                ]
+              }
+            ],
+            "productions": [
+              {
+                "catalog_id": "example.hooks",
+                "catalog_version": 1,
+                "hook": "example.after-command",
+                "reads": [
+                  "workspace-list"
+                ]
+              }
+            ]
+          }
+        }
       }
     },
     {
@@ -3975,6 +4297,55 @@
   ],
   "raw_cases": [
     {
+      "name": "v1_case_variant_top_level_key",
+      "description": "Keys match exactly; a JSON decoder's case folding is not part of the contract.",
+      "bytes": "{\"Surfaces\":[],\"app\":{\"id\":\"fixture\",\"origin\":\"https://fixture.example\",\"version\":\"0.0.0\"},\"event_emitters\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\"}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"manifest_version\":1,\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]}]}",
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_case_variant_event_emitters",
+      "bytes": "{\"Event_Emitters\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"k\"}],\"app\":{\"id\":\"fixture\",\"origin\":\"https://fixture.example\",\"version\":\"0.0.0\"},\"app_keys\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\",\"purposes\":[\"app-event\",\"app-request\",\"app-usage\"]}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"hooks\":{\"productions\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-command\",\"reads\":[\"workspace-list\"]}],\"registration_version\":1,\"registrations\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-operation\",\"scopes\":[\"fixture:audit-ingest\"],\"tool\":\"audit-ingest\"}]},\"lifecycle\":{\"delete_tool\":\"workspace-delete\",\"export_tool\":\"workspace-export\",\"status_tool\":\"lifecycle-status\"},\"manifest_version\":2,\"surfaces\":[{\"answer_tool\":\"workspace-answer\",\"events\":[{\"resource_field\":\"resource_ref\",\"revision_field\":\"rev\",\"type\":\"fixture/workspace.changed\"}],\"format\":\"aweb.page/1\",\"id\":\"workbench\",\"inputs\":{\"invocation\":\"request\",\"resource\":\"page_id\"},\"invoke_tool\":\"workspace-invoke\",\"label\":\"Workspace\",\"list_tool\":\"workspace-list\",\"read_tool\":\"workspace-read\"}],\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"agent\",\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-answer\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-answer\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/answers\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture audit-ingest\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"hook\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"audit-ingest\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/audit-ingest\",\"scopes\":[\"fixture:audit-ingest\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture human-input\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"human-input\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/human-input\",\"scopes\":[\"fixture:human-input\"]}],\"usage\":{\"format\":\"aweb.usage/1\",\"snapshot_tool\":\"usage-snapshot\"}}",
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_case_variant_tool_key",
+      "bytes": "{\"app\":{\"id\":\"fixture\",\"origin\":\"https://fixture.example\",\"version\":\"0.0.0\"},\"app_keys\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\",\"purposes\":[\"app-event\",\"app-request\",\"app-usage\"]}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"hooks\":{\"productions\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-command\",\"reads\":[\"workspace-list\"]}],\"registration_version\":1,\"registrations\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-operation\",\"scopes\":[\"fixture:audit-ingest\"],\"tool\":\"audit-ingest\"}]},\"lifecycle\":{\"delete_tool\":\"workspace-delete\",\"export_tool\":\"workspace-export\",\"status_tool\":\"lifecycle-status\"},\"manifest_version\":2,\"surfaces\":[{\"answer_tool\":\"workspace-answer\",\"events\":[{\"resource_field\":\"resource_ref\",\"revision_field\":\"rev\",\"type\":\"fixture/workspace.changed\"}],\"format\":\"aweb.page/1\",\"id\":\"workbench\",\"inputs\":{\"invocation\":\"request\",\"resource\":\"page_id\"},\"invoke_tool\":\"workspace-invoke\",\"label\":\"Workspace\",\"list_tool\":\"workspace-list\",\"read_tool\":\"workspace-read\"}],\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"agent\",\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"Invocation_Contexts\":[\"surface\"],\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-answer\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-answer\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/answers\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture audit-ingest\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"hook\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"audit-ingest\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/audit-ingest\",\"scopes\":[\"fixture:audit-ingest\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture human-input\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"human-input\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/human-input\",\"scopes\":[\"fixture:human-input\"]}],\"usage\":{\"format\":\"aweb.usage/1\",\"snapshot_tool\":\"usage-snapshot\"}}",
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_case_variant_surface_key",
+      "bytes": "{\"app\":{\"id\":\"fixture\",\"origin\":\"https://fixture.example\",\"version\":\"0.0.0\"},\"app_keys\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\",\"purposes\":[\"app-event\",\"app-request\",\"app-usage\"]}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"hooks\":{\"productions\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-command\",\"reads\":[\"workspace-list\"]}],\"registration_version\":1,\"registrations\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-operation\",\"scopes\":[\"fixture:audit-ingest\"],\"tool\":\"audit-ingest\"}]},\"lifecycle\":{\"delete_tool\":\"workspace-delete\",\"export_tool\":\"workspace-export\",\"status_tool\":\"lifecycle-status\"},\"manifest_version\":2,\"surfaces\":[{\"Answer_Tool\":\"workspace-answer\",\"events\":[{\"resource_field\":\"resource_ref\",\"revision_field\":\"rev\",\"type\":\"fixture/workspace.changed\"}],\"format\":\"aweb.page/1\",\"id\":\"workbench\",\"inputs\":{\"invocation\":\"request\",\"resource\":\"page_id\"},\"invoke_tool\":\"workspace-invoke\",\"label\":\"Workspace\",\"list_tool\":\"workspace-list\",\"read_tool\":\"workspace-read\"}],\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"agent\",\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-answer\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-answer\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/answers\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture audit-ingest\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"hook\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"audit-ingest\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/audit-ingest\",\"scopes\":[\"fixture:audit-ingest\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture human-input\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"human-input\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/human-input\",\"scopes\":[\"fixture:human-input\"]}],\"usage\":{\"format\":\"aweb.usage/1\",\"snapshot_tool\":\"usage-snapshot\"}}",
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v1_case_variant_app_key",
+      "bytes": "{\"app\":{\"Origin\":\"https://fixture.example\",\"id\":\"fixture\",\"version\":\"0.0.0\"},\"event_emitters\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\"}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"manifest_version\":1,\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]}]}",
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
+      "name": "v2_case_variant_hook_catalog_key",
+      "bytes": "{\"app\":{\"id\":\"fixture\",\"origin\":\"https://fixture.example\",\"version\":\"0.0.0\"},\"app_keys\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\",\"purposes\":[\"app-event\",\"app-request\",\"app-usage\"]}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"hooks\":{\"productions\":[{\"catalog\":{\"id\":\"example.hooks\",\"version\":1},\"hook\":\"example.after-command\",\"reads\":[\"workspace-list\"]}],\"registration_version\":1,\"registrations\":[{\"catalog\":{\"Version\":1,\"id\":\"example.hooks\"},\"hook\":\"example.after-operation\",\"scopes\":[\"fixture:audit-ingest\"],\"tool\":\"audit-ingest\"}]},\"lifecycle\":{\"delete_tool\":\"workspace-delete\",\"export_tool\":\"workspace-export\",\"status_tool\":\"lifecycle-status\"},\"manifest_version\":2,\"surfaces\":[{\"answer_tool\":\"workspace-answer\",\"events\":[{\"resource_field\":\"resource_ref\",\"revision_field\":\"rev\",\"type\":\"fixture/workspace.changed\"}],\"format\":\"aweb.page/1\",\"id\":\"workbench\",\"inputs\":{\"invocation\":\"request\",\"resource\":\"page_id\"},\"invoke_tool\":\"workspace-invoke\",\"label\":\"Workspace\",\"list_tool\":\"workspace-list\",\"read_tool\":\"workspace-read\"}],\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"agent\",\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-answer\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-answer\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/answers\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture audit-ingest\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"hook\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"audit-ingest\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/audit-ingest\",\"scopes\":[\"fixture:audit-ingest\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture human-input\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"request\":{\"type\":\"object\"}},\"required\":[\"request\"],\"type\":\"object\"},\"invocation_contexts\":[\"surface\"],\"method\":\"POST\",\"mutation\":true,\"name\":\"human-input\",\"params\":[{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/human-input\",\"scopes\":[\"fixture:human-input\"]}],\"usage\":{\"format\":\"aweb.usage/1\",\"snapshot_tool\":\"usage-snapshot\"}}",
+      "expected": {
+        "accepted": false,
+        "error": "manifest_invalid"
+      }
+    },
+    {
       "name": "trailing_document",
       "bytes": "{\"app\":{\"id\":\"fixture\",\"origin\":\"https://fixture.example\",\"version\":\"0.0.0\"},\"event_emitters\":[{\"did_key\":\"did:key:z6MkehRgf7yJbgaGfYsdoAsKdBPE3dj2CYhowQdcjqSJgvVd\",\"kid\":\"app-2026-10\"}],\"events\":[{\"default_delivery_intent\":\"ambient\",\"description\":\"Opaque revision changed.\",\"type\":\"workspace.changed\"}],\"manifest_version\":1,\"tools\":[{\"description\":\"Synthetic fixture workspace-list\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-list\",\"params\":[],\"path\":\"/v1/workspaces\",\"scopes\":[\"fixture:read\"]},{\"description\":\"Synthetic fixture workspace-read\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"workspace-read\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"}],\"path\":\"/v1/workspaces/{page_id}\",\"scopes\":[\"fixture:read\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-invoke\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"request\":{\"type\":\"object\"}},\"required\":[\"page_id\",\"request\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-invoke\",\"params\":[{\"in\":\"path\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"request\"}],\"path\":\"/v1/workspaces/{page_id}/invoke\",\"scopes\":[\"fixture:write\"]},{\"description\":\"Synthetic fixture usage-snapshot\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{},\"required\":[],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"usage-snapshot\",\"params\":[],\"path\":\"/v1/resource-usage\",\"scopes\":[\"fixture:usage\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-export\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-export\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"}],\"path\":\"/v1/export\",\"scopes\":[\"fixture:export\"]},{\"body\":{\"mode\":\"json\"},\"description\":\"Synthetic fixture workspace-delete\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"idempotency_key\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"},\"page_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"idempotency_key\",\"page_id\"],\"type\":\"object\"},\"method\":\"POST\",\"mutation\":true,\"name\":\"workspace-delete\",\"params\":[{\"in\":\"body\",\"name\":\"page_id\"},{\"in\":\"body\",\"name\":\"idempotency_key\"}],\"path\":\"/v1/erase\",\"scopes\":[\"fixture:delete\"]},{\"description\":\"Synthetic fixture lifecycle-status\",\"input_schema\":{\"additionalProperties\":false,\"properties\":{\"job_id\":{\"pattern\":\"^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$\",\"type\":\"string\"}},\"required\":[\"job_id\"],\"type\":\"object\"},\"method\":\"GET\",\"mutation\":false,\"name\":\"lifecycle-status\",\"params\":[{\"in\":\"path\",\"name\":\"job_id\"}],\"path\":\"/v1/jobs/{job_id}\",\"scopes\":[\"fixture:lifecycle\"]}]} {}",
       "expected": {
@@ -4392,14 +4763,37 @@
       "expected": "not_refused"
     },
     {
-      "name": "non_surface_tool_not_inspected",
+      "name": "agent_tool_answer_payload_refused",
       "base": "v2",
       "tool": "workspace-export",
       "body": {
         "page_id": "p1",
         "answer": "x"
       },
-      "expected": "not_refused"
+      "expected": "answer_payload_refused",
+      "description": "Every v2 tool except a surface answer_tool refuses an answer, not only invoke tools."
+    },
+    {
+      "name": "surface_only_tool_nested_answer_refused",
+      "base": "v2",
+      "tool": "human-input",
+      "body": {
+        "request": {
+          "answer": "x"
+        }
+      },
+      "expected": "answer_payload_refused"
+    },
+    {
+      "name": "hook_tool_answer_refused",
+      "base": "v2",
+      "tool": "audit-ingest",
+      "body": {
+        "request": {
+          "answer": "x"
+        }
+      },
+      "expected": "answer_payload_refused"
     },
     {
       "name": "v1_tool_not_inspected",

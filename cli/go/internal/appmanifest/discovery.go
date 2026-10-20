@@ -1,9 +1,12 @@
 package appmanifest
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/url"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -131,6 +134,15 @@ func parseCatalog(body []byte) (*catalogDocument, error) {
 	if err := DecodeSingleJSONStrict(body, &catalog); err != nil {
 		return nil, codedf(CodeCatalogInvalid, "decode manifest catalog: %v", err)
 	}
+	if err := checkObjectKeys(body, reflect.TypeOf(catalogDocument{}), "manifest catalog"); err != nil {
+		return nil, codedf(CodeCatalogInvalid, "decode manifest catalog: %v", err)
+	}
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(body, &members); err == nil {
+		if err := checkArrayKeys(members["variants"], reflect.TypeOf(catalogVariant{}), "manifest catalog variants[]", nil); err != nil {
+			return nil, codedf(CodeCatalogInvalid, "decode manifest catalog: %v", err)
+		}
+	}
 	if catalog.CatalogVersion != 1 {
 		return nil, codedf(CodeCatalogInvalid, "unsupported catalog_version %d", catalog.CatalogVersion)
 	}
@@ -147,7 +159,7 @@ func parseCatalog(body []byte) (*catalogDocument, error) {
 		}
 		seen[v.ManifestVersion] = true
 		if !validVariantPath(v.URL) {
-			return nil, codedf(CodeCatalogInvalid, "manifest catalog variant url %q must be a same-origin absolute path", v.URL)
+			return nil, codedf(CodeCatalogInvalid, "manifest catalog variant url %q must be an absolute path under the install base", v.URL)
 		}
 		if !digestPattern.MatchString(v.Digest) {
 			return nil, codedf(CodeCatalogInvalid, "manifest catalog variant digest %q is invalid", v.Digest)
@@ -156,8 +168,9 @@ func parseCatalog(body []byte) (*catalogDocument, error) {
 	return &catalog, nil
 }
 
-// validVariantPath accepts an absolute path on the catalog's own origin:
-// no scheme, host, query, fragment, backslash or dot segment.
+// validVariantPath accepts an absolute path that resolves under the install
+// base: no scheme, host, query, fragment, backslash, encoded slash or
+// backslash, or dot segment, encoded or not.
 func validVariantPath(path string) bool {
 	if len(path) == 0 || len(path) > maxVariantURLLen || path[0] != '/' || strings.HasPrefix(path, "//") {
 		return false
@@ -165,8 +178,13 @@ func validVariantPath(path string) bool {
 	if strings.ContainsAny(path, "?#\\") {
 		return false
 	}
+	lower := strings.ToLower(path)
+	if strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c") {
+		return false
+	}
 	for _, segment := range strings.Split(path[1:], "/") {
-		if segment == "." || segment == ".." {
+		decoded, err := url.PathUnescape(segment)
+		if err != nil || decoded == "." || decoded == ".." {
 			return false
 		}
 	}
@@ -192,17 +210,36 @@ func manifestDigest(body []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-// manifestIdentity reads only manifest_version and app.id, so discovery can
-// check a variant before the consumer validates it.
+// manifestIdentity reads only manifest_version and app.id, by their exact
+// keys, so discovery can check a variant before the consumer validates it.
+// A null reads as its zero value; any other wrong type reads as no identity.
 func manifestIdentity(body []byte) (int, string) {
-	var head struct {
-		ManifestVersion int `json:"manifest_version"`
-		App             struct {
-			ID string `json:"id"`
-		} `json:"app"`
-	}
-	if err := json.Unmarshal(body, &head); err != nil {
+	var members map[string]json.RawMessage
+	if err := json.Unmarshal(body, &members); err != nil || members == nil {
 		return 0, ""
 	}
-	return head.ManifestVersion, strings.TrimSpace(head.App.ID)
+	var version int
+	if raw, ok := members["manifest_version"]; ok {
+		if err := json.Unmarshal(raw, &version); err != nil {
+			return 0, ""
+		}
+	}
+	raw, ok := members["app"]
+	if !ok || isJSONNull(raw) {
+		return version, ""
+	}
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
+		return 0, ""
+	}
+	var app map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &app); err != nil {
+		return 0, ""
+	}
+	var id string
+	if rawID, ok := app["id"]; ok {
+		if err := json.Unmarshal(rawID, &id); err != nil {
+			return 0, ""
+		}
+	}
+	return version, strings.TrimSpace(id)
 }
