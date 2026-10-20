@@ -83,8 +83,8 @@ deployment (§17).
 - **Who authorizes.** AWID establishes the current team authority and the member
   certificate. secrets' own tables decide everything else: app-local roles,
   grants, policy and approver designations, keyed to the member's stable
-  identity. The installation admin, under D1's install authority, bootstraps the
-  first owner. Every later change that widens authority needs an enrolled owner
+  identity. The team owner act (`aweb.owner-act/1`, team controller authority)
+  designates the first owner, never install or admin authority (§10.2). Every later change that widens authority needs an enrolled owner
   passkey on secrets' own origin (§6.3). Narrowing changes never need a passkey
   (§12).
 - **What a host or transport may do.** A hosted operator's MCP endpoint (D1 L2) signs team-auth
@@ -107,8 +107,8 @@ any secrets role. secrets never creates, joins, recovers or reassigns an identit
 
 The secrets SOT §14 recommends that secrets authorize and audit credential use
 on top of the vaults teams already have, instead of replacing them. This design follows that
-recommendation. It also keeps the native store that the TASK's design default 1
-asks for. The native store exists so that a team without a vault can start, and
+recommendation. It also keeps a native store, so both custody backends are
+available at launch (Q1). The native store exists so that a team without a vault can start, and
 so that secrets can seal its own operational credentials, including the
 1Password service-account token (§5.3).
 
@@ -208,7 +208,10 @@ Every agent-API request is verified in this order, and every step fails closed.
    generic app-to-team-server API (aweb-acgh.7) and D1's admission fence. The
    admitted generation is recorded on the intent. B1's resource/action policy
    hook is where secrets plugs in steps 3–5.
-3. **Principal.** The stable principal is `member_did_aw` when present.
+3. **Principal.** The stable principal is the certificate's controller-certified
+   `member_did_aw` field when present, as B1 surfaces it from the verified
+   certificate. secrets does not need the did:aw current-key profile, which is
+   out of B1's scope.
    Otherwise it is `member_did_key`, which covers local identities. A key
    rotation under the same `did:aw` keeps the principal's grants. A new local key
    is a new principal.
@@ -270,7 +273,7 @@ audit event carries its digest. It holds the following fields:
 | `open_request` | boolean. Never true for `sensitive` secrets. |
 | `result` | the result-handling defaults and bounds (§7.6). |
 | `requires_attestation` | optional custody or principal predicates (§4.6). |
-| `self_approval` | `deny` (recommended default, Q7). |
+| `distinct_approver` | `required` or `not_required`. When required, the approver's linked principal must differ from the requesting principal: a four-eyes rule between humans (§10.2, Q7). |
 
 Policy is evaluated at admission and again at the dispatch fence (§11.3). Rate
 and window denials are security outcomes. They are recorded and never metered as
@@ -392,9 +395,12 @@ How a value is handled once opened:
   launch it does not cache values across dispatches. Whether vault rate limits
   require a short in-memory cache of at most 60 s is Q4. 1Password's own activity
   log is a second, independent record of every read.
-- **Ingress and replacement.** Both happen in the vault. secrets sees the item
-  version change at the next `open()` and records a `secret.version_observed`
-  event. Disable and destroy act on secrets' reference only. Revoking the service
+- **Ingress and replacement.** Both happen in the vault. `open()` returns the
+  item version it read. secrets compares it at the dispatch fence (§11.3) with
+  the version bound to the intent, and with the approved version when there is
+  an approval. On a mismatch secrets refuses (`secret_version_changed`), voids
+  the approval and records a `secret.version_observed` event. An approval given
+  for one value therefore never dispatches with another. Disable and destroy act on secrets' reference only. Revoking the service
   account is the owner's action in 1Password, and the console links to it.
 
 ### 5.4 What the broker sees, when, and for how long
@@ -428,9 +434,10 @@ reason ingress is not a surface tool rendered by a host: a D1 surface renders on
 the host and calls tools through the host as the member, so the host would see the
 plaintext in transit. The manifest surface therefore offers a **link-out** to the
 console (§13.2). Typing, pasting or uploading the value happens browser-to-secrets
-over TLS. This is the design's reading of TASK's `invocation_contexts: surface`
-for ingress, and it changes the secrets SOT §6, where creating a secret was a
-manifest tool.
+over TLS. The requirement is that values enter only through a human surface or
+the vault. This design meets it with secrets' own console rather than with a
+host-rendered `surface` tool. That changes the secrets SOT §6, where creating a
+secret was a manifest tool.
 
 ### 6.2 The owner's flow
 
@@ -474,9 +481,19 @@ The following are *widening* changes:
 
 A widening change is a frozen canonical change set (`aweb.secrets.change/1`). It
 is approved through B2/B3 with minimum assurance `passkey`, and an owner is the
-designated approver (§10). An owner who is also a team member may draft the change through a
-surface tool or `aw` (§13). The draft is inert until a passkey confirms it on the
-console.
+designated approver (§10). An owner who is also a team member may draft the
+change through a surface tool or `aw` (§13). The draft is inert until a passkey
+confirms it on the console.
+
+Anything that can sign as an owner can draft a change, an agent included. The
+console therefore renders each change set by the same rules as an approval
+(§10.4):
+
+- it renders from the frozen bytes;
+- hosts are emphasized, and each IDNA host is shown both as Unicode and as its
+  punycode A-label;
+- every widening element is highlighted against the current state;
+- drafter-supplied text is labelled untrusted and escaped.
 
 Because the confirmation is a passkey assertion on secrets' origin, holding the
 owner principal's team-auth key is not enough to widen anything. That includes
@@ -542,9 +559,10 @@ requirement.
 1. **Own resolver.** secrets resolves the host with its own resolver and collects
    all A and AAAA records.
 2. **Denied addresses.** If any resolved address falls in a denied range, the
-   request is refused (`destination_address_denied`). This applies unless the
-   destination has `network: internal` together with an exact allowed CIDR that
-   an owner confirmed by passkey. The denied ranges are:
+   request is refused (`destination_address_denied`). The only exception is a
+   destination with `network: internal` and an exact allowed CIDR. That needs
+   both an owner's passkey confirmation **and** the deploy-level switch
+   described below. The denied ranges are:
    - loopback, `0.0.0.0/8` and unspecified;
    - RFC 1918 private and CGNAT `100.64/10`;
    - link-local, including `169.254.169.254` and IPv6 `fe80::/10`;
@@ -569,10 +587,19 @@ requirement.
    downwards), request body at most 1 MiB, response at most 4 MiB. Both bounds are
    reduced by policy.
 
-"Internal" means internal to the secrets deployment's network. For a hosted
-secrets, internal destinations should essentially never be authorized. A
-customer's private services belong behind a runner (§9). A self-hosted operator
-may authorize them explicitly.
+"Internal" means internal to the secrets deployment's network. Whether such a
+destination is possible at all is an **operator deploy setting**,
+`internal_destinations: disabled | allowed`, which defaults to `disabled`.
+
+- **`disabled`.** Any `network: internal` entry, and any IP-literal destination,
+  is refused at definition time and again at dispatch, whatever an owner
+  confirms. Owner passkeys cannot change this, because the setting is not in any
+  installation's policy.
+- **Hosted deployments** run with `disabled`, because one deployment serves many
+  customers and its network is the operator's own.
+- **A self-hosted operator** may set `allowed` for their own network.
+
+A customer's private services belong behind a runner (§9).
 
 ### 7.4 Headers
 
@@ -607,8 +634,9 @@ The scheme is executed server-side, so the raw value never leaves secrets
 | `oauth2-client-credentials` | The broker exchanges client credentials at the owner-set token endpoint, then injects `Bearer <access_token>`. | The token endpoint passes the same egress guard and is an internal step of the dispatch. The access token is cached sealed with its TTL minus 60 s, never returned, and added to the redaction set. The scope string is owner-set. |
 | `aws-sigv4` | The broker signs the final canonical request (after header filtering) with SigV4, including `x-amz-date` and `x-amz-content-sha256`. | Region and service are owner-set per secret and never agent-chosen. `X-Amz-Target`, which selects the operation for AWS JSON APIs, is allowed only when a named operation fixes it. STS is token-issuing (§8.3). |
 
-`oauth2-refresh` and `mtls-client-cert` are in the secrets SOT §3. The TASK's
-design defaults put mTLS later and do not list refresh at launch. This design
+`oauth2-refresh` and `mtls-client-cert` are in the secrets SOT §3. The
+recommended launch set is the six kinds above. mTLS is proposed for later, and
+refresh tokens are not in the launch set. This design
 keeps the interface able to carry both, and lists their timing as Q9.
 
 ### 7.6 Response handling and default deny on credential-shaped results
@@ -701,7 +729,7 @@ declare `token_issuing: true` and one `result_handling`:
 | `deny` (default) | The operation is refused before dispatch. |
 | `withhold` | secrets dispatches, records, and returns a projection that excludes the credential fields. |
 | `store_as_secret` | secrets captures the issued credential into custody as a **derived secret**. It is child-linked to the parent, given a TTL from the response expiry, and given a kind (for STS, `aws-sigv4` with a session token). Its grants are copied from a named grant template. The agent receives the derived ref, never the value. |
-| `return` | The credential is returned to the agent. This needs a separate owner passkey confirmation, is labelled in the console and in every event as **outside the confidentiality guarantee**, and is never allowed for MCP-exposed grants unless Juan rules otherwise (Q8). |
+| `return` | **Recommended: does not exist (Q8).** Returning the credential is a value release, like `--unsafe-inject`, and `store_as_secret` plus runner `short_lived` delivery covers the use cases. If Juan keeps it, it needs a separate owner passkey confirmation and is labelled everywhere as **outside the confidentiality guarantee**. It also refuses unless a verified attestation (§4.6) shows `channel != mcp_l2`. Even then it cannot claim that the agent is not backed by L2. |
 
 When detection (§7.6) finds credential-shaped content in an operation that did not
 declare `token_issuing`, the result is withheld. A `secret.undeclared_credential`
@@ -763,12 +791,29 @@ digest. It holds:
 job_id, runner_ids, kind: exec | oci,
 exec: absolute executable path + sha256; declared file set (scripts, config, lockfiles) each with sha256,
 oci:  image reference by digest (never a tag); no host mounts except declared read-only paths,
-argv template: array; params substitute only as whole elements, never through a shell,
-env template: names that receive credential material or params,
+argv template: array; params substitute only as whole elements, never through a shell;
+               each slot is `positional` (placed after a literal `--`) or `option_value`
+               (the element after a fixed option name),
+env template: names that receive credential material or params, never a code-loading name,
 cwd, timeout, max output bytes, output projection,
 params: typed schema as in §8.1,
 credentials: [{secret_ref, delivery: short_lived | durable}]
 ```
+
+**Argument and environment safety.** These rules are checked when a job is
+defined and checked again by the runner before each run.
+
+- **Option injection.** A typed string parameter that starts with `-` is refused
+  unless its slot is declared `option_value`. Positional slots come after a
+  literal `--` in the template. A value like `--upload-pack=…` or
+  `-oProxyCommand=…` therefore can never become a flag.
+- **Environment names.** Names that load code or change resolution are refused
+  as targets for a parameter or a credential. They include `LD_*`, `DYLD_*`,
+  `PATH`, `*_OPTIONS`, `BASH_ENV`, `ENV`, `PYTHONPATH`, `PYTHONSTARTUP`,
+  `NODE_OPTIONS`, `PERL5OPT`, `RUBYOPT`, `GIT_*`, `SSH_ASKPASS` and `IFS`.
+- **Starting environment.** The runner starts each job from an empty
+  environment plus the declared names. It does not inherit the runner's own
+  environment.
 
 **Two-key pinning.** secrets checks the parameters and the digest. The runner's
 own local config independently lists the job digests it will execute. A job runs
@@ -868,24 +913,43 @@ which proves only possession.
 - **Who designates.** An owner, through a widening change confirmed by passkey
   (§6.3). An approver record covers chosen secrets or groups, and may link to a
   member principal.
-- **Bootstrap.** At install time, the installation admin designates the first
-  owner-approver and that person's contact, acting under D1's install authority.
-  This is the only widening act made without a prior passkey. It is the
-  installation's root of trust (boundary T11), and every owner contact is
-  notified of it. Enrolment then follows B3, with trust on first use stated
-  honestly.
-- **Self-approval** is denied by default. An approver whose linked principal is
-  the requester cannot approve that request (Q7).
-- **Optional generic hardening for B3, not secrets-local.** These are proposed as
-  B3 policy options, and Juan decides (Q14):
-  - a delay on a contact change (recommended 24 h), notified to both the old and
-    the new contact;
-  - a cooling-off period when the only owner is locked out and the installation
-    admin must re-designate (recommended 72 h). During it, `approve_only` uses
-    are frozen and every recorded contact is notified.
+- **Bootstrap and re-designation need the team owner act, not install
+  authority.** Install authority can belong to any certified member today, and
+  so possibly to an agent. Designating the first owner-approver, and
+  re-designating owners after a lockout, therefore take the team owner act
+  `aweb.owner-act/1` defined by the hooks design (aweb-acgh.1, §A3): a statement
+  signed by the current AWID team key, single-use and short-lived. The act is
+  `naapp-owner.designate`. Its subject is
+  `{installation_id, generation, app_id, approver_id, contact_sha256}`, which
+  commits to the contact without carrying it.
+  - For BYOT the owner signs it locally with `aw`.
+  - Where a custodial deployment holds the controller key, it signs only after a
+    fresh, interactive step-up by the human owner. That requirement on custodial
+    deployments is stated in §17.
+  - A member or admin signature is refused with `owner_required`.
 
-  They belong in B3 because pages' passkey approvals face the same takeover
-  path.
+  This act is the installation's root of trust (boundary T11). Enrolment then
+  follows B3, with trust on first use stated honestly.
+- **Owner lockout is protected (mandatory).** Revoking an owner's passkey or
+  contact through team-auth alone, the narrowing path in §12, is refused if it
+  would leave no owner with an enrolled passkey and a verified contact
+  (`last_owner_protected`). The last owner's passkey or contact can be changed
+  only on the console with that owner's own passkey, or by re-designation.
+  Re-designation after a lockout has a mandatory 72 h cooling-off period.
+  During it, `approve_only` uses and widening changes are frozen, and every
+  owner and approver contact recorded before the lockout is notified. A contact
+  change takes effect after 24 h and is notified to both the old and the new
+  contact. These rules are generic and proposed for B3 (aweb-acgh.4), because
+  pages' passkey approvals face the same takeover path.
+- **Self-approval** follows the policy in §4.4 (Q7). Here is what the rule can
+  and cannot protect. A passkey assertion already proves that a human with an
+  enrolled authenticator decided, not the agent. A distinct-approver rule adds
+  separation between the *requesting human* and the *approving human*. It
+  cannot separate a human from their own agent: a hosted human's MCP agent signs
+  as that human's custodial member, so the request and the approval come from
+  the same principal. Secrets compares the approver's linked principal with the
+  requesting principal. Under L2 that comparison therefore tests the human, not
+  the agent.
 
 ### 10.3 Flow
 
@@ -987,6 +1051,13 @@ received ─┬─> refused (terminal)
 - **`outcome_unknown`.** This covers a timeout after bytes were written, a reset
   mid-exchange, a lost runner after `started`, or a process crash, which the
   sweeper detects as a stale `dispatching` row.
+  - **Sweeper threshold.** The sweeper's threshold exceeds the maximum total
+    dispatch time (§7.3; the job timeout for runners) plus a margin, so a
+    dispatch that is still running is never swept.
+  - **Late results.** `completed` and `not_sent` are compare-and-set transitions
+    from `dispatching` only. A response or job result that arrives after the
+    sweeper has written `outcome_unknown` does not overwrite it. It is kept as
+    reconciliation evidence and resolves the state through §11.4.
 
 ### 11.2 Idempotency
 
@@ -1041,48 +1112,90 @@ SOT §2), reached through the hook.
   secrets' outbox **in the same DB transaction as the transition**.
 - If the outbox insert fails, the transition does not commit. The request is
   refused or stays in its previous state, and nothing is dispatched.
-- A dispatch therefore never happens without a durably enqueued `admitted` and
-  `dispatching` event.
-- **No registered target.** If no target is registered for `post-secret-use-hook`
-  for the team, secrets refuses every use with `audit_target_unavailable`. The
-  recommended default is that the owner cannot turn this off. The alternative is
-  Q11.
-- **Backlog bound.** If the oldest undelivered event for a target is older than a
-  threshold (recommended 1 h), secrets refuses new admissions with
-  `audit_delivery_stalled` until the backlog drains. This keeps "every use is
-  recorded" true in practice, not only eventually. The threshold is Q11.
+- A dispatch therefore never happens without a durably enqueued
+  `dispatch_intent` event.
+- **No active target.** secrets resolves targets through aweb-acgh.7, using the
+  hooks design's freshness bound of 60 s at most. The rule counts only a
+  registration whose `active_from` is at or before the event's `occurred_at`.
+  If no registration for `post-secret-use-hook` is active for the team in that
+  sense, secrets refuses every use with `audit_target_unavailable`. A
+  registration still inside its activation pad therefore does not let a use
+  through with zero deliveries. The recommended default is that owners cannot
+  turn this off. The alternative is Q11.
+- **Backlog bound.** secrets refuses new admissions with
+  `audit_delivery_stalled` when **no** active `post-secret-use-hook`
+  registration is current, meaning its oldest undelivered event is older than
+  a threshold (recommended 1 h, Q11). A stalled secondary target, such as a
+  self-hosted copy during a migration, does not block use while another active
+  registration is current. It is surfaced to owners on the console. This keeps
+  "every use is recorded" true in practice, not only eventually.
+- **Cancelled or rejected deliveries are a fault.** An audit-critical event can
+  end with every delivery cancelled (for example, its target was revoked between
+  commit and drain) or rejected. secrets records that as a fault in its
+  operational record and surfaces it to owners. It is never treated as
+  delivered.
 
-The drainer delivers at least once, and each event carries a deterministic
-`event_id`. The hooks seat owns delivery, retry, the signature envelope and target
-registration.
+The drainer delivers at least once. As the hooks design specifies, `event_id` is
+minted once inside the effecting transaction and stored with the outbox row, and
+retries never re-mint it. The hooks seat owns delivery, retry, the signature
+envelope and target registration.
 
-**Payload fields secrets supplies** (proposal to the hooks seat). They go beyond
-the common fields that the hooks contract owns (`event_id`, `trace_id`,
-`team_id`, `actor`, `fired_at`, `result_status`):
+**Schema.** The hooks design owns the `post-secret-use-hook` schema: one action
+enum and one flat allowlisted payload, recorded in its catalog vector (aweb-acgh.1,
+audit-substrate §A2). This design cites that schema and does not define its own.
+The actor comes from the common envelope and is not repeated in the payload.
+secrets' part is deciding which transition emits which action:
 
-| Field | Content |
+| secrets transition (§11.1) | hook `action` |
 | --- | --- |
-| `event_type` | `secret.use.refused`, `.approval_requested`, `.approval_decided`, `.admitted`, `.dispatching`, `.completed`, `.not_sent`, `.outcome_unknown`, `.reconciled`, `secret.value_withheld`, `secret.undeclared_credential` |
-| `installation_id`, `install_generation` | |
-| `principal` | `member_did_key`, `did_aw?`, `certificate_id`, `alias`; attestation claims if verified (§4.6), else `none` |
-| `secret` | `secret_id`, `secret_ref`, `version`, `kind`, `backend`, `sensitivity`. **Never a value, never a fingerprint.** |
-| `action` | `broker` or `run_job` |
-| `target` | broker: `method`, `host`, `port`, `path_template` or the canonical path with credential query values redacted, `operation_id@digest`. Job: `runner_id`, `job_id@digest` |
-| `request_sha256`, `params_sha256` | hashes of the frozen request and the parameters; no parameter values |
-| `grant_id`, `policy_digest` | |
-| `approval` | `approval_id`, assurance `passkey`, `approver_id`, `credential_id`, and the SHA-256 of the stored assertion. Absent when there is no approval. |
-| `dispatch_id`, `state` | |
-| `upstream` | `status_code`, `response_sha256`, `bytes`, `truncated` |
-| `disposition` | `returned`, `withheld`, `stored_as_secret:<derived_id>`, or `returned_credential` (§8.3) |
-| `redaction_count`, `refusal_code` | |
+| refusal at admission or at the fence | `refused` |
+| `awaiting_approval` | `approval_requested` |
+| approval decided (approve, deny, expire, revoke) | `approval_decided` |
+| `dispatching`, enqueued in the fence transaction before any byte is sent | `dispatch_intent` |
+| `completed`, including a withheld result or an undeclared credential, recorded as `disposition` | `completed` |
+| `not_sent` | `not_sent` (proposed addition) |
+| `outcome_unknown` | `outcome_unknown` |
+| `reconciled_*` | `reconciled` |
 
-Administrative and containment events are listed in §12. They include
-`secret.created`, `.version_added`, `.disabled`, `.replaced`, `grant.*`,
-`approver.*`, `runner.*` and `policy.*`. Whether they ride on
-`post-secret-use-hook` or on a separate catalog entry is the hooks seat's
-decision. The proposal is `post-secret-admin-hook`, so that `secret.use`
-consumers are not forced to filter. Manifest-tool calls additionally fire
-`post-manifest-command-hook` where the hooks contract places it.
+**Proposed additions to the flat allowlist.** These are for the hooks seat to
+accept or reject in the catalog vector:
+
+- `not_sent`, as an action;
+- `kind`: `broker` or `run_job`. For `run_job`, `operation` is `job_id@digest`
+  and `runner_id`;
+- `secret_version`, `grant_id`, `policy_digest`;
+- `approval_evidence_sha256`;
+- `disposition`: `returned`, `withheld`, `stored_as_secret`, or
+  `returned_credential` only if Q8 keeps `return`;
+- `refusal_code`, from a fixed enum;
+- `returned_sha256`, the SHA-256 of the bytes actually returned to the agent
+  after projection and redaction. It is absent when the result is withheld, so
+  the log cannot confirm a guess at a withheld credential-bearing response.
+  secrets keeps a keyed HMAC of the raw response in its own record, as
+  reconciliation evidence.
+
+For open requests, `operation` is the method plus canonical host and path
+template, as the hooks design limits it. Concrete paths and query values are
+never sent.
+
+**Governance acts.** These are the widening changes confirmed on the console:
+
+- owner and approver designation, passkey enrolment and recovery (B3's audit
+  interface);
+- secret creation, value replacement, disabling and enabling;
+- destinations, operations, jobs and runners;
+- grants and roles;
+- every containment act (§12).
+
+They go on the **one generic governance hook** that the hooks seat is adding to
+the v1 catalog. That hook carries no app name, and pages' approver acts use it
+as well. secrets fires it at each of those points, with the same fail-closed
+enqueue rule: a governance act that cannot enqueue does not commit.
+
+**One effect, one hook.** Under the hooks design's rule, a secrets tool call
+whose effect is a secret use fires only `post-secret-use-hook`. A governance act
+fires only the governance hook. Other secrets tool calls fire
+`post-manifest-command-hook` through the shared middleware.
 
 **Provenance.** Events are signed by secrets' registered app key under a purpose
 the hooks seat defines. D1 already separates app-event, app-request and app-usage
@@ -1106,7 +1219,7 @@ Narrowing must never wait on a ceremony. Each action is recorded as an event.
 | **Disable the installation** (kill switch) | Every secret is disabled at once, through one flag checked at admission and at the fence. |
 | **Replace a value** (§6.2) | The new version activates. The old version is destroyed in the live database in the same transaction (backups per §15, item 5). Version-bound approvals are voided. Derived and cached credentials are revoked where the upstream allows it. STS sessions cannot be revoked one by one, so the console guides the owner to the IAM "revoke older sessions" action. Upstream rotation remains the owner's act. |
 | **Deregister a runner** | The key is invalidated, unclaimed assignments are cancelled, and claimed ones go to `outcome_unknown`. |
-| **Revoke an approver passkey or contact** | That approver's pending decisions are voided. If no approver can decide anymore, `approve_only` uses refuse. |
+| **Revoke an approver passkey or contact** | That approver's pending decisions are voided. If no approver can decide anymore, `approve_only` uses refuse. Through team-auth, revoking the last owner's passkey or contact is refused (`last_owner_protected`, §10.2). |
 
 Installation uninstall (D1 §5) fences all normal calls. Deletion of secrets data
 follows D1's lifecycle jobs, with every native version crypto-shredded.
@@ -1168,7 +1281,8 @@ Authority always comes from secrets' role, grant and passkey checks. That is why
 
 ### 13.3 `aw do` and a generic alias
 
-Following design default 5, there is no built-in `aw do`. If short spelling
+There is no built-in `aw do`. Every capability is a manifest verb
+(`aw secrets …`, and the same tools through MCP). If short spelling
 matters, one option is a **generic** v2 manifest field `cli_aliases`, for example
 `{"do": "secrets request"}`, offered by any app. It would be activated only by a
 local user opt-in recorded in the identity's app approvals, and refused if it
@@ -1216,7 +1330,7 @@ If Juan wants it anyway (Q8), the minimum shape is:
 | T8 | Runner host and its OS user | running pinned jobs; holding job credentials | Same-user agents or a writable config defeat it. Documented, partly detected by `doctor`. |
 | T9 | Approver, authenticator and contact channel | decisions; enrolment and recovery delivery | A passkey proves an enrolled authenticator, not a named human or humanity. A compromised contact mailbox plus an owner-initiated enrolment can add an authenticator, hence notifications and delays. |
 | T10 | AWID and team controller | membership and keys | A controller can certify new keys. New principals get nothing without grants, but a controller who re-certifies an existing `did:aw` inherits its grants. |
-| T11 | Installation admin | installing and bootstrapping the first owner | the root of trust for the installation's policy |
+| T11 | Team controller (owner act) | designating the first owner and re-designating after a lockout (§10.2) | It is the root of trust for the installation's policy. Install or admin authority alone cannot bootstrap or recover secrets. A custodial deployment holding the controller key signs owner acts only after fresh interactive step-up. |
 | T12 | Hook targets (logs) | storing redacted events | They receive metadata, hashes and identifiers, never values. |
 | T13 | Network path and DNS | nothing | TLS verification, address checks and connection pinning (§7.3) |
 
@@ -1278,8 +1392,14 @@ Requirements specific to secrets:
    Otherwise it is generated at deploy, sealed under KMS and unsealed at start.
    The public key is published in the manifest's registered app keys.
 3. **Two origins.** The agent API origin accepts only team-auth and the runner
-   protocol, and serves no cookies. The console origin is the WebAuthn RP ID. It
-   serves strict CSP, `frame-ancestors 'none'`, `Referrer-Policy: no-referrer`
+   protocol, and serves no cookies.
+   - **RP ID.** The WebAuthn RP ID is the **exact console host**. It is never a
+     registrable parent domain shared with origins that serve agent-authored
+     content, such as pages, so a sibling origin cannot request assertions for
+     the console's RP.
+   - **Cookies.** The console cookie is host-only (`__Host-`), with no `Domain`
+     attribute.
+   - **Headers.** The console serves strict CSP, `frame-ancestors 'none'`, `Referrer-Policy: no-referrer`
    and `Cache-Control: no-store`, and accepts no team-auth.
 4. **Hardening.** Core dumps off. Request and response bodies are never logged.
    The log redactor is shared with §7.6. An egress allowlist proxy is used where
@@ -1331,16 +1451,16 @@ boundary):
 | --- | --- | --- |
 | Grant | granted principal, named operation | other member; same `did:aw` on another team; revoked certificate; uninstalled installation |
 | Scope | `/v1/charges/x` under `/v1/charges/**` | `/v1/chargesX`; `%2F`; `..`; uppercase-host variant canonicalized and matched; userinfo; IP literal |
-| Network | public host | private, link-local, metadata, IPv4-mapped and NAT64 addresses; DNS answering private; redirect to another host returned, not followed |
+| Network | public host | private, link-local, metadata, IPv4-mapped and NAT64 addresses; DNS answering private; redirect to another host returned, not followed; with `internal_destinations: disabled`, an owner-confirmed `network: internal` entry is refused at definition and at dispatch |
 | Headers | `Accept` | agent `Authorization`, `Cookie`, `X-Amz-Security-Token`, a credential-shaped value |
 | Schemes | each of the six injects or signs correctly upstream | wrong host gets no injection; SigV4 with an agent-chosen region or service |
 | Results | projected body | credential-shaped body withheld; undeclared token issuance flagged; STS `store_as_secret` yields a derived ref and no value |
-| Approval | passkey approve, then one dispatch | requester sees no link; reuse after consume; changed parameters after approval; expired; revoked; self-approval; value replaced before consume |
+| Approval | passkey approve, then one dispatch | requester sees no link; reuse after consume; changed parameters after approval; expired; revoked; `distinct_approver: required` with the same principal; native value replaced before consume; 1Password item changed between approval and dispatch (refused, approval voided) |
 | State machine | `not_sent` retry under the same intent | crash after send leads to `outcome_unknown`, which blocks a retry of the same operation until reconciled; reconciled-then-new needs a fresh approval |
 | Idempotency | same `request_id`, same bytes returns the same receipt | same `request_id`, different bytes is `409`; a replayed envelope inside the skew window does not dispatch again |
-| Outbox | event enqueued with every transition | outbox insert failure refuses dispatch; no hook target refuses; stalled delivery refuses |
-| Runner | pinned job with valid parameters | job digest not in the local config; executable hash changed; writable config; parameter outside the schema; assignment for another runner; replayed assignment |
-| Containment | each action takes effect at admission and at the fence | revocation racing dispatch: committed revocation before the fence stops it |
+| Outbox | event enqueued with every transition | outbox insert failure refuses dispatch; no hook target refuses; a registration inside its `active_from` pad refuses; no current registration refuses, while a stalled secondary target alone does not; all deliveries cancelled is surfaced as a fault; a governance act that cannot enqueue does not commit |
+| Runner | pinned job with valid parameters; a declared `option_value` slot taking `-x` | job digest not in the local config; executable hash changed; writable config; parameter outside the schema; a leading `-` in a positional slot; a job definition targeting `LD_PRELOAD`, `PATH`, `GIT_SSH_COMMAND` or `NODE_OPTIONS`; an inherited runner environment variable visible to the job; assignment for another runner; replayed assignment |
+| Containment | each action takes effect at admission and at the fence | revocation racing dispatch: committed revocation before the fence stops it; team-auth revoking the last owner's passkey or contact refused; bootstrap or re-designation by admin or member signature refused (`owner_required`); a valid owner act starts the cooling-off |
 | Ingress | value set on the console with a passkey | no tool in any context accepts a value; `propose-change` without a passkey stays inert |
 | L2 | MCP member with a grant succeeds | MCP member without a grant is refused although the tool is listed; `requires_attestation` refuses |
 
@@ -1351,13 +1471,15 @@ Each harness states whether it was shown to fail for the fault it targets.
 The design is one generic naapp architecture serving pages and secrets. §3.1
 places every component. This table lists what secrets needs from contracts that
 others own. At D1 fb42372bc, the items marked * are not yet written in D1's
-draft; the TASK states they are D1's to own, so those requests go to the D1 lead.
+draft. They belong to D1's contracts, so those requests go to the D1 lead.
 
 | Need | Owner | Notes |
 | --- | --- | --- |
-| Team-auth v2 verifier with scope enforcement and a resource/action policy hook | B1, aweb-acgh.3 | §4.1. secrets uses B1 as specified. It needs `member_did_aw` in the principal output, so that grants follow the stable identity. |
+| Team-auth v2 verifier with scope enforcement and a resource/action policy hook | B1, aweb-acgh.3 | §4.1. secrets uses B1 as specified. It needs the certificate's `member_did_aw` field in the principal output, so that grants follow the stable identity. It does not need the did:aw current-key profile. |
 | Grant status, admission fence, hook-target resolution | aweb-acgh.7; D1 F5/F6 | §4.1 step 2; §11.5 "no registered target". |
-| Approval primitive and WebAuthn | B2+B3, aweb-acgh.4 | §10. Requirements (a) and (b) in §10.1. The optional hardening in §10.2 is offered for Juan's decision. |
+| Approval primitive and WebAuthn | B2+B3, aweb-acgh.4 | §10. Requirements (a) and (b) in §10.1, plus the owner-lockout protection in §10.2, proposed as generic B3 behaviour. |
+| Team owner act `aweb.owner-act/1` and its verifier | hooks design (aweb-acgh.1); `aweb_naapp` | §10.2: bootstrap and re-designation. |
+| Generic governance hook in the v1 catalog; post-secret-use-hook schema and action enum | hooks design (aweb-acgh.1) | §11.5. secrets cites the schema and proposes the additions listed there. |
 | Manifest v2 with `invocation_contexts`* and a `hooks` slot* | D1 C3 | §13. Typed parameters must be able to model open requests. |
 | Surface link-out to an app-owned origin* | D1 C1/R1 | §6.1. Normalized visible destination, opened in a new top-level context. |
 | Hook envelope, catalog, provenance purpose, producer outbox, delivery | hooks seat; B4 for the shared code | §11.5. secrets owns its payload fields and its enqueue points. |
@@ -1377,6 +1499,11 @@ surface host must meet them:
 3. **Render the secrets surface through D1's generic surface host.** That covers
    the read-only views, containment and `propose-change` forms, and the link-out
    to the console (§6.1, §13.2).
+4. **Sign the team owner act only after fresh interactive step-up.** Where a
+   custodial deployment holds a team's controller key, it signs
+   `aweb.owner-act/1`, which secrets needs for bootstrap and re-designation
+   (§10.2), only after a fresh, interactive step-up by the human owner. A
+   session or a stored credential alone is never enough.
 
 No secrets-specific branch in aw-core is needed. Everything else is either
 secrets-local or generic.
@@ -1385,7 +1512,7 @@ secrets-local or generic.
 
 These are recommendations; Juan decides. No item below removes scope.
 
-1. **Q1. Positioning and custody.** Both backends at launch (default 1), with
+1. **Q1. Positioning and custody.** Both backends at launch, with
    1Password recommended as the primary path for teams that have it. The native
    store also seals the 1Password token.
 2. **Q2. KMS provider, hosting and egress controls.** Which KMS, and whether the
@@ -1400,31 +1527,52 @@ These are recommendations; Juan decides. No item below removes scope.
    requirement, because it is the only way for an owner to treat MCP use
    differently. Until it ships, policy that requires it refuses.
 6. **Q6. Launch auth schemes.** bearer, basic, header, query, OAuth2 client
-   credentials and SigV4 (default 3). Named operations are required for
+   credentials and SigV4. Named operations are required for
    `sensitive` and `approve_only`.
-7. **Q7. Self-approval.** Denied by default. Should policy be able to allow it?
-8. **Q8. `--unsafe-inject` and `result_handling: return`.** Recommend that
-   `unsafe-inject` does not exist, and that `return` is owner-passkey-gated,
-   labelled, and never for MCP-exposed grants.
+7. **Q7. Distinct approver.** The rule can separate the requesting *human* from
+   the approving human. It cannot separate a human from their own L2 agent,
+   which signs as that human (§10.2). The passkey already proves that a human,
+   not the agent, approved. Recommendation: `distinct_approver: not_required`
+   by default, with owners able to require four eyes per policy.
+8. **Q8. `--unsafe-inject` and `result_handling: return`.** Recommendation, with
+   Athena's agreement: neither exists. Both release a value to the agent.
+   `store_as_secret` and runner `short_lived` delivery cover the use cases. If
+   Juan keeps `return`, it requires a verified attestation of
+   `channel != mcp_l2` (§8.3).
 9. **Q9. `oauth2-refresh` and mTLS.** The interface supports both. Their timing
-   is Juan's call (defaults list mTLS for later).
+   is Juan's call. The recommendation is mTLS later.
 10. **Q10. Passkey authenticator policy.** Accept any authenticator with user
     verification, or restrict by AAGUID allow-list.
-11. **Q11. Audit fail-closed knobs.** Refuse without a hook target (recommended:
-    not owner-configurable), and refuse when delivery has stalled longer than
-    1 h.
+11. **Q11. Audit fail-closed rules.** Refuse unless a registry view no older
+    than 60 s holds an active registration with `active_from` at or before the
+    event. Recommended: owners cannot turn this off. Also refuse when no active
+    registration is current, using a 1 h threshold.
 12. **Q12. Generic `cli_aliases`.** Recommend not at launch.
 13. **Q13. Approval notification channel.** Email at launch. Should approvals
     also appear as an acah.4 task assigned to the approver? That needs C2, would
     carry only an opaque reference, and would be team-visible metadata.
-14. **Q14. Approval TTL and B3 hardening.** Recommended: a 15 min approval TTL;
-    as generic B3 options, a 24 h delay on contact changes and a 72 h cooling-off
-    period for sole-owner recovery.
-15. **Q15. Launch order.** Per default 4, secrets does not launch until logs
-    ingests real events end to end. One runner job end to end is part of launch.
-16. **Q16. Proposed `aweb_naapp` components (§3.1).** Recommend the coordinator
-    assigns them as shared tasks rather than building them inside secrets.
+14. **Q14. Approval TTL and lockout timings.** Recommended: a 15 min approval
+    TTL. The owner-lockout protection itself is mandatory (§10.2). Its timings
+    are for Juan to set: 24 h for a contact change and 72 h for re-designation
+    are proposed.
+15. **Q15. Launch order.** The hook contract lands first. aw-hooks delivery,
+    logs and secrets then build in parallel, and secrets does not launch until
+    logs ingests real events end to end. One runner job end to end is part of launch.
+16. **Q16. Which components become shared (§3.1).** There are two rules, and
+    Juan chooses between them.
+    - **This design's rule:** share whatever more than one naapp *could* use.
+      Under it, all the *proposed* components in §3.1 go to `aweb_naapp` now.
+    - **The reviewer's rule:** share a component once a second consumer exists.
+      Under it, the egress guard, the dispatch state machine, the idempotency
+      store and the console session go shared now, because pages (D1) needs
+      them. The auth-scheme injectors, KMS envelope sealing, rate buckets and
+      the credential-shape detector stay app-local until a second consumer
+      appears. The reviewer notes that secrets' own custody argument weighs
+      against shared injectors.
 
-Recommended for later, per default 3 and pending Juan: HSM custody, multi-party
+    Recommendation: the reviewer's rule. It is the same rule §3.1 already
+    applies to the runner.
+
+Recommended for later, pending Juan: HSM custody, multi-party
 approval (quorum above 1), automated rotation, a runner fleet, and mTLS. Each of
 these fits the interfaces above without a contract break.
