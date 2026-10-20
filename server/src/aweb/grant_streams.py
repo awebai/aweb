@@ -35,10 +35,18 @@ def clamp_deadline_to_grant(deadline: datetime, identity: TeamIdentity) -> datet
 
 def clamp_deadline_to_certificate(deadline: datetime, request: Request) -> datetime:
     """A certificate stream cannot authorize work beyond its signed deadline."""
-    expiry = getattr(request.state, 'team_certificate_expires_at', None)
-    if not expiry:
-        return deadline
-    return min(_as_utc(deadline), datetime.fromisoformat(expiry.replace('Z', '+00:00')))
+    for field in ('team_certificate_expires_at', 'grant_issuer_expires_at'):
+        expiry = getattr(request.state, field, None)
+        if expiry:
+            deadline = min(_as_utc(deadline), datetime.fromisoformat(expiry.replace('Z', '+00:00')))
+    return deadline
+
+
+def certificate_chain_expiry_reason(request: Request, identity: TeamIdentity) -> str | None:
+    expiry = getattr(request.state, 'grant_issuer_expires_at', None)
+    if identity.grant is not None and expiry and datetime.fromisoformat(expiry.replace('Z', '+00:00')) <= datetime.now(timezone.utc):
+        return 'grant_expired'
+    return None
 
 
 def grant_terminal_sse(reason: str) -> str:
@@ -190,6 +198,8 @@ class NeverGrantStreamGuard:
         grant = self.identity.grant
         if grant is None:
             return self.expiry_reason(self.identity)
+        if reason := certificate_chain_expiry_reason(self.request, self.identity):
+            return reason
         if reason := self.expiry_reason(self.identity):
             return reason
         now = time.monotonic()

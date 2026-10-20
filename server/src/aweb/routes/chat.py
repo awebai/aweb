@@ -100,7 +100,7 @@ from aweb.messaging.waiting import (
 from aweb.grant_streams import (
     GRANT_STREAM_RECHECK_SECONDS,
     clamp_deadline_to_grant, clamp_deadline_to_certificate,
-    grant_expiry_reason,
+    grant_expiry_reason, certificate_chain_expiry_reason,
     grant_terminal_reason,
     grant_terminal_sse,
     require_valid_stream_grant,
@@ -2097,7 +2097,7 @@ async def _sse_events(
 
     async def _stream_grant_reason():
         nonlocal next_grant_check
-        reason = grant_expiry_reason(auth)
+        reason = certificate_chain_expiry_reason(request, auth) or grant_expiry_reason(auth)
         if reason or auth.grant is None:
             return reason
         if time.monotonic() < next_grant_check:
@@ -2444,7 +2444,7 @@ async def _sse_events(
                         reconnect_delay_seconds = min(max_reconnect_delay_seconds, reconnect_delay_seconds * 2)
                 yield ": keepalive\n\n"
                 last_keepalive = current_time
-        reason = grant_expiry_reason(auth)
+        reason = certificate_chain_expiry_reason(request, auth) or grant_expiry_reason(auth)
         if reason:
             yield grant_terminal_sse(reason)
     finally:

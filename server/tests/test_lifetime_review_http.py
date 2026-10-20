@@ -11,7 +11,7 @@ import pytest
 from awid.signing import canonical_json_bytes, sign_message
 from test_dashboard_privacy import TEAM, privacy_app, _request  # noqa: F401
 from test_messages_http import _make_keypair, _signed_team_headers
-from test_team_credential_policy_http import _mint, _read, _policy
+from test_team_credential_policy_http import _mint, _read, _policy, _grant_headers
 from test_credential_rollover_clients_http import _register, _rollover
 
 
@@ -194,3 +194,30 @@ async def test_replacement_chain_accepts_eight_links_but_refuses_a_ninth(privacy
     await _rollover(env,registry,certificate)
     refused=await _read(env,key,did,grant)
     assert refused.status_code==403 and 'issuing certificate revoked' in refused.text
+
+
+@pytest.mark.asyncio
+async def test_never_grant_streams_close_at_replacement_certificate_expiry(privacy_app, monkeypatch):
+    from contextlib import AsyncExitStack
+    from urllib.parse import urlencode
+    env=privacy_app
+    monkeypatch.setenv('AWID_CERTIFICATE_V2_ISSUANCE_ENABLED','true')
+    chat=await _request(env,'alice','POST','/v1/chat/sessions',dict(to_dids=[env.actors['bob'].did],message='chain expiry'))
+    assert chat.status_code==200,chat.text
+    cert=await parent(env)
+    key,did,grant=await _mint(env,scopes=['mail.read','events.read','chat.read'])
+    assert grant['expires_at']=='never'
+    expiry=datetime.now(timezone.utc)+timedelta(seconds=3)
+    await _rollover(env,env.app.state.awid_registry_client,cert,expires_at=expiry.isoformat())
+    query=urlencode(dict(deadline=(expiry+timedelta(minutes=2)).isoformat()))
+    paths=['/v1/events/stream?'+query,f"/v1/chat/sessions/{chat.json()['session_id']}/stream?{query}"]
+    async with AsyncExitStack() as stack:
+        responses=[]
+        for path in paths:
+            response=await stack.enter_async_context(env.client.stream('GET',path,headers=_grant_headers(env,key,did,grant,path),timeout=8))
+            assert response.status_code==200,await response.aread()
+            responses.append(response)
+        bodies=await asyncio.wait_for(asyncio.gather(*(response.aread() for response in responses)),5)
+    assert datetime.now(timezone.utc)<expiry+timedelta(seconds=2)
+    for body in bodies:
+        assert b'grant_expired' in body

@@ -25,11 +25,14 @@ async def issuer_certificate_status(request, team_id, certificate_id, member_did
         active = await request.app.state.awid_registry_client.resolve_active_certificate(domain, name, certificate_id, member_did_key=member_did_key)
         if active is not None and not isinstance(active, dict):
             raise ValueError('Malformed certificate authority result')
+        if active is not None:
+            request.state.grant_issuer_expires_at = active.get('certificate_expires_at')
         return 'revoked' if active is None else 'active'
     except CertificateValidationError as exc:
         if exc.code == 'certificate_expired':
             return 'expired'
-        raise
+        logger.warning('Issuing certificate authority malformed', exc_info=True)
+        raise HTTPException(status_code=503, detail={'code': 'authority_unavailable'}) from exc
     except Exception as exc:
         if getattr(exc, 'status_code', None) == 404:
             if known_revoked:

@@ -264,7 +264,8 @@ async def verify_request_certificate(request: Request, db) -> dict[str, str]:
             replacement_id = active['certificate_id'] if active else None
         except CertificateValidationError as exc:
             if exc.code != 'certificate_expired':
-                raise
+                logger.warning('AWID replacement chain malformed', exc_info=True)
+                raise HTTPException(status_code=503, detail={'code': 'authority_unavailable'}) from exc
             replacement_id = None
         except Exception as exc:
             logger.warning('AWID replacement chain unavailable', exc_info=True)
