@@ -597,3 +597,70 @@ polyline {
     transition: none !important;
   }
 }
+.page-form,
+.file-drop {
+  max-width: 42rem;
+  padding: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--page-radius);
+}
+.form-field {
+  display: grid;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+}
+.form-field label,
+.file-drop label {
+  font-weight: 600;
+}
+.form-field input,
+.form-field select,
+.file-drop input {
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.65rem;
+  color: var(--ink);
+  background: var(--bg);
+}
+.form-field input[type="checkbox"] {
+  justify-self: start;
+  width: 1.4rem;
+  height: 1.4rem;
+  accent-color: var(--accent);
+}
+.field-description {
+  font-size: var(--page-small);
+  color: var(--muted);
+  margin: 0.25rem 0 0.75rem;
+}
+.field-error {
+  font-size: var(--page-small);
+  color: var(--stop);
+  margin: 0.4rem 0;
+}
+.action-status {
+  font-size: var(--page-small);
+  margin: 0.5rem 0;
+}
+.conflict-recovery {
+  padding: 0.3rem 0;
+}
+.file-drop {
+  display: grid;
+  gap: 0.7rem;
+  border-style: dashed;
+}
+.widget-image img,
+.widget-video video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--page-radius);
+}
+
+.widget-chart circle[stroke-dasharray] {
+  fill: none;
+}

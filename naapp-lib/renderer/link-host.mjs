@@ -38,3 +38,46 @@ export function createLinkConfirmation(dialog) {
   };
   return confirm;
 }
+
+export function createActionConfirmation(dialog) {
+  dialog.setAttribute("aria-labelledby", "action-confirmation-title");
+  let settle;
+  const confirm = (details, event) => {
+    if (!event?.isTrusted || !navigator.userActivation.isActive || dialog.open)
+      return Promise.resolve(false);
+    return new Promise((resolve) => {
+      settle = resolve;
+      const title = element("h2", "Confirm action");
+      title.id = "action-confirmation-title";
+      const label = element("p", details.label),
+        description = element("p", details.description);
+      const yes = element("button", "Confirm");
+      yes.type = "button";
+      const cancel = element("button", "Cancel");
+      cancel.type = "button";
+      cancel.autofocus = true;
+      let accepted = false;
+      const trigger = document.activeElement;
+      yes.onclick = () => {
+        accepted = true;
+        dialog.close();
+      };
+      cancel.onclick = () => dialog.close();
+      dialog.onclose = () => {
+        settle?.(accepted);
+        settle = null;
+        if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+      };
+      dialog.replaceChildren(title, label, description, yes, cancel);
+      dialog.showModal();
+      cancel.focus();
+    });
+  };
+  confirm.clear = () => {
+    settle?.(false);
+    settle = null;
+    dialog.close();
+    dialog.replaceChildren();
+  };
+  return confirm;
+}

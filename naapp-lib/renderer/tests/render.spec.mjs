@@ -73,9 +73,7 @@ const vectors = JSON.parse(
     new URL("../../../docs/vectors/page-format-v1.json", import.meta.url),
   ),
 );
-for (const vector of vectors.cases.filter(
-  (c) => c.render && !["bidi_isolated", "asset_origin_only"].includes(c.render),
-)) {
+for (const vector of vectors.cases.filter((c) => c.render)) {
   test(`C1 ${vector.name}: ${vector.render}`, async ({ page }) => {
     const requests = [];
     page.on("request", (request) => requests.push(request.url()));
@@ -109,8 +107,32 @@ for (const vector of vectors.cases.filter(
           exact: true,
         }),
       ).toBeVisible();
+    const assetOrigin = `https://127.0.0.1:${Number(new URL(page.url()).port) + 1}`;
+    if (vector.render === "asset_origin_only") {
+      const image = page.locator('[data-widget="img"] img');
+      await image.scrollIntoViewIfNeeded();
+      await expect(image).toHaveAttribute(
+        "src",
+        new RegExp("^" + assetOrigin.replaceAll(".", "\\.") + "/"),
+      );
+      await expect(
+        page.locator("#page svg,#page object,#page iframe"),
+      ).toHaveCount(0);
+    }
+    if (vector.render === "bidi_isolated") {
+      const value = page.locator('[data-widget="items"] tbody bdi').first();
+      await expect(value).toContainText(vector.input.patch[0].value);
+      expect(await value.evaluate((n) => getComputedStyle(n).unicodeBidi)).toBe(
+        "isolate",
+      );
+    }
     expect(
-      requests.every((url) => url.startsWith("http://127.0.0.1:8734/")),
+      requests.every(
+        (url) =>
+          url.startsWith(new URL(page.url()).origin + "/") ||
+          (vector.render === "asset_origin_only" &&
+            url.startsWith(assetOrigin + "/")),
+      ),
     ).toBe(true);
     expect(errors).toEqual([]);
   });

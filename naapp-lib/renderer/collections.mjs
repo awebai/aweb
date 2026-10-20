@@ -78,7 +78,13 @@ function chartGraphic(records, p, seriesIndex) {
     focusable: "false",
     class: `chart-graphic series-${seriesIndex}`,
   });
-  const values = records.map((r) => Number(r.value[field]));
+  const values = records.map((r) => {
+    const value = r.value[field];
+    return (typeof value === "number" || typeof value === "string") &&
+      /^-?[0-9]+(?:\.[0-9]+)?$/.test(String(value))
+      ? Number(value)
+      : NaN;
+  });
   const maximum = Math.max(1, ...values.filter(Number.isFinite).map(Math.abs));
   const points = values.map((v, i) => [
     30 + (i * 580) / Math.max(1, values.length - 1),
@@ -249,6 +255,26 @@ export function renderCollection({
     } else if (w.type === "chart") {
       const figure = element("figure");
       figure.append(element("figcaption", p.alternative));
+      if (
+        visible.some((record) =>
+          p.series.some((field) => {
+            const value = record.value[field];
+            return (
+              value === null ||
+              value === "" ||
+              !Number.isFinite(Number(value)) ||
+              (p.kind === "pie" && Number(value) < 0)
+            );
+          }),
+        )
+      )
+        figure.append(
+          element(
+            "p",
+            "Some values cannot be charted. Refer to the data table.",
+            "field-description",
+          ),
+        );
       for (let i = 0; i < p.series.length; i++) {
         figure.append(
           element("p", p.series[i], "widget-label"),

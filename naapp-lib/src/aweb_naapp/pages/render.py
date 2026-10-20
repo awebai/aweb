@@ -76,6 +76,7 @@ def page_shell(*, script_path: str, asset_origin: str) -> PageShell:
 <main><div id="page" tabindex="-1"></div></main>
 <aside id="destinations" class="host-chrome" aria-label="Destinations"></aside>
 <dialog id="link-confirmation" class="link-confirmation"></dialog>
+<dialog id="action-confirmation" class="link-confirmation"></dialog>
 <div id="announcements" class="sr-only" role="status" aria-live="polite"></div>
 </body></html>'''
     return PageShell(html, headers)

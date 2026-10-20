@@ -14,6 +14,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from aweb_naapp.pages import validate_page
+from aweb_naapp.pages.gallery_host import (
+    additions,
+    asset_server,
+    host_get,
+    json_response,
+    post,
+    session,
+)
 from aweb_naapp.pages.render import page_shell
 
 
@@ -232,6 +240,8 @@ def fixture(query: dict) -> dict:
     if query.get("state") == ["updated"]:
         page["rev"] = 2
         page["widget_state"]["occupancy"] = {"message": "Projection updated", "busy": False}
+    if "vector" not in query:
+        additions(page)
     validation = validate_page(page)
     if not validation.valid:
         raise ValueError(validation.errors)
@@ -271,25 +281,12 @@ def widget_projection(page: dict, bind: dict) -> dict:
     }
 
 
-ENTRY = b"""import { createPageRenderer, createLinkConfirmation } from '/assets/page-renderer.js';
-let query = new URLSearchParams(location.search);
-const host = {
-  confirmLink: createLinkConfirmation(document.querySelector('#link-confirmation')),
-  read: async request => {
-    const params = new URLSearchParams(query);
-    params.set('bind', JSON.stringify(request.bind));
-    return fetch('/api/widget?' + params).then(r => r.json());
-  },
-};
-const renderer = createPageRenderer({root: document.querySelector('#page'), destinations: document.querySelector('#destinations'), announcements: document.querySelector('#announcements'), host});
-async function refresh() { renderer.update(await fetch('/api/page?' + query).then(r => r.json())); }
-document.querySelector('#identity').textContent = 'Fixture gallery';
-document.addEventListener('keydown', event => { if(event.altKey && event.key === 'u') { event.preventDefault(); query.set('state','updated');refresh(); } });
-await refresh();
-"""
-
-
 class Handler(BaseHTTPRequestHandler):
+    asset_origin = "https://127.0.0.1:8735"
+
+    def do_POST(self) -> None:
+        post(self, urlsplit(self.path).path, fixture({}))
+
     def do_GET(self) -> None:
         url = urlsplit(self.path)
         query = parse_qs(url.query)
@@ -299,14 +296,25 @@ class Handler(BaseHTTPRequestHandler):
             "Referrer-Policy": "no-referrer",
         }
         status = 200
+        if url.path == "/api/host":
+            host_get(self, self.asset_origin, query.get("case", [""])[0])
+            return
         if url.path == "/":
-            shell = page_shell(
-                script_path="/assets/gallery.js", asset_origin="https://assets.example"
-            )
+            shell = page_shell(script_path="/assets/gallery.js", asset_origin=self.asset_origin)
             body, content_type = shell.html.encode(), "text/html; charset=utf-8"
             headers.update(shell.headers)
         elif url.path in ("/api/page", "/api/widget"):
             page = fixture(query)
+            _, state = session(self)
+            page["rev"] = max(page["rev"], state["rev"])
+            if state["state_updated"] and "vector" not in query:
+                page["widget_state"]["occupancy"] = {"message": "Projection updated", "busy": False}
+            if (
+                url.path == "/api/widget"
+                and int(query.get("expected_page_rev", [str(page["rev"])])[0]) != page["rev"]
+            ):
+                json_response(self, {"code": "revision_conflict"}, 409)
+                return
             if url.path == "/api/widget":
                 page = widget_projection(page, json.loads(query["bind"][0]))
             elif "vector" not in query:
@@ -317,7 +325,10 @@ class Handler(BaseHTTPRequestHandler):
                 page["page_format"] = "aweb.page/2"
             body, content_type = json.dumps(page, ensure_ascii=False).encode(), "application/json"
         elif url.path == "/assets/gallery.js":
-            body, content_type = ENTRY, "text/javascript"
+            body, content_type = (
+                files("aweb_naapp.pages").joinpath("assets/gallery-entry.js").read_bytes(),
+                "text/javascript",
+            )
         elif url.path in ("/assets/page-renderer.js", "/assets/page-renderer.css"):
             body = (
                 files("aweb_naapp.pages")
@@ -345,10 +356,17 @@ class Handler(BaseHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8734)
+    parser.add_argument("--asset-port", type=int)
     args = parser.parse_args()
+    asset, temporary = asset_server(args.asset_port or args.port + 1)
+    Handler.asset_origin = f"https://127.0.0.1:{asset.server_port}"
     server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
     print(f"Gallery: http://127.0.0.1:{server.server_port}/", flush=True)
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        asset.shutdown()
+        temporary.cleanup()
 
 
 if __name__ == "__main__":

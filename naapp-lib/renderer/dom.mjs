@@ -16,14 +16,21 @@ export function valueText(value, format = "text", locale = "en", timeZone) {
       : String(value);
   }
   if (format === "number" || format === "money_minor") {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return "—";
-    return new Intl.NumberFormat(
-      locale,
-      format === "money_minor"
-        ? { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-        : {},
-    ).format(format === "money_minor" ? number / 100 : number);
+    const decimal = String(value).match(/^(-?)([0-9]+)(?:\.([0-9]+))?$/);
+    if (!decimal || !["number", "string"].includes(typeof value)) return "—";
+    const [, sign, whole, fraction] = decimal;
+    let integer = BigInt(whole),
+      tail = fraction;
+    if (format === "money_minor") {
+      if (fraction !== undefined) return "—";
+      tail = (integer % 100n).toString().padStart(2, "0");
+      integer /= 100n;
+    }
+    return (
+      sign +
+      new Intl.NumberFormat(locale).format(integer) +
+      (tail !== undefined ? "." + tail : "")
+    );
   }
   return typeof value === "object" ? JSON.stringify(value) : String(value);
 }

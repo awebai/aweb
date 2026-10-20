@@ -57,18 +57,40 @@ The adapter grows with R1's widget slices. Its full shape is:
   goes through this read; no broader collection is sent to the browser. The
   bootstrap retains only definitions and exact decision/bundle records required
   by the frozen validator.
+- `actionPolicy(action_id, {widget_id, record})` returns trusted current
+  `{allowed, reason, consequential, label, description, input}`. Missing policy
+  disables actions. Page action definitions never grant permission. Consequential
+  actions require `confirmAction`, created with `createActionConfirmation` over
+  a host-owned native dialog outside the page (included in `page_shell`). This
+  confirmation is a gesture, never human approval evidence.
+- `csrfToken()` retrieves a nonempty host CSRF token through the host's private
+  closure, separately for every state-changing callback. It is never a page value,
+  DOM attribute or hidden input. Clearing the renderer fences pending retrievals.
+- `refresh()` returns a newly authorized and validated full page, used for
+  explicit conflict recovery. Drafts survive Review current page; only an
+  explicit Use current page revision rebases their precondition.
 - `invoke(request, {csrfToken})` invokes an allowed action. Request context
   retains page/widget/action IDs, expected page and record revisions, an
   idempotency key, and typed input. Answer requests additionally bind exact task
   revision, proposal record/revision/digest and selected offered option. The
   host obtains `csrfToken` through its private adapter closure, never page JSON.
 - `upload(request, {csrfToken})` applies the same authority/CSRF context and
-  MIME/size bounds, returning attachment IDs. Files never become agent URLs.
+  MIME/size bounds, returning attachment IDs. Its request contains the `File`
+  object and metadata including a SHA-256 binding in `input.file_sha256`; the
+  host maps this to its declared upload tool, never an agent-supplied URL. The
+  host validates actual bytes and MIME independently. Form file fields upload
+  first, then submit attachment IDs through the typed action. Files never become
+  agent URLs.
 - `asset(asset_id)` returns a host-issued URL at `adapter.assetOrigin`, a
   separately pinned app asset origin. The renderer refuses any other origin.
-- `health(subject)` and `decision(task_id)` return trusted host evidence,
-  including report age, task/proposal identity, status and current authority.
-  Agent-authored widget state is never such evidence.
+- `health(subject)` returns an authorized, verified status-host projection:
+  `{subject, reachable, observed_at, valid_until, reason?, fixing?}` with the
+  [agent-health](agent-health.md) meanings. Report words are escaped and shown
+  verbatim. Age and expiry are recalculated; missing, expired or mismatched
+  evidence says Status unavailable. Presence never proves execution.
+- `decision(task_id)` returns trusted current task/proposal/authority evidence
+  (the decision slice documents its fields). Agent-authored widget state is
+  never such evidence.
 
 Actions fail closed if the adapter or CSRF is absent. Every state-changing
 callback uses the host token before any signature or dispatch. Host adapters
@@ -96,7 +118,18 @@ npm run build --prefix renderer
 uv run --extra pages python -m aweb_naapp.pages.gallery --port 8734
 ```
 
-Open <http://127.0.0.1:8734/>.
+Open <http://127.0.0.1:8734/>. The separate asset origin uses HTTPS on port
+8735 by default (`--asset-port` overrides it), with an ephemeral local-only TLS
+certificate. For manual previews accept that local certificate once at the asset
+origin so media can load. Browser tests accept only their disposable local TLS
+fixture via Playwright's `ignoreHTTPSErrors`; applications use normally trusted
+HTTPS assets. The gallery requires `openssl` and discards its key on shutdown.
+Its synthetic sessions enforce Origin/CSRF, revisions and idempotency for the
+renderer tests; these are fixtures, not application accounts or approval proof.
+`Alt+u` commits a fixture state change and refreshes; `Alt+c` commits an unrelated
+change without refreshing, to exercise conflict recovery. Neither GET consumes
+an action. The browser runner uses ports 8740/8741, with `PAGE_GALLERY_PORT`
+selecting another pair.
 The gallery is a loopback fixture host with no real team credentials; its
 packaged renderer is the same artifact consumed by applications. Widgets are
 added to the gallery as their R1 slices land. Full application authorization
@@ -129,3 +162,19 @@ modes. E3 additionally checks real Windows typography and VoiceOver on macOS;
 these manual passes require their actual platforms and are not replaced by a
 browser user-agent override. English chrome is tested with non-English authored
 content to ensure pronunciation metadata does not change the product language.
+
+
+Image/video references are resolved by the host, checked against its separately
+pinned HTTPS asset origin and rendered as image/video elements only. Video never
+autoplays and has explicit native controls. No object, inline SVG or iframe can
+render uploaded markup on the host origin. Captions and alternative text are
+plain text. The asset host owns safe MIME, authorization, nosniff and restrictive
+CORS/CSP for every request. `link_out` resolves only the frozen relative path
+against the host's pinned app origin and uses the same host confirmation as
+Markdown.
+
+The browser form evaluator implements C1's bounded inline-schema subset without
+an expression engine or code generation. Integer input must be safe and integral;
+decimal strings are sent exactly, with no binary-float or locale coercion. Table
+number formatting keeps decimal-string fractional digits. Stat string values
+are authored display text; only integer stats are localized in English.

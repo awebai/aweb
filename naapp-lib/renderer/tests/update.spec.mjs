@@ -65,6 +65,9 @@ test("phone metric cards occupy a single column, stat figures never wrap", async
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
+  await expect(page.locator('[data-widget="metrics"] > .widget')).toHaveCount(
+    3,
+  );
   const positions = await page
     .locator('[data-widget="metrics"] > .widget')
     .evaluateAll((nodes) =>

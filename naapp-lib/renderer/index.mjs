@@ -1,9 +1,15 @@
 import { messages } from "./catalogs.mjs";
 import { renderMarkdown, inertLinks } from "./sanitize.mjs";
+import { createActions } from "./actions.mjs";
+import { renderMedia, renderPresence } from "./media.mjs";
+import { safeLink } from "./sanitize.mjs";
 import { element } from "./dom.mjs";
 import { renderCollection } from "./collections.mjs";
 export { inertLinks } from "./sanitize.mjs";
-export { createLinkConfirmation } from "./link-host.mjs";
+export {
+  createLinkConfirmation,
+  createActionConfirmation,
+} from "./link-host.mjs";
 const collectionTypes = new Set([
   "table",
   "cards",
@@ -18,6 +24,13 @@ const known = new Set([
   "status_badge",
   "stack",
   "grid",
+  "form",
+  "button",
+  "file_drop",
+  "image",
+  "video",
+  "agent_presence",
+  "link_out",
   ...collectionTypes,
 ]);
 const focusables = "a,button,input,select,textarea,[tabindex]";
@@ -48,6 +61,14 @@ export function createPageRenderer({
     queries = new Map(),
     links = new WeakMap();
   const title = element("h1", null, "page-title");
+  const actions = createActions({
+    host,
+    getPage: () => current,
+    update,
+    announce: (text) => {
+      announcements.textContent = text;
+    },
+  });
   function update(page) {
     const before = current;
     current = page;
@@ -60,6 +81,10 @@ export function createPageRenderer({
       : -1;
     const scroll = [scrollX, scrollY];
     if (before?.page_id !== page?.page_id) {
+      actions.clear();
+      host.confirmLink?.clear?.();
+      host.confirmAction?.clear?.();
+      for (const entry of cache.values()) entry.cleanup?.();
       cache.clear();
       queries.clear();
     } else if (before?.rev !== page?.rev) {
@@ -76,6 +101,10 @@ export function createPageRenderer({
         element("p", t.unsupportedHelp),
       );
       root.replaceChildren(panel);
+      for (const entry of cache.values()) entry.cleanup?.();
+      actions.clear();
+      host.confirmLink?.clear?.();
+      host.confirmAction?.clear?.();
       cache.clear();
       return;
     }
@@ -177,7 +206,8 @@ export function createPageRenderer({
         }
         return box;
       }
-      let refresh;
+      entry?.cleanup?.();
+      let refresh, cleanup;
       box = element(
         "section",
         null,
@@ -199,19 +229,36 @@ export function createPageRenderer({
         box.classList.add(`gap-${p.gap || "medium"}`);
         if (w.type === "grid") box.classList.add(`columns-${p.columns}`);
         box.append(...w.children.map(widget));
+      } else if (w.type === "form") actions.form(box, w);
+      else if (w.type === "button")
+        box.append(actions.actionButton(w, p.action, null, p.label));
+      else if (w.type === "file_drop") actions.fileDrop(box, w);
+      else if (w.type === "image" || w.type === "video")
+        cleanup = renderMedia(box, w, host);
+      else if (w.type === "agent_presence")
+        cleanup = renderPresence(box, w, host);
+      else if (w.type === "link_out") {
+        try {
+          const pinned = new URL(host.appOrigin);
+          const url = safeLink(new URL(p.path, pinned).href);
+          if (
+            !url ||
+            url.origin !== pinned.origin ||
+            pinned.username ||
+            pinned.password
+          )
+            throw Error();
+          const link = element("a", p.label);
+          pageLink(link, url);
+          box.append(link);
+        } catch {
+          box.append(element("p", t.unavailable));
+        }
       } else {
         const content = element("div", null, "bound-content");
         box.append(content);
-        const actionButton = (id, record) => {
-          const button = element(
-            "button",
-            page.actions.find((a) => a.id === id)?.label || t.actions,
-          );
-          button.type = "button";
-          button.disabled = true;
-          button.title = t.readOnly;
-          return button;
-        };
+        const actionButton = (id, record) =>
+          actions.actionButton(w, id, record);
         let controller;
         const draw = (records, projection) => {
           if (controller) {
@@ -306,6 +353,7 @@ export function createPageRenderer({
         signature,
         box,
         refresh,
+        cleanup,
         pageRev: page.rev,
         state: [...box.children].find((n) =>
           n.hasAttribute("data-widget-state"),
@@ -315,7 +363,11 @@ export function createPageRenderer({
       return box;
     }
     setChildren(root, [title, ...page.layout.map(widget)]);
-    for (const id of cache.keys()) if (!used.has(id)) cache.delete(id);
+    for (const id of cache.keys())
+      if (!used.has(id)) {
+        cache.get(id).cleanup?.();
+        cache.delete(id);
+      }
     if (focusedWidget && !focused?.isConnected) {
       const replacement = root
         .querySelector(
@@ -345,6 +397,9 @@ export function createPageRenderer({
     update,
     clear() {
       host.confirmLink?.clear?.();
+      host.confirmAction?.clear?.();
+      actions.clear();
+      for (const entry of cache.values()) entry.cleanup?.();
       ++epoch;
       current = null;
       cache.clear();
