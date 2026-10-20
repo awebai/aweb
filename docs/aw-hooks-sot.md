@@ -18,6 +18,12 @@ This document describes the only public hook seam that exists today. A plural
 hook registry, named extension points, externally loaded callbacks, and a
 private app-specific hook design do **not** ship in aweb.
 
+Named, owner-activated extension points are specified separately, in
+[aw-hooks: catalog, bindings and delivery](hook-events.md), and are not yet
+shipped. `on_mutation` is unchanged by them and is not an audit hook: it is
+post-commit and best effort, so it can lose an event, and it never carries a
+hook event.
+
 ## Callback shape
 
 Routes call:
