@@ -1,4 +1,6 @@
 """Actual aw user signatures cannot authorize protocol operations."""
+import asyncio
+from datetime import datetime, timezone
 import hashlib
 import json
 
@@ -8,6 +10,7 @@ import pytest
 from awid.did import stable_id_from_did_key
 from awid.log import identity_state_hash, log_entry_payload
 from awid.signing import canonical_json_bytes, sign_message, verify_signature, VerifyResult
+from test_addressless_sender_cli import _registry_http
 from test_cli_human_reply import _cli
 from test_dashboard_privacy import TEAM, privacy_app  # noqa: F401
 from test_e2ee_local_sender_read_trust import _local_sender_mail
@@ -76,5 +79,39 @@ async def test_user_signature_cannot_authorize_protocol(privacy_app, tmp_path, f
             assert control.status_code == 200, control.text
         assert verify_signature(actor.did, b'aweb.user-signature/1\n' + canonical, signature) == VerifyResult.VERIFIED
         assert verify_signature(actor.did, canonical, signature) == VerifyResult.FAILED
+
+
+@pytest.mark.usefixtures('source_cli_binary')
+@pytest.mark.asyncio
+async def test_identity_id_request_signs_only_fixed_identity_claims(privacy_app, tmp_path):
+    env = privacy_app
+    captured = []
+
+    async def front(scope, receive, send):
+        if scope['type'] == 'http' and scope['path'] == '/v1/messages/inbox':
+            captured.append(dict(scope['headers']))
+        await env.app(scope, receive, send)
+
+    async with _registry_http(front) as (url, _):
+        env.client.base_url = url
+        async with _local_sender_mail(env, tmp_path, False, False, False) as (
+                _, _, binary, cwd, command_env, _):
+            result = await _cli(binary, cwd, command_env, 'id', 'request', 'GET', url + '/v1/messages/inbox', '--json')
+            assert result['status'] == 200
+            headers = captured[-1]
+            assert b'x-aweb-signed-payload' not in headers  # Explicit interim compact-v1 residual.
+            timestamp = headers[b'x-aweb-timestamp'].decode()
+            payload = canonical_json_bytes(dict(body_sha256=hashlib.sha256(b'').hexdigest(), did_aw='', timestamp=timestamp))
+            signature = headers[b'authorization'].decode().split(' ')[2]
+            assert verify_signature(env.actors['bob'].did, payload, signature) == VerifyResult.VERIFIED
+            assert len(captured) == 1
+            process = await asyncio.create_subprocess_exec(
+                str(binary), 'id', 'request', 'GET', url + '/v1/messages/inbox',
+                '--sign', '{"operation":"rotate_key","new_did_key":"caller-chosen"}', '--json',
+                cwd=cwd, env=command_env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _ = await asyncio.wait_for(process.communicate(), 10)
+            assert process.returncode != 0
+            assert not stdout
+            assert len(captured) == 1
 
 
