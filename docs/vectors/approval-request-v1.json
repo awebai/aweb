@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "The approval primitive's request digest and challenge binding (docs/page-actions.md §6). request_sha256 is bare lowercase hex of SHA-256 over aweb.approval-request/1\\n followed by the canonical JSON of {policy: {ref, version}, request}. The challenge binding is the raw 32-byte SHA-256 over aweb.approval-challenge/1\\n followed by the canonical JSON of its fields, shown here as hex; the nonce inside the fields is hex, and task_answer_ref is always present, null when there is no task answer. Refusals apply to the whole covered object.",
+  "description": "The approval primitive's request digest and challenge binding (docs/page-actions.md §6). request_sha256 is bare lowercase hex of SHA-256 over aweb.approval-request/1\\n followed by the canonical JSON of {policy: {ref, version}, request}. The challenge binding is the raw 32-byte SHA-256 over aweb.approval-challenge/1\\n followed by the canonical JSON of its fields, shown here as hex. The fields are approval_id, candidate_subject and candidate_subject_type (the candidate the proof is for), nonce (hex), policy_ref, policy_version, purpose, request_sha256 and task_answer_ref, which is always present, null when there is no task answer. Refusals apply to the whole covered object.",
   "request_prefix": "aweb.approval-request/1\n",
   "challenge_prefix": "aweb.approval-challenge/1\n",
   "requests": [
@@ -105,6 +105,8 @@
       "name": "approve-with-task-answer",
       "fields": {
         "approval_id": "apr_01JB8",
+        "candidate_subject": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "candidate_subject_type": "member",
         "nonce": "00112233445566778899aabbccddeeff",
         "policy_ref": "pages.price-approval",
         "policy_version": 3,
@@ -112,13 +114,15 @@
         "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
         "task_answer_ref": "tar_7Hq2"
       },
-      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"approve\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":\"tar_7Hq2\"}",
-      "binding_hex": "44cb77e39e222e4404da93d3d503f8f1727858048884cb205afee77264857fdb"
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"candidate_subject\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"candidate_subject_type\":\"member\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"approve\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":\"tar_7Hq2\"}",
+      "binding_hex": "e65538361f1c27cbf1f08923b5914472c74d1ff980061dd4f01b1a5ce39fb1c6"
     },
     {
       "name": "reject-with-task-answer",
       "fields": {
         "approval_id": "apr_01JB8",
+        "candidate_subject": "did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V",
+        "candidate_subject_type": "member",
         "nonce": "00112233445566778899aabbccddeeff",
         "policy_ref": "pages.price-approval",
         "policy_version": 3,
@@ -126,13 +130,47 @@
         "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
         "task_answer_ref": "tar_7Hq2"
       },
-      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"reject\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":\"tar_7Hq2\"}",
-      "binding_hex": "8ebfcf841bbeb60e75c2d6649700cd62ce70d78ae90b600396404025173a8c90"
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"candidate_subject\":\"did:aw:2DHRM4x8em88KQdL3UCJtwoDBY5V\",\"candidate_subject_type\":\"member\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"reject\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":\"tar_7Hq2\"}",
+      "binding_hex": "fada63881d390eddd55bbdb733d12f7abaa9976453a2874fe48476c386612af2"
+    },
+    {
+      "name": "approve-with-task-answer-colleague",
+      "fields": {
+        "approval_id": "apr_01JB8",
+        "candidate_subject": "did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva",
+        "candidate_subject_type": "member",
+        "nonce": "00112233445566778899aabbccddeeff",
+        "policy_ref": "pages.price-approval",
+        "policy_version": 3,
+        "purpose": "approve",
+        "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
+        "task_answer_ref": "tar_7Hq2"
+      },
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"candidate_subject\":\"did:aw:2bvkNehXHxb9NusXh7MbiUwn2vva\",\"candidate_subject_type\":\"member\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"approve\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":\"tar_7Hq2\"}",
+      "binding_hex": "5c0fc2602c303a2b43945c96edeea4fdfacb7d1c6cff126b16385c0c1a5ea164"
+    },
+    {
+      "name": "approve-with-task-answer-passkey",
+      "fields": {
+        "approval_id": "apr_01JB8",
+        "candidate_subject": "apd_01JB9",
+        "candidate_subject_type": "app_local",
+        "nonce": "00112233445566778899aabbccddeeff",
+        "policy_ref": "pages.price-approval",
+        "policy_version": 3,
+        "purpose": "approve",
+        "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
+        "task_answer_ref": "tar_7Hq2"
+      },
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"candidate_subject\":\"apd_01JB9\",\"candidate_subject_type\":\"app_local\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"approve\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":\"tar_7Hq2\"}",
+      "binding_hex": "549beb794cefe0581d9cdbdb722d6139eada6b456133c8eb1adac2a364337dbc"
     },
     {
       "name": "approve-link-no-task-answer",
       "fields": {
         "approval_id": "apr_01JB8",
+        "candidate_subject": "apd_01JB9",
+        "candidate_subject_type": "app_local",
         "nonce": "00112233445566778899aabbccddeeff",
         "policy_ref": "pages.price-approval",
         "policy_version": 3,
@@ -140,13 +178,15 @@
         "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
         "task_answer_ref": null
       },
-      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"approve\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":null}",
-      "binding_hex": "b0292f084f1f348519db252b1938833503ee83cb83b31ac4bc6a499bffe3b114"
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"candidate_subject\":\"apd_01JB9\",\"candidate_subject_type\":\"app_local\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"approve\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":null}",
+      "binding_hex": "caf6c26e43b306e5648d4cb5e52ca88586a9cbb2d6df6491f782ef7e158e086d"
     },
     {
       "name": "view",
       "fields": {
         "approval_id": "apr_01JB8",
+        "candidate_subject": "apd_01JB9",
+        "candidate_subject_type": "app_local",
         "nonce": "00112233445566778899aabbccddeeff",
         "policy_ref": "pages.price-approval",
         "policy_version": 3,
@@ -154,8 +194,8 @@
         "request_sha256": "d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd",
         "task_answer_ref": null
       },
-      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"view\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":null}",
-      "binding_hex": "f70746a189d6f0d916ee4788d3e490f66f141b380a36332c037b86611a4fc036"
+      "canonical": "aweb.approval-challenge/1\n{\"approval_id\":\"apr_01JB8\",\"candidate_subject\":\"apd_01JB9\",\"candidate_subject_type\":\"app_local\",\"nonce\":\"00112233445566778899aabbccddeeff\",\"policy_ref\":\"pages.price-approval\",\"policy_version\":3,\"purpose\":\"view\",\"request_sha256\":\"d56c32ca5d544bd3d17690b725712bcfe2184e5e1f11ad07c822aeb92fe009fd\",\"task_answer_ref\":null}",
+      "binding_hex": "c24c56b40ebe7bdbf0e9f11067472ae57dc536fdf9ebf012a08b88eeddbbdff0"
     }
   ],
   "refusals": [

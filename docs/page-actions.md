@@ -296,8 +296,8 @@ returns partial evidence:
    rotation would orphan pending approvals.
 5. **The task answer.** The receipt is current, `answered_by` derives the same
    principal and certificate, and the approval's challenge binding
-   (`aweb.approval-challenge/1`, which commits to the purpose and
-   `task_answer_ref`) is the one the surface committed to when it requested
+   (`aweb.approval-challenge/1`, which commits to the purpose,
+   `task_answer_ref` and the candidate's `subject` and `subject_type`) is the one the surface committed to when it requested
    the decision.
 
 Evidence: `subject` is the member's `did_aw`, `subject_type` is `member`, and
