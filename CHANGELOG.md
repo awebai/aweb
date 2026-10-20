@@ -42,6 +42,21 @@ Server changes are since `server-v1.27.28`. No CLI change; aw stays 1.36.43.
   family, route template and aw client version. Deploy this server support and
   Cloud's verifiers before publishing the aw client that emits v2; clients must
   not fall back to v1 after a v2 refusal.
+- App emit keys, event declarations and the app version projection belong to
+  the installing team, and an app id's origin is bound per team (migrations
+  024-026). A key registered by one team is never active for another team's
+  install of the same app and digest; within a team a key id keeps its first
+  did_key (a different one is refused with 409) and a revoked key stays
+  revoked. Registry-entry keys and declarations are not carried over, because
+  they record no installing team, so app events for existing installs are
+  refused (fail closed) until reseeded.
+- Add the operator command `aweb reseed-app-registrations --origin <origin>
+  [--manifest-file <bytes>]`. It recreates every team's declarations, emit keys
+  and version projection from exact manifest bytes that hash to the team's
+  pinned digest, never changes subscriptions, reports teams on another digest
+  or with a conflicting key id, and exits 1 when any team was left unchanged.
+  Deploy: save each installed app origin's manifest bytes before migrating,
+  then reseed immediately after, so the refused window lasts minutes.
 
 ### Release preparation: aw 1.36.43
 

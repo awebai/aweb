@@ -319,7 +319,7 @@ def test_routes_that_are_not_exactly_declared_tools_are_refused(tmp_path: Path, 
 
 
 def test_the_root_path_is_part_of_the_declared_path(tmp_path: Path) -> None:
-    runtime, app = _guarded_app(tmp_path / "unprefixed", _renamed_placeholder, root_path="/api")
+    runtime, app = _guarded_app(tmp_path / "unprefixed", _renamed_placeholder, root_path="/mounted")
     with pytest.raises(RuntimeError):
         runtime.check_authorized_routes(app)
     prefixed = DeclaredTools.from_manifest(
@@ -328,14 +328,14 @@ def test_the_root_path_is_part_of_the_declared_path(tmp_path: Path) -> None:
                 {
                     "name": "get-thing",
                     "method": "GET",
-                    "path": "/api/v1/things/{id}",
+                    "path": "/mounted/v1/things/{id}",
                     "scopes": ["r"],
                 }
             ]
         }
     )
     runtime, app = _guarded_app(
-        tmp_path / "prefixed", _renamed_placeholder, tools=prefixed, root_path="/api/"
+        tmp_path / "prefixed", _renamed_placeholder, tools=prefixed, root_path="/mounted/"
     )
     runtime.check_authorized_routes(app)
 
