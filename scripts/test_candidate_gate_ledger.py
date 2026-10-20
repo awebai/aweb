@@ -14,7 +14,7 @@ STAGES = "checks unit artifacts integration"
 # Unrelated product targets check the fixture's committed source; the four
 # stage assertions below use real tools/services, never a replacement runner.
 SOURCE_CHECKS = """_candidate-gate-docker-boundaries check-aw-commit-repo-stamp
-check-cli-go-tidy check-cli-release-vcs-stamps test-python-locks
+check-cli-go-tidy check-cli-release-vcs-stamps test-python-locks lint-naapp
  test-sot-source-inventories test-vector-provenance test-federation-error-reference
  test-federation-authority-mutations test-federation-harness test-cli-reference
  test-mcp-tools-reference _candidate-channel-version check-a2a-copy-guardrails

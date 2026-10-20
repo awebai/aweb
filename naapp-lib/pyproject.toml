@@ -71,8 +71,8 @@ dev = [
   "httpx2>=2.9.1",
   "ruff>=0.14.0",
   "mypy>=1.18.0",
-  # Exact: the candidate-gate image installs the Chromium this version drives,
-  # reading the version from uv.lock, so the two cannot drift.
+  # Exact: the candidate gate's test image installs the Chromium this version
+  # drives, through this lock, so the two cannot drift.
   "playwright==1.63.0",
   "uvicorn>=0.35.0",
 ]

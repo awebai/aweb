@@ -3,7 +3,7 @@
 API_PORT ?= 8765
 
 test:
-	uv run pytest -q
+	uv run pytest -q -m "not e2e"
 
 test-server:
 	uv run pytest -q
