@@ -69,7 +69,7 @@ async def test_sdk_json_and_streaming_v2_against_real_stack(privacy_app, request
 
 
 @pytest.mark.asyncio
-async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cli_binary, tmp_path):
+async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cli_binary, tmp_path, monkeypatch):
     from aweb.auth_metrics import LEGACY_REQUEST_AUTH_ACCEPTED
     from aweb.presence import clear_workspace_presence
 
@@ -82,8 +82,10 @@ async def test_production_cli_connect_and_event_stream_use_v2(privacy_app, aw_cl
     for field in ("member_did_aw", "member_address", "signature"):
         cert.pop(field, None)
     cert["signature"] = sign_message(env.team_sk, canonical_json_bytes(cert))
-    (home / "team-certs/team.pem").write_text(json.dumps(cert))
-    membership = dict(team_id=TEAM, alias="alice", cert_path="team-certs/team.pem")
+    cert_path = "team-certs/" + TEAM.replace("__", "____").replace(":", "__") + ".pem"
+    (home / cert_path).write_text(json.dumps(cert))
+    membership = dict(team_id=TEAM, alias="alice", cert_path=cert_path)
+    monkeypatch.setenv("AWEB_DATABASE_URL", env.db.config.get_dsn())
     (home / "teams.yaml").write_text(json.dumps(dict(active_team=TEAM, memberships=[membership])))
     (home / "workspace.yaml").write_text(json.dumps(dict(aweb_url=str(env.client.base_url), memberships=[membership])))
     (home / "signing.key").write_text("-----BEGIN ED25519 PRIVATE KEY-----\n" + base64.b64encode(actor.sk).decode() + "\n-----END ED25519 PRIVATE KEY-----\n")
