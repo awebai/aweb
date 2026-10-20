@@ -41,6 +41,34 @@ class AdmittedInstallation:
     generation: int
 
 
+class InstallationDispatchFence:
+    """S3's prepare/check protocol, bound to one installation and transaction.
+
+    Create a fresh object for each dispatch/admission call. S3 must invoke
+    prepare before its pair and intent locks, then check under those locks.
+    """
+
+    def __init__(
+        self, store: InstallationFence, admitted: AdmittedInstallation, grant: Grant | None = None,
+    ) -> None:
+        self.store = store
+        self.admitted = admitted
+        self.grant = grant
+        self._prepared_tx: TransactionManager | None = None
+
+    async def prepare(self, tx: TransactionManager) -> None:
+        if self.grant is not None:
+            self.admitted = await self.store.admit(tx, self.grant)
+        else:
+            await self.store._lock(tx, self.admitted)
+        self._prepared_tx = tx
+
+    async def check(self, tx: TransactionManager, dispatch: object) -> None:
+        if self._prepared_tx is not tx:
+            raise _unavailable("Prepare the installation fence before taking dispatch locks")
+        await self.store._check_locked(tx, self.admitted)
+
+
 async def apply_installation_migrations(db: AsyncDatabaseManager) -> None:
     """Install the shared fence store, separately from the app's own tables."""
     await AsyncMigrationManager(
@@ -67,6 +95,18 @@ class InstallationFence:
         self.app_id = app_id
         self.grants = grants
         self.monotonic = monotonic
+
+    def for_installation(self, admitted: AdmittedInstallation) -> InstallationDispatchFence:
+        """Bind a previously admitted intent to S3's required fence protocol."""
+        return InstallationDispatchFence(self, admitted)
+
+    def for_admission(self, grant: Grant) -> InstallationDispatchFence:
+        """Record B1's grant in S3's pre-lock phase and expose ``.admitted``.
+
+        Pass this object to S3.admit(fence=...), rather than observing the
+        installation after S3 has acquired its pair or intent locks.
+        """
+        return InstallationDispatchFence(self, self._identity(grant), grant)
 
     def _identity(self, grant: Grant) -> AdmittedInstallation:
         if (
@@ -192,21 +232,34 @@ class InstallationFence:
                 )
 
     async def check(self, tx: TransactionManager, admitted: AdmittedInstallation) -> None:
-        """SQL-only dispatch fence, called under the caller's intent row lock.
+        """SQL-only standalone check; acquire this before app resource locks.
 
-        The shared lock lasts to transaction end. It prevents a local authority
-        observation from committing between this check and the dispatch commit.
-        A later observation fences subsequent commits, while earlier committed
-        work is reconciled. Refresh outside the transaction even when the app
-        has no new admissions; an expired observation never authorizes dispatch.
+        S3 callers pass ``for_installation`` or ``for_admission`` instead: its
+        prepare phase enforces fence -> pair -> intent lock order. The bound
+        check phase takes no new lock and evaluates freshness AFTER lock waits.
         """
+        await self._lock(tx, admitted)
+        await self._check_locked(tx, admitted)
+
+    async def _lock(self, tx: TransactionManager, admitted: AdmittedInstallation) -> None:
         if admitted.app_id != self.app_id:
             raise InstallationRefused("generation_superseded", 409, "The admission belongs to another app")
+        # Do not evaluate the SQL clock in this query: PostgreSQL can project
+        # it before the row-lock wait and return that stale result afterward.
+        row = await tx.fetch_one(
+            """SELECT installation_id FROM {{tables.installation_fences}}
+               WHERE app_id = $1 AND team_id = $2 FOR SHARE""",
+            self.app_id, admitted.team_id,
+        )
+        if row is None:
+            raise _unavailable("Refresh the installation before dispatch")
+
+    async def _check_locked(self, tx: TransactionManager, admitted: AdmittedInstallation) -> None:
         row = await tx.fetch_one(
             """SELECT installation_id, generation, state,
                       fresh_until > clock_timestamp() AS fresh
                FROM {{tables.installation_fences}}
-               WHERE app_id = $1 AND team_id = $2 FOR SHARE""",
+               WHERE app_id = $1 AND team_id = $2""",
             self.app_id, admitted.team_id,
         )
         if row is None:

@@ -259,10 +259,14 @@ above; route enforcement and its product request flow are separate F6 work.
 source implements B1's `GrantSource`; its remote implementation belongs to the
 generic app-to-team-server API.
 
-Admission obtains B1's authenticated, fresh `Grant`, then calls
-`admitted = await fence.admit(tx, grant)` inside the intent's transaction. Store
-the returned `AdmittedInstallation`'s `team_id`, `app_id`, `installation_id` and
-`generation` with that intent. Acquire the fence before app resource locks.
+Admission obtains B1's authenticated, fresh `Grant`, then creates
+`admission_fence = fence.for_admission(grant)` and passes it to
+`dispatches.admit(tx, dispatch_id, fence=admission_fence)`. Store
+`admission_fence.admitted`'s `team_id`, `app_id`, `installation_id` and
+`generation` with the intent after admission succeeds. S3 calls the bound
+fence's `prepare(tx)` before its pair advisory lock and intent-row lock;
+preparation records the installation under its update lock. It then calls
+`check(tx, dispatch)` under its locks, without taking a new fence-row lock.
 The observation rolls back with admission. Missing identity is refused, never
 synthesized. Committed observations cannot lower a generation, revive an
 inactive generation or revive an ID retired by a replacement installation ID.
@@ -277,7 +281,7 @@ await fence.refresh(team_id)
 async with db.transaction() as tx:
     await dispatches.begin_dispatch(
         tx, dispatch_id,
-        fence=lambda tx, dispatch: fence.check(tx, admitted),
+        fence=fence.for_installation(admitted),
     )
 ```
 
@@ -285,9 +289,19 @@ async with db.transaction() as tx:
 commits an active/inactive observation in its own short transaction. Failed
 refresh invalidates local freshness and stops dispatch. Refresh before resumed
 dispatch even when there have been no new admissions: an idle app must learn
-uninstall. `check(tx, admitted)` performs SQL only, requiring a fresh active
-observation with the admitted ID/generation. Its shared row lock lasts through
-the dispatch commit, serializing it with local authority observations.
+uninstall. S3 enforces the same two-phase order on `begin_dispatch` as on
+`admit`: `prepare` takes the shared fence lock before any pair/intent locks,
+then `check` validates active state, ID/generation and freshness under those
+locks. Both phases perform SQL only. The shared fence lock lasts through the
+dispatch commit, serializing it with local authority observations. The global
+order is **fence, pair, intent**, enforced inside S3 rather than by a separate
+call the app must remember. Each operation gets a new bound fence object.
+
+Without S3, `fence.admit(tx, grant)` and `fence.check(tx, admitted)` remain
+standalone transaction-level operations; call them before app resource locks.
+The shared lock is acquired in one query and freshness evaluated by a second
+query after waiting. A clock projection in the locking query can be evaluated
+before the wait and must not authorize a dispatch after expiry.
 
 An expired observation refuses even when refresh is not running. PostgreSQL
 stores the source's remaining monotonic freshness; waiting for the fence lock
@@ -296,6 +310,8 @@ team server and app the guarantee is **max_age plus one bounded refresh**, at
 most **60 + 5 seconds with the remote source's defaults**. A local lock is not
 a cross-server lease. Earlier committed work is reconciled, never reported as
 rolled back. Immediate app-local containment is a separate authority operation.
+A stale higher generation can be honoured for at most one cache window
+(60 + 5 s) after an uninstall.
 
 `InstallationRefused` carries `code` and HTTP-compatible `status`:
 
