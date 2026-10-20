@@ -43,8 +43,18 @@ signature     = Ed25519(signing key, signing bytes)
 
 - `canonical_json` is AWID's (`awid/src/awid/signing.py`): keys sorted, no
   whitespace, UTF-8, integers only (no floats), duplicate keys refused on input.
-  A verifier re-canonicalizes the parsed payload and requires the exact bytes it
-  received.
+- **Values.** Every string, key included, is a sequence of Unicode scalar
+  values: a lone surrogate escape such as `\ud800` is refused. Every integer,
+  in a payload, `params` or `credentials`, is within ±(2^53 − 1), so every
+  language reproduces the same bytes. A verifier refuses a value outside these
+  rules at its shape step.
+- **Which bytes are signed.** A request's header carries the exact payload
+  bytes, and they must be canonical: the verifier re-canonicalizes the parsed
+  payload and requires the bytes it received. An assignment arrives as a nested
+  object in a JSON body, so its signing bytes are the prefix followed by
+  `canonical_json` of the parsed `assignment`. The body's own encoding
+  (whitespace, key order) is not significant, but duplicate keys and floats
+  anywhere in it are still refused.
 - Signatures and every other binary value are base64url without padding, with
   exactly one accepted encoding: a verifier decodes, re-encodes and requires the
   same string.
@@ -90,9 +100,9 @@ X-AWEB-Secrets-Runner-Request: b64url(payload bytes) "." b64url(signature)
 secrets verifies in this order and refuses with the first code that applies:
 
 1. **Shape** (`runner_request_invalid`): the header has two parts, each a
-   canonical base64url string; the payload is canonical JSON with exactly the
-   fields above, `v` 1, the right `type`, a well-formed `runner_id`, a 16-byte
-   nonce and a valid timestamp.
+   canonical base64url string; the payload is canonical JSON within the value
+   rules, with exactly the fields above, `v` 1, the right `type`, a well-formed
+   `runner_id`, a 16-byte nonce and a valid timestamp.
 2. **Runner** (`runner_unknown`): `runner_id` names an active runner of this
    deployment, and `kid` is its registered signing key.
 3. **Signature** (`runner_request_invalid`): the signature verifies under that
@@ -149,9 +159,10 @@ The payload has exactly these fields:
 The runner verifies in this order and refuses with the first code that applies.
 It reports nothing it refused as started.
 
-1. **Shape** (`assignment_invalid`): the body and payload have exactly the
-   fields above, canonical and well-typed, with a well-formed `runner_id` and
-   `dispatch_id`.
+1. **Shape** (`assignment_invalid`): the body is at most 1 MiB; the body and
+   payload have exactly the fields above, well-typed and within the value rules,
+   with a well-formed `runner_id` and `dispatch_id`; each `credentials` item is
+   exactly `{secret_ref, sealed}`, with `sealed` a canonical base64url string.
 2. **Signature** (`assignment_invalid`): `service_kid` is the service key the
    runner pinned, and the signature verifies under it over the prefixed bytes.
 3. **Audience** (`assignment_wrong_runner`): `runner_id` is the runner's own and
@@ -201,8 +212,9 @@ credentials with the recipient key, and refusal cases for every step above:
 - a wrong domain prefix;
 - a non-canonical payload;
 - a duplicate key;
-- a float;
+- a float, an integer outside the safe range and a lone surrogate;
 - a timestamp with non-ASCII digits;
+- a credential item with an extra field or a non-canonical `sealed`;
 - a short identifier;
 - another method, path, body or origin;
 - an assignment for another runner;

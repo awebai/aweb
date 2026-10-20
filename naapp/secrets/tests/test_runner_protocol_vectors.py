@@ -58,6 +58,9 @@ ASSIGNMENT_FIELDS = {
     "expires_at",
 }
 BODY_FIELDS = {"assignment", "signature", "params", "credentials"}
+CREDENTIAL_FIELDS = {"secret_ref", "sealed"}
+MAX_ASSIGNMENT_BODY_BYTES = 1024 * 1024
+SAFE_INTEGER = 2**53 - 1
 SKEW = timedelta(seconds=120)
 MAX_ASSIGNMENT_LIFETIME = timedelta(seconds=300)
 # At least 16 CSPRNG bytes in unpadded base64url after the kind prefix.
@@ -108,9 +111,35 @@ def strict_json(raw: bytes | str, code: str) -> Any:
         raise Refused(code) from exc
 
 
+def _check_values(value: Any, code: str) -> None:
+    """Strings are Unicode scalar values; integers are within the safe range."""
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise Refused(code) from exc
+    elif isinstance(value, bool) or value is None:
+        return
+    elif isinstance(value, int):
+        if abs(value) > SAFE_INTEGER:
+            raise Refused(code)
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _check_values(key, code)
+            _check_values(item, code)
+    elif isinstance(value, list):
+        for item in value:
+            _check_values(item, code)
+
+
+def canonical_bytes(value: Any, code: str) -> bytes:
+    _check_values(value, code)
+    return canonical_json_bytes(value)
+
+
 def canonical_object(raw: bytes, code: str) -> dict[str, Any]:
     value = strict_json(raw, code)
-    if not isinstance(value, dict) or canonical_json_bytes(value) != raw:
+    if not isinstance(value, dict) or canonical_bytes(value, code) != raw:
         raise Refused(code)
     return value
 
@@ -180,6 +209,8 @@ def verify_request(case: dict[str, Any]) -> dict[str, Any]:
 def verify_assignment(case: dict[str, Any]) -> dict[str, Any]:
     runner = case["runner"]
     code = "assignment_invalid"
+    if len(case["body_json"].encode("utf-8", "surrogatepass")) > MAX_ASSIGNMENT_BODY_BYTES:
+        raise Refused(code)
     body = strict_json(case["body_json"], code)
     if not isinstance(body, dict) or set(body) != BODY_FIELDS:
         raise Refused(code)
@@ -188,7 +219,15 @@ def verify_assignment(case: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(body["credentials"], list):
         raise Refused(code)
     payload = body["assignment"]
-    payload_bytes = canonical_json_bytes(payload)
+    payload_bytes = canonical_bytes(payload, code)
+    params_bytes = canonical_bytes(body["params"], code)
+    credentials_bytes = canonical_bytes(body["credentials"], code)
+    for item in body["credentials"]:
+        if not isinstance(item, dict) or set(item) != CREDENTIAL_FIELDS:
+            raise Refused(code)
+        if not isinstance(item["secret_ref"], str) or not isinstance(item["sealed"], str):
+            raise Refused(code)
+        from_b64u(item["sealed"], code)
     if set(payload) != ASSIGNMENT_FIELDS or payload["v"] != 1 or payload["type"] != ASSIGNMENT_TYPE:
         raise Refused(code)
     if not all(isinstance(payload[f], str) for f in ASSIGNMENT_FIELDS - {"v"}):
@@ -212,9 +251,8 @@ def verify_assignment(case: dict[str, Any]) -> dict[str, Any]:
     if payload["runner_id"] != runner["runner_id"] or payload["origin"] != runner["origin"]:
         raise Refused("assignment_wrong_runner")
     if (
-        payload["params_sha256"] != hashlib.sha256(canonical_json_bytes(body["params"])).hexdigest()
-        or payload["credentials_sha256"]
-        != hashlib.sha256(canonical_json_bytes(body["credentials"])).hexdigest()
+        payload["params_sha256"] != hashlib.sha256(params_bytes).hexdigest()
+        or payload["credentials_sha256"] != hashlib.sha256(credentials_bytes).hexdigest()
     ):
         raise Refused("assignment_binding_mismatch")
     now = at(case["now"])
@@ -290,6 +328,16 @@ def test_sealed_credential_cases(case):
             SUITE.decrypt(sealed, private, info)
         return
     assert SUITE.decrypt(sealed, private, info) == case["expected"]["plaintext"].encode()
+
+
+def test_an_oversized_claim_response_is_refused():
+    valid = next(c for c in VECTOR["assignments"] if c["name"] == "valid")
+    padding = ', "padding": "' + "x" * MAX_ASSIGNMENT_BODY_BYTES + '"'
+    padded = valid["body_json"].replace('"database": "orders"', '"database": "orders"' + padding)
+    assert padded != valid["body_json"]
+    with pytest.raises(Refused) as refused:
+        verify_assignment(dict(valid, body_json=padded))
+    assert refused.value.code == "assignment_invalid"
 
 
 def test_every_refusal_code_of_the_contract_has_a_case():
