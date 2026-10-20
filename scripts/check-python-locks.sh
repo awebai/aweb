@@ -28,6 +28,10 @@ self_test() (
   cp "$ROOT/awid/pyproject.toml" "$ROOT/awid/uv.lock" "$ROOT/awid/README.md" "$tmp/awid/"
   cp "$ROOT/server/pyproject.toml" "$ROOT/server/uv.lock" "$ROOT/server/README.md" "$tmp/server/"
   cp "$ROOT/naapp-lib/pyproject.toml" "$ROOT/naapp-lib/uv.lock" "$ROOT/naapp-lib/README.md" "$tmp/naapp-lib/"
+  # naapp-lib's dev-only test-support distribution, which the dependents' dev groups lock too.
+  mkdir -p "$tmp/naapp-lib/testing"
+  cp "$ROOT/naapp-lib/testing/pyproject.toml" "$tmp/naapp-lib/testing/"
+  cp -R "$ROOT/naapp-lib/testing/src" "$tmp/naapp-lib/testing/"
   cp "$ROOT/naapp/folio/pyproject.toml" "$ROOT/naapp/folio/uv.lock" "$ROOT/naapp/folio/README.md" "$tmp/naapp/folio/"
   cp "$ROOT/naapp/secrets/pyproject.toml" "$ROOT/naapp/secrets/uv.lock" "$ROOT/naapp/secrets/README.md" "$tmp/naapp/secrets/"
 
