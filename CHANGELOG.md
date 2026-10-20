@@ -8,6 +8,21 @@
 
 ## Release preparations
 
+### Release preparation: AWID 0.5.29
+
+Changes are since `awid-v0.5.28` / `awid-service-v0.5.28`.
+Publishes PyPI `awid-service` 0.5.29 and the `awid` image 0.5.29.
+
+- Accept controller request envelopes binding the operation, configured public
+  audience, HTTP method, external raw path/query and exact body hash, with a
+  distinct AWID protocol type and a separate covering parent authorization.
+- Keep legacy controller envelopes accepted with per-operation usage counts;
+  their retirement requires a separate cutoff.
+- Require a matching team-signed certificate blob for every new registration;
+  historical blob-free records remain readable.
+- Configure `AWID_PUBLIC_ORIGINS` before clients emit v2. Deploy this accepting
+  AWID first; current clients remain on the legacy form until that deployment.
+
 ### Release preparation: server 1.27.29
 
 Server changes are since `server-v1.27.28`. No CLI change; aw stays 1.36.43.
@@ -27,6 +42,21 @@ Server changes are since `server-v1.27.28`. No CLI change; aw stays 1.36.43.
   family, route template and aw client version. Deploy this server support and
   Cloud's verifiers before publishing the aw client that emits v2; clients must
   not fall back to v1 after a v2 refusal.
+- App emit keys, event declarations and the app version projection belong to
+  the installing team, and an app id's origin is bound per team (migrations
+  024-026). A key registered by one team is never active for another team's
+  install of the same app and digest; within a team a key id keeps its first
+  did_key (a different one is refused with 409) and a revoked key stays
+  revoked. Registry-entry keys and declarations are not carried over, because
+  they record no installing team, so app events for existing installs are
+  refused (fail closed) until reseeded.
+- Add the operator command `aweb reseed-app-registrations --origin <origin>
+  [--manifest-file <bytes>]`. It recreates every team's declarations, emit keys
+  and version projection from exact manifest bytes that hash to the team's
+  pinned digest, never changes subscriptions, reports teams on another digest
+  or with a conflicting key id, and exits 1 when any team was left unchanged.
+  Deploy: save each installed app origin's manifest bytes before migrating,
+  then reseed immediately after, so the refused window lasts minutes.
 
 ### Release preparation: aw 1.36.43
 

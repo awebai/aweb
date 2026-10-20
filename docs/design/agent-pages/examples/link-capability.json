@@ -1,0 +1,35 @@
+{
+  "draft": true,
+  "link_id": "link-fixture-1",
+  "page_id": "fixture-home",
+  "mode": "live",
+  "projection": {
+    "collection": "items",
+    "record_ids": [
+      "item-1"
+    ],
+    "fields": [
+      "label",
+      "checked"
+    ]
+  },
+  "allowed_actions": [
+    {
+      "id": "check",
+      "constraints": {
+        "record_id": "item-1",
+        "checked": true
+      }
+    }
+  ],
+  "expires_at": "2026-10-20T10:00:00Z",
+  "revoked": false,
+  "one_use": true,
+  "secret_verifier_hash": "<hash only; secret returned to creator once>",
+  "rate_policy": "bounded-link-actions-v1",
+  "intent_sponsor": null,
+  "audit_origin": "anonymous_link",
+  "request_sha256": "<frozen canonical action digest>",
+  "approver_policy_ref": null,
+  "note": "Ordinary bounded edit capability; not an approval link. Approval links require an independent delivery authority and authenticated human proof."
+}
